@@ -117,6 +117,33 @@ func TestEventGoldens(t *testing.T) {
 		},
 	}
 
+	// Exhaustiveness guard (M5): every known Event implementation's
+	// EventType() must have exactly one row above, so a ninth event type
+	// added without a table row (and thus no golden) is caught here rather
+	// than silently shipping ungoldened, and two rows colliding on the same
+	// EventType() (which would silently overwrite each other's golden file)
+	// fails loudly instead.
+	wantEventTypes := []string{
+		core.StepEvent{}.EventType(),
+		core.DownloadEvent{}.EventType(),
+		core.ModEvent{}.EventType(),
+		core.HookEvent{}.EventType(),
+		core.WarningEvent{}.EventType(),
+		core.MergeEvent{}.EventType(),
+		core.UpdateCheckEvent{}.EventType(),
+		core.VerifyEvent{}.EventType(),
+	}
+	seenTypes := make(map[string]bool, len(tests))
+	for _, tt := range tests {
+		et := tt.ev.EventType()
+		require.Falsef(t, seenTypes[et], "two table rows share EventType() %q", et)
+		seenTypes[et] = true
+	}
+	require.Len(t, seenTypes, len(wantEventTypes), "table's distinct EventType() count drifted from the known event types")
+	for _, et := range wantEventTypes {
+		assert.Truef(t, seenTypes[et], "no golden table row for event type %q", et)
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b, err := core.MarshalEvent(tt.ev)

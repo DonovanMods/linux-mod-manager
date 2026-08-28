@@ -1051,7 +1051,7 @@ var deployPhaseNames = [...]string{
 
 // String returns the phase's wire name.
 func (p DeployPhase) String() string {
-	if int(p) < len(deployPhaseNames) && deployPhaseNames[p] != "" {
+	if p >= 0 && int(p) < len(deployPhaseNames) && deployPhaseNames[p] != "" {
 		return deployPhaseNames[p]
 	}
 	return fmt.Sprintf("deploy_phase(%d)", int(p))
@@ -1110,7 +1110,7 @@ var deployModClassNames = [...]string{
 
 // String returns the class's wire name.
 func (c DeployModClass) String() string {
-	if int(c) < len(deployModClassNames) && deployModClassNames[c] != "" {
+	if c >= 0 && int(c) < len(deployModClassNames) && deployModClassNames[c] != "" {
 		return deployModClassNames[c]
 	}
 	return fmt.Sprintf("deploy_mod_class(%d)", int(c))
@@ -1935,7 +1935,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 			return result, err
 		}
 
-		scope := Scope{Op: OpDeploy, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{ModID: mod.ID}}
+		scope := Scope{Op: OpDeploy, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
 		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
 		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
@@ -2221,7 +2221,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		// scope is this mod's event scope: purge-command mode carries
 		// Index/Total (a progress denominator for callers); deploy mode
 		// keeps its historical event shape (mod name/ID only).
-		scope := Scope{Op: spec.op, ModName: mod.Name, Mod: &domain.ModReference{ModID: mod.ID}}
+		scope := Scope{Op: spec.op, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 		if !spec.forDeploy {
 			scope.Index, scope.Total = idx+1, total
 		}
@@ -2671,7 +2671,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		im := plan.ToDisable[idx]
-		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalDisable, ModName: im.Name, Mod: &domain.ModReference{ModID: im.ID}}
+		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalDisable, ModName: im.Name, Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
 		if err := fromInstaller.Uninstall(ctx, game, &im.Mod, plan.From); err != nil {
 			msg := fmt.Sprintf("Warning: failed to undeploy %s: %v", im.Name, err)
@@ -2695,7 +2695,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		im := plan.ToEnable[idx]
-		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalEnable, ModName: im.Name, Mod: &domain.ModReference{ModID: im.ID}}
+		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalEnable, ModName: im.Name, Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
 		if err := toInstaller.Install(ctx, game, &im.Mod, plan.To); err != nil {
 			msg := fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err)

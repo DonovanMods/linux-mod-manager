@@ -1,1 +1,1 @@
-{"type":"warning","data":{"op":"install","mod":{"source_id":"nexusmods","mod_id":"42","version":""},"mod_name":"Sample Mod","index":2,"total":5,"phase":"install_warning","message":"could not save checksum"}}
+{"type":"warning","data":{"op":"install","mod":{"source_id":"nexusmods","mod_id":"42"},"mod_name":"Sample Mod","index":2,"total":5,"phase":"install_warning","message":"could not save checksum"}}

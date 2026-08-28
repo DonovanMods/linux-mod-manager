@@ -82,7 +82,7 @@ var verifyEventKindNames = [...]string{
 
 // String returns k's wire name.
 func (k VerifyEventKind) String() string {
-	if int(k) < len(verifyEventKindNames) && verifyEventKindNames[k] != "" {
+	if k >= 0 && int(k) < len(verifyEventKindNames) && verifyEventKindNames[k] != "" {
 		return verifyEventKindNames[k]
 	}
 	return fmt.Sprintf("verify_event_kind(%d)", int(k))

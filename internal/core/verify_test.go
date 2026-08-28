@@ -422,7 +422,7 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	require.Len(t, progressEvents, 5, "one VerifyEvProgress tick per installed mod")
 	wantModNames := []string{"Reachable", "Unreachable", "Unverifiable", "Mismatch", "Locked"}
 	for i, ev := range progressEvents {
-		require.Equal(t, core.OpVerify, ev.Scope.Op)
+		require.Equal(t, core.OpVerify, ev.Op)
 		require.Equal(t, i+1, ev.Index)
 		require.Equal(t, 5, ev.Total)
 		require.Equal(t, wantModNames[i], ev.ModName)

@@ -1,1 +1,1 @@
-{"type":"merge","data":{"op":"deploy","mod":{"source_id":"nexusmods","mod_id":"42","version":""},"mod_name":"Sample Mod","index":2,"total":5,"phase":"deploy_merge_synced","merged_mods":3,"artifact":"merged.pak","raw_fallbacks":1}}
+{"type":"merge","data":{"op":"deploy","mod":{"source_id":"nexusmods","mod_id":"42"},"mod_name":"Sample Mod","index":2,"total":5,"phase":"deploy_merge_synced","merged_mods":3,"artifact":"merged.pak","raw_fallbacks":1}}

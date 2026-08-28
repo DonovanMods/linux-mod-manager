@@ -240,26 +240,43 @@ func (r *reportingMockSource) CheckUpdatesWithProgress(ctx context.Context, inst
 
 func TestUpdater_CheckUpdates_EmitsUpdateCheckEventsPerReportingSource(t *testing.T) {
 	registry := source.NewRegistry()
-	rs := &reportingMockSource{updateMockSource: updateMockSource{id: "rep"}}
-	registry.Register(rs)
+	rs1 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep"}}
+	rs2 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep2"}}
+	registry.Register(rs1)
+	registry.Register(rs2)
 
 	updater := core.NewUpdater(registry)
 
 	installed := []domain.InstalledMod{
 		{Mod: domain.Mod{ID: "a", SourceID: "rep", Name: "A"}},
 		{Mod: domain.Mod{ID: "b", SourceID: "rep", Name: "B"}},
+		{Mod: domain.Mod{ID: "c", SourceID: "rep2", Name: "C"}},
+		{Mod: domain.Mod{ID: "d", SourceID: "rep2", Name: "D"}},
 	}
 
 	sink, got := core.RecordEvents()
 	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink)
 	require.NoError(t, err)
-	require.Len(t, *got, 2)
-	e := (*got)[0].(core.UpdateCheckEvent)
-	assert.Equal(t, core.OpUpdateCheck, e.Op)
-	assert.Equal(t, "rep", e.SourceID)
-	assert.Equal(t, "A", e.ModName)
-	assert.Equal(t, 1, e.Index)
-	assert.Equal(t, 2, e.Total)
+	require.Len(t, *got, 4)
+
+	// Sources are iterated from a map, so bucket by SourceID rather than
+	// assuming a fixed global order between "rep" and "rep2".
+	type tick struct {
+		modName      string
+		index, total int
+	}
+	bySource := map[string][]tick{}
+	for _, ev := range *got {
+		e := ev.(core.UpdateCheckEvent)
+		assert.Equal(t, core.OpUpdateCheck, e.Op)
+		bySource[e.SourceID] = append(bySource[e.SourceID], tick{e.ModName, e.Index, e.Total})
+	}
+
+	// M2: the second reporting source's ticks restart at 1/2, 2/2 rather
+	// than continuing the running total (3/4, 4/4) - per-source counters
+	// are preserved behaviour.
+	assert.Equal(t, []tick{{"A", 1, 2}, {"B", 2, 2}}, bySource["rep"])
+	assert.Equal(t, []tick{{"C", 1, 2}, {"D", 2, 2}}, bySource["rep2"])
 }
 
 func TestCompareVersions(t *testing.T) {

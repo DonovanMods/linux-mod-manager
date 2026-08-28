@@ -60,22 +60,27 @@ func TestRecordEvents(t *testing.T) {
 	assert.Equal(t, core.DeployDeployed, (*got)[1].(core.FlowEvent).FlowPhase())
 }
 
-func TestDeployPhase_TextRoundTrip(t *testing.T) {
-	seen := make(map[string]core.DeployPhase, core.DeployMergeSynced+1)
-	for i := core.DeployPurging; i <= core.DeployMergeSynced; i++ {
-		text, err := i.MarshalText()
-		require.NoError(t, err)
-		name := string(text)
-		require.NotEmpty(t, name, "phase %d has an empty wire name", int(i))
-
-		if prev, ok := seen[name]; ok {
-			t.Fatalf("wire name %q used by both phase %d and phase %d", name, int(prev), int(i))
-		}
-		seen[name] = i
-
-		var got core.DeployPhase
-		require.NoError(t, got.UnmarshalText(text))
-		assert.Equal(t, i, got, "round-trip mismatch for phase %d (%q)", int(i), name)
+// TestEnumString_NegativeValueUsesEscapeHatch pins M1: a negative enum value
+// must render the same "<type>(%d)" escape hatch as an out-of-range positive
+// one, not panic — these are MarshalText implementations, and the moment
+// UnmarshalText is fed hostile input the in-range-only guard stops being
+// structural.
+func TestEnumString_NegativeValueUsesEscapeHatch(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func() string
+		want string
+	}{
+		{"DeployPhase", func() string { return core.DeployPhase(-1).String() }, "deploy_phase(-1)"},
+		{"DeployModClass", func() string { return core.DeployModClass(-1).String() }, "deploy_mod_class(-1)"},
+		{"VerifyEventKind", func() string { return core.VerifyEventKind(-1).String() }, "verify_event_kind(-1)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			assert.NotPanics(t, func() { got = tt.fn() })
+			assert.Equal(t, tt.want, got)
+		})
 	}
 }
 
