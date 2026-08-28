@@ -418,6 +418,97 @@ func TestNexusMods_CheckUpdates_MultipleMods(t *testing.T) {
 	assert.Equal(t, 6, requestCount, "should make GetMod and GetModFiles per mod")
 }
 
+func TestNexusMods_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/v1/games/skyrimspecialedition/mods/111.json":
+			writeJSON(t, w, ModData{ModID: 111, Version: "2.0.0"}) // Update available
+		case "/v1/games/skyrimspecialedition/mods/111/files.json":
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 1, IsPrimary: true}}})
+		case "/v1/games/skyrimspecialedition/mods/222.json":
+			writeJSON(t, w, ModData{ModID: 222, Version: "1.0.0"}) // No update
+		case "/v1/games/skyrimspecialedition/mods/222/files.json":
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 10, IsPrimary: true}}})
+		case "/v1/games/skyrimspecialedition/mods/333.json":
+			writeJSON(t, w, ModData{ModID: 333, Version: "3.5.0"}) // Update available
+		case "/v1/games/skyrimspecialedition/mods/333/files.json":
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 2, IsPrimary: true}}})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Name: "Mod A", Version: "1.0.0", GameID: "skyrimspecialedition"}},
+		{Mod: domain.Mod{ID: "222", Name: "Mod B", Version: "1.0.0", GameID: "skyrimspecialedition"}},
+		{Mod: domain.Mod{ID: "333", Name: "Mod C", Version: "3.0.0", GameID: "skyrimspecialedition"}},
+	}
+
+	type progressCall struct {
+		n, total int
+		name     string
+	}
+	var calls []progressCall
+	report := func(n, total int, name string) {
+		calls = append(calls, progressCall{n, total, name})
+	}
+
+	updates, err := nm.CheckUpdatesWithProgress(context.Background(), installed, report)
+	require.NoError(t, err)
+
+	want := []progressCall{
+		{1, 3, "Mod A"},
+		{2, 3, "Mod B"},
+		{3, 3, "Mod C"},
+	}
+	assert.Equal(t, want, calls, "report should be called exactly once per mod, in order")
+
+	plainUpdates, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Equal(t, plainUpdates, updates, "the reported-progress call should find the same updates as CheckUpdates")
+}
+
+func TestNexusMods_CheckUpdates_DelegatesWithNilReport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/files.json") {
+			writeJSON(t, w, ModFileList{Files: []FileData{{FileID: 100, IsPrimary: true}}})
+			return
+		}
+		writeJSON(t, w, ModData{ModID: 12345, Name: "Test Mod", Version: "2.0.0"})
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{
+			Mod: domain.Mod{
+				ID:      "12345",
+				Name:    "Test Mod",
+				Version: "1.0.0",
+				GameID:  "skyrimspecialedition",
+			},
+		},
+	}
+
+	want, err := nm.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+
+	var got []domain.Update
+	require.NotPanics(t, func() {
+		got, err = nm.CheckUpdatesWithProgress(context.Background(), installed, nil)
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, want, got)
+}
+
 func TestNexusMods_GetDependencies(t *testing.T) {
 	// Mock GraphQL response for modRequirements query
 	mockResponse := map[string]interface{}{
