@@ -18,11 +18,11 @@ var ErrStalePlan = errors.New("plan is stale: installed mods changed since it wa
 // profile at plan time. Unexported, json:"-" wherever a Plan embeds one.
 type installedSnapshot map[string]string // key "source:id" -> "version|enabled"
 
-// installedSnapshot builds gameID/profileName's current installed-mod
+// currentInstalledSnapshot builds gameID/profileName's current installed-mod
 // snapshot, keyed by domain.ModKey (source:id), so a later checkPlanFresh
 // can detect any version, enabled-state, addition, or removal since a Plan
 // was computed.
-func (s *Service) installedSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
+func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileName string) (installedSnapshot, error) {
 	mods, err := s.GetInstalledMods(ctx, gameID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
@@ -39,7 +39,7 @@ func (s *Service) installedSnapshot(ctx context.Context, gameID, profileName str
 // returning nil when they match and a wrapped ErrStalePlan otherwise. Called
 // as the first statement inside each Apply's private twin, after beginOp.
 func (s *Service) checkPlanFresh(ctx context.Context, gameID, profileName string, want installedSnapshot) error {
-	got, err := s.installedSnapshot(ctx, gameID, profileName)
+	got, err := s.currentInstalledSnapshot(ctx, gameID, profileName)
 	if err != nil {
 		return err
 	}

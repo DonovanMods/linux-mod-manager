@@ -42,7 +42,7 @@ func TestCheckPlanFresh_EqualSnapshotsPass(t *testing.T) {
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
-	want, err := svc.installedSnapshot(ctx, "g1", "default")
+	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
 	require.NoError(t, err)
 
 	assert.NoError(t, svc.checkPlanFresh(ctx, "g1", "default", want))
@@ -55,7 +55,7 @@ func TestCheckPlanFresh_VersionBumpIsStale(t *testing.T) {
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
-	want, err := svc.installedSnapshot(ctx, "g1", "default")
+	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
 	require.NoError(t, err)
 
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "2.0", true)
@@ -72,7 +72,7 @@ func TestCheckPlanFresh_EnableFlipIsStale(t *testing.T) {
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
-	want, err := svc.installedSnapshot(ctx, "g1", "default")
+	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
 	require.NoError(t, err)
 
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", false)
@@ -89,7 +89,7 @@ func TestCheckPlanFresh_AddedModIsStale(t *testing.T) {
 	ctx := context.Background()
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 
-	want, err := svc.installedSnapshot(ctx, "g1", "default")
+	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
 	require.NoError(t, err)
 
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod2", "1.0", true)
@@ -107,7 +107,7 @@ func TestCheckPlanFresh_RemovedModIsStale(t *testing.T) {
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod1", "1.0", true)
 	seedPlanTestMod(t, svc, "g1", "default", "src", "mod2", "1.0", true)
 
-	want, err := svc.installedSnapshot(ctx, "g1", "default")
+	want, err := svc.currentInstalledSnapshot(ctx, "g1", "default")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.DeleteInstalledMod(ctx, "src", "mod2", "g1", "default"))

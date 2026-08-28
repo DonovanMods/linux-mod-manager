@@ -14,6 +14,9 @@ const defaultHookTimeout = 60 * time.Second
 // HookTimeout - mirrors the pre-lift CLI's getHookRunner (cmd/lmm/hooks.go)
 // exactly, including its swallow-and-warn behavior on an unreadable
 // config.yaml (defaults to 60s rather than failing the caller's flow).
+// Returns error for forward-compatibility with callers that resolve hooks
+// before a mutation and must propagate a real failure; today this always
+// returns nil.
 func (s *Service) hookRunner(_ context.Context) (*HookRunner, error) {
 	cfg, err := config.Load(s.ConfigDir())
 	timeout := defaultHookTimeout
@@ -29,7 +32,10 @@ func (s *Service) hookRunner(_ context.Context) (*HookRunner, error) {
 // mirrors the pre-lift CLI's getResolvedHooks (cmd/lmm/hooks.go) exactly,
 // including its swallow-on-failure behavior: an empty profileName, or ANY
 // profile-load error (not just domain.ErrProfileNotFound), resolves
-// game-level hooks only rather than failing the caller's flow.
+// game-level hooks only rather than failing the caller's flow. Returns
+// error for forward-compatibility with callers that resolve hooks before a
+// mutation and must propagate a real failure; today this always returns
+// nil.
 func (s *Service) resolvedHooks(_ context.Context, game *domain.Game, profileName string) (*ResolvedHooks, error) {
 	var profile *domain.Profile
 	if profileName != "" {
