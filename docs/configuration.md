@@ -1,6 +1,6 @@
 # Configuration Reference
 
-lmm uses YAML configuration files under `~/.config/lmm/` (or the directory set with `--config`).
+lmm uses YAML configuration files under `$XDG_CONFIG_HOME/lmm/` — `~/.config/lmm/` by default — or the directory set with `--config`.
 
 `link_method` and `deploy_mode` fields (in `config.yaml`, `games.yaml`, and profile files) are validated at load time: leaving one unset keeps its documented default, but a value that doesn't exactly match one of the listed options — a typo like `deploy_mode: compil` — is a load-time error naming the field, the offending value, and the valid options, not a silent fallback.
 
@@ -13,7 +13,7 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `default_link_method` | string | `symlink` | How to deploy mods: `symlink`, `hardlink`, or `copy`                                                 |
 | `default_game`        | string | (empty)   | Game ID to use when `--game` is not specified                                                        |
 | `keybindings`         | string | `vim`     | Ignored. Kept so existing config files that set it still parse (it was reserved for the removed TUI) |
-| `cache_path`          | string | (empty)   | Override default mod cache directory (`~/.local/share/lmm/cache`)                                    |
+| `cache_path`          | string | (empty)   | Override default mod cache directory (`<data dir>/cache`)                                            |
 | `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
 
 ## games.yaml
@@ -135,16 +135,18 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 
 ## File locations
 
-| Path                                            | Description                                                             |
-| ----------------------------------------------- | ----------------------------------------------------------------------- |
-| `~/.config/lmm/config.yaml`                     | Global config                                                           |
-| `~/.config/lmm/games.yaml`                      | Game definitions                                                        |
-| `~/.config/lmm/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override)                  |
-| `~/.config/lmm/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
-| `~/.config/lmm/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
-| `~/.local/share/lmm/lmm.db`                     | SQLite database (metadata, tokens)                                      |
-| `~/.local/share/lmm/cache/`                     | Mod file cache (or `cache_path` override)                               |
-| `~/.local/share/lmm/downloads/`                 | Staging area for in-flight downloads and archive extraction             |
+`<config>` is `$XDG_CONFIG_HOME/lmm` (default `~/.config/lmm`); `<data>` is `$XDG_DATA_HOME/lmm` (default `~/.local/share/lmm`).
+
+| Path                                       | Description                                                             |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `<config>/config.yaml`                     | Global config                                                           |
+| `<config>/games.yaml`                      | Game definitions                                                        |
+| `<config>/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override)                  |
+| `<config>/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
+| `<config>/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
+| `<data>/lmm.db`                            | SQLite database (metadata, tokens)                                      |
+| `<data>/cache/`                            | Mod file cache (or `cache_path` override)                               |
+| `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
 
 ## Custom Sources
 

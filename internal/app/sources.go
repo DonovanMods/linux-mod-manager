@@ -42,7 +42,7 @@ func registerSources(svc *core.Service, cfgDir string, warn io.Writer) {
 func registerSource(svc *core.Service, src source.ModSource, warn io.Writer) {
 	id := src.ID()
 	if _, err := svc.GetSource(id); err == nil {
-		fmt.Fprintf(warn, "warning: skipping source %q: id already in use\n", id)
+		_, _ = fmt.Fprintf(warn, "warning: skipping source %q: id already in use\n", id) //nolint:errcheck // best-effort warning write
 		return
 	}
 	// Gate on Capabilities().Auth: a key set on an auth-less source would be
@@ -61,16 +61,16 @@ func registerSource(svc *core.Service, src source.ModSource, warn io.Writer) {
 func registerCustomSources(svc *core.Service, cfgDir string, warn io.Writer) {
 	defs, loadErrs, err := config.LoadSourceDefinitions(cfgDir)
 	if err != nil {
-		fmt.Fprintf(warn, "warning: loading custom sources: %v\n", err)
+		_, _ = fmt.Fprintf(warn, "warning: loading custom sources: %v\n", err) //nolint:errcheck // best-effort warning write
 		return
 	}
 	for _, le := range loadErrs {
-		fmt.Fprintf(warn, "warning: skipping source definition %v\n", le)
+		_, _ = fmt.Fprintf(warn, "warning: skipping source definition %v\n", le) //nolint:errcheck // best-effort warning write
 	}
 	for _, def := range defs {
 		src, err := custom.New(def)
 		if err != nil {
-			fmt.Fprintf(warn, "warning: skipping source %q: %v\n", def.ID, err)
+			_, _ = fmt.Fprintf(warn, "warning: skipping source %q: %v\n", def.ID, err) //nolint:errcheck // best-effort warning write
 			continue
 		}
 		registerSource(svc, src, warn)

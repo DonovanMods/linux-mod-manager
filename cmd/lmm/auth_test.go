@@ -11,7 +11,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	customsrc "github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -115,23 +114,6 @@ func TestMaskAPIKey(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
-}
-
-// TestEnvKeyFor tests envKeyFor's two paths: a source's own EnvKeyProvider
-// (built-ins preserve their legacy env var names) and the derived
-// LMM_<ID>_API_KEY fallback for sources that don't implement it.
-func TestEnvKeyFor(t *testing.T) {
-	assert.Equal(t, "NEXUSMODS_API_KEY", envKeyFor(nexusmods.New(nil, "")))
-	assert.Equal(t, "CURSEFORGE_API_KEY", envKeyFor(curseforge.New(nil, "")))
-
-	dirSrc, err := customsrc.NewDirectory(customsrc.SourceDefinition{
-		ID:        "unknown-source",
-		Name:      "Unknown Source",
-		Type:      customsrc.TypeDirectory,
-		Directory: &customsrc.DirectoryConfig{Path: t.TempDir()},
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "LMM_UNKNOWN_SOURCE_API_KEY", envKeyFor(dirSrc))
 }
 
 // TestAuthCmd_Structure tests the auth command structure
@@ -408,11 +390,6 @@ func TestAuthLogoutCmd_DefaultSource(t *testing.T) {
 	assert.NotNil(t, authLogoutCmd.Args, "Args validator should be set")
 }
 
-func TestEnvKeyForSourceID(t *testing.T) {
-	assert.Equal(t, "LMM_DONOVAN_MODS_API_KEY", envKeyForSourceID("donovan-mods"))
-	assert.Equal(t, "LMM_MY_REPO_API_KEY", envKeyForSourceID("my-repo"))
-}
-
 // TestPrintLoginResult pins final-review finding 4: sources with no live
 // validator have no generic validation endpoint, so runAuthLogin must not
 // print the "Validating... done" sequence for them — that's a fabricated
@@ -478,8 +455,8 @@ func TestPrintAuthLoginSuccess(t *testing.T) {
 // nexusmods explicitly instead of relying on identity: auth-capability is
 // purely registry-driven post-Task-3 (isAuthCapableSource queries
 // CapabilitiesOf via service.GetSource, no more hardcoded ID list), so a
-// *core.Service built directly via core.NewService — bypassing root.go's
-// registerSources, which is what actually registers built-ins in
+// *core.Service built directly via core.NewService — bypassing app.Open,
+// which is what actually registers built-ins in
 // production — must register nexusmods itself to exercise that path.
 func TestResolveLogoutSource(t *testing.T) {
 	svc, err := core.NewService(core.ServiceConfig{

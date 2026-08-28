@@ -123,7 +123,7 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 // Registers nexusmods explicitly: post-Task-3, doAuthStatus's "registered"
 // set comes purely from authCapableSources' registry query, with no more
 // hardcoded built-in-ID special case — a *core.Service built directly here
-// (bypassing root.go's registerSources, which registers built-ins in
+// (bypassing app.Open, which registers built-ins in
 // production) must register nexusmods itself for "still-registered
 // built-in" to mean anything.
 func TestDoAuthStatusListsOrphanedTokens(t *testing.T) {

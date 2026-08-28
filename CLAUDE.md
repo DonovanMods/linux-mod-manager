@@ -59,6 +59,7 @@ Layered monolith with interface-based extensibility:
 ```text
 cmd/lmm/main.go           # Entry point, CLI (Cobra)
 internal/
+├── app/                  # Composition root: app.Open resolves paths (XDG), prepares dirs, opens core, registers sources
 ├── domain/               # Core types (Mod, Profile, Game) - NO external deps
 ├── source/               # ModSource interface + implementations
 │   ├── source.go         # Interface definition
@@ -80,7 +81,7 @@ internal/
     └── profile.go        # Profile switching logic
 ```
 
-**Data Flow**: CLI → Core Service → Source Registry + Storage → Linker → Game Directory
+**Data Flow**: CLI → app.Open → Core Service → Source Registry + Storage → Linker → Game Directory
 
 **Key Interfaces**:
 
@@ -97,13 +98,13 @@ internal/
 
 ## File Locations
 
-- **SQLite database**: `~/.local/share/lmm/lmm.db`
-- **Mod cache**: `~/.local/share/lmm/cache/<game-id>/<source-id>-<mod-id>/<version>/` (default; a per-game `cache_path` drops the `<game-id>` segment)
-- **Download staging**: `~/.local/share/lmm/downloads/`
-- **Config**: `~/.config/lmm/config.yaml`
-- **Games config**: `~/.config/lmm/games.yaml`
-- **Custom sources**: `~/.config/lmm/sources/*.yaml`
-- **Profiles**: `~/.config/lmm/games/<game-id>/profiles/<profile>.yaml`
+- **SQLite database**: `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)
+- **Mod cache**: `$XDG_DATA_HOME/lmm/cache/<game-id>/<source-id>-<mod-id>/<version>/` (default `~/.local/share/lmm`; a per-game `cache_path` drops the `<game-id>` segment)
+- **Download staging**: `$XDG_DATA_HOME/lmm/downloads/` (default `~/.local/share/lmm`)
+- **Config**: `$XDG_CONFIG_HOME/lmm/config.yaml` (default `~/.config/lmm`)
+- **Games config**: `$XDG_CONFIG_HOME/lmm/games.yaml` (default `~/.config/lmm`)
+- **Custom sources**: `$XDG_CONFIG_HOME/lmm/sources/*.yaml` (default `~/.config/lmm`)
+- **Profiles**: `$XDG_CONFIG_HOME/lmm/games/<game-id>/profiles/<profile>.yaml` (default `~/.config/lmm`)
 
 ## Testing Strategy
 

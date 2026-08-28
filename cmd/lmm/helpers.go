@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/spf13/cobra"
@@ -20,7 +21,13 @@ import (
 // guarantee Close on return (with a stderr warning on close failure), and forward
 // cmd.Context() to fn so SIGINT and explicit cancellation propagate downstream.
 func withService(cmd *cobra.Command, fn func(ctx context.Context, svc *core.Service) error) error {
-	svc, err := initService()
+	return withServiceOpts(cmd, app.Options{}, fn)
+}
+
+// withServiceOpts is withService with bootstrap options (e.g. a custom warning
+// writer); ConfigDir and DataDir still come from the global flags.
+func withServiceOpts(cmd *cobra.Command, opts app.Options, fn func(ctx context.Context, svc *core.Service) error) error {
+	svc, err := initServiceWith(opts)
 	if err != nil {
 		return fmt.Errorf("initializing service: %w", err)
 	}

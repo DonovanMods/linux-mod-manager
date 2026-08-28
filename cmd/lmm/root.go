@@ -8,17 +8,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/icarus"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/muesli/termenv"
@@ -76,13 +71,18 @@ EXIT CODES
 
 FILES
 
-    ~/.config/lmm/        Configuration: games.yaml, config.yaml, per-game
-                          profiles, and sources/*.yaml (custom source
-                          definitions). Override with --config.
-    ~/.local/share/lmm/   Data: lmm.db (mod metadata and auth tokens),
-                          cache/ (downloaded and extracted mod files), and
-                          downloads/ (staging area for in-flight downloads
-                          and archive extraction). Override with --data.`,
+    $XDG_CONFIG_HOME/lmm/   Configuration: games.yaml, config.yaml, per-game
+                            profiles, and sources/*.yaml (custom source
+                            definitions). Defaults to ~/.config/lmm.
+                            Override with --config.
+    $XDG_DATA_HOME/lmm/     Data: lmm.db (mod metadata and auth tokens),
+                            cache/ (downloaded and extracted mod files), and
+                            downloads/ (staging area for in-flight downloads
+                            and archive extraction). Defaults to
+                            ~/.local/share/lmm. Override with --data.
+
+    When an XDG variable is set but its lmm directory does not exist yet and
+    the legacy default does, the legacy directory is used.`,
 	Version:       computeDisplayVersion(version, buildDescribe),
 	SilenceUsage:  true, // Runtime errors should not print usage
 	SilenceErrors: true, // We handle error output in Execute()
@@ -104,8 +104,8 @@ func computeDisplayVersion(ver, describe string) string {
 
 func init() {
 	// Persistent flags available to all commands
-	rootCmd.PersistentFlags().StringVar(&configDir, "config", "", "config directory (default: ~/.config/lmm)")
-	rootCmd.PersistentFlags().StringVar(&dataDir, "data", "", "data directory (default: ~/.local/share/lmm)")
+	rootCmd.PersistentFlags().StringVar(&configDir, "config", "", "config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)")
+	rootCmd.PersistentFlags().StringVar(&dataDir, "data", "", "data directory (default: $XDG_DATA_HOME/lmm or ~/.local/share/lmm)")
 	rootCmd.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID to operate on")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
@@ -316,195 +316,28 @@ func runRoot(ctx context.Context) error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
-// initService creates and initializes the core service
+// initService builds the CLI's *core.Service from the global --config/--data
+// flags. See app.Open for what bootstrap involves.
 func initService() (*core.Service, error) {
-	cfg, err := getServiceConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	// Ensure directories exist
-	if err := os.MkdirAll(cfg.ConfigDir, 0755); err != nil {
-		return nil, fmt.Errorf("creating config dir: %w", err)
-	}
-	// Owner-only: this holds lmm.db, whose auth_tokens table stores API keys in
-	// plaintext, plus the downloads staging root. Also closes the window between
-	// SQLite creating the DB at 0644 and the db package tightening it.
-	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
-		return nil, fmt.Errorf("creating data dir: %w", err)
-	}
-	// MkdirAll leaves an existing directory's mode alone, so installs predating
-	// the line above keep a 0755 data dir without this.
-	if err := os.Chmod(cfg.DataDir, 0700); err != nil {
-		return nil, fmt.Errorf("restricting data dir: %w", err)
-	}
-	if err := os.MkdirAll(cfg.CacheDir, 0755); err != nil {
-		return nil, fmt.Errorf("creating cache dir: %w", err)
-	}
-
-	svc, err := core.NewService(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	// Register mod sources
-	registerSources(svc, cfg.ConfigDir)
-
-	return svc, nil
+	return initServiceWith(app.Options{})
 }
 
-// icarusFirestoreProjectID is Project Daedalus's Firebase project ID, from
-// the Firebase console. It is public information (Firestore reads are
-// unauthenticated by design, per the research spike) — this constant is the
-// one place it needs to be substituted with the real value.
-const icarusFirestoreProjectID = "projectdaedalus-fb09f"
-
-// builtinSourceFactories constructs each built-in source keyless — the
-// unified pipeline resolves and applies API keys post-construction via
-// registerSource's SetAPIKey seam, the same path custom sources use.
-var builtinSourceFactories = []func() source.ModSource{
-	func() source.ModSource { return nexusmods.New(nil, "") },
-	func() source.ModSource { return curseforge.New(nil, "") },
-	func() source.ModSource { return icarus.New(nil, icarusFirestoreProjectID) },
+// initServiceWith is initService with additional bootstrap options; ConfigDir
+// and DataDir always come from the flags.
+func initServiceWith(opts app.Options) (*core.Service, error) {
+	opts.ConfigDir = configDir
+	opts.DataDir = dataDir
+	return app.Open(opts)
 }
 
-// registerSources registers all available mod sources with the service
-// through one ordered pipeline: built-ins first (so the collision rule's
-// "first wins" preserves their identity against a same-id custom
-// definition), then user-defined sources from <configDir>/sources/.
-func registerSources(svc *core.Service, cfgDir string) {
-	for _, factory := range builtinSourceFactories {
-		registerSource(svc, factory())
-	}
-
-	registerCustomSources(svc, cfgDir)
-}
-
-// registerSource runs src through the shared registration steps used for
-// both built-in and custom sources: collision check (first registration
-// wins, warning on customSourceWarnWriter) → API-key resolution (env var via
-// envKeyFor, falling back to the stored DB token) → SetAPIKey when the
-// source accepts one → RegisterSource.
-func registerSource(svc *core.Service, src source.ModSource) {
-	id := src.ID()
-	// Custom sources are constructed (custom.New) by the caller before this
-	// runs; a definition that both collides with an existing ID AND fails to
-	// construct reports its construction error instead, since it never
-	// reaches this check — construct-then-check means construction wins.
-	if _, err := svc.GetSource(id); err == nil {
-		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: id already in use\n", id)
-		return
-	}
-	// Gate the token lookup on the source actually being able to use a key:
-	// skips a pointless per-source SQLite read for auth-incapable sources.
-	// Both halves matter: custom API/manifest sources implement SetAPIKey
-	// even when their definition declares no auth (the key would be unused).
-	if setter, ok := src.(interface{ SetAPIKey(string) }); ok && source.CapabilitiesOf(src).Auth {
-		if key := getSourceAPIKey(svc, id, envKeyFor(src)); key != "" {
-			setter.SetAPIKey(key)
-		}
-	}
-	svc.RegisterSource(src)
-}
-
-// envKeyFor returns the environment variable name consulted for src's API
-// key: src's own EnvKeyProvider when implemented (preserves legacy names
-// like NEXUSMODS_API_KEY), otherwise the derived LMM_<ID>_API_KEY
-// convention.
-func envKeyFor(src source.ModSource) string {
-	if p, ok := src.(source.EnvKeyProvider); ok {
-		return p.EnvKey()
-	}
-	return envKeyForSourceID(src.ID())
-}
-
-// customSourceWarnOut overrides where registerCustomSources sends its
-// per-definition warnings. Nil (the default) means "use the live os.Stderr",
-// resolved fresh on every write rather than captured once — so a test that
-// redirects the real os.Stderr still observes normal warnings. `source list`
-// points this at io.Discard for the duration of its own service init, since
-// it re-derives and renders the very same broken definitions as table rows;
-// without this seam every broken definition would be reported twice per
-// invocation (#52 item 14).
-var customSourceWarnOut io.Writer
-
-// customSourceWarnWriter resolves the writer registerCustomSources should
-// warn to: the override if one is set, otherwise the live os.Stderr.
-func customSourceWarnWriter() io.Writer {
-	if customSourceWarnOut != nil {
-		return customSourceWarnOut
-	}
-	return os.Stderr
-}
-
-// registerCustomSources loads user-defined source definitions and registers
-// the valid ones. Broken definitions warn (via customSourceWarnWriter, normally
-// os.Stderr) and are skipped — a bad file must never prevent lmm from starting.
-func registerCustomSources(svc *core.Service, cfgDir string) {
-	defs, loadErrs, err := config.LoadSourceDefinitions(cfgDir)
-	if err != nil {
-		fmt.Fprintf(customSourceWarnWriter(), "warning: loading custom sources: %v\n", err)
-		return
-	}
-	for _, le := range loadErrs {
-		fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source definition %v\n", le)
-	}
-	for _, def := range defs {
-		src, err := custom.New(def)
-		if err != nil {
-			fmt.Fprintf(customSourceWarnWriter(), "warning: skipping source %q: %v\n", def.ID, err)
-			continue
-		}
-		registerSource(svc, src)
-	}
-}
-
-// getSourceAPIKey retrieves an API key from environment or database
-func getSourceAPIKey(svc *core.Service, sourceID, envVar string) string {
-	// Check environment variable first
-	if key := os.Getenv(envVar); key != "" {
-		return key
-	}
-
-	// Fall back to stored token
-	token, err := svc.GetSourceToken(sourceID)
-	if err != nil || token == nil {
-		return ""
-	}
-
-	return token.APIKey
-}
-
-// getServiceConfig returns the service configuration with defaults.
-// Returns an error if UserHomeDir fails and defaults are needed.
+// getServiceConfig resolves the on-disk layout the CLI flags select, without
+// opening a service.
 func getServiceConfig() (core.ServiceConfig, error) {
-	homeDir, err := os.UserHomeDir()
+	p, err := app.ResolvePaths(app.Options{ConfigDir: configDir, DataDir: dataDir})
 	if err != nil {
-		return core.ServiceConfig{}, fmt.Errorf("home directory: %w", err)
+		return core.ServiceConfig{}, err
 	}
-
-	cfg := core.ServiceConfig{
-		ConfigDir: configDir,
-		DataDir:   dataDir,
-		CacheDir:  "",
-	}
-
-	// Apply defaults
-	if cfg.ConfigDir == "" {
-		cfg.ConfigDir = filepath.Join(homeDir, ".config", "lmm")
-	}
-	if cfg.DataDir == "" {
-		cfg.DataDir = filepath.Join(homeDir, ".local", "share", "lmm")
-	}
-
-	// Check config file for custom cache path
-	if appConfig, err := config.Load(cfg.ConfigDir); err == nil && appConfig.CachePath != "" {
-		cfg.CacheDir = appConfig.CachePath
-	} else {
-		cfg.CacheDir = filepath.Join(cfg.DataDir, "cache")
-	}
-
-	return cfg, nil
+	return core.ServiceConfig{ConfigDir: p.ConfigDir, DataDir: p.DataDir, CacheDir: p.CacheDir}, nil
 }
 
 // requireGame ensures a game is specified, checking config for default if not provided

@@ -76,7 +76,7 @@ var (
 // setupGameAddTest builds a *core.Service backed by the same configDir the
 // package-level saveGameConfig path reads via getServiceConfig (so games
 // saved during the test are visible to config.LoadGames afterward), without
-// running the real registerSources pipeline (no network).
+// running the real app.Open source-registration pipeline (no network).
 func setupGameAddTest(t *testing.T) *core.Service {
 	t.Helper()
 	configDir = t.TempDir()
