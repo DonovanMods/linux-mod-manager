@@ -278,3 +278,8 @@ func TestGuardNoOpUpdateSelection_UninstalledMatchDowngradesLabellingClaim(t *te
 	assert.Contains(t, err.Error(), "use --file to pick one explicitly",
 		"the generic remedy applies when another target-version file exists to pick")
 }
+
+func TestSelectFilesForVersion_EmptyFileList(t *testing.T) {
+	_, err := SelectFilesForVersion(nil, nil, "")
+	require.ErrorIs(t, err, ErrNoDownloadableFiles)
+}
