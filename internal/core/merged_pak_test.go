@@ -1,8 +1,10 @@
 package core_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -78,6 +81,104 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 	data, err := os.ReadFile(sources[0].SourcePath)
 	require.NoError(t, err)
 	require.Equal(t, "exmodz-first-mod-exmodz-file", string(data))
+}
+
+// TestClassifyCompileDeployMods_UnreadableRetainedPathWarns pins that a
+// genuine stat error on a retained-source path (anything but "not exist" -
+// classification's normal, silent case for a fileID with nothing retained)
+// is surfaced via s.logger().Warn, not swallowed identically to the
+// expected-absent case (#284). The mod is DISABLED so enabledMergeSources
+// (classifyCompileDeployMods's own first call) skips it entirely and never
+// touches the corrupted path itself - isolating the failure to
+// classifyCompileDeployMods's own os.Stat check at merged_pak.go:739.
+func TestClassifyCompileDeployMods_UnreadableRetainedPathWarns(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(), Logger: logger})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
+		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	svc.RegisterSource(&fakeCompilerSource{})
+
+	gameCache := svc.GetGameCache(game)
+	fileID := "exmodz-file"
+	require.NoError(t, gameCache.Store(game.ID, "icarus", "mod1", "1.0", cache.RetainedSourceName(fileID), []byte("retained-bytes")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "icarus", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      false,
+		FileIDs:      []string{fileID},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
+
+	versionDir := gameCache.ModPath(game.ID, "icarus", "mod1", "1.0")
+	require.NoError(t, os.Chmod(versionDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(versionDir, 0o755) })
+
+	mod, err := svc.GetInstalledMod(context.Background(), "icarus", "mod1", game.ID, "default")
+	require.NoError(t, err)
+
+	classes := svc.ClassifyCompileDeployModsForTest(context.Background(), game, "default", []*domain.InstalledMod{mod})
+	assert.Empty(t, classes, "the stat failure aborts classification for this mod's fileID, but must not panic or hard-fail")
+	assert.Contains(t, logBuf.String(), "level=WARN")
+	assert.Contains(t, logBuf.String(), "game_id=icarus")
+	assert.Contains(t, logBuf.String(), "file_id=exmodz-file")
+}
+
+// TestClassifyCompileDeployMods_CompilerResolutionFailureWarns pins the
+// second silent site (merged_pak.go:744): a mid-walk mergeCompilerForGame
+// failure, only reachable (per classifyCompileDeployMods's own doc comment)
+// when nothing ENABLED is retained but a mod in the full mods slice still
+// holds a retained file - e.g. a disabled mod under --all with no compile
+// source configured. No source is registered under "fake-compiler" here, so
+// resolution fails for the first (and only) retained fileID
+// classifyCompileDeployMods's own loop encounters.
+func TestClassifyCompileDeployMods_CompilerResolutionFailureWarns(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(), Logger: logger})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
+		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	// Deliberately no svc.RegisterSource: "fake-compiler" resolves to
+	// nothing, so mergeCompilerForGame fails with zero compilers found.
+
+	gameCache := svc.GetGameCache(game)
+	fileID := "exmodz-file"
+	require.NoError(t, gameCache.Store(game.ID, "icarus", "mod1", "1.0", cache.RetainedSourceName(fileID), []byte("retained-bytes")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "icarus", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      false,
+		FileIDs:      []string{fileID},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
+
+	mod, err := svc.GetInstalledMod(context.Background(), "icarus", "mod1", game.ID, "default")
+	require.NoError(t, err)
+
+	classes := svc.ClassifyCompileDeployModsForTest(context.Background(), game, "default", []*domain.InstalledMod{mod})
+	assert.Empty(t, classes, "a mid-walk resolution failure returns the classes computed so far - none, here")
+	assert.Contains(t, logBuf.String(), "level=WARN")
+	assert.Contains(t, logBuf.String(), "game_id=icarus")
+	assert.Contains(t, logBuf.String(), "no merge-compiler-capable source configured")
 }
 
 // newMergedPakTestGame builds a DeployCompile game with a registered merge

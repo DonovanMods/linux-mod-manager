@@ -4330,9 +4330,9 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 	}
 
 	require.NotEmpty(t, *seen)
-	phases, _ := phasesOf(*seen)
+	phases, flowEvents := phasesOf(*seen)
 	assert.Equal(t, core.DeployPurging, phases[0])
-	assert.Equal(t, 2, (*seen)[0].(core.FlowEvent).EventScope().Total)
+	assert.Equal(t, 2, flowEvents[0].(core.FlowEvent).EventScope().Total)
 	var purged []core.ModEvent
 	for _, e := range *seen {
 		if m, ok := e.(core.ModEvent); ok && m.Phase == core.PurgeModPurged {

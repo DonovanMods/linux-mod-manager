@@ -737,11 +737,15 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 		for _, fileID := range mod.FileIDs {
 			retained := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
+				if !os.IsNotExist(statErr) {
+					s.logger().Warn("stat failed while checking retained merge source", "game_id", game.ID, "file_id", fileID, "err", statErr)
+				}
 				continue // nothing retained for this fileID - not a merge source of any kind
 			}
 			if mc == nil {
 				var mcErr error
 				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+					s.logger().Warn("resolving compile source failed while classifying compile deploy mods", "game_id", game.ID, "file_id", fileID, "err", mcErr)
 					return classes
 				}
 			}
