@@ -11,17 +11,21 @@ import (
 type Op string
 
 const (
-	OpInstall     Op = "install"
-	OpDeploy      Op = "deploy"
-	OpPurge       Op = "purge"
-	OpSwitch      Op = "switch"
-	OpUpdate      Op = "update"
-	OpRollback    Op = "rollback"
-	OpImport      Op = "import"
-	OpMergeRegen  Op = "merge_regen"
-	OpVerify      Op = "verify"
-	OpUpdateCheck Op = "update_check"
-	OpDownload    Op = "download"
+	OpInstall Op = "install"
+	OpDeploy  Op = "deploy"
+	OpPurge   Op = "purge"
+	OpSwitch  Op = "switch"
+	// OpProfileApply is `lmm profile apply` - the converge flow whose
+	// per-mod lines are worded identically to OpSwitch's, so it emits the
+	// same Switch* phase family (see profile_apply.go's package comment).
+	OpProfileApply Op = "profile_apply"
+	OpUpdate       Op = "update"
+	OpRollback     Op = "rollback"
+	OpImport       Op = "import"
+	OpMergeRegen   Op = "merge_regen"
+	OpVerify       Op = "verify"
+	OpUpdateCheck  Op = "update_check"
+	OpDownload     Op = "download"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),

@@ -42,3 +42,24 @@ func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
 func (s *Service) SetDownloadClientForTest(c *http.Client) {
 	s.downloader = NewDownloader(c)
 }
+
+// SetModEnabledForTest exposes the enabled-flag write behind the same
+// beginOp gate the production flows take. The exported SetModEnabled it
+// replaced was ratcheted away with doProfileApply's lift (#290) - core's own
+// tests are its only remaining callers, and they are setting up state, not
+// exercising a frontend API.
+func (s *Service) SetModEnabledForTest(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModEnabled(ctx, sourceID, modID, gameID, profileName, enabled)
+}
+
+// GetInstallerForProfileForTest exposes getInstallerForProfile, which the
+// same lift unexported: an Installer is a core primitive no frontend
+// touches, but core's own tests deploy through one to build fixtures.
+func (s *Service) GetInstallerForProfileForTest(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
+	return s.GetInstallerForProfile(ctx, game, profileName)
+}

@@ -524,6 +524,14 @@ const (
 	// DeployPhase enum (per the task brief: "reuse the progress carrier and
 	// its phase-constant pattern - extend, don't fork") rather than
 	// introducing a parallel SwitchProgress/SwitchPhase pair.
+	//
+	// v2 Phase 2 Unit J (#290): ApplyProfileApply emits this same family.
+	// Every line doProfileApply printed is worded identically to its
+	// doProfileSwitch counterpart, so a duplicate ProfileApply* family
+	// would be twelve constants of copied text; Scope.Op (OpProfileApply
+	// vs OpSwitch) is what tells the two flows apart on the wire. Changing
+	// any wording below therefore changes BOTH flows - which is correct:
+	// they are the same lines.
 	// ApplyProfileSwitch is a behavior-preserving extraction of
 	// cmd/lmm/profile.go's doProfileSwitch;
 	// every phase below corresponds to exactly one of doProfileSwitch's

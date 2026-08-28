@@ -1,0 +1,15 @@
+{
+  "disabled": 1,
+  "enabled": 2,
+  "installed": 1,
+  "replaced": 1,
+  "failed": [
+    "nexusmods:8: failed to fetch mod: rate limited"
+  ],
+  "notes": [
+    "Warning: could not update profile: mod is locked"
+  ],
+  "warnings": [
+    "could not sync merged pak: base pak missing"
+  ]
+}
