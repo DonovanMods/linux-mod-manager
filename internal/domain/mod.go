@@ -43,15 +43,15 @@ type ModFile struct {
 
 // DownloadableFile represents a file available for download from a mod source
 type DownloadableFile struct {
-	ID          string // Source-specific file ID
-	Name        string // Display name
-	FileName    string // Actual filename (e.g., "mod-1.0.zip")
-	Version     string // File version
-	Size        int64  // Size in bytes
-	IsPrimary   bool   // Whether this is the primary/main file
-	Category    string // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
-	Description string // File description
-	SHA256      string // Expected SHA-256 of the download (hex); empty = source declares no checksum
+	ID          string `json:"id"`                    // Source-specific file ID
+	Name        string `json:"name"`                  // Display name
+	FileName    string `json:"file_name"`             // Actual filename (e.g., "mod-1.0.zip")
+	Version     string `json:"version"`               // File version
+	Size        int64  `json:"size"`                  // Size in bytes
+	IsPrimary   bool   `json:"is_primary"`            // Whether this is the primary/main file
+	Category    string `json:"category,omitempty"`    // Category: "MAIN", "OPTIONAL", "UPDATE", etc.
+	Description string `json:"description,omitempty"` // File description
+	SHA256      string `json:"sha256,omitempty"`      // Expected SHA-256 of the download (hex); empty = source declares no checksum
 }
 
 // EffectiveInstalledVersion resolves the version string that describes what
@@ -77,11 +77,11 @@ func EffectiveInstalledVersion(modVersion string, selected []*DownloadableFile) 
 
 // ModReference is a pointer to a mod (used in profiles, dependencies)
 type ModReference struct {
-	SourceID string   `yaml:"source_id"`          // "nexusmods", "curseforge", etc.
-	ModID    string   `yaml:"mod_id"`             // Source-specific identifier
-	Version  string   `yaml:"version"`            // The installed-version record (#94/#96): always stamped by installs, moved by updates, converged to by deploy. When Locked, also the lock's target.
-	FileIDs  []string `yaml:"file_ids,omitempty"` // Source-specific file IDs that were installed
-	Locked   bool     `yaml:"locked,omitempty"`   // #97 lock marker: lmm update refuses this mod; Version is the lock's target. Set/cleared only by lock/unlock; survives UpsertMod (in-place update) and export/import.
+	SourceID string   `yaml:"source_id" json:"source_id"`                   // "nexusmods", "curseforge", etc.
+	ModID    string   `yaml:"mod_id" json:"mod_id"`                         // Source-specific identifier
+	Version  string   `yaml:"version" json:"version"`                       // The installed-version record (#94/#96): always stamped by installs, moved by updates, converged to by deploy. When Locked, also the lock's target.
+	FileIDs  []string `yaml:"file_ids,omitempty" json:"file_ids,omitempty"` // Source-specific file IDs that were installed
+	Locked   bool     `yaml:"locked,omitempty" json:"locked,omitempty"`     // #97 lock marker: lmm update refuses this mod; Version is the lock's target. Set/cleared only by lock/unlock; survives UpsertMod (in-place update) and export/import.
 }
 
 // Mod represents a mod from any source

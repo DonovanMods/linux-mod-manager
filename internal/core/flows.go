@@ -1022,6 +1022,54 @@ const (
 	DeployMergeSynced
 )
 
+// deployPhaseNames maps each DeployPhase to its wire name (snake_case of
+// the constant without the type prefix rules — the constant's own name,
+// lower-snake). Keep in declaration order.
+var deployPhaseNames = [...]string{
+	DeployPurging: "deploy_purging", DeployBeforeEachSkipped: "deploy_before_each_skipped", DeployRedownloading: "deploy_redownloading",
+	DeployDownloading: "deploy_downloading", DeployDownloadFailed: "deploy_download_failed", DeployDownloadDone: "deploy_download_done",
+	DeploySkipped: "deploy_skipped", DeployDeployed: "deploy_deployed", DeployBeforeAllForced: "deploy_before_all_forced",
+	DeployNote: "deploy_note", DeployWarning: "deploy_warning", PurgeWarning: "purge_warning", PurgeNote: "purge_note",
+	PurgeComplete: "purge_complete", SwitchDisableNote: "switch_disable_note", SwitchDisabled: "switch_disabled",
+	SwitchEnableNote: "switch_enable_note", SwitchEnabled: "switch_enabled", SwitchInstalling: "switch_installing",
+	SwitchInstallingMod: "switch_installing_mod", SwitchInstallError: "switch_install_error", SwitchDownloading: "switch_downloading",
+	SwitchDownloadFailed: "switch_download_failed", SwitchDownloadDone: "switch_download_done", SwitchInstalled: "switch_installed",
+	SwitchInstallNote: "switch_install_note", InstallBeforeAllForced: "install_before_all_forced", InstallBeforeEachForced: "install_before_each_forced",
+	InstallDepInstalling: "install_dep_installing", InstallDepReinstalling: "install_dep_reinstalling", InstallDepFileSelected: "install_dep_file_selected",
+	InstallDepDownloading: "install_dep_downloading", InstallDepSkipped: "install_dep_skipped", InstallDepDownloadDone: "install_dep_download_done",
+	InstallDepConflictWarning: "install_dep_conflict_warning", InstallDepInstalled: "install_dep_installed", InstallDownloadStarted: "install_download_started",
+	InstallDownloading: "install_downloading", InstallDownloadDone: "install_download_done", InstallDownloadFailed: "install_download_failed",
+	InstallChecksumComputed: "install_checksum_computed", InstallCompiling: "install_compiling", InstallExtracting: "install_extracting",
+	InstallDeploying: "install_deploying", InstallDone: "install_done", InstallNote: "install_note", InstallWarning: "install_warning",
+	UpdateDownloading: "update_downloading", UpdateDownloadDone: "update_download_done", UpdateBeforeEachForced: "update_before_each_forced",
+	UpdateWarning: "update_warning", UpdateNote: "update_note", PurgeModSkipped: "purge_mod_skipped", PurgeModPurged: "purge_mod_purged",
+	ImportSaved: "import_saved", ImportInstalling: "import_installing", ImportModInstalling: "import_mod_installing",
+	ImportDownloading: "import_downloading", ImportDownloadDone: "import_download_done", ImportModFailed: "import_mod_failed",
+	ImportModInstalled: "import_mod_installed", ImportNote: "import_note", DeployMergeSynced: "deploy_merge_synced",
+}
+
+// String returns the phase's wire name.
+func (p DeployPhase) String() string {
+	if int(p) < len(deployPhaseNames) && deployPhaseNames[p] != "" {
+		return deployPhaseNames[p]
+	}
+	return fmt.Sprintf("deploy_phase(%d)", int(p))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (p DeployPhase) MarshalText() ([]byte, error) { return []byte(p.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (p *DeployPhase) UnmarshalText(b []byte) error {
+	for i, n := range deployPhaseNames {
+		if n == string(b) {
+			*p = DeployPhase(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown deploy phase %q", b)
+}
+
 // DeployModClass classifies how a DeployDeployed mod's content reaches the
 // game directory on a DeployCompile game (#255), so callers stop rendering
 // merge participants - which individually deploy zero files by design
@@ -1050,6 +1098,36 @@ const (
 	// individually.
 	DeployModRaw
 )
+
+// deployModClassNames maps each DeployModClass to its wire name. Keep in
+// declaration order.
+var deployModClassNames = [...]string{
+	DeployModIndividual: "individual",
+	DeployModMerged:     "merged",
+	DeployModRaw:        "raw",
+}
+
+// String returns the class's wire name.
+func (c DeployModClass) String() string {
+	if int(c) < len(deployModClassNames) && deployModClassNames[c] != "" {
+		return deployModClassNames[c]
+	}
+	return fmt.Sprintf("deploy_mod_class(%d)", int(c))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (c DeployModClass) MarshalText() ([]byte, error) { return []byte(c.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (c *DeployModClass) UnmarshalText(b []byte) error {
+	for i, n := range deployModClassNames {
+		if n == string(b) {
+			*c = DeployModClass(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown deploy mod class %q", b)
+}
 
 // DeployProgress reports incremental status during DeployProfile. Index and
 // Total describe ModName's position among the mods being deployed (both
