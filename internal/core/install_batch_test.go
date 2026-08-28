@@ -552,3 +552,115 @@ func TestService_ApplyInstall_Batch_StalePlanRefused(t *testing.T) {
 	require.ErrorIs(t, err, core.ErrStalePlan)
 	assert.Len(t, batchInstalledRows(t, svc, "g1", "default"), 1, "a stale plan applies nothing")
 }
+
+// TestService_ApplyInstall_Strict_StalePlanRefused is
+// TestService_ApplyInstall_Batch_StalePlanRefused's STRICT-path counterpart
+// (review Minor M4): checkPlanFresh runs as applyInstall's first statement,
+// before the plan.Batch branch (see ApplyInstall's doc comment), so it
+// guards the single-mod/dependency path too - but only the batch path had a
+// test proving it.
+func TestService_ApplyInstall_Strict_StalePlanRefused(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "content 1")
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod2", SourceID: "src", Name: "Mod Two", Version: "1.0", GameID: "g1"}, "mod2.esp", "content 2")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	// Install an unrelated mod behind the plan's back: the installed set it
+	// was computed against no longer describes the profile.
+	other, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod2", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(context.Background(), game, other, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "a stale plan applies nothing")
+}
+
+// --- Minor M4: PlanInstallMany's own zero-mutation test ---
+
+// TestService_PlanInstallMany_PerformsZeroMutations is
+// TestService_PlanInstall_PerformsZeroMutations' multi-mod counterpart
+// (review Minor M4): PlanInstallMany does strictly more I/O per entry (a
+// GetModFiles fetch AND a GetConflicts cache walk, see review Minor M2)
+// than PlanInstall, so a future edit that slips a write into the loop
+// deserves its own purity regression rather than relying on a golden's
+// "## state" section to catch it. An unrelated pre-existing mod's DB row,
+// its profile's YAML bytes, and the whole game cache directory tree must
+// all be byte-for-byte unchanged after planning two fresh mods.
+func TestService_PlanInstallMany_PerformsZeroMutations(t *testing.T) {
+	svc, game, src := newBatchInstallFixture(t)
+	modA := batchModA(t, src, "mod a content")
+	modB := batchModB(t, src, "mod b content")
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+
+	// Unrelated pre-existing state to prove untouched.
+	seedInstalledMod(t, svc, game, "test-src", "existing", "1.0", true, map[string][]byte{"existing.esp": []byte("e")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "existing", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+
+	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
+	require.NoError(t, err)
+
+	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
+	beforeProfileYAML, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+
+	beforeCache := cacheTreeSnapshot(t, svc.GetGameCachePath(game))
+
+	plan, err := svc.PlanInstallMany(context.Background(), game, "default", []*domain.Mod{modA, modB}, false)
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+
+	afterMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, beforeMods, afterMods, "DB rows must be untouched after planning")
+
+	afterProfileYAML, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.Equal(t, beforeProfileYAML, afterProfileYAML, "profile YAML must be byte-identical after planning")
+
+	afterCache := cacheTreeSnapshot(t, svc.GetGameCachePath(game))
+	assert.Equal(t, beforeCache, afterCache, "planning must not touch the cache directory tree")
+}
+
+// cacheTreeSnapshot walks dir and returns relative-path -> content for every
+// regular file, so a before/after comparison catches ANY write - a new
+// file, a modified one, or one removed - not just a top-level entry count.
+func cacheTreeSnapshot(t *testing.T, dir string) map[string][]byte {
+	t.Helper()
+	snap := make(map[string][]byte)
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		snap[rel] = content
+		return nil
+	})
+	require.NoError(t, err)
+	return snap
+}
