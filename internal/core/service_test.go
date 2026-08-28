@@ -515,7 +515,7 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 		Name:    "Test Game",
 		ModPath: gameDir,
 	}
-	err = svc.AddGame(game)
+	err = svc.SaveGame(context.Background(), game)
 	require.NoError(t, err)
 
 	// Create a mod
@@ -620,7 +620,7 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	zip1, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{"shared.txt": "from file1", "one.txt": "1"}))
@@ -684,7 +684,7 @@ func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
@@ -749,7 +749,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
@@ -811,7 +811,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	mod := &domain.Mod{ID: "123", SourceID: "test-compiler", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 
 	gameCache := svc.GetGameCache(game)
@@ -872,7 +872,7 @@ func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) 
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Hostile Mod", Version: "1.0.0", GameID: "testgame"}
 	file1 := &domain.DownloadableFile{ID: "file1", Name: "File One", FileName: "file1.zip"}
@@ -918,7 +918,7 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 		Name:    "Test Game",
 		ModPath: filepath.Join(t.TempDir(), "mods"),
 	}
-	err = svc.AddGame(game)
+	err = svc.SaveGame(context.Background(), game)
 	require.NoError(t, err)
 
 	mod := &domain.Mod{
@@ -983,7 +983,7 @@ func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) 
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
@@ -1124,7 +1124,7 @@ func TestService_ModLifecycleFacade(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:      "g1",
 		Name:    "Game 1",
 		ModPath: t.TempDir(),

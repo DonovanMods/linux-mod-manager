@@ -67,7 +67,7 @@ func newAggregateTestService(t *testing.T, sources map[string]string, srcs ...so
 		svc.RegisterSource(s)
 	}
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), SourceIDs: sources}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game
 }
 

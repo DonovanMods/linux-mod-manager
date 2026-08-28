@@ -65,7 +65,7 @@ mods:
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	ctx := context.Background()
 	res, err := src.Search(ctx, source.SearchQuery{Query: "cool", GameID: "testgame", PageSize: 20})

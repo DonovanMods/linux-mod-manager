@@ -84,7 +84,7 @@ func TestDoInstall_DeployCompile_AnnouncesRetaining(t *testing.T) {
 	// the game to be registered - setupDoInstallTest's bare *domain.Game
 	// construction skips this (a shared fixture used by many non-compile
 	// tests too); the production CLI always has this via withGameService.
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
@@ -137,7 +137,7 @@ func TestBatchInstallMods_DeployCompile_DeploysMergedPak(t *testing.T) {
 	// -> SourcesForGame), which requires the game to be registered - the
 	// production CLI always has this via withGameService's svc.GetGame,
 	// unlike this fixture's bare *domain.Game construction.
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}
 	wolfMod := &domain.Mod{ID: "wolf-mount", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
@@ -179,7 +179,7 @@ func TestBatchInstallMods_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *tes
 
 	compiler := &compilerInstallSource{fakeInstallSource: src, mergeErr: assert.AnError}
 	svc.RegisterSource(compiler)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	bearMod := &domain.Mod{ID: "bear-mount", SourceID: "test-src", Name: "Bear Mount", Version: "1.0", GameID: "g1"}
 	wolfMod := &domain.Mod{ID: "wolf-mount", SourceID: "test-src", Name: "Wolf Mount", Version: "1.0", GameID: "g1"}
@@ -218,7 +218,7 @@ func TestDoInstall_DeployCompile_SyncFailure_PrintsLoudly(t *testing.T) {
 	svc, game, src := setupDoInstallTest(t)
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
@@ -261,7 +261,7 @@ func TestDoInstallBatch_DeployCompile_DeploysMergedPak(t *testing.T) {
 	svc, game, src := setupDoInstallTest(t)
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	installYes = true
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
@@ -303,7 +303,7 @@ func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testi
 	svc, game, src := setupDoInstallTest(t)
 	game.DeployMode = domain.DeployCompile
 	game.InstallPath = t.TempDir()
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	installYes = true
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")

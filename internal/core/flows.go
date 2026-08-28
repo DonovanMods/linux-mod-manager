@@ -33,11 +33,20 @@ import (
 // match ReorderMods' own existing bare-error signature rather than
 // inventing a new result type for one warning slice.
 func (s *Service) ReorderProfileMods(ctx context.Context, gameID, profileName string, mods []domain.ModReference) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.reorderProfileMods(ctx, gameID, profileName, mods)
+}
+
+func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName string, mods []domain.ModReference) error {
 	pm := NewProfileManager(s.configDir, s.db)
 	if err := pm.ReorderMods(gameID, profileName, mods); err != nil {
 		return err
 	}
-	game, ok := s.games[gameID]
+	game, ok := s.game(gameID)
 	if !ok {
 		return nil // an unknown game has no merged pak to sync either
 	}
@@ -99,6 +108,15 @@ type DisableResult struct {
 // makes "the mod is enabled" true at all, unlike the deployed flag, which
 // is a cache of already-true, already-observable state.
 func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*EnableResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.enableMod(ctx, game, profileName, sourceID, modID)
+}
+
+func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*EnableResult, error) {
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
@@ -121,11 +139,11 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 	}
 
 	result := &EnableResult{}
-	if err := s.SetModDeployed(ctx, sourceID, modID, game.ID, profileName, true); err != nil {
+	if err := s.setModDeployed(ctx, sourceID, modID, game.ID, profileName, true); err != nil {
 		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as deployed: %v", err))
 	}
 
-	if err := s.SetModEnabled(ctx, sourceID, modID, game.ID, profileName, true); err != nil {
+	if err := s.setModEnabled(ctx, sourceID, modID, game.ID, profileName, true); err != nil {
 		return result, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -171,6 +189,15 @@ func (s *Service) EnableMod(ctx context.Context, game *domain.Game, profileName,
 // unchanged: it is the write that makes "the mod is disabled" true at all,
 // not a cache of already-true state.
 func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*DisableResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.disableMod(ctx, game, profileName, sourceID, modID)
+}
+
+func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string) (*DisableResult, error) {
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
@@ -185,7 +212,7 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 		// when called on an already-disabled mod.
 		result := &DisableResult{}
 		if mod.Deployed {
-			if err := s.SetModDeployed(ctx, sourceID, modID, game.ID, profileName, false); err != nil {
+			if err := s.setModDeployed(ctx, sourceID, modID, game.ID, profileName, false); err != nil {
 				result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as not deployed: %v", err))
 			}
 		}
@@ -203,11 +230,11 @@ func (s *Service) DisableMod(ctx context.Context, game *domain.Game, profileName
 		result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))
 	}
 
-	if err := s.SetModDeployed(ctx, sourceID, modID, game.ID, profileName, false); err != nil {
+	if err := s.setModDeployed(ctx, sourceID, modID, game.ID, profileName, false); err != nil {
 		result.Notes = append(result.Notes, fmt.Sprintf("Warning: could not mark as not deployed: %v", err))
 	}
 
-	if err := s.SetModEnabled(ctx, sourceID, modID, game.ID, profileName, false); err != nil {
+	if err := s.setModEnabled(ctx, sourceID, modID, game.ID, profileName, false); err != nil {
 		return result, fmt.Errorf("failed to update mod status: %w", err)
 	}
 
@@ -284,6 +311,15 @@ type UninstallResult struct {
 // completes. See UninstallResult's doc comment for the Warnings/Notes
 // display contract.
 func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.uninstallMod(ctx, game, profileName, sourceID, modID, opts)
+}
+
+func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
@@ -326,7 +362,7 @@ func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileNa
 		}
 	}
 
-	if err := s.DeleteInstalledMod(ctx, mod.SourceID, modID, game.ID, profileName); err != nil {
+	if err := s.deleteInstalledMod(ctx, mod.SourceID, modID, game.ID, profileName); err != nil {
 		return result, fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
@@ -1771,6 +1807,15 @@ func OrderByProfile(profile *domain.Profile, mods []domain.InstalledMod) []domai
 // function for every notable event - see DeployPhase's constants for what
 // each one means and what Detail/Percent carry.
 func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, progress func(DeployProgress)) (*DeployResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &DeployResult{}, err
+	}
+	defer release()
+	return s.deployProfile(ctx, game, profileName, opts, progress)
+}
+
+func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, progress func(DeployProgress)) (*DeployResult, error) {
 	result := &DeployResult{}
 	emit := func(p DeployProgress) {
 		if progress != nil {
@@ -1917,14 +1962,14 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 			continue
 		}
 
-		if err := s.SetModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+		if err := s.setModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 			msg := fmt.Sprintf("Warning: could not update link method: %v", err)
 			result.Notes = append(result.Notes, msg)
 			evt := base
 			evt.Phase, evt.Detail = DeployNote, msg
 			emit(evt)
 		}
-		if err := s.SetModDeployed(ctx, mod.SourceID, mod.ID, game.ID, profileName, true); err != nil {
+		if err := s.setModDeployed(ctx, mod.SourceID, mod.ID, game.ID, profileName, true); err != nil {
 			msg := fmt.Sprintf("Warning: could not mark as deployed: %v", err)
 			result.Notes = append(result.Notes, msg)
 			evt := base
@@ -2054,7 +2099,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 				emit(dl)
 			}
 		}
-		if _, err := s.DownloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
+		if _, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
 			reason := fmt.Sprintf("download failed: %v", err)
 			evt := base
 			evt.Phase, evt.Detail = DeployDownloadFailed, reason
@@ -2089,7 +2134,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		}
 		healedIDs = append(healedIDs, f.ID)
 	}
-	if err := s.SetModFileIDs(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs); err != nil {
+	if err := s.setModFileIDs(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs); err != nil {
 		msg := fmt.Sprintf("Warning: could not persist healed file IDs for %s: %v", mod.Name, err)
 		result.Notes = append(result.Notes, msg)
 		evt := base
@@ -2228,7 +2273,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		// rest of the mod (doPurge's failed++ + continue), including its
 		// after_each hook and PurgeModPurged.
 		if spec.uninstall {
-			if err := s.DeleteInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
+			if err := s.deleteInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
 				msg := fmt.Sprintf("⚠ %s - failed to remove record: %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
 				spec.emit(modEvent(PurgeNote, msg))
@@ -2241,7 +2286,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 				spec.emit(modEvent(PurgeNote, msg))
 			}
 		} else {
-			if err := s.SetModDeployed(ctx, mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
+			if err := s.setModDeployed(ctx, mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
 				msg := fmt.Sprintf("⚠ %s - failed to mark as not deployed: %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
 				spec.emit(modEvent(PurgeNote, msg))
@@ -2335,6 +2380,15 @@ type PurgeResult struct {
 // ctx.Err()); one cancellation-behavior delta from the pre-extraction
 // doPurge, which never checked ctx mid-loop.
 func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, progress func(DeployProgress)) (*PurgeResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &PurgeResult{}, err
+	}
+	defer release()
+	return s.purgeProfile(ctx, game, profileName, mods, opts, progress)
+}
+
+func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, progress func(DeployProgress)) (*PurgeResult, error) {
 	result := &PurgeResult{}
 	err := s.purgeMods(ctx, game, profileName, mods, purgeSpec{
 		uninstall: opts.Uninstall,
@@ -2362,7 +2416,7 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 	// cmd/lmm/purge.go's own doc comment claims every Notes/Warnings entry
 	// has a corresponding live event; this one didn't, so it was
 	// completely invisible (not even --verbose-gated).
-	if perr := s.PurgeMergedPak(ctx, game, profileName, opts.Uninstall); perr != nil {
+	if perr := s.purgeMergedPak(ctx, game, profileName, opts.Uninstall); perr != nil {
 		msg := fmt.Sprintf("could not remove merged pak: %v", perr)
 		result.Warnings = append(result.Warnings, msg)
 		if progress != nil {
@@ -2591,6 +2645,15 @@ type SwitchResult struct {
 // already baked into plan; PlanProfileSwitch's own doc comment documents
 // why speculative plans are cheap enough to discard and recompute instead.
 func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, progress func(DeployProgress)) (*SwitchResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &SwitchResult{}, err
+	}
+	defer release()
+	return s.applyProfileSwitch(ctx, game, plan, progress)
+}
+
+func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, progress func(DeployProgress)) (*SwitchResult, error) {
 	result := &SwitchResult{}
 	emit := func(p DeployProgress) {
 		if progress != nil {
@@ -2630,7 +2693,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			evt.Phase, evt.Detail = SwitchDisableNote, msg
 			emit(evt)
 		}
-		if err := s.SetModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.From, false); err != nil {
+		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.From, false); err != nil {
 			msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
 			evt := base
@@ -2661,7 +2724,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			emit(evt)
 			continue
 		}
-		if err := s.SetModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
+		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
 			if errors.Is(err, domain.ErrModNotFound) {
 				// im's row lives under a different profile (PlanProfileSwitch
 				// admits such mods into ToEnable), so the UPDATE-only
@@ -2671,7 +2734,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				row.ProfileName = plan.To
 				row.Enabled = true
 				row.Deployed = true
-				err = s.SaveInstalledMod(ctx, &row)
+				err = s.saveInstalledMod(ctx, &row)
 			}
 			if err != nil {
 				msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
@@ -2756,7 +2819,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 							emit(dl)
 						}
 					}
-					if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+					if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
 						evt := base
 						evt.Phase, evt.Detail = SwitchDownloadFailed, fmt.Sprintf("download failed: %v", err)
 						emit(evt)
@@ -2812,7 +2875,7 @@ func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				FileIDs:      downloadedFileIDs,
 			}
 			installedMod.Mod.GameID = game.ID
-			if err := s.SaveInstalledMod(ctx, installedMod); err != nil {
+			if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 				fail(fmt.Sprintf("save failed: %v", err))
 				continue
 			}
@@ -3752,6 +3815,15 @@ func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPl
 // accumulated before the failure - callers should surface them alongside the
 // error (see InstallResult's doc comment).
 func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, progress func(DeployProgress)) (*InstallResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &InstallResult{}, err
+	}
+	defer release()
+	return s.applyInstall(ctx, game, plan, opts, progress)
+}
+
+func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, progress func(DeployProgress)) (*InstallResult, error) {
 	result := &InstallResult{}
 	emit := func(p DeployProgress) {
 		if progress != nil {
@@ -4111,7 +4183,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 				emit(dl)
 			}
 		}
-		downloadResult, err := s.DownloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
+		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
 
 		// Unconditional (success OR failure alike), mirroring batchInstallMods'
 		// own `fmt.Println()` immediately after the download call returns -
@@ -4160,13 +4232,13 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		FileIDs:      fileIDs,
 	}
 	installedMod.Mod.GameID = game.ID
-	if err := s.SaveInstalledMod(ctx, installedMod); err != nil {
+	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		skip("Error", fmt.Sprintf("failed to save mod: %v", err))
 		return nil
 	}
 
 	for _, cs := range checksums {
-		if err := s.SaveFileChecksum(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile, cs.fileID, cs.checksum); err != nil {
+		if err := s.saveFileChecksum(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile, cs.fileID, cs.checksum); err != nil {
 			msg := fmt.Sprintf("failed to save checksum: %v", err)
 			result.Warnings = append(result.Warnings, msg)
 			evt := base
@@ -4315,7 +4387,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 			emit(dl)
 		}
 
-		downloadResult, dlErr := s.DownloadModToCache(ctx, downloadCache, plan.SourceID, game, &mod, file, progressFn)
+		downloadResult, dlErr := s.downloadModToCache(ctx, downloadCache, plan.SourceID, game, &mod, file, progressFn)
 
 		done := base
 		done.Phase, done.Index, done.Total, done.File = InstallDownloadDone, i+1, filesTotal, file
@@ -4433,7 +4505,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	if s.beforeSaveInstalled != nil {
 		s.beforeSaveInstalled()
 	}
-	if err := s.SaveInstalledMod(ctx, installedMod); err != nil {
+	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if plan.Replaces != nil {
@@ -4458,7 +4530,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	}
 
 	for _, fc := range checksums {
-		if err := s.SaveFileChecksum(ctx, plan.SourceID, mod.ID, game.ID, plan.Profile, fc.fileID, fc.checksum); err != nil {
+		if err := s.saveFileChecksum(ctx, plan.SourceID, mod.ID, game.ID, plan.Profile, fc.fileID, fc.checksum); err != nil {
 			msg := fmt.Sprintf("failed to save checksum for file %s: %v", fc.fileID, err)
 			result.Warnings = append(result.Warnings, msg)
 			emit(DeployProgress{Phase: InstallWarning, Detail: msg, ModName: mod.Name, ModID: mod.ID})
@@ -4629,6 +4701,15 @@ func LockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModRe
 // diagnostics accumulated before the failure - callers should surface them
 // alongside the error (see UpdateApplyResult's doc comment).
 func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &UpdateApplyResult{}, err
+	}
+	defer release()
+	return s.applyUpdate(ctx, game, profileName, upd, opts, progress)
+}
+
+func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, progress func(DeployProgress)) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
 	emit := func(p DeployProgress) {
 		if progress != nil {
@@ -4714,7 +4795,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 				emit(dl)
 			}
 		}
-		if _, err := s.DownloadMod(ctx, mod.SourceID, game, newMod, file, progressFn); err != nil {
+		if _, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, progressFn); err != nil {
 			return result, fmt.Errorf("downloading update: %w", err)
 		}
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
@@ -4792,13 +4873,13 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 		emit(evt)
 	}
 
-	if err := s.ApplyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
+	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		_ = installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
-	if err := s.SetModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+	if err := s.setModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 		msg := fmt.Sprintf("Warning: could not update link method: %v", err)
 		result.Notes = append(result.Notes, msg)
 		evt := base
@@ -4811,7 +4892,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
-		_ = s.RollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName)                                //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName)                                //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.ReplaceForUpdate(rctx, game, newMod, &mod.Mod, profileName, downloadedFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
@@ -4957,6 +5038,15 @@ type RollbackResult struct {
 // should surface them alongside the error (see RollbackResult's doc
 // comment).
 func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, progress func(DeployProgress)) (*RollbackResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &RollbackResult{}, err
+	}
+	defer release()
+	return s.applyRollback(ctx, game, profileName, sourceID, modID, opts, progress)
+}
+
+func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, progress func(DeployProgress)) (*RollbackResult, error) {
 	result := &RollbackResult{}
 	emit := func(p DeployProgress) {
 		if progress != nil {
@@ -5056,13 +5146,13 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 		emit(evt)
 	}
 
-	if err := s.RollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
+	if err := s.rollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		_ = installer.ReplaceForUpdate(context.WithoutCancel(ctx), game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating database: %w", err)
 	}
 
-	if err := s.SetModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
+	if err := s.setModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 		msg := fmt.Sprintf("Warning: could not update link method: %v", err)
 		result.Notes = append(result.Notes, msg)
 		evt := base
@@ -5084,7 +5174,7 @@ func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileN
 	}); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
-		_ = s.RollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName)                                    //nolint:errcheck // best-effort recovery on an already-erroring path
+		_ = s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName)                                    //nolint:errcheck // best-effort recovery on an already-erroring path
 		_ = installer.ReplaceForUpdate(rctx, game, &prevMod, &mod.Mod, profileName, mod.PreviousFileIDs, mod.FileIDs) //nolint:errcheck // best-effort recovery on an already-erroring path
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
@@ -5332,6 +5422,15 @@ type ProfileImportResult struct {
 // simply discard and recompute instead, for a caller that wants to guard
 // against drift).
 func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, progress func(DeployProgress)) (*ProfileImportResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &ProfileImportResult{}, err
+	}
+	defer release()
+	return s.applyImport(ctx, game, plan, opts, progress)
+}
+
+func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, progress func(DeployProgress)) (*ProfileImportResult, error) {
 	result := &ProfileImportResult{}
 	emit := func(p DeployProgress) {
 		if progress != nil {
@@ -5452,7 +5551,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 						emit(dl)
 					}
 				}
-				if _, err := s.DownloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+				if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
 					fail(fmt.Sprintf("download failed: %v", err))
 					downloadFailed = true
 					break
@@ -5496,7 +5595,7 @@ func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *Impo
 			Deployed:     true, // installer.Install above just succeeded
 		}
 		installedMod.Mod.GameID = game.ID
-		if err := s.SaveInstalledMod(ctx, installedMod); err != nil {
+		if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 			fail(fmt.Sprintf("save failed: %v", err))
 			continue
 		}

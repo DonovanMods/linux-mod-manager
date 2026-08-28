@@ -129,7 +129,7 @@ func setupTryMatchSourcesTest(t *testing.T) (*core.Service, *domain.Game) {
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	return svc, game
 }
@@ -521,7 +521,7 @@ func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T)
 	svc, game := setupDoImportTest(t)
 	// tryMatchSources resolves sources via SourcesForGame, which consults the
 	// service's own game registry - the game must actually be registered.
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	game.DeployMode = domain.DeployCopy
 	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "AcmeMod-1.0.zip"), []byte("payload"), 0644))
 

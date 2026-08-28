@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/steam"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -12,6 +14,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newGameDetectTestService builds a *core.Service backed by configDir (the
+// package-level var doGameDetect's caller resolves via getServiceConfig in
+// production), so games saved during the test are visible to
+// config.LoadGames afterward, without app.Open's source-registration
+// pipeline (no network) — mirrors setupGameAddTest in game_add_test.go.
+func newGameDetectTestService(t *testing.T) *core.Service {
+	t.Helper()
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return svc
+}
 
 func detectedGamesFixture() []steam.DetectedGame {
 	return []steam.DetectedGame{
@@ -99,12 +114,13 @@ func TestDoGameDetect_MarksConfiguredGamesAndExcludesFromAll(t *testing.T) {
 		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
 	}
 
+	svc := newGameDetectTestService(t)
 	var buf strings.Builder
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(cmd, reader, configDir, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games)
 	require.NoError(t, err)
 
 	out := buf.String()
@@ -129,12 +145,13 @@ func TestDoGameDetect_ExplicitSelectionRepairsConfiguredGame(t *testing.T) {
 		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
 	}
 
+	svc := newGameDetectTestService(t)
 	var buf strings.Builder
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("1\n"))
 
-	err := doGameDetect(cmd, reader, configDir, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
 
@@ -155,12 +172,13 @@ func TestDoGameDetect_AllExcludedPrintsFriendlyMessage(t *testing.T) {
 		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
 	}
 
+	svc := newGameDetectTestService(t)
 	var buf strings.Builder
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(cmd, reader, configDir, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "already configured")
 }
@@ -168,12 +186,13 @@ func TestDoGameDetect_AllExcludedPrintsFriendlyMessage(t *testing.T) {
 func TestDoGameDetect_NoGamesFound(t *testing.T) {
 	configDir = t.TempDir()
 
+	svc := newGameDetectTestService(t)
 	var buf strings.Builder
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader(""))
 
-	err := doGameDetect(cmd, reader, configDir, nil)
+	err := doGameDetect(context.Background(), cmd, reader, svc, nil)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "No moddable Steam games found.")
 }

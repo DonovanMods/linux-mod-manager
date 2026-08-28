@@ -24,7 +24,7 @@ func newResolveTestService(t *testing.T) *core.Service {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = svc.Close() })
 
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:      "testgame",
 		Name:    "Test Game",
 		ModPath: t.TempDir(),

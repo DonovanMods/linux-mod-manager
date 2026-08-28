@@ -29,7 +29,7 @@ func downloadWithSHA256(t *testing.T, content []byte, expectedSHA string) (error
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: filepath.Join(t.TempDir(), "mods"), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "m1", SourceID: "test", Name: "Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "m1.zip", SHA256: expectedSHA}

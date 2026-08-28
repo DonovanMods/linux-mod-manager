@@ -139,6 +139,17 @@ func (r *verifyRun) resolveLast(status, note string) {
 // sweep. The CLI does not call this yet - it still runs its own doVerify; a
 // later task (#224 Task 7) swaps it onto Verify.
 func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, progress func(VerifyEvent)) (*VerifyResult, error) {
+	if opts.Fix {
+		release, err := s.beginOp(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	return s.verify(ctx, game, profile, opts, progress)
+}
+
+func (s *Service) verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, progress func(VerifyEvent)) (*VerifyResult, error) {
 	if progress == nil {
 		progress = func(VerifyEvent) {}
 	}
@@ -229,7 +240,7 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 // Only called when opts.Fix - a plain verify pass makes no changes for a
 // sync to react to.
 func (r *verifyRun) syncMergedPakPass() {
-	syncWarnings, err := r.svc.SyncMergedPak(r.ctx, r.game, r.profile)
+	syncWarnings, err := r.svc.syncMergedPak(r.ctx, r.game, r.profile)
 	if err != nil {
 		r.emit(VerifyEvent{Kind: VerifyEvSyncWarning, Detail: fmt.Sprintf("could not sync merged pak: %v", err)})
 		return
@@ -265,7 +276,7 @@ func (r *verifyRun) syncMergedPakPass() {
 // here the same way every other per-item problem in this engine is: a
 // skipped row plus a warning, not a fatal Verify failure.
 func (r *verifyRun) convergencePass() {
-	convResult, convErr := r.svc.ConvergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
+	convResult, convErr := r.svc.convergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
 	if convResult != nil {
 		for _, cf := range convResult.Removed {
 			if r.opts.Fix {

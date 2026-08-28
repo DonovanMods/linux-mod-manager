@@ -100,7 +100,7 @@ func seedVerifyMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID,
 func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 	svc, dataDir := newVerifyTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -176,7 +176,7 @@ func newVerifyTestServiceWithFiles(t *testing.T, n int) (*core.Service, *domain.
 	t.Helper()
 	svc, _ := newVerifyTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestVerify_ContextCancelledDuringWalk(t *testing.T) {
 func TestVerify_EmptyProfile_HasFilesFalse(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -245,7 +245,7 @@ func TestVerify_EmptyProfile_HasFilesFalse(t *testing.T) {
 func TestVerify_ModFilter_LimitsRows(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -288,7 +288,7 @@ func (s *trapGetModFilesSource) GetModFiles(ctx context.Context, mod *domain.Mod
 func TestVerify_LocalTier_NeverTouchesNetwork(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -336,7 +336,7 @@ func (s *scriptedVersionSource) GetModFiles(ctx context.Context, mod *domain.Mod
 func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -435,7 +435,7 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -465,7 +465,7 @@ func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
 func TestVerify_MissingFinding_CarriesVersion(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -505,7 +505,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy, ConvertPaks: true,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -619,7 +619,7 @@ func (s *cancelOnFirstCallSource) GetModFiles(ctx context.Context, mod *domain.M
 func TestVerify_ContextCancelledMidVersionPass(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -722,7 +722,7 @@ func newFixTestGame(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -950,7 +950,7 @@ func newNeedsReingestFixGame(t *testing.T, src source.ModSource, sourceID string
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy, ConvertPaks: true,
 		SourceIDs: map[string]string{sourceID: "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -1465,7 +1465,7 @@ func strayDanglingSymlink(t *testing.T, svc *core.Service, game *domain.Game, na
 func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -1503,7 +1503,7 @@ func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
 func TestVerify_EmptyProfile_DanglingLink_Fix(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -1537,7 +1537,7 @@ func TestVerify_EmptyProfile_DanglingLink_Fix(t *testing.T) {
 func TestVerify_MainPath_ConvergenceAfterFileWalk(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -1595,7 +1595,7 @@ func TestVerify_Fix_SyncMergedPak_WarningsSurfaceAsSyncEvents(t *testing.T) {
 func TestVerify_Fix_SyncMergedPak_NonCompileGame_NoWarningEvents(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -1641,7 +1641,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy, ConvertPaks: true,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)

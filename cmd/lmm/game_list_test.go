@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -36,7 +37,7 @@ func TestDoGameList_EmptyState(t *testing.T) {
 // ID, name, install path, mod path, deploy mode, sources.
 func TestDoGameList_ShowsConfiguredGames(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:          "skyrim-se",
 		Name:        "Skyrim Special Edition",
 		InstallPath: "/games/skyrim",
@@ -72,13 +73,13 @@ func TestDoGameList_ShowsConfiguredGames(t *testing.T) {
 // (ConvertPaks is meaningless there).
 func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "icarus-convert-on", Name: "Icarus On", DeployMode: domain.DeployCompile, ConvertPaks: true,
 	}))
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "icarus-convert-off", Name: "Icarus Off", DeployMode: domain.DeployCompile, ConvertPaks: false,
 	}))
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "skyrim-se", Name: "Skyrim SE", DeployMode: domain.DeployExtract,
 	}))
 
@@ -104,8 +105,8 @@ func TestDoGameList_ConvertPaksColumnUsesOnOff(t *testing.T) {
 // TestDoGameList_MarksDefaultGame pins the "(default)" marker (#205 item 1).
 func TestDoGameList_MarksDefaultGame(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{ID: "skyrim-se", Name: "Skyrim SE"}))
-	require.NoError(t, svc.AddGame(&domain.Game{ID: "starrupture", Name: "Star Rupture"}))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "skyrim-se", Name: "Skyrim SE"}))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "starrupture", Name: "Star Rupture"}))
 
 	cfg := &config.Config{DefaultGame: "starrupture"}
 	require.NoError(t, cfg.Save(svc.ConfigDir()))
@@ -124,7 +125,7 @@ func TestDoGameList_MarksDefaultGame(t *testing.T) {
 // rendering, sorted by key for determinism (#205 item 1).
 func TestDoGameList_MultipleSourcesCompactKV(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:   "icarus",
 		Name: "Icarus",
 		SourceIDs: map[string]string{
@@ -146,7 +147,7 @@ func TestDoGameList_MultipleSourcesCompactKV(t *testing.T) {
 // a "-" placeholder makes "no sources configured" explicit.
 func TestDoGameList_NoSourcesShowsPlaceholder(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{ID: "bare-game", Name: "Bare Game"}))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "bare-game", Name: "Bare Game"}))
 
 	out := captureStdout(t, func() error {
 		return doGameList(&cobra.Command{}, svc)
@@ -160,7 +161,7 @@ func TestDoGameList_NoSourcesShowsPlaceholder(t *testing.T) {
 // null, even when empty) with an explicit "default" boolean per entry.
 func TestDoGameList_JSONOutput(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:          "skyrim-se",
 		Name:        "Skyrim SE",
 		InstallPath: "/games/skyrim",
@@ -206,7 +207,7 @@ func TestDoGameList_JSONOutput_EmptyIsArrayNotNull(t *testing.T) {
 // with no sources configured emits "sources": {} in JSON, not null.
 func TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject(t *testing.T) {
 	svc := setupGameAddTest(t)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:          "bare-game",
 		Name:        "Bare Game",
 		InstallPath: "/games/bare",

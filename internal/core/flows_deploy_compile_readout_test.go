@@ -31,7 +31,7 @@ func setupCompileReadoutGame(t *testing.T, svc *core.Service) *domain.Game {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy, ConvertPaks: true,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
@@ -217,7 +217,7 @@ func TestDeployProfile_NonCompile_NoMergeReadout(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
 	game := &domain.Game{ID: "plain", Name: "Plain", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
 	_, err = pm.Create(game.ID, "default")
 	require.NoError(t, err)

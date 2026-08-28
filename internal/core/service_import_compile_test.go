@@ -41,7 +41,7 @@ func newImportCompileTestGame(t *testing.T) (*core.Service, *fakeCompilerSource,
 		DeployMode:  domain.DeployCompile,
 		SourceIDs:   map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	return svc, src, game
 }
@@ -195,7 +195,7 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	// No RegisterSource call at all - the game has no source mapped, let
 	// alone a MergeCompiler-capable one.
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "Bear_Mount.exmodz")
@@ -245,7 +245,7 @@ func TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud(t *testing.T) {
 	// No RegisterSource call at all - the game has no source mapped, let
 	// alone a MergeCompiler-capable one.
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	tempDir := t.TempDir()
 	archivePath := filepath.Join(tempDir, "CoolMod.pak")

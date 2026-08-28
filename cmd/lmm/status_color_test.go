@@ -16,7 +16,7 @@ import (
 func TestShowGameStatus_EnabledDisabledCounts_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Enabled Mod", "a.esp")
 	seedModWithState(t, svc, game, "2", "Disabled Mod", false, false)
 
@@ -31,7 +31,7 @@ func TestShowGameStatus_EnabledDisabledCounts_PlainWhenColorDisabled(t *testing.
 func TestShowGameStatus_EnabledDisabledCounts_ColoredWhenTTY(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Enabled Mod", "a.esp")
 	seedModWithState(t, svc, game, "2", "Disabled Mod", false, false)
 
@@ -50,7 +50,7 @@ func TestShowGameStatus_EnabledDisabledCounts_ColoredWhenTTY(t *testing.T) {
 // printTable's doc comment).
 func TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
 
 	resetColorFlags(t)
@@ -75,7 +75,7 @@ func TestDoStatus_TableHeader_BoldedWhenTTY_AlignmentUnaffected(t *testing.T) {
 // tabwriter never pads after the final cell (see printTable's doc comment).
 func TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
 
 	resetColorFlags(t)
@@ -100,7 +100,7 @@ func TestDoStatus_LastColumnCount_CyanWhenTTY_AlignmentUnaffected(t *testing.T) 
 func TestShowGameStatus_RicherValues_ColoredWhenTTY(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
 	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))
 
@@ -121,7 +121,7 @@ func TestShowGameStatus_RicherValues_ColoredWhenTTY(t *testing.T) {
 func TestShowGameStatus_RicherValues_PlainWhenColorDisabled(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	resetColorFlags(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
 	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))
 

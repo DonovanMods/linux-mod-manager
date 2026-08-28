@@ -364,6 +364,15 @@ func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sour
 // directly (no staging commit), so the marker is stamped after the fact;
 // the members are whatever the entry actually holds.
 func (s *Service) MarkImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.markImportedFileComplete(ctx, game, mod, fileID)
+}
+
+func (s *Service) markImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
 	gameCache := s.GetGameCache(game)
 	members, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {

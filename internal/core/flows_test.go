@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -78,6 +79,23 @@ func seedInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, source
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      enabled,
 	}))
+}
+
+// newDeployableService returns a Service with one enabled mod, cached and
+// installed into game g1's "default" profile - ready for DeployProfile to
+// actually deploy something. Extracted from
+// TestService_DeployProfile_ProgressCallback_IndexTotalModNameSequence
+// (v2 Phase 1 Task 6), which needs the identical shape for its own 3-mod
+// setup and seeds two more mods on top of this one.
+func newDeployableService(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	seedNamedInstalledMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("1")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	return svc, game
 }
 
 // seedNamedInstalledMod is seedInstalledMod with a caller-supplied Name,
@@ -1817,14 +1835,9 @@ exit 1`)
 // TestService_DeployProfile_ProgressCallback_IndexTotalModNameSequence
 // guards the Index/Total/ModName sequence a 3-mod deploy reports.
 func TestService_DeployProfile_ProgressCallback_IndexTotalModNameSequence(t *testing.T) {
-	svc := newFlowsTestService(t)
-	gameDir := t.TempDir()
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
-
-	seedNamedInstalledMod(t, svc, game, "src", "1", "Mod One", "1.0", true, map[string][]byte{"one.esp": []byte("1")})
+	svc, game := newDeployableService(t)
 	seedNamedInstalledMod(t, svc, game, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("2")})
 	seedNamedInstalledMod(t, svc, game, "src", "3", "Mod Three", "1.0", true, map[string][]byte{"three.esp": []byte("3")})
-	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 	seedProfileWithMod(t, svc, "g1", "default", "src", "2", "1.0")
 	seedProfileWithMod(t, svc, "g1", "default", "src", "3", "1.0")
 
@@ -4724,4 +4737,91 @@ func TestService_DeployProfile_CancelledDuringLastModRedownload_RecordsSkipAndEr
 	require.Len(t, result.Skipped, 1, "the cancelled mod must be recorded as skipped, not silently dropped")
 	assert.Contains(t, result.Skipped[0], "Last Mod")
 	assert.Contains(t, result.Skipped[0], "cancelled")
+}
+
+// TestService_QueriesRunDuringMutation pins the contract end to end under
+// -race (v2 Phase 1 Task 6, #279; rewritten in fix round 1 per review
+// finding I2): a DeployProfile holds the mutation slot open on a gate, 16
+// query goroutines (GetInstalledMods + ListGames) must all complete while
+// the gate is still closed, and a second mutation (SetModEnabled) started
+// during that same window must NOT return until the gate opens. A
+// regression that lets a query - or a second mutation - through
+// unserialized deadlocks this test into one of its timeouts instead of
+// passing green with nothing checked.
+func TestService_QueriesRunDuringMutation(t *testing.T) {
+	svc, game := newDeployableService(t)
+	ctx := context.Background()
+
+	started := make(chan struct{})
+	gate := make(chan struct{})
+	errs := make(chan error, 32)
+
+	deployDone := make(chan struct{})
+	go func() {
+		defer close(deployDone)
+		first := true
+		_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, func(core.DeployProgress) {
+			if first {
+				first = false
+				close(started)
+				<-gate
+			}
+		})
+		errs <- err
+	}()
+	<-started
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := svc.GetInstalledMods(ctx, game.ID, "default"); err != nil {
+				errs <- err
+			}
+			_ = svc.ListGames()
+		}()
+	}
+	queriesDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(queriesDone)
+	}()
+	select {
+	case <-queriesDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queries blocked behind a mutation")
+	}
+
+	secondDone := make(chan struct{})
+	go func() {
+		defer close(secondDone)
+		if err := svc.SetModEnabled(ctx, "src", "1", game.ID, "default", false); err != nil {
+			errs <- err
+		}
+	}()
+
+	select {
+	case <-secondDone:
+		t.Fatal("second mutation returned while the first mutation still holds the slot")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(gate)
+
+	select {
+	case <-deployDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("DeployProfile never finished after the gate was released")
+	}
+	select {
+	case <-secondDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second mutation never finished after the gate was released")
+	}
+
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
 }

@@ -72,7 +72,7 @@ mods:
 		DeployMode: domain.DeployCopy,
 		SourceIDs:  map[string]string{"e2e-repo": "skyrim"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	// Drive the same package-level flags runInstall would set, skipping
 	// interactive prompts so the real doInstall save path executes.
@@ -159,7 +159,7 @@ mods:
 		DeployMode: domain.DeployCopy,
 		SourceIDs:  map[string]string{"e2e-repo": "skyrim"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	origInstallShowArchived, origSkipVerify, origInstallForce := installShowArchived, skipVerify, installForce
 	origNoHooks := noHooks

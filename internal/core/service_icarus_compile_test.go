@@ -150,7 +150,7 @@ func TestDownloadMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) 
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "3.3"}
 	file := &domain.DownloadableFile{ID: "exmodz", FileName: "Bear_Mount.exmodz"}
@@ -194,7 +194,7 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "bad-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "exmodz", FileName: "Bad_Mount.exmodz"}
@@ -295,7 +295,7 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 			ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
 			DeployMode: domain.DeployCompile, ConvertPaks: convertPaks,
 		}
-		require.NoError(t, svc.AddGame(game))
+		require.NoError(t, svc.SaveGame(context.Background(), game))
 
 		mod := &domain.Mod{ID: "cool-mod", SourceID: "fake-compiler", GameID: "icarus", Version: "1.0"}
 		file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
@@ -381,7 +381,7 @@ func TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath(t *testing.
 		ID: "icarus", InstallPath: t.TempDir(), ModPath: t.TempDir(),
 		DeployMode: domain.DeployCompile, ConvertPaks: true,
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "cool-mod", SourceID: "plain-source", GameID: "icarus", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
@@ -433,7 +433,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 		DeployMode: domain.DeployCompile, ConvertPaks: true, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")

@@ -37,7 +37,7 @@ func TestDownloadModToCache_TraversalFileName_SanitizedAgainstEscape(t *testing.
 	svc.RegisterSource(mock)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: filepath.Join(t.TempDir(), "mods"), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Evil Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "Evil File", FileName: "../evil-traversal.zip"}
@@ -91,7 +91,7 @@ func TestDownloadMod_DeployCompile_TraversalFileID_SanitizedAgainstEscape(t *tes
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(), DeployMode: domain.DeployCompile}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "3.3"}
 	file := &domain.DownloadableFile{ID: "../evil-traversal-id", FileName: "Bear_Mount.exmodz"}

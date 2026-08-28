@@ -97,6 +97,17 @@ type ConvergeResult struct {
 // never added to Removed, only to the joined error). ctx is checked between
 // mods during the row pass and periodically during the directory walk.
 func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
+	if !dryRun {
+		release, err := s.beginOp(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	return s.convergeDeployedFiles(ctx, game, profileName, dryRun)
+}
+
+func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
 	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)

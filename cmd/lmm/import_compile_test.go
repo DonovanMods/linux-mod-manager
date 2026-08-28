@@ -39,7 +39,7 @@ func setupDoImportCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	oldProfile, oldSource, oldModID, oldForce, oldDryRun, oldSkipMatch :=
 		importProfile, importSource, importModID, importForce, importDryRun, importSkipMatch

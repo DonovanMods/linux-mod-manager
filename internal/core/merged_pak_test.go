@@ -26,7 +26,7 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 	// fixture now maps and registers one.
 	game := &domain.Game{ID: "icarus", ModPath: t.TempDir(), DeployMode: domain.DeployCompile,
 		SourceIDs: map[string]string{"fake-compiler": "icarus"}}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	svc.RegisterSource(&fakeCompilerSource{})
 
 	gameCache := svc.GetGameCache(game)
@@ -101,7 +101,7 @@ func newMergedPakTestGame(t *testing.T) (*core.Service, *domain.Game, string) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")
@@ -301,7 +301,7 @@ func TestSyncMergedPak_RegeneratesOnBaseHashChange(t *testing.T) {
 func TestSyncMergedPak_NonCompileGame_NoOp(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "skyrim-se", ModPath: t.TempDir(), DeployMode: domain.DeployExtract}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

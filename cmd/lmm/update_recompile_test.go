@@ -45,7 +45,7 @@ func setupDoUpdateRecompileTest(t *testing.T) (*core.Service, *domain.Game, *com
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	oldSource, oldProfile, oldAll, oldDryRun, oldForce := updateSource, updateProfile, updateAll, updateDryRun, updateForce
 	oldVerbose, oldNoColor, oldNoHooks := verbose, noColor, noHooks
