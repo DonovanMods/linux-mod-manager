@@ -395,6 +395,11 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 // found missing this call). Safe to call unconditionally - it no-ops for a
 // non-DeployCompile game and is a cheap fast-path when nothing changed.
 func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return s.syncMergedPak(ctx, game, profileName)
 }
 
@@ -1008,6 +1013,15 @@ func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game
 // source to feed the merge is not "touching" it in the sense a lock
 // protects against).
 func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &UpdateApplyResult{}, err
+	}
+	defer release()
+	return s.applyMergedPakRegen(ctx, game, profileName, progress)
+}
+
+func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, progress func(DeployProgress)) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
 	// Resolved up front: the Applied entry below reports the merged
 	// artifact by the name only the compile source knows (#256), and a
@@ -1049,6 +1063,15 @@ func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 // (--uninstall) also clears the cache entry, matching every real mod's
 // full removal.
 func (s *Service) PurgeMergedPak(ctx context.Context, game *domain.Game, profileName string, deleteCache bool) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.purgeMergedPak(ctx, game, profileName, deleteCache)
+}
+
+func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profileName string, deleteCache bool) error {
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}

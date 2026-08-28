@@ -38,7 +38,17 @@ type DownloadModResult struct {
 	Checksum       string // MD5 hash of downloaded archive
 }
 
-// Service is the main orchestrator for mod management operations
+// Service is the application facade every frontend talks to.
+//
+// It is safe for concurrent use with this guarantee: query methods (Get*,
+// List*, Plan*, Search*, CheckGameUpdates, Verify without Fix) may run
+// concurrently with each other and with at most one in-flight mutation;
+// mutating operations (Apply*, DeployProfile, PurgeProfile, UninstallMod,
+// EnableMod/DisableMod, Set*, Save*, Delete*, Reorder*, SyncMergedPak,
+// ConvergeDeployedFiles unless dry-run, Verify with Fix) are serialized
+// service-wide through a one-slot semaphore acquired with the caller's
+// ctx, so a waiter is itself cancellable. Reads during a mutation observe
+// WAL snapshot state, which is per-mod consistent (spec §3).
 type Service struct {
 	config     *config.Config
 	db         *db.DB
@@ -46,6 +56,7 @@ type Service struct {
 	registry   *source.Registry
 	gamesMu    sync.RWMutex
 	games      map[string]*domain.Game
+	opSem      chan struct{}
 	downloader *Downloader
 	extractor  *Extractor
 
@@ -92,6 +103,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		cache:      cache.New(cfg.CacheDir),
 		registry:   source.NewRegistry(),
 		games:      games,
+		opSem:      make(chan struct{}, 1),
 		downloader: NewDownloader(nil),
 		extractor:  NewExtractor(),
 		configDir:  cfg.ConfigDir,
@@ -542,11 +554,29 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 // Returns the download result including files extracted and checksum.
 // Multiple files from the same mod can be downloaded to the same cache location.
 func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
-	return s.DownloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, progressFn)
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.downloadMod(ctx, sourceID, game, mod, file, progressFn)
+}
+
+func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
+	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, progressFn)
 }
 
 // DownloadModToCache downloads a mod file, extracts it, and stores it in the provided cache.
 func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.downloadModToCache(ctx, gameCache, sourceID, game, mod, file, progressFn)
+}
+
+func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
 
 	// Note: We intentionally do NOT check if cache exists here.
 	// A mod can have multiple downloadable files (e.g., main mod + optional patches),
@@ -1149,6 +1179,15 @@ func (s *Service) ListGames() []*domain.Game {
 // same ID. Readers (GetGame, ListGames, SourcesForGame, …) may run
 // concurrently with it.
 func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveGame(ctx, game)
+}
+
+func (s *Service) saveGame(ctx context.Context, game *domain.Game) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1323,6 +1362,15 @@ func (s *Service) ConfigDir() string {
 
 // SaveSourceToken saves an API token for a source
 func (s *Service) SaveSourceToken(ctx context.Context, sourceID, apiKey string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveSourceToken(ctx, sourceID, apiKey)
+}
+
+func (s *Service) saveSourceToken(ctx context.Context, sourceID, apiKey string) error {
 	return s.db.SaveToken(ctx, sourceID, apiKey)
 }
 
@@ -1333,6 +1381,15 @@ func (s *Service) GetSourceToken(ctx context.Context, sourceID string) (*db.Stor
 
 // DeleteSourceToken removes an API token for a source
 func (s *Service) DeleteSourceToken(ctx context.Context, sourceID string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.deleteSourceToken(ctx, sourceID)
+}
+
+func (s *Service) deleteSourceToken(ctx context.Context, sourceID string) error {
 	return s.db.DeleteToken(ctx, sourceID)
 }
 
@@ -1354,52 +1411,142 @@ func (s *Service) IsSourceAuthenticated(ctx context.Context, sourceID string) bo
 
 // UpdateModVersion updates the version of an installed mod, preserving the previous version for rollback
 func (s *Service) UpdateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.updateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
+}
+
+func (s *Service) updateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
 	return s.db.UpdateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
 }
 
 // ApplyModUpdate updates version and file IDs atomically, preserving rollback state.
 func (s *Service) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
+}
+
+func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
 	return s.db.ApplyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
 }
 
 // RollbackModVersion reverts a mod to its previous version
 func (s *Service) RollbackModVersion(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.rollbackModVersion(ctx, sourceID, modID, gameID, profileName)
+}
+
+func (s *Service) rollbackModVersion(ctx context.Context, sourceID, modID, gameID, profileName string) error {
 	return s.db.SwapModVersions(ctx, sourceID, modID, gameID, profileName)
 }
 
 // SetModUpdatePolicy sets the update policy for an installed mod
 func (s *Service) SetModUpdatePolicy(ctx context.Context, sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModUpdatePolicy(ctx, sourceID, modID, gameID, profileName, policy)
+}
+
+func (s *Service) setModUpdatePolicy(ctx context.Context, sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
 	return s.db.UpdateModPolicy(ctx, sourceID, modID, gameID, profileName, policy)
 }
 
 // SetModLinkMethod sets the deployment method for an installed mod
 func (s *Service) SetModLinkMethod(ctx context.Context, sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModLinkMethod(ctx, sourceID, modID, gameID, profileName, linkMethod)
+}
+
+func (s *Service) setModLinkMethod(ctx context.Context, sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
 	return s.db.SetModLinkMethod(ctx, sourceID, modID, gameID, profileName, linkMethod)
 }
 
 // SetModFileIDs updates the file IDs for an installed mod
 func (s *Service) SetModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
+}
+
+func (s *Service) setModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
 	return s.db.SetModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
 }
 
 // SetModEnabled toggles the enabled flag for an installed mod.
 func (s *Service) SetModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModEnabled(ctx, sourceID, modID, gameID, profileName, enabled)
+}
+
+func (s *Service) setModEnabled(ctx context.Context, sourceID, modID, gameID, profileName string, enabled bool) error {
 	return s.db.SetModEnabled(ctx, sourceID, modID, gameID, profileName, enabled)
 }
 
 // SetModDeployed records whether a mod's files are currently deployed.
 func (s *Service) SetModDeployed(ctx context.Context, sourceID, modID, gameID, profileName string, deployed bool) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModDeployed(ctx, sourceID, modID, gameID, profileName, deployed)
+}
+
+func (s *Service) setModDeployed(ctx context.Context, sourceID, modID, gameID, profileName string, deployed bool) error {
 	return s.db.SetModDeployed(ctx, sourceID, modID, gameID, profileName, deployed)
 }
 
 // SetModConvertPaks toggles per-mod pak-to-exmod conversion (#221). A local
 // DB write; the caller re-syncs the merged pak to apply the change.
 func (s *Service) SetModConvertPaks(ctx context.Context, sourceID, modID, gameID, profileName string, convert bool) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModConvertPaks(ctx, sourceID, modID, gameID, profileName, convert)
+}
+
+func (s *Service) setModConvertPaks(ctx context.Context, sourceID, modID, gameID, profileName string, convert bool) error {
 	return s.db.SetModConvertPaks(ctx, sourceID, modID, gameID, profileName, convert)
 }
 
 // SaveInstalledMod persists an installed-mod record (insert or update).
 func (s *Service) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveInstalledMod(ctx, mod)
+}
+
+func (s *Service) saveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
 	return s.db.SaveInstalledMod(ctx, mod)
 }
 
@@ -1412,11 +1559,29 @@ func (s *Service) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod
 // version-record repair, issue #94), where the file IDs and their
 // checksums are already correct.
 func (s *Service) SetModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.setModVersion(ctx, sourceID, modID, gameID, profileName, version)
+}
+
+func (s *Service) setModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
 	return s.db.SetModVersion(ctx, sourceID, modID, gameID, profileName, version)
 }
 
 // DeleteInstalledMod removes the installed-mod record from the active profile.
 func (s *Service) DeleteInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.deleteInstalledMod(ctx, sourceID, modID, gameID, profileName)
+}
+
+func (s *Service) deleteInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) error {
 	return s.db.DeleteInstalledMod(ctx, sourceID, modID, gameID, profileName)
 }
 
@@ -1471,6 +1636,15 @@ func (s *Service) GetFilesWithChecksums(ctx context.Context, gameID, profileName
 
 // SaveFileChecksum records the verified checksum for a downloaded mod file.
 func (s *Service) SaveFileChecksum(ctx context.Context, sourceID, modID, gameID, profileName, fileID, checksum string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.saveFileChecksum(ctx, sourceID, modID, gameID, profileName, fileID, checksum)
+}
+
+func (s *Service) saveFileChecksum(ctx context.Context, sourceID, modID, gameID, profileName, fileID, checksum string) error {
 	return s.db.SaveFileChecksum(ctx, sourceID, modID, gameID, profileName, fileID, checksum)
 }
 
