@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -107,19 +105,16 @@ func TestCheckBoundary(t *testing.T) {
 	}
 }
 
-// goBinary locates the go tool for the live check: PATH first, then the
-// GOROOT that built this test binary.
+// goBinary locates the go tool for the live check. The test binary was built
+// by a go toolchain, and `go test` puts that toolchain's bin dir on PATH, so a
+// missing tool means an unusual invocation worth failing loudly on.
 func goBinary(t *testing.T) string {
 	t.Helper()
-	if p, err := exec.LookPath("go"); err == nil {
-		return p
+	p, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("go tool not found on PATH: %v", err)
 	}
-	p := filepath.Join(runtime.GOROOT(), "bin", "go")
-	if _, err := exec.LookPath(p); err == nil {
-		return p
-	}
-	t.Fatalf("go tool not found on PATH or in GOROOT %q", runtime.GOROOT())
-	return ""
+	return p
 }
 
 // TestImportBoundary is the ratchet: cmd/lmm's non-test imports must stay

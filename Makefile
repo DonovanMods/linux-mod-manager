@@ -69,7 +69,7 @@ lint-fix:
 	@XDG_CACHE_HOME=$(TRUNK_CACHE_LOCAL) trunk fmt
 
 ## check: Run fmt, vet, and tests
-check: fmt lint vet test
+check: fmt lint vet test-race
 
 ## update: Update dependencies
 update:
