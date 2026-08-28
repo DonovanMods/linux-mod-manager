@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,16 +26,34 @@ type DB struct {
 // dsnFor builds the modernc.org/sqlite DSN. Pragmas passed as _pragma= query
 // parameters run on EVERY new pooled connection (the driver applies them in
 // newConn); a plain Exec after Open would only reach one connection (#271).
+// The path is percent-encoded so '#', '?', '%' and spaces cannot be read as
+// URI syntax. path must be absolute (or ":memory:") — url.URL renders a
+// relative Path as "file://<path>", which parses back with the path's first
+// segment as the host instead of as part of the file path; New resolves
+// relative paths before calling this.
 func dsnFor(path string) string {
+	const pragmas = "_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	if path == ":memory:" {
 		return "file::memory:?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 	}
-	return "file:" + path + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	u := url.URL{Scheme: "file", Path: path, RawQuery: pragmas}
+	return u.String()
 }
 
-// New creates a new database connection and runs migrations
+// New creates a new database connection and runs migrations. A relative path
+// is resolved against the current working directory before being placed in
+// the DSN, since a relative path in a "file:" URI is ambiguous (see dsnFor).
 func New(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", dsnFor(path))
+	dsnPath := path
+	if path != ":memory:" {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolving database path: %w", err)
+		}
+		dsnPath = abs
+	}
+
+	sqlDB, err := sql.Open("sqlite", dsnFor(dsnPath))
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}

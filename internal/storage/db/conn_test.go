@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -46,6 +47,24 @@ func TestNew_MemoryDatabaseIsSingleConnection(t *testing.T) {
 	var n int
 	require.NoError(t, d.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM schema_migrations").Scan(&n))
 	require.Greater(t, n, 0, "migrations must be visible on the (only) connection")
+}
+
+// TestNew_PathWithURISpecialCharacters pins that the DSN builder escapes
+// the path: a '#' or a space in a directory name must open THAT file.
+func TestNew_PathWithURISpecialCharacters(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "odd #dir name%")
+	require.NoError(t, os.MkdirAll(dir, 0755))
+	path := filepath.Join(dir, "lmm.db")
+
+	d, err := New(path)
+	require.NoError(t, err)
+	require.NoError(t, d.Close())
+
+	_, err = os.Stat(path)
+	require.NoError(t, err, "the database must be created at the exact path given")
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "no stray files created from a truncated path")
 }
 
 // TestQueryContext_HonoursCancellation pins that a cancelled ctx reaches SQLite.
