@@ -1,9 +1,9 @@
 {
-  "installed_mod": {
+  "mod": {
     "id": "42",
     "source_id": "nexusmods",
     "name": "Sample Mod",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "author": "",
     "summary": "",
     "description": "",
@@ -18,18 +18,16 @@
     "profile_name": "default",
     "update_policy": "notify",
     "installed_at": "2026-08-27T12:00:00Z",
-    "enabled": true,
-    "deployed": true,
+    "enabled": false,
+    "deployed": false,
     "link_method": "symlink",
     "manual_download": false,
     "convert_paks": false
   },
-  "new_version": "1.2.3",
-  "changelog": "Fixed a crash on load.",
-  "file_id_replacements": {
-    "file-0": "file-1"
-  },
-  "recompile_needed": true,
-  "recompile_reason": "base pak updated",
-  "locked": false
+  "from_version": "1.2.3",
+  "to_version": "1.2.2",
+  "locked": true,
+  "locked_version": "1.2.3",
+  "refusal": "mod is locked: Sample Mod is locked at v1.2.3 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
+  "cache_missing": true
 }

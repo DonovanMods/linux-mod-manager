@@ -31,7 +31,7 @@ var allowedImports = []string{
 var boundaryAllowList = map[string]string{
 	"internal/source/custom":  "lmm source list/validate --probe re-derive definitions; Phase 2 #8",
 	"internal/source/steam":   "lmm game detect scans Steam libraries in cmd; Phase 2 #7",
-	"internal/storage/config": "profiles/games/config read directly by 10 commands; Phase 2 #7-#8",
+	"internal/storage/config": "profiles/games/config read directly by 9 commands; Phase 2 #7-#8",
 }
 
 // checkBoundary returns one message per problem: an intra-module import that

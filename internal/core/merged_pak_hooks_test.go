@@ -108,7 +108,9 @@ func TestApplyRollback_SyncsMergedPak(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "v2-bytes", string(before))
 
-	_, err = svc.ApplyRollback(context.Background(), game, "default", "fake-compiler", "bear-mount", core.RollbackOptions{}, nil)
+	plan, err := svc.PlanRollback(context.Background(), game, "default", "fake-compiler", "bear-mount")
+	require.NoError(t, err)
+	_, err = svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.NoError(t, err)
 
 	after, err := os.ReadFile(deployedPath)

@@ -158,6 +158,39 @@ func IsNewerVersion(currentVersion, newVersion string) bool {
 	return domain.IsNewerVersion(currentVersion, newVersion)
 }
 
+// lockStateFromProfile is lockState's variant for a caller that has already
+// loaded the profile - CheckGameUpdates' stamping loop below uses this to
+// load the profile ONCE for the whole call rather than once per listed mod
+// (#289 review, Minor 2: reloading the same profile from disk N times for a
+// listing of N mods was needless I/O). prof may be nil (a missing/
+// unreadable profile), in which case every ref reports unlocked - matching
+// lockState's own convention.
+func lockStateFromProfile(prof *domain.Profile, sourceID, modID string) (locked bool, lockedVersion string) {
+	if prof == nil {
+		return false, ""
+	}
+	ref := prof.FindRef(sourceID, modID)
+	if ref != nil && ref.Locked {
+		return true, ref.Version
+	}
+	return false, ""
+}
+
+// lockState reports whether (sourceID, modID) is locked in gameID/
+// profileName's profile and, if so, at what version - the "load profile ->
+// FindRef -> check .Locked" pattern PlanUpdate/PlanUpdateFrom/PlanRollback
+// need for a SINGLE mod (each already reads the profile once per call, so
+// there is nothing to batch). A missing/unreadable profile reports unlocked
+// rather than an error - matching every other lock gate's convention (a
+// lock cannot exist in a profile that doesn't load); err is always nil
+// today, kept for symmetry with this file's other ctx-taking Service
+// methods.
+func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, modID string) (locked bool, lockedVersion string, err error) {
+	prof, _ := s.NewProfileManager().Get(gameID, profileName)
+	locked, lockedVersion = lockStateFromProfile(prof, sourceID, modID)
+	return locked, lockedVersion, nil
+}
+
 // CheckGameUpdates is the single seam CLI checks updates through
 // (#196/#197): it combines Updater.CheckUpdates' remote version
 // checks with CheckMergedPakStaleness' local merged-pak staleness scan
@@ -188,6 +221,22 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 		}
 		if !reported {
 			updates = append(updates, *staleUpd)
+		}
+	}
+
+	// #289: stamp each entry's lock state via lockStateFromProfile - the
+	// single seam that lets every caller (cmd/lmm's bulk table/JSON,
+	// PlanUpdate/PlanUpdateFrom) drop its own profile scan. The profile is
+	// loaded ONCE here (#289 review, Minor 2), not once per entry - a
+	// missing/unreadable profile leaves every entry unlocked, matching every
+	// other "profile load failure means unlocked" precedent (ApplyUpdate's
+	// own lock gate, applySingleUpdate before this task).
+	prof, _ := s.NewProfileManager().Get(game.ID, profileName)
+	for i := range updates {
+		locked, lockedVersion := lockStateFromProfile(prof, updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
+		if locked {
+			updates[i].Locked = true
+			updates[i].LockedVersion = lockedVersion
 		}
 	}
 

@@ -94,7 +94,9 @@ func TestApplyRollbackSwapsVersions(t *testing.T) {
 	require.Equal(t, "2.0", mod.Version)
 	require.Equal(t, "1.0", mod.PreviousVersion)
 
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -124,29 +126,14 @@ func TestApplyRollbackSwapsVersions(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "the current version's file must be undeployed")
 }
 
-// TestApplyRollbackNoPreviousVersion covers the first guard: a mod that has
-// never been updated (or has already been rolled back once) has no
-// PreviousVersion, and ApplyRollback must fail with the exact
-// pre-extraction error text before touching hooks, Replace, or the DB.
-func TestApplyRollbackNoPreviousVersion(t *testing.T) {
-	svc := newFlowsTestService(t)
-	gameDir := t.TempDir()
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
-
-	mod := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
-	require.Empty(t, mod.PreviousVersion)
-
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
-	require.Error(t, err)
-	assert.Equal(t, "no previous version available for rollback", err.Error())
-	require.NotNil(t, result)
-	assert.Empty(t, result.ModName, "no identity fields should be populated before this guard")
-}
-
 // TestApplyRollbackMissingCache covers the second guard: PreviousVersion is
 // set, but its cache entry has been removed (pruned, or manually deleted)
 // since the update - ApplyRollback must fail with the exact pre-extraction
-// error text, again before touching hooks, Replace, or the DB.
+// error text, again before touching hooks, Replace, or the DB. PlanRollback
+// itself still succeeds here (v2 Phase 2 Unit I, #289): a missing cache is
+// plan DATA (RollbackPlan.CacheMissing), not a PlanRollback error - see
+// RollbackPlan's doc comment - so this now exercises ApplyRollback's own
+// independent re-check of the same condition.
 func TestApplyRollbackMissingCache(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -159,7 +146,11 @@ func TestApplyRollbackMissingCache(t *testing.T) {
 
 	require.NoError(t, svc.GetGameCache(game).Delete("g1", "src", "mod1", "1.0"))
 
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	assert.True(t, plan.CacheMissing)
+
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.Error(t, err)
 	assert.Equal(t, "previous version 1.0 not found in cache", err.Error())
 	require.NotNil(t, result)
@@ -184,7 +175,11 @@ func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
 	pm := svc.NewProfileManager()
 	require.NoError(t, pm.SetModLock("g1", "default", "src", "mod1", ""))
 
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	assert.True(t, plan.Locked)
+
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked)
 	assert.Contains(t, err.Error(), "locked at v")
@@ -221,7 +216,9 @@ func TestApplyRollback_UnlockedRefStillRollsBack(t *testing.T) {
 		map[string][]byte{"mod1-new.esp": []byte("new-content")})
 	require.Equal(t, "2.0", mod.Version)
 
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -257,7 +254,9 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		scriptsDir := t.TempDir()
 		seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
-		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+		plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+		require.NoError(t, err)
+		result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 		require.NotNil(t, result)
@@ -273,8 +272,10 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		scriptsDir := t.TempDir()
 		seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
+		plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+		require.NoError(t, err)
 		sink, seen := core.RecordEvents()
-		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Force: true}, sink)
+		result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{Force: true}, sink)
 		require.NoError(t, err)
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "uninstall.before_each hook failed (forced):")
@@ -299,7 +300,9 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		scriptsDir := t.TempDir()
 		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
-		_, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+		plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+		require.NoError(t, err)
+		_, err = svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_each hook failed")
 
@@ -313,7 +316,9 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		scriptsDir := t.TempDir()
 		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}})
 
-		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Force: true}, nil)
+		plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+		require.NoError(t, err)
+		result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{Force: true}, nil)
 		require.NoError(t, err)
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "install.before_each hook failed (forced):")
@@ -344,8 +349,10 @@ func TestApplyRollbackAfterEachWarnings(t *testing.T) {
 		Install:   domain.HookConfig{AfterEach: createTestScript(t, scriptsDir, "i_after.sh", "#!/bin/bash\necho boom >&2\nexit 1")},
 	})
 
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
 	sink, seen := core.RecordEvents()
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, sink)
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, sink)
 	require.NoError(t, err, "after_each hook failures must never fail the rollback")
 	require.Len(t, result.Warnings, 2)
 	assert.Contains(t, result.Warnings[0], "uninstall.after_each hook failed")
@@ -392,9 +399,12 @@ func TestApplyRollbackCompensatesOnDBFailure(t *testing.T) {
 		map[string][]byte{"mod1-old.esp": []byte("old-content")},
 		map[string][]byte{"mod1-new.esp": []byte("new-content")})
 
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+
 	installVersionBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
 
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "updating database:")
 	require.NotNil(t, result, "a partial result must be returned alongside the error")
@@ -499,7 +509,9 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_UndeploysRolledBackFromMember(t
 	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileA.esp"))
 	require.True(t, os.IsNotExist(statErr))
 
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, result.Warnings)
 	assert.Empty(t, result.Notes)
@@ -543,7 +555,9 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_LegacyCacheFallsBackToUnion(t *
 	_, statErr = os.Lstat(filepath.Join(gameDir, "mod1-fileB.esp"))
 	require.NoError(t, statErr)
 
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+	result, err := svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.NoError(t, err)
 	assert.Empty(t, result.Warnings)
 	assert.Empty(t, result.Notes)
@@ -578,9 +592,12 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_CompensationStaysNarrow(t *test
 
 	mod := seedSameVersionRollbackReadyMod(t, svc, game, true)
 
+	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
+
 	installVersionBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"))
 
-	_, err = svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{}, nil)
+	_, err = svc.ApplyRollback(context.Background(), game, plan, core.RollbackOptions{}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "updating database:")
 

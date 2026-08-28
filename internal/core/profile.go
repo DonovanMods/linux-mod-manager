@@ -73,9 +73,16 @@ func (pm *ProfileManager) List(gameID string) ([]*domain.Profile, error) {
 	return profiles, nil
 }
 
+// loadProfile is Get's file-read step, indirected through a package
+// variable so a test can wrap it to count calls - CountProfileLoadsForTest
+// (profile_export_test.go) uses this to verify CheckGameUpdates' lock-state
+// stamping loop loads the profile once per call rather than once per
+// listed mod. Production code always resolves to config.LoadProfile.
+var loadProfile = config.LoadProfile
+
 // Get retrieves a specific profile
 func (pm *ProfileManager) Get(gameID, name string) (*domain.Profile, error) {
-	return config.LoadProfile(pm.configDir, gameID, name)
+	return loadProfile(pm.configDir, gameID, name)
 }
 
 // Delete removes a profile
