@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -84,4 +85,38 @@ func TestRunRoot_PropagatesContextCancellation(t *testing.T) {
 	err := runRoot(ctx)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+// TestRoot_LogLevel_InvalidRejectedBeforeSubcommand pins that an invalid
+// --log-level is rejected before any subcommand runs, even one that would
+// otherwise short-circuit (--help never opens a Service, so without eager
+// validation a bad level was silently never seen).
+func TestRoot_LogLevel_InvalidRejectedBeforeSubcommand(t *testing.T) {
+	// `lmm --log-level loud game list --help` must fail with the flag error and exit code 1,
+	// not print help (pre-fix: --help never opens a Service, so the bad level is never seen).
+	var out, errb bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&errb)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); logLevel = "off" })
+	rootCmd.SetArgs([]string{"--log-level", "loud", "game", "list", "--help"})
+	err := rootCmd.ExecuteContext(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid --log-level "loud"`)
+	assert.NotContains(t, out.String(), "Usage:")
+}
+
+// TestRoot_LogLevel_InvalidRejectedBeforeVersion pins that PersistentPreRunE
+// on rootCmd runs for every subcommand, including built-in ones like
+// --version, since no subcommand in this tree defines its own
+// PersistentPreRun(E) to shadow it (cobra runs only the nearest one in the
+// command chain).
+func TestRoot_LogLevel_InvalidRejectedBeforeVersion(t *testing.T) {
+	var out, errb bytes.Buffer
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(&errb)
+	t.Cleanup(func() { rootCmd.SetOut(nil); rootCmd.SetErr(nil); logLevel = "off" })
+	rootCmd.SetArgs([]string{"--log-level", "loud", "--version"})
+	err := rootCmd.ExecuteContext(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid --log-level "loud"`)
 }

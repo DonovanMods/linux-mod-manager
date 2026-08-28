@@ -27,3 +27,30 @@ func newCLILogger(level string, w io.Writer) (*slog.Logger, error) {
 	}
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: lvl})), nil
 }
+
+// logLevelFlag is a pflag.Value wrapping --log-level's destination string.
+// Cobra checks --help and (when Version is set) --version at the top of a
+// command's execute(), immediately after ParseFlags but before ever walking
+// the parent chain for PersistentPreRunE - so `lmm --log-level loud <sub>
+// --help` (or a bare `--log-level loud --version`) would reach neither
+// rootCmd's PersistentPreRunE nor any RunE, silently letting the bad level
+// through. Validating in Set makes ParseFlags itself fail on the bad value,
+// which cobra checks first, before either short-circuit.
+type logLevelFlag struct{ dest *string }
+
+func (f logLevelFlag) String() string {
+	if f.dest == nil {
+		return ""
+	}
+	return *f.dest
+}
+
+func (f logLevelFlag) Set(v string) error {
+	if _, err := newCLILogger(v, io.Discard); err != nil {
+		return err
+	}
+	*f.dest = v
+	return nil
+}
+
+func (f logLevelFlag) Type() string { return "string" }

@@ -87,6 +87,18 @@ FILES
 	Version:       computeDisplayVersion(version, buildDescribe),
 	SilenceUsage:  true, // Runtime errors should not print usage
 	SilenceErrors: true, // We handle error output in Execute()
+
+	// PersistentPreRunE validates --log-level before any subcommand runs
+	// (including --version and --help), so an invalid level is rejected up
+	// front instead of only surfacing if and when the subcommand happens to
+	// open a Service. No subcommand in this tree defines its own
+	// PersistentPreRun(E), so cobra never skips this one in favor of a
+	// nearer override. newCLILogger's returned logger is discarded here;
+	// initServiceWith re-validates (idempotently) when it builds the real one.
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		_, err := newCLILogger(logLevel, io.Discard)
+		return err
+	},
 }
 
 // computeDisplayVersion returns the version string shown to the user for
@@ -112,7 +124,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "off", "diagnostic log level written to stderr (off, error, warn, info, debug)")
+	logLevel = "off"
+	rootCmd.PersistentFlags().Var(logLevelFlag{&logLevel}, "log-level", "diagnostic log level written to stderr (off, error, warn, info, debug)")
 }
 
 // stdoutColorCapable reports whether the live os.Stdout is a color-capable
