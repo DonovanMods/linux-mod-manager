@@ -52,6 +52,24 @@ func setupRollbackReadyMod(t *testing.T) (*core.Service, *domain.Game, *domain.I
 	return svc, game, updated
 }
 
+// TestDoUpdateRollback_NotInstalled_ReturnsExactError guards doUpdateRollback's
+// own GetInstalledMod lookup, ahead of every other guard: a mod ID absent
+// from the profile must fail with the exact pre-extraction error text,
+// before the header ever prints (v2 Phase 2 Unit I Task 10 characterization,
+// #289 - this branch previously had no dedicated capture).
+func TestDoUpdateRollback_NotInstalled_ReturnsExactError(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+
+	var callErr error
+	out := captureStdout(t, func() error {
+		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
+		return nil
+	})
+	require.Error(t, callErr)
+	assert.Equal(t, "mod not found: mod1", callErr.Error())
+	assert.Empty(t, out, "the header must never print when this guard fails")
+}
+
 // TestDoUpdateRollback_NoPreviousVersion_ReturnsExactError guards the first
 // guard doUpdateRollback checks: a mod with no PreviousVersion (never
 // updated) must fail with the exact pre-extraction error text, before any

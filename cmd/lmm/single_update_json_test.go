@@ -290,6 +290,49 @@ func TestDoUpdateRollback_JSON_GuardErrorNoDocument(t *testing.T) {
 	assert.Empty(t, out, "the guard error must never emit a JSON document")
 }
 
+// TestDoUpdateRollback_JSON_NotInstalled_GuardErrorNoDocument covers the
+// "mod not found" guard under --json (v2 Phase 2 Unit I Task 10
+// characterization, #289 - this branch previously had no dedicated capture):
+// doUpdateRollback must fail before printing anything, JSON or otherwise -
+// matching TestDoUpdateRollback_NotInstalled_ReturnsExactError's non-JSON
+// assertion but for the --json path.
+func TestDoUpdateRollback_JSON_NotInstalled_GuardErrorNoDocument(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, _ := setupDoUpdateTest(t)
+
+	var callErr error
+	out := captureStdout(t, func() error {
+		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
+		return nil
+	})
+
+	require.Error(t, callErr)
+	assert.Equal(t, "mod not found: mod1", callErr.Error())
+	assert.Empty(t, out, "the guard error must never emit a JSON document")
+}
+
+// TestDoUpdateRollback_JSON_MissingCache_GuardErrorNoDocument covers the
+// "previous version not found in cache" guard under --json (v2 Phase 2 Unit
+// I Task 10 characterization, #289 - this branch previously had no
+// dedicated capture): doUpdateRollback must fail before printing anything,
+// JSON or otherwise - matching TestDoUpdateRollback_MissingCache_ReturnsExactError's
+// non-JSON assertion but for the --json path.
+func TestDoUpdateRollback_JSON_MissingCache_GuardErrorNoDocument(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, _ := setupRollbackReadyMod(t)
+	require.NoError(t, svc.GetGameCache(game).Delete("g1", "test-src", "mod1", "1.0"))
+
+	var callErr error
+	out := captureStdout(t, func() error {
+		callErr = doUpdateRollback(context.Background(), svc, game, "mod1")
+		return nil
+	})
+
+	require.Error(t, callErr)
+	assert.Equal(t, "previous version 1.0 not found in cache", callErr.Error())
+	assert.Empty(t, out, "the guard error must never emit a JSON document")
+}
+
 // TestDoUpdate_JSON_ZeroInstalled_SingleMod is FIX 2's single-mod case:
 // doUpdate's "No mods installed." shortcut used to return nil (exit 0)
 // before --json ever got a look, silently swallowing what should be a
