@@ -273,7 +273,7 @@ conversion pipeline; there is no separate migration step to run.
 
 ## Configuration
 
-Configuration files are stored in `~/.config/lmm/`:
+Configuration files are stored in `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`; override with `--config`):
 
 ### Main Config (`config.yaml`)
 
@@ -347,7 +347,7 @@ The mod cache location is determined by:
 
 1. Per-game `cache_path` in `games.yaml` (if set)
 2. Global `cache_path` in `config.yaml` (if set)
-3. Default: `~/.local/share/lmm/cache/`
+3. Default: `<data>/cache/` (`~/.local/share/lmm/cache/` unless `XDG_DATA_HOME` is set)
 
 This allows you to store different games' mods on different drives (e.g., large games on HDD, frequently accessed games on SSD).
 
@@ -355,7 +355,7 @@ This allows you to store different games' mods on different drives (e.g., large 
 
 In addition to built-in mod sources (NexusMods, CurseForge), lmm lets you declare custom sources in YAML files instead of writing code. Three types are fully implemented: `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list you publish, over `https://` or as a local file), and `api` (a GET+JSON REST API described declaratively) — all three work from `search`/`install`/`update` like any built-in source (within each type's capabilities), and `manifest`/`api` sources also support optional API-key authentication. Because `lmm search` queries every source configured for a game concurrently by default (see [Search](#search)), a game mapping several of these alongside NexusMods/CurseForge surfaces results from all of them in one query.
 
-Custom source definitions are loaded from `~/.config/lmm/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
+Custom source definitions are loaded from `<config>/sources/*.yaml` (or `*.yml`). Each file must define exactly one source. Broken definition files are skipped with a warning — they never prevent lmm from starting.
 
 ### Source Definition Format
 
@@ -974,13 +974,17 @@ internal/
 
 ## File Locations
 
-| Type             | Path                                                                         |
-| ---------------- | ---------------------------------------------------------------------------- |
-| Config           | `~/.config/lmm/`                                                             |
-| Custom Sources   | `~/.config/lmm/sources/*.yaml`                                               |
-| Database         | `~/.local/share/lmm/lmm.db`                                                  |
-| Mod Cache        | `~/.local/share/lmm/cache/` (default)                                        |
-| Download Staging | `~/.local/share/lmm/downloads/` (in-flight downloads and archive extraction) |
+lmm follows the XDG Base Directory specification. `--config` and `--data` override the resolved directories; `cache_path` in `config.yaml` overrides the cache.
+
+| Type             | Path                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| Config           | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                               |
+| Custom Sources   | `<config>/sources/*.yaml`                                                                        |
+| Database         | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                |
+| Mod Cache        | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download) |
+| Download Staging | `<data>/downloads/` (in-flight downloads and archive extraction)                                 |
+
+If an XDG variable is set but `$XDG_…/lmm` does not exist yet and the legacy `~/.config/lmm` or `~/.local/share/lmm` does, the legacy directory is used, so existing installs keep working after setting the variables. Move the directory to adopt the XDG location.
 
 The mod cache location can be customized via `cache_path` in `config.yaml`. Setting a per-game `cache_path` in `games.yaml` changes that game's on-disk layout too: the global cache is `cache/<game-id>/<source-id>-<mod-id>/<version>/`, but a game-scoped `cache_path` drops the `<game-id>` segment since the configured directory is already specific to that game (`<cache_path>/<source-id>-<mod-id>/<version>/`).
 

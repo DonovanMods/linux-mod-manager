@@ -8,6 +8,7 @@ import (
 	"sort"
 	"text/tabwriter"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -23,8 +24,9 @@ var sourceCmd = &cobra.Command{
 
 Custom sources (directory scans, static manifests, or REST APIs) are
 defined as YAML files in the sources/ directory under the config dir
-(~/.config/lmm/sources/*.yaml by default) - see the Custom Sources
-section of the project README for the file format.`,
+(sources/*.yaml under the config directory; see the FILES section of
+'lmm --help') - see the Custom Sources section of the project README for
+the file format.`,
 }
 
 // sourceInfo is one row of `lmm source list` output.
@@ -67,13 +69,9 @@ Examples:
 		// registerCustomSources' init-time stderr warnings would double up on
 		// the error rows rendered below (#52 item 14): the same broken
 		// definition would otherwise be reported once on stderr and once as a
-		// row. Silence the warnings for the duration of this command's own
-		// service init; the rows below are the canonical report here.
-		prevWarnOut := customSourceWarnOut
-		customSourceWarnOut = io.Discard
-		defer func() { customSourceWarnOut = prevWarnOut }()
-
-		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+		// row. Silence the warnings for this command's own service init; the
+		// rows below are the canonical report here.
+		return withServiceOpts(cmd, app.Options{WarnWriter: io.Discard}, func(ctx context.Context, svc *core.Service) error {
 			cfg, err := getServiceConfig()
 			if err != nil {
 				return err
@@ -260,13 +258,9 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 		return fmt.Errorf("probe: constructing source: %w", err)
 	}
 	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
-		// envKeyFor(src) rather than envKeyForSourceID(def.ID) directly: today
-		// no custom type implements EnvKeyProvider, so both resolve to the
-		// same derived LMM_<ID>_API_KEY name and behavior is unchanged - but
-		// routing through envKeyFor keeps this call from silently diverging
-		// from every other env-key lookup in the codebase if a custom source
-		// ever does implement EnvKeyProvider.
-		if key := getSourceAPIKey(svc, def.ID, envKeyFor(src)); key != "" {
+		// Same resolution as registration (env var named by EnvKeyFor, then
+		// the stored token), so a probe sees exactly the key a real run would.
+		if key := app.ResolveAPIKey(svc, src); key != "" {
 			a.SetAPIKey(key)
 		}
 	}

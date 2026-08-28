@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
@@ -110,7 +111,7 @@ func init() {
 
 // authCapableSources returns every registered source whose
 // CapabilitiesOf(src).Auth is true, sorted by ID. Built-ins are always
-// registered (registerSources in root.go runs unconditionally), so they
+// registered (app.Open registers them unconditionally), so they
 // always appear here alongside any auth-capable custom source - the
 // interactive picker, `auth status`, and the "unsupported source" error
 // hint all derive their source list from this single registry query,
@@ -358,7 +359,7 @@ func doAuthStatus(service *core.Service) error {
 			continue
 		}
 
-		envKey := envKeyFor(src)
+		envKey := app.EnvKeyFor(src)
 		if apiKey := os.Getenv(envKey); apiKey != "" {
 			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", src.Name(), id, envKey, maskAPIKey(apiKey))
 			continue
@@ -397,21 +398,15 @@ func doAuthStatus(service *core.Service) error {
 // printAuthInstructions prints setup steps for obtaining src's API key: its
 // own AuthInstructionsProvider text when implemented (built-ins preserve
 // their exact wording), otherwise generic instructions naming the
-// environment variable envKeyFor resolves for src.
+// environment variable app.EnvKeyFor resolves for src.
 func printAuthInstructions(src source.ModSource) {
 	if p, ok := src.(source.AuthInstructionsProvider); ok {
 		fmt.Print(p.AuthInstructions())
 	} else {
 		fmt.Printf("Enter the API key for %s.\n", src.ID())
-		fmt.Printf("(Alternatively, set the %s environment variable.)\n", envKeyFor(src))
+		fmt.Printf("(Alternatively, set the %s environment variable.)\n", app.EnvKeyFor(src))
 	}
 	fmt.Println()
-}
-
-// envKeyForSourceID derives the env var that can supply a custom source's API
-// key: LMM_<ID>_API_KEY with the ID uppercased and dashes as underscores.
-func envKeyForSourceID(sourceID string) string {
-	return "LMM_" + strings.ReplaceAll(strings.ToUpper(sourceID), "-", "_") + "_API_KEY"
 }
 
 // readAPIKey prompts for and reads an API key from the terminal

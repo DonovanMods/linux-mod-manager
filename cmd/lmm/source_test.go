@@ -268,7 +268,7 @@ directory:
 
 // TestSourceInfoRows_EmptyJSONEncode pins the JSON contract for `source list
 // --json`: a zero-length row slice must encode as `[]`, never `null` (#52
-// item 13). This is unreachable through the CLI today — registerSources
+// item 13). This is unreachable through the CLI today — app.Open
 // always registers the built-in sources before sourceListCmd builds its row
 // slice, so rows is never actually empty at runtime — so this exercises the
 // encoding contract directly, guarding against a future regression back to
@@ -391,7 +391,7 @@ func TestSourceTypeLabel_AllRealTypesPlusBareMock(t *testing.T) {
 // same TypeLabel()-derived values in its TYPE column, alongside both
 // built-ins (always registered). A bare mock can't be exercised here — the
 // real registration pipeline only ever constructs sources via
-// registerSources' built-in factories or custom.New, both of which always
+// app's built-in factories or custom.New, both of which always
 // return a TypeLabeler — so that fallback stays covered at the unit level
 // above only.
 func TestSourceListCmd_TypeColumnFromTypeLabeler(t *testing.T) {

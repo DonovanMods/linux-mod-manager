@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 // test fails in a subset run, that guard has been removed or broken.
 func TestPackageGlobals_HermeticDefaults(t *testing.T) {
 	require.NotEmpty(t, configDir,
-		"configDir is empty: getServiceConfig would fall back to the real ~/.config/lmm")
+		"configDir is empty: getServiceConfig would fall back to the real $XDG_CONFIG_HOME/lmm (~/.config/lmm)")
 	require.NotEmpty(t, dataDir,
-		"dataDir is empty: getServiceConfig would fall back to the real ~/.local/share/lmm")
+		"dataDir is empty: getServiceConfig would fall back to the real $XDG_DATA_HOME/lmm (~/.local/share/lmm)")
 }

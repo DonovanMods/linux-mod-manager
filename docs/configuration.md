@@ -1,6 +1,6 @@
 # Configuration Reference
 
-lmm uses YAML configuration files under `~/.config/lmm/` (or the directory set with `--config`).
+lmm uses YAML configuration files under `$XDG_CONFIG_HOME/lmm/` — `~/.config/lmm/` by default — or the directory set with `--config`.
 
 `link_method` and `deploy_mode` fields (in `config.yaml`, `games.yaml`, and profile files) are validated at load time: leaving one unset keeps its documented default, but a value that doesn't exactly match one of the listed options — a typo like `deploy_mode: compil` — is a load-time error naming the field, the offending value, and the valid options, not a silent fallback.
 
@@ -13,7 +13,7 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `default_link_method` | string | `symlink` | How to deploy mods: `symlink`, `hardlink`, or `copy`                                                 |
 | `default_game`        | string | (empty)   | Game ID to use when `--game` is not specified                                                        |
 | `keybindings`         | string | `vim`     | Ignored. Kept so existing config files that set it still parse (it was reserved for the removed TUI) |
-| `cache_path`          | string | (empty)   | Override default mod cache directory (`~/.local/share/lmm/cache`)                                    |
+| `cache_path`          | string | (empty)   | Override default mod cache directory (`<data dir>/cache`)                                            |
 | `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
 
 ## games.yaml
@@ -78,7 +78,7 @@ games:
 
 ## Profile files
 
-Profiles are stored under `~/.config/lmm/games/<game-id>/profiles/<name>.yaml`.
+Profiles are stored under `<config>/games/<game-id>/profiles/<name>.yaml`.
 
 | Option        | Type   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,7 +107,7 @@ Import preserves load order, link method, and overrides; missing mods can be ins
 
 Used by `lmm game detect` to know which Steam games are moddable. The app ships with a built-in list; you can add or override entries by creating:
 
-**`~/.config/lmm/steam-games.yaml`**
+**`<config>/steam-games.yaml`**
 
 Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and two more optional fields, `deploy_mode` and `sources`, that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources` (omit both for the default `{nexusmods: <nexus_id>}` sources map and `extract` deploy mode every entry got before these existed). Example:
 
@@ -135,20 +135,22 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 
 ## File locations
 
-| Path                                            | Description                                                             |
-| ----------------------------------------------- | ----------------------------------------------------------------------- |
-| `~/.config/lmm/config.yaml`                     | Global config                                                           |
-| `~/.config/lmm/games.yaml`                      | Game definitions                                                        |
-| `~/.config/lmm/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override)                  |
-| `~/.config/lmm/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
-| `~/.config/lmm/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
-| `~/.local/share/lmm/lmm.db`                     | SQLite database (metadata, tokens)                                      |
-| `~/.local/share/lmm/cache/`                     | Mod file cache (or `cache_path` override)                               |
-| `~/.local/share/lmm/downloads/`                 | Staging area for in-flight downloads and archive extraction             |
+`<config>` is `$XDG_CONFIG_HOME/lmm` (default `~/.config/lmm`); `<data>` is `$XDG_DATA_HOME/lmm` (default `~/.local/share/lmm`).
+
+| Path                                       | Description                                                             |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `<config>/config.yaml`                     | Global config                                                           |
+| `<config>/games.yaml`                      | Game definitions                                                        |
+| `<config>/steam-games.yaml`                | Optional: Steam games for `game detect` (add/override)                  |
+| `<config>/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
+| `<config>/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
+| `<data>/lmm.db`                            | SQLite database (metadata, tokens)                                      |
+| `<data>/cache/`                            | Mod file cache (or `cache_path` override)                               |
+| `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
 
 ## Custom Sources
 
-In addition to the built-in sources below (NexusMods, CurseForge), lmm can load user-defined sources from `~/.config/lmm/sources/*.yaml` — `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list), and `api` (a declarative REST API). This file only lists the built-in sources' `games.yaml` conventions; the custom-source YAML format, field reference, and authentication are documented in the README's **[Custom Sources](../README.md#custom-sources)** section.
+In addition to the built-in sources below (NexusMods, CurseForge), lmm can load user-defined sources from `<config>/sources/*.yaml` — `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list), and `api` (a declarative REST API). This file only lists the built-in sources' `games.yaml` conventions; the custom-source YAML format, field reference, and authentication are documented in the README's **[Custom Sources](../README.md#custom-sources)** section.
 
 ## Mod Sources
 

@@ -31,23 +31,28 @@ EXIT CODES
 FILES
 
 .EX
-~/.config/lmm/        Configuration: games.yaml, config.yaml, per-game
-                      profiles, and sources/*.yaml (custom source
-                      definitions). Override with --config.
-~/.local/share/lmm/   Data: lmm.db (mod metadata and auth tokens),
-                      cache/ (downloaded and extracted mod files), and
-                      downloads/ (staging area for in-flight downloads
-                      and archive extraction). Override with --data.
+$XDG_CONFIG_HOME/lmm/   Configuration: games.yaml, config.yaml, per-game
+                        profiles, and sources/*.yaml (custom source
+                        definitions). Defaults to ~/.config/lmm.
+                        Override with --config.
+$XDG_DATA_HOME/lmm/     Data: lmm.db (mod metadata and auth tokens),
+                        cache/ (downloaded and extracted mod files), and
+                        downloads/ (staging area for in-flight downloads
+                        and archive extraction). Defaults to
+                        ~/.local/share/lmm. Override with --data.
+
+When an XDG variable is set but its lmm directory does not exist yet and
+the legacy default does, the legacy directory is used.
 .EE
 
 
 .SH OPTIONS
 \fB--config\fP=""
-	config directory (default: ~/.config/lmm)
+	config directory (default: $XDG_CONFIG_HOME/lmm or ~/.config/lmm)
 
 .PP
 \fB--data\fP=""
-	data directory (default: ~/.local/share/lmm)
+	data directory (default: $XDG_DATA_HOME/lmm or ~/.local/share/lmm)
 
 .PP
 \fB-g\fP, \fB--game\fP=""
