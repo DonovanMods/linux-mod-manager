@@ -301,6 +301,13 @@ func (c *CurseForge) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID
 
 // CheckUpdates checks for available updates.
 func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	return c.CheckUpdatesWithProgress(ctx, installed, nil)
+}
+
+// CheckUpdatesWithProgress is CheckUpdates plus a per-mod progress callback
+// (source.UpdateProgressReporter); report is called with a 1-based index
+// before each mod's remote lookup. report may be nil.
+func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
 	var updates []domain.Update
 	var fetchErrs []error
 
@@ -311,8 +318,8 @@ func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.Instal
 		default:
 		}
 
-		if fn, ok := ctx.Value(domain.UpdateProgressContextKey).(domain.UpdateProgressFunc); ok && fn != nil {
-			fn(i+1, len(installed), inst.Name)
+		if report != nil {
+			report(i+1, len(installed), inst.Name)
 		}
 
 		remoteMod, err := c.GetMod(ctx, inst.GameID, inst.ID)

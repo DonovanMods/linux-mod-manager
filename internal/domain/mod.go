@@ -7,15 +7,6 @@ import (
 	"time"
 )
 
-// UpdateProgressFunc is called during update checks with (current 1-based index, total count, mod name).
-// Set via context when running "lmm -v update" to get per-mod progress.
-type UpdateProgressFunc func(n, total int, modName string)
-
-type updateProgressKey struct{}
-
-// UpdateProgressContextKey is the context key for UpdateProgressFunc. Attach with context.WithValue.
-var UpdateProgressContextKey = &updateProgressKey{}
-
 // SourceLocal is the source ID for mods imported from local files
 const SourceLocal = "local"
 

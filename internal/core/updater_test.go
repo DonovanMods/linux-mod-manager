@@ -89,7 +89,7 @@ func TestUpdater_CheckUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.Equal(t, "2.0.0", updates[0].NewVersion)
@@ -125,7 +125,7 @@ func TestUpdater_CheckUpdates_NoUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
 	require.NoError(t, err)
 	assert.Empty(t, updates)
 }
@@ -155,7 +155,7 @@ func TestUpdater_CheckUpdates_PinnedModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
 	require.NoError(t, err)
 	assert.Empty(t, updates, "pinned mods should not show updates")
 }
@@ -177,7 +177,7 @@ func TestUpdater_CheckUpdates_LocalModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
 	require.NoError(t, err)
 	assert.Empty(t, updates, "local mods should not be checked for updates")
 }
@@ -217,12 +217,49 @@ func TestCheckUpdatesTranslatesGameIDPerSourceMapping(t *testing.T) {
 		{Mod: domain.Mod{ID: "b", SourceID: "my-repo", GameID: "skyrim-se", Version: "1.0"}},
 	}
 
-	_, err := u.CheckUpdates(context.Background(), game, installed)
+	_, err := u.CheckUpdates(context.Background(), game, installed, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"skyrimspecialedition"}, mapped.received)
 	assert.Equal(t, []string{"skyrim-se"}, unmapped.received)
 	// Caller's slice must be untouched.
 	assert.Equal(t, "skyrim-se", installed[0].GameID)
+}
+
+// reportingMockSource is a mock that reports per-mod progress like
+// nexusmods/curseforge do.
+type reportingMockSource struct {
+	updateMockSource
+}
+
+func (r *reportingMockSource) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
+	for i, m := range installed {
+		report(i+1, len(installed), m.Name)
+	}
+	return r.CheckUpdates(ctx, installed)
+}
+
+func TestUpdater_CheckUpdates_EmitsUpdateCheckEventsPerReportingSource(t *testing.T) {
+	registry := source.NewRegistry()
+	rs := &reportingMockSource{updateMockSource: updateMockSource{id: "rep"}}
+	registry.Register(rs)
+
+	updater := core.NewUpdater(registry)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "a", SourceID: "rep", Name: "A"}},
+		{Mod: domain.Mod{ID: "b", SourceID: "rep", Name: "B"}},
+	}
+
+	sink, got := core.RecordEvents()
+	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink)
+	require.NoError(t, err)
+	require.Len(t, *got, 2)
+	e := (*got)[0].(core.UpdateCheckEvent)
+	assert.Equal(t, core.OpUpdateCheck, e.Op)
+	assert.Equal(t, "rep", e.SourceID)
+	assert.Equal(t, "A", e.ModName)
+	assert.Equal(t, 1, e.Index)
+	assert.Equal(t, 2, e.Total)
 }
 
 func TestCompareVersions(t *testing.T) {

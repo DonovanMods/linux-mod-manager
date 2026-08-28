@@ -56,6 +56,18 @@ type ModSource interface {
 	CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error)
 }
 
+// UpdateProgressFunc reports one per-mod tick during an update check:
+// n is the 1-based index within the batch handed to the source, total the
+// batch size.
+type UpdateProgressFunc func(n, total int, modName string)
+
+// UpdateProgressReporter is implemented by sources that check mods one at
+// a time and can report progress. Core uses it when present and falls
+// back to ModSource.CheckUpdates otherwise.
+type UpdateProgressReporter interface {
+	CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report UpdateProgressFunc) ([]domain.Update, error)
+}
+
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade
 // gracefully (hide the action, show a notice) rather than treat it as a failure.

@@ -25,8 +25,11 @@ func NewUpdater(registry *source.Registry) *Updater {
 // the source-ID mapping: installed rows persist the lmm game ID, but sources
 // like NexusMods address games by their own domain, so each source's batch is
 // translated via game.SourceIDs before the call (empty mapping = keep the lmm
-// id, matching the search-side semantics in Service.SearchMods/GetMod).
-func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod) ([]domain.Update, error) {
+// id, matching the search-side semantics in Service.SearchMods/GetMod). sink
+// receives an UpdateCheckEvent per mod from sources that implement
+// source.UpdateProgressReporter (nexusmods, curseforge); a nil sink, or a
+// source without the optional interface, emits nothing.
+func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink) ([]domain.Update, error) {
 	var checkable []domain.InstalledMod
 	for _, mod := range installed {
 		if UpdateCheckable(mod) {
@@ -72,7 +75,14 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 			}
 		}
 
-		updates, err := src.CheckUpdates(ctx, mods)
+		var updates []domain.Update
+		if rep, ok := src.(source.UpdateProgressReporter); ok && sink != nil {
+			updates, err = rep.CheckUpdatesWithProgress(ctx, mods, func(n, total int, name string) {
+				sink(UpdateCheckEvent{Scope: Scope{Op: OpUpdateCheck, ModName: name, Index: n, Total: total}, SourceID: sourceID})
+			})
+		} else {
+			updates, err = src.CheckUpdates(ctx, mods)
+		}
 		allUpdates = append(allUpdates, updates...)
 		if err != nil {
 			checkErrs = append(checkErrs, fmt.Errorf("source %s: %w", sourceID, err))
@@ -158,9 +168,10 @@ func IsNewerVersion(currentVersion, newVersion string) bool {
 // Errors from either half are tolerated the same way CheckUpdates already
 // tolerates a single source failing: whatever updates were found are still
 // returned, with the first non-nil error surfaced (checkErr takes priority
-// as the richer, multi-source diagnostic when both fail).
-func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod) ([]domain.Update, error) {
-	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed)
+// as the richer, multi-source diagnostic when both fail). sink is passed
+// straight through to Updater.CheckUpdates.
+func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink) ([]domain.Update, error) {
+	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed, sink)
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)
 	if staleErr != nil && checkErr == nil {
