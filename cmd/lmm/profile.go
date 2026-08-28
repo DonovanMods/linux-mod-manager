@@ -9,7 +9,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -772,12 +771,12 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 	if err != nil {
 		return err
 	}
-	profile, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("loading profile: %w", err)
-	}
 
 	if len(args) == 0 {
+		profile, err := getProfileManager(service).Get(game.ID, profileName)
+		if err != nil {
+			return fmt.Errorf("loading profile: %w", err)
+		}
 		// Show current load order
 		if len(profile.Mods) == 0 {
 			fmt.Printf("No mods in profile %s.\n", profileName)
@@ -810,55 +809,10 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 		return nil
 	}
 
-	// Set new order: args are mod IDs (or "source:modid") in desired order (first = lowest priority).
-	// Key by sourceID:modID so mods from different sources with the same ModID are not overwritten.
-	byKey := make(map[string]domain.ModReference)
-	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		byKey[key] = ref
-	}
-	var newRefs []domain.ModReference
-	seen := make(map[string]bool)
-	for _, id := range args {
-		var ref domain.ModReference
-		var key string
-		if strings.Contains(id, ":") {
-			key = id
-			var ok bool
-			ref, ok = byKey[key]
-			if !ok {
-				return fmt.Errorf("mod %s not in profile", id)
-			}
-		} else {
-			// Look up by ModID only; ambiguous if multiple sources have this ModID
-			var matches []string
-			for k, r := range byKey {
-				if r.ModID == id {
-					matches = append(matches, k)
-				}
-			}
-			switch len(matches) {
-			case 0:
-				return fmt.Errorf("mod %s not in profile", id)
-			case 1:
-				key = matches[0]
-				ref = byKey[key]
-			default:
-				return fmt.Errorf("ambiguous mod id %s (use source:modid): %s", id, strings.Join(matches, ", "))
-			}
-		}
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		newRefs = append(newRefs, ref)
-	}
-	// Append mods not mentioned in args (unchanged relative order)
-	for _, ref := range profile.Mods {
-		key := ref.SourceID + ":" + ref.ModID
-		if !seen[key] {
-			newRefs = append(newRefs, ref)
-		}
+	// args are mod IDs (or "source:modid") in desired order (first = lowest priority).
+	newRefs, err := service.ResolveReorder(ctx, game, profileName, args)
+	if err != nil {
+		return err
 	}
 
 	if err := service.ReorderProfileMods(ctx, game.ID, profileName, newRefs); err != nil {
