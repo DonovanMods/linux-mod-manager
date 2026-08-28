@@ -13,7 +13,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -836,14 +835,15 @@ func runUpdateRollback(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// doUpdateRollback resolves the target mod -> prints its own
-// "Rolling back %s %s → %s..." header (using its own GetInstalledMod call,
-// which also reproduces doUpdateRollback's pre-extraction guard errors
-// verbatim: "mod not found: %s" and, before ApplyRollback is ever called,
-// the same PreviousVersion/cache-existence checks ApplyRollback repeats
-// internally - so the header never prints when either guard would fail,
-// matching the pre-extraction ordering exactly; a locked mod is likewise
-// refused as a skip before the header, #143) -> calls
+// doUpdateRollback resolves the target mod via Service.PlanRollback, which
+// computes the pre-extraction CLI's four pre-checks (installed, previous
+// version, lock state, cache existence) in one call instead of doUpdateRollback
+// hand-rolling them (#289) -> prints its own "Rolling back %s %s → %s..."
+// header from the plan's own fields (the guard errors "mod not found: %s"
+// and "no previous version available for rollback" are PlanRollback errors,
+// so the header never prints when either fails, matching the pre-extraction
+// ordering exactly; a cache-missing or locked mod is likewise refused/
+// skipped from plan data before the header, #143) -> calls
 // Service.ApplyRollback, printing from its progress events exactly like
 // applyUpdate does for ApplyUpdate (forced-hook warnings, after_each hook
 // warnings, and the --verbose-gated link-method note all reuse the SAME
@@ -862,20 +862,16 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		return err
 	}
 
-	// Get the installed mod - kept CLI-side for the header below (see this
-	// function's doc comment); ApplyRollback fetches it again internally.
-	mod, err := service.GetInstalledMod(ctx, updateSource, modID, game.ID, profileName)
+	plan, err := service.PlanRollback(ctx, game, profileName, updateSource, modID)
 	if err != nil {
-		return fmt.Errorf("mod not found: %s", modID)
+		if errors.Is(err, domain.ErrModNotFound) {
+			return fmt.Errorf("mod not found: %s", modID)
+		}
+		return err
 	}
 
-	if mod.PreviousVersion == "" {
-		return fmt.Errorf("no previous version available for rollback")
-	}
-
-	// Check if previous version exists in cache
-	if !service.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion) {
-		return fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
+	if plan.CacheMissing {
+		return fmt.Errorf("previous version %s not found in cache", plan.ToVersion)
 	}
 
 	// #143: refuse a locked mod up front, mirroring applySingleUpdate's
@@ -884,26 +880,23 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// back..." header for a call that will never apply, treats the refusal
 	// as a skip (nil error / "skipped"+"locked" document) like the update
 	// path does, and names both remedy commands instead of surfacing the
-	// core gate's raw error. Same profile-load-failure semantics too: a
-	// missing/unreadable profile is treated as unlocked.
-	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
-		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
-			if jsonOutput {
-				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.PreviousVersion, Status: "skipped", Reason: "locked",
-				})
-			}
-			fmt.Printf("Rollback available: %s → %s — but %s is locked at v%s.\n", mod.Version, mod.PreviousVersion, mod.Name, ref.Version)
-			// -s/-p on both remedies for the same reason as applySingleUpdate's
-			// locked branch (#142 round 5): a bare copy-paste could resolve
-			// against the wrong profile or an ambiguous source.
-			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, mod.PreviousVersion, mod.SourceID, profileName, mod.ID)
-			return nil
+	// core gate's raw error.
+	if plan.Locked {
+		if jsonOutput {
+			return emitSingleUpdateJSON(singleUpdateJSON{
+				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.FromVersion, ToVersion: plan.ToVersion, Status: "skipped", Reason: "locked",
+			})
 		}
+		fmt.Printf("Rollback available: %s → %s — but %s is locked at v%s.\n", plan.FromVersion, plan.ToVersion, plan.Mod.Name, plan.LockedVersion)
+		// -s/-p on both remedies for the same reason as applySingleUpdate's
+		// locked branch (#142 round 5): a bare copy-paste could resolve
+		// against the wrong profile or an ambiguous source.
+		fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, plan.ToVersion, plan.Mod.SourceID, profileName, plan.Mod.ID)
+		return nil
 	}
 
 	if !jsonOutput {
-		fmt.Printf("Rolling back %s %s → %s...\n", mod.Name, mod.Version, mod.PreviousVersion)
+		fmt.Printf("Rolling back %s %s → %s...\n", plan.Mod.Name, plan.FromVersion, plan.ToVersion)
 	}
 
 	opts := core.RollbackOptions{
@@ -926,14 +919,14 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		}
 	}
 
-	result, err := service.ApplyRollback(ctx, game, profileName, mod.SourceID, mod.ID, opts, progress)
+	result, err := service.ApplyRollback(ctx, game, plan, opts, progress)
 	if err != nil {
 		return err
 	}
 
 	if jsonOutput {
 		return emitSingleUpdateJSON(singleUpdateJSON{
-			ModID: mod.ID, Name: result.ModName, FromVersion: result.FromVersion, ToVersion: result.ToVersion,
+			ModID: plan.Mod.ID, Name: result.ModName, FromVersion: result.FromVersion, ToVersion: result.ToVersion,
 			Status: "rolled_back",
 		})
 	}
