@@ -331,6 +331,22 @@ func TestApplySingleUpdate_HappyPath_PrintsExpectedOutput(t *testing.T) {
 	})
 }
 
+// TestApplySingleUpdate_UpToDate_PrintsExpectedText characterizes the
+// plain-text up-to-date branch (Update==nil, not pinned) before the Task 9
+// PlanUpdate lift - no existing test pinned this exact line.
+func TestApplySingleUpdate_UpToDate_PrintsExpectedText(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+	// No AddMod: fakeUpdateSource's CheckUpdates finds no registered mod, so
+	// no update is produced and the mod reports as current.
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	assert.Equal(t, "Mod One is already up to date (v1.0).\n", out)
+}
+
 // TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues guards doUpdate's own
 // loop: auto-policy updates apply automatically, a failure mid-batch prints
 // "✗ %s: %v" and CONTINUES to the next update (never aborts), and --all

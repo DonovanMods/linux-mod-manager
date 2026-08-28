@@ -162,6 +162,110 @@ func TestApplySingleUpdate_Recompile_JSON(t *testing.T) {
 	assert.Equal(t, "3.3", out.ToVersion)
 }
 
+// TestApplySingleUpdate_RecompileLocked_Text characterizes the recompile
+// branch's locked refusal (text) before the Task 9 PlanUpdate lift - no
+// existing test combined "recompile needed" with "locked".
+func TestApplySingleUpdate_RecompileLocked_Text(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	setLockedForUpdate(t, svc, game, "fake-compiler", "bear-mount", "3.3")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	assert.Contains(t, out, "Recompile needed for Bear Mount (base pak updated) — but it is locked at v3.3.")
+	assert.Contains(t, out, "Move the lock: lmm mod lock -s fake-compiler -p default bear-mount 3.3   |   Unlock: lmm mod unlock -s fake-compiler -p default bear-mount")
+	assert.NotContains(t, out, "Recompiling", "must never print the applying header - it never applies")
+	assert.Equal(t, 0, compiler.compileCalls, "a locked mod must never actually recompile")
+}
+
+// TestApplySingleUpdate_RecompileLocked_JSON is
+// TestApplySingleUpdate_RecompileLocked_Text's --json sibling.
+func TestApplySingleUpdate_RecompileLocked_JSON(t *testing.T) {
+	svc, game, _, _ := setupDoUpdateRecompileTest(t)
+	setLockedForUpdate(t, svc, game, "fake-compiler", "bear-mount", "3.3")
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	var doc singleUpdateJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	assert.Equal(t, "bear-mount", doc.ModID)
+	assert.Equal(t, "3.3", doc.FromVersion)
+	assert.Equal(t, "3.3", doc.ToVersion)
+	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "locked", doc.Reason)
+}
+
+// TestApplySingleUpdate_RecompileDryRun_Text characterizes the recompile
+// branch's --dry-run text (unlocked) before the Task 9 PlanUpdate lift - no
+// existing test drove this branch under --dry-run.
+func TestApplySingleUpdate_RecompileDryRun_Text(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	updateDryRun = true
+
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	assert.Equal(t, "Recompiling Bear Mount (base pak updated)...\n(dry-run: no changes applied)\n", out)
+	assert.Equal(t, 0, compiler.compileCalls, "dry-run must never actually recompile")
+}
+
+// TestApplySingleUpdate_RecompileDryRun_JSON is
+// TestApplySingleUpdate_RecompileDryRun_Text's --json sibling.
+func TestApplySingleUpdate_RecompileDryRun_JSON(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	updateDryRun = true
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	var doc singleUpdateJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	assert.Equal(t, "bear-mount", doc.ModID)
+	assert.Equal(t, "3.3", doc.FromVersion)
+	assert.Equal(t, "3.3", doc.ToVersion)
+	assert.Equal(t, "recompile_available", doc.Status)
+	assert.Equal(t, 0, compiler.compileCalls, "dry-run must never actually recompile")
+}
+
+// TestApplySingleUpdate_Recompile_PrintsExpectedText characterizes the
+// recompile branch's applied-success text before the Task 9 PlanUpdate lift:
+// TestApplySingleUpdate_Recompile_AppliesAndRedeploys proves the file-level
+// effect but never asserted the printed header/footer.
+func TestApplySingleUpdate_Recompile_PrintsExpectedText(t *testing.T) {
+	svc, game, _, _ := setupDoUpdateRecompileTest(t)
+
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	assert.Contains(t, out, "Recompiling Bear Mount (base pak updated)...\n")
+	assert.Contains(t, out, "\n✓ Recompiled: Bear Mount (base pak updated)\n")
+}
+
 // TestApplySingleUpdate_Recompile_PrintsMergeWarnings is the #197 M4
 // regression test: ApplyMergedPakRegen's merge warnings (e.g. an
 // asset-path collision - "a loud warning" per the CHANGELOG) travel

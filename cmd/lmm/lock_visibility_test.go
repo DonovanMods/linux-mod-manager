@@ -94,6 +94,54 @@ func TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth(t *testing.T) {
 	assert.Contains(t, out, "Unpin with: lmm mod set-update -s test-src -p default mod1 --notify", "the unpin remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
 }
 
+// TestApplySingleUpdate_LockedAndPinned_JSON is TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth's
+// --json sibling, characterized before the Task 9 PlanUpdate lift: the
+// document has no locked-distinguishing field for the pinned branch (unlike
+// the text branch's "(also locked)" suffix) - reason stays "pinned" whether
+// or not the mod is also locked.
+func TestApplySingleUpdate_LockedAndPinned_JSON(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned))
+	setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
+
+	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	var doc singleUpdateJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	assert.Equal(t, "mod1", doc.ModID)
+	assert.Equal(t, "1.0", doc.FromVersion)
+	assert.Empty(t, doc.ToVersion)
+	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "pinned", doc.Reason)
+}
+
+// TestApplySingleUpdate_LockedUpToDate_MessageUnchanged characterizes the
+// up-to-date branch's indifference to lock state before the Task 9 PlanUpdate
+// lift: unlike the pinned branch, the up-to-date message never gained a
+// "(also locked)" caveat, and this guards against the lift accidentally
+// adding one.
+func TestApplySingleUpdate_LockedUpToDate_MessageUnchanged(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+	setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
+	// No AddMod: the mod is up to date regardless of lock state.
+
+	out := captureStdout(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	assert.Equal(t, "Mod One is already up to date (v1.0).\n", out)
+}
+
 // TestApplySingleUpdate_UnlockedPinned_MessageUnchanged pins the counterpart:
 // a plain pinned (not locked) mod must NOT gain the "(also locked)" suffix -
 // this is one of pin_visibility_test.go's contract's siblings, guarding
