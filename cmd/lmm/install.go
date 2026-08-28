@@ -696,6 +696,11 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 			if verbose {
 				fmt.Printf("  %s\n", p.Detail)
 			}
+		case core.InstallMergedPakSyncFailed:
+			// The event carries the RAW error (#288: the multi-select path
+			// words this line differently) - this path's historical wording
+			// is the "syncing merged pak: " phrase core used to bake in.
+			fmt.Fprintf(os.Stderr, "Warning: syncing merged pak: %s\n", p.Detail)
 		case core.InstallWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
@@ -813,6 +818,11 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 			// failure, "Error: ..." for everything else) - see
 			// InstallDepSkipped's doc comment.
 			fmt.Printf("  %s\n", p.Detail)
+		case core.InstallLockRefusal:
+			// Detail is the refusal SENTENCE only (#288); this path has
+			// always printed the ErrModLocked-wrapped error, so it puts the
+			// sentinel back. The multi-select path prints the bare sentence.
+			fmt.Printf("  Skipped: %v: %s\n", core.ErrModLocked, p.Detail)
 		case core.InstallChecksumComputed:
 			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
 		case core.InstallDepConflictWarning:
@@ -834,6 +844,11 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 			if verbose {
 				fmt.Printf("  %s\n", p.Detail)
 			}
+		case core.InstallChecksumSaveFailed:
+			// Flush, not indented (#288) - the multi-select path indents it.
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.InstallMergedPakSyncFailed:
+			fmt.Fprintf(os.Stderr, "Warning: syncing merged pak: %s\n", p.Detail)
 		case core.InstallWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
@@ -966,10 +981,132 @@ func progressBar(percentage float64, width int) string {
 	return bar
 }
 
-// installMultipleMods handles installing multiple mods sequentially.
-// Delegates to batchInstallMods.
+// installMultipleMods installs `lmm install <query>`'s multi-select
+// selection: core plans the whole batch (PlanInstallMany), core executes it
+// (ApplyInstall's batch branch), and this function does nothing but render
+// the resulting event stream. It replaces the hand-rolled batchInstallMods
+// engine that used to live here (v2 Phase 2 Unit H, #288) - hooks, lock
+// gating, download, deploy, persistence and the merged-pak sync all moved
+// into internal/core, so `lmm serve` can drive the same flow.
+//
+// The wording below is this path's own, not doInstallBatch's, wherever the
+// two frozen contracts differ - the lock refusal (printed unwrapped here,
+// ErrModLocked-prefixed there), a failed checksum save (indented here,
+// flush there) and a failed merged-pak sync ("could not sync merged pak"
+// here, "syncing merged pak" there). Core emits the fact; each frontend
+// owns the sentence. Every other line is identical to doInstallBatch's, as
+// it always was - the two paths render the same BATCH engine.
 func installMultipleMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
-	return batchInstallMods(ctx, service, game, mods, profileName)
+	plan, err := service.PlanInstallMany(ctx, game, profileName, mods, installShowArchived)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Batch))
+
+	opts := core.InstallOptions{
+		// No TargetVersion/TargetFileIDs: --version/--file name a single
+		// mod, and this path is reached only from a multi-mod search
+		// selection, which has never had a per-mod file pin to honor.
+		SkipVerify: skipVerify,
+		Force:      installForce,
+		SkipHooks:  noHooks,
+	}
+
+	// pendingCompileMods buffers the display names of DeployCompile
+	// zero-file mods as InstallDepInstalled events arrive live - their
+	// "merged pak updated" claim can't be verified until the batch's SINGLE
+	// end-of-install sync (inside ApplyInstall) has actually run, which
+	// happens after every per-mod event has already streamed. Printed once
+	// ApplyInstall returns with the real outcome (#197 postsmoke Copilot
+	// review fix, #200).
+	var pendingCompileMods []string
+
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.InstallBeforeAllForced:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.InstallDepInstalling:
+			fmt.Printf("\n[%d/%d] Installing: %s v%s\n", p.Index, p.Total, p.ModName, p.ModVersion)
+		case core.InstallDepReinstalling:
+			fmt.Printf("  Removing previous installation...\n")
+		case core.InstallDepFileSelected:
+			fmt.Printf("  File: %s\n", displayFileLabel(*p.File))
+		case core.InstallDepDownloading:
+			bar := progressBar(p.Percent, 20)
+			fmt.Printf("\r  [%s] %.1f%%", bar, p.Percent)
+		case core.InstallDepDownloadDone:
+			fmt.Println()
+		case core.InstallDepSkipped:
+			// Detail already carries its failure-type-specific, fully
+			// prefixed text verbatim ("Skipped: ..." for a hook failure,
+			// "Error: ..." for everything else).
+			fmt.Printf("  %s\n", p.Detail)
+		case core.InstallLockRefusal:
+			fmt.Printf("  Skipped: %s\n", p.Detail)
+		case core.InstallChecksumComputed:
+			fmt.Printf("  Checksum: %s\n", truncateChecksum(p.Detail))
+		case core.InstallDepConflictWarning:
+			fmt.Printf("  ⚠ %s\n", p.Detail)
+		case core.InstallDepInstalled:
+			// A DeployCompile ".exmodz" mod deploys zero files of its own by
+			// design (validate+retain only; the sync below is what actually
+			// deploys it) - see pendingCompileMods above.
+			if game.DeployMode == domain.DeployCompile && p.FilesExtracted == 0 {
+				pendingCompileMods = append(pendingCompileMods, p.ModName)
+			} else {
+				fmt.Printf("  ✓ Installed (%d files)\n", p.FilesExtracted)
+			}
+		case core.InstallNote:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		case core.InstallChecksumSaveFailed:
+			fmt.Fprintf(os.Stderr, "  Warning: %s\n", p.Detail)
+		case core.InstallMergedPakSyncFailed:
+			// Printed unconditionally, never --verbose-gated: if this had
+			// failed loudly the first time, the #197 postsmoke bug (content
+			// silently missing from the game) would have been noticed
+			// immediately.
+			fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %s\n", p.Detail)
+		case core.InstallWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		}
+	}
+
+	result, err := service.ApplyInstall(ctx, game, plan, opts, progress)
+	if err != nil {
+		// Diagnostics accumulated before a fatal error were already printed
+		// above, live, via progress. No ordinary per-mod failure reaches
+		// here - the batch engine records those in result.Failed/Skipped and
+		// the Summary below reports them; only a fatal one does (an
+		// unforced install.before_all failure, a profile that can't be
+		// created, an unresolvable link method, or a stale plan).
+		return err
+	}
+
+	// The batch's one merged-pak sync attempt (inside ApplyInstall) has now
+	// happened - print the deferred per-mod completion lines with the
+	// outcome finally known.
+	for _, name := range pendingCompileMods {
+		if result.MergedPakSyncFailed {
+			fmt.Printf("  ✓ %s: installed; merged pak sync FAILED — see warning above\n", name)
+		} else {
+			fmt.Printf("  ✓ %s: Installed (merged pak updated)\n", name)
+		}
+	}
+
+	fmt.Printf("\n--- Summary ---\n")
+	fmt.Printf("Installed: %d\n", len(result.Installed))
+	if len(result.Failed) > 0 {
+		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(result.Failed, ", "))
+	}
+
+	return nil
 }
 
 // parseRangeSelection parses a selection string like "1,3-5,8" or "1..3"
@@ -1099,277 +1236,4 @@ func truncateChecksum(checksum string) string {
 		return checksum[:12] + "..."
 	}
 	return checksum
-}
-
-// runInstallHook runs a named hook if configured. Returns an error if the hook fails.
-func runInstallHook(ctx context.Context, runner *core.HookRunner, hooks *core.ResolvedHooks, hookCtx *core.HookContext, hookName, command string) error {
-	if runner == nil || hooks == nil || command == "" {
-		return nil
-	}
-	hookCtx.HookName = hookName
-	_, err := runner.Run(ctx, command, *hookCtx)
-	return err
-}
-
-// batchInstallMods is the shared implementation for installing multiple mods
-// sequentially. Used by installMultipleMods (multi-select from search) -
-// dependency-resolved installs go through PlanInstall/ApplyInstall instead
-// as of Phase 5b Task 2 (see doInstall and ApplyInstall's doc comments for
-// why the two paths were unified there rather than here). Each mod's
-// SourceID is used for API calls (set during search/dep resolution).
-func batchInstallMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
-	fmt.Printf("\nInstalling %d mod(s)...\n", len(mods))
-
-	// Ensure profile exists
-	pm := getProfileManager(service)
-	if _, err := pm.Get(game.ID, profileName); err != nil {
-		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(game.ID, profileName); err != nil {
-				return fmt.Errorf("could not create profile: %w", err)
-			}
-		}
-	}
-
-	linkMethod, err := service.GetEffectiveLinkMethod(ctx, game, profileName)
-	if err != nil {
-		return err
-	}
-
-	// Set up hooks
-	hookRunner := getHookRunner(service)
-	resolvedHooks := getResolvedHooks(service, game, profileName)
-	hookCtx := makeHookContext(game)
-
-	// Run install.before_all hook
-	if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.before_all", resolvedHooks.GetInstallBeforeAll()); err != nil {
-		if !installForce {
-			return fmt.Errorf("install.before_all hook failed: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "Warning: install.before_all hook failed (forced): %v\n", err)
-	}
-
-	var installed, failed []string
-	var hookErrors []error
-	// pendingCompileMods buffers the display names of DeployCompile
-	// zero-file mods as they're installed - their "merged pak updated"
-	// claim can't be verified until the batch's one sync attempt, below
-	// the loop, actually runs (#197 postsmoke Copilot review fix, #200).
-	var pendingCompileMods []string
-
-	for i, mod := range mods {
-		fmt.Printf("\n[%d/%d] Installing: %s v%s\n", i+1, len(mods), mod.Name, mod.Version)
-
-		sourceID := mod.SourceID
-
-		// Run install.before_each hook
-		hookCtx.ModID = mod.ID
-		hookCtx.ModName = mod.Name
-		// Deliberately the mod-level version, not the #94 effective-file
-		// stamp: this hook fires before file selection below, unlike
-		// applyInstallPrimary (internal/core/flows.go) where the stamp is
-		// computed before its own hook fires. Not a bug to "fix" in either
-		// direction - each hook sees whatever version is actually known at
-		// its point in the flow.
-		hookCtx.ModVersion = mod.Version
-		if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.before_each", resolvedHooks.GetInstallBeforeEach()); err != nil {
-			fmt.Printf("  Skipped: install.before_each hook failed: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-
-		installer := service.NewInstallerWithLinker(game, service.GetLinker(linkMethod))
-
-		// Get and filter available files - derived ONCE, BEFORE the
-		// remove-previous block below (#143 review finding F1: the earlier
-		// shape fetched twice - a locked-ref pre-check fetch plus the normal
-		// path's own post-uninstall fetch - so a transient failure of the
-		// first fell through PAST the lock check and uninstalled the
-		// deployed lock target anyway, and a version published between the
-		// two fetches deployed a selection the lock check never judged).
-		// Deriving here also means ANY mod's fetch failure now skips while
-		// its previous installation is still intact.
-		files, err := service.GetModFiles(ctx, sourceID, mod)
-		if err != nil {
-			fmt.Printf("  Error: failed to get mod files: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-		files = core.FilterAndSortFiles(files, installShowArchived)
-		if len(files) == 0 {
-			fmt.Printf("  Error: no downloadable files available\n")
-			failed = append(failed, mod.Name)
-			continue
-		}
-		selectedFile := core.PrimaryFile(files)
-		mod.Version = domain.EffectiveInstalledVersion(mod.Version, []*domain.DownloadableFile{selectedFile}) // #94
-
-		// #143: a LOCKED profile ref converges only via explicit lock/unlock
-		// - skip BEFORE the remove-previous block below, so a locked
-		// reinstall-at-another-version never uninstalls the deployed lock
-		// target, and before any download/deploy. Judges the exact selection
-		// derived above - the one that would actually download. Mirrors
-		// core's ApplyInstall gate (internal/core/flows.go
-		// lockedInstallRefusal), with UpsertMod's ErrModLocked guard as the
-		// final backstop, and names -s/-p in both remedies for the same
-		// copy-paste-resolves-against-the-wrong-target reason as
-		// LockedRefRefusalError.
-		if prof, err := pm.Get(game.ID, profileName); err == nil {
-			if ref := prof.FindRef(sourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
-				fmt.Printf("  Skipped: %s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'\n",
-					mod.Name, ref.Version, profileName, sourceID, profileName, mod.ID, sourceID, profileName, mod.ID)
-				failed = append(failed, mod.Name)
-				continue
-			}
-		}
-
-		// Remove previous installation if re-installing
-		if existingMod, err := service.GetInstalledMod(ctx, sourceID, mod.ID, game.ID, profileName); err == nil && existingMod != nil {
-			fmt.Printf("  Removing previous installation...\n")
-			if err := installer.Uninstall(ctx, game, &existingMod.Mod, profileName); err != nil && verbose {
-				fmt.Printf("  Warning: could not remove old files: %v\n", err)
-			}
-			if err := service.GetGameCache(game).Delete(game.ID, existingMod.SourceID, existingMod.ID, existingMod.Version); err != nil && verbose {
-				fmt.Printf("  Warning: could not clear old cache: %v\n", err)
-			}
-		}
-
-		fmt.Printf("  File: %s\n", displayFileLabel(*selectedFile))
-
-		// Download
-		progressFn := func(e core.Event) {
-			if d, ok := e.(core.DownloadEvent); ok && d.TotalBytes > 0 {
-				bar := progressBar(d.Percent, 20)
-				fmt.Printf("\r  [%s] %.1f%%", bar, d.Percent)
-			}
-		}
-		downloadResult, err := service.DownloadMod(ctx, sourceID, game, mod, selectedFile, progressFn)
-		if err != nil {
-			fmt.Println()
-			fmt.Printf("  Error: download failed: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-		fmt.Println()
-
-		if !skipVerify && downloadResult.Checksum != "" {
-			fmt.Printf("  Checksum: %s\n", truncateChecksum(downloadResult.Checksum))
-		}
-
-		// Check conflicts in batch mode (warn but proceed)
-		if !installForce {
-			if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil && len(conflicts) > 0 {
-				fmt.Printf("  ⚠ %d file conflict(s) - will overwrite\n", len(conflicts))
-			}
-		}
-
-		// Deploy
-		if err := installer.Install(ctx, game, mod, profileName); err != nil {
-			fmt.Printf("  Error: deployment failed: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-
-		// Save to database. Normalize GameID to the lmm game (see comment on
-		// the single-mod save site above for why).
-		installedMod := &domain.InstalledMod{
-			Mod:          *mod,
-			ProfileName:  profileName,
-			UpdatePolicy: domain.UpdateNotify,
-			Enabled:      true,
-			Deployed:     true,
-			LinkMethod:   linkMethod,
-			FileIDs:      []string{selectedFile.ID},
-		}
-		installedMod.Mod.GameID = game.ID
-		if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
-			fmt.Printf("  Error: failed to save mod: %v\n", err)
-			failed = append(failed, mod.Name)
-			continue
-		}
-
-		// Store checksum
-		if !skipVerify && downloadResult.Checksum != "" {
-			if err := service.SaveFileChecksum(ctx, sourceID, mod.ID, game.ID, profileName, selectedFile.ID, downloadResult.Checksum); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: failed to save checksum: %v\n", err)
-			}
-		}
-
-		// Update profile
-		modRef := domain.ModReference{
-			SourceID: mod.SourceID,
-			ModID:    mod.ID,
-			Version:  mod.Version,
-			FileIDs:  []string{selectedFile.ID},
-		}
-		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil && verbose {
-			fmt.Printf("  Warning: could not update profile: %v\n", err)
-		}
-
-		// #197 postsmoke UX fix: see doInstall's identical fix - a
-		// DeployCompile ".exmodz" mod deploys zero files of its own by
-		// design (validate+retain only; the merged pak sync below is what
-		// actually deploys it). The "merged pak updated" half of that
-		// claim can't be printed yet (see pendingCompileMods above) -
-		// deferred until the sync below actually runs and its outcome is
-		// known.
-		if game.DeployMode == domain.DeployCompile && downloadResult.FilesExtracted == 0 {
-			pendingCompileMods = append(pendingCompileMods, mod.Name)
-		} else {
-			fmt.Printf("  ✓ Installed (%d files)\n", downloadResult.FilesExtracted)
-		}
-		installed = append(installed, mod.Name)
-
-		// Run install.after_each hook
-		if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.after_each", resolvedHooks.GetInstallAfterEach()); err != nil {
-			hookErrors = append(hookErrors, fmt.Errorf("install.after_each hook failed for %s: %w", mod.ID, err))
-		}
-	}
-
-	// Run install.after_all hook
-	hookCtx.ModID = ""
-	hookCtx.ModName = ""
-	hookCtx.ModVersion = ""
-	if err := runInstallHook(ctx, hookRunner, resolvedHooks, &hookCtx, "install.after_all", resolvedHooks.GetInstallAfterAll()); err != nil {
-		hookErrors = append(hookErrors, fmt.Errorf("install.after_all hook failed: %w", err))
-	}
-
-	printHookWarnings(hookErrors)
-
-	// #197 postsmoke fix (root cause): this whole function is a bespoke
-	// reimplementation of install/deploy that never went through
-	// Service.ApplyInstall, the ONLY seam that used to sync the merged pak
-	// - a DeployCompile game's ".exmodz" mod deploys zero files of its own
-	// (validate+retain only, Task 2/3), so a multi-select install left the
-	// merged pak generated in cache but NEVER DEPLOYED, with nothing to
-	// warn the user. Sync failures are printed unconditionally (not
-	// --verbose-gated): if this had failed loudly the first time, the user
-	// would have noticed immediately instead of silently missing content.
-	syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName)
-	if syncErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
-	} else {
-		for _, w := range syncWarnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
-	}
-
-	// The sync above has now happened - print the deferred per-mod
-	// completion lines pendingCompileMods buffered during the loop, with
-	// the outcome finally known (#197 postsmoke Copilot review fix, #200).
-	for _, name := range pendingCompileMods {
-		if syncErr != nil {
-			fmt.Printf("  ✓ %s: installed; merged pak sync FAILED — see warning above\n", name)
-		} else {
-			fmt.Printf("  ✓ %s: Installed (merged pak updated)\n", name)
-		}
-	}
-
-	// Summary
-	fmt.Printf("\n--- Summary ---\n")
-	fmt.Printf("Installed: %d\n", len(installed))
-	if len(failed) > 0 {
-		fmt.Printf("Failed: %d (%s)\n", len(failed), strings.Join(failed, ", "))
-	}
-
-	return nil
 }

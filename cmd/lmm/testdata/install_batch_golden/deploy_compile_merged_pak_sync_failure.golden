@@ -1,0 +1,69 @@
+## stdout
+
+Installing 2 mod(s)...
+
+[1/2] Installing: Bear Mount v1.0
+  File: Bear_Mount.exmodz
+  [████████████████████] 100.0%
+  Checksum: 05867933b1df...
+
+[2/2] Installing: Wolf Mount v1.0
+  File: Wolf_Mount.exmodz
+  [████████████████████] 100.0%
+  Checksum: 9771a4f5776b...
+  ✓ Bear Mount: installed; merged pak sync FAILED — see warning above
+  ✓ Wolf Mount: installed; merged pak sync FAILED — see warning above
+
+--- Summary ---
+Installed: 2
+## stderr
+Warning: could not sync merged pak: merging 2 merge source(s): assert.AnError general error for testing
+## error
+<nil>
+## state
+{
+  "installed_mods": [
+    {
+      "source_id": "test-src",
+      "id": "bear-mount",
+      "version": "1.0",
+      "enabled": true,
+      "deployed": true,
+      "file_ids": [
+        "bear-exmodz"
+      ],
+      "manual_download": false
+    },
+    {
+      "source_id": "test-src",
+      "id": "wolf-mount",
+      "version": "1.0",
+      "enabled": true,
+      "deployed": true,
+      "file_ids": [
+        "wolf-exmodz"
+      ],
+      "manual_download": false
+    }
+  ],
+  "profile_refs": [
+    {
+      "source_id": "test-src",
+      "mod_id": "bear-mount",
+      "version": "1.0",
+      "file_ids": [
+        "bear-exmodz"
+      ],
+      "locked": false
+    },
+    {
+      "source_id": "test-src",
+      "mod_id": "wolf-mount",
+      "version": "1.0",
+      "file_ids": [
+        "wolf-exmodz"
+      ],
+      "locked": false
+    }
+  ]
+}

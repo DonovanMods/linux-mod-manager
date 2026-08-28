@@ -9,12 +9,15 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
-// ErrNoDownloadableFiles is FilterAndSortFiles/PrimaryFile/
-// SelectFilesForVersion's sentinel for an empty file list - the mod's
-// source offers nothing to install/deploy. This text is part of the CLI
-// contract: cmd/lmm/profile.go's errNoDownloadableFiles and this package's
-// former errNoDeployFiles were hand-kept byte-identical before the two
-// copies were unified into this one sentinel.
+// ErrNoDownloadableFiles is SelectFilesForVersion's (and, beneath it,
+// selectDeployFiles') sentinel for an empty file list - the mod's source
+// offers nothing to install/deploy. FilterAndSortFiles and primaryFile
+// cannot return it: neither returns an error at all (an empty input yields
+// an empty slice and a nil *DownloadableFile respectively), so deciding
+// what "nothing left" means is their callers' job. This text is part of the
+// CLI contract: cmd/lmm/profile.go's errNoDownloadableFiles and this
+// package's former errNoDeployFiles were hand-kept byte-identical before
+// the two copies were unified into this one sentinel.
 var ErrNoDownloadableFiles = errors.New("no downloadable files")
 
 // ErrStoredFilesUnavailable is SelectFilesForVersion's sentinel for a
@@ -68,9 +71,17 @@ func installFileCategoryPriority(category string) int {
 	}
 }
 
-// PrimaryFile returns the primary file from files - the first with
+// primaryFile returns the primary file from files - the first with
 // IsPrimary set, else the first file - or nil for an empty slice.
-func PrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
+//
+// Unexported again in #288: #287 exported it for cmd/lmm's batchInstallMods
+// (the last cmd caller of the selection policy's primary-pick step), and
+// deleting that engine left it with no caller outside this package - the
+// phase plan's "a task that leaves a now-unused export is incomplete" ratchet.
+// The pick it makes is still the whole policy for a batch entry; it is just
+// reached through PlanInstallMany now. Re-export it if a frontend ever needs
+// the step on its own.
+func primaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
 	if len(files) == 0 {
 		return nil
 	}
@@ -224,7 +235,7 @@ func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string, 
 		if !allowFallback {
 			return nil, false, fmt.Errorf("%w (file ID(s): %s) - reinstall the mod or run 'lmm update' to adopt the current version", ErrStoredFilesUnavailable, strings.Join(storedFileIDs, ", "))
 		}
-		return []*domain.DownloadableFile{PrimaryFile(files)}, true, nil
+		return []*domain.DownloadableFile{primaryFile(files)}, true, nil
 	}
-	return []*domain.DownloadableFile{PrimaryFile(files)}, false, nil
+	return []*domain.DownloadableFile{primaryFile(files)}, false, nil
 }

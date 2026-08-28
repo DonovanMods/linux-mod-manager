@@ -1,0 +1,46 @@
+## stdout
+
+Installing 2 mod(s)...
+
+[1/2] Installing: Mod A v1.0
+  File: modA.esp
+  [████████████████████] 100.0%
+  Checksum: fbf39e016ee5...
+  ✓ Installed (1 files)
+
+[2/2] Installing: Mod B v2.0
+  Error: failed to get mod files: boom: files endpoint unavailable
+
+--- Summary ---
+Installed: 1
+Failed: 1 (Mod B)
+## stderr
+## error
+<nil>
+## state
+{
+  "installed_mods": [
+    {
+      "source_id": "test-src",
+      "id": "mod-a",
+      "version": "1.0",
+      "enabled": true,
+      "deployed": true,
+      "file_ids": [
+        "a-file"
+      ],
+      "manual_download": false
+    }
+  ],
+  "profile_refs": [
+    {
+      "source_id": "test-src",
+      "mod_id": "mod-a",
+      "version": "1.0",
+      "file_ids": [
+        "a-file"
+      ],
+      "locked": false
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 package core
 
 // Unit tests for selection.go's file-selection policy: FilterAndSortFiles,
-// PrimaryFile, and SelectFilesForVersion. Some cases (pickVersionMatch's
+// primaryFile, and SelectFilesForVersion. Some cases (pickVersionMatch's
 // tie-break tail) are pure functions of their inputs that the end-to-end
 // ApplyUpdate harness in flows_update_test.go cannot isolate without
 // dragging in install/deploy fixtures that add nothing here.
@@ -101,7 +101,7 @@ func TestPrimaryFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := PrimaryFile(tt.files)
+			result := primaryFile(tt.files)
 			assert.NotNil(t, result)
 			assert.Equal(t, tt.expected, result.ID)
 		})
@@ -110,7 +110,7 @@ func TestPrimaryFile(t *testing.T) {
 
 func TestPrimaryFile_EmptySlice(t *testing.T) {
 	var files []domain.DownloadableFile
-	result := PrimaryFile(files)
+	result := primaryFile(files)
 	assert.Nil(t, result)
 }
 

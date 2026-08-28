@@ -1490,7 +1490,7 @@ func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
 	})
 	src.AddDownload("main", []byte("plugin content"))
 
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 
 	installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
@@ -1498,9 +1498,10 @@ func TestBatchInstallMods_StampsSelectedFileVersion(t *testing.T) {
 }
 
 // TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall is
-// #143's guard for the CLI's OWN batch path (multi-select `lmm install`
-// results and resolved dependency lists route through batchInstallMods, not
-// core.ApplyInstall): re-installing a mod whose profile ref is LOCKED at a
+// #143's guard for the multi-select batch path (`lmm install <query>` with
+// several results selected; it had its own hand-rolled engine,
+// batchInstallMods, until #288 routed it through core.ApplyInstall's batch
+// branch like the dependency path): re-installing a mod whose profile ref is LOCKED at a
 // version other than what the source would now serve must skip the mod
 // BEFORE its remove-previous-installation step - previously it uninstalled
 // the deployed lock target, deployed the new latest, and swallowed
@@ -1515,7 +1516,7 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 	})
 	src.AddDownload("f1", []byte("v1 content"))
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 
 	pm := svc.NewProfileManager()
@@ -1530,7 +1531,7 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 
 	servedBefore := src.served.Load()
 	stdout, err := captureStdoutErr(t, func() error {
-		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+		return installMultipleMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
 	})
 	require.NoError(t, err, "batch semantics: a locked mod skips, the run itself succeeds")
 	assert.Contains(t, stdout, "locked at v1.0", "the skip line must name the lock")
@@ -1572,7 +1573,7 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 		{ID: "f1", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 	})
 	src.AddDownload("f1", []byte("v1 content"))
-	require.NoError(t, batchInstallMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
+	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 
 	pm := svc.NewProfileManager()
@@ -1584,7 +1585,7 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 
 	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
 	stdout, err := captureStdoutErr(t, func() error {
-		return batchInstallMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
+		return installMultipleMods(context.Background(), svc, game, []*domain.Mod{latest}, "default")
 	})
 	require.NoError(t, err, "batch semantics: a per-mod fetch failure skips, the run itself succeeds")
 	assert.Contains(t, stdout, "failed to get mod files", "the fetch failure must be reported")
