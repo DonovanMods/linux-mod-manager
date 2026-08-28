@@ -128,6 +128,13 @@ type InstallPlan struct {
 	// parameter on InstallOptions. "The plan is the contract."
 	ShowArchived bool `json:"show_archived"`
 
+	// Two items on the #288 brief's "Files → Modify" list are deliberately
+	// untouched by the batch engine below, not missed: InstallOptions'
+	// ConflictsBlock (both batch paths already warn-and-continue on
+	// conflicts, so a block flag would have no reader) and InstallResult
+	// (Skipped/Failed/Warnings/MergedPakSyncFailed already carry everything
+	// a batch install needs - see task-7-review.md Minor M1).
+
 	// Batch, when non-nil, makes this a MULTI-MOD plan produced by
 	// PlanInstallMany rather than PlanInstall, and ApplyInstall runs the
 	// batch engine over these entries, in order, instead of consulting

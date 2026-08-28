@@ -60,7 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`[]*InstallPlanEntry`), and every `ApplyInstall` now re-derives the installed-mod set its plan
   was computed against and refuses a stale one (`core.ErrStalePlan`). The install flow moved out
   of `flows.go` into `internal/core/install.go`. No user-visible change: CLI output and end state
-  are byte-identical, pinned by `cmd/lmm/testdata/install_batch_golden/`. (#288)
+  are byte-identical, pinned by `cmd/lmm/testdata/install_batch_golden/`. Behaviour note: because
+  every mod's metadata is now fetched at plan time, `install.before_all`/`install.before_each` run
+  after all of a batch's source reads rather than interleaved with them, matching the dependency
+  path's existing behaviour. (#288)
 
 ### Fixed
 
