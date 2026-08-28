@@ -74,7 +74,7 @@ mods:
 		DeployMode: domain.DeployCopy,
 		SourceIDs:  map[string]string{"e2e-repo": "skyrim"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := getProfileManager(svc)
 	_, err = pm.Create(game.ID, "default")

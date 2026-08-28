@@ -47,7 +47,7 @@ func TestCheckMergedPakStaleness_NilWhenNoMergedPakEverGenerated(t *testing.T) {
 func TestCheckMergedPakStaleness_NonCompileGame_Nil(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "skyrim-se", ModPath: t.TempDir(), DeployMode: domain.DeployExtract}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.Nil(t, upd)

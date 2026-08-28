@@ -294,7 +294,7 @@ func TestWithGameService_ResolvesGame(t *testing.T) {
 	// Seed the game via a one-off service so withGameService can resolve it.
 	svc, err := initService()
 	require.NoError(t, err)
-	require.NoError(t, svc.AddGame(&domain.Game{
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:      "testgame",
 		Name:    "Test Game",
 		ModPath: t.TempDir(),

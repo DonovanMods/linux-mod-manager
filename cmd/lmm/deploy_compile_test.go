@@ -26,7 +26,7 @@ func setupDoDeployCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 	game.ConvertPaks = true
 	game.InstallPath = t.TempDir()
 	game.SourceIDs = map[string]string{"fake-compiler": "external-icarus-id"}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	basePak := filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")
 	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))

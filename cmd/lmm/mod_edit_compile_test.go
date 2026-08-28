@@ -41,7 +41,7 @@ func TestDoModEdit_DeployCompile_VersionEditSyncsMergedPak(t *testing.T) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := getProfileManager(svc)
 	_, err = pm.Create(game.ID, "default")
 	require.NoError(t, err)

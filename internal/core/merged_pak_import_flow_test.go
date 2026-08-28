@@ -104,7 +104,7 @@ func TestApplyImport_DeployCompile_SyncsMergedPak(t *testing.T) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", Name: "Bear Mount", Version: "1.0", GameID: "icarus"}
 	src := newImportFlowCompilerSource(mod, "Bear_Mount.exmodz", []byte("bear-exmodz-bytes"))

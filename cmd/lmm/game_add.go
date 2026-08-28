@@ -84,16 +84,16 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 	selected := sources[choice-1]
 
 	if catalog, ok := selected.(source.GameCatalog); ok {
-		return runGameAddCatalog(ctx, cmd, reader, catalog, selected.ID(), selected.Name())
+		return runGameAddCatalog(ctx, cmd, reader, service, catalog, selected.ID(), selected.Name())
 	}
-	return runGameAddManual(cmd, reader, selected.ID(), selected.Name())
+	return runGameAddManual(ctx, cmd, reader, service, selected.ID(), selected.Name())
 }
 
 // runGameAddCatalog drives the interactive catalog-search flow - today's
 // CurseForge path, generalized to any source.GameCatalog: search the
 // source's game catalog, filter by substring match on name or slug
 // (case-insensitive), let the user pick one, then collect paths and save.
-func runGameAddCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, catalog source.GameCatalog, sourceID, sourceName string) error {
+func runGameAddCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, catalog source.GameCatalog, sourceID, sourceName string) error {
 	cmd.Print("\nSearch for a game: ")
 	query, err := reader.ReadString('\n')
 	if err != nil {
@@ -168,7 +168,7 @@ func runGameAddCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Re
 		return err
 	}
 
-	return saveGameConfig(cmd, gameSlug, selected.Name, installPath, modPath,
+	return saveGameConfig(ctx, cmd, service, gameSlug, selected.Name, installPath, modPath,
 		map[string]string{sourceID: catalogIdentifier(selected)})
 }
 
@@ -191,7 +191,7 @@ func catalogIdentifier(e source.GameEntry) string {
 // runGameAddManual drives the manual-identifier flow - today's NexusMods
 // slug path, generalized: prompt for a display name and the game's
 // identifier with sourceName directly, then collect paths and save.
-func runGameAddManual(cmd *cobra.Command, reader *bufio.Reader, sourceID, sourceName string) error {
+func runGameAddManual(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, sourceID, sourceName string) error {
 	cmd.Printf("\n%s has no searchable game catalog; enter this game's identifier with %s directly.\n", sourceName, sourceName)
 
 	cmd.Print("\nGame name (display): ")
@@ -222,7 +222,7 @@ func runGameAddManual(cmd *cobra.Command, reader *bufio.Reader, sourceID, source
 		return err
 	}
 
-	return saveGameConfig(cmd, gameSlug, gameName, installPath, modPath,
+	return saveGameConfig(ctx, cmd, service, gameSlug, gameName, installPath, modPath,
 		map[string]string{sourceID: identifier})
 }
 
@@ -251,12 +251,7 @@ func promptForPaths(cmd *cobra.Command, reader *bufio.Reader) (installPath, modP
 	return installPath, modPath, nil
 }
 
-func saveGameConfig(cmd *cobra.Command, gameSlug, gameName, installPath, modPath string, sourceIDs map[string]string) error {
-	svcCfg, err := getServiceConfig()
-	if err != nil {
-		return err
-	}
-
+func saveGameConfig(ctx context.Context, cmd *cobra.Command, service *core.Service, gameSlug, gameName, installPath, modPath string, sourceIDs map[string]string) error {
 	game := &domain.Game{
 		ID:          gameSlug,
 		Name:        gameName,
@@ -266,7 +261,7 @@ func saveGameConfig(cmd *cobra.Command, gameSlug, gameName, installPath, modPath
 		LinkMethod:  domain.LinkSymlink,
 	}
 
-	if err := config.SaveGame(svcCfg.ConfigDir, game); err != nil {
+	if err := service.SaveGame(ctx, game); err != nil {
 		return fmt.Errorf("saving game: %w", err)
 	}
 
@@ -278,7 +273,7 @@ func saveGameConfig(cmd *cobra.Command, gameSlug, gameName, installPath, modPath
 		LinkMethod: domain.LinkSymlink,
 		IsDefault:  true,
 	}
-	if err := config.SaveProfile(svcCfg.ConfigDir, defaultProfile); err != nil {
+	if err := config.SaveProfile(service.ConfigDir(), defaultProfile); err != nil {
 		return fmt.Errorf("creating default profile: %w", err)
 	}
 

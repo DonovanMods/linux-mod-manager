@@ -98,7 +98,7 @@ func TestDirectorySourceGameIDSurvivesEmptySourceMapping(t *testing.T) {
 		SourceIDs:  map[string]string{"my-mods": ""}, // README-documented: directory sources ignore the value
 		DeployMode: domain.DeployExtract,
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	ctx := context.Background()
 

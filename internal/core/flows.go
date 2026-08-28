@@ -37,7 +37,7 @@ func (s *Service) ReorderProfileMods(ctx context.Context, gameID, profileName st
 	if err := pm.ReorderMods(gameID, profileName, mods); err != nil {
 		return err
 	}
-	game, ok := s.games[gameID]
+	game, ok := s.game(gameID)
 	if !ok {
 		return nil // an unknown game has no merged pak to sync either
 	}

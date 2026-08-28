@@ -31,7 +31,7 @@ func TestDoModFiles_DeployCompile_ExmodzModExplainsMergedPak(t *testing.T) {
 		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := getProfileManager(svc)
 	_, err = pm.Create(game.ID, "default")
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestDoModFiles_NonCompile_ZeroFiles_KeepsOriginalMessage(t *testing.T) {
 		DeployMode: domain.DeployExtract, LinkMethod: domain.LinkCopy,
 		SourceIDs: map[string]string{"fake-source": "external-other-id"},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := getProfileManager(svc)
 	_, err = pm.Create(game.ID, "default")
 	require.NoError(t, err)

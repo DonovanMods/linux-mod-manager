@@ -36,7 +36,7 @@ func setupConflictsCmdTest(t *testing.T) (*core.Service, *domain.Game) {
 	require.NoError(t, err)
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	oldGameID, oldProfile, oldJSON := gameID, conflictsProfile, jsonOutput
 	gameID = "g1"

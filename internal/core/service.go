@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -43,6 +44,7 @@ type Service struct {
 	db         *db.DB
 	cache      *cache.Cache
 	registry   *source.Registry
+	gamesMu    sync.RWMutex
 	games      map[string]*domain.Game
 	downloader *Downloader
 	extractor  *Extractor
@@ -168,7 +170,7 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 	}
 
 	sourceGameID := gameID
-	if game, ok := s.games[gameID]; ok {
+	if game, ok := s.game(gameID); ok {
 		// An empty mapping (e.g. directory sources: `donovan-mods: ""`) means
 		// "this source applies to any game" — it must not blank out the ID.
 		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
@@ -193,7 +195,7 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 // values come back - matching SearchAllSources's existing tolerance for the
 // same situation. An unknown game is the only error case.
 func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
-	game, ok := s.games[gameID]
+	game, ok := s.game(gameID)
 	if !ok {
 		// Wrap the sentinel like GetGame does, so callers can errors.Is;
 		// the visible text stays "game not found: <id>".
@@ -336,7 +338,7 @@ func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
 // error. Sources without search capability are skipped silently. Pagination
 // is per-source: page N requests page N from each source and merges.
 func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
-	game, ok := s.games[gameID]
+	game, ok := s.game(gameID)
 	if !ok {
 		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
 	}
@@ -470,7 +472,7 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 	// mapping (e.g. directory sources: `donovan-mods: ""`) means "this source
 	// applies to any game" — it must not blank out the ID.
 	sourceGameID := gameID
-	if game, ok := s.games[gameID]; ok {
+	if game, ok := s.game(gameID); ok {
 		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
 			sourceGameID = id
 		}
@@ -1130,7 +1132,7 @@ func isConvertEligibleArtifact(game *domain.Game, mc source.MergeCompiler, fileN
 
 // GetGame retrieves a game by ID
 func (s *Service) GetGame(gameID string) (*domain.Game, error) {
-	game, ok := s.games[gameID]
+	game, ok := s.game(gameID)
 	if !ok {
 		return nil, domain.ErrGameNotFound
 	}
@@ -1139,20 +1141,43 @@ func (s *Service) GetGame(gameID string) (*domain.Game, error) {
 
 // ListGames returns all configured games
 func (s *Service) ListGames() []*domain.Game {
-	games := make([]*domain.Game, 0, len(s.games))
-	for _, g := range s.games {
-		games = append(games, g)
-	}
-	return games
+	return s.gamesSnapshot()
 }
 
-// AddGame adds a new game configuration
-func (s *Service) AddGame(game *domain.Game) error {
+// SaveGame persists game to games.yaml and publishes it to this Service's
+// in-memory game set atomically. It replaces an existing entry with the
+// same ID. Readers (GetGame, ListGames, SourcesForGame, …) may run
+// concurrently with it.
+func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.gamesMu.Lock()
+	defer s.gamesMu.Unlock()
 	if err := config.SaveGame(s.configDir, game); err != nil {
 		return err
 	}
 	s.games[game.ID] = game
 	return nil
+}
+
+// game returns the in-memory game for id under the read lock.
+func (s *Service) game(id string) (*domain.Game, bool) {
+	s.gamesMu.RLock()
+	defer s.gamesMu.RUnlock()
+	g, ok := s.games[id]
+	return g, ok
+}
+
+// gamesSnapshot returns the games in a fresh slice under the read lock.
+func (s *Service) gamesSnapshot() []*domain.Game {
+	s.gamesMu.RLock()
+	defer s.gamesMu.RUnlock()
+	out := make([]*domain.Game, 0, len(s.games))
+	for _, g := range s.games {
+		out = append(out, g)
+	}
+	return out
 }
 
 // GetInstalledMods returns all installed mods for a game/profile (DB order: installed_at).

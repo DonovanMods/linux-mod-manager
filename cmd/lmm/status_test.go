@@ -157,14 +157,14 @@ func TestStatusCmd_JSONOutput(t *testing.T) {
 // pair but never registers the game with the service's config-backed game
 // map (doDeploy takes the game directly, so it never needed to) - these
 // tests call showGameStatus(JSON) by gameID instead, which resolves through
-// service.GetGame, so each test below adds its own svc.AddGame(game) call.
+// service.GetGame, so each test below adds its own svc.SaveGame(context.Background(), game) call.
 
 // TestShowGameStatus_NeverDeployed_ShowsNeverInText pins the "never
 // deployed" text rendering: a game whose profile has no deployed_files rows
 // renders "Last Deploy: never", not an empty string or a zero time.
 func TestShowGameStatus_NeverDeployed_ShowsNeverInText(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp") // profile exists, never deployed
 
 	out := captureStdout(t, func() error {
@@ -181,7 +181,7 @@ func TestShowGameStatus_NeverDeployed_ShowsNeverInText(t *testing.T) {
 // formatLastDeploy's doc comment in status.go).
 func TestShowGameStatus_AfterDeploy_ShowsTimestampInText(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
 
@@ -200,7 +200,7 @@ func TestShowGameStatus_AfterDeploy_ShowsTimestampInText(t *testing.T) {
 // byte-for-byte the same document as before this change.
 func TestShowGameStatusJSON_NeverDeployed_OmitsLastDeploy(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 	out := captureStdout(t, func() error {
@@ -231,7 +231,7 @@ func TestShowGameStatusJSON_ProfileLinkMethodOverride_TextJSONParity(t *testing.
 	svc, game := setupDoDeployTest(t)
 	game.LinkMethod = domain.LinkSymlink
 	game.LinkMethodExplicit = true
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 	setVerifyProfileLinkMethod(t, svc, game.ID, "default", domain.LinkCopy)
 
@@ -273,7 +273,7 @@ func TestShowGameStatusJSON_LinkMethodSource_GameAndGlobal(t *testing.T) {
 				game.LinkMethod = domain.LinkHardlink
 				game.LinkMethodExplicit = true
 			}
-			require.NoError(t, svc.AddGame(game))
+			require.NoError(t, svc.SaveGame(context.Background(), game))
 			seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 			out := captureStdout(t, func() error {
@@ -298,7 +298,7 @@ func TestShowGameStatusJSON_NoProfiles_LinkMethodSourceStillPresent(t *testing.T
 	svc, game := setupDoDeployTest(t)
 	game.LinkMethod = domain.LinkCopy
 	game.LinkMethodExplicit = true
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	out := captureStdout(t, func() error {
 		return showGameStatusJSON(context.Background(), svc, game.ID)
@@ -314,7 +314,7 @@ func TestShowGameStatusJSON_NoProfiles_LinkMethodSourceStillPresent(t *testing.T
 // deploy surfaces a parseable last_deploy timestamp in the JSON document.
 func TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 	require.NoError(t, doDeploy(context.Background(), svc, game, nil))
 

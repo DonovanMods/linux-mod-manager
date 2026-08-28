@@ -2740,10 +2740,10 @@ func TestService_PlanInstall_DependencyFetchSurvivesGameIDNamespaceCollision(t *
 
 	game := &domain.Game{ID: "skyrim", Name: "Skyrim", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
 		SourceIDs: map[string]string{"src": "skyrimspecialedition"}}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	// The colliding game: its user-chosen LMM id equals skyrim's source-domain
 	// id, and it maps "src" to a different domain of its own.
-	require.NoError(t, svc.AddGame(&domain.Game{ID: "skyrimspecialedition", Name: "Collider",
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: "skyrimspecialedition", Name: "Collider",
 		ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
 		SourceIDs: map[string]string{"src": "other-domain"}}))
 
@@ -2778,7 +2778,7 @@ func TestService_PlanInstall_DependencyFetchTranslatesMappedGameID(t *testing.T)
 
 	game := &domain.Game{ID: "skyrim", Name: "Skyrim", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
 		SourceIDs: map[string]string{"src": "skyrimspecialedition"}}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mock := newMockSource("src")
 	svc.RegisterSource(mock)
@@ -2805,7 +2805,7 @@ func TestService_PlanInstall_DependencyFetchEmptyMappingKeepsLMMGameID(t *testin
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
 		SourceIDs: map[string]string{"src": ""}}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	mock := newMockSource("src")
 	svc.RegisterSource(mock)

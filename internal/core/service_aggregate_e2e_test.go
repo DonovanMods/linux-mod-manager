@@ -85,7 +85,7 @@ mods:
 		DeployMode: domain.DeployCopy,
 		SourceIDs:  map[string]string{"local-mods": "", "manifest-repo": "", "dead-repo": ""},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	return svc, game
 }
@@ -170,7 +170,7 @@ func TestSearchAllSources_PageSizeAboveDefaultReturnsMoreThanDefaultCap(t *testi
 		DeployMode: domain.DeployCopy,
 		SourceIDs:  map[string]string{"big-dir": ""},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	// pageSize 0 (the CLI's pre-fix default): capped at the source's
 	// internal default of 20, even though 30 mods match.

@@ -195,22 +195,29 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
+
+	svc, err := core.NewService(svcCfg)
+	if err != nil {
+		return fmt.Errorf("initializing service: %w", err)
+	}
+	defer closeService(svc)
+
 	reader := bufio.NewReader(os.Stdin)
-	return doGameDetect(cmd, reader, svcCfg.ConfigDir, games)
+	return doGameDetect(cmd.Context(), cmd, reader, svc, games)
 }
 
 // doGameDetect drives the interactive detect-and-select flow against an
 // already-detected games list, so it can be tested without a real Steam
-// library scan. configDir is used both for the existing-games lookup (to
-// mark/exclude already-configured games, #205 item 2) and for saving newly
-// selected ones.
-func doGameDetect(cmd *cobra.Command, reader *bufio.Reader, configDir string, games []steam.DetectedGame) error {
+// library scan. service's ConfigDir is used both for the existing-games
+// lookup (to mark/exclude already-configured games, #205 item 2) and for
+// saving newly selected ones.
+func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, games []steam.DetectedGame) error {
 	if len(games) == 0 {
 		cmd.Println("No moddable Steam games found.")
 		return nil
 	}
 
-	existingGames, err := config.LoadGames(configDir)
+	existingGames, err := config.LoadGames(service.ConfigDir())
 	if err != nil {
 		return fmt.Errorf("loading games: %w", err)
 	}
@@ -250,7 +257,7 @@ func doGameDetect(cmd *cobra.Command, reader *bufio.Reader, configDir string, ga
 		if err != nil {
 			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
 		}
-		if err := config.SaveGame(configDir, game); err != nil {
+		if err := service.SaveGame(ctx, game); err != nil {
 			return fmt.Errorf("saving game %s: %w", g.Slug, err)
 		}
 		// No LinkMethod: a detected game's default profile should inherit the
@@ -261,7 +268,7 @@ func doGameDetect(cmd *cobra.Command, reader *bufio.Reader, configDir string, ga
 			Mods:      nil,
 			IsDefault: true,
 		}
-		if err := config.SaveProfile(configDir, defaultProfile); err != nil {
+		if err := config.SaveProfile(service.ConfigDir(), defaultProfile); err != nil {
 			return fmt.Errorf("creating default profile for %s: %w", g.Slug, err)
 		}
 		cmd.Printf("Added: %s (%s)\n", g.Name, g.Slug)

@@ -300,7 +300,7 @@ func newPageSizeSpyService(t *testing.T, spy *pageSizeSpySource) (*core.Service,
 		ModPath:   t.TempDir(),
 		SourceIDs: map[string]string{spy.id: ""},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game
 }
 
@@ -418,7 +418,7 @@ func newNoSearchCapService(t *testing.T) (*core.Service, *domain.Game) {
 		ModPath:   t.TempDir(),
 		SourceIDs: map[string]string{src.id: ""},
 	}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	return svc, game
 }
 

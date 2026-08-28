@@ -72,7 +72,7 @@ mods:
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	ctx := context.Background()
 
 	// Search finds the mod and stamps identity.
@@ -146,7 +146,7 @@ mods:
 	svc.RegisterSource(src)
 
 	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), DeployMode: domain.DeployCopy}
-	require.NoError(t, svc.AddGame(game))
+	require.NoError(t, svc.SaveGame(context.Background(), game))
 	ctx := context.Background()
 
 	mod, err := src.GetMod(ctx, "testgame", "bad-mod")
