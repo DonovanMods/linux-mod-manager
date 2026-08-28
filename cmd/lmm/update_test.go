@@ -587,9 +587,10 @@ func TestApplyUpdate_ForcedBeforeEachHookFailure_PrintsWarningAndApplies(t *test
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("new-1", []byte("new-content"))
 
-	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
 	stderr, err := captureStderrErr(t, func() error {
-		return applyUpdate(context.Background(), svc, game, upd, "default")
+		return applyUpdate(context.Background(), svc, game, plan)
 	})
 
 	require.NoError(t, err, "a forced before_each hook failure must not abort the update")
@@ -626,9 +627,10 @@ func TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed(t *testing.T)
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("new-1", []byte("new-content"))
 
-	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
 	stderr, err := captureStderrErr(t, func() error {
-		return applyUpdate(context.Background(), svc, game, upd, "default")
+		return applyUpdate(context.Background(), svc, game, plan)
 	})
 
 	require.NoError(t, err, "after_each hook failures must never fail the update")

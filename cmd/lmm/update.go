@@ -381,20 +381,6 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return finish()
 	}
 
-	// #97: locked refs get a POLICY marker (or, under --json, "locked": true)
-	// and are excluded from auto/--all application below (loaded once, keyed
-	// by domain.ModKey - locked mods ARE checked, so they show up in updates
-	// like any other row; only applying is refused). A precomputed map, not
-	// per-row FindRef, since this loops over every update below.
-	lockedRefs := map[string]string{}
-	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
-		for _, ref := range prof.Mods {
-			if ref.Locked {
-				lockedRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref.Version
-			}
-		}
-	}
-
 	if jsonOutput {
 		skips := core.CountUpdateSkips(installed)
 		out := updateJSONOutput{
@@ -405,14 +391,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			out.Error = checkErr.Error()
 		}
 		for i, u := range updates {
-			_, isLocked := lockedRefs[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)]
 			row := updateModJSON{
 				ModID:        u.InstalledMod.ID,
 				Name:         u.InstalledMod.Name,
 				Current:      u.InstalledMod.Version,
 				Available:    u.NewVersion,
 				UpdatePolicy: policyToString(u.InstalledMod.UpdatePolicy),
-				Locked:       isLocked,
+				Locked:       u.Locked,
 			}
 			if u.RecompileNeeded {
 				row.RecompileNeeded = true
@@ -447,9 +432,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	var lockedNames []string
 	for _, update := range updates {
 		policyStr := policyToString(update.InstalledMod.UpdatePolicy)
-		lockedVersion, isLocked := lockedRefs[domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID)]
+		isLocked := update.Locked
 		if isLocked {
-			policyStr += " [locked@" + lockedVersion + "]"
+			policyStr += " [locked@" + update.LockedVersion + "]"
 		}
 		if update.RecompileNeeded {
 			// #196: a base-pak staleness row - Available above equals
@@ -537,7 +522,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if len(autoUpdates) > 0 {
 		fmt.Printf("\nApplying %d auto-update(s)...\n", len(autoUpdates))
 		for _, update := range autoUpdates {
-			if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
+			if err := applyBulkUpdate(ctx, service, game, update, profileName); err != nil {
 				fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
 			} else {
 				fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
@@ -552,7 +537,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			if update.InstalledMod.UpdatePolicy == domain.UpdateAuto {
 				continue // already handled above (applied, or reported as a locked skip)
 			}
-			if _, isLocked := lockedRefs[domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID)]; isLocked {
+			if update.Locked {
 				lockedAuto++
 				lockedNames = append(lockedNames, update.InstalledMod.Name)
 				continue
@@ -563,7 +548,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if len(notifyUpdates) > 0 {
 			fmt.Printf("\nApplying %d remaining update(s)...\n", len(notifyUpdates))
 			for _, update := range notifyUpdates {
-				if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
+				if err := applyBulkUpdate(ctx, service, game, update, profileName); err != nil {
 					fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
 				} else {
 					fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
@@ -585,87 +570,77 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	return finish()
 }
 
+// applySingleUpdate renders `lmm update <mod-id>`'s outcome for mod: plans
+// via Service.PlanUpdate, then switches on the plan exactly the way the
+// pre-extraction CLI computed locked/pinned/recompile state inline (see the
+// task report for the branch-by-branch mapping). All locked/pinned/
+// recompile/changelog facts come from the plan; this function decides
+// nothing about them itself - it only renders and, for the version-bump and
+// recompile branches, applies.
 func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.Game, mod *domain.InstalledMod, profileName string) error {
-	// #97: load the profile once up front so both branches below (zero
-	// updates + pinned, and update-found) can consult the ref's lock state
-	// without a second load. A missing/unreadable profile is treated as
-	// unlocked - matches ApplyUpdate's own core gate precedent (a lock
-	// cannot exist in an unloadable profile).
-	locked := false
-	lockedVersion := mod.Version
-	if prof, perr := config.LoadProfile(service.ConfigDir(), game.ID, profileName); perr == nil {
-		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil {
-			locked = ref.Locked
-			lockedVersion = ref.Version
-		}
-	}
-
-	// Check for update for this specific mod (plus merged-pak staleness, #196/#197)
-	updates, err := service.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil)
+	plan, err := service.PlanUpdate(ctx, game, profileName, mod.SourceID, mod.ID)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
 		}
-		return fmt.Errorf("failed to check update: %w", err)
+		return err
 	}
 
-	if len(updates) == 0 {
+	switch {
+	case plan.Update == nil && plan.Pinned:
 		// A pinned mod is filtered out before the source is queried, so no
 		// version comparison ever happened — reporting it as up to date would
 		// claim currency that was never checked.
-		if mod.UpdatePolicy == domain.UpdatePinned {
-			if jsonOutput {
-				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, Status: "skipped", Reason: "pinned",
-				})
-			}
-			lockedSuffix := ""
-			if locked {
-				lockedSuffix = " (also locked)"
-			}
-			fmt.Printf("%s is pinned at v%s and was not checked%s.\n", mod.Name, mod.Version, lockedSuffix)
-			// #142 round 5: -s/-p, same reasoning as the locked-refusal
-			// remedies just below - set-update is profile-scoped
-			// (SetModUpdatePolicy takes profileName) and the mod ID may
-			// exist under more than one configured source.
-			fmt.Printf("Unpin with: lmm mod set-update -s %s -p %s %s --notify\n", mod.SourceID, profileName, mod.ID)
-			return nil
-		}
 		if jsonOutput {
 			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, Status: "up_to_date",
+				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, Status: "skipped", Reason: "pinned",
 			})
 		}
-		fmt.Printf("%s is already up to date (v%s).\n", mod.Name, mod.Version)
+		lockedSuffix := ""
+		if plan.Locked {
+			lockedSuffix = " (also locked)"
+		}
+		fmt.Printf("%s is pinned at v%s and was not checked%s.\n", plan.Mod.Name, plan.Mod.Version, lockedSuffix)
+		// #142 round 5: -s/-p, same reasoning as the locked-refusal
+		// remedies below - set-update is profile-scoped (SetModUpdatePolicy
+		// takes profileName) and the mod ID may exist under more than one
+		// configured source.
+		fmt.Printf("Unpin with: lmm mod set-update -s %s -p %s %s --notify\n", plan.Mod.SourceID, profileName, plan.Mod.ID)
 		return nil
-	}
 
-	update := updates[0]
+	case plan.Update == nil:
+		if jsonOutput {
+			return emitSingleUpdateJSON(singleUpdateJSON{
+				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, Status: "up_to_date",
+			})
+		}
+		fmt.Printf("%s is already up to date (v%s).\n", plan.Mod.Name, plan.Mod.Version)
+		return nil
 
-	// #196: a base-pak staleness row carries no real version change
-	// (NewVersion == mod.Version) - branch off before any of the
-	// version-bump wording/JSON below, which would otherwise print a
-	// misleading "Updating vX → vX...".
-	if update.RecompileNeeded {
-		if locked {
+	case plan.RecompileNeeded:
+		// #196: a base-pak staleness row carries no real version change
+		// (NewVersion == mod.Version) - branched off before any of the
+		// version-bump wording/JSON below, which would otherwise print a
+		// misleading "Updating vX → vX...".
+		if plan.Locked {
 			if jsonOutput {
 				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.Version, Status: "skipped", Reason: "locked",
+					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, ToVersion: plan.Mod.Version, Status: "skipped", Reason: "locked",
 				})
 			}
-			fmt.Printf("Recompile needed for %s (base pak updated) — but it is locked at v%s.\n", mod.Name, lockedVersion)
-			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, mod.Version, mod.SourceID, profileName, mod.ID)
+			fmt.Printf("Recompile needed for %s (base pak updated) — but it is locked at v%s.\n", plan.Mod.Name, plan.LockedVersion)
+			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, plan.Mod.Version, plan.Mod.SourceID, profileName, plan.Mod.ID)
 			return nil
 		}
 
 		if !jsonOutput {
-			fmt.Printf("Recompiling %s (base pak updated)...\n", mod.Name)
+			fmt.Printf("Recompiling %s (base pak updated)...\n", plan.Mod.Name)
 		}
 
 		if updateDryRun {
 			if jsonOutput {
 				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.Version, Status: "recompile_available",
+					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, ToVersion: plan.Mod.Version, Status: "recompile_available",
 				})
 			}
 			fmt.Println("(dry-run: no changes applied)")
@@ -678,97 +653,120 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 
 		if jsonOutput {
 			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: mod.ID, Name: mod.Name, FromVersion: mod.Version, ToVersion: mod.Version, Status: "recompiled",
+				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, ToVersion: plan.Mod.Version, Status: "recompiled",
 			})
 		}
-		fmt.Printf("\n%s Recompiled: %s (base pak updated)\n", colorGreen("✓"), mod.Name)
+		fmt.Printf("\n%s Recompiled: %s (base pak updated)\n", colorGreen("✓"), plan.Mod.Name)
 		return nil
-	}
 
-	oldVersion := mod.Version
-	newVersion := update.NewVersion
+	default:
+		oldVersion := plan.Mod.Version
+		newVersion := plan.Update.NewVersion
 
-	// #97: refuse up front - the core gate (Service.ApplyUpdate) backstops
-	// this regardless, but checking here avoids ever printing the
-	// "Updating..." header/changelog for a call that will never actually
-	// apply, and gives an actionable message naming both remedy commands
-	// instead of surfacing the core gate's raw error.
-	if locked {
+		// #97: refuse up front - the core gate (Service.ApplyUpdate)
+		// backstops this regardless, but checking here avoids ever printing
+		// the "Updating..." header/changelog for a call that will never
+		// actually apply, and gives an actionable message naming both
+		// remedy commands instead of surfacing the core gate's raw error.
+		// The wording here is hand-composed and deliberately differs from
+		// LockedRefRefusalError/plan.Refusal - byte-identity wins for now
+		// (Phase 3 unifies wording).
+		if plan.Locked {
+			if jsonOutput {
+				return emitSingleUpdateJSON(singleUpdateJSON{
+					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: oldVersion, ToVersion: newVersion, Status: "skipped", Reason: "locked",
+				})
+			}
+			fmt.Printf("Update available: %s → %s — but %s is locked at v%s.\n", oldVersion, newVersion, plan.Mod.Name, plan.LockedVersion)
+			// #142 round 5: name -s/-p in both remedies - update honors -p
+			// (this call already resolved profileName, possibly non-active),
+			// and the mod ID may exist under more than one configured
+			// source, so a bare 'lmm mod lock <id> <version>' copy-pasted
+			// from here could resolve against the wrong profile/an
+			// ambiguous source (same fix as the core gates -
+			// internal/core/update.go's LockedRefRefusalError).
+			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, newVersion, plan.Mod.SourceID, profileName, plan.Mod.ID)
+			return nil
+		}
+
+		if !jsonOutput {
+			fmt.Printf("Updating %s %s → %s...\n", plan.Mod.Name, oldVersion, newVersion)
+			if plan.Update.Changelog != "" {
+				cl := plan.Changelog
+				const maxChangelog = 500
+				if len(cl) > maxChangelog {
+					cl = cl[:maxChangelog] + "..."
+				}
+				fmt.Println("Changelog:")
+				for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
+					fmt.Printf("  %s\n", line)
+				}
+				fmt.Println()
+			}
+		}
+
+		if updateDryRun {
+			if jsonOutput {
+				// Cleaned like the human output (upstream changelogs are
+				// HTML), but untruncated - the 500-char cap is a display
+				// concern.
+				return emitSingleUpdateJSON(singleUpdateJSON{
+					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
+					Changelog: plan.Changelog, Status: "available",
+				})
+			}
+			fmt.Println("(dry-run: no changes applied)")
+			return nil
+		}
+
+		if err := applyUpdate(ctx, service, game, plan); err != nil {
+			return err
+		}
+
 		if jsonOutput {
 			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion, Status: "skipped", Reason: "locked",
+				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
+				Changelog: plan.Changelog, Status: "updated",
 			})
 		}
-		fmt.Printf("Update available: %s → %s — but %s is locked at v%s.\n", oldVersion, newVersion, mod.Name, lockedVersion)
-		// #142 round 5: name -s/-p in both remedies - update honors -p (this
-		// call already resolved profileName, possibly non-active), and the
-		// mod ID may exist under more than one configured source, so a bare
-		// 'lmm mod lock <id> <version>' copy-pasted from here could resolve
-		// against the wrong profile/an ambiguous source (same fix as the
-		// core gates - internal/core/flows.go's LockedRefRefusalError).
-		fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", mod.SourceID, profileName, mod.ID, newVersion, mod.SourceID, profileName, mod.ID)
+
+		fmt.Printf("\n%s Updated: %s %s → %s\n", colorGreen("✓"), plan.Mod.Name, oldVersion, newVersion)
+		fmt.Println("  Previous version preserved for rollback")
 		return nil
 	}
-
-	if !jsonOutput {
-		fmt.Printf("Updating %s %s → %s...\n", mod.Name, oldVersion, newVersion)
-		if update.Changelog != "" {
-			cl := core.CleanChangelog(update.Changelog)
-			const maxChangelog = 500
-			if len(cl) > maxChangelog {
-				cl = cl[:maxChangelog] + "..."
-			}
-			fmt.Println("Changelog:")
-			for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
-				fmt.Printf("  %s\n", line)
-			}
-			fmt.Println()
-		}
-	}
-
-	if updateDryRun {
-		if jsonOutput {
-			// Cleaned like the human output (upstream changelogs are HTML),
-			// but untruncated - the 500-char cap is a display concern.
-			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
-				Changelog: core.CleanChangelog(update.Changelog), Status: "available",
-			})
-		}
-		fmt.Println("(dry-run: no changes applied)")
-		return nil
-	}
-
-	if err := applyUpdate(ctx, service, game, update, profileName); err != nil {
-		return err
-	}
-
-	if jsonOutput {
-		return emitSingleUpdateJSON(singleUpdateJSON{
-			ModID: mod.ID, Name: mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
-			Changelog: core.CleanChangelog(update.Changelog), Status: "updated",
-		})
-	}
-
-	fmt.Printf("\n%s Updated: %s %s → %s\n", colorGreen("✓"), mod.Name, oldVersion, newVersion)
-	fmt.Println("  Previous version preserved for rollback")
-	return nil
 }
 
-// applyUpdate applies upd to an installed mod: resolve -> call
-// Service.ApplyUpdate -> print from its progress events. progress prints
-// every diagnostic at its exact point of occurrence, driven entirely by
-// core.ApplyUpdate's progress events - reproducing the pre-extraction CLI's
-// exact console positioning (download progress, forced-hook warnings,
-// after_each hook warnings, and the --verbose-gated link-method note).
+// applyBulkUpdate re-plans and applies a single row from doUpdate's bulk
+// check (its auto-policy and --all loops both call this): ApplyUpdate now
+// takes a *core.UpdatePlan, and a plan computed once at the top of doUpdate
+// would go stale after the FIRST mod in the loop applies (Ruling 5 - see
+// PlanUpdate's doc comment), so each mod is re-planned immediately before
+// its own apply. update identifies which mod to re-plan; the bulk loop's own
+// printed line still uses update's fields (the bulk check's own values),
+// not the freshly re-planned ones - the two are the same mod moments apart,
+// but printing from the original avoids depending on a race-free re-check.
+func applyBulkUpdate(ctx context.Context, service *core.Service, game *domain.Game, update domain.Update, profileName string) error {
+	plan, err := service.PlanUpdate(ctx, game, profileName, update.InstalledMod.SourceID, update.InstalledMod.ID)
+	if err != nil {
+		return err
+	}
+	return applyUpdate(ctx, service, game, plan)
+}
+
+// applyUpdate applies plan: resolve -> call Service.ApplyUpdate -> print
+// from its progress events. progress prints every diagnostic at its exact
+// point of occurrence, driven entirely by core.ApplyUpdate's progress
+// events - reproducing the pre-extraction CLI's exact console positioning
+// (download progress, forced-hook warnings, after_each hook warnings, and
+// the --verbose-gated link-method note).
 //
-// #196/#197: a RecompileNeeded row carries no real version change
+// #196/#197: a RecompileNeeded plan carries no real version change
 // (NewVersion == InstalledMod.Version) - it is routed to
 // Service.ApplyMergedPakRegen instead, which has no hooks to run and no
 // version/FileIDs to record, only the merge-and-redeploy step itself.
-func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, upd domain.Update, profileName string) error {
-	if upd.RecompileNeeded {
-		return applyRecompile(ctx, service, game, profileName)
+func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, plan *core.UpdatePlan) error {
+	if plan.RecompileNeeded {
+		return applyRecompile(ctx, service, game, plan.Mod.ProfileName)
 	}
 
 	opts := core.UpdateOptions{
@@ -799,7 +797,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
-	_, err := service.ApplyUpdate(ctx, game, profileName, upd, opts, progress)
+	_, err := service.ApplyUpdate(ctx, game, plan, opts, progress)
 	return err
 }
 

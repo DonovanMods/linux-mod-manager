@@ -106,8 +106,14 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 		withJSONOutput(t)
 		svc, game, _ := setupDoUpdateTest(t)
 		mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
-		mod.UpdatePolicy = domain.UpdatePinned
-		require.NoError(t, svc.SaveInstalledMod(context.Background(), mod))
+		// SetModUpdatePolicy, not a direct mod.UpdatePolicy mutation +
+		// SaveInstalledMod: SaveInstalledMod deliberately preserves the
+		// existing update_policy on an update (see its doc comment) so a
+		// reinstall can never silently clear a user's --pin/--auto choice -
+		// PlanUpdate (#289) re-reads the mod from the DB, so a policy change
+		// that never reached the DB is no longer masked by trusting the
+		// caller's in-memory copy the way pre-lift applySingleUpdate did.
+		require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned))
 
 		out := captureStdout(t, func() error {
 			return applySingleUpdate(context.Background(), svc, game, mod, "default")

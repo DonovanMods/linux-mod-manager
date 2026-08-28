@@ -176,9 +176,10 @@ func TestApplyUpdate_Locked_CoreGateBackstop(t *testing.T) {
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("new-1", []byte("new-content"))
 
-	upd := domain.Update{InstalledMod: *mod, NewVersion: "2.0"}
+	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
+	require.NoError(t, err)
 
-	err := applyUpdate(context.Background(), svc, game, upd, "default")
+	err = applyUpdate(context.Background(), svc, game, plan)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked, "the core gate must still refuse even when a CLI pre-check is bypassed")
 
