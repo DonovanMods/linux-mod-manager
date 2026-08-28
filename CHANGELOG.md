@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pinned by a golden (`internal/{domain,core}/testdata/json/*.golden`) so a shape change is a
   visible diff. No user-visible change: the CLI's `--json` still emits its own view structs and is
   byte-identical. (#282)
+- Internal: dead `Installer.InstallBatch`/`UninstallBatch` and their result types removed;
+  `ScanResult` drops its never-populated error pair; `--log-level` is validated before any
+  subcommand runs (#284, #285)
 
 ### Fixed
 
