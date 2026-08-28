@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every mod's metadata is now fetched at plan time, `install.before_all`/`install.before_each` run
   after all of a batch's source reads rather than interleaved with them, matching the dependency
   path's existing behaviour. (#288)
+- Internal: update and rollback are Plan/Apply — PlanUpdate/PlanUpdateFrom compute lock, pin and
+  recompile gating in core; CheckGameUpdates entries carry lock state; cmd no longer reads
+  profiles for lock checks (#289)
 
 ### Fixed
 
