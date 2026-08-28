@@ -97,8 +97,13 @@ func TestRunRoot_PropagatesContextCancellation(t *testing.T) {
 // path would otherwise short-circuit past PersistentPreRunE (--help,
 // --version, completion) or open a Service (game list). Also pins that the
 // failure maps to Execute's exit-1 branch (not the exit-2 cancellation
-// branch) and that the printed text is byte-identical in both plain
-// (stderr) and --json (stdout) mode.
+// branch), that the printed text is byte-identical in both plain (stderr)
+// and --json (stdout) mode, and - per the whole-branch review's Important #1
+// - that the --json envelope is chosen regardless of whether --json appears
+// before or after the bad --log-level on the command line: pflag's
+// FlagSet.Parse stops at the first Set error, so a --json placed after the
+// bad --log-level is never reached by ParseFlags itself, and
+// logLevelFlagErrorFunc must fall back to scanning rawArgs to find it.
 func TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere(t *testing.T) {
 	const wantErrText = `invalid --log-level "loud": expected off, error, warn, info, or debug`
 	wantPlain := "Error: " + wantErrText + "\n"
@@ -110,10 +115,15 @@ func TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere(t *testing.T) {
 		json bool
 	}{
 		{"game list plain", []string{"--log-level", "loud", "game", "list"}, false},
-		// --json must be parsed before --log-level: pflag's FlagSet.Parse
-		// stops at the first Set error, so a --json placed after the bad
-		// --log-level would never be reached.
 		{"game list --json", []string{"--json", "--log-level", "loud", "game", "list"}, true},
+		// --log-level before --json: ParseFlags aborts on --log-level's Set
+		// error before ever reaching --json, so jsonOutput must come from
+		// logLevelFlagErrorFunc's rawArgs scan, not from --json's own Set.
+		{"game list --log-level then --json", []string{"--log-level", "loud", "--json", "game", "list"}, true},
+		// Flags after the subcommand: --json is parsed (and Set) before
+		// --log-level errors, so this order already worked before the fix -
+		// kept here as a regression guard against the fix narrowing scope.
+		{"list --json --log-level (flags after subcommand)", []string{"list", "--json", "--log-level", "loud"}, true},
 		{"--help", []string{"--log-level", "loud", "--help"}, false},
 		{"--version", []string{"--log-level", "loud", "--version"}, false},
 		{"completion bash", []string{"--log-level", "loud", "completion", "bash"}, false},
@@ -126,12 +136,15 @@ func TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere(t *testing.T) {
 			rootCmd.SetOut(&out)
 			rootCmd.SetErr(&errb)
 			oldJSON := jsonOutput
+			oldRawArgs := rawArgs
 			jsonOutput = false
+			rawArgs = tc.args
 			t.Cleanup(func() {
 				rootCmd.SetOut(nil)
 				rootCmd.SetErr(nil)
 				logLevel = "off"
 				jsonOutput = oldJSON
+				rawArgs = oldRawArgs
 			})
 			rootCmd.SetArgs(tc.args)
 

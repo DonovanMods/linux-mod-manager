@@ -72,9 +72,26 @@ func (f logLevelFlag) Type() string { return "string" }
 // Unwrapping back to the cause here makes --log-level's error text
 // identical everywhere it's rejected. Every other flag's parse error is
 // returned unchanged, so it keeps cobra's default wrapped text.
+//
+// pflag's FlagSet.Parse also stops at the first Set error, so a --json
+// flag placed AFTER a bad --log-level on the command line never reaches
+// ParseFlags and jsonOutput is left false, even though the user asked for
+// JSON. That would make reportError's stdout-envelope-vs-stderr choice
+// depend on argument order for this one flag, breaking the project's
+// one-document-on-stdout invariant for scripts that pipe stdout to a
+// parser. Falling back to a scan of rawArgs (the full argument list, not
+// just what ParseFlags reached) restores order independence.
 func logLevelFlagErrorFunc(_ *cobra.Command, err error) error {
 	var invalidErr *pflag.InvalidValueError
 	if errors.As(err, &invalidErr) && invalidErr.GetFlag() != nil && invalidErr.GetFlag().Name == logLevelFlagName {
+		if !jsonOutput {
+			for _, a := range rawArgs {
+				if a == "--json" {
+					jsonOutput = true
+					break
+				}
+			}
+		}
 		return invalidErr.Unwrap()
 	}
 	return err

@@ -51,6 +51,15 @@ var (
 	jsonOutput bool
 	noColor    bool
 	logLevel   string
+
+	// rawArgs is the argument list Execute is about to hand to runRoot,
+	// captured before ParseFlags can consume it. logLevelFlagErrorFunc
+	// consults it to detect a --json flag that pflag's FlagSet.Parse never
+	// reached because it aborted on an earlier --log-level Set error - see
+	// that function's comment in logging.go. Tests that call runRoot
+	// directly (bypassing Execute) must set this alongside rootCmd.SetArgs
+	// so the two argument lists agree.
+	rawArgs []string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -304,6 +313,7 @@ func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {
 		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
 			os.Exit(2)
