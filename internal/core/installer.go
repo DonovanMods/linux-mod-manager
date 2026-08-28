@@ -605,6 +605,7 @@ type BatchOptions struct {
 	HookRunner  *HookRunner    // Runner for executing hooks
 	HookContext HookContext    // Base context for hooks (mod-specific fields added per-mod)
 	Force       bool           // If true, bypass before_* hook failures
+	SkipHooks   bool           // run no hooks even when Hooks/HookRunner are set (the CLI's --no-hooks)
 }
 
 // SkippedMod represents a mod that was skipped during batch operation
@@ -641,7 +642,7 @@ func (i *Installer) InstallBatch(ctx context.Context, game *domain.Game, mods []
 	result := &BatchResult{}
 
 	// Run before_all hook
-	if opts.Hooks != nil && opts.Hooks.Install.BeforeAll != "" && opts.HookRunner != nil {
+	if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Install.BeforeAll != "" && opts.HookRunner != nil {
 		hookCtx := opts.HookContext
 		hookCtx.HookName = "install.before_all"
 		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Install.BeforeAll, hookCtx)
@@ -665,7 +666,7 @@ func (i *Installer) InstallBatch(ctx context.Context, game *domain.Game, mods []
 		}
 
 		// Run before_each hook
-		if opts.Hooks != nil && opts.Hooks.Install.BeforeEach != "" && opts.HookRunner != nil {
+		if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Install.BeforeEach != "" && opts.HookRunner != nil {
 			hookCtx := opts.HookContext
 			hookCtx.HookName = "install.before_each"
 			hookCtx.ModID = mod.ID
@@ -691,7 +692,7 @@ func (i *Installer) InstallBatch(ctx context.Context, game *domain.Game, mods []
 		}
 
 		// Run after_each hook
-		if opts.Hooks != nil && opts.Hooks.Install.AfterEach != "" && opts.HookRunner != nil {
+		if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Install.AfterEach != "" && opts.HookRunner != nil {
 			hookCtx := opts.HookContext
 			hookCtx.HookName = "install.after_each"
 			hookCtx.ModID = mod.ID
@@ -707,7 +708,7 @@ func (i *Installer) InstallBatch(ctx context.Context, game *domain.Game, mods []
 	}
 
 	// Run after_all hook
-	if opts.Hooks != nil && opts.Hooks.Install.AfterAll != "" && opts.HookRunner != nil {
+	if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Install.AfterAll != "" && opts.HookRunner != nil {
 		hookCtx := opts.HookContext
 		hookCtx.HookName = "install.after_all"
 		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Install.AfterAll, hookCtx)
@@ -729,7 +730,7 @@ func (i *Installer) UninstallBatch(ctx context.Context, game *domain.Game, mods 
 	result := &BatchResult{}
 
 	// Run before_all hook
-	if opts.Hooks != nil && opts.Hooks.Uninstall.BeforeAll != "" && opts.HookRunner != nil {
+	if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Uninstall.BeforeAll != "" && opts.HookRunner != nil {
 		hookCtx := opts.HookContext
 		hookCtx.HookName = "uninstall.before_all"
 		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Uninstall.BeforeAll, hookCtx)
@@ -750,7 +751,7 @@ func (i *Installer) UninstallBatch(ctx context.Context, game *domain.Game, mods 
 		mod := &installedMod.Mod
 
 		// Run before_each hook
-		if opts.Hooks != nil && opts.Hooks.Uninstall.BeforeEach != "" && opts.HookRunner != nil {
+		if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Uninstall.BeforeEach != "" && opts.HookRunner != nil {
 			hookCtx := opts.HookContext
 			hookCtx.HookName = "uninstall.before_each"
 			hookCtx.ModID = mod.ID
@@ -776,7 +777,7 @@ func (i *Installer) UninstallBatch(ctx context.Context, game *domain.Game, mods 
 		}
 
 		// Run after_each hook
-		if opts.Hooks != nil && opts.Hooks.Uninstall.AfterEach != "" && opts.HookRunner != nil {
+		if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Uninstall.AfterEach != "" && opts.HookRunner != nil {
 			hookCtx := opts.HookContext
 			hookCtx.HookName = "uninstall.after_each"
 			hookCtx.ModID = mod.ID
@@ -792,7 +793,7 @@ func (i *Installer) UninstallBatch(ctx context.Context, game *domain.Game, mods 
 	}
 
 	// Run after_all hook
-	if opts.Hooks != nil && opts.Hooks.Uninstall.AfterAll != "" && opts.HookRunner != nil {
+	if !opts.SkipHooks && opts.Hooks != nil && opts.Hooks.Uninstall.AfterAll != "" && opts.HookRunner != nil {
 		hookCtx := opts.HookContext
 		hookCtx.HookName = "uninstall.after_all"
 		_, err := opts.HookRunner.Run(ctx, opts.Hooks.Uninstall.AfterAll, hookCtx)

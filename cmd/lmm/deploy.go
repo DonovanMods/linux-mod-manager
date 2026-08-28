@@ -108,6 +108,7 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 		HookRunner:  getHookRunner(service),
 		HookContext: makeHookContext(game),
 		Force:       deployForce,
+		SkipHooks:   noHooks,
 	}
 	if len(args) > 0 {
 		resolvedSource, err := resolveSource(service, game, deploySource, false)
