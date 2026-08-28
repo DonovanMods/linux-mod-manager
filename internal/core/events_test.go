@@ -85,12 +85,18 @@ func TestEnumString_NegativeValueUsesEscapeHatch(t *testing.T) {
 }
 
 // phasesOf projects recorded events to their phases, for ordered assertions.
-func phasesOf(events []core.Event) []core.DeployPhase {
-	out := make([]core.DeployPhase, 0, len(events))
+// It also returns the same events filtered down to just the FlowEvents
+// (phases[i] is the phase of flowEvents[i]), so a caller that needs both an
+// index into the phase sequence and the underlying event at that index -
+// e.g. to inspect a ModEvent's Detail after locating it by phase - indexes
+// flowEvents rather than the original, unfiltered slice: the two coincide
+// only when nothing non-FlowEvent appears mid-stream.
+func phasesOf(events []core.Event) (phases []core.DeployPhase, flowEvents []core.Event) {
 	for _, e := range events {
 		if fe, ok := e.(core.FlowEvent); ok {
-			out = append(out, fe.FlowPhase())
+			phases = append(phases, fe.FlowPhase())
+			flowEvents = append(flowEvents, e)
 		}
 	}
-	return out
+	return phases, flowEvents
 }

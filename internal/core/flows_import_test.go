@@ -132,7 +132,8 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	assert.Equal(t, []string{"1"}, savedProfile.Mods[0].FileIDs, "UpsertMod must record the downloaded FileIDs")
 
 	var sawSaved, sawInstalled bool
-	for _, ph := range phasesOf(*seen) {
+	phases, _ := phasesOf(*seen)
+	for _, ph := range phases {
 		switch ph {
 		case core.ImportSaved:
 			sawSaved = true

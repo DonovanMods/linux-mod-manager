@@ -67,6 +67,21 @@ func TestNew_PathWithURISpecialCharacters(t *testing.T) {
 	require.Len(t, entries, 1, "no stray files created from a truncated path")
 }
 
+// TestNew_RelativePathResolvesAgainstWorkingDirectory pins New's
+// filepath.Abs branch: dsnFor documents a relative path as ambiguous in a
+// "file:" URI (its first segment reads back as the host), so New must
+// resolve a relative path before it ever reaches the DSN.
+func TestNew_RelativePathResolvesAgainstWorkingDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	d, err := New("lmm.db")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+	_, err = os.Stat("lmm.db")
+	require.NoError(t, err, "the relative path must resolve to a file in the working directory")
+}
+
 // TestQueryContext_HonoursCancellation pins that a cancelled ctx reaches SQLite.
 func TestQueryContext_HonoursCancellation(t *testing.T) {
 	d, err := New(":memory:")

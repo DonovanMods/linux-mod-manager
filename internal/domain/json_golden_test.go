@@ -164,7 +164,7 @@ func TestJSONGoldens(t *testing.T) {
 				Name:                "Skyrim Special Edition",
 				InstallPath:         "/home/user/games/skyrim-se",
 				ModPath:             "/home/user/games/skyrim-se/Data",
-				SourceIDs:           map[string]string{"nexusmods": "skyrimspecialedition"},
+				SourceIDs:           map[string]string{"nexusmods": "skyrimspecialedition", "curseforge": "skyrim-special-edition"},
 				LinkMethod:          domain.LinkSymlink,
 				LinkMethodExplicit:  true,
 				CachePath:           "/home/user/.cache/lmm/skyrim-se",
