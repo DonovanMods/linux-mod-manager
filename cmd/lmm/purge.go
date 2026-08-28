@@ -106,7 +106,11 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	// same adapter pattern as doDeploy's). Entries that also land in
 	// result.Warnings/.Notes are never separately batch-printed below -
 	// every one has a corresponding event here.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.DeployBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)

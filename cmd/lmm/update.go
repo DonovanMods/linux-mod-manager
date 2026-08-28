@@ -778,7 +778,11 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		Force:       updateForce,
 	}
 
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.UpdateDownloading:
 			if verbose && !jsonOutput {
@@ -906,7 +910,11 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		Force:       updateForce,
 	}
 
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)

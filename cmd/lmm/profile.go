@@ -342,7 +342,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	// the SwitchResult.Notes display contract. result.Notes is never
 	// separately batch-printed below: every entry has a corresponding event
 	// here already.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.SwitchDisableNote:
 			if verbose {
@@ -498,7 +502,11 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	// including the sole diagnostic that also lands in result.Notes (see
 	// core.ProfileImportResult's doc comment). Notes is never separately
 	// batch-printed below: it has a corresponding event here already.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.ImportSaved:
 			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
