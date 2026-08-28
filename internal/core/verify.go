@@ -43,8 +43,14 @@ type VerifyOptions struct {
 // extras (text mode) or copies VerifyFinding by named field (JSON mode, see
 // verifyFileJSON in cmd/lmm/verify.go), never a bare struct copy.
 type VerifyFinding struct {
-	ModID, ModName, FileID, Status, Note string
-	Recorded, Effective, Version         string
+	ModID     string `json:"mod_id,omitempty"`
+	ModName   string `json:"mod_name,omitempty"`
+	FileID    string `json:"file_id,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Note      string `json:"note,omitempty"`
+	Recorded  string `json:"recorded,omitempty"`
+	Effective string `json:"effective,omitempty"`
+	Version   string `json:"version,omitempty"`
 }
 
 // VerifyResult is the accumulated outcome of a Verify run.
@@ -103,18 +109,20 @@ func (k *VerifyEventKind) UnmarshalText(b []byte) error {
 // fill the rest of Scope where relevant).
 type VerifyEvent struct {
 	Scope
-	Kind     VerifyEventKind
-	HasFiles bool
-	Finding  VerifyFinding // valid for VerifyEvFinding
+	Kind     VerifyEventKind `json:"kind"`
+	HasFiles bool            `json:"has_files,omitempty"`
+	Finding  VerifyFinding   `json:"finding"` // valid for VerifyEvFinding
 
 	// Main-line extras the CLI needs beyond the finding row itself:
-	Recorded, Effective, Version string // version_mismatch / missing
-	ExpectedCount                int    // file_count_mismatch
-	ChecksumPopulated            bool   // ok main line: a --fix redownload populated a previously-missing checksum (#164)
+	Recorded          string `json:"recorded,omitempty"`           // version_mismatch / missing
+	Effective         string `json:"effective,omitempty"`          // version_mismatch
+	Version           string `json:"version,omitempty"`            // missing
+	ExpectedCount     int    `json:"expected_count,omitempty"`     // file_count_mismatch
+	ChecksumPopulated bool   `json:"checksum_populated,omitempty"` // ok main line: a --fix redownload populated a previously-missing checksum (#164)
 
 	// Sub-line payload (VerifyEvRepairDetail):
-	Detail string
-	Fixed  bool // this sub-line reports a completed repair
+	Detail string `json:"detail,omitempty"`
+	Fixed  bool   `json:"fixed,omitempty"` // this sub-line reports a completed repair
 }
 
 // EventType implements Event.
