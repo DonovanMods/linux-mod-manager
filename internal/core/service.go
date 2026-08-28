@@ -1243,9 +1243,6 @@ func (s *Service) SaveGame(ctx context.Context, game *domain.Game) error {
 }
 
 func (s *Service) saveGame(ctx context.Context, game *domain.Game) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	s.gamesMu.Lock()
 	defer s.gamesMu.Unlock()
 	if err := config.SaveGame(s.configDir, game); err != nil {

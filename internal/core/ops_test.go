@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,11 +27,14 @@ func TestBeginOp_SecondMutationBlocksUntilRelease(t *testing.T) {
 	require.NoError(t, err)
 
 	acquired := make(chan struct{})
+	var acquireErr error
 	go func() {
 		r2, err := svc.beginOp(ctx)
-		require.NoError(t, err)
+		acquireErr = err
 		close(acquired)
-		r2()
+		if err == nil {
+			r2()
+		}
 	}()
 
 	select {
@@ -41,6 +45,7 @@ func TestBeginOp_SecondMutationBlocksUntilRelease(t *testing.T) {
 	release()
 	select {
 	case <-acquired:
+		require.NoError(t, acquireErr)
 	case <-time.After(time.Second):
 		t.Fatal("second mutation never acquired after release")
 	}
@@ -123,4 +128,38 @@ func TestBeginOp_PreCancelledCtxNeverAcquires(t *testing.T) {
 		require.ErrorIs(t, err, context.Canceled, "iteration %d", i)
 		require.Len(t, svc.opSem, 0, "iteration %d: slot must stay free when the caller never acquires", i)
 	}
+}
+
+// TestBeginOp_ReleaseIsIdempotent pins that calling release a second time is
+// a no-op rather than a second <-s.opSem: without idempotency, that second
+// receive would consume whichever later caller currently holds the slot,
+// freeing it out from under them and letting two mutations run concurrently.
+func TestBeginOp_ReleaseIsIdempotent(t *testing.T) {
+	svc := newOpsService(t)
+	ctx := context.Background()
+
+	release1, err := svc.beginOp(ctx)
+	require.NoError(t, err)
+	release1()
+
+	release2, err := svc.beginOp(ctx)
+	require.NoError(t, err)
+
+	release1() // second call: must not steal release2's slot
+	require.Len(t, svc.opSem, 1, "the slot release1 already freed must not be double-freed onto release2's holder")
+
+	release2()
+	require.Len(t, svc.opSem, 0)
+}
+
+// TestBeginOp_NilOpSemPanics pins that a Service built as a struct literal
+// (nil opSem) fails loudly the moment it gains a mutation call, rather than
+// blocking forever on a nil channel send until a test's 10-minute timeout.
+func TestBeginOp_NilOpSemPanics(t *testing.T) {
+	svc := &Service{}
+
+	assert.PanicsWithValue(t,
+		"core: beginOp called on a Service with a nil opSem; construct it via NewService, not a struct literal",
+		func() { _, _ = svc.beginOp(context.Background()) },
+	)
 }

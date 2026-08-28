@@ -4277,11 +4277,12 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	}
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selectedFiles)
 
-	// scope is the full identity (source + mod ID) the download/checksum
-	// events carry; modScope is the name+ID-only shape the mod-lifecycle
-	// events historically carried.
+	// scope carries the download/checksum events; modScope carries the
+	// mod-lifecycle events below. Both now carry the same full identity
+	// (source + mod ID) - kept as separate values because they're read at
+	// different points as selectedFiles/mod.Version settle.
 	scope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
-	modScope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{ModID: mod.ID}}
+	modScope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
 	hookCtx := opts.HookContext
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
