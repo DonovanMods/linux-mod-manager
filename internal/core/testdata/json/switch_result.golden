@@ -1,0 +1,11 @@
+{
+  "disabled": 1,
+  "enabled": 2,
+  "installed": 1,
+  "notes": [
+    "enabled Realistic Needs"
+  ],
+  "warnings": [
+    "failed to set enabled for OldMod"
+  ]
+}

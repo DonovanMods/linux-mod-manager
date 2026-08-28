@@ -1,5 +1,7 @@
 package domain
 
+import "fmt"
+
 // LinkMethod determines how mods are deployed to game directories
 type LinkMethod int
 
@@ -20,6 +22,23 @@ func (m LinkMethod) String() string {
 	default:
 		return "unknown"
 	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+//
+// NOTE: yaml.v3 also honours TextMarshaler — a struct that yaml-marshals this
+// type will now emit the name, not the int. The storage/config DTOs use
+// plain strings; keep it that way.
+func (m LinkMethod) MarshalText() ([]byte, error) { return []byte(m.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (m *LinkMethod) UnmarshalText(b []byte) error {
+	method, ok := ParseLinkMethod(string(b))
+	if !ok {
+		return fmt.Errorf("unknown link method %q", b)
+	}
+	*m = method
+	return nil
 }
 
 // ValidLinkMethods lists ParseLinkMethod's recognized non-empty values, in
@@ -49,18 +68,18 @@ func ParseLinkMethod(s string) (method LinkMethod, ok bool) {
 
 // Game represents a moddable game
 type Game struct {
-	ID                  string            // Unique slug, e.g., "skyrim-se"
-	Name                string            // Display name
-	InstallPath         string            // Game installation directory
-	ModPath             string            // Where mods should be deployed
-	SourceIDs           map[string]string // Map source to game ID, e.g., "nexusmods" -> "skyrimspecialedition"
-	LinkMethod          LinkMethod        // How to deploy mods
-	LinkMethodExplicit  bool              // True if LinkMethod was explicitly set in config
-	CachePath           string            // Optional: custom cache path for this game's mods
-	Hooks               GameHooks         // Optional: hooks for install/uninstall operations
-	DeployMode          DeployMode        // How to handle downloaded files (extract vs copy)
-	ConvertPaks         bool              // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
-	ConvertPaksExplicit bool              // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
+	ID                  string            `json:"id"`                    // Unique slug, e.g., "skyrim-se"
+	Name                string            `json:"name"`                  // Display name
+	InstallPath         string            `json:"install_path"`          // Game installation directory
+	ModPath             string            `json:"mod_path"`              // Where mods should be deployed
+	SourceIDs           map[string]string `json:"source_ids"`            // Map source to game ID, e.g., "nexusmods" -> "skyrimspecialedition"
+	LinkMethod          LinkMethod        `json:"link_method"`           // How to deploy mods
+	LinkMethodExplicit  bool              `json:"link_method_explicit"`  // True if LinkMethod was explicitly set in config
+	CachePath           string            `json:"cache_path,omitempty"`  // Optional: custom cache path for this game's mods
+	Hooks               GameHooks         `json:"hooks"`                 // Optional: hooks for install/uninstall operations
+	DeployMode          DeployMode        `json:"deploy_mode"`           // How to handle downloaded files (extract vs copy)
+	ConvertPaks         bool              `json:"convert_paks"`          // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
+	ConvertPaksExplicit bool              `json:"convert_paks_explicit"` // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
 }
 
 // DeployMode determines how downloaded mod archives are handled
@@ -83,6 +102,27 @@ func (m DeployMode) String() string {
 	default:
 		return "extract"
 	}
+}
+
+// MarshalText implements encoding.TextMarshaler.
+//
+// NOTE: yaml.v3 also honours TextMarshaler — a struct that yaml-marshals this
+// type will now emit the name, not the int. The storage/config DTOs use
+// plain strings; keep it that way.
+//
+// Out-of-range values marshal as the default name ("extract"), not an error
+// — this is String()'s pre-existing behaviour, preserved on purpose (unlike
+// LinkMethod/VerifyTier, which reject).
+func (m DeployMode) MarshalText() ([]byte, error) { return []byte(m.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (m *DeployMode) UnmarshalText(b []byte) error {
+	mode, ok := ParseDeployMode(string(b))
+	if !ok {
+		return fmt.Errorf("unknown deploy mode %q", b)
+	}
+	*m = mode
+	return nil
 }
 
 // ValidDeployModes is ValidLinkMethods' counterpart for ParseDeployMode.

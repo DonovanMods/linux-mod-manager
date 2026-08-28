@@ -969,12 +969,5 @@ func plural(n int) string {
 }
 
 func policyToString(policy domain.UpdatePolicy) string {
-	switch policy {
-	case domain.UpdateAuto:
-		return "auto"
-	case domain.UpdatePinned:
-		return "pinned"
-	default:
-		return "notify"
-	}
+	return policy.String()
 }

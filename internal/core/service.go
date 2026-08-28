@@ -36,8 +36,8 @@ type ServiceConfig struct {
 
 // DownloadModResult contains the outcome of downloading a mod file
 type DownloadModResult struct {
-	FilesExtracted int    // Number of files extracted
-	Checksum       string // MD5 hash of downloaded archive
+	FilesExtracted int    `json:"files_extracted"` // Number of files extracted
+	Checksum       string `json:"checksum"`        // MD5 hash of downloaded archive
 }
 
 // Service is the application facade every frontend talks to.
@@ -328,16 +328,24 @@ func soleMergeCompiler(gameID string, compilers []source.MergeCompiler) (source.
 
 // SourceWarning reports a per-source failure during an aggregate operation.
 type SourceWarning struct {
-	SourceID string
-	Err      error
+	SourceID     string `json:"source_id"`
+	Err          error  `json:"-"`
+	ErrorMessage string `json:"error,omitempty"` // Err.Error(), when Err is set
+}
+
+// newSourceWarning builds a SourceWarning with ErrorMessage and Err paired
+// from a single error, so a construction site can't emit one without the
+// other (final review, Minor #1 / #282).
+func newSourceWarning(id string, err error) SourceWarning {
+	return SourceWarning{SourceID: id, ErrorMessage: err.Error(), Err: err}
 }
 
 // AggregateSearchResult is the merged outcome of searching every source
 // configured for a game.
 type AggregateSearchResult struct {
-	Mods       []domain.Mod    // merged, ranked; each Mod carries its SourceID
-	TotalCount int             // sum of per-source totals (sources reporting 0/unknown contribute 0)
-	Warnings   []SourceWarning // per-source failures (design §5: warnings, not errors)
+	Mods       []domain.Mod    `json:"mods"`               // merged, ranked; each Mod carries its SourceID
+	TotalCount int             `json:"total_count"`        // sum of per-source totals (sources reporting 0/unknown contribute 0)
+	Warnings   []SourceWarning `json:"warnings,omitempty"` // per-source failures (design §5: warnings, not errors)
 	// Exhausted reports whether every source that successfully returned a
 	// result for THIS page has nothing left to page through (#58 item 1).
 	// TotalCount is summed across sources with INDEPENDENT per-source
@@ -352,7 +360,7 @@ type AggregateSearchResult struct {
 	// contributing source and ANDs the results, so it is the accurate signal
 	// callers should gate a next-page offer on instead. True when there were
 	// zero successful sources too (nothing left to page through).
-	Exhausted bool
+	Exhausted bool `json:"exhausted"`
 	// AttemptedCount is how many of the game's configured sources actually
 	// had a search attempted against them - capability-less sources are
 	// skipped silently (see SearchAllSources's doc comment) and never
@@ -361,7 +369,7 @@ type AggregateSearchResult struct {
 	// unless a caller checks this field - the honesty-notice fix (#58 item
 	// 3): callers render a distinct "no source supports search" notice
 	// instead of a plain "no mods found" when this is 0.
-	AttemptedCount int
+	AttemptedCount int `json:"attempted_count"`
 }
 
 // sourceHasMore reports whether res (one source's response to the given
@@ -461,7 +469,7 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 			continue
 		}
 		if slots[i].err != nil {
-			result.Warnings = append(result.Warnings, SourceWarning{SourceID: sourceID, Err: slots[i].err})
+			result.Warnings = append(result.Warnings, newSourceWarning(sourceID, slots[i].err))
 			continue
 		}
 		succeeded++
@@ -1666,10 +1674,10 @@ func (s *Service) GetFileOwner(ctx context.Context, gameID, profileName, relativ
 
 // DeployedFile is a service-boundary view of a tracked mod file with its checksum.
 type DeployedFile struct {
-	SourceID string
-	ModID    string
-	FileID   string
-	Checksum string
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	FileID   string `json:"file_id"`
+	Checksum string `json:"checksum,omitempty"`
 }
 
 // GetFilesWithChecksums returns every tracked file in the profile with its

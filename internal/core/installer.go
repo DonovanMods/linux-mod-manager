@@ -528,9 +528,9 @@ func (i *Installer) IsInstalled(ctx context.Context, game *domain.Game, mod *dom
 
 // Conflict represents a file that would be overwritten by installing a mod
 type Conflict struct {
-	RelativePath    string
-	CurrentSourceID string
-	CurrentModID    string
+	RelativePath    string `json:"relative_path"`
+	CurrentSourceID string `json:"current_source_id"`
+	CurrentModID    string `json:"current_mod_id"`
 }
 
 // GetConflicts checks if installing a mod would overwrite files from other mods.

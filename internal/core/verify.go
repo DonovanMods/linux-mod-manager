@@ -21,11 +21,40 @@ const (
 	VerifyFull
 )
 
+// verifyTierNames maps each VerifyTier to its wire name. Keep in declaration
+// order.
+var verifyTierNames = [...]string{
+	VerifyLocal: "local",
+	VerifyFull:  "full",
+}
+
+// String returns the tier's wire name.
+func (t VerifyTier) String() string {
+	if t >= 0 && int(t) < len(verifyTierNames) && verifyTierNames[t] != "" {
+		return verifyTierNames[t]
+	}
+	return fmt.Sprintf("verify_tier(%d)", int(t))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (t VerifyTier) MarshalText() ([]byte, error) { return []byte(t.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (t *VerifyTier) UnmarshalText(b []byte) error {
+	for i, n := range verifyTierNames {
+		if n == string(b) {
+			*t = VerifyTier(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown verify tier %q", b)
+}
+
 // VerifyOptions configures a Verify run.
 type VerifyOptions struct {
-	Tier      VerifyTier
-	Fix       bool
-	ModFilter string
+	Tier      VerifyTier `json:"tier"`
+	Fix       bool       `json:"fix"`
+	ModFilter string     `json:"mod_filter,omitempty"`
 }
 
 // VerifyFinding is one reported row - a per-file or per-mod outcome from a
@@ -55,10 +84,11 @@ type VerifyFinding struct {
 
 // VerifyResult is the accumulated outcome of a Verify run.
 type VerifyResult struct {
-	Findings         []VerifyFinding
-	Issues, Warnings int
-	Checked          int  // feeds the CLI's "No files found for mod X" gate
-	HasFiles         bool // false = the #217 empty-profile path ran
+	Findings []VerifyFinding `json:"findings"`
+	Issues   int             `json:"issues"`
+	Warnings int             `json:"warnings"`
+	Checked  int             `json:"checked"`   // feeds the CLI's "No files found for mod X" gate
+	HasFiles bool            `json:"has_files"` // false = the #217 empty-profile path ran
 }
 
 // VerifyEventKind identifies what a VerifyEvent carries.

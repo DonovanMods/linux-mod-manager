@@ -1,0 +1,12 @@
+{
+  "profile_name": "default",
+  "installed": 3,
+  "failed": 1,
+  "skipped": 1,
+  "warnings": [
+    "could not install nexusmods:99"
+  ],
+  "notes": [
+    "created profile default"
+  ]
+}

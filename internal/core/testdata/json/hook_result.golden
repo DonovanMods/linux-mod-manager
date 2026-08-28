@@ -1,0 +1,5 @@
+{
+  "stdout": "hook completed\n",
+  "stderr": "warning: deprecated option used\n",
+  "exit_code": 1
+}

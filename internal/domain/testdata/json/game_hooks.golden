@@ -1,0 +1,10 @@
+{
+  "install": {
+    "before_all": "scripts/install_before_all.sh",
+    "after_all": "scripts/install_after_all.sh"
+  },
+  "uninstall": {
+    "before_all": "scripts/uninstall_before_all.sh",
+    "after_all": "scripts/uninstall_after_all.sh"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "version": "1.2.3",
+  "profile": "default",
+  "update_policy": "auto",
+  "locked": true,
+  "locked_version": "1.2.3",
+  "convert_paks": true
+}

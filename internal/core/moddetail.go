@@ -17,22 +17,22 @@ import (
 // eligibility) - and frontends are thin adapters over core, so no frontend
 // re-derives that join for itself (#86).
 type ModDetail struct {
-	Mod       *domain.Mod
-	Installed *InstalledDetail
+	Mod       *domain.Mod      `json:"mod,omitempty"`
+	Installed *InstalledDetail `json:"installed,omitempty"`
 }
 
 // InstalledDetail is the local install state. Nil on ModDetail when the mod
 // is not installed in the profile - an ordinary state, not an error.
 type InstalledDetail struct {
-	Version       string
-	Profile       string
-	UpdatePolicy  domain.UpdatePolicy
-	Locked        bool
-	LockedVersion string
+	Version       string              `json:"version"`
+	Profile       string              `json:"profile"`
+	UpdatePolicy  domain.UpdatePolicy `json:"update_policy"`
+	Locked        bool                `json:"locked"`
+	LockedVersion string              `json:"locked_version,omitempty"`
 	// ConvertPaks is nil when pak conversion does not apply to this mod at
 	// all (not a merge-compile game, or no pak merge source) - distinct from
 	// a non-nil pointer to false, which means "applies, and is off".
-	ConvertPaks *bool
+	ConvertPaks *bool `json:"convert_paks,omitempty"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install

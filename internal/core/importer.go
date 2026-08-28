@@ -24,10 +24,10 @@ type ImportOptions struct {
 
 // ImportResult contains the outcome of importing a local mod
 type ImportResult struct {
-	Mod            *domain.Mod
-	FilesExtracted int
-	LinkedSource   string // "nexusmods", "local", etc.
-	AutoDetected   bool   // true if source/ID was parsed from filename
+	Mod            *domain.Mod `json:"mod,omitempty"`
+	FilesExtracted int         `json:"files_extracted"`
+	LinkedSource   string      `json:"linked_source"` // "nexusmods", "local", etc.
+	AutoDetected   bool        `json:"auto_detected"` // true if source/ID was parsed from filename
 	// RetainedFileID is the identity Import used to key a retained compile
 	// source (cache.RetainedSourceName) - only set for the DeployCompile
 	// ".exmodz" branch, where it is the archive's own filename (Import has
@@ -38,7 +38,7 @@ type ImportResult struct {
 	// value is invisible to every future merge - silently, forever, since
 	// it is also excluded from the staleness fingerprint on both sides of
 	// the comparison. Empty for every other deploy mode.
-	RetainedFileID string
+	RetainedFileID string `json:"retained_file_id,omitempty"`
 }
 
 // Importer handles importing mods from local archive files
@@ -518,18 +518,20 @@ func pathWithinRoot(root, target string) bool {
 
 // ScanResult contains the outcome of scanning a single mod file
 type ScanResult struct {
-	FilePath       string      // Original path in mod_path
-	FileName       string      // Base filename
-	Mod            *domain.Mod // Detected/created mod info
-	MatchedSource  string      // a configured source's ID (any registered source, not just curseforge/nexusmods), or "local"
-	AlreadyTracked bool        // True if already in lmm database
-	Error          error       // Any error during processing
+	FilePath       string      `json:"file_path"`       // Original path in mod_path
+	FileName       string      `json:"file_name"`       // Base filename
+	Mod            *domain.Mod `json:"mod,omitempty"`   // Detected/created mod info
+	MatchedSource  string      `json:"matched_source"`  // a configured source's ID (any registered source, not just curseforge/nexusmods), or "local"
+	AlreadyTracked bool        `json:"already_tracked"` // True if already in lmm database
+	// Currently never set by ScanModPath — see #285.
+	Err          error  `json:"-"`               // Any error during processing
+	ErrorMessage string `json:"error,omitempty"` // Err.Error(), when Err is set
 
 	// ResolvedFile is the matched source's own file this scanned archive
 	// corresponds to (#139), when the import flow could resolve one (exact
 	// FileName match via ResolveImportedFile); nil otherwise. Set by the
 	// import flow after source matching, not by ScanModPath itself.
-	ResolvedFile *domain.DownloadableFile
+	ResolvedFile *domain.DownloadableFile `json:"resolved_file,omitempty"`
 }
 
 // ScanOptions configures the scan operation

@@ -1,0 +1,24 @@
+{
+  "id": "42",
+  "source_id": "nexusmods",
+  "name": "Sample Mod",
+  "version": "1.2.3",
+  "author": "Sample Author",
+  "summary": "A short one-line summary.",
+  "description": "A longer, multi-sentence description of the mod.",
+  "game_id": "skyrim-se",
+  "category": "Gameplay",
+  "downloads": 15000,
+  "endorsements": 500,
+  "picture_url": "https://example.invalid/picture.jpg",
+  "source_url": "https://example.invalid/mods/42",
+  "files": [
+    {
+      "path": "Data/textures/armor/mesh.dds",
+      "size": 2048576,
+      "checksum": "abc123"
+    }
+  ],
+  "dependencies": [],
+  "updated_at": "2026-08-27T12:00:00Z"
+}

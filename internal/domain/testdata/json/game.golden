@@ -1,0 +1,23 @@
+{
+  "id": "skyrim-se",
+  "name": "Skyrim Special Edition",
+  "install_path": "/home/user/games/skyrim-se",
+  "mod_path": "/home/user/games/skyrim-se/Data",
+  "source_ids": {
+    "nexusmods": "skyrimspecialedition"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": true,
+  "cache_path": "/home/user/.cache/lmm/skyrim-se",
+  "hooks": {
+    "install": {
+      "before_all": "scripts/before_all.sh"
+    },
+    "uninstall": {
+      "after_all": "scripts/after_all.sh"
+    }
+  },
+  "deploy_mode": "compile",
+  "convert_paks": true,
+  "convert_paks_explicit": true
+}

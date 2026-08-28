@@ -24,9 +24,9 @@ type HookContext struct {
 
 // HookResult contains the output from running a hook
 type HookResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout   string `json:"stdout,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
+	ExitCode int    `json:"exit_code"`
 }
 
 // HookRunner executes hook scripts with timeout and environment

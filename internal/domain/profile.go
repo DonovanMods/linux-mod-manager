@@ -3,31 +3,31 @@ package domain
 // HookExplicitFlags tracks which hooks were explicitly set in profile config
 // This allows distinguishing between "not set" (inherit from game) and "set to empty" (disable)
 type HookExplicitFlags struct {
-	BeforeAll  bool
-	BeforeEach bool
-	AfterEach  bool
-	AfterAll   bool
+	BeforeAll  bool `json:"before_all"`
+	BeforeEach bool `json:"before_each"`
+	AfterEach  bool `json:"after_each"`
+	AfterAll   bool `json:"after_all"`
 }
 
 // GameHooksExplicit tracks which hooks were explicitly set
 type GameHooksExplicit struct {
-	Install   HookExplicitFlags
-	Uninstall HookExplicitFlags
+	Install   HookExplicitFlags `json:"install"`
+	Uninstall HookExplicitFlags `json:"uninstall"`
 }
 
 // Profile represents a collection of mods with a specific configuration
 type Profile struct {
-	Name       string            // Profile identifier
-	GameID     string            // Which game this profile is for
-	Mods       []ModReference    // Mods in load order (first = lowest priority)
-	Overrides  map[string][]byte // Config file overrides (path -> content)
-	LinkMethod LinkMethod        // Override game's default link method (optional)
+	Name       string            `json:"name"`        // Profile identifier
+	GameID     string            `json:"game_id"`     // Which game this profile is for
+	Mods       []ModReference    `json:"mods"`        // Mods in load order (first = lowest priority)
+	Overrides  map[string][]byte `json:"-"`           // Config file overrides (path -> content)
+	LinkMethod LinkMethod        `json:"link_method"` // Override game's default link method (optional)
 	// LinkMethodExplicit distinguishes "not set" (inherit from game/global) from an
 	// explicit "symlink", which is LinkMethod's zero value. Mirrors Game.LinkMethodExplicit.
-	LinkMethodExplicit bool
-	IsDefault          bool              // Is this the default profile for the game?
-	Hooks              GameHooks         // Profile-level hook overrides
-	HooksExplicit      GameHooksExplicit // Tracks which hooks were explicitly set
+	LinkMethodExplicit bool              `json:"link_method_explicit"`
+	IsDefault          bool              `json:"is_default"`     // Is this the default profile for the game?
+	Hooks              GameHooks         `json:"hooks"`          // Profile-level hook overrides
+	HooksExplicit      GameHooksExplicit `json:"hooks_explicit"` // Tracks which hooks were explicitly set
 }
 
 // FindRef returns a pointer into p.Mods for the reference matching
@@ -57,9 +57,9 @@ func (p *Profile) FindRef(sourceID, modID string) *ModReference {
 
 // ExportedProfile is the YAML-serializable format for sharing
 type ExportedProfile struct {
-	Name       string            `yaml:"name"`
-	GameID     string            `yaml:"game_id"`
-	Mods       []ModReference    `yaml:"mods"`
-	LinkMethod string            `yaml:"link_method,omitempty"`
-	Overrides  map[string]string `yaml:"overrides,omitempty"` // path (relative to game install) -> file content
+	Name       string            `yaml:"name" json:"name"`
+	GameID     string            `yaml:"game_id" json:"game_id"`
+	Mods       []ModReference    `yaml:"mods" json:"mods"`
+	LinkMethod string            `yaml:"link_method,omitempty" json:"link_method,omitempty"`
+	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"` // path (relative to game install) -> file content
 }

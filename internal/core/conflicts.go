@@ -13,7 +13,10 @@ import (
 // ConflictModRef identifies one mod participating in a file conflict. Key is
 // domain.ModKey ("sourceID:modID"); Name is the mod's display name, falling
 // back to Key when no installed record supplies one.
-type ConflictModRef struct{ Key, Name string }
+type ConflictModRef struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
 
 // ProfileConflict describes one game-directory path that more than one
 // enabled mod in the profile provides. Owner is the mod whose copy of the
@@ -26,11 +29,11 @@ type ConflictModRef struct{ Key, Name string }
 // profile was reordered - or historically, deploy order was nondeterministic
 // - since the last deploy), meaning a redeploy would change which file wins.
 type ProfileConflict struct {
-	Path            string
-	Owner           ConflictModRef
-	AlsoIn          []ConflictModRef
-	LoadOrderWinner ConflictModRef
-	Stale           bool
+	Path            string           `json:"path"`
+	Owner           ConflictModRef   `json:"owner"`
+	AlsoIn          []ConflictModRef `json:"also_in"`
+	LoadOrderWinner ConflictModRef   `json:"load_order_winner"`
+	Stale           bool             `json:"stale"`
 }
 
 // GetProfileConflicts is a pure read-only query returning every file path in
