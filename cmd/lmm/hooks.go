@@ -1,3 +1,11 @@
+// Package main: this file's helpers are what's left after Task 2 (#286)
+// moved hook RESOLUTION into core (Service.hookRunner/resolvedHooks/
+// hookContextFor, internal/core/hooks_resolve.go) - every core.XOptions
+// literal now resolves its own hooks, so getHookRunner/getResolvedHooks/
+// makeHookContext have exactly two remaining callers: batchInstallMods
+// (install.go, the CLI-side batch install engine ApplyInstall does not
+// cover) and doImport's archive tail (import.go). Remaining helpers die
+// with batchInstallMods (Unit H) and doImport's archive tail (Unit K).
 package main
 
 import (

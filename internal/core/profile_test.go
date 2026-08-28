@@ -472,6 +472,60 @@ func TestProfileManager_UpsertMod_PreservesLockedMarker(t *testing.T) {
 	assert.True(t, profile.Mods[0].Locked, "locked marker should be preserved despite zero-value in input")
 }
 
+// TestProfileManager_UpsertMod_PreservesHooks is the end-to-end guard for
+// #295: config.SaveProfile never serialized profile.Hooks/HooksExplicit, so
+// every ProfileManager mutation - UpsertMod here, but the same
+// load->mutate->config.SaveProfile shape is shared by SetModLock/
+// ClearModLock/RemoveMod/ReorderMods/SetDefault - silently wiped a
+// profile's hand-edited hooks: override on its very next write. The
+// profile's hooks: block is hand-written directly to disk (mirroring the
+// issue's own repro: a user hand-edits <profile>.yaml) rather than going
+// through SaveProfile, since seeding it via the very function #295 fixes
+// would beg the question.
+func TestProfileManager_UpsertMod_PreservesHooks(t *testing.T) {
+	dir := t.TempDir()
+
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "test")
+	require.NoError(t, err)
+
+	profilePath := filepath.Join(dir, "games", "skyrim-se", "profiles", "test.yaml")
+	profileYAML := `name: test
+game_id: skyrim-se
+mods: []
+hooks:
+  install:
+    before_all: ""
+  uninstall:
+    after_all: "/home/user/.config/lmm/hooks/cleanup.sh"
+`
+	require.NoError(t, os.WriteFile(profilePath, []byte(profileYAML), 0644))
+
+	modRef := domain.ModReference{
+		SourceID: "nexusmods",
+		ModID:    "12345",
+		Version:  "1.0.0",
+		FileIDs:  []string{"100"},
+	}
+	require.NoError(t, pm.UpsertMod("skyrim-se", "test", modRef))
+
+	profile, err := pm.Get("skyrim-se", "test")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1, "the mutation itself must still have applied")
+
+	assert.Equal(t, "", profile.Hooks.Install.BeforeAll)
+	assert.True(t, profile.HooksExplicit.Install.BeforeAll, "explicitly-disabled override must survive the mutation")
+	assert.Equal(t, "/home/user/.config/lmm/hooks/cleanup.sh", profile.Hooks.Uninstall.AfterAll)
+	assert.True(t, profile.HooksExplicit.Uninstall.AfterAll, "hook override must survive UpsertMod, not be wiped")
+}
+
 // TestProfileManager_UpsertMod_LockedRefRefusesVersionMove is #143's core
 // guard: UpsertMod on a LOCKED ref with a DIFFERENT Version must refuse with
 // an error wrapping core.ErrModLocked and leave the profile untouched - the

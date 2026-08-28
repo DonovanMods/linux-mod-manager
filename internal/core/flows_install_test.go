@@ -13,16 +13,17 @@ package core_test
 // doc comments.
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -680,15 +681,12 @@ exit 0`)
 echo "after_all" >> `+callLog+`
 exit 0`)
 
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{
 		BeforeAll: beforeAllScript, BeforeEach: beforeEachScript,
 		AfterEach: afterEachScript, AfterAll: afterAllScript,
-	}}
-	runner := core.NewHookRunner(5 * time.Second)
+	}})
 
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{
-		Hooks: hooks, HookRunner: runner,
-	}, nil)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -904,6 +902,77 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "1.0", installed.Version, "DB row must be unchanged")
 	})
+
+	// This subtest pins that prepareReinstallCacheTransaction's ephemeral
+	// snapshot/staged caches (flows.go) are wired to the service's own
+	// logger via SetLogger, not left on cache.New's silent-discard default
+	// (#284). Neither cache.Cache method the reinstall path actually calls
+	// logs anything on a clean run, so the only observable signal is
+	// Cache.Exists' "stat failed" Debug line on a genuine stat error -
+	// forced here by making the snapshot's version directory unreadable
+	// (parent chmod 000) between prepare and the deploy step's
+	// oldCache.Exists check, via an InstallDeploying sink hook (mirroring
+	// TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLiveCache's
+	// TMPDIR + sink-hook technique). A wired logger sees the debug line; the
+	// pre-fix code (cache.New's default discard logger) would see nothing.
+	t.Run("same-version reinstall wires the transaction's caches to the service logger", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("permission checks are bypassed when running as root")
+		}
+		tmpRoot := t.TempDir()
+		t.Setenv("TMPDIR", tmpRoot) // where the transaction's snapshot temp dir lands
+
+		var logBuf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(), Logger: logger})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+		gameDir := t.TempDir()
+		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
+		installer := svc.GetInstaller(game)
+		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+		defer mock.Close()
+		svc.RegisterSource(mock)
+		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "new-content")
+
+		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+		require.NoError(t, err)
+		require.NotNil(t, plan.Replaces)
+		require.Equal(t, "1.0", plan.Replaces.Version, "a same-version reinstall - the reinstall-cache-transaction path")
+
+		var lockedDir string
+		_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, func(e core.Event) {
+			fe, ok := e.(core.FlowEvent)
+			if !ok || fe.FlowPhase() != core.InstallDeploying {
+				return
+			}
+			entries, rerr := os.ReadDir(tmpRoot)
+			require.NoError(t, rerr)
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), "lmm-reinstall-cache-") {
+					// The parent of the version dir, not the version dir
+					// itself: a stat needs execute (search) permission on
+					// every ANCESTOR to resolve the target, not on the
+					// target itself, so chmod 000 has to land one level up.
+					lockedDir = filepath.Join(tmpRoot, entry.Name(), "snapshot", "g1", "src-mod1")
+					require.NoError(t, os.Chmod(lockedDir, 0o000))
+				}
+			}
+		})
+		t.Cleanup(func() {
+			if lockedDir != "" {
+				_ = os.Chmod(lockedDir, 0o755)
+			}
+		})
+		require.Error(t, err, "the forced stat failure makes the snapshot read as missing, so ReplaceWithOldCache refuses to proceed")
+		require.NotEmpty(t, lockedDir, "the sink must have found and locked the transaction's snapshot dir")
+		assert.Contains(t, logBuf.String(), "stat failed while checking cache entry",
+			"the transaction's snapshot cache must log through the service logger, not cache.New's default discard")
+	})
 }
 
 // TestService_ApplyInstall_DownloadFailure covers the primary's download
@@ -1116,8 +1185,6 @@ func TestService_ApplyInstall_ContextCancelledBetweenPrimaryFiles(t *testing.T) 
 func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 	scriptsDir := t.TempDir()
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\necho boom >&2\nexit 1\n")
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
 
 	newPlan := func(t *testing.T) (*core.Service, *domain.Game, *core.InstallPlan) {
 		svc := newFlowsTestService(t)
@@ -1127,6 +1194,7 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 		t.Cleanup(mock.Close)
 		svc.RegisterSource(mock)
 		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}})
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 		require.NoError(t, err)
 		return svc, game, plan
@@ -1134,7 +1202,7 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 
 	t.Run("fatal without Force", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_all hook failed")
 		require.NotNil(t, result)
@@ -1145,7 +1213,7 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 
 	t.Run("forced continues with a warning", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Warnings, 1)
@@ -1163,8 +1231,6 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 	scriptsDir := t.TempDir()
 	failScript := createTestScript(t, scriptsDir, "before_each.sh", "#!/bin/bash\necho boom >&2\nexit 1\n")
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
 
 	newPlan := func(t *testing.T) (*core.Service, *domain.Game, *core.InstallPlan) {
 		svc := newFlowsTestService(t)
@@ -1174,6 +1240,7 @@ func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 		t.Cleanup(mock.Close)
 		svc.RegisterSource(mock)
 		registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+		seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failScript}})
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 		require.NoError(t, err)
 		return svc, game, plan
@@ -1181,7 +1248,7 @@ func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 
 	t.Run("fatal without Force", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_each hook failed")
 		require.NotNil(t, result)
@@ -1190,7 +1257,7 @@ func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 
 	t.Run("forced continues with a warning", func(t *testing.T) {
 		svc, game, plan := newPlan(t)
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner, Force: true}, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		require.Len(t, result.Warnings, 1)
@@ -1232,10 +1299,9 @@ if [ "$LMM_MOD_ID" = "dep1" ]; then
   exit 1
 fi
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failScript}})
 
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err, "a dependency's before_each failure must never fail the whole install, even without Force")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Root"}, result.Installed)
@@ -1402,8 +1468,7 @@ func TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion(t *test
 	beforeEach := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
 echo "install.before_each:$LMM_MOD_ID:$LMM_MOD_VERSION" >> `+callLog+`
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: beforeEach}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: beforeEach}})
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
 	require.NoError(t, err)
@@ -1413,7 +1478,7 @@ exit 0`)
 		{ID: "2", Name: "Old File", FileName: "mod1-old.zip", Version: "1.0"},
 	}
 
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, nil)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Mod One"}, result.Installed)
@@ -1962,11 +2027,10 @@ if [ "$LMM_MOD_ID" = "root" ]; then
   exit 1
 fi
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: failScript}})
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Hooks: hooks, HookRunner: runner}, sink)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "the primary's before_each failure must never fail the whole install in the BATCH path, even without Force")
 	require.NotNil(t, result)
 	assert.Equal(t, []string{"Dep One"}, result.Installed, "only the dependency installs - the primary was skipped")

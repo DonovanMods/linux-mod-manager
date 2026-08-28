@@ -1468,6 +1468,55 @@ func TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError(t *testin
 	assert.Error(t, dbErr)
 }
 
+// TestDoInstall_BeforeAllHookFails_AbortsWithoutForce characterizes the
+// pre-lift STRICT install path's hook-refusal semantics (Task 2, #286):
+// without --force, a failing install.before_all hook aborts the whole
+// install before anything is downloaded, deployed, or recorded - the
+// non-forced counterpart to TestDoInstall_FailurePath_
+// PrintsAccumulatedDiagnosticsBeforeError's forced case, added because
+// nothing else in this file pinned the refusal path before hook resolution
+// moves into core.
+func TestDoInstall_BeforeAllHookFails_AbortsWithoutForce(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	scriptsDir := t.TempDir()
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+
+	err := doInstall(context.Background(), svc, game, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "install.before_all hook failed")
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "a fatal before_all hook must leave nothing installed")
+}
+
+// TestDoInstall_NoHooks_SkipsConfiguredHook characterizes --no-hooks for the
+// STRICT install path (Task 2, #286): a configured install.before_all hook
+// that would otherwise abort the install (it exits 1) never runs at all
+// when noHooks is set, so the install proceeds and succeeds.
+func TestDoInstall_NoHooks_SkipsConfiguredHook(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	noHooks = true
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	scriptsDir := t.TempDir()
+	failScript := filepath.Join(scriptsDir, "before_all.sh")
+	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\nexit 1\n"), 0755))
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+
+	require.NoError(t, doInstall(context.Background(), svc, game, nil))
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, dbErr, "--no-hooks must skip the hook entirely, letting the install succeed")
+}
+
 // TestBatchInstallMods_StampsSelectedFileVersion guards issue #94 for
 // batchInstallMods (the multi-select/dependency-resolved install save
 // site): when the selected primary file carries its own version distinct

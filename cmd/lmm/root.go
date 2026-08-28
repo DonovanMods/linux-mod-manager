@@ -51,6 +51,15 @@ var (
 	jsonOutput bool
 	noColor    bool
 	logLevel   string
+
+	// rawArgs is the argument list Execute is about to hand to runRoot,
+	// captured before ParseFlags can consume it. logLevelFlagErrorFunc
+	// consults it to detect a --json flag that pflag's FlagSet.Parse never
+	// reached because it aborted on an earlier --log-level Set error - see
+	// that function's comment in logging.go. Tests that call runRoot
+	// directly (bypassing Execute) must set this alongside rootCmd.SetArgs
+	// so the two argument lists agree.
+	rawArgs []string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -87,6 +96,18 @@ FILES
 	Version:       computeDisplayVersion(version, buildDescribe),
 	SilenceUsage:  true, // Runtime errors should not print usage
 	SilenceErrors: true, // We handle error output in Execute()
+
+	// PersistentPreRunE validates --log-level before any subcommand runs
+	// (including --version and --help), so an invalid level is rejected up
+	// front instead of only surfacing if and when the subcommand happens to
+	// open a Service. No subcommand in this tree defines its own
+	// PersistentPreRun(E), so cobra never skips this one in favor of a
+	// nearer override. newCLILogger's returned logger is discarded here;
+	// initServiceWith re-validates (idempotently) when it builds the real one.
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		_, err := newCLILogger(logLevel, io.Discard)
+		return err
+	},
 }
 
 // computeDisplayVersion returns the version string shown to the user for
@@ -112,7 +133,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "off", "diagnostic log level written to stderr (off, error, warn, info, debug)")
+	logLevel = "off"
+	rootCmd.PersistentFlags().Var(logLevelFlag{&logLevel}, logLevelFlagName, "diagnostic log level written to stderr (off, error, warn, info, debug)")
+	rootCmd.SetFlagErrorFunc(logLevelFlagErrorFunc)
 }
 
 // stdoutColorCapable reports whether the live os.Stdout is a color-capable
@@ -290,6 +313,7 @@ func Execute() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {
 		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
 			os.Exit(2)

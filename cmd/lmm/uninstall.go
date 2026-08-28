@@ -96,12 +96,9 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	opts := core.UninstallOptions{
-		KeepCache:   uninstallKeep,
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       uninstallForce,
-		SkipHooks:   noHooks,
+		KeepCache: uninstallKeep,
+		Force:     uninstallForce,
+		SkipHooks: noHooks,
 	}
 
 	result, err := service.UninstallMod(ctx, game, profileName, installedMod.SourceID, modID, opts)

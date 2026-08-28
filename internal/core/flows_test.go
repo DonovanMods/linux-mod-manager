@@ -38,6 +38,18 @@ func (s *versionedFileSource) GetModFiles(ctx context.Context, mod *domain.Mod) 
 	}, nil
 }
 
+// createTestScript creates an executable script in the temp directory.
+// Shared by every hook-lifecycle test across this package (flows_test.go,
+// flows_install_test.go, flows_update_test.go, flows_rollback_test.go,
+// flows_variant_exclusivity_test.go) - moved here when the dead batch
+// installer's test file (its original home) was deleted (#284, #285).
+func createTestScript(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	scriptPath := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(scriptPath, []byte(content), 0755))
+	return scriptPath
+}
+
 // newFlowsTestService returns a *core.Service backed by fresh temp dirs
 // (config/data/cache), matching the construction pattern used throughout
 // service_test.go.
@@ -434,6 +446,22 @@ func seedProfileWithMod(t *testing.T, svc *core.Service, gameID, profileName, so
 	require.NoError(t, pm.AddMod(gameID, profileName, domain.ModReference{SourceID: sourceID, ModID: modID, Version: version}))
 }
 
+// seedHooks sets game's hooks and persists them (mirroring a real games.yaml
+// edit) so a flow's internal hook resolution (Service.resolvedHooks/
+// hookRunner, hooks_resolve.go) picks them up - the Task 2 (#286)
+// replacement for setting core.XOptions.Hooks/HookRunner/HookContext
+// directly, now that those fields no longer exist. The blanked profileName
+// param is intentionally VESTIGIAL (#286 review Minor 1) - kept only so
+// every call site symmetrically names the profile the caller is about to
+// exercise; profile-level hook overrides are exercised directly by
+// TestResolvedHooks_MergesGameAndProfile (hooks_resolve_test.go) and
+// ResolveHooks's own tests (hooks_test.go), not by these flow tests.
+func seedHooks(t *testing.T, svc *core.Service, game *domain.Game, _ string, hooks domain.GameHooks) {
+	t.Helper()
+	game.Hooks = hooks
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+}
+
 // installBlockingTrigger opens a second connection to the SQLite file at
 // dbPath and installs a trigger that makes any UPDATE touching
 // installed_mods.link_method or installed_mods.deployed fail - used to
@@ -566,21 +594,16 @@ exit 0`)
 echo "after_all" >> `+callLog+`
 exit 0`)
 
-	hooks := &core.ResolvedHooks{
+	seedHooks(t, svc, game, "default", domain.GameHooks{
 		Uninstall: domain.HookConfig{
 			BeforeAll:  beforeAllScript,
 			BeforeEach: beforeEachScript,
 			AfterEach:  afterEachScript,
 			AfterAll:   afterAllScript,
 		},
-	}
-	runner := core.NewHookRunner(5 * time.Second)
-
-	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
-		Hooks:       hooks,
-		HookRunner:  runner,
-		HookContext: core.HookContext{GameID: game.ID, GamePath: game.InstallPath, ModPath: game.ModPath},
 	})
+
+	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Empty(t, result.Warnings)
@@ -614,14 +637,10 @@ func TestService_UninstallMod_BeforeEachHookFails_AbortsUnlessForce(t *testing.T
 	failScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}})
 
 	t.Run("fatal without Force", func(t *testing.T) {
-		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
-			Hooks:      hooks,
-			HookRunner: runner,
-		})
+		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_each hook failed")
 		require.NotNil(t, result, "the (empty) result must still be returned alongside a fatal error, not discarded")
@@ -637,9 +656,7 @@ exit 1`)
 
 	t.Run("forced continues with a warning", func(t *testing.T) {
 		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
-			Hooks:      hooks,
-			HookRunner: runner,
-			Force:      true,
+			Force: true,
 		})
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -672,14 +689,10 @@ func TestService_UninstallMod_BeforeAllHookFails_AbortsUnlessForce(t *testing.T)
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}})
 
 	t.Run("fatal without Force", func(t *testing.T) {
-		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
-			Hooks:      hooks,
-			HookRunner: runner,
-		})
+		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uninstall.before_all hook failed")
 		require.NotNil(t, result, "the (empty) result must still be returned alongside a fatal error, not discarded")
@@ -695,9 +708,7 @@ exit 1`)
 
 	t.Run("forced continues with a warning", func(t *testing.T) {
 		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
-			Hooks:      hooks,
-			HookRunner: runner,
-			Force:      true,
+			Force: true,
 		})
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -753,8 +764,7 @@ func TestService_UninstallMod_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartia
 	failScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: failScript}})
 
 	dbPath := filepath.Join(dataDir, "lmm.db")
 	locker, err := sql.Open("sqlite", dbPath)
@@ -769,9 +779,7 @@ exit 1`)
 	defer conn.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup
 
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
-		Hooks:      hooks,
-		HookRunner: runner,
-		Force:      true,
+		Force: true,
 	})
 	require.Error(t, err, "DeleteInstalledMod must fail while another writer holds the file lock")
 	assert.Contains(t, err.Error(), "failed to remove mod record")
@@ -914,13 +922,9 @@ func TestService_UninstallMod_AfterEachHookFailure_IsNonFatalWarning(t *testing.
 	failScript := createTestScript(t, scriptsDir, "after_each.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{AfterEach: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{AfterEach: failScript}})
 
-	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{
-		Hooks:      hooks,
-		HookRunner: runner,
-	})
+	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 	require.NoError(t, err, "after_each failures must not fail UninstallMod")
 	require.NotNil(t, result)
 	require.Len(t, result.Warnings, 1)
@@ -1665,15 +1669,12 @@ exit 0`)
 echo "after_all" >> `+callLog+`
 exit 0`)
 
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{
 		BeforeAll: beforeAllScript, BeforeEach: beforeEachScript,
 		AfterEach: afterEachScript, AfterAll: afterAllScript,
-	}}
-	runner := core.NewHookRunner(5 * time.Second)
+	}})
 
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Hooks: hooks, HookRunner: runner,
-	}, nil)
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
@@ -1705,12 +1706,9 @@ if [ "$LMM_MOD_ID" = "bad" ]; then
   exit 1
 fi
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeEach: beforeEachScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeEach: beforeEachScript}})
 
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Hooks: hooks, HookRunner: runner,
-	}, nil)
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err, "a before_each hook failure must skip that mod, not fail the deploy")
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
@@ -1738,13 +1736,10 @@ func TestService_DeployProfile_BeforeAllHookFails_AbortsUnlessForce(t *testing.T
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}})
 
 	t.Run("fatal without Force", func(t *testing.T) {
-		result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-			Hooks: hooks, HookRunner: runner,
-		}, nil)
+		result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "install.before_all hook failed")
 		require.NotNil(t, result)
@@ -1756,7 +1751,7 @@ exit 1`)
 
 	t.Run("forced continues with a warning", func(t *testing.T) {
 		result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-			Hooks: hooks, HookRunner: runner, Force: true,
+			Force: true,
 		}, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -1815,12 +1810,11 @@ func TestService_DeployProfile_FatalErrorAfterAccumulatedDiagnostic_ReturnsParti
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}})
 
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
 		Purge: true, ModID: "does-not-exist", SourceID: "src",
-		Hooks: hooks, HookRunner: runner, Force: true,
+		Force: true,
 	}, nil)
 	require.Error(t, err, "an unknown ModID must fail the deploy")
 	assert.Contains(t, err.Error(), "mod not found")
@@ -1937,12 +1931,9 @@ func TestService_DeployProfile_ZeroModsToDeploy_NoHooksFired(t *testing.T) {
 	beforeAllScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
 echo "before_all" >> `+callLog+`
 exit 0`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: beforeAllScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: beforeAllScript}})
 
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Hooks: hooks, HookRunner: runner,
-	}, nil)
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Deployed)
@@ -1978,12 +1969,11 @@ func TestService_DeployProfile_ForcedBeforeAllWarning_EmitsEventBeforeAnythingEl
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Hooks: hooks, HookRunner: runner, Force: true,
+		Force: true,
 	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -2003,10 +1993,10 @@ exit 1`)
 }
 
 // TestService_DeployProfile_SkipHooks_RunsNoHooks guards Task 16: SkipHooks
-// must suppress hook execution even when Hooks/HookRunner are both set (the
-// CLI's --no-hooks case, which still resolves hooks/runner but flags
-// SkipHooks) - no HookEvent is emitted and no hook-failure Warning is
-// recorded, even though the configured before_all script would fail.
+// must suppress hook execution even though DeployProfile still resolves
+// game-level hooks/a runner internally (the CLI's --no-hooks case) - no
+// HookEvent is emitted and no hook-failure Warning is recorded, even though
+// the configured before_all script would fail.
 func TestService_DeployProfile_SkipHooks_RunsNoHooks(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -2019,12 +2009,11 @@ func TestService_DeployProfile_SkipHooks_RunsNoHooks(t *testing.T) {
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		SkipHooks: true, Hooks: hooks, HookRunner: runner,
+		SkipHooks: true,
 	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -2053,12 +2042,11 @@ func TestService_DeployProfile_PurgeForcedBeforeAllWarning_EmitsEventBeforePurgi
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Purge: true, Hooks: hooks, HookRunner: runner, Force: true,
+		Purge: true, Force: true,
 	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -2208,12 +2196,11 @@ if [ "$LMM_MOD_ID" = "bad" ]; then
   exit 1
 fi
 exit 0`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Purge: true, All: true, Hooks: hooks, HookRunner: runner,
+		Purge: true, All: true,
 	}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -2303,10 +2290,10 @@ func TestService_DeployProfile_PurgeBeforeEachSkip_WarningTextExact(t *testing.T
 	seedProfileWithMod(t, svc, "g1", "default", "src", "bad", "1.0")
 
 	beforeEachScript := createTestScript(t, scriptsDir, "before_each.sh", "#!/bin/bash\necho boom >&2\nexit 1")
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}})
 
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Purge: true, All: true, Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
+		Purge: true, All: true,
 	}, nil)
 	require.NoError(t, err)
 
@@ -2330,10 +2317,10 @@ func TestService_DeployProfile_PurgeAfterEachWarning_UsesModID(t *testing.T) {
 	seedProfileWithMod(t, svc, "g1", "default", "src", "mod-id-1", "1.0")
 
 	afterEachScript := createTestScript(t, scriptsDir, "after_each.sh", "#!/bin/bash\necho boom >&2\nexit 1")
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{AfterEach: afterEachScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{AfterEach: afterEachScript}})
 
 	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Purge: true, Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
+		Purge: true,
 	}, nil)
 	require.NoError(t, err)
 
@@ -2384,13 +2371,10 @@ exit 1`)
 	afterAllScript := createTestScript(t, scriptsDir, "after_all.sh", `#!/bin/bash
 echo "boom" >&2
 exit 1`)
-	hooks := &core.ResolvedHooks{Install: domain.HookConfig{AfterEach: afterEachScript, AfterAll: afterAllScript}}
-	runner := core.NewHookRunner(5 * time.Second)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{AfterEach: afterEachScript, AfterAll: afterAllScript}})
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
-		Hooks: hooks, HookRunner: runner,
-	}, sink)
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
@@ -4318,9 +4302,9 @@ func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *te
 	}
 
 	require.NotEmpty(t, *seen)
-	phases, _ := phasesOf(*seen)
+	phases, flowEvents := phasesOf(*seen)
 	assert.Equal(t, core.DeployPurging, phases[0])
-	assert.Equal(t, 2, (*seen)[0].(core.FlowEvent).EventScope().Total)
+	assert.Equal(t, 2, flowEvents[0].(core.FlowEvent).EventScope().Total)
 	var purged []core.ModEvent
 	for _, e := range *seen {
 		if m, ok := e.(core.ModEvent); ok && m.Phase == core.PurgeModPurged {
@@ -4346,12 +4330,10 @@ func TestService_PurgeProfile_EmptyModList_NoEventsNoHooks(t *testing.T) {
 	// A failing before_all hook is the witness that no hooks run on an
 	// empty purge: if it ran, the (Force-less) call would return its error.
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\nexit 1")
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}})
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.PurgeProfile(context.Background(), game, "default", nil, core.PurgeOptions{
-		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, sink)
+	result, err := svc.PurgeProfile(context.Background(), game, "default", nil, core.PurgeOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Zero(t, result.Purged)
@@ -4400,15 +4382,13 @@ if [ "$LMM_MOD_ID" = "bad" ]; then
   exit 1
 fi
 exit 0`)
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeEach: beforeEachScript}})
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
-		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, sink)
+	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged)
 
@@ -4445,15 +4425,13 @@ func TestService_PurgeProfile_BeforeAllFailure_FatalWithoutForce(t *testing.T) {
 	installSeededMod(t, svc, game, "1")
 
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\necho boom >&2\nexit 1")
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}})
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
-		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, sink)
+	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "uninstall.before_all hook failed:")
 	require.NotNil(t, result, "partial-result convention: the accumulated result comes back alongside the error")
@@ -4474,14 +4452,14 @@ func TestService_PurgeProfile_BeforeAllFailure_ForcedWarnsBeforePurging(t *testi
 	installSeededMod(t, svc, game, "1")
 
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", "#!/bin/bash\necho boom >&2\nexit 1")
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{BeforeAll: failScript}})
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
-		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second), Force: true,
+		Force: true,
 	}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged)
@@ -4508,15 +4486,13 @@ func TestService_PurgeProfile_AfterHookFailures_WarningsUseModNameAndDeferEmissi
 	installSeededMod(t, svc, game, "1")
 
 	failScript := createTestScript(t, scriptsDir, "fail.sh", "#!/bin/bash\necho boom >&2\nexit 1")
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{AfterEach: failScript, AfterAll: failScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{AfterEach: failScript, AfterAll: failScript}})
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
-		Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
-	}, sink)
+	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Purged)
 
@@ -4621,14 +4597,14 @@ func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAft
 	// after_each leaves a marker file; a delete-record failure must skip it.
 	marker := filepath.Join(scriptsDir, "after_each_ran")
 	afterEachScript := createTestScript(t, scriptsDir, "after_each.sh", "#!/bin/bash\ntouch "+marker+"\nexit 0")
-	hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{AfterEach: afterEachScript}}
+	seedHooks(t, svc, game, "default", domain.GameHooks{Uninstall: domain.HookConfig{AfterEach: afterEachScript}})
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.PurgeProfile(context.Background(), game, "default", mods, core.PurgeOptions{
-		Uninstall: true, Hooks: hooks, HookRunner: core.NewHookRunner(5 * time.Second),
+		Uninstall: true,
 	}, sink)
 	require.NoError(t, err)
 

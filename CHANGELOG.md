@@ -36,10 +36,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pinned by a golden (`internal/{domain,core}/testdata/json/*.golden`) so a shape change is a
   visible diff. No user-visible change: the CLI's `--json` still emits its own view structs and is
   byte-identical. (#282)
+- Internal: dead `Installer.InstallBatch`/`UninstallBatch` and their result types removed;
+  `ScanResult` drops its never-populated error pair; `--log-level` is now validated at flag-parse
+  time (before `PersistentPreRunE`), so an invalid value is rejected on every path, including
+  `--help`/`--version`/`completion`, not just paths that opened a `Service` (#284, #285)
+- Internal: `core` resolves hook configuration itself — `DeployOptions`, `UninstallOptions`,
+  `PurgeOptions`, `InstallOptions`, `UpdateOptions` and `RollbackOptions` no longer carry
+  `Hooks`/`HookRunner`/`HookContext`; every flow resolves the merged game/profile hooks and a
+  `HookRunner` from config before its first mutation. No user-visible change: CLI output is
+  byte-identical. (#286)
 
 ### Fixed
 
 - SQLite pragmas (foreign_keys, WAL, busy_timeout) now apply to every pooled connection via the DSN; `:memory:` databases use a single connection. (#271)
+- An invalid `--log-level` value's error message no longer carries the misattributed
+  `initializing service:` prefix (rejecting the flag never actually opened a service). It now
+  reads `Error: invalid --log-level "<value>": expected off, error, warn, info, or debug`
+  identically on every path (#284, #285)
+- Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
+  `hooks:`) (#295)
 
 ## [1.30.1] - 2026-08-08
 

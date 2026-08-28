@@ -482,11 +482,11 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				// - is always safe, never a double-apply: the raw copy is
 				// never claimed as "gone" (members=nil) before it actually
 				// is.
-				// Single-mod Installer.Uninstall, not UninstallBatch - no
-				// before/after hooks run for this undeploy (hooks are only
-				// wired through the batch path's BatchOptions). User-observable:
-				// a game's uninstall/before_each/after_each hooks never fire
-				// for this reconcile-driven raw-pak takedown.
+				// Single-mod Installer.Uninstall - no before/after hooks run
+				// for this undeploy (hooks are only wired through the BATCH
+				// install path's applyInstallBatchMod, not here).
+				// User-observable: a game's uninstall/before_each/after_each
+				// hooks never fire for this reconcile-driven raw-pak takedown.
 				if uerr := installer.Uninstall(ctx, game, &mod.Mod, profileName); uerr != nil {
 					return warnings, fmt.Errorf("undeploying raw pak for %s: %w", ref, uerr)
 				}
@@ -551,9 +551,9 @@ func (s *Service) reconcilePakManifests(ctx context.Context, game *domain.Game, 
 				if werr := cache.MarkFileCompleteWithMembers(versionDir, fileID, members); werr != nil {
 					return warnings, fmt.Errorf("flipping %s to raw-deploy: %w", ref, werr)
 				}
-				// Single-mod Installer.Install, not InstallBatch - same hook
-				// gap as the Uninstall call above: no install hooks run for
-				// this reconcile-driven raw-pak fallback deploy.
+				// Single-mod Installer.Install - same hook gap as the
+				// Uninstall call above: no install hooks run for this
+				// reconcile-driven raw-pak fallback deploy.
 				if ierr := installer.Install(ctx, game, &mod.Mod, profileName); ierr != nil {
 					return warnings, fmt.Errorf("deploying raw pak for %s: %w", ref, ierr)
 				}
@@ -737,11 +737,15 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 		for _, fileID := range mod.FileIDs {
 			retained := gameCache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, cache.RetainedSourceName(fileID))
 			if _, statErr := os.Stat(retained); statErr != nil {
+				if !os.IsNotExist(statErr) {
+					s.logger().Warn("stat failed while checking retained merge source", "game_id", game.ID, "file_id", fileID, "err", statErr)
+				}
 				continue // nothing retained for this fileID - not a merge source of any kind
 			}
 			if mc == nil {
 				var mcErr error
 				if mc, mcErr = s.mergeCompilerForGame(game); mcErr != nil {
+					s.logger().Warn("resolving compile source failed while classifying compile deploy mods", "game_id", game.ID, "file_id", fileID, "err", mcErr)
 					return classes
 				}
 			}

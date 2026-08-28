@@ -101,14 +101,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	opts := core.DeployOptions{
-		Purge:       deployPurge,
-		LinkMethod:  linkMethodOverride,
-		All:         deployAll,
-		Hooks:       getResolvedHooks(service, game, profileName),
-		HookRunner:  getHookRunner(service),
-		HookContext: makeHookContext(game),
-		Force:       deployForce,
-		SkipHooks:   noHooks,
+		Purge:      deployPurge,
+		LinkMethod: linkMethodOverride,
+		All:        deployAll,
+		Force:      deployForce,
+		SkipHooks:  noHooks,
 	}
 	if len(args) > 0 {
 		resolvedSource, err := resolveSource(service, game, deploySource, false)
