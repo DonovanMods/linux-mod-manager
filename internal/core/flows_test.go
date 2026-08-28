@@ -450,14 +450,14 @@ func seedProfileWithMod(t *testing.T, svc *core.Service, gameID, profileName, so
 // edit) so a flow's internal hook resolution (Service.resolvedHooks/
 // hookRunner, hooks_resolve.go) picks them up - the Task 2 (#286)
 // replacement for setting core.XOptions.Hooks/HookRunner/HookContext
-// directly, now that those fields no longer exist. profileName is accepted
-// for symmetry with the flow the caller is about to exercise; profile-level
-// hook overrides are exercised directly by TestResolvedHooks_
-// MergesGameAndProfile (hooks_resolve_test.go) and ResolveHooks's own tests
-// (hooks_test.go), not by these flow tests.
-func seedHooks(t *testing.T, svc *core.Service, game *domain.Game, profileName string, hooks domain.GameHooks) {
+// directly, now that those fields no longer exist. The blanked profileName
+// param is intentionally VESTIGIAL (#286 review Minor 1) - kept only so
+// every call site symmetrically names the profile the caller is about to
+// exercise; profile-level hook overrides are exercised directly by
+// TestResolvedHooks_MergesGameAndProfile (hooks_resolve_test.go) and
+// ResolveHooks's own tests (hooks_test.go), not by these flow tests.
+func seedHooks(t *testing.T, svc *core.Service, game *domain.Game, _ string, hooks domain.GameHooks) {
 	t.Helper()
-	_ = profileName
 	game.Hooks = hooks
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 }

@@ -17,7 +17,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -223,6 +225,81 @@ exit 0`)
 	logContent, err := os.ReadFile(callLog)
 	require.NoError(t, err)
 	assert.Equal(t, "uninstall.before_each:mod1:1.0\ninstall.before_each:mod1:2.0\nuninstall.after_each:mod1:1.0\ninstall.after_each:mod1:2.0\n", string(logContent))
+}
+
+// TestService_ApplyUpdate_ResolvesHooksBeforeFirstMutation guards Task 2
+// review Important #1 (#286): applyUpdate must resolve hooks (hookRunner/
+// resolvedHooks) BEFORE its first mutation (the download loop), matching
+// every other flow (uninstallMod, deployProfile, purgeProfile, applyInstall,
+// applyRollback all resolve before mutating).
+//
+// hookRunner/resolvedHooks are structurally incapable of returning a
+// non-nil error today (both swallow every failure mode - see
+// hooks_resolve.go's doc comments), so a failure-injection test can't
+// distinguish the two orderings. Instead this turns the global config.yaml
+// into a FIFO: opening it for read (hookRunner's config.Load - the ONLY
+// config.yaml read anywhere in ApplyUpdate's call chain; the lock check and
+// GetEffectiveLinkMethod both read profile YAML instead, and GetMod/
+// GetModFiles/download never touch config.yaml at all) blocks in the
+// kernel until a writer connects. Racing that genuine blocking syscall
+// against mockSourceWithDownloads.urlRequests (the first thing the
+// download loop touches - see its doc comment) proves which happens
+// first: if resolution ran after the download (the pre-fix bug),
+// urlRequests would already be nonzero by the time we check, well before
+// we ever unblock the FIFO.
+func TestService_ApplyUpdate_ResolvesHooksBeforeFirstMutation(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	old := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+
+	mock := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files:                   []domain.DownloadableFile{{ID: "new-1", Name: "New File", FileName: "mod1-new.esp", IsPrimary: true}},
+	}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+	mock.AddDownload("new-1", []byte("new-content"))
+
+	configPath := filepath.Join(svc.ConfigDir(), "config.yaml")
+	require.NoError(t, syscall.Mkfifo(configPath, 0o644))
+
+	type outcome struct {
+		result *core.UpdateApplyResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
+		result, err := svc.ApplyUpdate(context.Background(), game, "default", upd, core.UpdateOptions{}, nil)
+		done <- outcome{result, err}
+	}()
+
+	// The goroutine has had ample time to reach (and block in) the
+	// config.yaml FIFO open if hooks are resolved up front. This isn't a
+	// scheduling race: a correctly-ordered run is PROVABLY parked in a
+	// blocking open(2) syscall by now, incapable of having reached the
+	// download loop.
+	time.Sleep(300 * time.Millisecond)
+	require.Zero(t, mock.urlRequests.Load(), "download must not start before hook resolution reads config.yaml")
+
+	w, err := os.OpenFile(configPath, os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = w.Write([]byte("hook_timeout: 60\n"))
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.NotNil(t, got.result)
+	case <-time.After(5 * time.Second):
+		t.Fatal("ApplyUpdate did not complete after unblocking the config.yaml read")
+	}
+
+	assert.Equal(t, int64(1), mock.urlRequests.Load(), "download must have proceeded once hooks resolved")
 }
 
 // TestService_ApplyUpdate_FileIDReplacements covers FileIDReplacements

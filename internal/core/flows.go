@@ -4719,6 +4719,20 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		}
 	}
 
+	// #286 review (Important 1): resolved before the download loop below,
+	// applyUpdate's first mutation - mirroring every other flow
+	// (uninstallMod/deployProfile/purgeProfile/applyInstall/applyRollback
+	// all resolve hooks before their own first mutation).
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		return result, err
+	}
+	runner, err := s.hookRunner(ctx)
+	if err != nil {
+		return result, err
+	}
+	hookCtx := hookContextFor(game)
+
 	mod := upd.InstalledMod // local, addressable copy - distinct from upd.InstalledMod
 	newVersion := upd.NewVersion
 	scope := Scope{Op: OpUpdate, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
@@ -4812,15 +4826,6 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		return result, err
 	}
 
-	hooks, err := s.resolvedHooks(ctx, game, profileName)
-	if err != nil {
-		return result, err
-	}
-	runner, err := s.hookRunner(ctx)
-	if err != nil {
-		return result, err
-	}
-	hookCtx := hookContextFor(game)
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "uninstall.before_each", hooks.GetUninstallBeforeEach()); err != nil {
 		if !opts.Force {
