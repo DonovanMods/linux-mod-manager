@@ -2943,10 +2943,9 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 }
 
 // resolveInstallDependencies is PlanInstall's copy of cmd/lmm/install.go's
-// resolveDependencies (duplicated rather than shared for the same reason
-// selectDeployFiles duplicates cmd/lmm/profile.go's selectFilesToDownload:
-// internal/core cannot import cmd/lmm, and hoisting the CLI helper out is
-// outside this task's scope - see the task report): a depth-first,
+// resolveDependencies (duplicated rather than shared: internal/core cannot
+// import cmd/lmm, and hoisting the CLI helper out is outside this task's
+// scope - see the task report): a depth-first,
 // cycle-detecting traversal of target's dependency graph that returns
 // resolved dependencies in install order (deepest first). Every fetch uses
 // sourceID - NOT each domain.ModReference's own SourceID - matching

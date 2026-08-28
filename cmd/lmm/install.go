@@ -578,7 +578,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 			return err
 		}
 	} else {
-		files = filterAndSortFiles(files, installShowArchived)
+		files = core.FilterAndSortFiles(files, installShowArchived)
 	}
 	if len(files) == 0 {
 		return fmt.Errorf("no downloadable files available for this mod")
@@ -966,49 +966,10 @@ func progressBar(percentage float64, width int) string {
 	return bar
 }
 
-// filterAndSortFiles filters out archived files (unless showArchived is true)
-// and sorts files by category: MAIN first, OPTIONAL second, others after
-func filterAndSortFiles(files []domain.DownloadableFile, showArchived bool) []domain.DownloadableFile {
-	// Filter out archived/old files unless requested
-	var filtered []domain.DownloadableFile
-	for _, f := range files {
-		category := strings.ToUpper(f.Category)
-		if !showArchived && (category == "ARCHIVED" || category == "OLD_VERSION" || category == "DELETED") {
-			continue
-		}
-		filtered = append(filtered, f)
-	}
-
-	// Sort by category priority: MAIN > OPTIONAL > UPDATE > MISCELLANEOUS > others
-	sort.SliceStable(filtered, func(i, j int) bool {
-		return fileCategoryPriority(filtered[i].Category) < fileCategoryPriority(filtered[j].Category)
-	})
-
-	return filtered
-}
-
 // installMultipleMods handles installing multiple mods sequentially.
 // Delegates to batchInstallMods.
 func installMultipleMods(ctx context.Context, service *core.Service, game *domain.Game, mods []*domain.Mod, profileName string) error {
 	return batchInstallMods(ctx, service, game, mods, profileName)
-}
-
-// fileCategoryPriority returns sort priority for file categories (lower = first)
-func fileCategoryPriority(category string) int {
-	switch strings.ToUpper(category) {
-	case "MAIN":
-		return 0
-	case "OPTIONAL":
-		return 1
-	case "UPDATE":
-		return 2
-	case "MISCELLANEOUS":
-		return 3
-	case "ARCHIVED", "OLD_VERSION", "DELETED":
-		return 99
-	default:
-		return 50
-	}
 }
 
 // parseRangeSelection parses a selection string like "1,3-5,8" or "1..3"
@@ -1233,13 +1194,13 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 			failed = append(failed, mod.Name)
 			continue
 		}
-		files = filterAndSortFiles(files, installShowArchived)
+		files = core.FilterAndSortFiles(files, installShowArchived)
 		if len(files) == 0 {
 			fmt.Printf("  Error: no downloadable files available\n")
 			failed = append(failed, mod.Name)
 			continue
 		}
-		selectedFile := selectPrimaryFile(files)
+		selectedFile := core.PrimaryFile(files)
 		mod.Version = domain.EffectiveInstalledVersion(mod.Version, []*domain.DownloadableFile{selectedFile}) // #94
 
 		// #143: a LOCKED profile ref converges only via explicit lock/unlock

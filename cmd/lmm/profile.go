@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -1100,7 +1099,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 				// New install: use FileIDs from profile
 				fileIDsToUse = ref.FileIDs
 			}
-			filesToDownload, err := selectFilesToDownload(files, fileIDsToUse, ref.Version)
+			filesToDownload, err := core.SelectFilesForVersion(files, fileIDsToUse, ref.Version)
 			if err != nil {
 				fmt.Printf("    Error: %v\n", err)
 				continue
@@ -1229,181 +1228,4 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
-}
-
-// selectPrimaryFile returns the primary file from a list of downloadable files,
-// or the first file if no primary is marked. Returns nil for empty slice.
-func selectPrimaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
-	if len(files) == 0 {
-		return nil
-	}
-	for i := range files {
-		if files[i].IsPrimary {
-			return &files[i]
-		}
-	}
-	return &files[0]
-}
-
-// errNoDownloadableFiles is returned when selectFilesToDownload is called with no files.
-var errNoDownloadableFiles = fmt.Errorf("no downloadable files")
-
-// errStoredFilesUnavailable mirrors internal/core/flows.go's sentinel of the
-// same name (selectDeployFiles' would-be-fallback rejection, #95): this
-// package can't import internal/core's unexported sentinel, so it's
-// duplicated here for the same documented reason selectFilesToDownload
-// itself duplicates selectDeployFiles - see the cross-reference comment on
-// selectFilesToDownload below and on selectDeployFiles in flows.go.
-var errStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
-
-// availableVersions mirrors internal/core/resolve.go's unexported helper of
-// the same name: the distinct non-empty versions in files, in first-seen
-// order - display material for core.ErrVersionNotFound.
-func availableVersions(files []domain.DownloadableFile) []string {
-	seen := make(map[string]bool, len(files))
-	var out []string
-	for _, f := range files {
-		if f.Version == "" || seen[f.Version] {
-			continue
-		}
-		seen[f.Version] = true
-		out = append(out, f.Version)
-	}
-	return out
-}
-
-// anyFileHasVersion mirrors internal/core/resolve.go's unexported helper of
-// the same name: reports whether at least one file carries version info -
-// the gate between version-aware and legacy (FileIDs-only) behavior.
-func anyFileHasVersion(files []domain.DownloadableFile) bool {
-	for _, f := range files {
-		if f.Version != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// selectFilesToDownload picks files to download based on the recorded
-// version (#96), stored FileIDs (for re-downloads), or primary file (for
-// fresh installs). Mirrors internal/core/flows.go's selectVersionedDeployFiles
-// with allowFallback=false (doProfileApply's only caller is deploy-class, so
-// no allowFallback parameter is needed here) exactly - same precedence,
-// byte-identical error wording, so callers/tests can't tell which package
-// produced a given error. This is a hand-duplicated twin rather than a
-// shared helper because cmd/lmm is package main.
-//
-// version == "" (legacy refs) and version-less file lists (the #130 vacuous
-// rule) fall through to the pre-#96 behavior unchanged: storedFileIDs found
-// upstream win, storedFileIDs missing hard-fail via errStoredFilesUnavailable
-// (#95 - no fallback, since silently substituting the primary file would
-// install a file the caller never asked for), and no storedFileIDs at all
-// falls back to the primary file. Otherwise: stored IDs win only while their
-// effective version agrees with the record; drift and gone-IDs heal by
-// exact-match resolution to the SAME version (never latest); unresolvable
-// targets are hard per-mod errors naming the version - the "gone upstream"
-// #95 wording only when the stored IDs themselves match nothing at all
-// upstream, versus a distinct core.ErrVersionNotFound wrap when at least one
-// stored ID IS still present upstream but the recorded version isn't (the
-// classic pre-#94 mis-stamped row, which isn't a "gone" file - it's a wrong
-// version record on a file that's still there).
-func selectFilesToDownload(files []domain.DownloadableFile, storedFileIDs []string, version string) ([]*domain.DownloadableFile, error) {
-	if version == "" || !anyFileHasVersion(files) {
-		return selectFilesToDownloadLegacy(files, storedFileIDs)
-	}
-	var idSet map[string]bool
-	if len(storedFileIDs) > 0 {
-		idSet = make(map[string]bool, len(storedFileIDs))
-		for _, id := range storedFileIDs {
-			idSet[id] = true
-		}
-	}
-	var found []*domain.DownloadableFile
-	for i := range files {
-		if idSet[files[i].ID] {
-			found = append(found, &files[i])
-		}
-	}
-	if len(found) > 0 && domain.EffectiveInstalledVersion(version, found) == version {
-		return found, nil
-	}
-	var matches []*domain.DownloadableFile
-	for i := range files {
-		if files[i].Version == version {
-			matches = append(matches, &files[i])
-		}
-	}
-	if len(matches) == 0 {
-		if len(storedFileIDs) > 0 {
-			if len(found) > 0 {
-				// At least one stored ID is still present upstream - the
-				// files aren't gone, only the recorded version doesn't
-				// match anything. Distinct from the #95 "gone" wording
-				// below: this is a version-record problem, not a
-				// missing-file problem, so it points at verify/update
-				// instead of reinstall.
-				return nil, fmt.Errorf("%w: installed file(s) (ID(s): %s) do not match recorded version %q, which is not available upstream - run 'lmm verify --fix' to correct the version record, or 'lmm update' to adopt the current version", core.ErrVersionNotFound, strings.Join(storedFileIDs, ", "), version)
-			}
-			return nil, fmt.Errorf("%w (file ID(s): %s; version %q not available) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "), version)
-		}
-		return nil, fmt.Errorf("%w: version %q is not available upstream (available: %s) - edit the profile's version or reinstall", core.ErrVersionNotFound, version, strings.Join(availableVersions(files), ", "))
-	}
-	// This "stored subset, else primary, else best category priority, else
-	// first" tail is the twin of internal/core/flows.go's pickVersionMatch,
-	// shared there by selectVersionedDeployFiles (#96) and
-	// selectUpdateDeployFiles (#143) - mirror any change to it here, and vice
-	// versa (drift guard: TestSelectFilesToDownload_CategoryPriorityTieBreak
-	// and its core-side parity test).
-	if len(storedFileIDs) > 0 {
-		var stored []*domain.DownloadableFile
-		for _, m := range matches {
-			if idSet[m.ID] {
-				stored = append(stored, m)
-			}
-		}
-		if len(stored) > 0 {
-			return stored, nil
-		}
-	}
-	for _, m := range matches {
-		if m.IsPrimary {
-			return []*domain.DownloadableFile{m}, nil
-		}
-	}
-	best := 0
-	for i := 1; i < len(matches); i++ {
-		if fileCategoryPriority(matches[i].Category) < fileCategoryPriority(matches[best].Category) {
-			best = i
-		}
-	}
-	return []*domain.DownloadableFile{matches[best]}, nil
-}
-
-// selectFilesToDownloadLegacy is selectFilesToDownload's pre-#96 behavior,
-// mirroring internal/core/flows.go's selectDeployFiles with
-// allowFallback=false: when storedFileIDs is non-empty but none of it
-// matches what the source currently offers, silently substituting the
-// primary file would install a file the caller never asked for - exactly
-// the silent-fallback bug #95 tracks - so this returns
-// errStoredFilesUnavailable instead, wrapped with the missing IDs and a
-// remediation hint.
-func selectFilesToDownloadLegacy(files []domain.DownloadableFile, storedFileIDs []string) ([]*domain.DownloadableFile, error) {
-	if len(files) == 0 {
-		return nil, errNoDownloadableFiles
-	}
-	if len(storedFileIDs) > 0 {
-		// Try to use stored file IDs
-		found := findFilesByIDs(files, storedFileIDs)
-		if len(found) > 0 {
-			return found, nil
-		}
-		// No fallback (#95): a would-be primary-file substitution is an error.
-		return nil, fmt.Errorf("%w (file ID(s): %s) - reinstall the mod or run 'lmm update' to adopt the current version", errStoredFilesUnavailable, strings.Join(storedFileIDs, ", "))
-	}
-	// Fresh install: use primary file
-	p := selectPrimaryFile(files)
-	if p == nil {
-		return nil, errNoDownloadableFiles
-	}
-	return []*domain.DownloadableFile{p}, nil
 }

@@ -273,19 +273,3 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	return nil
 }
-
-// findFilesByIDs finds downloadable files matching the given IDs
-func findFilesByIDs(files []domain.DownloadableFile, fileIDs []string) []*domain.DownloadableFile {
-	idSet := make(map[string]bool)
-	for _, id := range fileIDs {
-		idSet[id] = true
-	}
-
-	var result []*domain.DownloadableFile
-	for i := range files {
-		if idSet[files[i].ID] {
-			result = append(result, &files[i])
-		}
-	}
-	return result
-}
