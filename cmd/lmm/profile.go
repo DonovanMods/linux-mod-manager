@@ -1118,9 +1118,9 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 			if !service.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 				// Download each file
-				progressFn := func(p core.DownloadProgress) {
-					if p.TotalBytes > 0 {
-						fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+				progressFn := func(e core.Event) {
+					if d, ok := e.(core.DownloadEvent); ok && d.TotalBytes > 0 {
+						fmt.Printf("\r    Downloading: %.1f%%", d.Percent)
 					}
 				}
 

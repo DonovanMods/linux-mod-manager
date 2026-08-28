@@ -2170,12 +2170,15 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			// finding I1).
 			return skip(fmt.Sprintf("cancelled: %v", err))
 		}
-		progressFn := func(p DownloadProgress) {
-			if p.TotalBytes > 0 {
-				dl := base
-				dl.Phase, dl.Percent = DeployDownloading, p.Percentage
-				emit(dl)
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
 			}
+			dl := base
+			dl.Phase = DeployDownloading
+			dl.Percent = d.Percent
+			emit(dl)
 		}
 		if _, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
 			reason := fmt.Sprintf("download failed: %v", err)
@@ -2890,12 +2893,15 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 				downloadFailed := false
 				for _, file := range filesToDownload {
-					progressFn := func(p DownloadProgress) {
-						if p.TotalBytes > 0 {
-							dl := base
-							dl.Phase, dl.Percent = SwitchDownloading, p.Percentage
-							emit(dl)
+					progressFn := func(e Event) {
+						d, ok := e.(DownloadEvent)
+						if !ok || d.TotalBytes <= 0 {
+							return
 						}
+						dl := base
+						dl.Phase = SwitchDownloading
+						dl.Percent = d.Percent
+						emit(dl)
 					}
 					if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
 						evt := base
@@ -3084,7 +3090,7 @@ type InstallPlan struct {
 
 	// TotalDownloadBytes is the sum of Files' declared sizes, or -1 if any
 	// selected file's size is unreported (Size <= 0, matching the
-	// DownloadProgress convention used elsewhere in this file: only a
+	// DownloadEvent convention used elsewhere in this file: only a
 	// positive TotalBytes/Size is treated as "known").
 	TotalDownloadBytes int64
 
@@ -4254,12 +4260,15 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		fileEvt.Phase, fileEvt.File = InstallDepFileSelected, file
 		emit(fileEvt)
 
-		progressFn := func(p DownloadProgress) {
-			if p.TotalBytes > 0 {
-				dl := base
-				dl.Phase, dl.Percent = InstallDepDownloading, p.Percentage
-				emit(dl)
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
 			}
+			dl := base
+			dl.Phase = InstallDepDownloading
+			dl.Percent = d.Percent
+			emit(dl)
 		}
 		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
 
@@ -4458,10 +4467,14 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		started.Phase, started.Index, started.Total, started.File = InstallDownloadStarted, i+1, filesTotal, file
 		emit(started)
 
-		progressFn := func(p DownloadProgress) {
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok {
+				return
+			}
 			dl := base
 			dl.Phase, dl.Index, dl.Total, dl.File = InstallDownloading, i+1, filesTotal, file
-			dl.Percent, dl.Downloaded, dl.TotalBytes = p.Percentage, p.Downloaded, p.TotalBytes
+			dl.Percent, dl.Downloaded, dl.TotalBytes = d.Percent, d.Downloaded, d.TotalBytes
 			emit(dl)
 		}
 
@@ -4866,12 +4879,15 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		progressFn := func(p DownloadProgress) {
-			if p.TotalBytes > 0 {
-				dl := base
-				dl.Phase, dl.Percent = UpdateDownloading, p.Percentage
-				emit(dl)
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
 			}
+			dl := base
+			dl.Phase = UpdateDownloading
+			dl.Percent = d.Percent
+			emit(dl)
 		}
 		if _, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, progressFn); err != nil {
 			return result, fmt.Errorf("downloading update: %w", err)
@@ -5622,12 +5638,15 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 				if err := ctx.Err(); err != nil {
 					return result, err
 				}
-				progressFn := func(p DownloadProgress) {
-					if p.TotalBytes > 0 {
-						dl := base
-						dl.Phase, dl.Percent = ImportDownloading, p.Percentage
-						emit(dl)
+				progressFn := func(e Event) {
+					d, ok := e.(DownloadEvent)
+					if !ok || d.TotalBytes <= 0 {
+						return
 					}
+					dl := base
+					dl.Phase = ImportDownloading
+					dl.Percent = d.Percent
+					emit(dl)
 				}
 				if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
 					fail(fmt.Sprintf("download failed: %v", err))

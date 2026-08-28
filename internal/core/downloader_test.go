@@ -59,12 +59,9 @@ func TestDownloader_Download(t *testing.T) {
 	downloader := core.NewDownloader(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
-	var progressCalls []core.DownloadProgress
-	progressFn := func(p core.DownloadProgress) {
-		progressCalls = append(progressCalls, p)
-	}
+	sink, events := core.RecordEvents()
 
-	_, err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, sink)
 	require.NoError(t, err)
 
 	// Verify file was created
@@ -73,10 +70,11 @@ func TestDownloader_Download(t *testing.T) {
 	assert.Equal(t, content, data)
 
 	// Verify progress was called
-	assert.NotEmpty(t, progressCalls)
+	require.NotEmpty(t, *events)
 	// Last call should show 100%
-	lastProgress := progressCalls[len(progressCalls)-1]
-	assert.Equal(t, int64(17), lastProgress.Downloaded)
+	lastEvent, ok := (*events)[len(*events)-1].(core.DownloadEvent)
+	require.True(t, ok)
+	assert.Equal(t, int64(17), lastEvent.Downloaded)
 }
 
 func TestDownloader_Download_CancelledContext(t *testing.T) {
@@ -224,24 +222,35 @@ func TestDownloader_Download_ProgressTracking(t *testing.T) {
 	downloader := core.NewDownloader(nil)
 	destPath := filepath.Join(t.TempDir(), "test.bin")
 
-	var lastProgress core.DownloadProgress
-	progressFn := func(p core.DownloadProgress) {
-		lastProgress = p
-	}
+	sink, events := core.RecordEvents()
 
-	_, err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, sink)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(1000), lastProgress.TotalBytes)
-	assert.Equal(t, int64(1000), lastProgress.Downloaded)
-	assert.InDelta(t, 100.0, lastProgress.Percentage, 0.1)
+	require.NotEmpty(t, *events)
+	var lastDownloaded int64
+	for _, e := range *events {
+		d, ok := e.(core.DownloadEvent)
+		require.True(t, ok)
+		assert.Equal(t, core.OpDownload, d.Op)
+		assert.Equal(t, int64(1000), d.TotalBytes)
+		assert.GreaterOrEqual(t, d.Downloaded, lastDownloaded)
+		lastDownloaded = d.Downloaded
+	}
+	lastEvent := (*events)[len(*events)-1].(core.DownloadEvent)
+	assert.Equal(t, int64(1000), lastEvent.TotalBytes)
+	assert.Equal(t, int64(1000), lastEvent.Downloaded)
+	assert.InDelta(t, 100.0, lastEvent.Percent, 0.1)
 }
 
 func TestDownloader_Download_UnknownContentLength(t *testing.T) {
 	content := []byte("test content")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Don't set Content-Length header
+		// Flush before writing the body to force chunked transfer (no
+		// Content-Length): Go's server would otherwise auto-compute the
+		// header for a body this small written in a single shot.
+		w.(http.Flusher).Flush()
 		if _, err := w.Write(content); err != nil {
 			t.Errorf("writing response: %v", err)
 		}
@@ -251,18 +260,23 @@ func TestDownloader_Download_UnknownContentLength(t *testing.T) {
 	downloader := core.NewDownloader(nil)
 	destPath := filepath.Join(t.TempDir(), "test.txt")
 
-	var progressCalls []core.DownloadProgress
-	progressFn := func(p core.DownloadProgress) {
-		progressCalls = append(progressCalls, p)
-	}
+	sink, events := core.RecordEvents()
 
-	_, err := downloader.Download(context.Background(), server.URL, destPath, progressFn)
+	_, err := downloader.Download(context.Background(), server.URL, destPath, sink)
 	require.NoError(t, err)
 
 	// Verify file was created
 	data, err := os.ReadFile(destPath)
 	require.NoError(t, err)
 	assert.Equal(t, content, data)
+
+	require.NotEmpty(t, *events)
+	for _, e := range *events {
+		d, ok := e.(core.DownloadEvent)
+		require.True(t, ok)
+		assert.Equal(t, int64(0), d.TotalBytes)
+		assert.Equal(t, float64(0), d.Percent)
+	}
 }
 
 func TestDownloader_Download_CustomHTTPClient(t *testing.T) {
@@ -305,7 +319,7 @@ func (t *testRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	return t.rt.RoundTrip(req)
 }
 
-func TestDownloadProgress_Percentage(t *testing.T) {
+func TestDownloadEvent_Percent(t *testing.T) {
 	tests := []struct {
 		name       string
 		total      int64
@@ -320,14 +334,14 @@ func TestDownloadProgress_Percentage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := core.DownloadProgress{
+			e := core.DownloadEvent{
 				TotalBytes: tt.total,
 				Downloaded: tt.downloaded,
 			}
 			if tt.total > 0 {
-				p.Percentage = float64(p.Downloaded) / float64(p.TotalBytes) * 100
+				e.Percent = float64(e.Downloaded) / float64(e.TotalBytes) * 100
 			}
-			assert.InDelta(t, tt.expected, p.Percentage, 0.1)
+			assert.InDelta(t, tt.expected, e.Percent, 0.1)
 		})
 	}
 }

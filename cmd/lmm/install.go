@@ -1271,10 +1271,10 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		fmt.Printf("  File: %s\n", displayFileLabel(*selectedFile))
 
 		// Download
-		progressFn := func(p core.DownloadProgress) {
-			if p.TotalBytes > 0 {
-				bar := progressBar(p.Percentage, 20)
-				fmt.Printf("\r  [%s] %.1f%%", bar, p.Percentage)
+		progressFn := func(e core.Event) {
+			if d, ok := e.(core.DownloadEvent); ok && d.TotalBytes > 0 {
+				bar := progressBar(d.Percent, 20)
+				fmt.Printf("\r  [%s] %.1f%%", bar, d.Percent)
 			}
 		}
 		downloadResult, err := service.DownloadMod(ctx, sourceID, game, mod, selectedFile, progressFn)
