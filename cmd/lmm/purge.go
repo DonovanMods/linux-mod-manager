@@ -99,6 +99,7 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 		HookRunner:  getHookRunner(service),
 		HookContext: makeHookContext(game),
 		Force:       purgeForce,
+		SkipHooks:   noHooks,
 	}
 
 	// progress prints every diagnostic and per-mod line at its exact point

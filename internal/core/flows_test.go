@@ -2000,6 +2000,41 @@ exit 1`)
 	assert.NotEqual(t, core.DeployBeforeAllForced, phasesOf(*seen)[1])
 }
 
+// TestService_DeployProfile_SkipHooks_RunsNoHooks guards Task 16: SkipHooks
+// must suppress hook execution even when Hooks/HookRunner are both set (the
+// CLI's --no-hooks case, which still resolves hooks/runner but flags
+// SkipHooks) - no HookEvent is emitted and no hook-failure Warning is
+// recorded, even though the configured before_all script would fail.
+func TestService_DeployProfile_SkipHooks_RunsNoHooks(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	scriptsDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "boom" >&2
+exit 1`)
+	hooks := &core.ResolvedHooks{Install: domain.HookConfig{BeforeAll: failScript}}
+	runner := core.NewHookRunner(5 * time.Second)
+
+	sink, seen := core.RecordEvents()
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{
+		SkipHooks: true, Hooks: hooks, HookRunner: runner,
+	}, sink)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	for _, e := range *seen {
+		_, ok := e.(core.HookEvent)
+		assert.False(t, ok, "SkipHooks must suppress every HookEvent")
+	}
+	assert.Empty(t, result.Warnings)
+	assert.Equal(t, 1, result.Deployed, "the single seeded mod must actually deploy, not merely avoid hook errors")
+}
+
 // TestService_DeployProfile_PurgeForcedBeforeAllWarning_EmitsEventBeforePurgingEvent
 // guards finding 1 (purge side): a forced uninstall.before_all failure
 // during --purge must be reported before the DeployPurging event (which the

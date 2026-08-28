@@ -1,8 +1,10 @@
 package db_test
 
 import (
+	"bytes"
 	"context"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -363,6 +365,28 @@ func TestSwapModVersions_NoPreviousVersion(t *testing.T) {
 	// Swap should fail - no previous version
 	err = database.SwapModVersions(context.Background(), "nexusmods", "12345", "skyrim-se", "default")
 	assert.Error(t, err)
+}
+
+// TestOpen_LogsRunningMigrationsOnlyWhenMigrationsRun pins review Minor 5:
+// "running migrations" is Debug-level progress noise about the loop that
+// follows it, so it must only fire when that loop will actually execute -
+// not unconditionally on every open, including the steady state where the
+// database is already at the current schema version.
+func TestOpen_LogsRunningMigrationsOnlyWhenMigrationsRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lmm.db")
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	database, err := db.Open(path, log)
+	require.NoError(t, err)
+	require.NoError(t, database.Close())
+	assert.Contains(t, buf.String(), "running migrations", "a fresh database has migrations to run and must log it")
+
+	buf.Reset()
+	reopened, err := db.Open(path, log)
+	require.NoError(t, err)
+	defer func() { _ = reopened.Close() }()
+	assert.NotContains(t, buf.String(), "running migrations", "an already-migrated database has nothing to run and must not log it")
 }
 
 func TestGetInstalledMod(t *testing.T) {

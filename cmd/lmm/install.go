@@ -632,6 +632,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		HookRunner:    getHookRunner(service),
 		HookContext:   makeHookContext(game),
 		Force:         installForce,
+		SkipHooks:     noHooks,
 		// ConfirmConflicts restores the pre-extraction CLI's blocking
 		// conflict prompt at ApplyInstall's own restored position (post-
 		// download/extract, pre-deploy) - see core.InstallOptions.
@@ -775,6 +776,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		HookRunner:    getHookRunner(service),
 		HookContext:   makeHookContext(game),
 		Force:         installForce,
+		SkipHooks:     noHooks,
 	}
 
 	// pendingCompileDeps buffers the display names of DeployCompile

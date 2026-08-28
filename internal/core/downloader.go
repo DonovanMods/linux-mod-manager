@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	neturl "net/url"
@@ -33,6 +34,7 @@ type DownloadResult struct {
 // Downloader handles HTTP file downloads with progress tracking
 type Downloader struct {
 	httpClient *http.Client
+	log        *slog.Logger
 }
 
 // NewDownloader creates a new Downloader with the given HTTP client
@@ -43,7 +45,17 @@ func NewDownloader(httpClient *http.Client) *Downloader {
 	}
 	return &Downloader{
 		httpClient: httpClient,
+		log:        slog.New(slog.DiscardHandler),
 	}
+}
+
+// SetLogger sets the logger used for diagnostics (retry attempts). nil
+// resets to discard, which is also the default.
+func (d *Downloader) SetLogger(l *slog.Logger) {
+	if l == nil {
+		l = slog.New(slog.DiscardHandler)
+	}
+	d.log = l
 }
 
 // isRetryableHTTP returns true for status codes that warrant a retry (transient/server overload).
@@ -104,6 +116,8 @@ func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath stri
 		} else if ctx.Err() != nil || !isRetryableNet(err) {
 			return nil, err
 		}
+
+		d.log.Debug("download attempt failed; retrying", "attempt", attempt, "backoff", backoff, "err", err)
 
 		// Sleep with backoff; respect context
 		timer := time.NewTimer(backoff)

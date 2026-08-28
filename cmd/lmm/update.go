@@ -776,6 +776,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		HookRunner:  getHookRunner(service),
 		HookContext: makeHookContext(game),
 		Force:       updateForce,
+		SkipHooks:   noHooks,
 	}
 
 	progress := func(e core.Event) {
@@ -908,6 +909,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		HookRunner:  getHookRunner(service),
 		HookContext: makeHookContext(game),
 		Force:       updateForce,
+		SkipHooks:   noHooks,
 	}
 
 	progress := func(e core.Event) {

@@ -50,6 +50,7 @@ var (
 	noHooks    bool
 	jsonOutput bool
 	noColor    bool
+	logLevel   string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -111,6 +112,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "off", "diagnostic log level written to stderr (off, error, warn, info, debug)")
 }
 
 // stdoutColorCapable reports whether the live os.Stdout is a color-capable
@@ -327,6 +329,11 @@ func initService() (*core.Service, error) {
 func initServiceWith(opts app.Options) (*core.Service, error) {
 	opts.ConfigDir = configDir
 	opts.DataDir = dataDir
+	logger, err := newCLILogger(logLevel, os.Stderr)
+	if err != nil {
+		return nil, err
+	}
+	opts.Logger = logger
 	return app.Open(opts)
 }
 

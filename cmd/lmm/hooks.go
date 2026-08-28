@@ -10,7 +10,10 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
-// getHookRunner returns a HookRunner if hooks are enabled (respects --no-hooks flag)
+// getHookRunner returns a HookRunner if hooks are enabled (respects
+// --no-hooks flag). Every core.XOptions{...} literal ALSO sets SkipHooks
+// from noHooks directly, so a nil runner here and SkipHooks there both say
+// the same thing: --no-hooks disables hook execution.
 func getHookRunner(svc *core.Service) *core.HookRunner {
 	if noHooks {
 		return nil
@@ -21,6 +24,8 @@ func getHookRunner(svc *core.Service) *core.HookRunner {
 	timeout := 60 * time.Second // default
 	if err == nil && cfg.HookTimeout > 0 {
 		timeout = time.Duration(cfg.HookTimeout) * time.Second
+	} else if err != nil {
+		svc.Logger().Warn("config.yaml unreadable; using default hook timeout", "err", err)
 	}
 
 	return core.NewHookRunner(timeout)
