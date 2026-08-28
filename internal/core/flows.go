@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -3451,13 +3452,15 @@ type reinstallCacheTransaction struct {
 	activated bool
 }
 
-func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, gameID, sourceID, modID, version string) (*reinstallCacheTransaction, error) {
+func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, gameID, sourceID, modID, version string, logger *slog.Logger) (*reinstallCacheTransaction, error) {
 	tempDir, err := os.MkdirTemp("", "lmm-reinstall-cache-*")
 	if err != nil {
 		return nil, fmt.Errorf("creating cache snapshot: %w", err)
 	}
 	snapshot := cache.New(filepath.Join(tempDir, "snapshot"))
+	snapshot.SetLogger(logger)
 	staged := cache.New(filepath.Join(tempDir, "staged"))
+	staged.SetLogger(logger)
 	if err := live.CloneMod(ctx, snapshot, gameID, sourceID, modID, version); err != nil {
 		_ = os.RemoveAll(tempDir)
 		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
@@ -4302,7 +4305,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	var reinstallTxn *reinstallCacheTransaction
 	if plan.Replaces != nil && plan.Replaces.Version == mod.Version {
 		var txnErr error
-		reinstallTxn, txnErr = prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version)
+		reinstallTxn, txnErr = prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version, s.logger())
 		if txnErr != nil {
 			return nil, fmt.Errorf("preparing reinstall cache: %w", txnErr)
 		}
