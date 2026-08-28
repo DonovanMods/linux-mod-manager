@@ -523,8 +523,9 @@ type ScanResult struct {
 	Mod            *domain.Mod `json:"mod,omitempty"`   // Detected/created mod info
 	MatchedSource  string      `json:"matched_source"`  // a configured source's ID (any registered source, not just curseforge/nexusmods), or "local"
 	AlreadyTracked bool        `json:"already_tracked"` // True if already in lmm database
-	Error          error       `json:"-"`               // Any error during processing
-	ErrorMessage   string      `json:"error,omitempty"` // Error.Error(), when Error is set
+	// Currently never set by ScanModPath — see #285.
+	Err          error  `json:"-"`               // Any error during processing
+	ErrorMessage string `json:"error,omitempty"` // Err.Error(), when Err is set
 
 	// ResolvedFile is the matched source's own file this scanned archive
 	// corresponds to (#139), when the import flow could resolve one (exact

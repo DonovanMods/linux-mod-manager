@@ -328,9 +328,16 @@ func soleMergeCompiler(gameID string, compilers []source.MergeCompiler) (source.
 
 // SourceWarning reports a per-source failure during an aggregate operation.
 type SourceWarning struct {
-	SourceID string `json:"source_id"`
-	Message  string `json:"message"`
-	Err      error  `json:"-"`
+	SourceID     string `json:"source_id"`
+	Err          error  `json:"-"`
+	ErrorMessage string `json:"error,omitempty"` // Err.Error(), when Err is set
+}
+
+// newSourceWarning builds a SourceWarning with ErrorMessage and Err paired
+// from a single error, so a construction site can't emit one without the
+// other (final review, Minor #1 / #282).
+func newSourceWarning(id string, err error) SourceWarning {
+	return SourceWarning{SourceID: id, ErrorMessage: err.Error(), Err: err}
 }
 
 // AggregateSearchResult is the merged outcome of searching every source
@@ -462,7 +469,7 @@ func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category 
 			continue
 		}
 		if slots[i].err != nil {
-			result.Warnings = append(result.Warnings, SourceWarning{SourceID: sourceID, Message: slots[i].err.Error(), Err: slots[i].err})
+			result.Warnings = append(result.Warnings, newSourceWarning(sourceID, slots[i].err))
 			continue
 		}
 		succeeded++

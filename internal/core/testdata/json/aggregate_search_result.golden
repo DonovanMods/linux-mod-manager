@@ -22,7 +22,7 @@
   "warnings": [
     {
       "source_id": "curseforge",
-      "message": "search request timed out"
+      "error": "search request timed out"
     }
   ],
   "exhausted": true,

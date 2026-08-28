@@ -215,14 +215,14 @@ func TestJSONGoldens(t *testing.T) {
 			// Err is deliberately non-nil (json:"-") to pin that it never
 			// reaches the wire even when populated.
 			"source_warning",
-			core.SourceWarning{SourceID: "curseforge", Message: "search request timed out", Err: errors.New("search request timed out")},
+			core.SourceWarning{SourceID: "curseforge", ErrorMessage: "search request timed out", Err: errors.New("search request timed out")},
 		},
 		{
 			"aggregate_search_result",
 			core.AggregateSearchResult{
 				Mods:       []domain.Mod{jsonGoldenMod},
 				TotalCount: 25,
-				Warnings:   []core.SourceWarning{{SourceID: "curseforge", Message: "search request timed out"}},
+				Warnings:   []core.SourceWarning{{SourceID: "curseforge", ErrorMessage: "search request timed out"}},
 				Exhausted:  true, AttemptedCount: 2,
 			},
 		},
@@ -277,7 +277,7 @@ func TestJSONGoldens(t *testing.T) {
 			core.ScanResult{
 				FilePath: "/home/user/Downloads/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
 				Mod: &jsonGoldenMod, MatchedSource: "nexusmods", AlreadyTracked: true,
-				Error:        errors.New("scan failed: permission denied"),
+				Err:          errors.New("scan failed: permission denied"),
 				ErrorMessage: "scan failed: permission denied",
 				ResolvedFile: &domain.DownloadableFile{
 					ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3",

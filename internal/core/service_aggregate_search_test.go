@@ -123,6 +123,8 @@ func TestSearchAllSourcesFailureIsWarning(t *testing.T) {
 	assert.Equal(t, "local", res.Mods[0].SourceID)
 	require.Len(t, res.Warnings, 1)
 	assert.Equal(t, "remote", res.Warnings[0].SourceID)
+	assert.Equal(t, res.Warnings[0].Err.Error(), res.Warnings[0].ErrorMessage,
+		"ErrorMessage must mirror Err.Error() (newSourceWarning pairs them)")
 }
 
 func TestSearchAllSourcesSkipsNonSearching(t *testing.T) {
