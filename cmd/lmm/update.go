@@ -306,17 +306,20 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return applySingleUpdate(ctx, service, game, targetMod, profileName)
 	}
 
+	var sink core.EventSink
 	if verbose {
 		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
-		ctx = context.WithValue(ctx, domain.UpdateProgressContextKey, domain.UpdateProgressFunc(func(n, total int, name string) {
-			fmt.Fprintf(os.Stderr, "  %d/%d: %s\n", n, total, truncate(name, 60))
-		}))
+		sink = func(e core.Event) {
+			if uc, ok := e.(core.UpdateCheckEvent); ok {
+				fmt.Fprintf(os.Stderr, "  %d/%d: %s\n", uc.Index, uc.Total, truncate(uc.ModName, 60))
+			}
+		}
 	}
 
 	// Check for updates (partial results returned even when some mods fail to
 	// fetch) plus, for DeployCompile games, merged-pak staleness (#196/#197) -
 	// CheckGameUpdates is the single seam the CLI checks through.
-	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed)
+	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed, sink)
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
@@ -598,7 +601,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 	}
 
 	// Check for update for this specific mod (plus merged-pak staleness, #196/#197)
-	updates, err := service.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod})
+	updates, err := service.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil)
 	if err != nil {
 		if errors.Is(err, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
@@ -775,7 +778,11 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		Force:       updateForce,
 	}
 
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.UpdateDownloading:
 			if verbose && !jsonOutput {
@@ -903,7 +910,11 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		Force:       updateForce,
 	}
 
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)

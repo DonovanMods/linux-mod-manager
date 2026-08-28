@@ -236,7 +236,11 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter}
-	result, err := svc.Verify(cmd.Context(), game, profile, opts, func(ev core.VerifyEvent) {
+	result, err := svc.Verify(cmd.Context(), game, profile, opts, func(e core.Event) {
+		ev, ok := e.(core.VerifyEvent)
+		if !ok {
+			return
+		}
 		if jsonOutput {
 			if ev.Kind == core.VerifyEvSyncWarning {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", ev.Detail) // stderr never corrupts the JSON document
@@ -319,7 +323,7 @@ func renderVerifyEvent(ev core.VerifyEvent) {
 		renderVerifyFinding(ev)
 
 	case core.VerifyEvRepairDetail:
-		if ev.Green {
+		if ev.Fixed {
 			fmt.Printf("  %s\n", colorGreen(ev.Detail))
 		} else {
 			fmt.Printf("  %s\n", ev.Detail)
@@ -347,9 +351,9 @@ func renderVerifyEvent(ev core.VerifyEvent) {
 
 // renderVerifyFinding prints ev.Finding's main line, keyed on
 // Finding.Status plus whatever extras that status's site relies on
-// (Recorded/Effective/Version/ExpectedCount/Variant - see VerifyEvent's own
-// doc comment). Every branch is copied verbatim from the deleted CLI's
-// inline fmt.Printf calls.
+// (Recorded/Effective/Version/ExpectedCount/ChecksumPopulated - see
+// VerifyEvent's own doc comment). Every branch is copied verbatim from the
+// deleted CLI's inline fmt.Printf calls.
 func renderVerifyFinding(ev core.VerifyEvent) {
 	f := ev.Finding
 	switch f.Status {
@@ -370,7 +374,7 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 
 	case "ok":
 		switch {
-		case ev.Variant == "checksum_populated":
+		case ev.ChecksumPopulated:
 			// #164: only printed when a checksum was actually written by a
 			// --fix redownload.
 			fmt.Printf("%s %s (%s) - %s (checksum populated)\n", colorGreen("+"), f.ModName, f.FileID, colorGreen("OK"))
@@ -406,10 +410,10 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), f.FileID, f.Note)
 
 	case "fixed_stale_deployment":
-		// The WHOLE line is green (Variant "fixed_green") - unlike a
-		// version repair, which prints a plain main line and a separate
-		// green sub-line, a --fix stale-deployment removal has no main
-		// line of its own to have printed first.
+		// The WHOLE line is green, keyed on this Status alone (no event
+		// field involved) - unlike a version repair, which prints a plain
+		// main line and a separate green sub-line, a --fix stale-deployment
+		// removal has no main line of its own to have printed first.
 		fmt.Println(colorGreen(fmt.Sprintf("Fixed: removed %s (%s)", f.FileID, f.Note)))
 	}
 }

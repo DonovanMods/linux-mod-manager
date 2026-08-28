@@ -125,11 +125,10 @@ func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 4, "precondition: four checksum rows exist")
 
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, sink)
 	require.NoError(t, err)
+	events := verifyEvents(*rec)
 
 	require.True(t, result.HasFiles)
 	require.Equal(t, 1, result.Issues, "only mod-missing's MISSING row counts as an issue")
@@ -198,7 +197,11 @@ func TestVerify_ContextCancelledDuringWalk(t *testing.T) {
 	svc, game := newVerifyTestServiceWithFiles(t, 5) // 5 deployed files
 	ctx, cancel := context.WithCancel(context.Background())
 	findings := 0
-	_, err := svc.Verify(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, func(ev core.VerifyEvent) {
+	_, err := svc.Verify(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, func(e core.Event) {
+		ev, ok := e.(core.VerifyEvent)
+		if !ok {
+			return
+		}
 		if ev.Kind == core.VerifyEvFinding {
 			findings++
 			cancel()
@@ -221,11 +224,10 @@ func TestVerify_EmptyProfile_HasFilesFalse(t *testing.T) {
 	_, err := pm.Create(game.ID, "default")
 	require.NoError(t, err)
 
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, sink)
 	require.NoError(t, err)
+	events := verifyEvents(*rec)
 
 	require.False(t, result.HasFiles)
 	require.Empty(t, result.Findings)
@@ -375,11 +377,10 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "vsrc", ModID: "locked-mod", Version: "1.0", FileIDs: []string{"f1"}}))
 	require.NoError(t, pm.SetModLock(game.ID, "default", "vsrc", "locked-mod", "2.0"))
 
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, sink)
 	require.NoError(t, err)
+	events := verifyEvents(*rec)
 
 	require.Equal(t, 1, result.Issues, "only mismatch-mod's VERSION MISMATCH counts as an issue")
 	require.Equal(t, 2, result.Warnings, "unreachable-mod's skipped + unverifiable-mod's version_unverifiable")
@@ -421,6 +422,7 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	require.Len(t, progressEvents, 5, "one VerifyEvProgress tick per installed mod")
 	wantModNames := []string{"Reachable", "Unreachable", "Unverifiable", "Mismatch", "Locked"}
 	for i, ev := range progressEvents {
+		require.Equal(t, core.OpVerify, ev.Op)
 		require.Equal(t, i+1, ev.Index)
 		require.Equal(t, 5, ev.Total)
 		require.Equal(t, wantModNames[i], ev.ModName)
@@ -703,6 +705,21 @@ func newEmptyDirSource(t *testing.T, sourceID, modID string) source.ModSource {
 	return src
 }
 
+// verifyEvents type-asserts each of a Verify run's recorded core.Event
+// values down to core.VerifyEvent - the shape every test in this file
+// actually asserts against - dropping anything else (there is never
+// anything else, since Verify's sink only ever emits VerifyEvent, but the
+// sink is a core.EventSink and the recorder's slice is typed core.Event).
+func verifyEvents(recorded []core.Event) []core.VerifyEvent {
+	out := make([]core.VerifyEvent, 0, len(recorded))
+	for _, e := range recorded {
+		if ve, ok := e.(core.VerifyEvent); ok {
+			out = append(out, ve)
+		}
+	}
+	return out
+}
+
 // repairDetails filters events down to its VerifyEvRepairDetail entries, in
 // order - the fix-mode tests' sub-line assertions.
 func repairDetails(events []core.VerifyEvent) []core.VerifyEvent {
@@ -747,9 +764,10 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, false)
 		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 0, result.Issues, "a successful redownload resolves the missing issue")
 		require.Equal(t, 0, result.Warnings)
@@ -758,7 +776,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		details := repairDetails(events)
 		require.Len(t, details, 1)
 		require.Equal(t, "Re-downloaded OK", details[0].Detail)
-		require.True(t, details[0].Green)
+		require.True(t, details[0].Fixed)
 	})
 
 	t.Run("no_checksum_available", func(t *testing.T) {
@@ -767,9 +785,10 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"main"}, false)
 		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "main", "old-checksum"))
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 0, result.Issues, "the cache was restored, so the missing issue is backed out")
 		require.Equal(t, 1, result.Warnings, "but no checksum could be stored, so a warning replaces it")
@@ -780,7 +799,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		details := repairDetails(events)
 		require.Len(t, details, 1)
 		require.Equal(t, "Re-downloaded, but no checksum was available to store - NO CHECKSUM remains", details[0].Detail)
-		require.False(t, details[0].Green)
+		require.False(t, details[0].Fixed)
 	})
 
 	t.Run("error", func(t *testing.T) {
@@ -789,9 +808,10 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, false)
 		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 1, result.Issues, "the failed redownload leaves the missing issue outstanding")
 		require.Equal(t, 0, result.Warnings)
@@ -803,7 +823,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		details := repairDetails(events)
 		require.Len(t, details, 1)
 		require.Equal(t, "Re-download failed: "+wantErr, details[0].Detail)
-		require.False(t, details[0].Green)
+		require.False(t, details[0].Fixed)
 	})
 }
 
@@ -822,17 +842,18 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		svc.RegisterSource(&nonArchiveDownloadSource{mockSourceWithDownloads: mock})
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, true)
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 0, result.Issues)
 		require.Equal(t, 0, result.Warnings, "a persisted checksum never counted as a warning in the first place")
 		require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "ok"}}, result.Findings)
 
 		// The "checksum populated" outcome is a main-line "ok" row, not a
-		// RepairDetail sub-line - the CLI renders it via Variant, not an
-		// indented detail.
+		// RepairDetail sub-line - the CLI renders it via ChecksumPopulated,
+		// not an indented detail.
 		require.Empty(t, repairDetails(events))
 		var findingEvent *core.VerifyEvent
 		for i := range events {
@@ -841,7 +862,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 			}
 		}
 		require.NotNil(t, findingEvent)
-		require.Equal(t, "checksum_populated", findingEvent.Variant)
+		require.True(t, findingEvent.ChecksumPopulated)
 	})
 
 	t.Run("no_checksum_available", func(t *testing.T) {
@@ -849,9 +870,10 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		svc.RegisterSource(newEmptyDirSource(t, "rsrc", "mod1"))
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"main"}, true)
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 0, result.Issues)
 		require.Equal(t, 1, result.Warnings)
@@ -862,7 +884,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		details := repairDetails(events)
 		require.Len(t, details, 1)
 		require.Equal(t, "Re-downloaded, but no checksum was available to store", details[0].Detail, "no ' - NO CHECKSUM remains' suffix here - that phrasing is MISSING's own")
-		require.False(t, details[0].Green)
+		require.False(t, details[0].Fixed)
 	})
 
 	t.Run("error", func(t *testing.T) {
@@ -870,9 +892,10 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		svc.RegisterSource(&redownloadURLFailingSource{mockSource: newMockSource("rsrc")})
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, true)
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 0, result.Issues)
 		require.Equal(t, 1, result.Warnings)
@@ -884,7 +907,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		details := repairDetails(events)
 		require.Len(t, details, 1)
 		require.Equal(t, "Re-download to populate checksum failed: "+wantErr, details[0].Detail)
-		require.False(t, details[0].Green)
+		require.False(t, details[0].Fixed)
 	})
 }
 
@@ -980,9 +1003,10 @@ func TestVerify_Fix_NeedsReingest_Redownload(t *testing.T) {
 		src := &reingestFixSource{fakeCompilerSource: &fakeCompilerSource{downloadURL: dlSrv}}
 		svc, game := newNeedsReingestFixGame(t, src, "fake-compiler")
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 0, result.Warnings, "a successful re-ingest backs out the warning")
 		reingest, ok := findFindingByStatus(result.Findings, "fixed_needs_reingest")
@@ -993,16 +1017,17 @@ func TestVerify_Fix_NeedsReingest_Redownload(t *testing.T) {
 		details := repairDetails(events)
 		require.Len(t, details, 1)
 		require.Equal(t, "Re-ingested for pak conversion", details[0].Detail)
-		require.True(t, details[0].Green)
+		require.True(t, details[0].Fixed)
 	})
 
 	t.Run("error", func(t *testing.T) {
 		src := &reingestFixErrorSource{reingestFixSource: &reingestFixSource{fakeCompilerSource: &fakeCompilerSource{}}}
 		svc, game := newNeedsReingestFixGame(t, src, "fake-compiler")
 
-		var events []core.VerifyEvent
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+		sink, rec := core.RecordEvents()
+		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
+		events := verifyEvents(*rec)
 
 		require.Equal(t, 1, result.Warnings, "a failed re-ingest leaves the warning outstanding")
 		finding, ok := findFindingByStatus(result.Findings, "needs_reingest")
@@ -1014,7 +1039,7 @@ func TestVerify_Fix_NeedsReingest_Redownload(t *testing.T) {
 		details := repairDetails(events)
 		require.Len(t, details, 1)
 		require.Equal(t, "Re-ingest failed: "+wantErr, details[0].Detail)
-		require.False(t, details[0].Green)
+		require.False(t, details[0].Fixed)
 	})
 }
 
@@ -1029,9 +1054,10 @@ func TestVerify_Fix_SourceLocal_NoRepairAttempted(t *testing.T) {
 	seedVerifyMod(t, svc, game, domain.SourceLocal, "mod1", "Mod One", "1.0", []string{"1"}, false)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), domain.SourceLocal, "mod1", game.ID, "default", "1", "old-checksum"))
 
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) { events = append(events, e) })
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
+	events := verifyEvents(*rec)
 
 	require.Equal(t, 1, result.Issues, "no repair was attempted - the missing issue stands")
 	require.Equal(t, 0, result.Warnings)
@@ -1107,12 +1133,10 @@ func addVersionRepairSibling(t *testing.T, svc *core.Service, game *domain.Game,
 // "default" and returns the result plus every emitted event.
 func runVersionRepairFix(t *testing.T, svc *core.Service, game *domain.Game) (*core.VerifyResult, []core.VerifyEvent) {
 	t.Helper()
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Fix: true}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Fix: true}, sink)
 	require.NoError(t, err)
-	return result, events
+	return result, verifyEvents(*rec)
 }
 
 // mismatchFinding returns the version-check finding (FileID == "") for
@@ -1163,7 +1187,7 @@ func TestVerify_Fix_VersionMismatch_NotDeployed_RepairsCacheAndRecord(t *testing
 	details := repairDetails(events)
 	require.Len(t, details, 1)
 	require.Equal(t, "Repaired: 1.5 → 1.0", details[0].Detail)
-	require.True(t, details[0].Green)
+	require.True(t, details[0].Fixed)
 }
 
 // TestVerify_Fix_VersionMismatch_RenameBlocked_NoRelink is the
@@ -1206,9 +1230,9 @@ func TestVerify_Fix_VersionMismatch_RenameBlocked_NoRelink(t *testing.T) {
 	details := repairDetails(events)
 	require.Len(t, details, 2)
 	require.Equal(t, "Repaired: 1.5 → 1.0", details[0].Detail)
-	require.True(t, details[0].Green)
+	require.True(t, details[0].Fixed)
 	require.Equal(t, "Note: cache entry for 1.0 already exists; left 1.5 in place", details[1].Detail)
-	require.False(t, details[1].Green)
+	require.False(t, details[1].Fixed)
 }
 
 // TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair is the
@@ -1243,7 +1267,7 @@ func TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair(t *testing.T) {
 	require.Len(t, details, 1)
 	wantRefusal := "--fix skipped: Mod One is locked at v1.5 in profile default — the record is the lock's target; move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1' instead of rewriting it."
 	require.Equal(t, wantRefusal, details[0].Detail)
-	require.False(t, details[0].Green)
+	require.False(t, details[0].Fixed)
 }
 
 // TestVerify_Fix_VersionMismatch_SiblingRepaired covers the sibling-repaired
@@ -1280,11 +1304,11 @@ func TestVerify_Fix_VersionMismatch_SiblingRepaired(t *testing.T) {
 	details := repairDetails(events)
 	require.Len(t, details, 3, "sibling detail + primary Repaired detail + Note detail (the sibling repair produced a non-empty note)")
 	require.Equal(t, "Repaired (profile second): 1.5 → 1.0", details[0].Detail, "ordering trap: the sibling detail must be emitted FIRST")
-	require.True(t, details[0].Green)
+	require.True(t, details[0].Fixed)
 	require.Equal(t, "Repaired: 1.5 → 1.0", details[1].Detail, "the primary row's own resolution detail comes AFTER the sibling's")
-	require.True(t, details[1].Green)
+	require.True(t, details[1].Fixed)
 	require.Equal(t, "Note: also repaired in profile(s): second", details[2].Detail)
-	require.False(t, details[2].Green)
+	require.False(t, details[2].Fixed)
 }
 
 // TestVerify_Fix_VersionMismatch_SiblingDiffers_DeclinedWithWarning covers
@@ -1312,7 +1336,7 @@ func TestVerify_Fix_VersionMismatch_SiblingDiffers_DeclinedWithWarning(t *testin
 	details := repairDetails(events)
 	require.Len(t, details, 3)
 	require.Equal(t, "Warning: profile differs records the same version but differs in file selection; run verify --fix -p differs", details[0].Detail, "the decline detail must be emitted before the primary's own Repaired detail")
-	require.False(t, details[0].Green)
+	require.False(t, details[0].Fixed)
 	require.Equal(t, "Repaired: 1.5 → 1.0", details[1].Detail)
 	require.Equal(t, "Note: "+wantNote, details[2].Detail)
 }
@@ -1393,9 +1417,9 @@ func TestVerify_Fix_VersionMismatch_Deployed_RelinkFailure_ClearsDeployedFlag(t 
 	details := repairDetails(events)
 	require.Len(t, details, 2)
 	require.Contains(t, details[0].Detail, "Warning: undeploy Mod One:")
-	require.False(t, details[0].Green)
+	require.False(t, details[0].Fixed)
 	require.Contains(t, details[1].Detail, "Repair failed: relinking deployed files:")
-	require.False(t, details[1].Green)
+	require.False(t, details[1].Fixed)
 }
 
 // TestVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingStillRepaired
@@ -1436,11 +1460,11 @@ func TestVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingStillRepaired(t *t
 	details := repairDetails(events)
 	require.Len(t, details, 3)
 	require.Contains(t, details[0].Detail, "Warning: undeploy Mod One:")
-	require.False(t, details[0].Green)
+	require.False(t, details[0].Fixed)
 	require.Equal(t, "Repaired (profile second): 1.5 → 1.0", details[1].Detail, "ordering trap: the sibling detail (emitted DURING repairModVersion) must precede the primary's own failure detail")
-	require.True(t, details[1].Green)
+	require.True(t, details[1].Fixed)
 	require.Contains(t, details[2].Detail, "Repair failed: relinking deployed files:", "the primary's own failure detail (emitted by versionPass AFTER repairModVersion returns) comes last")
-	require.False(t, details[2].Green)
+	require.False(t, details[2].Fixed)
 }
 
 // --- #224 Task 6: convergence pass + merged-pak sync (engine completion) --
@@ -1472,11 +1496,10 @@ func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
 
 	strayDanglingSymlink(t, svc, game, "stray.pak")
 
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, sink)
 	require.NoError(t, err)
+	events := verifyEvents(*rec)
 
 	require.False(t, result.HasFiles)
 	require.Equal(t, 0, result.Issues)
@@ -1497,9 +1520,10 @@ func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
 
 // TestVerify_EmptyProfile_DanglingLink_Fix is the --fix counterpart: the
 // same dangling link is actually removed, reported as fixed_stale_
-// deployment with the fixed_green variant, and does NOT count as a warning
-// (a resolved problem, same convention as every other successful --fix
-// repair in this engine).
+// deployment (the CLI renders the whole main line green for that status,
+// keyed on Finding.Status alone - no event field is involved), and does NOT
+// count as a warning (a resolved problem, same convention as every other
+// successful --fix repair in this engine).
 func TestVerify_EmptyProfile_DanglingLink_Fix(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
@@ -1510,11 +1534,10 @@ func TestVerify_EmptyProfile_DanglingLink_Fix(t *testing.T) {
 
 	strayDanglingSymlink(t, svc, game, "stray.pak")
 
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
+	events := verifyEvents(*rec)
 
 	require.Equal(t, 0, result.Issues)
 	require.Equal(t, 0, result.Warnings, "a successful fix is a resolved problem, not an outstanding one")
@@ -1524,7 +1547,7 @@ func TestVerify_EmptyProfile_DanglingLink_Fix(t *testing.T) {
 
 	require.Len(t, events, 2)
 	require.Equal(t, core.VerifyEvFinding, events[1].Kind)
-	require.Equal(t, "fixed_green", events[1].Variant, "the CLI renders the whole main line green for a fixed convergence row")
+	require.Equal(t, result.Findings[0], events[1].Finding)
 
 	_, statErr := os.Lstat(filepath.Join(game.ModPath, "stray.pak"))
 	require.True(t, os.IsNotExist(statErr), "--fix must remove the dangling link")
@@ -1571,12 +1594,11 @@ func TestVerify_Fix_SyncMergedPak_WarningsSurfaceAsSyncEvents(t *testing.T) {
 	src.mergeWarnings = []string{"asset collision: fixture warning"}
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 
-	var events []core.VerifyEvent
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
+	events := verifyEvents(*rec)
 
 	var syncEvents []core.VerifyEvent
 	for _, e := range events {
@@ -1603,11 +1625,10 @@ func TestVerify_Fix_SyncMergedPak_NonCompileGame_NoWarningEvents(t *testing.T) {
 	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", []string{"ok-file"}, true)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
 
-	var events []core.VerifyEvent
-	_, err = svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, func(e core.VerifyEvent) {
-		events = append(events, e)
-	})
+	sink, rec := core.RecordEvents()
+	_, err = svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
+	events := verifyEvents(*rec)
 
 	for _, e := range events {
 		require.NotEqual(t, core.VerifyEvSyncWarning, e.Kind, "a non-DeployCompile game's sync must be a silent no-op")

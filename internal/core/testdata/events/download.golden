@@ -1,0 +1,1 @@
+{"type":"download","data":{"op":"install","mod":{"source_id":"nexusmods","mod_id":"42"},"mod_name":"Sample Mod","index":2,"total":5,"phase":"install_downloading","file":{"id":"f1","name":"Main","file_name":"main.zip","version":"1.2.3","size":1234,"is_primary":true},"downloaded":617,"total_bytes":1234,"percent":50}}

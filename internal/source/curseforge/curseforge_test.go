@@ -299,6 +299,90 @@ func TestCurseForge_CheckUpdates(t *testing.T) {
 	assert.Equal(t, "15.4.0.0", updates[0].NewVersion)
 }
 
+func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		switch r.URL.Path {
+		case "/v1/mods/111":
+			_, _ = w.Write([]byte(`{"data": {"id": 111, "name": "Mod A", "latestFiles": [{"displayName": "mod-a-2.0.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
+		case "/v1/mods/222":
+			_, _ = w.Write([]byte(`{"data": {"id": 222, "name": "Mod B", "latestFiles": [{"displayName": "mod-b-1.0.0"}], "dateModified": "2024-01-15T10:30:00Z"}}`))
+		case "/v1/mods/333":
+			_, _ = w.Write([]byte(`{"data": {"id": 333, "name": "Mod C", "latestFiles": [{"displayName": "mod-c-3.5.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
+		}
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Name: "Mod A", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "222", Name: "Mod B", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "333", Name: "Mod C", Version: "3.0.0", GameID: "432"}},
+	}
+
+	type progressCall struct {
+		n, total int
+		name     string
+	}
+	var calls []progressCall
+	report := func(n, total int, name string) {
+		calls = append(calls, progressCall{n, total, name})
+	}
+
+	updates, err := cf.CheckUpdatesWithProgress(context.Background(), installed, report)
+	require.NoError(t, err)
+
+	want := []progressCall{
+		{1, 3, "Mod A"},
+		{2, 3, "Mod B"},
+		{3, 3, "Mod C"},
+	}
+	assert.Equal(t, want, calls, "report should be called exactly once per mod, in order")
+
+	plainUpdates, err := cf.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Equal(t, plainUpdates, updates, "the reported-progress call should find the same updates as CheckUpdates")
+}
+
+func TestCurseForge_CheckUpdates_DelegatesWithNilReport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": {"id": 238222, "name": "JEI", "latestFiles": [{"displayName": "jei-1.20.1-15.4.0.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{
+			Mod: domain.Mod{
+				ID:       "238222",
+				SourceID: "curseforge",
+				Name:     "JEI",
+				Version:  "15.3.0.4",
+				GameID:   "432",
+			},
+		},
+	}
+
+	want, err := cf.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+
+	var got []domain.Update
+	require.NotPanics(t, func() {
+		got, err = cf.CheckUpdatesWithProgress(context.Background(), installed, nil)
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, want, got)
+}
+
 func TestCurseForge_ExchangeToken(t *testing.T) {
 	cf := New(nil, "")
 

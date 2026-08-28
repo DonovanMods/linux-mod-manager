@@ -557,30 +557,30 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
 // Returns the download result including files extracted and checksum.
 // Multiple files from the same mod can be downloaded to the same cache location.
-func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
+func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	return s.downloadMod(ctx, sourceID, game, mod, file, progressFn)
+	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
 }
 
-func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
-	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, progressFn)
+func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
+	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, sink)
 }
 
 // DownloadModToCache downloads a mod file, extracts it, and stores it in the provided cache.
-func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
+func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	return s.downloadModToCache(ctx, gameCache, sourceID, game, mod, file, progressFn)
+	return s.downloadModToCache(ctx, gameCache, sourceID, game, mod, file, sink)
 }
 
-func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, progressFn ProgressFunc) (result *DownloadModResult, err error) {
+func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 
 	// Note: We intentionally do NOT check if cache exists here.
 	// A mod can have multiple downloadable files (e.g., main mod + optional patches),
@@ -634,7 +634,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	if hp, ok := src.(source.DownloadHeaderProvider); ok {
 		headers = hp.DownloadHeaders(url)
 	}
-	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, progressFn)
+	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, sink)
 	if err != nil {
 		return nil, fmt.Errorf("downloading mod: %w", err)
 	}

@@ -75,21 +75,25 @@ func seedLooseMod(t *testing.T, svc *core.Service, game *domain.Game, modID, nam
 // deployRecordingProgress runs DeployProfile with a recorder and returns the
 // result, every DeployDeployed event keyed by mod name (with its position in
 // the event stream), and any DeployMergeSynced events (with positions).
-func deployRecordingProgress(t *testing.T, svc *core.Service, game *domain.Game) (*core.DeployResult, map[string]core.DeployProgress, map[string]int, []core.DeployProgress, []int) {
+func deployRecordingProgress(t *testing.T, svc *core.Service, game *domain.Game) (*core.DeployResult, map[string]core.Event, map[string]int, []core.Event, []int) {
 	t.Helper()
-	deployed := map[string]core.DeployProgress{}
+	deployed := map[string]core.Event{}
 	deployedAt := map[string]int{}
-	var mergeEvents []core.DeployProgress
+	var mergeEvents []core.Event
 	var mergeAt []int
 	seq := 0
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(e core.Event) {
 		seq++
-		switch p.Phase {
+		fe, ok := e.(core.FlowEvent)
+		if !ok {
+			return
+		}
+		switch fe.FlowPhase() {
 		case core.DeployDeployed:
-			deployed[p.ModName] = p
-			deployedAt[p.ModName] = seq
+			deployed[fe.EventScope().ModName] = e
+			deployedAt[fe.EventScope().ModName] = seq
 		case core.DeployMergeSynced:
-			mergeEvents = append(mergeEvents, p)
+			mergeEvents = append(mergeEvents, e)
 			mergeAt = append(mergeAt, seq)
 		}
 	})
@@ -123,18 +127,18 @@ func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
 
 	// Per-mod classification, set on each DeployDeployed event (#255).
 	require.Contains(t, deployed, "Bear Mount")
-	assert.Equal(t, core.DeployModMerged, deployed["Bear Mount"].ModClass, "a native merge source is carried by the merged artifact")
+	assert.Equal(t, core.DeployModMerged, deployed["Bear Mount"].(core.ModEvent).Class, "a native merge source is carried by the merged artifact")
 	require.Contains(t, deployed, "raw-pak")
-	assert.Equal(t, core.DeployModRaw, deployed["raw-pak"].ModClass, "an opted-out pak deploys raw, individually")
+	assert.Equal(t, core.DeployModRaw, deployed["raw-pak"].(core.ModEvent).Class, "an opted-out pak deploys raw, individually")
 	require.Contains(t, deployed, "Loose Mod")
-	assert.Equal(t, core.DeployModIndividual, deployed["Loose Mod"].ModClass, "a loose-file mod is an ordinary individual deployment")
+	assert.Equal(t, core.DeployModIndividual, deployed["Loose Mod"].(core.ModEvent).Class, "a loose-file mod is an ordinary individual deployment")
 
 	// The post-sync merge event: exactly one, after every per-mod event,
 	// naming the artifact and counting merge participants.
 	require.Len(t, mergeEvents, 1, "exactly one DeployMergeSynced event must fire")
-	evt := mergeEvents[0]
-	assert.Equal(t, 1, evt.Total, "one mod's content is carried by the merged artifact")
-	assert.Equal(t, "zzz_LMM_Merged_P.pak", evt.Detail, "Detail must name the merged artifact (MergedArtifactName)")
+	evt := mergeEvents[0].(core.MergeEvent)
+	assert.Equal(t, 1, evt.MergedMods, "one mod's content is carried by the merged artifact")
+	assert.Equal(t, "zzz_LMM_Merged_P.pak", evt.Artifact, "Artifact must name the merged artifact (MergedArtifactName)")
 	assert.Equal(t, 0, evt.RawFallbacks)
 	for name, at := range deployedAt {
 		assert.Greater(t, mergeAt[0], at, "DeployMergeSynced must fire after %s's DeployDeployed", name)
@@ -168,16 +172,22 @@ func TestDeployProfile_Compile_ConversionFailure_ReportsRawFallback(t *testing.T
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "flaky-pak", "1.0", "flaky.pak", []byte("flaky-pak-bytes"))
 
 	var warnings []string
-	deployed := map[string]core.DeployProgress{}
-	var mergeEvents []core.DeployProgress
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		switch p.Phase {
-		case core.DeployDeployed:
-			deployed[p.ModName] = p
-		case core.DeployWarning:
-			warnings = append(warnings, p.Detail)
-		case core.DeployMergeSynced:
-			mergeEvents = append(mergeEvents, p)
+	deployed := map[string]core.Event{}
+	var mergeEvents []core.Event
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(e core.Event) {
+		switch ev := e.(type) {
+		case core.ModEvent:
+			if ev.Phase == core.DeployDeployed {
+				deployed[ev.ModName] = e
+			}
+		case core.WarningEvent:
+			if ev.Phase == core.DeployWarning {
+				warnings = append(warnings, ev.Message)
+			}
+		case core.MergeEvent:
+			if ev.Phase == core.DeployMergeSynced {
+				mergeEvents = append(mergeEvents, e)
+			}
 		}
 	})
 	require.NoError(t, err)
@@ -186,7 +196,7 @@ func TestDeployProfile_Compile_ConversionFailure_ReportsRawFallback(t *testing.T
 	// Optimistic inline label: at DeployDeployed time the pak is a merge
 	// participant - the correction comes from the warning + footer below.
 	require.Contains(t, deployed, "flaky-pak")
-	assert.Equal(t, core.DeployModMerged, deployed["flaky-pak"].ModClass)
+	assert.Equal(t, core.DeployModMerged, deployed["flaky-pak"].(core.ModEvent).Class)
 
 	// The existing conversion-failure warning still fires (the correction).
 	foundConversionWarning := false
@@ -198,9 +208,9 @@ func TestDeployProfile_Compile_ConversionFailure_ReportsRawFallback(t *testing.T
 	assert.True(t, foundConversionWarning, "the pak-conversion-failure warning must still fire; got %v", warnings)
 
 	require.Len(t, mergeEvents, 1)
-	assert.Equal(t, 1, mergeEvents[0].Total, "only the exmodz mod's content made the merged artifact")
-	assert.Equal(t, "zzz_LMM_Merged_P.pak", mergeEvents[0].Detail)
-	assert.Equal(t, 1, mergeEvents[0].RawFallbacks, "the failed pak fell back to a raw individual deploy")
+	assert.Equal(t, 1, mergeEvents[0].(core.MergeEvent).MergedMods, "only the exmodz mod's content made the merged artifact")
+	assert.Equal(t, "zzz_LMM_Merged_P.pak", mergeEvents[0].(core.MergeEvent).Artifact)
+	assert.Equal(t, 1, mergeEvents[0].(core.MergeEvent).RawFallbacks, "the failed pak fell back to a raw individual deploy")
 
 	assert.Equal(t, 1, result.MergedMods)
 	assert.Equal(t, 1, result.RawFallbacks)
@@ -231,21 +241,25 @@ func TestDeployProfile_NonCompile_NoMergeReadout(t *testing.T) {
 	}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a", Version: "1.0"}))
 
-	var mergeEvents []core.DeployProgress
-	deployed := map[string]core.DeployProgress{}
-	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(p core.DeployProgress) {
-		switch p.Phase {
-		case core.DeployDeployed:
-			deployed[p.ModName] = p
-		case core.DeployMergeSynced:
-			mergeEvents = append(mergeEvents, p)
+	var mergeEvents []core.Event
+	deployed := map[string]core.Event{}
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, func(e core.Event) {
+		switch ev := e.(type) {
+		case core.ModEvent:
+			if ev.Phase == core.DeployDeployed {
+				deployed[ev.ModName] = e
+			}
+		case core.MergeEvent:
+			if ev.Phase == core.DeployMergeSynced {
+				mergeEvents = append(mergeEvents, e)
+			}
 		}
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Deployed)
 
 	assert.Empty(t, mergeEvents, "a non-compile deploy must emit no DeployMergeSynced event")
-	assert.Equal(t, core.DeployModIndividual, deployed["Mod A"].ModClass)
+	assert.Equal(t, core.DeployModIndividual, deployed["Mod A"].(core.ModEvent).Class)
 	assert.Zero(t, result.MergedArtifact)
 	assert.Zero(t, result.MergedMods)
 	assert.Zero(t, result.RawFallbacks)

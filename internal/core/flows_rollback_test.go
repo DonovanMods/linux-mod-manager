@@ -276,19 +276,18 @@ func TestApplyRollbackHookForceGate(t *testing.T) {
 		hooks := &core.ResolvedHooks{Uninstall: domain.HookConfig{BeforeEach: failingScript(t, scriptsDir, "fail.sh")}}
 		runner := core.NewHookRunner(5 * time.Second)
 
-		var events []core.DeployProgress
-		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner, Force: true}, func(p core.DeployProgress) {
-			events = append(events, p)
-		})
+		sink, seen := core.RecordEvents()
+		result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner, Force: true}, sink)
 		require.NoError(t, err)
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "uninstall.before_each hook failed (forced):")
 
 		var sawForced bool
-		for _, e := range events {
-			if e.Phase == core.UpdateBeforeEachForced {
+		for _, e := range *seen {
+			if hook, ok := e.(core.HookEvent); ok && hook.Phase == core.UpdateBeforeEachForced {
 				sawForced = true
-				assert.Equal(t, result.Warnings[0], e.Detail)
+				assert.Equal(t, result.Warnings[0], hook.Detail)
+				assert.Equal(t, "uninstall.before_each", hook.Stage)
 			}
 		}
 		assert.True(t, sawForced, "an UpdateBeforeEachForced event must fire")
@@ -351,18 +350,16 @@ func TestApplyRollbackAfterEachWarnings(t *testing.T) {
 	}
 	runner := core.NewHookRunner(5 * time.Second)
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyRollback(context.Background(), game, "default", mod.SourceID, mod.ID, core.RollbackOptions{Hooks: hooks, HookRunner: runner}, sink)
 	require.NoError(t, err, "after_each hook failures must never fail the rollback")
 	require.Len(t, result.Warnings, 2)
 	assert.Contains(t, result.Warnings[0], "uninstall.after_each hook failed")
 	assert.Contains(t, result.Warnings[1], "install.after_each hook failed")
 
 	var warningCount int
-	for _, e := range events {
-		if e.Phase == core.UpdateWarning {
+	for _, e := range *seen {
+		if w, ok := e.(core.WarningEvent); ok && w.Phase == core.UpdateWarning {
 			warningCount++
 		}
 	}

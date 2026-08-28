@@ -759,13 +759,14 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 // mods' content the merged artifact carries and which participants fell
 // back to a raw individual deploy. The artifact name and counts land on
 // result (for progress-less callers) and as one DeployMergeSynced
-// event. A missing fingerprint means no merged artifact exists (zero merge
+// event, stamped with the calling flow's op. A missing fingerprint means
+// no merged artifact exists (zero merge
 // participants - the uninstall-to-zero path) so there is nothing to report;
 // resolution failures likewise skip the readout rather than fail an
 // already-successful deploy. Counts are per MOD, not per file: a mod
 // contributing both a converted and a failed file counts once on each side,
 // which is the accurate reading of that (rare) state.
-func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, profileName string, result *DeployResult, emit func(DeployProgress)) {
+func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, profileName string, op Op, result *DeployResult, emit func(Event)) {
 	if game.DeployMode != domain.DeployCompile {
 		return
 	}
@@ -790,7 +791,7 @@ func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, pro
 	result.MergedArtifact = mc.MergedArtifactName()
 	result.MergedMods = len(merged)
 	result.RawFallbacks = len(raw)
-	emit(DeployProgress{Phase: DeployMergeSynced, Total: result.MergedMods, Detail: result.MergedArtifact, RawFallbacks: result.RawFallbacks})
+	emit(MergeEvent{Scope: Scope{Op: op}, Phase: DeployMergeSynced, MergedMods: result.MergedMods, Artifact: result.MergedArtifact, RawFallbacks: result.RawFallbacks})
 }
 
 // MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
@@ -1015,16 +1016,16 @@ func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game
 // merged pak or exclude the mod's diff; reading a locked mod's retained
 // source to feed the merge is not "touching" it in the sense a lock
 // protects against).
-func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, sink EventSink) (*UpdateApplyResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &UpdateApplyResult{}, err
 	}
 	defer release()
-	return s.applyMergedPakRegen(ctx, game, profileName, progress)
+	return s.applyMergedPakRegen(ctx, game, profileName, sink)
 }
 
-func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, sink EventSink) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
 	// Resolved up front: the Applied entry below reports the merged
 	// artifact by the name only the compile source knows (#256), and a
@@ -1040,8 +1041,8 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 	}
 	result.Warnings = warnings
 	result.Applied = []string{mc.MergedArtifactName()}
-	if progress != nil {
-		progress(DeployProgress{Phase: UpdateDownloadDone})
+	if sink != nil {
+		sink(StepEvent{Scope: Scope{Op: OpMergeRegen}, Phase: UpdateDownloadDone})
 	}
 	return result, nil
 }

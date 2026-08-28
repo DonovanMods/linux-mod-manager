@@ -22,16 +22,6 @@ const (
 	defaultBackoffMultiplier = 2
 )
 
-// DownloadProgress represents the current state of a download
-type DownloadProgress struct {
-	TotalBytes int64   // Total size in bytes (0 if unknown)
-	Downloaded int64   // Bytes downloaded so far
-	Percentage float64 // Completion percentage (0-100)
-}
-
-// ProgressFunc is called periodically during download with progress updates
-type ProgressFunc func(DownloadProgress)
-
 // DownloadResult contains the outcome of a download
 type DownloadResult struct {
 	Path     string // Final file path
@@ -82,20 +72,20 @@ func isRetryableNet(err error) bool {
 }
 
 // Download fetches a file from the URL and saves it to destPath, with retries
-// on transient failures (exponential backoff). Progress updates are sent to
-// the optional progressFn callback.
-func (d *Downloader) Download(ctx context.Context, url, destPath string, progressFn ProgressFunc) (*DownloadResult, error) {
-	return d.DownloadWithHeaders(ctx, url, destPath, nil, progressFn)
+// on transient failures (exponential backoff). Progress ticks are sent to
+// the optional sink as DownloadEvent.
+func (d *Downloader) Download(ctx context.Context, url, destPath string, sink EventSink) (*DownloadResult, error) {
+	return d.DownloadWithHeaders(ctx, url, destPath, nil, sink)
 }
 
 // DownloadWithHeaders is Download with extra request headers applied to every
 // attempt — used for authenticated file downloads from custom sources.
-func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (*DownloadResult, error) {
+func (d *Downloader) DownloadWithHeaders(ctx context.Context, url, destPath string, headers map[string]string, sink EventSink) (*DownloadResult, error) {
 	var lastErr error
 	backoff := defaultInitialBackoff
 
 	for attempt := 1; attempt <= defaultMaxAttempts; attempt++ {
-		result, err := d.downloadOnce(ctx, url, destPath, headers, progressFn)
+		result, err := d.downloadOnce(ctx, url, destPath, headers, sink)
 		if err == nil {
 			return result, nil
 		}
@@ -178,7 +168,7 @@ func (d *Downloader) redirectSafeClient(headers map[string]string) *http.Client 
 }
 
 // downloadOnce performs a single download attempt (no retries).
-func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, headers map[string]string, progressFn ProgressFunc) (result *DownloadResult, err error) {
+func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, headers map[string]string, sink EventSink) (result *DownloadResult, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
@@ -236,12 +226,17 @@ func (d *Downloader) downloadOnce(ctx context.Context, url, destPath string, hea
 	}()
 
 	totalBytes := resp.ContentLength
+	if totalBytes < 0 {
+		// http.Response.ContentLength is -1 when unknown (e.g. chunked
+		// transfer-encoding); DownloadEvent's contract is 0 for unknown.
+		totalBytes = 0
+	}
 	md5Hasher := md5.New()
 	shaHasher := sha256.New()
 	reader := &progressReader{
 		reader:     resp.Body,
 		totalBytes: totalBytes,
-		progressFn: progressFn,
+		sink:       sink,
 	}
 	teeReader := io.TeeReader(reader, io.MultiWriter(md5Hasher, shaHasher))
 
@@ -272,22 +267,24 @@ type progressReader struct {
 	reader     io.Reader
 	totalBytes int64
 	downloaded int64
-	progressFn ProgressFunc
+	sink       EventSink
 }
 
 func (r *progressReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if n > 0 {
 		r.downloaded += int64(n)
-		if r.progressFn != nil {
-			progress := DownloadProgress{
-				TotalBytes: r.totalBytes,
-				Downloaded: r.downloaded,
-			}
+		if r.sink != nil {
+			var pct float64
 			if r.totalBytes > 0 {
-				progress.Percentage = float64(r.downloaded) / float64(r.totalBytes) * 100
+				pct = float64(r.downloaded) / float64(r.totalBytes) * 100
 			}
-			r.progressFn(progress)
+			r.sink(DownloadEvent{
+				Scope:      Scope{Op: OpDownload},
+				Downloaded: r.downloaded,
+				TotalBytes: r.totalBytes,
+				Percent:    pct,
+			})
 		}
 	}
 	return n, err

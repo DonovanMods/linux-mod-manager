@@ -158,7 +158,11 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// deploy loop starts (a forced before_all warning, anything from the
 	// --purge pass) return early, without calling printDeployHeaderOnce -
 	// they must print before "Deploying N mod(s)..." even exists.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.DeployBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)

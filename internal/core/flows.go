@@ -445,10 +445,10 @@ type DeployOptions struct {
 	Force       bool // continue past a failing before_* hook (warn instead of fail)
 }
 
-// DeployPhase identifies what DeployProfile is doing for the mod named in a
-// DeployProgress event (or, for DeployPurging, for the purge pass as a
-// whole), letting callers render phase-appropriate UI without needing to
-// know how a deploy is actually carried out.
+// DeployPhase identifies what DeployProfile is doing for the mod named in
+// a flow event (or, for DeployPurging, for the purge pass as a whole),
+// letting callers render phase-appropriate UI without needing to know how
+// a deploy is actually carried out.
 type DeployPhase int
 
 const (
@@ -553,10 +553,11 @@ const (
 	PurgeComplete
 
 	// --- Task 4: ApplyProfileSwitch progress events, extending this same
-	// DeployPhase enum (per the task brief: "reuse DeployProgress and its
-	// phase-constant pattern - extend, don't fork") rather than introducing
-	// a parallel SwitchProgress/SwitchPhase pair. ApplyProfileSwitch is a
-	// behavior-preserving extraction of cmd/lmm/profile.go's doProfileSwitch;
+	// DeployPhase enum (per the task brief: "reuse the progress carrier and
+	// its phase-constant pattern - extend, don't fork") rather than
+	// introducing a parallel SwitchProgress/SwitchPhase pair.
+	// ApplyProfileSwitch is a behavior-preserving extraction of
+	// cmd/lmm/profile.go's doProfileSwitch;
 	// every phase below corresponds to exactly one of doProfileSwitch's
 	// fmt.Print* call sites - see the task report for the full mapping.
 	// Unlike DeployProfile, doProfileSwitch never printed to stderr at all,
@@ -752,7 +753,7 @@ const (
 	// InstallDownloading mirrors the STRICT path's primary per-tick
 	// download progress - Downloaded/TotalBytes/Percent carry the raw
 	// numbers so the CLI can reproduce its exact byte-count/percent
-	// readout (see DeployProgress's doc comment on those fields). The
+	// readout (see DownloadEvent's doc comment on those fields). The
 	// BATCH path's per-mod download progress fires InstallDepDownloading
 	// instead (Percent only, no byte-count fallback).
 	InstallDownloading
@@ -1022,6 +1023,54 @@ const (
 	DeployMergeSynced
 )
 
+// deployPhaseNames maps each DeployPhase to its wire name (snake_case of
+// the constant without the type prefix rules — the constant's own name,
+// lower-snake). Keep in declaration order.
+var deployPhaseNames = [...]string{
+	DeployPurging: "deploy_purging", DeployBeforeEachSkipped: "deploy_before_each_skipped", DeployRedownloading: "deploy_redownloading",
+	DeployDownloading: "deploy_downloading", DeployDownloadFailed: "deploy_download_failed", DeployDownloadDone: "deploy_download_done",
+	DeploySkipped: "deploy_skipped", DeployDeployed: "deploy_deployed", DeployBeforeAllForced: "deploy_before_all_forced",
+	DeployNote: "deploy_note", DeployWarning: "deploy_warning", PurgeWarning: "purge_warning", PurgeNote: "purge_note",
+	PurgeComplete: "purge_complete", SwitchDisableNote: "switch_disable_note", SwitchDisabled: "switch_disabled",
+	SwitchEnableNote: "switch_enable_note", SwitchEnabled: "switch_enabled", SwitchInstalling: "switch_installing",
+	SwitchInstallingMod: "switch_installing_mod", SwitchInstallError: "switch_install_error", SwitchDownloading: "switch_downloading",
+	SwitchDownloadFailed: "switch_download_failed", SwitchDownloadDone: "switch_download_done", SwitchInstalled: "switch_installed",
+	SwitchInstallNote: "switch_install_note", InstallBeforeAllForced: "install_before_all_forced", InstallBeforeEachForced: "install_before_each_forced",
+	InstallDepInstalling: "install_dep_installing", InstallDepReinstalling: "install_dep_reinstalling", InstallDepFileSelected: "install_dep_file_selected",
+	InstallDepDownloading: "install_dep_downloading", InstallDepSkipped: "install_dep_skipped", InstallDepDownloadDone: "install_dep_download_done",
+	InstallDepConflictWarning: "install_dep_conflict_warning", InstallDepInstalled: "install_dep_installed", InstallDownloadStarted: "install_download_started",
+	InstallDownloading: "install_downloading", InstallDownloadDone: "install_download_done", InstallDownloadFailed: "install_download_failed",
+	InstallChecksumComputed: "install_checksum_computed", InstallCompiling: "install_compiling", InstallExtracting: "install_extracting",
+	InstallDeploying: "install_deploying", InstallDone: "install_done", InstallNote: "install_note", InstallWarning: "install_warning",
+	UpdateDownloading: "update_downloading", UpdateDownloadDone: "update_download_done", UpdateBeforeEachForced: "update_before_each_forced",
+	UpdateWarning: "update_warning", UpdateNote: "update_note", PurgeModSkipped: "purge_mod_skipped", PurgeModPurged: "purge_mod_purged",
+	ImportSaved: "import_saved", ImportInstalling: "import_installing", ImportModInstalling: "import_mod_installing",
+	ImportDownloading: "import_downloading", ImportDownloadDone: "import_download_done", ImportModFailed: "import_mod_failed",
+	ImportModInstalled: "import_mod_installed", ImportNote: "import_note", DeployMergeSynced: "deploy_merge_synced",
+}
+
+// String returns the phase's wire name.
+func (p DeployPhase) String() string {
+	if p >= 0 && int(p) < len(deployPhaseNames) && deployPhaseNames[p] != "" {
+		return deployPhaseNames[p]
+	}
+	return fmt.Sprintf("deploy_phase(%d)", int(p))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (p DeployPhase) MarshalText() ([]byte, error) { return []byte(p.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (p *DeployPhase) UnmarshalText(b []byte) error {
+	for i, n := range deployPhaseNames {
+		if n == string(b) {
+			*p = DeployPhase(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown deploy phase %q", b)
+}
+
 // DeployModClass classifies how a DeployDeployed mod's content reaches the
 // game directory on a DeployCompile game (#255), so callers stop rendering
 // merge participants - which individually deploy zero files by design
@@ -1051,76 +1100,34 @@ const (
 	DeployModRaw
 )
 
-// DeployProgress reports incremental status during DeployProfile. Index and
-// Total describe ModName's position among the mods being deployed (both
-// zero for phases with no mod/count in scope - see each DeployPhase
-// constant's doc comment). ModID accompanies ModName wherever a specific
-// mod is in scope; for phases whose historical text carries no mod name at
-// all (DeployNote's link-method/mark-deployed cases), it is the only
-// attribution available. Detail and Percent are populated only for the
-// phases documented on DeployPhase's constants; both are zero otherwise.
-type DeployProgress struct {
-	Index, Total int
-	ModName      string
-	ModID        string
-	// SourceID is populated by ApplyProfileSwitch's install-loop events
-	// (SwitchInstallingMod onward), where a mod's SourceID:ModID pair is the
-	// only identity known before it has even been fetched (no ModName yet).
-	// DeployProfile's own events never set it (zero value, ignored).
-	SourceID string
-	Phase    DeployPhase
-	Detail   string
-	Percent  float64
+// deployModClassNames maps each DeployModClass to its wire name. Keep in
+// declaration order.
+var deployModClassNames = [...]string{
+	DeployModIndividual: "individual",
+	DeployModMerged:     "merged",
+	DeployModRaw:        "raw",
+}
 
-	// --- Phase 5b Task 2: ApplyInstall-only fields ---
+// String returns the class's wire name.
+func (c DeployModClass) String() string {
+	if c >= 0 && int(c) < len(deployModClassNames) && deployModClassNames[c] != "" {
+		return deployModClassNames[c]
+	}
+	return fmt.Sprintf("deploy_mod_class(%d)", int(c))
+}
 
-	// Downloaded and TotalBytes carry the raw byte counts behind Percent for
-	// the primary mod's own download phases (InstallDownloading) - unlike
-	// DeployDownloading (gated on TotalBytes > 0 and Percent-only),
-	// doInstall's downloadSelectedFiles prints a byte-count readout even
-	// when the total size is unknown ("Downloaded %s" vs "%.1f%% (%s /
-	// %s)"), so the CLI needs the raw numbers, not just Percent, to
-	// reproduce that byte-identically. Zero for every other phase.
-	Downloaded int64
-	TotalBytes int64
-	// File identifies which of the primary mod's selected files an
-	// InstallDownload* event concerns, so the CLI can call its own
-	// displayFileLabel(*File) to reproduce doInstall's exact file-name
-	// formatting without core duplicating that cosmetic, CLI-only helper.
-	// Populated only for InstallDownloadStarted/InstallDownloading/
-	// InstallDownloadDone/InstallDownloadFailed/InstallChecksumComputed.
-	File *domain.DownloadableFile
+// MarshalText implements encoding.TextMarshaler.
+func (c DeployModClass) MarshalText() ([]byte, error) { return []byte(c.String()), nil }
 
-	// --- Fix wave 1 (dep-path fidelity): BATCH-mode-only fields, used
-	// exclusively by the Install-batch events (InstallDepInstalling onward)
-	// that fire when plan.Dependencies is non-empty - see ApplyInstall's doc
-	// comment and task-2-report.md's "Fix wave 1" entry for the full trace
-	// back to cmd/lmm/install.go's pre-extraction batchInstallMods. ---
-
-	// ModVersion carries the mod's version for InstallDepInstalling's
-	// restored "Installing: %s v%s" header text (batchInstallMods printed
-	// the version; the strict/no-deps path's own headers are printed
-	// CLI-side from data already in doInstall's scope, so this is a
-	// batch-only field). Zero for every other phase.
-	ModVersion string
-	// FilesExtracted carries the batch-mode mod's own extracted-file count
-	// for InstallDepInstalled's restored "  ✓ Installed (%d files)" text
-	// (batchInstallMods' downloadResult.FilesExtracted) - distinct from
-	// InstallResult.FilesDeployed, which only ever tracks the STRICT path's
-	// primary. Zero for every other phase.
-	FilesExtracted int
-
-	// --- #255: compile-mode deploy readout fields ---
-
-	// ModClass classifies how ModName's content reaches the game
-	// directory on a DeployCompile game - set on DeployDeployed only;
-	// zero (DeployModIndividual) for every other phase and on non-compile
-	// games. See DeployModClass.
-	ModClass DeployModClass
-	// RawFallbacks carries DeployMergeSynced's count of participant mods
-	// that fell back to an individual raw deploy. Zero for every other
-	// phase.
-	RawFallbacks int
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (c *DeployModClass) UnmarshalText(b []byte) error {
+	for i, n := range deployModClassNames {
+		if n == string(b) {
+			*c = DeployModClass(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown deploy mod class %q", b)
 }
 
 // DeployResult reports the outcome of DeployProfile. As with UninstallResult
@@ -1146,12 +1153,12 @@ type DeployProgress struct {
 //     print each entry to stdout ONLY under --verbose, verbatim, e.g.
 //     `fmt.Printf("  %s\n", n)`.
 //
-// Every entry in both slices is ALSO reported via the progress callback at
+// Every entry in both slices is ALSO reported via the event stream at
 // the exact point it is appended (DeployBeforeAllForced/DeployNote/
 // DeployWarning/PurgeWarning/PurgeNote - see each DeployPhase constant's
 // doc comment for which), with Detail equal to the slice entry verbatim and
 // the phase itself indicating which display contract above applies. A
-// caller driving its console output entirely from progress events (as
+// caller driving its console output entirely from the event stream (as
 // cmd/lmm's doDeploy does) gets pre-extraction-accurate positioning; the
 // slices remain here, unconditionally, for callers that only want the
 // final, order-independent summary.
@@ -1159,10 +1166,10 @@ type DeployProgress struct {
 // Skipped carries one "<mod name>: <reason>" entry per mod that did not
 // deploy, for any reason (hook failure, download failure, install
 // failure); the pre-extraction CLI printed each of these unconditionally
-// as it happened; DeployProgress's DeployBeforeEachSkipped/
-// DeployDownloadFailed/DeploySkipped events carry the same reason text in
-// real time for callers that want to print them as they occur instead of
-// (or in addition to) at the end.
+// as it happened; the DeployBeforeEachSkipped/DeployDownloadFailed/
+// DeploySkipped events carry the same reason text in real time for callers
+// that want to print them as they occur instead of (or in addition to) at
+// the end.
 //
 // On error, the returned result carries any diagnostics accumulated before
 // the failure; callers should surface them alongside the error.
@@ -1173,7 +1180,7 @@ type DeployResult struct {
 	Notes    []string
 
 	// MergedArtifact/MergedMods/RawFallbacks mirror the DeployMergeSynced
-	// event for callers with no progress stream (#255 - a caller may pass
+	// event for callers with no event sink (#255 - a caller may pass
 	// nil): the merged artifact's file name
 	// (source.MergeCompiler.MergedArtifactName), how many mods' content it
 	// carries, and how many participants fell back to an individual raw
@@ -1803,23 +1810,24 @@ func OrderByProfile(profile *domain.Profile, mods []domain.InstalledMod) []domai
 // later extracted too, as PurgeProfile, and since #61 both purges share
 // purgeMods); see the task report for the exact mapping.
 //
-// progress may be nil. When non-nil, it is called synchronously from this
+// sink may be nil. When non-nil, it is called synchronously from this
 // function for every notable event - see DeployPhase's constants for what
-// each one means and what Detail/Percent carry.
-func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, progress func(DeployProgress)) (*DeployResult, error) {
+// each one means, and each event type's own doc comment for the payload it
+// carries.
+func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, sink EventSink) (*DeployResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &DeployResult{}, err
 	}
 	defer release()
-	return s.deployProfile(ctx, game, profileName, opts, progress)
+	return s.deployProfile(ctx, game, profileName, opts, sink)
 }
 
-func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, progress func(DeployProgress)) (*DeployResult, error) {
+func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, sink EventSink) (*DeployResult, error) {
 	result := &DeployResult{}
-	emit := func(p DeployProgress) {
-		if progress != nil {
-			progress(p)
+	emit := func(e Event) {
+		if sink != nil {
+			sink(e)
 		}
 	}
 
@@ -1899,7 +1907,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
+		emit(HookEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployBeforeAllForced, Stage: "install.before_all", Detail: msg})
 	}
 
 	// deferredWarnings holds install.after_each (per mod, in loop order)
@@ -1909,7 +1917,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	// DeployWarning's doc comment. Emission (and therefore printing) is
 	// deferred to preserve that order; the Warnings slice itself is still
 	// appended to at the natural point, unchanged.
-	var deferredWarnings []DeployProgress
+	var deferredWarnings []Event
 
 	// #255: on a compile game, classify each mod up front so its
 	// DeployDeployed event can say whether it deploys files individually or
@@ -1927,20 +1935,18 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 			return result, err
 		}
 
-		base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModID: mod.ID}
+		scope := Scope{Op: OpDeploy, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
 		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
 		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.before_each", opts.Hooks.GetInstallBeforeEach()); err != nil {
 			reason := fmt.Sprintf("install.before_each hook failed: %v", err)
-			evt := base
-			evt.Phase, evt.Detail = DeployBeforeEachSkipped, reason
-			emit(evt)
+			emit(ModEvent{Scope: scope, Phase: DeployBeforeEachSkipped, Detail: reason})
 			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
 			continue
 		}
 
 		if !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-			if skipped := s.redeployFromSource(ctx, game, mod, base, emit, result); skipped {
+			if skipped := s.redeployFromSource(ctx, game, mod, scope, emit, result); skipped {
 				continue
 			}
 		}
@@ -1948,16 +1954,12 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
 			msg := fmt.Sprintf("Warning: undeploy %s: %v", mod.Name, err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = DeployNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
 		}
 
 		if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
 			reason := err.Error()
-			evt := base
-			evt.Phase, evt.Detail = DeploySkipped, reason
-			emit(evt)
+			emit(ModEvent{Scope: scope, Phase: DeploySkipped, Detail: reason})
 			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
 			continue
 		}
@@ -1965,30 +1967,21 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err := s.setModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 			msg := fmt.Sprintf("Warning: could not update link method: %v", err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = DeployNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
 		}
 		if err := s.setModDeployed(ctx, mod.SourceID, mod.ID, game.ID, profileName, true); err != nil {
 			msg := fmt.Sprintf("Warning: could not mark as deployed: %v", err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = DeployNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
 		}
 
 		result.Deployed++
-		evt := base
-		evt.Phase = DeployDeployed
-		evt.ModClass = modClasses[domain.ModKey(mod.SourceID, mod.ID)]
-		emit(evt)
+		emit(ModEvent{Scope: scope, Phase: DeployDeployed, Class: modClasses[domain.ModKey(mod.SourceID, mod.ID)]})
 
 		if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
 			msg := fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err)
 			result.Warnings = append(result.Warnings, msg)
-			evt := base
-			evt.Phase, evt.Detail = DeployWarning, msg
-			deferredWarnings = append(deferredWarnings, evt)
+			deferredWarnings = append(deferredWarnings, WarningEvent{Scope: scope, Phase: DeployWarning, Message: msg})
 		}
 	}
 
@@ -2003,30 +1996,30 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		deferredWarnings = append(deferredWarnings, DeployProgress{Phase: DeployWarning, Detail: msg})
+		deferredWarnings = append(deferredWarnings, WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 	}
 
 	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
 		if err := ApplyProfileOverrides(game, profile); err != nil {
 			msg := fmt.Sprintf("applying profile overrides: %v", err)
 			result.Warnings = append(result.Warnings, msg)
-			emit(DeployProgress{Phase: DeployWarning, Detail: msg})
+			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 		}
 	}
 
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
 		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
 		result.Warnings = append(result.Warnings, msg)
-		emit(DeployProgress{Phase: DeployWarning, Detail: msg})
+		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 	} else {
 		for _, w := range syncWarnings {
 			result.Warnings = append(result.Warnings, w)
-			emit(DeployProgress{Phase: DeployWarning, Detail: w})
+			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: w})
 		}
 		// #255: the sync succeeded, so the just-written fingerprint is the
 		// authoritative record of what the merged artifact carries - report
 		// it (result fields + one DeployMergeSynced event).
-		s.recordMergeOutcome(ctx, game, profileName, result, emit)
+		s.recordMergeOutcome(ctx, game, profileName, OpDeploy, result, emit)
 	}
 
 	for _, w := range deferredWarnings {
@@ -2045,18 +2038,14 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 // task report. Returns true if the mod was skipped (added to
 // result.Skipped and reported via emit) and the caller must not proceed to
 // undeploy/install it.
-func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, base DeployProgress, emit func(DeployProgress), result *DeployResult) bool {
+func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, scope Scope, emit func(Event), result *DeployResult) bool {
 	skip := func(reason string) bool {
-		evt := base
-		evt.Phase, evt.Detail = DeploySkipped, reason
-		emit(evt)
+		emit(ModEvent{Scope: scope, Phase: DeploySkipped, Detail: reason})
 		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
 		return true
 	}
 
-	redl := base
-	redl.Phase = DeployRedownloading
-	emit(redl)
+	emit(StepEvent{Scope: scope, Phase: DeployRedownloading})
 
 	fetchedMod, err := s.GetMod(ctx, mod.SourceID, game.ID, mod.ID)
 	if err != nil {
@@ -2092,26 +2081,22 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			// finding I1).
 			return skip(fmt.Sprintf("cancelled: %v", err))
 		}
-		progressFn := func(p DownloadProgress) {
-			if p.TotalBytes > 0 {
-				dl := base
-				dl.Phase, dl.Percent = DeployDownloading, p.Percentage
-				emit(dl)
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
 			}
+			emit(DownloadEvent{Scope: scope, Phase: DeployDownloading, Percent: d.Percent})
 		}
 		if _, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
 			reason := fmt.Sprintf("download failed: %v", err)
-			evt := base
-			evt.Phase, evt.Detail = DeployDownloadFailed, reason
-			emit(evt)
+			emit(ModEvent{Scope: scope, Phase: DeployDownloadFailed, Detail: reason})
 			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
 			return true
 		}
 	}
 
-	done := base
-	done.Phase = DeployDownloadDone
-	emit(done)
+	emit(StepEvent{Scope: scope, Phase: DeployDownloadDone})
 
 	// #139: a successful heal must outlive this deploy - persist the resolved
 	// FileIDs onto the DB row (via the targeted SetModFileIDs setter, never a
@@ -2137,9 +2122,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	if err := s.setModFileIDs(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs); err != nil {
 		msg := fmt.Sprintf("Warning: could not persist healed file IDs for %s: %v", mod.Name, err)
 		result.Notes = append(result.Notes, msg)
-		evt := base
-		evt.Phase, evt.Detail = DeployNote, msg
-		emit(evt)
+		emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
 	} else {
 		mod.FileIDs = healedIDs
 	}
@@ -2153,8 +2136,9 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 // thin adapter over purgeMods - the single purge loop it shares with
 // PurgeProfile (the standalone `lmm purge` command's flow). See
 // DeployResult's doc comment for where each diagnostic ends up.
-func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts DeployOptions, result *DeployResult, emit func(DeployProgress)) error {
+func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts DeployOptions, result *DeployResult, emit func(Event)) error {
 	return s.purgeMods(ctx, game, profileName, mods, purgeSpec{
+		op:        OpDeploy,
 		forDeploy: true,
 		hooks:     opts.Hooks,
 		runner:    opts.HookRunner,
@@ -2178,12 +2162,16 @@ type purgeSpec struct {
 	uninstall bool // PurgeProfile --uninstall; always false for deploy
 	forDeploy bool
 
+	// op is the calling flow's operation, stamped onto every event this
+	// loop emits: OpDeploy for purgeForDeploy, OpPurge for PurgeProfile.
+	op Op
+
 	hooks   *ResolvedHooks
 	runner  *HookRunner
 	hookCtx HookContext
 	force   bool
 
-	emit     func(DeployProgress)
+	emit     func(Event)
 	warnings *[]string
 	notes    *[]string
 	skipped  *[]string
@@ -2208,21 +2196,21 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		}
 		msg := fmt.Sprintf("uninstall.before_all hook failed (forced): %v", err)
 		*spec.warnings = append(*spec.warnings, msg)
-		spec.emit(DeployProgress{Phase: DeployBeforeAllForced, Detail: msg})
+		spec.emit(HookEvent{Scope: Scope{Op: spec.op}, Phase: DeployBeforeAllForced, Stage: "uninstall.before_all", Detail: msg})
 	}
 
 	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
-	spec.emit(DeployProgress{Phase: DeployPurging, Total: len(mods)})
+	spec.emit(StepEvent{Scope: Scope{Op: spec.op, Total: len(mods)}, Phase: DeployPurging})
 
 	// deferredWarnings holds uninstall.after_each (per mod, in loop order)
 	// and uninstall.after_all PurgeWarning events: both pre-#61 copies
 	// accumulated these during/after the loop and only printed them
 	// together, via printHookWarnings, once the whole loop had finished -
 	// so emission is deferred to right after the loop, mirroring that.
-	var deferredWarnings []DeployProgress
+	var deferredWarnings []Event
 
 	total := len(mods)
 	for idx, mod := range mods {
@@ -2230,14 +2218,12 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			return err
 		}
 
-		// modEvent builds a per-mod event: purge-command mode carries
+		// scope is this mod's event scope: purge-command mode carries
 		// Index/Total (a progress denominator for callers); deploy mode
-		// keeps its historical event shape (ModName/ModID/Detail only).
-		modEvent := func(phase DeployPhase, detail string) DeployProgress {
-			if spec.forDeploy {
-				return DeployProgress{Phase: phase, ModName: mod.Name, ModID: mod.ID, Detail: detail}
-			}
-			return DeployProgress{Phase: phase, Index: idx + 1, Total: total, ModName: mod.Name, ModID: mod.ID, Detail: detail}
+		// keeps its historical event shape (mod name/ID only).
+		scope := Scope{Op: spec.op, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
+		if !spec.forDeploy {
+			scope.Index, scope.Total = idx+1, total
 		}
 
 		hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -2251,11 +2237,11 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			if spec.forDeploy {
 				msg := fmt.Sprintf("uninstall.before_each hook failed for %s during purge (not purged): %v", mod.Name, err)
 				*spec.warnings = append(*spec.warnings, msg)
-				spec.emit(modEvent(PurgeWarning, msg))
+				spec.emit(WarningEvent{Scope: scope, Phase: PurgeWarning, Message: msg})
 			} else {
 				detail := fmt.Sprintf("uninstall.before_each hook failed: %v", err)
 				*spec.skipped = append(*spec.skipped, fmt.Sprintf("%s: %s", mod.Name, detail))
-				spec.emit(modEvent(PurgeModSkipped, detail))
+				spec.emit(ModEvent{Scope: scope, Phase: PurgeModSkipped, Detail: detail})
 			}
 			continue
 		}
@@ -2264,7 +2250,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			// Best-effort: files may have been manually removed.
 			msg := fmt.Sprintf("⚠ %s - %v", mod.Name, err)
 			*spec.notes = append(*spec.notes, msg)
-			spec.emit(modEvent(PurgeNote, msg))
+			spec.emit(StepEvent{Scope: scope, Phase: PurgeNote, Detail: msg})
 		}
 
 		// Divergence 4 of 4 (#61): --uninstall (purge-command-only)
@@ -2276,20 +2262,20 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			if err := s.deleteInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
 				msg := fmt.Sprintf("⚠ %s - failed to remove record: %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
-				spec.emit(modEvent(PurgeNote, msg))
+				spec.emit(StepEvent{Scope: scope, Phase: PurgeNote, Detail: msg})
 				*spec.skipped = append(*spec.skipped, fmt.Sprintf("%s: failed to remove record: %v", mod.Name, err))
 				continue
 			}
 			if err := s.NewProfileManager().RemoveMod(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
 				msg := fmt.Sprintf("Note: %s - %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
-				spec.emit(modEvent(PurgeNote, msg))
+				spec.emit(StepEvent{Scope: scope, Phase: PurgeNote, Detail: msg})
 			}
 		} else {
 			if err := s.setModDeployed(ctx, mod.SourceID, mod.ID, game.ID, profileName, false); err != nil {
 				msg := fmt.Sprintf("⚠ %s - failed to mark as not deployed: %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
-				spec.emit(modEvent(PurgeNote, msg))
+				spec.emit(StepEvent{Scope: scope, Phase: PurgeNote, Detail: msg})
 			}
 		}
 
@@ -2304,7 +2290,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 			}
 			msg := fmt.Sprintf("uninstall.after_each hook failed for %s: %v", attr, err)
 			*spec.warnings = append(*spec.warnings, msg)
-			deferredWarnings = append(deferredWarnings, modEvent(PurgeWarning, msg))
+			deferredWarnings = append(deferredWarnings, WarningEvent{Scope: scope, Phase: PurgeWarning, Message: msg})
 		}
 
 		// Divergence 3 of 4 (#61): only the purge command counts and
@@ -2312,7 +2298,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		// deploy pass's event stream stays byte-identical to pre-#61.
 		if !spec.forDeploy {
 			*spec.purged++
-			spec.emit(modEvent(PurgeModPurged, ""))
+			spec.emit(ModEvent{Scope: scope, Phase: PurgeModPurged})
 		}
 	}
 
@@ -2320,7 +2306,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 	if err := runHook(ctx, spec.runner, &hookCtx, "uninstall.after_all", spec.hooks.GetUninstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("uninstall.after_all hook failed: %v", err)
 		*spec.warnings = append(*spec.warnings, msg)
-		deferredWarnings = append(deferredWarnings, DeployProgress{Phase: PurgeWarning, Detail: msg})
+		deferredWarnings = append(deferredWarnings, WarningEvent{Scope: Scope{Op: spec.op}, Phase: PurgeWarning, Message: msg})
 	}
 
 	for _, w := range deferredWarnings {
@@ -2328,7 +2314,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 	}
 
 	linker.CleanupEmptyDirs(game.ModPath)
-	spec.emit(DeployProgress{Phase: PurgeComplete})
+	spec.emit(StepEvent{Scope: Scope{Op: spec.op}, Phase: PurgeComplete})
 	return nil
 }
 
@@ -2375,30 +2361,31 @@ type PurgeResult struct {
 // before_each hook failure or --uninstall record-delete failure skips
 // that mod (Skipped).
 //
-// progress may be nil. Cancellation is honored between mods (the
+// sink may be nil. Cancellation is honored between mods (the
 // partial-result convention: the accumulated result comes back alongside
 // ctx.Err()); one cancellation-behavior delta from the pre-extraction
 // doPurge, which never checked ctx mid-loop.
-func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, progress func(DeployProgress)) (*PurgeResult, error) {
+func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, sink EventSink) (*PurgeResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &PurgeResult{}, err
 	}
 	defer release()
-	return s.purgeProfile(ctx, game, profileName, mods, opts, progress)
+	return s.purgeProfile(ctx, game, profileName, mods, opts, sink)
 }
 
-func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, progress func(DeployProgress)) (*PurgeResult, error) {
+func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, sink EventSink) (*PurgeResult, error) {
 	result := &PurgeResult{}
 	err := s.purgeMods(ctx, game, profileName, mods, purgeSpec{
+		op:        OpPurge,
 		uninstall: opts.Uninstall,
 		hooks:     opts.Hooks,
 		runner:    opts.HookRunner,
 		hookCtx:   opts.HookContext,
 		force:     opts.Force,
-		emit: func(p DeployProgress) {
-			if progress != nil {
-				progress(p)
+		emit: func(e Event) {
+			if sink != nil {
+				sink(e)
 			}
 		},
 		warnings: &result.Warnings,
@@ -2419,8 +2406,8 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 	if perr := s.purgeMergedPak(ctx, game, profileName, opts.Uninstall); perr != nil {
 		msg := fmt.Sprintf("could not remove merged pak: %v", perr)
 		result.Warnings = append(result.Warnings, msg)
-		if progress != nil {
-			progress(DeployProgress{Phase: PurgeWarning, Detail: msg})
+		if sink != nil {
+			sink(WarningEvent{Scope: Scope{Op: OpPurge}, Phase: PurgeWarning, Message: msg})
 		}
 	}
 
@@ -2610,7 +2597,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 //     (disable/enable loop notes) or `fmt.Printf("    %s\n", n)` (the
 //     install loop's profile-update note, one indent level deeper).
 //
-// Every Notes entry is ALSO reported via the progress callback at the exact
+// Every Notes entry is ALSO reported via the event stream at the exact
 // point it is appended (SwitchDisableNote/SwitchEnableNote/SwitchInstallNote
 // - see each DeployPhase constant's doc comment), with Detail equal to the
 // slice entry verbatim.
@@ -2630,7 +2617,7 @@ type SwitchResult struct {
 // every ToDisable mod, then enables every ToEnable mod, then downloads and
 // installs every ToInstall mod, and finally calls ProfileManager.SetDefault
 // to make plan.To the active profile - in that order, matching
-// doProfileSwitch exactly. progress may be nil.
+// doProfileSwitch exactly. sink may be nil.
 //
 // doProfileSwitch runs no install/uninstall hooks at all (unlike
 // DeployProfile/UninstallMod), so ApplyProfileSwitch doesn't either - there
@@ -2644,20 +2631,20 @@ type SwitchResult struct {
 // showing that preview, accepts whatever has changed in the interim as
 // already baked into plan; PlanProfileSwitch's own doc comment documents
 // why speculative plans are cheap enough to discard and recompute instead.
-func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, progress func(DeployProgress)) (*SwitchResult, error) {
+func (s *Service) ApplyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, sink EventSink) (*SwitchResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &SwitchResult{}, err
 	}
 	defer release()
-	return s.applyProfileSwitch(ctx, game, plan, progress)
+	return s.applyProfileSwitch(ctx, game, plan, sink)
 }
 
-func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, progress func(DeployProgress)) (*SwitchResult, error) {
+func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, plan *SwitchPlan, sink EventSink) (*SwitchResult, error) {
 	result := &SwitchResult{}
-	emit := func(p DeployProgress) {
-		if progress != nil {
-			progress(p)
+	emit := func(e Event) {
+		if sink != nil {
+			sink(e)
 		}
 	}
 
@@ -2684,27 +2671,21 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		im := plan.ToDisable[idx]
-		base := DeployProgress{Index: idx + 1, Total: totalDisable, ModName: im.Name, ModID: im.ID}
+		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalDisable, ModName: im.Name, Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
 		if err := fromInstaller.Uninstall(ctx, game, &im.Mod, plan.From); err != nil {
 			msg := fmt.Sprintf("Warning: failed to undeploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = SwitchDisableNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
 		}
 		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.From, false); err != nil {
 			msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = SwitchDisableNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: SwitchDisableNote, Detail: msg})
 		}
 
 		result.Disabled++
-		evt := base
-		evt.Phase = SwitchDisabled
-		emit(evt)
+		emit(ModEvent{Scope: scope, Phase: SwitchDisabled})
 	}
 
 	totalEnable := len(plan.ToEnable)
@@ -2714,14 +2695,12 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 
 		im := plan.ToEnable[idx]
-		base := DeployProgress{Index: idx + 1, Total: totalEnable, ModName: im.Name, ModID: im.ID}
+		scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalEnable, ModName: im.Name, Mod: &domain.ModReference{SourceID: im.SourceID, ModID: im.ID}}
 
 		if err := toInstaller.Install(ctx, game, &im.Mod, plan.To); err != nil {
 			msg := fmt.Sprintf("Warning: failed to deploy %s: %v", im.Name, err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = SwitchEnableNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
 			continue
 		}
 		if err := s.setModEnabled(ctx, im.SourceID, im.ID, game.ID, plan.To, true); err != nil {
@@ -2739,35 +2718,27 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			if err != nil {
 				msg := fmt.Sprintf("Warning: failed to update %s: %v", im.Name, err)
 				result.Notes = append(result.Notes, msg)
-				evt := base
-				evt.Phase, evt.Detail = SwitchEnableNote, msg
-				emit(evt)
+				emit(StepEvent{Scope: scope, Phase: SwitchEnableNote, Detail: msg})
 			}
 		}
 
 		result.Enabled++
-		evt := base
-		evt.Phase = SwitchEnabled
-		emit(evt)
+		emit(ModEvent{Scope: scope, Phase: SwitchEnabled})
 	}
 
 	if totalInstall := len(plan.ToInstall); totalInstall > 0 {
-		emit(DeployProgress{Phase: SwitchInstalling, Total: totalInstall})
+		emit(StepEvent{Scope: Scope{Op: OpSwitch, Total: totalInstall}, Phase: SwitchInstalling})
 
 		for idx, ref := range plan.ToInstall {
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
 
-			base := DeployProgress{Index: idx + 1, Total: totalInstall, SourceID: ref.SourceID, ModID: ref.ModID}
-			installingEvt := base
-			installingEvt.Phase = SwitchInstallingMod
-			emit(installingEvt)
+			scope := Scope{Op: OpSwitch, Index: idx + 1, Total: totalInstall, Mod: &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}}
+			emit(ModEvent{Scope: scope, Phase: SwitchInstallingMod})
 
 			fail := func(reason string) {
-				evt := base
-				evt.Phase, evt.Detail = SwitchInstallError, reason
-				emit(evt)
+				emit(ModEvent{Scope: scope, Phase: SwitchInstallError, Detail: reason})
 			}
 
 			mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
@@ -2775,7 +2746,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				fail(fmt.Sprintf("failed to fetch mod: %v", err))
 				continue
 			}
-			base.ModName = mod.Name
+			scope.ModName = mod.Name
 
 			files, err := s.GetModFiles(ctx, ref.SourceID, mod)
 			if err != nil {
@@ -2812,24 +2783,20 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 				downloadFailed := false
 				for _, file := range filesToDownload {
-					progressFn := func(p DownloadProgress) {
-						if p.TotalBytes > 0 {
-							dl := base
-							dl.Phase, dl.Percent = SwitchDownloading, p.Percentage
-							emit(dl)
+					progressFn := func(e Event) {
+						d, ok := e.(DownloadEvent)
+						if !ok || d.TotalBytes <= 0 {
+							return
 						}
+						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 					}
 					if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
-						evt := base
-						evt.Phase, evt.Detail = SwitchDownloadFailed, fmt.Sprintf("download failed: %v", err)
-						emit(evt)
+						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
 						downloadFailed = true
 						break
 					}
 				}
-				doneEvt := base
-				doneEvt.Phase = SwitchDownloadDone
-				emit(doneEvt)
+				emit(StepEvent{Scope: scope, Phase: SwitchDownloadDone})
 
 				if downloadFailed {
 					continue
@@ -2884,15 +2851,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			if err := pm.UpsertMod(game.ID, plan.To, modRef); err != nil {
 				msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 				result.Notes = append(result.Notes, msg)
-				evt := base
-				evt.Phase, evt.Detail = SwitchInstallNote, msg
-				emit(evt)
+				emit(StepEvent{Scope: scope, Phase: SwitchInstallNote, Detail: msg})
 			}
 
 			result.Installed++
-			installedEvt := base
-			installedEvt.Phase = SwitchInstalled
-			emit(installedEvt)
+			emit(ModEvent{Scope: scope, Phase: SwitchInstalled})
 		}
 	}
 
@@ -3006,7 +2969,7 @@ type InstallPlan struct {
 
 	// TotalDownloadBytes is the sum of Files' declared sizes, or -1 if any
 	// selected file's size is unreported (Size <= 0, matching the
-	// DownloadProgress convention used elsewhere in this file: only a
+	// DownloadEvent convention used elsewhere in this file: only a
 	// positive TotalBytes/Size is treated as "known").
 	TotalDownloadBytes int64
 
@@ -3375,7 +3338,7 @@ type InstallOptions struct {
 //     wanting byte-identical output should print each entry to stdout ONLY
 //     under --verbose, e.g. `fmt.Printf("  %s\n", n)`.
 //
-// Every entry in both slices is ALSO reported via the progress callback at
+// Every entry in both slices is ALSO reported via the event stream at
 // the exact point it is appended (InstallBeforeAllForced/
 // InstallBeforeEachForced/InstallWarning/InstallNote - see each DeployPhase
 // constant's doc comment), with Detail equal to the slice entry verbatim.
@@ -3809,25 +3772,25 @@ func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPl
 // single-mod code); in the BATCH path, unconditionally once the loop
 // finishes, since no per-mod failure there is ever fatal (matching
 // batchInstallMods, which always reaches its own install.after_all call
-// regardless of how many mods in its list failed). progress may be nil.
+// regardless of how many mods in its list failed). sink may be nil.
 //
 // On error, the returned result carries any diagnostics/Installed entries
 // accumulated before the failure - callers should surface them alongside the
 // error (see InstallResult's doc comment).
-func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, progress func(DeployProgress)) (*InstallResult, error) {
+func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, sink EventSink) (*InstallResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &InstallResult{}, err
 	}
 	defer release()
-	return s.applyInstall(ctx, game, plan, opts, progress)
+	return s.applyInstall(ctx, game, plan, opts, sink)
 }
 
-func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, progress func(DeployProgress)) (*InstallResult, error) {
+func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, sink EventSink) (*InstallResult, error) {
 	result := &InstallResult{}
-	emit := func(p DeployProgress) {
-		if progress != nil {
-			progress(p)
+	emit := func(e Event) {
+		if sink != nil {
+			sink(e)
 		}
 	}
 
@@ -3925,7 +3888,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		}
 		msg := fmt.Sprintf("install.before_all hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		emit(DeployProgress{Phase: InstallBeforeAllForced, Detail: msg})
+		emit(HookEvent{Scope: Scope{Op: OpInstall}, Phase: InstallBeforeAllForced, Stage: "install.before_all", Detail: msg})
 	}
 
 	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, plan.Profile)
@@ -3942,7 +3905,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	// accumulated hook errors across the WHOLE loop - deps and primary
 	// alike - and printed them together only after everything else had
 	// already happened).
-	var deferredWarnings []DeployProgress
+	var deferredWarnings []Event
 
 	if len(plan.Dependencies) > 0 {
 		// --- BATCH path: every mod, primary included, treated identically. ---
@@ -3994,7 +3957,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		deferredWarnings = append(deferredWarnings, DeployProgress{Phase: InstallWarning, Detail: msg})
+		deferredWarnings = append(deferredWarnings, WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: msg})
 	}
 
 	for _, w := range deferredWarnings {
@@ -4011,11 +3974,11 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
 		result.Warnings = append(result.Warnings, msg)
 		result.MergedPakSyncFailed = true
-		emit(DeployProgress{Phase: InstallWarning, Detail: msg})
+		emit(WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: msg})
 	} else {
 		for _, w := range syncWarnings {
 			result.Warnings = append(result.Warnings, w)
-			emit(DeployProgress{Phase: InstallWarning, Detail: w})
+			emit(WarningEvent{Scope: Scope{Op: OpInstall}, Phase: InstallWarning, Message: w})
 		}
 	}
 
@@ -4051,19 +4014,15 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 // Every dependency iteration passes nil here and re-derives its own
 // selection exactly as before - decision 6, dependencies install at latest
 // regardless of the primary's pins.
-func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress), overrideFiles []domain.DownloadableFile) *DeployProgress {
-	base := DeployProgress{Index: idx + 1, Total: total, ModName: mod.Name, ModVersion: mod.Version, ModID: mod.ID, SourceID: mod.SourceID}
+func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, plan *InstallPlan, mod *domain.Mod, idx, total int, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(Event), overrideFiles []domain.DownloadableFile) *WarningEvent {
+	scope := Scope{Op: OpInstall, Index: idx + 1, Total: total, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 	skip := func(label, reason string) {
-		evt := base
-		evt.Phase, evt.Detail = InstallDepSkipped, fmt.Sprintf("%s: %s", label, reason)
-		emit(evt)
+		emit(ModEvent{Scope: scope, Phase: InstallDepSkipped, Detail: fmt.Sprintf("%s: %s", label, reason)})
 		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
 		result.Failed = append(result.Failed, mod.Name)
 	}
 
-	installing := base
-	installing.Phase = InstallDepInstalling
-	emit(installing)
+	emit(ModEvent{Scope: scope, Phase: InstallDepInstalling, Version: mod.Version})
 
 	hookCtx := opts.HookContext
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -4135,22 +4094,16 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	}
 
 	if existing, err := s.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
-		reinstalling := base
-		reinstalling.Phase = InstallDepReinstalling
-		emit(reinstalling)
+		emit(ModEvent{Scope: scope, Phase: InstallDepReinstalling})
 		if err := installer.Uninstall(ctx, game, &existing.Mod, plan.Profile); err != nil {
 			msg := fmt.Sprintf("Warning: could not remove old files: %v", err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = InstallNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 		}
 		if err := s.GetGameCache(game).Delete(game.ID, existing.SourceID, existing.ID, existing.Version); err != nil {
 			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = InstallNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 		}
 	}
 
@@ -4172,16 +4125,14 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			skip("Error", fmt.Sprintf("cancelled: %v", err))
 			return nil
 		}
-		fileEvt := base
-		fileEvt.Phase, fileEvt.File = InstallDepFileSelected, file
-		emit(fileEvt)
+		emit(StepEvent{Scope: scope, Phase: InstallDepFileSelected, File: file})
 
-		progressFn := func(p DownloadProgress) {
-			if p.TotalBytes > 0 {
-				dl := base
-				dl.Phase, dl.Percent = InstallDepDownloading, p.Percentage
-				emit(dl)
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
 			}
+			emit(DownloadEvent{Scope: scope, Phase: InstallDepDownloading, Percent: d.Percent})
 		}
 		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, mod, file, progressFn)
 
@@ -4189,9 +4140,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		// own `fmt.Println()` immediately after the download call returns -
 		// see InstallDepDownloadDone's doc comment for why this precedes the
 		// failure branch's own InstallDepSkipped event.
-		done := base
-		done.Phase = InstallDepDownloadDone
-		emit(done)
+		emit(StepEvent{Scope: scope, Phase: InstallDepDownloadDone})
 
 		if err != nil {
 			skip("Error", fmt.Sprintf("download failed: %v", err))
@@ -4199,9 +4148,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 
 		if !opts.SkipVerify && downloadResult.Checksum != "" {
-			evt := base
-			evt.Phase, evt.Detail = InstallChecksumComputed, downloadResult.Checksum
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: InstallChecksumComputed, Detail: downloadResult.Checksum})
 			checksums = append(checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
 		}
 
@@ -4211,9 +4158,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 
 	if !opts.Force {
 		if conflicts, err := installer.GetConflicts(ctx, game, mod, plan.Profile); err == nil && len(conflicts) > 0 {
-			evt := base
-			evt.Phase, evt.Detail = InstallDepConflictWarning, fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))
-			emit(evt)
+			emit(WarningEvent{Scope: scope, Phase: InstallDepConflictWarning, Message: fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))})
 		}
 	}
 
@@ -4241,39 +4186,29 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		if err := s.saveFileChecksum(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile, cs.fileID, cs.checksum); err != nil {
 			msg := fmt.Sprintf("failed to save checksum: %v", err)
 			result.Warnings = append(result.Warnings, msg)
-			evt := base
-			evt.Phase, evt.Detail = InstallWarning, msg
-			emit(evt)
+			emit(WarningEvent{Scope: scope, Phase: InstallWarning, Message: msg})
 		}
 	}
 
 	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
-		evt := base
-		evt.Phase, evt.Detail = InstallNote, msg
-		emit(evt)
+		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
 	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
-		evt := base
-		evt.Phase, evt.Detail = InstallNote, msg
-		emit(evt)
+		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
 
 	result.Installed = append(result.Installed, mod.Name)
-	installedEvt := base
-	installedEvt.Phase, installedEvt.FilesExtracted = InstallDepInstalled, filesExtracted
-	emit(installedEvt)
+	emit(ModEvent{Scope: scope, Phase: InstallDepInstalled, FilesExtracted: filesExtracted})
 
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed for %s: %v", mod.ID, err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = InstallWarning, msg
-		return &evt
+		return &WarningEvent{Scope: scope, Phase: InstallWarning, Message: msg}
 	}
 	return nil
 }
@@ -4302,7 +4237,7 @@ type fileChecksum struct {
 // Dependencies was non-empty). Returns the install.after_each warning event
 // to defer (nil if none). A non-nil error is always fatal to ApplyInstall
 // as a whole, matching doInstall's own early returns.
-func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(DeployProgress)) (*DeployProgress, error) {
+func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, result *InstallResult, emit func(Event)) (*WarningEvent, error) {
 	mod := plan.Mod // local, addressable copy - distinct from plan.Mod
 
 	// #94: record what is actually being installed. plan.Files is the final
@@ -4314,7 +4249,11 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	}
 	mod.Version = domain.EffectiveInstalledVersion(mod.Version, selectedFiles)
 
-	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+	// scope is the full identity (source + mod ID) the download/checksum
+	// events carry; modScope is the name+ID-only shape the mod-lifecycle
+	// events historically carried.
+	scope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
+	modScope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{ModID: mod.ID}}
 
 	hookCtx := opts.HookContext
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -4324,9 +4263,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = InstallBeforeEachForced, msg
-		emit(evt)
+		emit(HookEvent{Scope: scope, Phase: InstallBeforeEachForced, Stage: "install.before_each", Detail: msg})
 	}
 
 	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
@@ -4376,28 +4313,29 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 		file := &plan.Files[i]
 
-		started := base
-		started.Phase, started.Index, started.Total, started.File = InstallDownloadStarted, i+1, filesTotal, file
-		emit(started)
+		fileScope := scope
+		fileScope.Index, fileScope.Total = i+1, filesTotal
 
-		progressFn := func(p DownloadProgress) {
-			dl := base
-			dl.Phase, dl.Index, dl.Total, dl.File = InstallDownloading, i+1, filesTotal, file
-			dl.Percent, dl.Downloaded, dl.TotalBytes = p.Percentage, p.Downloaded, p.TotalBytes
-			emit(dl)
+		emit(StepEvent{Scope: fileScope, Phase: InstallDownloadStarted, File: file})
+
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok {
+				return
+			}
+			emit(DownloadEvent{
+				Scope: fileScope, Phase: InstallDownloading, File: file,
+				Percent: d.Percent, Downloaded: d.Downloaded, TotalBytes: d.TotalBytes,
+			})
 		}
 
 		downloadResult, dlErr := s.downloadModToCache(ctx, downloadCache, plan.SourceID, game, &mod, file, progressFn)
 
-		done := base
-		done.Phase, done.Index, done.Total, done.File = InstallDownloadDone, i+1, filesTotal, file
-		emit(done)
+		emit(StepEvent{Scope: fileScope, Phase: InstallDownloadDone, File: file})
 
 		if dlErr != nil {
 			reason := fmt.Sprintf("download failed: %v", dlErr)
-			evt := base
-			evt.Phase, evt.Index, evt.Total, evt.File, evt.Detail = InstallDownloadFailed, i+1, filesTotal, file, reason
-			emit(evt)
+			emit(ModEvent{Scope: fileScope, Phase: InstallDownloadFailed, Detail: reason})
 			if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
 				return nil, fmt.Errorf("download unavailable via API")
 			}
@@ -4405,9 +4343,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 
 		if !opts.SkipVerify && downloadResult.Checksum != "" {
-			evt := base
-			evt.Phase, evt.Index, evt.Total, evt.File, evt.Detail = InstallChecksumComputed, i+1, filesTotal, file, downloadResult.Checksum
-			emit(evt)
+			emit(StepEvent{Scope: fileScope, Phase: InstallChecksumComputed, File: file, Detail: downloadResult.Checksum})
 			checksums = append(checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
 		}
 
@@ -4441,12 +4377,10 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	// to announce (Detail is unset).
 	if len(compiledFiles) > 0 {
 		for _, cf := range compiledFiles {
-			evt := base
-			evt.Phase, evt.File = InstallCompiling, cf
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: InstallCompiling, File: cf})
 		}
 	} else {
-		emit(DeployProgress{Phase: InstallExtracting, ModName: mod.Name, ModID: mod.ID})
+		emit(StepEvent{Scope: modScope, Phase: InstallExtracting})
 	}
 
 	// Conflict confirmation restored to doInstall's ORIGINAL position (C1
@@ -4464,7 +4398,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 	}
 
-	emit(DeployProgress{Phase: InstallDeploying, ModName: mod.Name, ModID: mod.ID})
+	emit(StepEvent{Scope: modScope, Phase: InstallDeploying})
 
 	if plan.Replaces != nil {
 		if reinstallTxn != nil {
@@ -4524,7 +4458,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		if err := reinstallTxn.Commit(); err != nil {
 			msg := fmt.Sprintf("Warning: could not finalize reinstall cache transaction: %v", err)
 			result.Notes = append(result.Notes, msg)
-			emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+			emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 		}
 		reinstallTxn = nil
 	}
@@ -4533,37 +4467,37 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		if err := s.saveFileChecksum(ctx, plan.SourceID, mod.ID, game.ID, plan.Profile, fc.fileID, fc.checksum); err != nil {
 			msg := fmt.Sprintf("failed to save checksum for file %s: %v", fc.fileID, err)
 			result.Warnings = append(result.Warnings, msg)
-			emit(DeployProgress{Phase: InstallWarning, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+			emit(WarningEvent{Scope: modScope, Phase: InstallWarning, Message: msg})
 		}
 	}
 
 	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
-		emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
 	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
-		emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
 
 	if plan.Replaces != nil && plan.Replaces.Version != mod.Version {
 		if err := s.GetGameCache(game).Delete(game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version); err != nil {
 			msg := fmt.Sprintf("Warning: could not clear old cache: %v", err)
 			result.Notes = append(result.Notes, msg)
-			emit(DeployProgress{Phase: InstallNote, Detail: msg, ModName: mod.Name, ModID: mod.ID})
+			emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 		}
 	}
 
 	result.Installed = append(result.Installed, mod.Name)
-	emit(DeployProgress{Phase: InstallDone, ModName: mod.Name, ModID: mod.ID})
+	emit(ModEvent{Scope: modScope, Phase: InstallDone})
 
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		return &DeployProgress{Phase: InstallWarning, Detail: msg, ModName: mod.Name, ModID: mod.ID}, nil
+		return &WarningEvent{Scope: modScope, Phase: InstallWarning, Message: msg}, nil
 	}
 	return nil, nil
 }
@@ -4609,7 +4543,7 @@ type UpdateOptions struct {
 //     wording); a caller wanting byte-identical output should print it to
 //     stdout ONLY under --verbose, e.g. `fmt.Printf("  %s\n", n)`.
 //
-// Every entry in both slices is ALSO reported via the progress callback at
+// Every entry in both slices is ALSO reported via the event stream at
 // the exact point it is appended (UpdateBeforeEachForced/UpdateWarning/
 // UpdateNote - see each DeployPhase constant's doc comment), with Detail
 // equal to the slice entry verbatim.
@@ -4697,29 +4631,29 @@ func LockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModRe
 // SetModLinkMethod is NOT rolled back, matching applyUpdate exactly (it only
 // ever produced a --verbose-gated Note).
 //
-// progress may be nil. On error, the returned result carries any
+// sink may be nil. On error, the returned result carries any
 // diagnostics accumulated before the failure - callers should surface them
 // alongside the error (see UpdateApplyResult's doc comment).
-func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+func (s *Service) ApplyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, sink EventSink) (*UpdateApplyResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &UpdateApplyResult{}, err
 	}
 	defer release()
-	return s.applyUpdate(ctx, game, profileName, upd, opts, progress)
+	return s.applyUpdate(ctx, game, profileName, upd, opts, sink)
 }
 
-func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, progress func(DeployProgress)) (*UpdateApplyResult, error) {
+func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileName string, upd domain.Update, opts UpdateOptions, sink EventSink) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
-	emit := func(p DeployProgress) {
-		if progress != nil {
-			progress(p)
+	emit := func(e Event) {
+		if sink != nil {
+			sink(e)
 		}
 	}
 
 	mod := upd.InstalledMod // local, addressable copy - distinct from upd.InstalledMod
 	newVersion := upd.NewVersion
-	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+	scope := Scope{Op: OpUpdate, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
 	// #97: a locked ref refuses update-apply entirely - the lock's whole
 	// contract. Checked before any network or hook side effect.
@@ -4769,9 +4703,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 	}
 	for _, w := range selectionWarnings {
 		result.Warnings = append(result.Warnings, w)
-		evt := base
-		evt.Phase, evt.Detail = UpdateWarning, w
-		emit(evt)
+		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: w})
 	}
 
 	// #96/#94: record what is actually being installed, not the mod-level
@@ -4788,19 +4720,19 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		progressFn := func(p DownloadProgress) {
-			if p.TotalBytes > 0 {
-				dl := base
-				dl.Phase, dl.Percent = UpdateDownloading, p.Percentage
-				emit(dl)
+		progressFn := func(e Event) {
+			d, ok := e.(DownloadEvent)
+			if !ok || d.TotalBytes <= 0 {
+				return
 			}
+			emit(DownloadEvent{Scope: scope, Phase: UpdateDownloading, Percent: d.Percent})
 		}
 		if _, err := s.downloadMod(ctx, mod.SourceID, game, newMod, file, progressFn); err != nil {
 			return result, fmt.Errorf("downloading update: %w", err)
 		}
 		downloadedFileIDs = append(downloadedFileIDs, file.ID)
 	}
-	emit(DeployProgress{Phase: UpdateDownloadDone, ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID})
+	emit(StepEvent{Scope: scope, Phase: UpdateDownloadDone})
 
 	// Task 6 item d (cancel-then-drain): checked between the download step
 	// above and the hook/deploy (Replace) steps below, at minimum - a
@@ -4820,9 +4752,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		}
 		msg := fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
-		emit(evt)
+		emit(HookEvent{Scope: scope, Phase: UpdateBeforeEachForced, Stage: "uninstall.before_each", Detail: msg})
 	}
 
 	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
@@ -4838,9 +4768,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 		}
 		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
-		emit(evt)
+		emit(HookEvent{Scope: scope, Phase: UpdateBeforeEachForced, Stage: "install.before_each", Detail: msg})
 	}
 
 	// #144 item 4: the mod's file-ID transition (installed set -> downloaded
@@ -4860,17 +4788,13 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("uninstall.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateWarning, msg
-		emit(evt)
+		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = newMod.ID, newMod.Name, newMod.Version
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateWarning, msg
-		emit(evt)
+		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 
 	if err := s.applyModUpdate(ctx, mod.SourceID, mod.ID, game.ID, profileName, effectiveVersion, downloadedFileIDs); err != nil {
@@ -4882,9 +4806,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if err := s.setModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 		msg := fmt.Sprintf("Warning: could not update link method: %v", err)
 		result.Notes = append(result.Notes, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateNote, msg
-		emit(evt)
+		emit(StepEvent{Scope: scope, Phase: UpdateNote, Detail: msg})
 	}
 
 	pm := s.NewProfileManager()
@@ -4908,11 +4830,11 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, profileNam
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
 		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
 		result.Warnings = append(result.Warnings, msg)
-		emit(DeployProgress{Phase: UpdateWarning, Detail: msg})
+		emit(WarningEvent{Scope: Scope{Op: OpUpdate}, Phase: UpdateWarning, Message: msg})
 	} else {
 		for _, w := range syncWarnings {
 			result.Warnings = append(result.Warnings, w)
-			emit(DeployProgress{Phase: UpdateWarning, Detail: w})
+			emit(WarningEvent{Scope: Scope{Op: OpUpdate}, Phase: UpdateWarning, Message: w})
 		}
 	}
 
@@ -4968,7 +4890,7 @@ type RollbackOptions struct {
 //     byte-identical output should print it to stdout ONLY under --verbose,
 //     e.g. `fmt.Printf("  %s\n", n)`.
 //
-// Every entry in both slices is ALSO reported via the progress callback at
+// Every entry in both slices is ALSO reported via the event stream at
 // the exact point it is appended (UpdateBeforeEachForced/UpdateWarning/
 // UpdateNote - reused verbatim from ApplyUpdate, see each DeployPhase
 // constant's doc comment), Detail equal to the slice entry verbatim.
@@ -5033,24 +4955,24 @@ type RollbackResult struct {
 // either, matching doUpdateRollback exactly (it only ever produced a
 // --verbose-gated Note).
 //
-// progress may be nil. On error, the returned result carries any
+// sink may be nil. On error, the returned result carries any
 // diagnostics/identity fields accumulated before the failure - callers
 // should surface them alongside the error (see RollbackResult's doc
 // comment).
-func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, progress func(DeployProgress)) (*RollbackResult, error) {
+func (s *Service) ApplyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, sink EventSink) (*RollbackResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &RollbackResult{}, err
 	}
 	defer release()
-	return s.applyRollback(ctx, game, profileName, sourceID, modID, opts, progress)
+	return s.applyRollback(ctx, game, profileName, sourceID, modID, opts, sink)
 }
 
-func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, progress func(DeployProgress)) (*RollbackResult, error) {
+func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts RollbackOptions, sink EventSink) (*RollbackResult, error) {
 	result := &RollbackResult{}
-	emit := func(p DeployProgress) {
-		if progress != nil {
-			progress(p)
+	emit := func(e Event) {
+		if sink != nil {
+			sink(e)
 		}
 	}
 
@@ -5084,7 +5006,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 	result.FromVersion = mod.Version
 	result.ToVersion = mod.PreviousVersion
 
-	base := DeployProgress{ModName: mod.Name, ModID: mod.ID, SourceID: mod.SourceID}
+	scope := Scope{Op: OpRollback, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
 	hookCtx := opts.HookContext
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
@@ -5094,9 +5016,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 		}
 		msg := fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
-		emit(evt)
+		emit(HookEvent{Scope: scope, Phase: UpdateBeforeEachForced, Stage: "uninstall.before_each", Detail: msg})
 	}
 
 	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
@@ -5115,9 +5035,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 		}
 		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateBeforeEachForced, msg
-		emit(evt)
+		emit(HookEvent{Scope: scope, Phase: UpdateBeforeEachForced, Stage: "install.before_each", Detail: msg})
 	}
 
 	// #150: the update path's file-ID transition, reversed - current FileIDs
@@ -5133,17 +5051,13 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "uninstall.after_each", opts.Hooks.GetUninstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("uninstall.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateWarning, msg
-		emit(evt)
+		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = prevMod.ID, prevMod.Name, prevMod.Version
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_each", opts.Hooks.GetInstallAfterEach()); err != nil {
 		msg := fmt.Sprintf("install.after_each hook failed: %v", err)
 		result.Warnings = append(result.Warnings, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateWarning, msg
-		emit(evt)
+		emit(WarningEvent{Scope: scope, Phase: UpdateWarning, Message: msg})
 	}
 
 	if err := s.rollbackModVersion(ctx, mod.SourceID, mod.ID, game.ID, profileName); err != nil {
@@ -5155,9 +5069,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 	if err := s.setModLinkMethod(ctx, mod.SourceID, mod.ID, game.ID, profileName, linkMethod); err != nil {
 		msg := fmt.Sprintf("Warning: could not update link method: %v", err)
 		result.Notes = append(result.Notes, msg)
-		evt := base
-		evt.Phase, evt.Detail = UpdateNote, msg
-		emit(evt)
+		emit(StepEvent{Scope: scope, Phase: UpdateNote, Detail: msg})
 	}
 
 	rolledBackMod, err := s.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, profileName)
@@ -5189,11 +5101,11 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, profileN
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
 		msg := fmt.Sprintf("could not sync merged pak: %v", syncErr)
 		result.Warnings = append(result.Warnings, msg)
-		emit(DeployProgress{Phase: UpdateWarning, Detail: msg})
+		emit(WarningEvent{Scope: Scope{Op: OpRollback}, Phase: UpdateWarning, Message: msg})
 	} else {
 		for _, w := range syncWarnings {
 			result.Warnings = append(result.Warnings, w)
-			emit(DeployProgress{Phase: UpdateWarning, Detail: w})
+			emit(WarningEvent{Scope: Scope{Op: OpRollback}, Phase: UpdateWarning, Message: w})
 		}
 	}
 
@@ -5390,7 +5302,7 @@ type ProfileImportOptions struct {
 //     (e.g. #95's stored-files-gone message) after the live progress
 //     line is gone.
 //
-// Every Notes entry is ALSO reported via the progress callback at the exact
+// Every Notes entry is ALSO reported via the event stream at the exact
 // point it is appended (ImportNote - see its DeployPhase doc comment), with
 // Detail equal to the slice entry verbatim; likewise every Warnings entry
 // has a corresponding ImportModFailed event with Detail equal to the bare
@@ -5414,27 +5326,27 @@ type ProfileImportResult struct {
 // carries ApplyProfileSwitch's convergence machinery: a fully-cached target
 // version (by per-file completion marker) deploys from cache without
 // redownloading, and a version-drift entry with a live prior deployment is
-// Replaced rather than installed over. progress may be nil.
+// Replaced rather than installed over. sink may be nil.
 //
 // plan is executed EXACTLY as given - like PlanProfileSwitch/ApplyProfileSwitch,
 // this method never re-plans or re-validates it against current state (see
 // that pair's own doc comments for why a speculative plan is cheap enough to
 // simply discard and recompute instead, for a caller that wants to guard
 // against drift).
-func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, progress func(DeployProgress)) (*ProfileImportResult, error) {
+func (s *Service) ApplyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &ProfileImportResult{}, err
 	}
 	defer release()
-	return s.applyImport(ctx, game, plan, opts, progress)
+	return s.applyImport(ctx, game, plan, opts, sink)
 }
 
-func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, progress func(DeployProgress)) (*ProfileImportResult, error) {
+func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *ImportPlan, opts ProfileImportOptions, sink EventSink) (*ProfileImportResult, error) {
 	result := &ProfileImportResult{}
-	emit := func(p DeployProgress) {
-		if progress != nil {
-			progress(p)
+	emit := func(e Event) {
+		if sink != nil {
+			sink(e)
 		}
 	}
 
@@ -5444,7 +5356,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, fmt.Errorf("importing profile: %w", err)
 	}
 	result.ProfileName = profile.Name
-	emit(DeployProgress{Phase: ImportSaved, ModName: profile.Name})
+	emit(StepEvent{Scope: Scope{Op: OpImport, ModName: profile.Name}, Phase: ImportSaved})
 
 	toDownload := make([]domain.ModReference, 0, len(plan.NeedsRedownload)+len(plan.Missing))
 	toDownload = append(toDownload, plan.NeedsRedownload...)
@@ -5467,7 +5379,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, err
 	}
 	total := len(toDownload)
-	emit(DeployProgress{Phase: ImportInstalling, Total: total})
+	emit(StepEvent{Scope: Scope{Op: OpImport, Total: total}, Phase: ImportInstalling})
 
 	for idx, ref := range toDownload {
 		// Task 6 item d (cancel-then-drain): checked between mods, never
@@ -5477,17 +5389,13 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			return result, err
 		}
 
-		base := DeployProgress{Index: idx + 1, Total: total, SourceID: ref.SourceID, ModID: ref.ModID}
-		installingEvt := base
-		installingEvt.Phase = ImportModInstalling
-		emit(installingEvt)
+		scope := Scope{Op: OpImport, Index: idx + 1, Total: total, Mod: &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}}
+		emit(ModEvent{Scope: scope, Phase: ImportModInstalling})
 
 		fail := func(reason string) {
 			result.Failed++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s:%s: %s", ref.SourceID, ref.ModID, reason))
-			evt := base
-			evt.Phase, evt.Detail = ImportModFailed, reason
-			emit(evt)
+			emit(ModEvent{Scope: scope, Phase: ImportModFailed, Detail: reason})
 		}
 
 		mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
@@ -5495,7 +5403,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			fail(fmt.Sprintf("failed to fetch mod: %v", err))
 			continue
 		}
-		base.ModName = mod.Name
+		scope.ModName = mod.Name
 
 		files, err := s.GetModFiles(ctx, ref.SourceID, mod)
 		if err != nil {
@@ -5544,12 +5452,12 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 				if err := ctx.Err(); err != nil {
 					return result, err
 				}
-				progressFn := func(p DownloadProgress) {
-					if p.TotalBytes > 0 {
-						dl := base
-						dl.Phase, dl.Percent = ImportDownloading, p.Percentage
-						emit(dl)
+				progressFn := func(e Event) {
+					d, ok := e.(DownloadEvent)
+					if !ok || d.TotalBytes <= 0 {
+						return
 					}
+					emit(DownloadEvent{Scope: scope, Phase: ImportDownloading, Percent: d.Percent})
 				}
 				if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
 					fail(fmt.Sprintf("download failed: %v", err))
@@ -5557,9 +5465,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 					break
 				}
 			}
-			doneEvt := base
-			doneEvt.Phase = ImportDownloadDone
-			emit(doneEvt)
+			emit(StepEvent{Scope: scope, Phase: ImportDownloadDone})
 
 			if downloadFailed {
 				continue
@@ -5604,15 +5510,11 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		if err := pm.UpsertMod(game.ID, profile.Name, modRef); err != nil {
 			msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 			result.Notes = append(result.Notes, msg)
-			evt := base
-			evt.Phase, evt.Detail = ImportNote, msg
-			emit(evt)
+			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 		}
 
 		result.Installed++
-		installedEvt := base
-		installedEvt.Phase = ImportModInstalled
-		emit(installedEvt)
+		emit(ModEvent{Scope: scope, Phase: ImportModInstalled})
 	}
 
 	// #197 I3 fix: profile import deploys mods (installer.Install above) the
@@ -5623,11 +5525,11 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profile.Name); syncErr != nil {
 		msg := fmt.Sprintf("syncing merged pak: %v", syncErr)
 		result.Warnings = append(result.Warnings, msg)
-		emit(DeployProgress{Phase: ImportNote, Detail: msg})
+		emit(StepEvent{Scope: Scope{Op: OpImport}, Phase: ImportNote, Detail: msg})
 	} else {
 		for _, w := range syncWarnings {
 			result.Warnings = append(result.Warnings, w)
-			emit(DeployProgress{Phase: ImportNote, Detail: w})
+			emit(StepEvent{Scope: Scope{Op: OpImport}, Phase: ImportNote, Detail: w})
 		}
 	}
 

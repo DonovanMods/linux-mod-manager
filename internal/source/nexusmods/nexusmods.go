@@ -235,6 +235,13 @@ func (n *NexusMods) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 // any installed file ID has been superseded by a new file (NexusMods FileUpdates).
 // Returns partial updates plus a joined error when one or more mods fail to fetch.
 func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	return n.CheckUpdatesWithProgress(ctx, installed, nil)
+}
+
+// CheckUpdatesWithProgress is CheckUpdates plus a per-mod progress callback
+// (source.UpdateProgressReporter); report is called with a 1-based index
+// before each mod's remote lookup. report may be nil.
+func (n *NexusMods) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
 	var updates []domain.Update
 	var fetchErrs []error
 
@@ -245,8 +252,8 @@ func (n *NexusMods) CheckUpdates(ctx context.Context, installed []domain.Install
 		default:
 		}
 
-		if fn, ok := ctx.Value(domain.UpdateProgressContextKey).(domain.UpdateProgressFunc); ok && fn != nil {
-			fn(i+1, len(installed), inst.Name)
+		if report != nil {
+			report(i+1, len(installed), inst.Name)
 		}
 
 		remoteMod, err := n.GetMod(ctx, inst.GameID, inst.ID)

@@ -653,7 +653,11 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// core.InstallResult's doc comment). Those slices are never separately
 	// batch-printed below: every entry has a corresponding event here, so
 	// doing so would double-print.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.InstallBeforeAllForced, core.InstallBeforeEachForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
@@ -788,7 +792,11 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	// byte-for-byte. See each Install* constant's doc comment (in
 	// internal/core/flows.go, starting at InstallDepInstalling) for the
 	// exact text/semantics being restored here.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.InstallBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
@@ -1271,10 +1279,10 @@ func batchInstallMods(ctx context.Context, service *core.Service, game *domain.G
 		fmt.Printf("  File: %s\n", displayFileLabel(*selectedFile))
 
 		// Download
-		progressFn := func(p core.DownloadProgress) {
-			if p.TotalBytes > 0 {
-				bar := progressBar(p.Percentage, 20)
-				fmt.Printf("\r  [%s] %.1f%%", bar, p.Percentage)
+		progressFn := func(e core.Event) {
+			if d, ok := e.(core.DownloadEvent); ok && d.TotalBytes > 0 {
+				bar := progressBar(d.Percent, 20)
+				fmt.Printf("\r  [%s] %.1f%%", bar, d.Percent)
 			}
 		}
 		downloadResult, err := service.DownloadMod(ctx, sourceID, game, mod, selectedFile, progressFn)

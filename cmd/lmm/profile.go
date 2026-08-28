@@ -342,7 +342,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 	// the SwitchResult.Notes display contract. result.Notes is never
 	// separately batch-printed below: every entry has a corresponding event
 	// here already.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.SwitchDisableNote:
 			if verbose {
@@ -498,7 +502,11 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	// including the sole diagnostic that also lands in result.Notes (see
 	// core.ProfileImportResult's doc comment). Notes is never separately
 	// batch-printed below: it has a corresponding event here already.
-	progress := func(p core.DeployProgress) {
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
 		switch p.Phase {
 		case core.ImportSaved:
 			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
@@ -1118,9 +1126,9 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			}
 			if !service.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 				// Download each file
-				progressFn := func(p core.DownloadProgress) {
-					if p.TotalBytes > 0 {
-						fmt.Printf("\r    Downloading: %.1f%%", p.Percentage)
+				progressFn := func(e core.Event) {
+					if d, ok := e.(core.DownloadEvent); ok && d.TotalBytes > 0 {
+						fmt.Printf("\r    Downloading: %.1f%%", d.Percent)
 					}
 				}
 

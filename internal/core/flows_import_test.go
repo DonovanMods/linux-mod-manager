@@ -111,10 +111,8 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Missing, 1)
 
-	var events []core.DeployProgress
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
-		events = append(events, p)
-	})
+	sink, seen := core.RecordEvents()
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "target", result.ProfileName)
@@ -134,8 +132,8 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	assert.Equal(t, []string{"1"}, savedProfile.Mods[0].FileIDs, "UpsertMod must record the downloaded FileIDs")
 
 	var sawSaved, sawInstalled bool
-	for _, e := range events {
-		switch e.Phase {
+	for _, ph := range phasesOf(*seen) {
+		switch ph {
 		case core.ImportSaved:
 			sawSaved = true
 		case core.ImportModInstalled:
@@ -304,10 +302,10 @@ func TestApplyImportPartialFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Missing, 2)
 
-	var failedEvt core.DeployProgress
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.ImportModFailed {
-			failedEvt = p
+	var failedEvt core.ModEvent
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.ImportModFailed {
+			failedEvt = m
 		}
 	})
 	require.NoError(t, err)
@@ -368,10 +366,10 @@ func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, plan.Missing, 2)
 
-	var failedEvt core.DeployProgress
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.ImportModFailed {
-			failedEvt = p
+	var failedEvt core.ModEvent
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.ImportModFailed {
+			failedEvt = m
 		}
 	})
 	require.NoError(t, err)
@@ -604,10 +602,10 @@ func TestApplyImport_VersionlessSource_KeepsLegacyBehavior(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Missing, 1)
 
-	var failedEvt core.DeployProgress
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.ImportModFailed {
-			failedEvt = p
+	var failedEvt core.ModEvent
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+		if m, ok := e.(core.ModEvent); ok && m.Phase == core.ImportModFailed {
+			failedEvt = m
 		}
 	})
 	require.NoError(t, err)
@@ -851,8 +849,8 @@ func TestApplyImportCtxCancelled(t *testing.T) {
 	require.Len(t, plan.Missing, 2)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := svc.ApplyImport(ctx, game, plan, core.ProfileImportOptions{}, func(p core.DeployProgress) {
-		if p.Phase == core.ImportModInstalled {
+	result, err := svc.ApplyImport(ctx, game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.ImportModInstalled {
 			cancel() // cancel right after the first mod finishes, before the second's iteration starts
 		}
 	})
