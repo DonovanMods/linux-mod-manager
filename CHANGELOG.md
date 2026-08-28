@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ScanResult` drops its never-populated error pair; `--log-level` is now validated at flag-parse
   time (before `PersistentPreRunE`), so an invalid value is rejected on every path, including
   `--help`/`--version`/`completion`, not just paths that opened a `Service` (#284, #285)
+- Internal: `core` resolves hook configuration itself — `DeployOptions`, `UninstallOptions`,
+  `PurgeOptions`, `InstallOptions`, `UpdateOptions` and `RollbackOptions` no longer carry
+  `Hooks`/`HookRunner`/`HookContext`; every flow resolves the merged game/profile hooks and a
+  `HookRunner` from config before its first mutation. No user-visible change: CLI output is
+  byte-identical. (#286)
 
 ### Fixed
 
