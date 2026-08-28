@@ -78,7 +78,7 @@ games:
 
 ## Profile files
 
-Profiles are stored under `~/.config/lmm/games/<game-id>/profiles/<name>.yaml`.
+Profiles are stored under `<config>/games/<game-id>/profiles/<name>.yaml`.
 
 | Option        | Type   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -107,7 +107,7 @@ Import preserves load order, link method, and overrides; missing mods can be ins
 
 Used by `lmm game detect` to know which Steam games are moddable. The app ships with a built-in list; you can add or override entries by creating:
 
-**`~/.config/lmm/steam-games.yaml`**
+**`<config>/steam-games.yaml`**
 
 Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative to game install, empty for game root), optional `nexus_id` (omit for a game with no NexusMods presence), and two more optional fields, `deploy_mode` and `sources`, that pass straight through to the generated `games.yaml` entry's own `deploy_mode`/`sources` (omit both for the default `{nexusmods: <nexus_id>}` sources map and `extract` deploy mode every entry got before these existed). Example:
 
@@ -150,7 +150,7 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 
 ## Custom Sources
 
-In addition to the built-in sources below (NexusMods, CurseForge), lmm can load user-defined sources from `~/.config/lmm/sources/*.yaml` — `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list), and `api` (a declarative REST API). This file only lists the built-in sources' `games.yaml` conventions; the custom-source YAML format, field reference, and authentication are documented in the README's **[Custom Sources](../README.md#custom-sources)** section.
+In addition to the built-in sources below (NexusMods, CurseForge), lmm can load user-defined sources from `<config>/sources/*.yaml` — `directory` (a local folder of mods), `manifest` (a JSON/YAML mod list), and `api` (a declarative REST API). This file only lists the built-in sources' `games.yaml` conventions; the custom-source YAML format, field reference, and authentication are documented in the README's **[Custom Sources](../README.md#custom-sources)** section.
 
 ## Mod Sources
 

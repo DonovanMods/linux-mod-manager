@@ -24,8 +24,9 @@ var sourceCmd = &cobra.Command{
 
 Custom sources (directory scans, static manifests, or REST APIs) are
 defined as YAML files in the sources/ directory under the config dir
-(~/.config/lmm/sources/*.yaml by default) - see the Custom Sources
-section of the project README for the file format.`,
+(sources/*.yaml under the config directory; see the FILES section of
+'lmm --help') - see the Custom Sources section of the project README for
+the file format.`,
 }
 
 // sourceInfo is one row of `lmm source list` output.

@@ -122,7 +122,9 @@ func TestRegisterSource_KeyResolutionPrecedence(t *testing.T) {
 
 // TestRegisterSources_BuiltinAuthenticatesWithEnvAndToken pins that a
 // built-in constructed keyless still ends up authenticated through the
-// shared key pipeline.
+// shared key pipeline. IsAuthenticated() only proves *some* key applied, not
+// which one — TestRegisterSource_KeyResolutionPrecedence is what pins
+// env-over-token precedence; the two tests are not redundant.
 func TestRegisterSources_BuiltinAuthenticatesWithEnvAndToken(t *testing.T) {
 	t.Setenv("NEXUSMODS_API_KEY", "env-key-value")
 	svc := newTestService(t)
