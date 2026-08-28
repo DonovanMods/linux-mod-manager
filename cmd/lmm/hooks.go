@@ -21,6 +21,8 @@ func getHookRunner(svc *core.Service) *core.HookRunner {
 	timeout := 60 * time.Second // default
 	if err == nil && cfg.HookTimeout > 0 {
 		timeout = time.Duration(cfg.HookTimeout) * time.Second
+	} else if err != nil {
+		svc.Logger().Warn("config.yaml unreadable; using default hook timeout", "err", err)
 	}
 
 	return core.NewHookRunner(timeout)

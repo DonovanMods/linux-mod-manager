@@ -39,6 +39,8 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV12,
 	}
 
+	d.log.Debug("running migrations", "from", version, "to", len(migrations))
+
 	for i := version; i < len(migrations); i++ {
 		if err := migrations[i](ctx, d); err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
@@ -46,6 +48,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		if _, err := d.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", i+1); err != nil {
 			return fmt.Errorf("recording migration %d: %w", i+1, err)
 		}
+		d.log.Debug("migration applied", "version", i+1)
 	}
 
 	return nil

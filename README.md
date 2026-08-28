@@ -755,15 +755,16 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 ### Global Flags
 
-| Flag         | Short | Description                                                                                                             |
-| ------------ | ----- | ----------------------------------------------------------------------------------------------------------------------- |
-| `--game`     | `-g`  | Game ID (optional if default set via `game set-default`)                                                                |
-| `--verbose`  | `-v`  | Enable verbose output                                                                                                   |
-| `--config`   |       | Custom config directory                                                                                                 |
-| `--data`     |       | Custom data directory                                                                                                   |
-| `--json`     |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list); errors print `{"error":"..."}` |
-| `--no-hooks` |       | Disable all hooks at runtime                                                                                            |
-| `--no-color` |       | Disable colored output (respects NO_COLOR env)                                                                          |
+| Flag          | Short | Description                                                                                                             |
+| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------- |
+| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                |
+| `--verbose`   | `-v`  | Enable verbose output                                                                                                   |
+| `--config`    |       | Custom config directory                                                                                                 |
+| `--data`      |       | Custom data directory                                                                                                   |
+| `--json`      |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list); errors print `{"error":"..."}` |
+| `--no-hooks`  |       | Disable all hooks at runtime                                                                                            |
+| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                          |
+| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                         |
 
 Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
 

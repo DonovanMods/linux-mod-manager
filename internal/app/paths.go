@@ -8,6 +8,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -28,6 +29,8 @@ type Options struct {
 	// (a custom source definition that fails to load, an ID collision).
 	// nil means os.Stderr.
 	WarnWriter io.Writer
+	// Logger receives diagnostics from the opened service. nil means discard.
+	Logger *slog.Logger
 }
 
 // Paths is a resolved on-disk layout.

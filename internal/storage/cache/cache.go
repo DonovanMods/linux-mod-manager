@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,17 +17,27 @@ import (
 type Cache struct {
 	basePath   string
 	gameScoped bool // when true, basePath is game-specific; omit gameID from ModPath
+	log        *slog.Logger
 }
 
 // New creates a new cache manager for the global cache (basePath/gameID/source-mod/version).
 func New(basePath string) *Cache {
-	return &Cache{basePath: basePath}
+	return &Cache{basePath: basePath, log: slog.New(slog.DiscardHandler)}
 }
 
 // NewGameScoped creates a cache for a per-game cache_path.
 // Paths are basePath/source-mod/version (no gameID); the base is already game-specific.
 func NewGameScoped(basePath string) *Cache {
-	return &Cache{basePath: basePath, gameScoped: true}
+	return &Cache{basePath: basePath, gameScoped: true, log: slog.New(slog.DiscardHandler)}
+}
+
+// SetLogger sets the logger used for diagnostics (a nil-mod cache stat error,
+// etc.). nil resets to discard, which is also the default.
+func (c *Cache) SetLogger(l *slog.Logger) {
+	if l == nil {
+		l = slog.New(slog.DiscardHandler)
+	}
+	c.log = l
 }
 
 // ModPath returns the path where a mod version's files are stored
@@ -42,7 +53,13 @@ func (c *Cache) ModPath(gameID, sourceID, modID, version string) string {
 func (c *Cache) Exists(gameID, sourceID, modID, version string) bool {
 	path := c.ModPath(gameID, sourceID, modID, version)
 	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			c.log.Debug("stat failed while checking cache entry", "path", path, "err", err)
+		}
+		return false
+	}
+	return info.IsDir()
 }
 
 // ReservedPrefix marks lmm's own bookkeeping entries inside a cache version
@@ -253,7 +270,11 @@ func (c *Cache) HasFileIDs(gameID, sourceID, modID, version string, fileIDs []st
 		if !VerifiableFileID(id) {
 			return false
 		}
-		if _, err := os.Stat(filepath.Join(versionDir, fileMarkerPrefix+id)); err != nil {
+		markerPath := filepath.Join(versionDir, fileMarkerPrefix+id)
+		if _, err := os.Stat(markerPath); err != nil {
+			if !os.IsNotExist(err) {
+				c.log.Debug("stat failed while checking file marker", "path", markerPath, "err", err)
+			}
 			return false
 		}
 	}

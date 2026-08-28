@@ -716,6 +716,7 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 	}
 	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
+		s.log.Warn("resolving enabled merge sources failed while classifying compile deploy mods", "game_id", game.ID, "profile", profileName, "err", err)
 		return nil
 	}
 	mergedRefs := make(map[string]bool, len(sources))

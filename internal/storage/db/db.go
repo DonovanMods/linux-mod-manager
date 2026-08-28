@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ const secureFileMode = 0600
 // DB wraps the SQLite database connection
 type DB struct {
 	*sql.DB
+	log *slog.Logger
 }
 
 // dsnFor builds the modernc.org/sqlite DSN. Pragmas passed as _pragma= query
@@ -40,10 +42,20 @@ func dsnFor(path string) string {
 	return u.String()
 }
 
-// New creates a new database connection and runs migrations. A relative path
-// is resolved against the current working directory before being placed in
-// the DSN, since a relative path in a "file:" URI is ambiguous (see dsnFor).
+// New creates a new database connection and runs migrations, with a
+// discarding logger. See Open for the logger-aware constructor.
 func New(path string) (*DB, error) {
+	return Open(path, nil)
+}
+
+// Open creates a new database connection and runs migrations, logging
+// migration activity to log (nil means discard). A relative path is
+// resolved against the current working directory before being placed in
+// the DSN, since a relative path in a "file:" URI is ambiguous (see dsnFor).
+func Open(path string, log *slog.Logger) (*DB, error) {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	dsnPath := path
 	if path != ":memory:" {
 		abs, err := filepath.Abs(path)
@@ -79,7 +91,7 @@ func New(path string) (*DB, error) {
 		return nil, err
 	}
 
-	database := &DB{DB: sqlDB}
+	database := &DB{DB: sqlDB, log: log}
 
 	if err := database.migrate(context.Background()); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {

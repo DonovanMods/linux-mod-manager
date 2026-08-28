@@ -23,6 +23,7 @@ func Open(opts Options) (*core.Service, error) {
 		ConfigDir: p.ConfigDir,
 		DataDir:   p.DataDir,
 		CacheDir:  p.CacheDir,
+		Logger:    opts.Logger,
 	})
 	if err != nil {
 		return nil, err

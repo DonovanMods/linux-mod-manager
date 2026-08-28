@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,9 +28,10 @@ import (
 
 // ServiceConfig holds configuration for the core service
 type ServiceConfig struct {
-	ConfigDir string // Directory for configuration files
-	DataDir   string // Directory for database and persistent data
-	CacheDir  string // Directory for mod file cache
+	ConfigDir string       // Directory for configuration files
+	DataDir   string       // Directory for database and persistent data
+	CacheDir  string       // Directory for mod file cache
+	Logger    *slog.Logger // Diagnostics logger; nil means discard
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -63,6 +65,7 @@ type Service struct {
 	opSem      chan struct{}
 	downloader *Downloader
 	extractor  *Extractor
+	log        *slog.Logger
 
 	configDir string
 	dataDir   string
@@ -79,6 +82,11 @@ type Service struct {
 
 // NewService creates a new core service instance
 func NewService(cfg ServiceConfig) (*Service, error) {
+	log := cfg.Logger
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+
 	// Load configuration
 	appConfig, err := config.Load(cfg.ConfigDir)
 	if err != nil {
@@ -87,7 +95,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 
 	// Open database
 	dbPath := filepath.Join(cfg.DataDir, "lmm.db")
-	database, err := db.New(dbPath)
+	database, err := db.Open(dbPath, log)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -101,15 +109,21 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		return nil, fmt.Errorf("loading games: %w", err)
 	}
 
+	modCache := cache.New(cfg.CacheDir)
+	modCache.SetLogger(log)
+	downloader := NewDownloader(nil)
+	downloader.SetLogger(log)
+
 	return &Service{
 		config:     appConfig,
 		db:         database,
-		cache:      cache.New(cfg.CacheDir),
+		cache:      modCache,
 		registry:   source.NewRegistry(),
 		games:      games,
 		opSem:      make(chan struct{}, 1),
-		downloader: NewDownloader(nil),
+		downloader: downloader,
 		extractor:  NewExtractor(),
+		log:        log,
 		configDir:  cfg.ConfigDir,
 		dataDir:    cfg.DataDir,
 		cacheDir:   cfg.CacheDir,
@@ -122,6 +136,12 @@ func (s *Service) Close() error {
 		return s.db.Close()
 	}
 	return nil
+}
+
+// Logger returns the diagnostics logger this Service was constructed with
+// (ServiceConfig.Logger), or a discarding logger if none was given.
+func (s *Service) Logger() *slog.Logger {
+	return s.log
 }
 
 // RegisterSource adds a mod source to the registry
@@ -649,7 +669,11 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(stagePath) //nolint:errcheck
+	defer func() {
+		if rmErr := os.RemoveAll(stagePath); rmErr != nil {
+			s.log.Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
+		}
+	}()
 
 	// convertEligiblePak requires BOTH the game's own eligibility (deploy
 	// mode + ConvertPaks) AND this specific src implementing MergeCompiler
@@ -769,7 +793,11 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(stagePath) //nolint:errcheck
+	defer func() {
+		if rmErr := os.RemoveAll(stagePath); rmErr != nil {
+			s.log.Debug("removing staging directory failed", "path", stagePath, "err", rmErr)
+		}
+	}()
 
 	var members []string
 	var checksum string
@@ -1315,7 +1343,9 @@ func (s *Service) GetInstallerForProfile(ctx context.Context, game *domain.Game,
 // caller-supplied linker — used when the CLI overrides the game's default
 // link method (e.g. `lmm deploy --method`).
 func (s *Service) NewInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
-	return NewInstaller(s.GetGameCache(game), lnk, s.db)
+	installer := NewInstaller(s.GetGameCache(game), lnk, s.db)
+	installer.SetLogger(s.log)
+	return installer
 }
 
 // NewProfileManager returns a ProfileManager wired to this service's storage,
@@ -1354,7 +1384,9 @@ func (s *Service) GlobalCacheDir() string {
 // Uses the game's cache_path if configured (game-scoped: paths omit gameID), otherwise the global cache.
 func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {
 	if game.CachePath != "" {
-		return cache.NewGameScoped(game.CachePath)
+		gameCache := cache.NewGameScoped(game.CachePath)
+		gameCache.SetLogger(s.log)
+		return gameCache
 	}
 	return s.cache
 }
@@ -1408,6 +1440,7 @@ func (s *Service) ListSourceTokens(ctx context.Context) ([]db.StoredToken, error
 func (s *Service) IsSourceAuthenticated(ctx context.Context, sourceID string) bool {
 	has, err := s.db.HasToken(ctx, sourceID)
 	if err != nil {
+		s.log.Warn("checking source authentication failed", "source_id", sourceID, "err", err)
 		return false
 	}
 	return has

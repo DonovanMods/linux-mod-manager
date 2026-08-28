@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -18,6 +19,7 @@ type Installer struct {
 	cache  *cache.Cache
 	linker linker.Linker
 	db     *db.DB // Optional: enables file tracking for conflict detection
+	log    *slog.Logger
 }
 
 // NewInstaller creates a new installer
@@ -27,7 +29,17 @@ func NewInstaller(cache *cache.Cache, linker linker.Linker, database *db.DB) *In
 		cache:  cache,
 		linker: linker,
 		db:     database,
+		log:    slog.New(slog.DiscardHandler),
 	}
+}
+
+// SetLogger sets the logger used for diagnostics. nil resets to discard,
+// which is also the default.
+func (i *Installer) SetLogger(l *slog.Logger) {
+	if l == nil {
+		l = slog.New(slog.DiscardHandler)
+	}
+	i.log = l
 }
 
 // Install deploys a mod to the game directory. If DB tracking is enabled and a
@@ -576,6 +588,7 @@ func (i *Installer) GetDeployedFiles(ctx context.Context, game *domain.Game, mod
 		dstPath := filepath.Join(game.ModPath, file)
 		isDeployed, err := i.linker.IsDeployed(dstPath)
 		if err != nil {
+			i.log.Debug("checking deployed state failed", "path", dstPath, "err", err)
 			continue
 		}
 		if isDeployed {
