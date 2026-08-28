@@ -1023,10 +1023,11 @@ type mockSourceWithDownloads struct {
 	// (if set) fires right after, once per request - a per-file-cancellation
 	// test hangs a cancel() off it to assert a loop never starts the next
 	// file once ctx is done (e.g. TestService_ApplyInstall_
-	// ContextCancelledBetweenPrimaryFiles). Both are only ever touched by
-	// this single-threaded test server's handler and read after the
-	// triggering client call has returned, so no atomic is needed.
-	downloads  int
+	// ContextCancelledBetweenPrimaryFiles). Atomic for the same reason as
+	// served: the handler runs on the server's own goroutine, and nothing
+	// establishes a happens-before edge between the client's read of the
+	// response body and the handler's post-Write statements.
+	downloads  atomic.Int64
 	onDownload func()
 }
 
@@ -1047,7 +1048,7 @@ func newMockSourceWithDownloads(id string) *mockSourceWithDownloads {
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
-		m.downloads++
+		m.downloads.Add(1)
 		if m.onDownload != nil {
 			m.onDownload()
 		}

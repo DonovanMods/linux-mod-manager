@@ -1946,6 +1946,13 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 
+	// The head-of-loop check above cannot see a cancellation that lands
+	// during the LAST mod's iteration, which would otherwise fall through to
+	// after_all/merged-pak sync and return (result, nil) - review finding I1.
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+
 	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = "", "", ""
 	if err := runHook(ctx, opts.HookRunner, &hookCtx, "install.after_all", opts.Hooks.GetInstallAfterAll()); err != nil {
 		msg := fmt.Sprintf("install.after_all hook failed: %v", err)
@@ -2033,7 +2040,11 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 
 	for _, file := range filesToDownload {
 		if err := ctx.Err(); err != nil {
-			return true
+			// Record the skip like every other early exit here: the caller
+			// only sees `continue`, so a bare `true` on the LAST mod of the
+			// profile made a cancelled deploy look successful (review
+			// finding I1).
+			return skip(fmt.Sprintf("cancelled: %v", err))
 		}
 		progressFn := func(p DownloadProgress) {
 			if p.TotalBytes > 0 {
@@ -2073,7 +2084,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	healedIDs := make([]string, 0, len(filesToDownload))
 	for _, f := range filesToDownload {
 		if err := ctx.Err(); err != nil {
-			return true
+			return skip(fmt.Sprintf("cancelled: %v", err))
 		}
 		healedIDs = append(healedIDs, f.ID)
 	}
@@ -3381,7 +3392,6 @@ func ensureProfileExists(pm *ProfileManager, gameID, profileName string) error {
 // reinstall) - a version upgrade downloads into a distinct cache path
 // already (version is part of the cache key) and needs no staging.
 type reinstallCacheTransaction struct {
-	ctx       context.Context
 	live      *cache.Cache
 	snapshot  *cache.Cache
 	staged    *cache.Cache
@@ -3405,7 +3415,6 @@ func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, ga
 		return nil, fmt.Errorf("snapshotting existing cache: %w", err)
 	}
 	return &reinstallCacheTransaction{
-		ctx:      ctx,
 		live:     live,
 		snapshot: snapshot,
 		staged:   staged,
@@ -3417,7 +3426,14 @@ func prepareReinstallCacheTransaction(ctx context.Context, live *cache.Cache, ga
 	}, nil
 }
 
-func (s *reinstallCacheTransaction) Activate() error {
+// Activate publishes the staged download over the live cache entry. It is
+// the FORWARD path, so it takes the caller's own ctx and a cancellation
+// legitimately aborts the install - but the Delete below has already
+// destroyed the live entry by the time the clone can fail, so activated is
+// set the moment the delete succeeds: it is what tells RestoreLive there is
+// something to put back. (Before that, a cancelled clone left the entry
+// deleted with the recovery path early-returning nil - review finding C1.)
+func (s *reinstallCacheTransaction) Activate(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
@@ -3427,37 +3443,45 @@ func (s *reinstallCacheTransaction) Activate() error {
 	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err
 	}
-	if err := s.staged.CloneMod(s.ctx, s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
+	s.activated = true
+	if err := s.staged.CloneMod(ctx, s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err
 	}
-	s.activated = true
 	return nil
 }
 
-func (s *reinstallCacheTransaction) RestoreLive() error {
+// RestoreLive puts the original cache entry back. It is a RECOVERY path:
+// its Delete-then-CloneMod sequence destroys the live entry before it can
+// rewrite it, so every call site passes context.WithoutCancel(ctx) - a
+// cancelled clone here would leave the mod's cache entry gone for good
+// (review finding C1). ctx is still threaded rather than dropped so the
+// copy stays interruptible by a future non-cancellation signal.
+func (s *reinstallCacheTransaction) RestoreLive(ctx context.Context) error {
 	if s == nil || !s.activated {
 		return nil
 	}
 	if err := s.live.Delete(s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err
 	}
-	if err := s.snapshot.CloneMod(s.ctx, s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
+	if err := s.snapshot.CloneMod(ctx, s.live, s.gameID, s.sourceID, s.modID, s.version); err != nil {
 		return err
 	}
 	s.activated = false
 	return nil
 }
 
-func (s *reinstallCacheTransaction) Rollback() error {
+// Rollback restores the live entry and ALWAYS removes the temp dir, even
+// when the restore failed: the old early return leaked the snapshot into
+// $TMPDIR on exactly the paths that most need cleaning up (review finding
+// C1). Both errors are reported together.
+func (s *reinstallCacheTransaction) Rollback(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
-	if err := s.RestoreLive(); err != nil {
-		return err
-	}
-	err := os.RemoveAll(s.tempDir)
+	restoreErr := s.RestoreLive(ctx)
+	rmErr := os.RemoveAll(s.tempDir)
 	*s = reinstallCacheTransaction{}
-	return err
+	return errors.Join(restoreErr, rmErr)
 }
 
 func (s *reinstallCacheTransaction) Commit() error {
@@ -3875,6 +3899,13 @@ func (s *Service) ApplyInstall(ctx context.Context, game *domain.Game, plan *Ins
 				deferredWarnings = append(deferredWarnings, *warn)
 			}
 		}
+		// The primary is mods' LAST entry, so a cancellation inside its own
+		// iteration never reaches the head-of-loop check above - without
+		// this, install.after_all would run and ApplyInstall would return
+		// (result, nil) (review finding I2).
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 	} else {
 		// --- STRICT path: only the primary, doInstall's own mechanics. ---
 		afterEachWarning, err := s.applyInstallPrimary(ctx, game, plan, linkMethod, pm, opts, result, emit)
@@ -4061,6 +4092,11 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	filesExtracted := 0
 	for _, file := range selected {
 		if err := ctx.Err(); err != nil {
+			// skip() (not a bare nil) so the mod lands in Skipped AND
+			// Failed: the primary is the last entry in the batch loop by
+			// construction, so a silent return made ApplyInstall exit 0
+			// having installed nothing (review finding I2).
+			skip("Error", fmt.Sprintf("cancelled: %v", err))
 			return nil
 		}
 		fileEvt := base
@@ -4233,7 +4269,10 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		downloadCache = reinstallTxn.staged
 		defer func() {
 			if reinstallTxn != nil {
-				_ = reinstallTxn.Rollback() //nolint:errcheck // best-effort cleanup on an already-erroring path
+				// WithoutCancel: this deferred cleanup fires precisely when the
+				// caller's ctx is already dead, and its restore must not be
+				// interrupted halfway (review finding C1).
+				_ = reinstallTxn.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // best-effort cleanup on an already-erroring path
 			}
 		}()
 	}
@@ -4356,7 +4395,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 
 	if plan.Replaces != nil {
 		if reinstallTxn != nil {
-			if err := reinstallTxn.Activate(); err != nil {
+			if err := reinstallTxn.Activate(ctx); err != nil {
 				return nil, fmt.Errorf("activating reinstall cache: %w", err)
 			}
 		}
@@ -4368,7 +4407,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 		if replaceErr != nil {
 			if reinstallTxn != nil {
-				_ = reinstallTxn.RestoreLive()                                                                                                                //nolint:errcheck // best-effort recovery on an already-erroring path
+				_ = reinstallTxn.RestoreLive(context.WithoutCancel(ctx))                                                                                      //nolint:errcheck // best-effort recovery on an already-erroring path
 				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
 			}
 			return nil, fmt.Errorf("deployment failed: %w", replaceErr)
@@ -4391,7 +4430,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	if err := s.SaveInstalledMod(ctx, installedMod); err != nil {
 		if plan.Replaces != nil {
 			if reinstallTxn != nil {
-				_ = reinstallTxn.RestoreLive()                                                                                                //nolint:errcheck // best-effort recovery on an already-erroring path
+				_ = reinstallTxn.RestoreLive(context.WithoutCancel(ctx))                                                                      //nolint:errcheck // best-effort recovery on an already-erroring path
 				_ = installer.ReplaceWithCaches(ctx, game, reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery
 			} else {
 				_ = installer.Replace(ctx, game, &mod, &plan.Replaces.Mod, plan.Profile) //nolint:errcheck // best-effort recovery

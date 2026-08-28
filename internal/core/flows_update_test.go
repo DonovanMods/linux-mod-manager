@@ -605,7 +605,7 @@ func TestService_ApplyUpdate_ContextCancelledBetweenDownloads(t *testing.T) {
 	src.onDownload = func() { cancel() }
 	_, err := svc.ApplyUpdate(ctx, game, "default", upd, core.UpdateOptions{}, nil)
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, 1, src.downloads)
+	assert.Equal(t, int64(1), src.downloads.Load())
 }
 
 // TestService_ApplyUpdate_GameIDNormalization is the P3-class regression

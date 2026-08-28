@@ -1063,7 +1063,7 @@ func TestService_ApplyInstall_ContextCancelledBetweenPrimaryFiles(t *testing.T) 
 	require.NoError(t, err)
 	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{TargetFileIDs: []string{"f1", "f2", "f3"}}, nil)
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, 1, src.downloads, "second file must not be requested after cancellation")
+	assert.Equal(t, int64(1), src.downloads.Load(), "second file must not be requested after cancellation")
 }
 
 // TestService_ApplyInstall_BeforeAllHookFailure mirrors
@@ -2782,4 +2782,100 @@ func TestService_PlanInstall_DependencyFetchEmptyMappingKeepsLMMGameID(t *testin
 	assert.Empty(t, plan.MissingDependencies)
 	require.Len(t, plan.Dependencies, 1)
 	assert.Equal(t, "dep1", plan.Dependencies[0].ID)
+}
+
+// --- Fix round 1: cancellation safety (task-3 review C1 / I2) ---
+
+// TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLiveCache
+// is review finding C1's regression guard: the reinstall cache transaction's
+// recovery half (RestoreLive/Rollback) must run to completion even when the
+// request ctx is already dead, because it is a Delete-then-CloneMod sequence
+// whose live cache entry is destroyed by the Delete. InstallDeploying is the
+// last callback the flow emits before Activate, so cancelling there lands
+// inside exactly the destructive window C1 describes ("Ctrl-C during the
+// deploy step" of a same-version reinstall). Afterwards the live entry must
+// still hold its ORIGINAL files and the snapshot temp dir must be gone.
+func TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLiveCache(t *testing.T) {
+	tmpRoot := t.TempDir()
+	t.Setenv("TMPDIR", tmpRoot) // where the transaction's snapshot temp dir lands
+
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "new-content")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.NotNil(t, plan.Replaces)
+	require.Equal(t, "1.0", plan.Replaces.Version, "a same-version reinstall - the reinstall-cache-transaction path")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, func(p core.DeployProgress) {
+		if p.Phase == core.InstallDeploying {
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+
+	gameCache := svc.GetGameCache(game)
+	require.True(t, gameCache.Exists("g1", "src", "mod1", "1.0"),
+		"the live cache entry must be restored, not left deleted by a cancelled clone")
+	files, err := gameCache.ListFiles("g1", "src", "mod1", "1.0")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"mod1.esp"}, files, "the restored live entry must carry its files")
+	content, err := os.ReadFile(gameCache.GetFilePath("g1", "src", "mod1", "1.0", "mod1.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "original-content", string(content), "the ORIGINAL cached bytes must be what was restored")
+
+	entries, err := os.ReadDir(tmpRoot)
+	require.NoError(t, err)
+	var leaked []string
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "lmm-reinstall-cache-") {
+			leaked = append(leaked, e.Name())
+		}
+	}
+	assert.Empty(t, leaked, "Rollback must remove the snapshot temp dir even when the restore ran under a cancelled ctx")
+}
+
+// TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFailureAndErrors
+// is review finding I2's regression guard: on the BATCH path the primary is
+// the LAST entry in the loop by construction, so a per-file ctx check that
+// returns a bare nil lets ApplyInstall exit 0 with the primary uninstalled
+// and nothing recorded. Cancelling on the primary's FIRST InstallDepDownloadDone
+// (its download already finished; the next iteration's head check is what
+// fires) must surface as an error AND name the primary in result.Failed.
+func TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFailureAndErrors(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1, "root must take the BATCH path")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var cancelled bool
+	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1", "root-opt-1"}}
+	result, err := svc.ApplyInstall(ctx, game, plan, opts, func(p core.DeployProgress) {
+		if !cancelled && p.Phase == core.InstallDepDownloadDone && p.ModName == "Root" {
+			cancelled = true
+			cancel()
+		}
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Contains(t, result.Failed, "Root", "the cancelled primary must be recorded as failed, not silently dropped")
+	assert.NotContains(t, result.Installed, "Root")
 }

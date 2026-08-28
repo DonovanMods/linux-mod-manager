@@ -21,7 +21,7 @@ func TestNew_PragmasApplyToEveryPooledConnection(t *testing.T) {
 
 	rows, err := d.QueryContext(ctx, "SELECT name FROM sqlite_master")
 	require.NoError(t, err)
-	defer rows.Close() // keep connection #1 busy for the duration
+	defer func() { _ = rows.Close() }() // keep connection #1 busy for the duration
 
 	var fk int
 	require.NoError(t, d.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk)) // connection #2
