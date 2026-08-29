@@ -105,6 +105,18 @@ func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain
 	return s.newInstallerWithLinker(game, s.getLinker(method))
 }
 
+// FreshSwitchPlanForTest stamps plan.From's current installed-mod snapshot
+// (Ruling 5, phase-2-close review Important #1) onto a hand-built SwitchPlan
+// and returns it, for tests that construct one directly - bypassing
+// PlanProfileSwitch to isolate ApplyProfileSwitch's own execution logic -
+// so ApplyProfileSwitch's checkPlanFresh call doesn't refuse it as stale.
+// Call AFTER seeding whatever installed-mod state the test wants
+// ApplyProfileSwitch to see.
+func (s *Service) FreshSwitchPlanForTest(ctx context.Context, plan *SwitchPlan) *SwitchPlan {
+	plan.snapshot, _ = s.currentInstalledSnapshot(ctx, plan.GameID, plan.From)
+	return plan
+}
+
 // ConvergeDeployedFilesForTest exposes convergeDeployedFiles behind the same
 // beginOp gate the exported wrapper the deploy lift (#293) removed used to
 // take: verify's --fix pass is production's only caller, but convergence's

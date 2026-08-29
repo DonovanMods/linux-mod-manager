@@ -1138,6 +1138,16 @@ type SwitchPlan struct {
 
 	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise; only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
+
+	// snapshot is From's installed-mod set this plan was computed against
+	// (Ruling 5): ApplyProfileSwitch re-derives it under beginOp and returns
+	// ErrStalePlan when it no longer matches, so a plan a frontend held while
+	// something else changed From's installed mods is refused rather than
+	// applied against a world it never saw. Unexported and outside the wire
+	// contract on purpose - see InstallPlan.snapshot's doc comment. Zero
+	// value (unset) on the AlreadyActive early return, whose plan is never
+	// passed to ApplyProfileSwitch.
+	snapshot installedSnapshot `json:"-"`
 }
 
 // PlanProfileSwitch computes the diff between game's currently-active
@@ -1171,6 +1181,11 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// exactly (a missing/unreadable profile's mods are simply treated as
 	// empty rather than aborting the plan).
 	currentMods, _ := s.GetInstalledMods(ctx, game.ID, currentName)
+	// Ruling 5: record the installed set this plan is being computed
+	// against, so ApplyProfileSwitch can refuse it once From has moved on -
+	// snapshotOf reuses currentMods rather than re-querying (see its own doc
+	// comment).
+	snapshot := snapshotOf(currentMods)
 
 	currentEnabled := make(map[string]*domain.InstalledMod)
 	for i := range currentMods {
@@ -1273,6 +1288,7 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
 		PriorVersions: priorVersions,
 		NoChanges:     len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
+		snapshot:      snapshot,
 	}, nil
 }
 
@@ -1341,6 +1357,14 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		if sink != nil {
 			sink(e)
 		}
+	}
+
+	// Ruling 5: the plan is a contract about a world that may have moved.
+	// First statement inside the op (ApplyProfileSwitch took beginOp just
+	// above), so nothing this call does can race the re-derivation - a stale
+	// plan is refused having changed nothing at all.
+	if err := s.checkPlanFresh(ctx, plan.GameID, plan.From, plan.snapshot); err != nil {
+		return result, err
 	}
 
 	// #81: a switch spans two profiles that may carry different explicit
@@ -1633,6 +1657,15 @@ type ImportPlan struct {
 	// version doesn't serve) rather than merely installed over. Private,
 	// like storedFileIDs: pure plan-to-apply plumbing no preview renders.
 	priorVersions map[string]domain.InstalledMod
+
+	// snapshot is the installed-mod set (for Profile.Name, the profile being
+	// imported into) this plan was computed against (Ruling 5): ApplyImport
+	// re-derives it under beginOp and returns ErrStalePlan when it no longer
+	// matches, so a plan a frontend held while something else changed that
+	// profile's installed mods is refused rather than applied against a
+	// world it never saw. Unexported and outside the wire contract on
+	// purpose - see InstallPlan.snapshot's doc comment.
+	snapshot installedSnapshot `json:"-"`
 }
 
 // PlanImport parses data (an exported profile) and categorizes its mods
@@ -1658,6 +1691,11 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	// (c) record the prior row a #138 version-drift entry converges away
 	// from (priorVersions needs the whole Mod for Installer.Replace).
 	installedMods, _ := s.GetInstalledMods(ctx, game.ID, profile.Name)
+	// Ruling 5: record the installed set this plan is being computed
+	// against, so ApplyImport can refuse it once profile.Name's has moved on
+	// - snapshotOf reuses installedMods rather than re-querying (see its own
+	// doc comment).
+	snapshot := snapshotOf(installedMods)
 	installedData := make(map[string]domain.InstalledMod)
 	for _, im := range installedMods {
 		key := domain.ModKey(im.SourceID, im.ID)
@@ -1721,6 +1759,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		data:            data,
 		storedFileIDs:   storedFileIDs,
 		priorVersions:   priorVersions,
+		snapshot:        snapshot,
 	}, nil
 }
 
@@ -1811,6 +1850,15 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		if sink != nil {
 			sink(e)
 		}
+	}
+
+	// Ruling 5: the plan is a contract about a world that may have moved.
+	// First statement inside the op (ApplyImport took beginOp just above),
+	// so nothing this call does can race the re-derivation - a stale plan is
+	// refused having changed nothing at all (before the profile is even
+	// saved).
+	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile.Name, plan.snapshot); err != nil {
+		return result, err
 	}
 
 	pm := s.NewProfileManager()
