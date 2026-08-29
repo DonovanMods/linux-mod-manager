@@ -397,6 +397,14 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 // and both import paths were found missing this call). Safe to call
 // unconditionally - it no-ops for a non-DeployCompile game and is a cheap
 // fast-path when nothing changed.
+//
+// `mod edit`'s last cmd caller (v2 Phase 3 Task 10, #303) moved into
+// ApplyRelinkMod (which calls the unexported syncMergedPak directly, already
+// inside its own beginOp); this exported wrapper's remaining callers are
+// cmd/lmm test fixtures across several command areas that need to force a
+// merged-pak resync as test setup. Kept exported by the same
+// SaveFileChecksum precedent (Ruling 10) rather than rewriting that fixture
+// surface.
 func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

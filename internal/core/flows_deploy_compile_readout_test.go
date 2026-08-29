@@ -118,7 +118,8 @@ func TestDeployProfile_Compile_ClassifiesModsAndEmitsMergeSynced(t *testing.T) {
 
 	seedExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "raw-pak", "1.0", "raw.pak", []byte("raw-pak-bytes"))
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false))
+	_, settingErr22 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false)
+	require.NoError(t, settingErr22)
 	seedLooseMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
 
 	result, deployed, deployedAt, mergeEvents, mergeAt := deployRecordingProgress(t, svc, game)

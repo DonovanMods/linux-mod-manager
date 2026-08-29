@@ -532,7 +532,8 @@ func TestPlanDeploy_Compile_MergePlanNamesArtifactSourcesAndRawFallbacks(t *test
 
 	seedExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
 	seedEnabledPakMod(t, svc, game, "fake-compiler", "raw-pak", "1.0", "raw.pak", []byte("raw-pak-bytes"))
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false))
+	_, settingErr21 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false)
+	require.NoError(t, settingErr21)
 	seedLooseMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
 
 	plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{})

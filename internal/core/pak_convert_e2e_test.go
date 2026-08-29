@@ -104,7 +104,8 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.True(t, pakOutcome.Converted)
 
 	// --- Step 2: toggle pakmod's conversion off ---
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false))
+	_, settingErr24 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false)
+	require.NoError(t, settingErr24)
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -127,7 +128,8 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.False(t, found, "opted-out: pakmod must not appear in the merge fingerprint (membership changed)")
 
 	// --- Step 3: toggle back on ---
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", true))
+	_, settingErr25 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "pakmod", game.ID, "default", true)
+	require.NoError(t, settingErr25)
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

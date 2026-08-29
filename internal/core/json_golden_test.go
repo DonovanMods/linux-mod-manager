@@ -858,6 +858,39 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			"mod_setting_result",
+			core.ModSettingResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateAuto,
+				},
+				Locked:        true,
+				LockedVersion: "1.2.3",
+				UpdatePolicy:  domain.UpdateAuto,
+				ConvertPaks:   boolPtr(true),
+			},
+		},
+		{
+			"mod_file_entry",
+			core.ModFileEntry{Path: "Data/Sample.esp", Size: 1234, Deployed: true},
+		},
+		{
+			// Files is deliberately non-empty (MergedPakOnly and a non-empty
+			// Files never co-occur on a real report) to pin ModFileEntry's
+			// wire shape nested inside - same convention as install_plan
+			// above.
+			"mod_files_report",
+			core.ModFilesReport{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				Files: []core.ModFileEntry{
+					{Path: "Data/Sample.esp", Size: 1234, Deployed: true},
+				},
+			},
+		},
+		{
 			// Every optional key is populated (Locked/LockedVersion/Refusal
 			// and CacheMissing together) - on a real plan a locked rollback and
 			// a missing cache entry can co-occur, but the golden's job is to
