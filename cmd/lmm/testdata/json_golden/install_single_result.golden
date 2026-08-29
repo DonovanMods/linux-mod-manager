@@ -1,0 +1,12 @@
+{
+  "installed": [
+    {
+      "source_id": "test-src",
+      "mod_id": "mod1",
+      "name": "Mod One",
+      "version": "1.0"
+    }
+  ],
+  "files_deployed": 1,
+  "merged_pak_sync_failed": false
+}

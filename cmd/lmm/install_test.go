@@ -1129,13 +1129,21 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 	})
 }
 
-// TestDoInstall_ConflictPrompt_JSONOutputReturnsConfirmationRequired pins the
-// non-interactive rule at the conflict-confirm site (confirmInstallConflicts):
-// under --json with no --force, doInstall must fail with
-// core.ErrConfirmationRequired before ever reading stdin, and the primary
-// must not be recorded in the DB - only the cache fill (not a mutation of
-// managed state, per Ruling 1) survives the refused Apply.
-func TestDoInstall_ConflictPrompt_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+// TestDoInstall_ConflictPrompt_JSONOutputSurfacesConflictError pins the
+// non-interactive rule at the conflict-confirm site
+// (confirmInstallConflicts): under --json with no --force, doInstall must
+// fail before ever reading stdin, and the primary must not be recorded in
+// the DB - only the cache fill (not a mutation of managed state, per Ruling
+// 1) survives the refused Apply.
+//
+// v2 Phase 3 Task 11 (Ruling 15) refined WHICH error: doInstall no longer
+// enters the prompt under --json at all, so core's own *core.ConflictError
+// comes straight back instead of the generic ErrConfirmationRequired the
+// prompt's stdin guard used to produce. That is strictly more information -
+// reportError renders it as the envelope with details.conflicts, naming the
+// files - and --force is the deciding flag (core reads it as
+// AcceptConflicts). See TestDoInstall_JSON_ConflictWithoutForce_*.
+func TestDoInstall_ConflictPrompt_JSONOutputSurfacesConflictError(t *testing.T) {
 	svc, game, src := setupDoInstallTest(t)
 	installYes = false
 	installForce = false
@@ -1149,7 +1157,9 @@ func TestDoInstall_ConflictPrompt_JSONOutputReturnsConfirmationRequired(t *testi
 		return doInstall(context.Background(), svc, game, nil)
 	})
 
-	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	var conflictErr *core.ConflictError
+	require.ErrorAs(t, err, &conflictErr)
+	assert.NotEmpty(t, conflictErr.Conflicts, "the envelope's details must name the conflicting files")
 	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	assert.Error(t, dbErr, "must result in zero DB mutations")
 }

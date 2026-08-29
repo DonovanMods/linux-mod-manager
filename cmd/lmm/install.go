@@ -174,9 +174,14 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 		return selected, nil
 	}
 
-	fmt.Println("\nAvailable files:")
-	for i, f := range files {
-		fmt.Println(installFileRow(i, f))
+	// The listing exists for the prompt that follows it; under --json
+	// readMultiSelectionLine refuses to read stdin (Ruling 2), so printing
+	// it would only put console text beside the error envelope.
+	if !jsonOutput {
+		fmt.Println("\nAvailable files:")
+		for i, f := range files {
+			fmt.Println(installFileRow(i, f))
+		}
 	}
 
 	// reader is created ONCE and shared across every attempt below (both
@@ -512,10 +517,14 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		mod = selectedMods[0]
 	}
 
-	fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
+	// Every human-facing line below is suppressed under --json: the run
+	// emits exactly one document (Ruling 15).
+	if !jsonOutput {
+		fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
 
-	if !installNoDeps && mod.SourceID != domain.SourceLocal {
-		fmt.Println("\nResolving dependencies...")
+		if !installNoDeps && mod.SourceID != domain.SourceLocal {
+			fmt.Println("\nResolving dependencies...")
+		}
 	}
 
 	// PlanInstall resolves dependencies, files (its own non-interactive
@@ -542,10 +551,14 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// If there are dependencies to install (or unresolvable ones to warn
 	// about), show the plan and confirm.
 	if len(plan.Dependencies) > 0 || len(plan.MissingDependencies) > 0 || len(plan.DependencyWarnings) > 0 {
-		showInstallPlan(plan)
+		if !jsonOutput {
+			showInstallPlan(plan)
+		}
 
 		if !installYes {
-			fmt.Printf("\nInstall %d mod(s)? [Y/n]: ", len(plan.Dependencies)+1)
+			if !jsonOutput {
+				fmt.Printf("\nInstall %d mod(s)? [Y/n]: ", len(plan.Dependencies)+1)
+			}
 			input, err := readPromptLine()
 			if err != nil {
 				return err
@@ -614,12 +627,14 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	}
 
 	// Show selected files - unchanged, CLI-side.
-	if len(selectedFiles) == 1 {
-		fmt.Printf("\nFile: %s\n", displayFileLabel(*selectedFiles[0]))
-	} else {
-		fmt.Printf("\nFiles (%d):\n", len(selectedFiles))
-		for _, f := range selectedFiles {
-			fmt.Printf("  - %s\n", displayFileLabel(*f))
+	if !jsonOutput {
+		if len(selectedFiles) == 1 {
+			fmt.Printf("\nFile: %s\n", displayFileLabel(*selectedFiles[0]))
+		} else {
+			fmt.Printf("\nFiles (%d):\n", len(selectedFiles))
+			for _, f := range selectedFiles {
+				fmt.Printf("  - %s\n", displayFileLabel(*f))
+			}
 		}
 	}
 
@@ -702,14 +717,21 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		}
 	}
 
-	result, err := service.ApplyInstall(ctx, game, plan, opts, progress)
+	result, err := service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
 
 	// Ruling 1: an unaccepted file conflict comes back as a typed error, not
 	// a callback into this prompt. ApplyInstall stopped before it deployed
 	// or wrote anything (the download is cached), so accepting is simply a
 	// re-run of the same Apply with AcceptConflicts set.
+	//
+	// Ruling 15/2: under --json the prompt is unanswerable, so the
+	// *core.ConflictError is returned untouched and reportError renders it
+	// as the envelope with details.conflicts - the conflicts as data, which
+	// is strictly more than the prompt's own summary showed. --force is how
+	// a non-interactive caller accepts them (core reads it as
+	// AcceptConflicts, so a forced install never gets here at all).
 	var conflictErr *core.ConflictError
-	if errors.As(err, &conflictErr) {
+	if errors.As(err, &conflictErr) && !jsonOutput {
 		proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, conflictErr.Conflicts)
 		if readErr != nil {
 			// A genuine stdin read failure, not an ordinary decline - see
@@ -721,13 +743,18 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 			return fmt.Errorf("installation cancelled")
 		}
 		opts.AcceptConflicts = true
-		result, err = service.ApplyInstall(ctx, game, plan, opts, progress)
+		result, err = service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
 	}
 	if err != nil {
 		// Diagnostics accumulated before a fatal error (ApplyInstall's
 		// error-path convention returns them alongside it) were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
+	}
+
+	// Ruling 15: the InstallResult document, in place of the readout below.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
@@ -770,7 +797,9 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 // before this is ever called) is the only legitimate stdin read anywhere
 // in this path.
 func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Game, plan *core.InstallPlan, profileName string) error {
-	fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Dependencies)+1)
+	if !jsonOutput {
+		fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Dependencies)+1)
+	}
 
 	opts := core.InstallOptions{
 		// TargetVersion/TargetFileIDs pin --version/--file to the named/
@@ -863,7 +892,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	result, err := service.ApplyInstall(ctx, game, plan, opts, progress)
+	result, err := service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error (install.before_all,
 		// forced) were already printed above, live, via progress - nothing
@@ -877,6 +906,12 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		// explicitly requested" - surfaced before any dependency is
 		// touched, so nothing has been installed yet on this path either.
 		return err
+	}
+
+	// Ruling 15: the InstallResult document - Installed/Failed/Skipped and
+	// MergedPakSyncFailed are the data behind every line below.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	// The batch's one merged-pak sync attempt (inside ApplyInstall) has
@@ -1014,7 +1049,9 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		return err
 	}
 
-	fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Batch))
+	if !jsonOutput {
+		fmt.Printf("\nInstalling %d mod(s)...\n", len(plan.Batch))
+	}
 
 	opts := core.InstallOptions{
 		// No TargetVersion/TargetFileIDs: --version/--file name a single
@@ -1090,7 +1127,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		}
 	}
 
-	result, err := service.ApplyInstall(ctx, game, plan, opts, progress)
+	result, err := service.ApplyInstall(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
 		// above, live, via progress. No ordinary per-mod failure reaches
@@ -1099,6 +1136,11 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		// unforced install.before_all failure, a profile that can't be
 		// created, an unresolvable link method, or a stale plan).
 		return err
+	}
+
+	// Ruling 15: the InstallResult document (see doInstallBatch's twin).
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	// The batch's one merged-pak sync attempt (inside ApplyInstall) has now

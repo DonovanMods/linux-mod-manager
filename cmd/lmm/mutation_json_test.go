@@ -630,3 +630,128 @@ func TestJSONGolden_ImportScan(t *testing.T) {
 		assertJSONCLIGolden(t, "import_scan_dry_run", out, game.ModPath, "<GAME-DIR>")
 	})
 }
+
+// --- install (single / deps / multi) ---
+
+// seedConflictingOwner installs "other", which owns shared.esp in the game
+// dir, so a later install of a mod carrying the same file conflicts.
+// Mirrors install_test.go's own local seedOtherOwningSharedFile closure.
+func seedConflictingOwner(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "shared.esp", []byte("original-other-content")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "other", SourceID: "test-src", Name: "Other Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game,
+		&domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: game.ID}, "default"))
+}
+
+func TestJSONGolden_Install(t *testing.T) {
+	t.Run("single", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"}})
+		src.AddDownload("main", []byte("plugin content"))
+
+		out := runJSONCommand(t, func() error {
+			return doInstall(context.Background(), svc, game, nil)
+		})
+		assertJSONCLIGolden(t, "install_single_result", out)
+	})
+
+	t.Run("deps", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		src.AddMod(&domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "dep-main", FileName: "dep1.esp", IsPrimary: true}})
+		src.AddDownload("dep-main", []byte("dep content"))
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1",
+			Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}},
+			[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+		src.AddDownload("main", []byte("plugin content"))
+
+		out := runJSONCommand(t, func() error {
+			return doInstall(context.Background(), svc, game, nil)
+		})
+		assertJSONCLIGolden(t, "install_deps_result", out)
+	})
+
+	t.Run("multi", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		for _, id := range []string{"mod1", "mod2"} {
+			src.AddMod(&domain.Mod{ID: id, SourceID: "test-src", Name: "Mod " + id, Version: "1.0", GameID: "g1"},
+				[]domain.DownloadableFile{{ID: id + "-main", FileName: id + ".esp", IsPrimary: true}})
+			src.AddDownload(id+"-main", []byte("content "+id))
+		}
+		mods := []*domain.Mod{
+			{ID: "mod1", SourceID: "test-src", Name: "Mod mod1", Version: "1.0", GameID: "g1"},
+			{ID: "mod2", SourceID: "test-src", Name: "Mod mod2", Version: "1.0", GameID: "g1"},
+		}
+
+		out := runJSONCommand(t, func() error {
+			return installMultipleMods(context.Background(), svc, game, mods, "default")
+		})
+		assertJSONCLIGolden(t, "install_multi_result", out)
+	})
+}
+
+// TestDoInstall_JSON_ConflictWithoutForce_SurfacesEnvelopeWithDetails pins
+// the install-specific half of Ruling 15: under --json an unaccepted file
+// conflict never reaches the confirmation prompt at all - the
+// *core.ConflictError comes straight back, so reportError renders it as the
+// envelope with details.conflicts, and nothing is installed.
+func TestDoInstall_JSON_ConflictWithoutForce_SurfacesEnvelopeWithDetails(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	withJSONOutput(t)
+	seedConflictingOwner(t, svc, game)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "shared.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("new-mod1-content"))
+
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doInstall(context.Background(), svc, game, nil)
+		})
+	})
+
+	var conflictErr *core.ConflictError
+	require.ErrorAs(t, err, &conflictErr)
+	require.NotEmpty(t, conflictErr.Conflicts)
+	assert.Empty(t, stdout, "the conflict path emits no result document")
+	assert.Empty(t, stderr)
+
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "nothing may be installed when the conflict is unresolved")
+
+	// The envelope reportError would print for that error carries the
+	// conflicts as data.
+	envelope := captureStdout(t, func() error { reportError(err); return nil })
+	assert.Contains(t, envelope, "\"details\"")
+	assert.Contains(t, envelope, "\"conflicts\"")
+}
+
+// TestDoInstall_JSON_ForceAcceptsConflicts is the other side: --force
+// implies AcceptConflicts in core, so a --json install never reaches the
+// prompt and completes with its Result document.
+func TestDoInstall_JSON_ForceAcceptsConflicts(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	installForce = true
+	seedConflictingOwner(t, svc, game)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "shared.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("new-mod1-content"))
+
+	out := runJSONCommand(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doInstall(context.Background(), svc, game, nil)
+		})
+	})
+
+	var doc core.InstallResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Len(t, doc.Installed, 1)
+}

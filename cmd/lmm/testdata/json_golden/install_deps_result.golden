@@ -1,0 +1,18 @@
+{
+  "installed": [
+    {
+      "source_id": "test-src",
+      "mod_id": "dep1",
+      "name": "Dep One",
+      "version": "1.0"
+    },
+    {
+      "source_id": "test-src",
+      "mod_id": "mod1",
+      "name": "Mod One",
+      "version": "1.0"
+    }
+  ],
+  "files_deployed": 0,
+  "merged_pak_sync_failed": false
+}
