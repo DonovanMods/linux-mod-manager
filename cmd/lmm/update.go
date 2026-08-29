@@ -282,8 +282,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
 		}
-		// Surface warning but continue to show partial updates
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
+		// Surface warning but continue to show partial updates - under
+		// --json the same message already reaches the document via
+		// bulkCheckReport's ErrorMessage field, so printing it here too
+		// would both leak onto stderr and duplicate it (Ruling 15).
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
+		}
 	}
 
 	// finish is returned at every exit below rather than bailing out early: a

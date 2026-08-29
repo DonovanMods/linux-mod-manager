@@ -972,3 +972,31 @@ func TestDoUpdateRollback_JSON_AfterEachHookWarnings_ReachResultWithNoStderr(t *
 	assert.Contains(t, doc.Warnings, "uninstall.after_each hook failed: hook failed with exit code 1: "+uninstallScript)
 	assert.Contains(t, doc.Warnings, "install.after_each hook failed: hook failed with exit code 1: "+installScript)
 }
+
+// TestDoUpdate_JSON_BulkCheckError_NoStderrLeak pins Task 11 re-review round
+// 2, New Finding 1: a bulk `lmm update --json` whose source check fails with
+// a non-auth error used to print an unconditional "Warning: ..." line to
+// stderr even though the same message already reaches
+// UpdateCheckReport.ErrorMessage in the document - the exact "stderr stays
+// empty under --json" violation Important 3 fixed at its three named sites,
+// left standing here because this fourth site was outside the ruling's
+// scope.
+func TestDoUpdate_JSON_BulkCheckError_NoStderrLeak(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	// "unregistered-src" is never passed to svc.RegisterSource, so
+	// CheckGameUpdates' source lookup fails with a plain (non-auth) error -
+	// the ordinary "a source is unreachable" case, not an auth prompt.
+	seedInstalledForUpdate(t, svc, game, "unregistered-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+
+	withJSONOutput(t)
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	require.ErrorIs(t, err, ErrReported, "a failed check must still report non-zero")
+	assert.Empty(t, stderr, "the check-error warning must not leak to stderr under --json (Ruling 15)")
+
+	var doc core.UpdateCheckReport
+	decodeSingleDoc(t, stdout, &doc)
+	assert.Contains(t, doc.ErrorMessage, "unregistered-src", "the message must still reach the document")
+}
