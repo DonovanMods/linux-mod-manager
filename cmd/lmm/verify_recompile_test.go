@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,13 +98,14 @@ func TestDoVerify_StaleCompile_JSON(t *testing.T) {
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
 
-	var out verifyJSONOutput
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
+	var outDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &outDoc))
+	out := outDoc.Result
 
-	var found *verifyFileJSON
-	for i := range out.Files {
-		if out.Files[i].Status == "stale_compile" {
-			found = &out.Files[i]
+	var found *core.VerifyFinding
+	for i := range out.Findings {
+		if out.Findings[i].Status == "stale_compile" {
+			found = &out.Findings[i]
 		}
 	}
 	require.NotNil(t, found, "expected a stale_compile row")
@@ -145,10 +148,11 @@ func TestDoVerify_HealthyExmodzMod_NoFileCountMismatch(t *testing.T) {
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
 
-	var out verifyJSONOutput
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
+	var outDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &outDoc))
+	out := outDoc.Result
 
-	for _, f := range out.Files {
+	for _, f := range out.Findings {
 		assert.NotEqual(t, "file_count_mismatch", f.Status,
 			"a healthy exmodz mod (validate+retain only, zero deployment members by design) must never report file_count_mismatch")
 	}

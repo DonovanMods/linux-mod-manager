@@ -183,13 +183,22 @@ type RollbackOptions struct {
 // accumulated before the failure; callers should surface them alongside the
 // error.
 type RollbackResult struct {
-	ModName     string       `json:"mod_name"`
-	FromVersion string       `json:"from_version"`
-	ToVersion   string       `json:"to_version"`
-	Status      UpdateStatus `json:"status"`
-	Reason      string       `json:"reason,omitempty"`
-	Warnings    []string     `json:"warnings,omitempty"`
-	Notes       []string     `json:"notes,omitempty"`
+	// Mod identifies what was rolled back, with Version = the version rolled
+	// back TO - the convention core's own results follow (v2 Phase 3 Task 6,
+	// #302: rollback's own document had no mod reference at all, so
+	// `lmm update rollback --json` could not say which mod, or which source,
+	// it was reporting on). cmd/lmm/update.go's planUpdateResult sets
+	// UpdateApplyResult.Mod.Version differently for its own not-applied
+	// branches (pinned/up-to-date/locked/dry-run) - see that function's own
+	// doc comment.
+	Mod         domain.ModReference `json:"mod"`
+	ModName     string              `json:"mod_name"`
+	FromVersion string              `json:"from_version"`
+	ToVersion   string              `json:"to_version"`
+	Status      UpdateStatus        `json:"status"`
+	Reason      string              `json:"reason,omitempty"`
+	Warnings    []string            `json:"warnings,omitempty"`
+	Notes       []string            `json:"notes,omitempty"`
 }
 
 // ApplyRollback rolls plan.Mod back to its PreviousVersion, following
@@ -303,6 +312,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		return result, fmt.Errorf("previous version %s not found in cache", mod.PreviousVersion)
 	}
 
+	result.Mod = domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.PreviousVersion}
 	result.ModName = mod.Name
 	result.FromVersion = mod.Version
 	result.ToVersion = mod.PreviousVersion
@@ -389,12 +399,13 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	}
 
 	pm := s.NewProfileManager()
-	if err := pm.UpsertMod(game.ID, profileName, domain.ModReference{
+	restoredRef := domain.ModReference{
 		SourceID: rolledBackMod.SourceID,
 		ModID:    rolledBackMod.ID,
 		Version:  rolledBackMod.Version,
 		FileIDs:  rolledBackMod.FileIDs,
-	}); err != nil {
+	}
+	if err := pm.UpsertMod(game.ID, profileName, restoredRef); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {
@@ -410,6 +421,9 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	// upsert - has succeeded: everything after this point is non-fatal
 	// merged-pak housekeeping, so the rollback is reported as done (#301).
 	result.Status = UpdateRolledBack
+	// Upgraded from the early stamp above to the ref actually written: same
+	// source/mod/version, now also carrying the restored FileIDs.
+	result.Mod = restoredRef
 
 	// #197 I1 fix: a rollback changes the mod's Version (and possibly its
 	// FileIDs), both regeneration triggers - without this, the merged pak

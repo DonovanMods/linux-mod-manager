@@ -109,13 +109,14 @@ func TestDoVerify_StaleDeployment_ReportedAsWarning(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 	assert.Equal(t, 2, result.Warnings, "both convergence candidates must be counted as warnings")
 
 	var staleFiles []string
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.Status == "stale_deployment" {
 			staleFiles = append(staleFiles, f.FileID)
 		}
@@ -178,12 +179,13 @@ func TestDoVerify_Fix_StaleDeployment_JSONReportsFixed(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Warnings, "a successfully fixed candidate must not be counted as an outstanding warning")
 
 	var fixedFiles []string
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.Status == "fixed_stale_deployment" {
 			fixedFiles = append(fixedFiles, f.FileID)
 		}
@@ -271,13 +273,14 @@ func TestDoVerify_EmptyProfile_ConvergenceStillRuns(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 	assert.Equal(t, 1, result.Warnings)
-	require.Len(t, result.Files, 1)
-	assert.Equal(t, "stale_deployment", result.Files[0].Status)
-	assert.Equal(t, "stray.pak", result.Files[0].FileID)
+	require.Len(t, result.Findings, 1)
+	assert.Equal(t, "stale_deployment", result.Findings[0].Status)
+	assert.Equal(t, "stray.pak", result.Findings[0].FileID)
 
 }
 

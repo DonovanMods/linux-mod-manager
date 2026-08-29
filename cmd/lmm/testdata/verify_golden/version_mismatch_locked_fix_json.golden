@@ -1,21 +1,26 @@
 {
   "game_id": "g1",
   "profile": "default",
-  "files": [
-    {
-      "mod_id": "mod1",
-      "mod_name": "Mod One",
-      "file_id": "",
-      "status": "version_mismatch",
-      "note": "locked"
-    },
-    {
-      "mod_id": "mod1",
-      "mod_name": "Mod One",
-      "file_id": "2",
-      "status": "ok"
-    }
-  ],
-  "issues": 1,
-  "warnings": 0
+  "result": {
+    "findings": [
+      {
+        "mod_id": "mod1",
+        "mod_name": "Mod One",
+        "status": "version_mismatch",
+        "note": "locked",
+        "recorded": "1.5",
+        "effective": "1.0"
+      },
+      {
+        "mod_id": "mod1",
+        "mod_name": "Mod One",
+        "file_id": "2",
+        "status": "ok"
+      }
+    ],
+    "issues": 1,
+    "warnings": 0,
+    "checked": 1,
+    "has_files": true
+  }
 }

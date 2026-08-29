@@ -23,8 +23,10 @@ until you redeploy.
 
 .PP
 --json emits {game_id, profile, conflicts: [{path, owner, also_in,
-winner, stale}]}; winner and stale carry the same information as the
-human output's "Winner:" line and its stale suffix.
+load_order_winner, stale}]}, where owner, each also_in entry and
+load_order_winner are {key, name} objects; load_order_winner and stale
+carry the same information as the human output's "Winner:" line and its
+stale suffix.
 
 .PP
 Note: File tracking requires mods to be installed/deployed with lmm version 0.9.0+.

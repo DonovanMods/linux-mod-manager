@@ -1,0 +1,1 @@
+[{"id":"curseforge","name":"CurseForge","type":"built-in","auth":"yes","capabilities":"search,deps,updates,auth,versions"},{"id":"icarus","name":"Icarus (Project Daedalus)","type":"built-in","auth":"n/a","capabilities":"search,updates"},{"id":"nexusmods","name":"Nexus Mods","type":"built-in","auth":"yes","capabilities":"search,deps,updates,auth,versions"}]

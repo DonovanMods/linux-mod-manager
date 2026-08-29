@@ -1,4 +1,13 @@
 {
+  "mod": {
+    "source_id": "nexusmods",
+    "mod_id": "42",
+    "version": "1.2.2",
+    "file_ids": [
+      "file-0"
+    ],
+    "locked": false
+  },
   "mod_name": "Sample Mod",
   "from_version": "1.2.3",
   "to_version": "1.2.2",

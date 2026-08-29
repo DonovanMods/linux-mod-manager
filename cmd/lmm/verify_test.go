@@ -115,19 +115,20 @@ func TestDoVerify_VersionMismatch_ReportedAsIssue(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 1, result.Issues, "version mismatch must be bucketed as an issue")
 	assert.Equal(t, 0, result.Warnings)
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.Status == "version_mismatch" {
 			found = true
 			assert.Empty(t, f.FileID, "FileID left empty per brief - fix branch fills it in later")
 		}
 	}
-	assert.True(t, found, "expected a version_mismatch entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a version_mismatch entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_VersionUnverifiable_ReportedAsWarning guards the other half:
@@ -154,18 +155,19 @@ func TestDoVerify_VersionUnverifiable_ReportedAsWarning(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 	assert.Equal(t, 1, result.Warnings, "unverifiable version must be bucketed as a warning, not an issue")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.Status == "version_unverifiable" {
 			found = true
 		}
 	}
-	assert.True(t, found, "expected a version_unverifiable entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a version_unverifiable entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_VersionCheck_SourceUnreachable_JSONNotesReason guards PR
@@ -189,20 +191,21 @@ func TestDoVerify_VersionCheck_SourceUnreachable_JSONNotesReason(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues, "source-unreachable is a warning, not an issue")
 	assert.Equal(t, 1, result.Warnings, "the warnings count must be unaffected by adding the note")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Equal(t, "skipped", f.Status, "status must stay skipped")
 			assert.Contains(t, f.Note, "connection refused", "the source-unreachable reason must reach the JSON note, not just the text-mode line")
 		}
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_VersionCheck_MapsGameIDPerSourceMapping guards PR #128
@@ -372,18 +375,19 @@ func TestDoVerify_Fix_VersionMismatch_NotDeployed_RepairsRecord(t *testing.T) {
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues, "a successful repair must decrement issues back out")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" {
 			found = true
 			assert.Equal(t, "ok", f.Status, "repaired row's JSON status must flip to ok")
 		}
 	}
-	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Findings)
 
 	gameCache := svc.GetGameCache(game)
 	assert.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must exist under the effective (new) version key")
@@ -453,8 +457,9 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinksSymlink(t *testing.T) {
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 
 	// The symlink must resolve post-fix - it was refreshed to point at the
@@ -525,8 +530,9 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_JSONExposesNote(t *testing.T
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 
 	// FileID is empty specifically on the version-record pre-pass's own
 	// entry (the one this repair flips from version_mismatch to ok) - the
@@ -534,14 +540,14 @@ func TestDoVerify_Fix_VersionMismatch_RenameBlocked_JSONExposesNote(t *testing.T
 	// FileID "2" that never carried a note, so filtering on FileID avoids
 	// asserting Note against the wrong entry.
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Equal(t, "ok", f.Status)
 			assert.NotEmpty(t, f.Note, "the blocked-rename note must be visible in JSON, not just text output")
 		}
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_Fix_VersionMismatch_RenameBlocked_Deployed_LeavesWorkingSymlinkAlone
@@ -701,8 +707,9 @@ func TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testi
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 1, result.Issues, "a failed rename must not repair the row - the issue must still be counted")
 
 	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
@@ -713,7 +720,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testi
 	assert.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "no new cache dir must have been created under the effective key")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Equal(t, "version_mismatch", f.Status, "JSON row must stay version_mismatch when the rename fails")
@@ -724,7 +731,7 @@ func TestDoVerify_Fix_VersionMismatch_RenameFails_LeavesRecordUnchanged(t *testi
 			assert.NotEmpty(t, f.Note, "the repair failure reason must be visible in the JSON note, not text-only")
 		}
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 }
 
 // --- full-file audit (epic98), findings F1-F8 ---
@@ -993,8 +1000,9 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 
 	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
@@ -1026,14 +1034,14 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t
 	}
 
 	noteFound := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			noteFound = true
 			assert.Contains(t, f.Note, "second", "note must mention the repaired sibling profile")
 			assert.NotContains(t, f.Note, "third", "note must not mention the untouched, differently-versioned sibling")
 		}
 	}
-	assert.True(t, noteFound, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, noteFound, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_Fix_VersionMismatch_SiblingProfile_PrintsRepairedLine covers
@@ -1230,8 +1238,9 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
 
 	deployedPath := filepath.Join(game.ModPath, "mod1.esp")
@@ -1244,7 +1253,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks(t *testing
 	assert.Equal(t, "plugin content", string(content))
 
 	// This doVerify run only checks the "default" profile - checking
-	// result.Files' status wouldn't observe whether "second"'s own
+	// result.Findings' status wouldn't observe whether "second"'s own
 	// checksum survived the targeted setters above, since verify never
 	// looks at a non-active profile's checksums. Check directly instead.
 	secondFiles, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "second")
@@ -1345,20 +1354,21 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_RelinkFails_JSONNo
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Contains(t, f.Note, "second", "JSON note must mention the sibling whose re-link failed")
 			assert.Contains(t, f.Note, "FAILED", "JSON note must clearly flag it as a failure, not a success")
 		}
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 
-	// This run only checks the "default" profile, so result.Files wouldn't
+	// This run only checks the "default" profile, so result.Findings wouldn't
 	// reflect whether "second"'s checksum survived the targeted setters
 	// above - check directly instead.
 	secondFiles, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "second")
@@ -1447,17 +1457,18 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_UpsertModFails_JSONNotesFai
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Contains(t, f.Note, "second", "JSON note must mention the failed sibling profile")
 			assert.Contains(t, f.Note, "FAILED", "JSON note must clearly flag the failure, not read as a success")
 		}
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 
 	// PR #128 Copilot review round 4: the JSON "warnings" field must
 	// reflect the failed sibling repair - not just the note text - so a
@@ -1543,12 +1554,13 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 1, result.Issues, "the primary row's own repair failed, so the issue must still be counted")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Equal(t, "version_mismatch", f.Status, "status must stay version_mismatch - the PRIMARY row itself was not fixed")
@@ -1556,7 +1568,7 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 		}
 		assert.NotEqual(t, "no_checksum", f.Status, "the targeted setters must not have wiped the seeded checksum: %+v", f)
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 
 	// The sibling itself was, in fact, repaired.
 	secondMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "second")
@@ -1681,18 +1693,19 @@ func TestDoVerify_Fix_Missing_JSONNotesRedownloadFailure(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "2" {
 			found = true
 			assert.Equal(t, "missing", f.Status)
 			assert.NotEmpty(t, f.Note, "the redownload failure reason must reach the JSON note, not just the text-mode line")
 		}
 	}
-	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_Fix_Redownload_MapsGameIDPerSourceMapping guards the
@@ -1793,18 +1806,19 @@ func TestDoVerify_Fix_NoChecksum_JSONNotesRedownloadFailure(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "2" {
 			found = true
 			assert.Equal(t, "no_checksum", f.Status)
 			assert.NotEmpty(t, f.Note, "the redownload failure reason must reach the JSON note, not just the text-mode line")
 		}
 	}
-	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 file entry in JSON files: %+v", result.Findings)
 }
 
 // --- doVerify --fix checksum persistence for directory sources (#164) ---
@@ -1988,18 +2002,19 @@ func TestDoVerify_Fix_NoChecksum_NotPersisted_JSONStaysNoChecksum(t *testing.T) 
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "EmptyMod-1.0" && f.FileID == "main" {
 			found = true
 			assert.Equal(t, "no_checksum", f.Status, "no write happened, so the row must not claim ok")
 			assert.NotEmpty(t, f.Note, "the reason no checksum was stored must reach --json")
 		}
 	}
-	assert.True(t, found, "expected an EmptyMod-1.0 file entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected an EmptyMod-1.0 file entry in JSON files: %+v", result.Findings)
 	// 2 warnings: the honest no_checksum one under test, plus the
 	// pre-existing file_count_mismatch a fileless mod's empty cache entry
 	// legitimately draws from the file-count pre-pass.
@@ -2020,18 +2035,19 @@ func TestDoVerify_Fix_Missing_NotPersisted_JSONStaysNoChecksum(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "EmptyMod-1.0" && f.FileID == "main" {
 			found = true
 			assert.Equal(t, "no_checksum", f.Status, "cache was restored but no checksum stored - the row must say so, not claim ok")
 			assert.NotEmpty(t, f.Note, "the reason no checksum was stored must reach --json")
 		}
 	}
-	assert.True(t, found, "expected an EmptyMod-1.0 file entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected an EmptyMod-1.0 file entry in JSON files: %+v", result.Findings)
 	assert.Equal(t, 0, result.Issues, "the MISSING issue itself was genuinely repaired")
 	assert.Equal(t, 1, result.Warnings, "the unpersisted checksum must still be counted as a warning")
 }
@@ -2134,19 +2150,20 @@ func TestDoVerify_Fix_VersionMismatchLocked_JSONKeepsStatusAndNotesLocked(t *tes
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 1, result.Issues, "a locked mod's version mismatch must still count as an issue since --fix refused it")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Equal(t, "version_mismatch", f.Status, "status must NOT flip to ok - --fix refused the repair")
 			assert.Equal(t, "locked", f.Note, "note must additively flag the refusal reason")
 		}
 	}
-	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_Fix_VersionMismatchUnlocked_StillRepairs is a guardrail
@@ -2164,8 +2181,9 @@ func TestDoVerify_Fix_VersionMismatchUnlocked_StillRepairs(t *testing.T) {
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues, "an unlocked mismatch must still be repaired and drop back out of issues")
 
 	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
@@ -2231,18 +2249,19 @@ func TestDoVerify_LockedDrift_JSONNotCountedAsIssue(t *testing.T) {
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues, "pending convergence must not be counted as an issue")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Contains(t, f.Note, "lock pending convergence", "the JSON note must additively carry the pending-convergence detail")
 		}
 	}
-	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 entry in JSON files: %+v", result.Findings)
 }
 
 // TestDoVerify_LockedConverged_NoNote closes the named no-note edge case: a
@@ -2279,10 +2298,11 @@ func TestDoVerify_LockedConverged_NoNote(t *testing.T) {
 	outJSON := captureStdout(t, func() error {
 		return doVerify(cmd, svc, game, nil)
 	})
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues)
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			t.Fatalf("expected no version-check row for a converged locked mod, got: %+v", f)
 		}
@@ -2417,12 +2437,13 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt(t *te
 		return doVerify(cmd, svc, game, nil)
 	})
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(outJSON), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(outJSON), &resultDoc))
+	result := resultDoc.Result
 	assert.Equal(t, 0, result.Issues, "the repair itself succeeded - the undeploy warning must not keep the issue counted")
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == "mod1" && f.FileID == "" {
 			found = true
 			assert.Equal(t, "ok", f.Status, "the repaired row still flips to ok")
@@ -2430,7 +2451,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_UndeployWarning_JSONNotesIt(t *te
 			assert.Contains(t, f.Note, "not a symlink", "the note must carry the underlying reason")
 		}
 	}
-	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Files)
+	assert.True(t, found, "expected a mod1 version-check entry in JSON files: %+v", result.Findings)
 
 	// The re-link itself must still have completed: the squatter was
 	// replaced by a working symlink into the renamed cache dir.

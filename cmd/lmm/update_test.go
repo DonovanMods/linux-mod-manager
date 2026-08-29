@@ -634,7 +634,8 @@ func TestApplyUpdate_ForcedBeforeEachHookFailure_PrintsWarningAndApplies(t *test
 	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
 	require.NoError(t, err)
 	stderr, err := captureStderrErr(t, func() error {
-		return applyUpdate(context.Background(), svc, game, plan)
+		_, applyErr := applyUpdate(context.Background(), svc, game, plan)
+		return applyErr
 	})
 
 	require.NoError(t, err, "a forced before_each hook failure must not abort the update")
@@ -674,7 +675,8 @@ func TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed(t *testing.T)
 	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
 	require.NoError(t, err)
 	stderr, err := captureStderrErr(t, func() error {
-		return applyUpdate(context.Background(), svc, game, plan)
+		_, applyErr := applyUpdate(context.Background(), svc, game, plan)
+		return applyErr
 	})
 
 	require.NoError(t, err, "after_each hook failures must never fail the update")

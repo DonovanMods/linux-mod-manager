@@ -1,0 +1,20 @@
+{
+  "mod": {
+    "id": "a",
+    "source_id": "src",
+    "name": "Mod A",
+    "version": "1.5",
+    "author": "Author A",
+    "summary": "A short summary.",
+    "description": "<p>Line one.</p><br/><p>Line &amp; two.</p>",
+    "game_id": "g1",
+    "category": "Utilities",
+    "downloads": 0,
+    "endorsements": 84213,
+    "picture_url": "https://example.invalid/img/1.png",
+    "source_url": "https://example.invalid/mods/1",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "0001-01-01T00:00:00Z"
+  }
+}

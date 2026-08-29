@@ -157,9 +157,10 @@ func TestDoConflicts_TwinConflict_Stale_Text(t *testing.T) {
 		out)
 }
 
-// TestDoConflicts_TwinConflict_JSON pins the full JSON bytes: the
-// pre-extraction fields in their exact positions plus the additive "winner"
-// and "stale" fields.
+// TestDoConflicts_TwinConflict_JSON pins the full JSON bytes of the v2
+// document (#302): core.ProfileConflict's own shape, where owner / each
+// also_in entry / load_order_winner are {key, name} objects rather than
+// bare display names.
 func TestDoConflicts_TwinConflict_JSON(t *testing.T) {
 	svc, game := setupConflictsTest(t)
 	seedTwinConflictFixture(t, svc, game)
@@ -176,11 +177,20 @@ func TestDoConflicts_TwinConflict_JSON(t *testing.T) {
 			"  \"conflicts\": [\n"+
 			"    {\n"+
 			"      \"path\": \"shared.esp\",\n"+
-			"      \"owner\": \"Mod B\",\n"+
+			"      \"owner\": {\n"+
+			"        \"key\": \"src:b\",\n"+
+			"        \"name\": \"Mod B\"\n"+
+			"      },\n"+
 			"      \"also_in\": [\n"+
-			"        \"Mod A\"\n"+
+			"        {\n"+
+			"          \"key\": \"src:a\",\n"+
+			"          \"name\": \"Mod A\"\n"+
+			"        }\n"+
 			"      ],\n"+
-			"      \"winner\": \"Mod B\",\n"+
+			"      \"load_order_winner\": {\n"+
+			"        \"key\": \"src:b\",\n"+
+			"        \"name\": \"Mod B\"\n"+
+			"      },\n"+
 			"      \"stale\": false\n"+
 			"    }\n"+
 			"  ]\n"+

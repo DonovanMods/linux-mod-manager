@@ -173,6 +173,89 @@ list` is only visible to app). Each carries snake_case json tags and a recorded 
 verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
   the query types; CLI output — text and JSON — is unchanged. (#301)
 
+### Changed — JSON output (v2)
+
+Every `--json` document is now a core/domain type marshalled with
+`encoding/json/v2` (deterministic key order, 2-space indent, exactly one
+document on stdout with one trailing newline). The nine commands that
+supported `--json` no longer project their own view structs — those are
+deleted — so the CLI's wire shape is the same contract `internal/{core,domain,app}`'s
+recorded goldens pin, and `lmm serve` will render the same documents. **This
+is a breaking change for scripts written against the 1.x JSON**; it happens
+once, in the v2.0.0 window. The error envelope is now
+`{"error": "...", "details": {...}}`, with `details` present only for typed
+errors that carry data. See the README's "JSON output" section. (#302)
+
+Per command:
+
+- `lmm list` → `core.ModList`. Each `mods[]` row is the whole
+  `domain.InstalledMod` plus `locked`/`locked_version`/`convert_paks`:
+  `source` → `source_id`, and author, summary, description, game_id,
+  category, downloads, picture_url, source_url, files, dependencies,
+  updated_at, profile_name, installed_at and manual_download are now present.
+- `lmm list --profiles` → `core.ProfileNames` (unchanged shape: `{game_id,
+profiles}`).
+- `lmm status` → `core.StatusReport`; `lmm status -g <id>` →
+  `core.GameStatus`. Each game row is the whole `domain.Game` (source_ids,
+  link_method_explicit, hooks, deploy_mode, convert_paks_explicit), and
+  `is_default`, `installed_mod_count`, `enabled_mod_count` and
+  `conversion_failures` are always present rather than omitted when zero.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state convention `list --json` already used for
+  mods. `lmm status -g <id> --json`'s `cache_path` also changes meaning: it
+  used to be the _resolved_ cache root and is now the _configured per-game
+  override_ (absent when unset); the resolved value moved to the new
+  `resolved_cache_path`, which is always present.
+- `lmm search` → `core.SearchReport`. Each hit is the whole `domain.Mod`
+  plus `installed` (`source` → `source_id`); `warnings` is now
+  `[{source_id, error}]` instead of pre-formatted strings and is always
+  present; `total_results` (the untruncated count behind a `--limit`-capped
+  `mods[]`) and `attempted_count` (how many sources could actually search)
+  are new.
+- `lmm verify` → `core.VerifyReport`. Findings and counts move under
+  `result`: `files` → `result.findings`, plus `result.checked` and
+  `result.has_files`. Finding keys are omitted when unset, and a finding may
+  now carry `recorded`/`effective`/`version`.
+- `lmm conflicts` → `core.ConflictReport`. `owner`, each `also_in` entry and
+  `winner` → `load_order_winner` are now `{key, name}` objects, where `key`
+  is `"<source_id>:<mod_id>"`, instead of bare display names.
+- `lmm mod show` → `core.ModDetail`. The source metadata moves under `mod`:
+  `{mod: {...}, installed?: {...}}`. The `installed` block is unchanged.
+- `lmm source list` → `[]app.SourceInfo`. Now indented like every other
+  document (it was the last compact one). `auth` is the enum
+  `none|required|authenticated` (was `n/a|no|yes`) and `capabilities` is a
+  string array (was a comma-joined string). An error row (a source that
+  failed to construct) now omits the `auth` key entirely, rather than
+  carrying it as `""`.
+- `lmm game list` → `[]core.GameListEntry`. Each row is the whole
+  `domain.Game` plus `default`: `sources` → `source_ids`, and link_method,
+  link_method_explicit, cache_path, hooks and convert_paks_explicit are new.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state `list --json` already used for mods.
+- `lmm update` (bulk) → `core.UpdateCheckReport`. Each `updates[]` entry is a
+  `domain.Update`: the installed mod under `installed_mod` (carrying
+  `update_policy`) plus `new_version`, replacing the flat
+  mod_id/name/current_version/available_version/update_policy row.
+  `reason: "stale_compile"` → `recompile_reason`, carrying core's own wording.
+- `lmm update <mod-id>` → `core.UpdateApplyResult`; `lmm update rollback` →
+  `core.RollbackResult`. `mod_id` → `mod`, the profile reference
+  `{source_id, mod_id, version, locked}`, so a document names its source;
+  rollback's `name` → `mod_name`; `to_version` is always present; `warnings`
+  and `notes` appear when the operation produced any.
+- `core.RollbackResult` gains `Mod` (a `domain.ModReference`), matching
+  `UpdateApplyResult` — without it the rollback document had no way to say
+  which mod, from which source, it was reporting on. (#302)
+- A `false` boolean or `0` tagged `omitempty` is now emitted rather than
+  omitted (`encoding/json/v2` omits only empty JSON values — `""`, `null`,
+  `{}`, `[]`); `lmm update --json`'s unlocked `updates[]` entries therefore
+  carry `"locked": false` explicitly.
+- `encoding/json/v2` no longer HTML-escapes the angle-bracket and ampersand
+  characters the way `encoding/json` did; string fields that can carry
+  markup (`mod show`'s `description`, `update <mod-id>`'s `changelog`) may
+  now contain those characters literally instead of as escape sequences.
+  Semantically identical after decoding, but pasting lmm's JSON directly
+  into an HTML/script context is no longer incidentally safe.
+
 ### Fixed
 
 - SQLite pragmas (foreign_keys, WAL, busy_timeout) now apply to every pooled connection via the DSN; `:memory:` databases use a single connection. (#271)

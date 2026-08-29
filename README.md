@@ -223,9 +223,9 @@ Lock state shows up alongside version info wherever it's installed: `lmm
 list -v`'s `LOCKED` column (the locked version, or `-`), `lmm mod show`'s
 Installed section, and `lmm update`'s table, where a locked mod's `POLICY`
 cell gets a `[locked@<version>]` suffix. `--json` output for `list` and `mod
-show` carries the same information additively (`locked`, `locked_version`),
-and bulk `lmm update --json` marks a locked mod's `updates[]` entry with
-`"locked": true` (omitted when unlocked); single-mod `lmm update --json`
+show` carries the same information (`locked`, `locked_version`), and bulk
+`lmm update --json` marks a locked mod's `updates[]` entry with
+`"locked": true`; single-mod `lmm update --json`
 instead reports a refused apply as `status: "skipped", reason: "locked"`, and
 `lmm update rollback` of a locked mod is refused the same way — before its
 "Rolling back..." header, with the same remedies and JSON document. `lmm verify` still reports a locked mod's version-record
@@ -755,18 +755,73 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 ### Global Flags
 
-| Flag          | Short | Description                                                                                                             |
-| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------- |
-| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                |
-| `--verbose`   | `-v`  | Enable verbose output                                                                                                   |
-| `--config`    |       | Custom config directory                                                                                                 |
-| `--data`      |       | Custom data directory                                                                                                   |
-| `--json`      |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list); errors print `{"error":"..."}` |
-| `--no-hooks`  |       | Disable all hooks at runtime                                                                                            |
-| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                          |
-| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                         |
+| Flag          | Short | Description                                                                                                                          |
+| ------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                             |
+| `--verbose`   | `-v`  | Enable verbose output                                                                                                                |
+| `--config`    |       | Custom config directory                                                                                                              |
+| `--data`      |       | Custom data directory                                                                                                                |
+| `--json`      |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list, game list) — see [JSON output](#json-output) |
+| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                         |
+| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                       |
+| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                      |
 
 Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
+
+### JSON output
+
+`--json` prints **exactly one JSON document to stdout**, 2-space indented,
+with a single trailing newline and nothing else. Warnings, progress and
+human notices go to stderr, so `lmm ... --json | jq` is always safe. Map keys
+and list order are deterministic, so two runs over the same state produce
+byte-identical output.
+
+On failure the document is an envelope instead:
+
+```json
+{ "error": "game not found: skyrim-se" }
+```
+
+An error that carries structured data adds a `details` object beside it;
+plain errors have no `details` key at all. Either way, stdout still holds one
+document and the exit code is non-zero.
+
+Every document is a type from `internal/core`, `internal/domain` or
+`internal/app` — never a shape invented by the CLI — and each of those types
+has a recorded golden under `internal/core/testdata/json/`,
+`internal/domain/testdata/json/` or `internal/app/testdata/json/` that pins
+its exact wire shape. A field can only change by changing that golden, which
+shows up as a diff in review.
+
+| Command                        | Document                                                                                     |
+| ------------------------------ | -------------------------------------------------------------------------------------------- |
+| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                |
+| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                |
+| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                            |
+| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                           |
+| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count}` |
+| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`          |
+| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                    |
+| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                 |
+| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                       |
+| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                   |
+| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                |
+| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`              |
+| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`             |
+
+List fields are always arrays, never `null`: an empty listing is `[]` and a
+game with no configured sources is `{}`. Enum-valued fields (link method,
+deploy mode, update policy, update status, auth state) are their text names,
+not integers. Times are RFC 3339.
+
+> **v2 changed these shapes.** Before v2 each command projected its own
+> ad-hoc view struct, so the JSON was a parallel, undocumented contract that
+> could drift from what core actually knew. v2 emits core's own types
+> directly — richer, self-describing documents (a `mods[]` row is a whole
+> installed mod; a mod reference names its source, not just an ID) — and
+> keys were renamed where the old name was ambiguous. Scripts written against
+> the 1.x JSON need updating. See the CHANGELOG's "Changed — JSON output
+> (v2)" section for the full field-by-field list.
 
 ### Commands
 
@@ -917,7 +972,7 @@ A game with no configured sources at all fails fast with a diagnostic instead of
 Error: no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml
 ```
 
-`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`.
+`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`, each entry `{source_id, error}`.
 
 ### Update check behavior
 

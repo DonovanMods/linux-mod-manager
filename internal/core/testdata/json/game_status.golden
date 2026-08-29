@@ -12,12 +12,11 @@
     "uninstall": {}
   },
   "deploy_mode": "extract",
-  "convert_paks": false,
   "convert_paks_explicit": false,
   "link_method": "symlink",
   "effective_link_method": "hardlink",
   "link_method_source": "profile",
-  "cache_path": "/home/user/.local/share/lmm",
+  "resolved_cache_path": "/home/user/.local/share/lmm",
   "profiles": [
     {
       "name": "default",

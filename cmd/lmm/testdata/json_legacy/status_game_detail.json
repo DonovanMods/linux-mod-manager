@@ -1,0 +1,23 @@
+{
+  "id": "alpha",
+  "name": "Alpha",
+  "install_path": "/games/alpha",
+  "mod_path": "/games/alpha/Mods",
+  "link_method": "symlink",
+  "effective_link_method": "symlink",
+  "link_method_source": "global",
+  "cache_path": "/cache/alpha",
+  "profiles": [
+    {
+      "name": "default",
+      "mod_count": 0,
+      "is_default": false
+    },
+    {
+      "name": "survival",
+      "mod_count": 0,
+      "is_default": false
+    }
+  ],
+  "active_profile": "default"
+}

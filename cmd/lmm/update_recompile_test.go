@@ -101,7 +101,7 @@ func TestDoUpdate_JSON_ReportsRecompileNeeded(t *testing.T) {
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
 
-	var out updateJSONOutput
+	var out core.UpdateCheckReport
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
 	require.Len(t, out.Updates, 1)
 	row := out.Updates[0]
@@ -109,11 +109,12 @@ func TestDoUpdate_JSON_ReportsRecompileNeeded(t *testing.T) {
 	// merged-pak mod (domain.SourceMerged/"merged-pak"), not the
 	// contributing "bear-mount" mod - CheckMergedPakStaleness is
 	// profile-scoped, not per-mod.
-	assert.Equal(t, "merged-pak", row.ModID)
-	assert.Equal(t, "merged", row.Current)
-	assert.Equal(t, "merged", row.Available, "a staleness row's available version equals current - nothing has a real version change")
+	assert.Equal(t, "merged-pak", row.InstalledMod.ID)
+	assert.Equal(t, "merged", row.InstalledMod.Version)
+	assert.Equal(t, "merged", row.NewVersion, "a staleness row's available version equals current - nothing has a real version change")
 	assert.True(t, row.RecompileNeeded)
-	assert.Equal(t, "stale_compile", row.Reason)
+	assert.Equal(t, "base pak updated", row.RecompileReason,
+		"the wire now carries core's own reason, not the CLI's hardcoded \"stale_compile\"")
 }
 
 // TestApplySingleUpdate_Recompile_AppliesAndRedeploys drives `lmm update
@@ -155,9 +156,9 @@ func TestApplySingleUpdate_Recompile_JSON(t *testing.T) {
 	require.NoError(t, err)
 	_, _ = buf.ReadFrom(r)
 
-	var out singleUpdateJSON
+	var out core.UpdateApplyResult
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &out))
-	assert.Equal(t, "recompiled", out.Status)
+	assert.Equal(t, "recompiled", out.Status.String())
 	assert.Equal(t, "3.3", out.FromVersion)
 	assert.Equal(t, "3.3", out.ToVersion)
 }
@@ -197,12 +198,12 @@ func TestApplySingleUpdate_RecompileLocked_JSON(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	var doc singleUpdateJSON
+	var doc core.UpdateApplyResult
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
-	assert.Equal(t, "bear-mount", doc.ModID)
+	assert.Equal(t, "bear-mount", doc.Mod.ModID)
 	assert.Equal(t, "3.3", doc.FromVersion)
 	assert.Equal(t, "3.3", doc.ToVersion)
-	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "skipped", doc.Status.String())
 	assert.Equal(t, "locked", doc.Reason)
 }
 
@@ -239,12 +240,12 @@ func TestApplySingleUpdate_RecompileDryRun_JSON(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	var doc singleUpdateJSON
+	var doc core.UpdateApplyResult
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
-	assert.Equal(t, "bear-mount", doc.ModID)
+	assert.Equal(t, "bear-mount", doc.Mod.ModID)
 	assert.Equal(t, "3.3", doc.FromVersion)
 	assert.Equal(t, "3.3", doc.ToVersion)
-	assert.Equal(t, "recompile_available", doc.Status)
+	assert.Equal(t, "recompile_available", doc.Status.String())
 	assert.Equal(t, 0, compiler.compileCalls, "dry-run must never actually recompile")
 }
 

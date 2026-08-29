@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -15,20 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 )
-
-// gameListJSON is the --json row shape for 'game list': Default is an
-// explicit boolean (rather than embedding a marker in ID, as the table view
-// does) so a JSON consumer doesn't need to string-match the ID field.
-type gameListJSON struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	InstallPath string            `json:"install_path"`
-	ModPath     string            `json:"mod_path"`
-	DeployMode  string            `json:"deploy_mode"`
-	ConvertPaks *bool             `json:"convert_paks,omitempty"`
-	Sources     map[string]string `json:"sources"`
-	Default     bool              `json:"default"`
-}
 
 var gameListCmd = &cobra.Command{
 	Use:   "list",
@@ -63,34 +47,9 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	}
 
 	if jsonOutput {
-		rows := make([]gameListJSON, len(games))
-		for i, g := range games {
-			sources := g.SourceIDs
-			if sources == nil {
-				sources = map[string]string{}
-			}
-			row := gameListJSON{
-				ID:          g.ID,
-				Name:        g.Name,
-				InstallPath: g.InstallPath,
-				ModPath:     g.ModPath,
-				DeployMode:  g.DeployMode.String(),
-				Sources:     sources,
-				Default:     g.Default,
-			}
-			// Populate convert_paks only for DeployCompile games
-			if g.DeployMode == domain.DeployCompile {
-				v := g.ConvertPaks
-				row.ConvertPaks = &v
-			}
-			rows[i] = row
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(rows); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		// A top-level array, as it has always been; emitJSON encodes an empty
+		// registry as [] and a game's absent source map as {}, never null.
+		return emitJSON(games)
 	}
 
 	if len(games) == 0 {
@@ -115,7 +74,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 		convertPaksStr := ""
 		if g.DeployMode == domain.DeployCompile {
 			convertPaksStr = "off"
-			if g.ConvertPaks {
+			if g.Game.ConvertPaks {
 				convertPaksStr = "on"
 			}
 		}

@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -13,20 +11,6 @@ import (
 )
 
 var conflictsProfile string
-
-type conflictsJSONOutput struct {
-	GameID    string         `json:"game_id"`
-	Profile   string         `json:"profile"`
-	Conflicts []conflictJSON `json:"conflicts"`
-}
-
-type conflictJSON struct {
-	Path   string   `json:"path"`
-	Owner  string   `json:"owner"`
-	AlsoIn []string `json:"also_in"`
-	Winner string   `json:"winner"`
-	Stale  bool     `json:"stale"`
-}
 
 var conflictsCmd = &cobra.Command{
 	Use:   "conflicts",
@@ -42,8 +26,10 @@ apply)" - the deployed file is out of date with the current load order
 until you redeploy.
 
 --json emits {game_id, profile, conflicts: [{path, owner, also_in,
-winner, stale}]}; winner and stale carry the same information as the
-human output's "Winner:" line and its stale suffix.
+load_order_winner, stale}]}, where owner, each also_in entry and
+load_order_winner are {key, name} objects; load_order_winner and stale
+carry the same information as the human output's "Winner:" line and its
+stale suffix.
 
 Note: File tracking requires mods to be installed/deployed with lmm version 0.9.0+.
 Older mods may need to be redeployed to track their files.
@@ -80,18 +66,15 @@ func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) erro
 		return fmt.Errorf("getting installed mods: %w", err)
 	}
 
-	emitEmptyJSON := func() error {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: []conflictJSON{}}); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
-	}
+	// The report is the whole --json document in all three branches below;
+	// a nil Conflicts slice encodes as [], so "no installed mods" and "no
+	// conflicts found" emit the same empty document they always did while
+	// the text branches keep their two distinct sentences.
+	report := &core.ConflictReport{GameID: game.ID, Profile: profileName}
 
 	if len(mods) == 0 {
 		if jsonOutput {
-			return emitEmptyJSON()
+			return emitJSON(report)
 		}
 		fmt.Println("No installed mods.")
 		return nil
@@ -101,36 +84,18 @@ func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) erro
 	if err != nil {
 		return fmt.Errorf("getting conflicts: %w", err)
 	}
+	report.Conflicts = conflicts
 
 	if len(conflicts) == 0 {
 		if jsonOutput {
-			return emitEmptyJSON()
+			return emitJSON(report)
 		}
 		fmt.Println("No conflicts found.")
 		return nil
 	}
 
 	if jsonOutput {
-		out := conflictsJSONOutput{GameID: game.ID, Profile: profileName, Conflicts: make([]conflictJSON, len(conflicts))}
-		for i, c := range conflicts {
-			alsoIn := make([]string, len(c.AlsoIn))
-			for j, m := range c.AlsoIn {
-				alsoIn[j] = m.Name
-			}
-			out.Conflicts[i] = conflictJSON{
-				Path:   c.Path,
-				Owner:  c.Owner.Name,
-				AlsoIn: alsoIn,
-				Winner: c.LoadOrderWinner.Name,
-				Stale:  c.Stale,
-			}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		return emitJSON(report)
 	}
 
 	fmt.Printf("Found %d conflicting file(s):\n\n", len(conflicts))

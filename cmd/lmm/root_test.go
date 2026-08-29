@@ -107,7 +107,16 @@ func TestRunRoot_PropagatesContextCancellation(t *testing.T) {
 func TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere(t *testing.T) {
 	const wantErrText = `invalid --log-level "loud": expected off, error, warn, info, or debug`
 	wantPlain := "Error: " + wantErrText + "\n"
-	wantJSON := `{"error":"invalid --log-level \"loud\": expected off, error, warn, info, or debug"}` + "\n"
+
+	// wantJSON is reportError's actual --json rendering of wantErrText,
+	// captured via the real code path: this test's concern is whether the
+	// same error text reaches --json output regardless of flag order, not
+	// emitJSON's byte-for-byte envelope framing (pinned separately in
+	// jsonout_test.go).
+	oldJSONForCapture := jsonOutput
+	jsonOutput = true
+	wantJSON := captureStdout(t, func() error { reportError(errors.New(wantErrText)); return nil })
+	jsonOutput = oldJSONForCapture
 
 	cases := []struct {
 		name string

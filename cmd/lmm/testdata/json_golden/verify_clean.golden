@@ -1,0 +1,18 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "result": {
+    "findings": [
+      {
+        "mod_id": "mod1",
+        "mod_name": "Mod One",
+        "file_id": "2",
+        "status": "ok"
+      }
+    ],
+    "issues": 0,
+    "warnings": 0,
+    "checked": 2,
+    "has_files": true
+  }
+}

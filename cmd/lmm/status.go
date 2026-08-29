@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"text/tabwriter"
 	"time"
@@ -41,12 +39,10 @@ func doStatus(ctx context.Context, service *core.Service) error {
 
 	if len(games) == 0 {
 		if jsonOutput {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(statusJSONOutput{Games: []statusGameJSON{}}); err != nil {
-				return fmt.Errorf("encoding json: %w", err)
-			}
-			return nil
+			// Service.Status over zero games is a trivial call whose Games
+			// slice is empty-but-non-nil, so the document stays {"games": []}
+			// without this branch hand-building one.
+			return emitJSON(service.Status(ctx))
 		}
 		fmt.Println("No games configured.")
 		fmt.Println("\nUse 'lmm game add' to add a game.")
@@ -68,7 +64,7 @@ func doStatus(ctx context.Context, service *core.Service) error {
 	report := service.Status(ctx)
 
 	if jsonOutput {
-		return outputStatusJSON(report)
+		return emitJSON(report)
 	}
 
 	// Show summary of all games
@@ -154,40 +150,6 @@ func doStatus(ctx context.Context, service *core.Service) error {
 	return nil
 }
 
-type statusJSONOutput struct {
-	Games []statusGameJSON `json:"games"`
-}
-
-type statusGameJSON struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	InstallPath string   `json:"install_path"`
-	ModPath     string   `json:"mod_path"`
-	LinkMethod  string   `json:"link_method"`
-	Profiles    []string `json:"profiles"`
-	ModCount    int      `json:"mod_count"`
-	IsDefault   bool     `json:"is_default,omitempty"`
-}
-
-func outputStatusJSON(report *core.StatusReport) error {
-	out := statusJSONOutput{Games: make([]statusGameJSON, 0, len(report.Games))}
-	for _, summary := range report.Games {
-		out.Games = append(out.Games, statusGameJSON{
-			ID:          summary.ID,
-			Name:        summary.Name,
-			InstallPath: summary.InstallPath,
-			ModPath:     summary.ModPath,
-			LinkMethod:  summary.LinkMethod.String(),
-			Profiles:    summary.Profiles,
-			ModCount:    summary.ModCount,
-			IsDefault:   summary.IsDefault,
-		})
-	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
-}
-
 func showGameStatusJSON(ctx context.Context, service *core.Service, gameID string) error {
 	game, err := service.GetGame(gameID)
 	if err != nil {
@@ -197,72 +159,7 @@ func showGameStatusJSON(ctx context.Context, service *core.Service, gameID strin
 	if err != nil {
 		return err
 	}
-	profileList := make([]statusProfileJSON, len(st.Profiles))
-	for i, p := range st.Profiles {
-		profileList[i] = statusProfileJSON{Name: p.Name, ModCount: p.ModCount, IsDefault: p.IsDefault}
-	}
-	out := statusGameDetailJSON{
-		ID:                  st.ID,
-		Name:                st.Name,
-		InstallPath:         st.InstallPath,
-		ModPath:             st.ModPath,
-		LinkMethod:          st.LinkMethod.String(),
-		EffectiveLinkMethod: st.EffectiveLinkMethod.String(),
-		LinkMethodSource:    st.LinkMethodSource,
-		Profiles:            profileList,
-		CachePath:           st.CachePath,
-		ActiveProfile:       st.ActiveProfile,
-		InstalledModCount:   st.InstalledModCount,
-		EnabledModCount:     st.EnabledModCount,
-		LastDeploy:          st.LastDeploy,
-		ConversionFailures:  st.ConversionFailures,
-	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
-}
-
-type statusGameDetailJSON struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	InstallPath string `json:"install_path"`
-	ModPath     string `json:"mod_path"`
-	// LinkMethod is the GAME-level resolution (game-explicit or global
-	// default) - deliberately NOT the profile-effective method, for JSON
-	// contract stability (#155): consumers written before per-profile
-	// overrides existed read this key as the game's setting, so its meaning
-	// stays put and the profile-aware fields below are additive instead.
-	LinkMethod string `json:"link_method"`
-	// EffectiveLinkMethod is what a deploy into the active profile actually
-	// uses (profile > game > global) - the JSON twin of the text output's
-	// Link Method line. LinkMethodSource says which level won: "profile",
-	// "game", or "global". Both are always present; with no profile
-	// override they equal LinkMethod and its level.
-	EffectiveLinkMethod string              `json:"effective_link_method"`
-	LinkMethodSource    string              `json:"link_method_source"`
-	CachePath           string              `json:"cache_path"`
-	Profiles            []statusProfileJSON `json:"profiles"`
-	ActiveProfile       string              `json:"active_profile,omitempty"`
-	InstalledModCount   int                 `json:"installed_mod_count,omitempty"`
-	EnabledModCount     int                 `json:"enabled_mod_count,omitempty"`
-	// LastDeploy is nil for a profile that has never been deployed. Kept
-	// omitempty (task-4-brief.md / lmm-repo-conventions' JSON-contract-
-	// additions-are-MINOR precedent): an unset field, not a null or zero
-	// time, is what makes this an additive change existing consumers can
-	// ignore entirely.
-	LastDeploy *time.Time `json:"last_deploy,omitempty"`
-	// ConversionFailures is the active profile's count of pak-conversion
-	// failures (#221 design §5) - mods whose prebuilt .pak could not be
-	// converted into the merged pak on the last sync and stay raw-deployed
-	// instead ('lmm verify' reports each one by name). Zero/omitted for a
-	// non-DeployCompile game or a profile with none.
-	ConversionFailures int `json:"conversion_failures,omitempty"`
-}
-
-type statusProfileJSON struct {
-	Name      string `json:"name"`
-	ModCount  int    `json:"mod_count"`
-	IsDefault bool   `json:"is_default"`
+	return emitJSON(st)
 }
 
 func showGameStatus(ctx context.Context, service *core.Service, gameID string) error {
@@ -298,10 +195,10 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 	}
 
 	// Show cache path
-	if st.Game.CachePath != "" {
-		fmt.Printf("  Cache Path: %s (per-game)\n", st.Game.CachePath)
+	if st.CachePath != "" {
+		fmt.Printf("  Cache Path: %s (per-game)\n", st.CachePath)
 	} else if verbose {
-		fmt.Printf("  Cache Path: %s (global default)\n", st.CachePath)
+		fmt.Printf("  Cache Path: %s (global default)\n", st.ResolvedCachePath)
 	}
 
 	// Show source mappings in verbose mode

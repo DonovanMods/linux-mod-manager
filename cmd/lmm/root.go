@@ -323,13 +323,16 @@ func Execute() {
 }
 
 // reportError prints err in the active output format, unless the command
-// already reported it (ErrReported).
+// already reported it (ErrReported). Under --json this is a
+// {"error": "...", "details": {...}} envelope via emitJSON, with "details"
+// present only when errorDetails finds data to attach; otherwise it is
+// "Error: ..." on stderr.
 func reportError(err error) {
 	if errors.Is(err, ErrReported) {
 		return
 	}
 	if jsonOutput {
-		fmt.Printf(`{"error":%q}`+"\n", err.Error())
+		_ = emitJSON(jsonErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
 	} else {
 		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
 	}

@@ -1,0 +1,50 @@
+{
+  "games": [
+    {
+      "id": "alpha",
+      "name": "Alpha",
+      "install_path": "/games/alpha",
+      "mod_path": "/games/alpha/Mods",
+      "source_ids": {
+        "src": "alpha"
+      },
+      "link_method_explicit": false,
+      "cache_path": "/cache/alpha",
+      "hooks": {
+        "install": {},
+        "uninstall": {}
+      },
+      "deploy_mode": "extract",
+      "convert_paks_explicit": false,
+      "link_method": "symlink",
+      "profiles": [
+        "default"
+      ],
+      "mod_count": 0,
+      "is_default": false
+    },
+    {
+      "id": "zulu",
+      "name": "Zulu",
+      "install_path": "/games/zulu",
+      "mod_path": "/games/zulu/Mods",
+      "source_ids": {
+        "src": "zulu"
+      },
+      "link_method_explicit": false,
+      "cache_path": "/cache/zulu",
+      "hooks": {
+        "install": {},
+        "uninstall": {}
+      },
+      "deploy_mode": "extract",
+      "convert_paks_explicit": false,
+      "link_method": "symlink",
+      "profiles": [
+        "default"
+      ],
+      "mod_count": 0,
+      "is_default": false
+    }
+  ]
+}

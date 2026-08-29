@@ -129,16 +129,17 @@ func TestVerifyReportsConversionFailed(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
-	var found *verifyFileJSON
-	for i := range result.Files {
-		if result.Files[i].Status == "conversion_failed" {
-			found = &result.Files[i]
+	var found *core.VerifyFinding
+	for i := range result.Findings {
+		if result.Findings[i].Status == "conversion_failed" {
+			found = &result.Findings[i]
 		}
 	}
-	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Files)
+	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Findings)
 	assert.Equal(t, modID, found.ModID)
 	assert.Equal(t, "table X not present in current base", found.Note)
 	assert.GreaterOrEqual(t, result.Warnings, 1)
@@ -186,16 +187,17 @@ func TestVerifyReportsConversionFailed_UninstalledMod(t *testing.T) {
 
 	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
-	var found *verifyFileJSON
-	for i := range result.Files {
-		if result.Files[i].Status == "conversion_failed" {
-			found = &result.Files[i]
+	var found *core.VerifyFinding
+	for i := range result.Findings {
+		if result.Findings[i].Status == "conversion_failed" {
+			found = &result.Findings[i]
 		}
 	}
-	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Files)
+	require.NotNil(t, found, "expected a conversion_failed row: %+v", result.Findings)
 	assert.Equal(t, modID, found.ModID)
 	assert.Equal(t, modID, found.ModName, "ModName must fall back to the raw ModID when the mod is no longer installed")
 
@@ -229,16 +231,17 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	cmd.SetContext(context.Background())
 
 	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
-	var found *verifyFileJSON
-	for i := range result.Files {
-		if result.Files[i].ModID == modID {
-			found = &result.Files[i]
+	var found *core.VerifyFinding
+	for i := range result.Findings {
+		if result.Findings[i].ModID == modID {
+			found = &result.Findings[i]
 		}
 	}
-	require.NotNil(t, found, "expected a row for the legacy pak mod: %+v", result.Files)
+	require.NotNil(t, found, "expected a row for the legacy pak mod: %+v", result.Findings)
 	assert.Equal(t, "needs_reingest", found.Status)
 	assert.Contains(t, found.Note, "verify --fix")
 	firstRunWarnings := result.Warnings
@@ -253,15 +256,16 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	// rewrites status/note and backs the row out of the warnings count
 	// instead of leaving it reading as still-outstanding; needs_reingest
 	// must follow the same convention.
-	var fixResult verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(fixOut), &fixResult))
-	var fixedRow *verifyFileJSON
-	for i := range fixResult.Files {
-		if fixResult.Files[i].ModID == modID {
-			fixedRow = &fixResult.Files[i]
+	var fixResultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(fixOut), &fixResultDoc))
+	fixResult := fixResultDoc.Result
+	var fixedRow *core.VerifyFinding
+	for i := range fixResult.Findings {
+		if fixResult.Findings[i].ModID == modID {
+			fixedRow = &fixResult.Findings[i]
 		}
 	}
-	require.NotNil(t, fixedRow, "expected a row for the legacy pak mod in the --fix run: %+v", fixResult.Files)
+	require.NotNil(t, fixedRow, "expected a row for the legacy pak mod in the --fix run: %+v", fixResult.Findings)
 	assert.Equal(t, "fixed_needs_reingest", fixedRow.Status, "a successful same-run re-ingest must rewrite the row to a fixed-state status")
 	assert.NotContains(t, fixedRow.Note, "run 'lmm verify --fix'", "the note must reflect success, not still tell the user to run the fix that just ran")
 	assert.Equal(t, firstRunWarnings-1, fixResult.Warnings, "a successfully re-ingested row must be backed out of the warnings count, like every other --fix success path")
@@ -291,9 +295,10 @@ func TestVerifyNeedsReingest_ReportsThenFixes(t *testing.T) {
 	jsonOutput = true
 	verifyFix = false
 	secondOut := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
-	var secondResult verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(secondOut), &secondResult))
-	for _, f := range secondResult.Files {
+	var secondResultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(secondOut), &secondResultDoc))
+	secondResult := secondResultDoc.Result
+	for _, f := range secondResult.Findings {
 		if f.ModID == modID {
 			assert.NotEqual(t, "needs_reingest", f.Status, "a re-ingested entry must not be flagged needs_reingest again")
 		}
@@ -321,9 +326,10 @@ func TestVerifyNeedsReingest_ModOptedOut_NotFlagged(t *testing.T) {
 	cmd.SetContext(context.Background())
 	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
-	for _, f := range result.Files {
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
+	for _, f := range result.Findings {
 		if f.ModID == modID {
 			assert.NotEqual(t, "needs_reingest", f.Status,
 				"a mod opted out of pak conversion (ConvertPaks=false) must not be flagged for reingest")
@@ -418,14 +424,15 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 	cmd.SetContext(context.Background())
 	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
 
-	var result verifyJSONOutput
-	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	var resultDoc core.VerifyReport
+	require.NoError(t, json.Unmarshal([]byte(out), &resultDoc))
+	result := resultDoc.Result
 
 	found := false
-	for _, f := range result.Files {
+	for _, f := range result.Findings {
 		if f.ModID == modID && f.Status == "file_count_mismatch" {
 			found = true
 		}
 	}
-	assert.True(t, found, "a retained pak entry whose manifest records members must NOT be suppressed by the retain-only carve-out: %+v", result.Files)
+	assert.True(t, found, "a retained pak entry whose manifest records members must NOT be suppressed by the retain-only carve-out: %+v", result.Findings)
 }

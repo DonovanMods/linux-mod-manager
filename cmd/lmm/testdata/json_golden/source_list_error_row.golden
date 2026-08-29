@@ -1,0 +1,45 @@
+[
+  {
+    "id": "curseforge",
+    "name": "CurseForge",
+    "type": "built-in",
+    "auth": "required",
+    "capabilities": [
+      "search",
+      "deps",
+      "updates",
+      "auth",
+      "versions"
+    ]
+  },
+  {
+    "id": "icarus",
+    "name": "Icarus (Project Daedalus)",
+    "type": "built-in",
+    "auth": "none",
+    "capabilities": [
+      "search",
+      "updates"
+    ]
+  },
+  {
+    "id": "nexusmods",
+    "name": "Nexus Mods",
+    "type": "built-in",
+    "auth": "required",
+    "capabilities": [
+      "search",
+      "deps",
+      "updates",
+      "auth",
+      "versions"
+    ]
+  },
+  {
+    "id": "broken-mods",
+    "name": "",
+    "type": "error",
+    "capabilities": [],
+    "error": "directory source path: stat /nonexistent/lmm-golden: no such file or directory"
+  }
+]

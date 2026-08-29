@@ -36,6 +36,19 @@ type ProfileConflict struct {
 	Stale           bool             `json:"stale"`
 }
 
+// ConflictReport is the document `lmm conflicts` (and serve) renders:
+// GetProfileConflicts' result paired with the game/profile it describes, so
+// the identity travels with the data instead of each frontend re-stamping
+// its own. Conflicts is sorted by Path (the query's own order) and is empty
+// - never null on the wire - both when the profile has no conflicts and when
+// it has no installed mods at all; telling those two apart is a
+// presentation concern the frontend already owns.
+type ConflictReport struct {
+	GameID    string            `json:"game_id"`
+	Profile   string            `json:"profile"`
+	Conflicts []ProfileConflict `json:"conflicts"`
+}
+
 // GetProfileConflicts is a pure read-only query returning every file path in
 // the named profile that more than one mod provides, sorted by Path. Only
 // ENABLED installed mods are considered: they are the set that participates

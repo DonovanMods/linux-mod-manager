@@ -1,20 +1,23 @@
 {
   "game_id": "g1",
   "profile": "default",
-  "files": [
-    {
-      "mod_id": "mod1",
-      "mod_name": "Mod One",
-      "file_id": "",
-      "status": "ok"
-    },
-    {
-      "mod_id": "mod1",
-      "mod_name": "Mod One",
-      "file_id": "2",
-      "status": "ok"
-    }
-  ],
-  "issues": 0,
-  "warnings": 0
+  "result": {
+    "findings": [
+      {
+        "mod_id": "mod1",
+        "mod_name": "Mod One",
+        "status": "ok"
+      },
+      {
+        "mod_id": "mod1",
+        "mod_name": "Mod One",
+        "file_id": "2",
+        "status": "ok"
+      }
+    ],
+    "issues": 0,
+    "warnings": 0,
+    "checked": 1,
+    "has_files": true
+  }
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
@@ -181,7 +182,7 @@ manifest:
 // construct, and must not relabel a built-in source's type just because a
 // custom definition collides with its ID.
 func TestSourceListCmd_ErrorRows(t *testing.T) {
-	runList := func(t *testing.T) []sourceInfo {
+	runList := func(t *testing.T) []app.SourceInfo {
 		t.Helper()
 		// Task 4 made sourceListCmd read the package-level gameID (game
 		// scoping) - this test doesn't care about game context at all, so
@@ -191,28 +192,28 @@ func TestSourceListCmd_ErrorRows(t *testing.T) {
 		cmd := &cobra.Command{Use: "test"}
 		cmd.AddCommand(sourceCmd)
 		t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
-		buf := new(bytes.Buffer)
-		cmd.SetOut(buf)
-		cmd.SetErr(buf)
 		cmd.SetArgs([]string{"source", "list"})
 
 		jsonOutput = true
 		t.Cleanup(func() { jsonOutput = false })
 
-		require.NoError(t, cmd.Execute())
+		// Captured off os.Stdout, not cmd.SetOut: --json documents go
+		// through emitJSON, which owns the one-document-on-stdout invariant
+		// (#302).
+		out := captureStdout(t, cmd.Execute)
 
-		var rows []sourceInfo
-		require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+		var rows []app.SourceInfo
+		require.NoError(t, json.Unmarshal([]byte(out), &rows))
 		return rows
 	}
 
-	findRow := func(rows []sourceInfo, id, typ string) (sourceInfo, bool) {
+	findRow := func(rows []app.SourceInfo, id, typ string) (app.SourceInfo, bool) {
 		for _, r := range rows {
 			if r.ID == id && r.Type == typ {
 				return r, true
 			}
 		}
-		return sourceInfo{}, false
+		return app.SourceInfo{}, false
 	}
 
 	t.Run("definition with missing path produces an error row", func(t *testing.T) {
@@ -231,7 +232,7 @@ directory:
 
 		row, found := findRow(rows, "broken-mods", "error")
 		require.True(t, found, "a definition whose source fails to construct must still produce a row: %+v", rows)
-		assert.NotEmpty(t, row.Error)
+		assert.NotEmpty(t, row.ErrorMessage)
 	})
 
 	t.Run("definition colliding with a built-in id keeps the built-in row and adds an error row", func(t *testing.T) {
@@ -253,29 +254,23 @@ directory:
 
 		errRow, errFound := findRow(rows, "nexusmods", "error")
 		require.True(t, errFound, "an id collision must still produce an error row: %+v", rows)
-		assert.Contains(t, errRow.Error, "already in use")
+		assert.Contains(t, errRow.ErrorMessage, "already in use")
 	})
 }
 
 // TestSourceInfoRows_EmptyJSONEncode pins the JSON contract for `source list
-// --json`: a zero-length row slice must encode as `[]`, never `null` (#52
-// item 13). This is unreachable through the CLI today — app.Open
-// always registers the built-in sources before sourceListCmd builds its row
-// slice, so rows is never actually empty at runtime — so this exercises the
-// encoding contract directly, guarding against a future regression back to
-// `var rows []sourceInfo` (whose zero value is nil and encodes as `null`).
+// --json`: an empty registry must emit `[]`, never `null` (#52 item 13).
+// This is unreachable through the CLI today — app.Open always registers the
+// built-in sources before app.SourceInfos assembles the rows — so it
+// exercises emitJSON directly, on the nil slice that is the failure mode
+// being guarded against (encoding/json v1 wrote `null` for it; emitJSON's
+// json/v2 does not).
 func TestSourceInfoRows_EmptyJSONEncode(t *testing.T) {
-	rows := make([]sourceInfo, 0)
-	b, err := json.Marshal(rows)
-	require.NoError(t, err)
-	assert.Equal(t, "[]", string(b))
+	var nilRows []app.SourceInfo
 
-	// Sanity check on the failure mode being guarded against: a nil slice of
-	// the same type really does encode as `null`.
-	var nilRows []sourceInfo
-	b, err = json.Marshal(nilRows)
-	require.NoError(t, err)
-	assert.Equal(t, "null", string(b))
+	out := captureStdout(t, func() error { return emitJSON(nilRows) })
+
+	assert.Equal(t, "[]\n", out)
 }
 
 // TestSourceListCmd_ReportsBrokenDefinitionOnce is the regression test for
@@ -422,18 +417,15 @@ api:
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(sourceCmd)
 	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
 	cmd.SetArgs([]string{"source", "list"})
 
 	jsonOutput = true
 	t.Cleanup(func() { jsonOutput = false })
 
-	require.NoError(t, cmd.Execute())
+	out := captureStdout(t, cmd.Execute)
 
-	var rows []sourceInfo
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+	var rows []app.SourceInfo
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 
 	byID := make(map[string]string, len(rows))
 	for _, r := range rows {
@@ -528,7 +520,7 @@ func TestSourceListCmd_AllFlagShowsFullRegistryWithInUseColumn(t *testing.T) {
 
 	rows := runSourceListJSON(t)
 
-	byID := make(map[string]sourceInfo, len(rows))
+	byID := make(map[string]app.SourceInfo, len(rows))
 	for _, r := range rows {
 		byID[r.ID] = r
 	}
@@ -599,7 +591,7 @@ directory:
 	for _, r := range rows {
 		if r.ID == "broken-mods" && r.Type == "error" {
 			found = true
-			assert.NotEmpty(t, r.Error)
+			assert.NotEmpty(t, r.ErrorMessage)
 		}
 	}
 	assert.True(t, found, "a broken definition must stay visible even in the scoped default view: %+v", rows)
@@ -623,14 +615,11 @@ func TestSourceListCmd_ScopedUsesConfigDefaultGame(t *testing.T) {
 // by the caller) and decodes the row slice - the shared tail every test
 // above uses instead of hand-rolling runList (TestSourceListCmd_ErrorRows'
 // own private copy predates --all and only ever ran ungamed).
-func runSourceListJSON(t *testing.T) []sourceInfo {
+func runSourceListJSON(t *testing.T) []app.SourceInfo {
 	t.Helper()
 	cmd := &cobra.Command{Use: "test"}
 	cmd.AddCommand(sourceCmd)
 	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
-	buf := new(bytes.Buffer)
-	cmd.SetOut(buf)
-	cmd.SetErr(buf)
 	args := []string{"source", "list"}
 	if sourceAll {
 		args = append(args, "--all")
@@ -645,14 +634,14 @@ func runSourceListJSON(t *testing.T) []sourceInfo {
 	jsonOutput = true
 	defer func() { jsonOutput = prevJSON }()
 
-	require.NoError(t, cmd.Execute())
+	out := captureStdout(t, cmd.Execute)
 
-	var rows []sourceInfo
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rows))
+	var rows []app.SourceInfo
+	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 	return rows
 }
 
-func rowIDs(rows []sourceInfo) []string {
+func rowIDs(rows []app.SourceInfo) []string {
 	ids := make([]string, 0, len(rows))
 	for _, r := range rows {
 		ids = append(ids, r.ID)

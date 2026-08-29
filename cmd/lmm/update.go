@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,89 +24,43 @@ var (
 	updateForce   bool
 )
 
-type updateJSONOutput struct {
-	GameID  string          `json:"game_id"`
-	Profile string          `json:"profile"`
-	Updates []updateModJSON `json:"updates"`
-	// Skipped reports installed mods that were never checked, so a consumer
-	// can tell "nothing to update" apart from "nothing was looked at". An
-	// empty updates array means both, and only this distinguishes them.
-	Skipped updateSkippedJSON `json:"skipped"`
-	// Error is set when the check itself failed. An empty updates array
-	// otherwise means "nothing to update"; with this set it means the answer
-	// is unknown. Omitted on success so the common document stays unchanged.
-	Error string `json:"error,omitempty"`
-}
-
-// updateSkippedJSON counts CHECK-time filtering only (core.CountUpdateSkips):
-// mods CheckUpdates never even queried a source for. Locked mods do NOT
-// belong here (#97): they ARE checked ("locked but informed") - a locked-and-
-// skippable-at-apply-time mod is reported instead via the bulk table's
-// "[locked@<version>]" POLICY marker, the CLI's own auto/--all locked-skip
-// line, and updateModJSON.Locked on its updates[] entry (#143; see
-// applySingleUpdate's singleUpdateJSON.Reason for the single-mod --json
-// equivalent).
-type updateSkippedJSON struct {
-	Pinned int `json:"pinned"`
-	Local  int `json:"local"`
-}
-
-type updateModJSON struct {
-	ModID        string `json:"mod_id"`
-	Name         string `json:"name"`
-	Current      string `json:"current_version"`
-	Available    string `json:"available_version"`
-	UpdatePolicy string `json:"update_policy"`
-	// Locked is the --json sibling of the bulk table's "[locked@<version>]"
-	// POLICY marker (#143): true means applying this update is refused until
-	// the lock moves or clears, even under auto policy or --all. Omitted
-	// (not false) when unlocked, so pre-#143 documents are unchanged.
-	Locked bool `json:"locked,omitempty"`
-	// RecompileNeeded is the --json sibling of the bulk table's "[recompile]"
-	// POLICY marker (#196): true means this row is a base-pak staleness
-	// signal, not a real mod version update - Available equals Current, and
-	// Reason explains why. Omitted (not false) when the row is a normal
-	// update, so pre-#196 documents are unchanged (additive field, per the
-	// JSON-contract-additions-are-MINOR precedent - see #143/#155).
-	RecompileNeeded bool `json:"recompile_needed,omitempty"`
-	// Reason qualifies RecompileNeeded: "stale_compile" today. Omitted
-	// otherwise.
-	Reason string `json:"reason,omitempty"`
-}
-
-// singleUpdateJSON is the one-document --json result of `lmm update <mod-id>`
-// and `lmm update rollback <mod-id>`. It is deliberately NOT updateJSONOutput:
-// that document reports a *check* over many mods (updates[], skipped counts);
-// this reports a *single applied event*, so an updates[] array here would imply
-// a batch that never happened. Emitted exactly once, on stdout, at the end of
-// the operation. Failures never reach this type — they return before any
-// document is written, and Execute renders {"error":...} instead, keeping the
-// one-document-on-stdout invariant without ErrReported.
-type singleUpdateJSON struct {
-	ModID       string `json:"mod_id"`
-	Name        string `json:"name"`
-	FromVersion string `json:"from_version"`
-	ToVersion   string `json:"to_version,omitempty"` // omitted for up_to_date / skipped
-	Changelog   string `json:"changelog,omitempty"`
-	// Status: "updated" | "up_to_date" | "skipped" | "available" | "rolled_back"
-	// | "recompiled" | "recompile_available" (#196: a base-pak staleness row,
-	// applied or --dry-run respectively - ToVersion equals FromVersion for
-	// both, since the mod itself hasn't changed).
-	Status string `json:"status"`
-	// Reason qualifies status=="skipped": "pinned" | "local" | "locked".
-	// Omitted otherwise.
-	Reason string `json:"reason,omitempty"`
-}
-
-// emitSingleUpdateJSON writes doc as the sole JSON document on stdout,
-// 2-space indented to match updateJSONOutput's existing formatting.
-func emitSingleUpdateJSON(doc singleUpdateJSON) error {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(doc); err != nil {
-		return fmt.Errorf("encoding json: %w", err)
+// bulkCheckReport assembles the one document a bulk `lmm update --json`
+// emits, from the three things the check produced: the updates found
+// (nil when there are none - emitJSON encodes that as []), the skip counts
+// derived from what was installed, and the check's own failure, if any.
+func bulkCheckReport(gameID, profileName string, updates []domain.Update, installed []domain.InstalledMod, checkErr error) *core.UpdateCheckReport {
+	report := &core.UpdateCheckReport{
+		GameID:  gameID,
+		Profile: profileName,
+		Updates: updates,
+		Skipped: core.CountUpdateSkips(installed),
 	}
-	return nil
+	if checkErr != nil {
+		report.ErrorMessage = checkErr.Error()
+	}
+	return report
+}
+
+// planUpdateResult builds the one-document result `lmm update <mod-id>`
+// emits for an outcome core never applied - pinned, up to date, locked, or a
+// --dry-run preview. Mod is the profile ref as it stands RIGHT NOW, since
+// nothing was written: its Version is the installed version, or the lock's
+// target when the ref is locked, and Locked says which. toVersion carries
+// what the run would have moved to. The applied branches emit core's own
+// UpdateApplyResult instead, whose Mod is the ref actually written.
+func planUpdateResult(plan *core.UpdatePlan, toVersion string, status core.UpdateStatus, reason string) *core.UpdateApplyResult {
+	ref := domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.Mod.Version, Locked: plan.Locked}
+	if plan.Locked {
+		ref.Version = plan.LockedVersion
+	}
+	return &core.UpdateApplyResult{
+		Mod:         ref,
+		Name:        plan.Mod.Name,
+		FromVersion: plan.Mod.Version,
+		ToVersion:   toVersion,
+		Status:      status,
+		Reason:      reason,
+	}
 }
 
 var updateCmd = &cobra.Command{
@@ -137,17 +90,22 @@ recompile against the current base pak.
   - Bulk check (no mod ID): {game_id, profile, updates: [...], skipped:
     {pinned, local}, error?}. error is present when the check itself
     failed partway through; updates/skipped still reflect whatever was
-    learned first. A locked mod's updates[] entry carries "locked": true
-    (omitted when unlocked): the update is reported but will not be
-    applied until the lock moves or clears. A recompile-needed entry
-    carries "recompile_needed": true and "reason": "stale_compile"
-    (available_version equals current_version - the mod hasn't changed).
-  - Single mod (a mod ID given) or 'update rollback': {mod_id, name,
-    from_version, to_version, changelog, status, reason}. status is one
+    learned first. Each updates[] entry carries the whole installed mod
+    under "installed_mod" plus "new_version"; "locked": true means the
+    update is reported but will not be applied until the lock moves or
+    clears, and "recompile_needed": true with a "recompile_reason" marks
+    a base-pak staleness row (new_version equals the installed version -
+    the mod itself hasn't changed).
+  - Single mod (a mod ID given): {mod, name, from_version, to_version,
+    changelog, status, reason, warnings, notes}, where "mod" is the
+    profile reference {source_id, mod_id, version, locked}. status is one
     of "updated", "up_to_date", "skipped", "available" (--dry-run),
-    "rolled_back", "recompiled", or "recompile_available" (--dry-run,
-    same-version base-pak recompile); reason is set only when status is
-    "skipped" ("pinned", "local", or "locked").
+    "recompiled", or "recompile_available" (--dry-run, same-version
+    base-pak recompile); reason is set only when status is "skipped"
+    ("pinned", "local", or "locked").
+  - 'update rollback' emits the rollback document: {mod, mod_name,
+    from_version, to_version, status, reason, warnings, notes}, with
+    status "rolled_back" or "skipped".
 
 Examples:
   lmm update --game skyrim-se                    # Check all mods for updates
@@ -168,9 +126,9 @@ The previous version must still be available in the cache. If the same
 mod ID is installed from more than one source in the profile, use
 -s/--source to disambiguate.
 
---json prints the single-mod document (see 'lmm update --help') with
-status "rolled_back", or status "skipped" with reason "locked" when the
-mod is locked (unlock or move the lock to roll back).
+--json prints the rollback document (see 'lmm update --help') with status
+"rolled_back", or status "skipped" with reason "locked" when the mod is
+locked (unlock or move the lock to roll back).
 
 Examples:
   lmm update rollback 12345 --game skyrim-se
@@ -227,16 +185,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			// installed, candidates stays empty and it reports the same
 			// "not found in profile" error as any other absent mod.
 		case jsonOutput:
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			out := updateJSONOutput{
-				GameID: game.ID, Profile: profileName, Updates: []updateModJSON{},
-				Skipped: updateSkippedJSON{},
-			}
-			if err := enc.Encode(out); err != nil {
-				return fmt.Errorf("encoding json: %w", err)
-			}
-			return nil
+			// Nothing installed: no updates, nothing skipped. emitJSON
+			// encodes the nil Updates slice as [].
+			return emitJSON(&core.UpdateCheckReport{GameID: game.ID, Profile: profileName})
 		default:
 			fmt.Println("No mods installed.")
 			return nil
@@ -271,8 +222,16 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				if candidates[0].SourceID == domain.SourceLocal {
 					// Present, just not checkable — informational, not an error.
 					if jsonOutput {
-						return emitSingleUpdateJSON(singleUpdateJSON{
-							ModID: modID, Name: candidates[0].Name, FromVersion: candidates[0].Version, Status: "skipped", Reason: "local",
+						// The one branch with no plan behind it: a local mod
+						// is never planned, so the ref is built from the
+						// installed row directly.
+						local := candidates[0]
+						return emitJSON(&core.UpdateApplyResult{
+							Mod:         domain.ModReference{SourceID: local.SourceID, ModID: local.ID, Version: local.Version},
+							Name:        local.Name,
+							FromVersion: local.Version,
+							Status:      core.UpdateSkipped,
+							Reason:      "local",
 						})
 					}
 					fmt.Printf("%s is a local mod — no remote source to check for updates.\n", candidates[0].Name)
@@ -341,18 +300,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	if len(updates) == 0 {
 		if jsonOutput {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			skips := core.CountUpdateSkips(installed)
-			out := updateJSONOutput{
-				GameID: game.ID, Profile: profileName, Updates: []updateModJSON{},
-				Skipped: updateSkippedJSON{Pinned: skips.Pinned, Local: skips.Local},
-			}
-			if checkErr != nil {
-				out.Error = checkErr.Error()
-			}
-			if err := enc.Encode(out); err != nil {
-				return fmt.Errorf("encoding json: %w", err)
+			if err := emitJSON(bulkCheckReport(game.ID, profileName, nil, installed, checkErr)); err != nil {
+				return err
 			}
 			return finish()
 		}
@@ -381,33 +330,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if jsonOutput {
-		skips := core.CountUpdateSkips(installed)
-		out := updateJSONOutput{
-			GameID: game.ID, Profile: profileName, Updates: make([]updateModJSON, len(updates)),
-			Skipped: updateSkippedJSON{Pinned: skips.Pinned, Local: skips.Local},
-		}
-		if checkErr != nil {
-			out.Error = checkErr.Error()
-		}
-		for i, u := range updates {
-			row := updateModJSON{
-				ModID:        u.InstalledMod.ID,
-				Name:         u.InstalledMod.Name,
-				Current:      u.InstalledMod.Version,
-				Available:    u.NewVersion,
-				UpdatePolicy: policyToString(u.InstalledMod.UpdatePolicy),
-				Locked:       u.Locked,
-			}
-			if u.RecompileNeeded {
-				row.RecompileNeeded = true
-				row.Reason = "stale_compile"
-			}
-			out.Updates[i] = row
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
+		if err := emitJSON(bulkCheckReport(game.ID, profileName, updates, installed, checkErr)); err != nil {
+			return err
 		}
 		return finish()
 	}
@@ -591,9 +515,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// version comparison ever happened — reporting it as up to date would
 		// claim currency that was never checked.
 		if jsonOutput {
-			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, Status: "skipped", Reason: "pinned",
-			})
+			return emitJSON(planUpdateResult(plan, "", core.UpdateSkipped, "pinned"))
 		}
 		lockedSuffix := ""
 		if plan.Locked {
@@ -609,9 +531,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 
 	case plan.Update == nil:
 		if jsonOutput {
-			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, Status: "up_to_date",
-			})
+			return emitJSON(planUpdateResult(plan, "", core.UpdateUpToDate, ""))
 		}
 		fmt.Printf("%s is already up to date (v%s).\n", plan.Mod.Name, plan.Mod.Version)
 		return nil
@@ -623,9 +543,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// misleading "Updating vX → vX...".
 		if plan.Locked {
 			if jsonOutput {
-				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, ToVersion: plan.Mod.Version, Status: "skipped", Reason: "locked",
-				})
+				return emitJSON(planUpdateResult(plan, plan.Mod.Version, core.UpdateSkipped, "locked"))
 			}
 			fmt.Printf("Recompile needed for %s (base pak updated) — but it is locked at v%s.\n", plan.Mod.Name, plan.LockedVersion)
 			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, plan.Mod.Version, plan.Mod.SourceID, profileName, plan.Mod.ID)
@@ -638,22 +556,25 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 
 		if updateDryRun {
 			if jsonOutput {
-				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, ToVersion: plan.Mod.Version, Status: "recompile_available",
-				})
+				return emitJSON(planUpdateResult(plan, plan.Mod.Version, core.UpdateRecompileAvailable, ""))
 			}
 			fmt.Println("(dry-run: no changes applied)")
 			return nil
 		}
 
-		if err := applyRecompile(ctx, service, game, profileName); err != nil {
+		regen, err := applyRecompile(ctx, service, game, profileName)
+		if err != nil {
 			return err
 		}
 
 		if jsonOutput {
-			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.Mod.Version, ToVersion: plan.Mod.Version, Status: "recompiled",
-			})
+			// ApplyMergedPakRegen has no mod of its own to report (it
+			// regenerates the profile's merged artifact), so its result
+			// carries the run's diagnostics and this stamps the identity of
+			// the mod the user named onto it.
+			result := planUpdateResult(plan, plan.Mod.Version, core.UpdateRecompiled, "")
+			result.Warnings, result.Notes = regen.Warnings, regen.Notes
+			return emitJSON(result)
 		}
 		fmt.Printf("\n%s Recompiled: %s (base pak updated)\n", colorGreen("✓"), plan.Mod.Name)
 		return nil
@@ -672,9 +593,7 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// (Phase 3 unifies wording).
 		if plan.Locked {
 			if jsonOutput {
-				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: oldVersion, ToVersion: newVersion, Status: "skipped", Reason: "locked",
-				})
+				return emitJSON(planUpdateResult(plan, newVersion, core.UpdateSkipped, "locked"))
 			}
 			fmt.Printf("Update available: %s → %s — but %s is locked at v%s.\n", oldVersion, newVersion, plan.Mod.Name, plan.LockedVersion)
 			// #142 round 5: name -s/-p in both remedies - update honors -p
@@ -706,27 +625,28 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 
 		if updateDryRun {
 			if jsonOutput {
-				// Cleaned like the human output (upstream changelogs are
-				// HTML), but untruncated - the 500-char cap is a display
-				// concern.
-				return emitSingleUpdateJSON(singleUpdateJSON{
-					ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
-					Changelog: plan.Changelog, Status: "available",
-				})
+				result := planUpdateResult(plan, newVersion, core.UpdateAvailable, "")
+				// plan.Changelog is core's cleaned changelog (upstream ones
+				// are HTML), untruncated - the 500-char cap above is a
+				// display concern.
+				result.Changelog = plan.Changelog
+				return emitJSON(result)
 			}
 			fmt.Println("(dry-run: no changes applied)")
 			return nil
 		}
 
-		if err := applyUpdate(ctx, service, game, plan); err != nil {
+		result, err := applyUpdate(ctx, service, game, plan)
+		if err != nil {
 			return err
 		}
 
 		if jsonOutput {
-			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: oldVersion, ToVersion: newVersion,
-				Changelog: plan.Changelog, Status: "updated",
-			})
+			// core's own result document, with one substitution: it records
+			// the RAW upstream changelog, while --json has always carried
+			// core's cleaned one (plan.Changelog), untruncated.
+			result.Changelog = plan.Changelog
+			return emitJSON(result)
 		}
 
 		fmt.Printf("\n%s Updated: %s %s → %s\n", colorGreen("✓"), plan.Mod.Name, oldVersion, newVersion)
@@ -756,7 +676,10 @@ func applyBulkUpdate(ctx context.Context, service *core.Service, game *domain.Ga
 	if err != nil {
 		return err
 	}
-	return applyUpdate(ctx, service, game, plan)
+	// The bulk loop renders its own per-mod line from the check's data and
+	// emits no document, so the apply result is not needed here.
+	_, err = applyUpdate(ctx, service, game, plan)
+	return err
 }
 
 // applyUpdate applies plan: resolve -> call Service.ApplyUpdate -> print
@@ -770,7 +693,7 @@ func applyBulkUpdate(ctx context.Context, service *core.Service, game *domain.Ga
 // (NewVersion == InstalledMod.Version) - it is routed to
 // Service.ApplyMergedPakRegen instead, which has no hooks to run and no
 // version/FileIDs to record, only the merge-and-redeploy step itself.
-func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, plan *core.UpdatePlan) error {
+func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, plan *core.UpdatePlan) (*core.UpdateApplyResult, error) {
 	if plan.RecompileNeeded {
 		return applyRecompile(ctx, service, game, plan.Mod.ProfileName)
 	}
@@ -803,8 +726,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
-	_, err := service.ApplyUpdate(ctx, game, plan, opts, progress)
-	return err
+	return service.ApplyUpdate(ctx, game, plan, opts, progress)
 }
 
 // applyRecompile applies a #197 merged-pak staleness row via
@@ -812,7 +734,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 // way applyUpdate does for its own (UpdateWarning/UpdateNote are the only
 // phases ApplyMergedPakRegen emits - it runs no hooks and downloads
 // nothing worth a progress bar).
-func applyRecompile(ctx context.Context, service *core.Service, game *domain.Game, profileName string) error {
+func applyRecompile(ctx context.Context, service *core.Service, game *domain.Game, profileName string) (*core.UpdateApplyResult, error) {
 	result, err := service.ApplyMergedPakRegen(ctx, game, profileName, nil)
 	// #197 M4 fix: ApplyMergedPakRegen never emits UpdateWarning/UpdateNote
 	// progress events (only UpdateDownloadDone) - its merge warnings (e.g.
@@ -821,12 +743,15 @@ func applyRecompile(ctx context.Context, service *core.Service, game *domain.Gam
 	// those phases would silently never fire; print result.Warnings
 	// directly so `lmm update`'s apply path surfaces them the same way
 	// DeployProfile already does.
-	if result != nil {
-		for _, w := range result.Warnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
+	if result == nil {
+		// ApplyMergedPakRegen always returns one, but a caller stamping
+		// identity onto it must never have to nil-check.
+		result = &core.UpdateApplyResult{}
 	}
-	return err
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+	return result, err
 }
 
 func runUpdateRollback(cmd *cobra.Command, args []string) error {
@@ -883,8 +808,18 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// core gate's raw error.
 	if plan.Locked {
 		if jsonOutput {
-			return emitSingleUpdateJSON(singleUpdateJSON{
-				ModID: plan.Mod.ID, Name: plan.Mod.Name, FromVersion: plan.FromVersion, ToVersion: plan.ToVersion, Status: "skipped", Reason: "locked",
+			// Nothing was written, so nothing changed - but Mod.Version is
+			// still the version rolled back TO, per RollbackResult.Mod's own
+			// doc comment, on every branch including this refusal one (final
+			// review, Important #4 / #302): here that's the same value as
+			// ToVersion below, since core never applies past this refusal.
+			return emitJSON(&core.RollbackResult{
+				Mod:         domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.ToVersion, Locked: true},
+				ModName:     plan.Mod.Name,
+				FromVersion: plan.FromVersion,
+				ToVersion:   plan.ToVersion,
+				Status:      core.UpdateSkipped,
+				Reason:      "locked",
 			})
 		}
 		fmt.Printf("Rollback available: %s → %s — but %s is locked at v%s.\n", plan.FromVersion, plan.ToVersion, plan.Mod.Name, plan.LockedVersion)
@@ -925,10 +860,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	}
 
 	if jsonOutput {
-		return emitSingleUpdateJSON(singleUpdateJSON{
-			ModID: plan.Mod.ID, Name: result.ModName, FromVersion: result.FromVersion, ToVersion: result.ToVersion,
-			Status: "rolled_back",
-		})
+		return emitJSON(result)
 	}
 
 	fmt.Printf("\n%s Rolled back: %s %s → %s\n", colorGreen("✓"), result.ModName, result.FromVersion, result.ToVersion)

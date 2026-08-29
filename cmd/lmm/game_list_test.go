@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
@@ -179,12 +180,12 @@ func TestDoGameList_JSONOutput(t *testing.T) {
 		return doGameList(&cobra.Command{}, svc)
 	})
 
-	var rows []gameListJSON
+	var rows []core.GameListEntry
 	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 	require.Len(t, rows, 1)
 	assert.Equal(t, "skyrim-se", rows[0].ID)
 	assert.True(t, rows[0].Default)
-	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, rows[0].Sources)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, rows[0].SourceIDs)
 }
 
 // TestDoGameList_JSONOutput_EmptyIsArrayNotNull mirrors search/list's
@@ -204,7 +205,7 @@ func TestDoGameList_JSONOutput_EmptyIsArrayNotNull(t *testing.T) {
 }
 
 // TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject tests that a game
-// with no sources configured emits "sources": {} in JSON, not null.
+// with no sources configured emits "source_ids": {} in JSON, not null.
 func TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject(t *testing.T) {
 	svc := setupGameAddTest(t)
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
@@ -223,11 +224,11 @@ func TestDoGameList_JSONOutput_NoSourcesEmitsEmptyObject(t *testing.T) {
 		return doGameList(&cobra.Command{}, svc)
 	})
 
-	var rows []gameListJSON
+	var rows []core.GameListEntry
 	require.NoError(t, json.Unmarshal([]byte(out), &rows))
 	require.Len(t, rows, 1)
 	assert.Equal(t, "bare-game", rows[0].ID)
-	assert.Equal(t, map[string]string{}, rows[0].Sources)
+	assert.Equal(t, map[string]string{}, rows[0].SourceIDs)
 }
 
 func lineContaining(out, needle string) string {

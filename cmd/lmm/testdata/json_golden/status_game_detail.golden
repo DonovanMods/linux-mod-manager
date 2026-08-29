@@ -1,0 +1,37 @@
+{
+  "id": "alpha",
+  "name": "Alpha",
+  "install_path": "/games/alpha",
+  "mod_path": "/games/alpha/Mods",
+  "source_ids": {
+    "src": "alpha"
+  },
+  "link_method_explicit": false,
+  "cache_path": "/cache/alpha",
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks_explicit": false,
+  "link_method": "symlink",
+  "effective_link_method": "symlink",
+  "link_method_source": "global",
+  "resolved_cache_path": "/cache/alpha",
+  "profiles": [
+    {
+      "name": "default",
+      "mod_count": 0,
+      "is_default": false
+    },
+    {
+      "name": "survival",
+      "mod_count": 0,
+      "is_default": false
+    }
+  ],
+  "active_profile": "default",
+  "installed_mod_count": 0,
+  "enabled_mod_count": 0,
+  "conversion_failures": 0
+}

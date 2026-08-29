@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -17,22 +16,6 @@ var (
 	verifyFix     bool
 	verifyProfile string
 )
-
-type verifyJSONOutput struct {
-	GameID   string           `json:"game_id"`
-	Profile  string           `json:"profile"`
-	Files    []verifyFileJSON `json:"files"`
-	Issues   int              `json:"issues"`
-	Warnings int              `json:"warnings"`
-}
-
-type verifyFileJSON struct {
-	ModID   string `json:"mod_id"`
-	ModName string `json:"mod_name"`
-	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment, conversion_failed, needs_reingest, fixed_needs_reingest
-	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), a convergence per-item error (e.g. an unsafe deployed-file record skipped), a pak-conversion failure reason (conversion_failed), or why/whether a pak needed re-ingesting (needs_reingest / fixed_needs_reingest) - omitted when there's nothing extra to add
-}
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify [mod-id]",
@@ -170,9 +153,17 @@ recorded version hasn't yet caught up to the lock's target (pending a
 convergence" informational line instead of being silently folded into the
 OK case - this is never counted in issues or warnings.
 
---json emits {game_id, profile, files: [{mod_id, mod_name, file_id,
-status, note}], issues, warnings}; status is one of "ok", "missing",
-"no_checksum", "file_count_mismatch", "skipped", "version_mismatch",
+--json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
+file_id, status, note, recorded, effective, version}], issues, warnings,
+checked, has_files}}; each finding key is omitted when unset (a row only
+carries the fields its status needs - e.g. "version_mismatch" carries
+recorded/effective, "missing" carries version, most statuses carry
+neither). checked is the number of files/mods verify walked (feeds the
+"No files found for mod X" text-mode message); has_files is false only
+for the #217 empty-profile path, where no checksummed files exist so no
+findings/issues are possible and only whatever the deploy-convergence
+sweep found appears. status is one of "ok", "missing", "no_checksum",
+"file_count_mismatch", "skipped", "version_mismatch",
 "version_unverifiable", "stale_compile", "stale_deployment",
 "fixed_stale_deployment", "conversion_failed", "needs_reingest", or
 "fixed_needs_reingest"; note adds detail where there's something extra to
@@ -184,11 +175,11 @@ stale-deployment row's reason (populated on both "stale_deployment" and
 "fixed_stale_deployment"), a pak's conversion-failure reason
 ("conversion_failed"), or why/whether a pak needed re-ingesting
 (populated on both "needs_reingest" and "fixed_needs_reingest") - and is
-omitted otherwise. issues counts MISSING files and VERSION MISMATCH rows
-(a successful --fix repair of either decrements it back out; a locked
-VERSION MISMATCH stays counted since --fix refuses it); warnings counts
-everything else that isn't OK, including "stale_deployment",
-"conversion_failed", and "needs_reingest" rows (never
+omitted otherwise. result.issues counts MISSING files and VERSION
+MISMATCH rows (a successful --fix repair of either decrements it back
+out; a locked VERSION MISMATCH stays counted since --fix refuses it);
+result.warnings counts everything else that isn't OK, including
+"stale_deployment", "conversion_failed", and "needs_reingest" rows (never
 "fixed_stale_deployment" or "fixed_needs_reingest" - a successful --fix
 removal/re-ingest is a resolved problem, not an outstanding one, the same
 convention as a successful re-download or version repair). Lock-pending-convergence rows
@@ -255,19 +246,10 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	result := report.Result
 
 	if jsonOutput {
-		// Always a non-nil slice (even with zero findings, e.g. an
-		// empty-profile run with nothing stale to report) so --json's
-		// "files" key encodes as [] rather than null.
-		jsonFiles := make([]verifyFileJSON, 0, len(result.Findings))
-		for _, f := range result.Findings {
-			jsonFiles = append(jsonFiles, verifyFileJSON{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note})
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(verifyJSONOutput{GameID: report.GameID, Profile: report.Profile, Files: jsonFiles, Issues: result.Issues, Warnings: result.Warnings}); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		// emitJSON encodes a nil Findings slice as [], so a zero-finding run
+		// (e.g. #217's empty profile with nothing stale) still emits an
+		// array rather than null.
+		return emitJSON(report)
 	}
 
 	if !result.HasFiles {
