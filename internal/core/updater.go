@@ -119,6 +119,25 @@ type UpdateSkips struct {
 // Total is the number of mods that will not be checked at all.
 func (s UpdateSkips) Total() int { return s.Pinned + s.Local }
 
+// UpdateCheckReport is everything a bulk `lmm update` check renders: the
+// updates found, the mods that were never checked, and - when the check
+// itself failed partway through - why.
+//
+// Updates is CheckGameUpdates' own result verbatim (each entry carries the
+// whole installed mod, the new version, the changelog and the #196
+// recompile/#289 lock flags), never a projection of it. ErrorMessage is set
+// when the check did not complete: an empty Updates list otherwise means
+// "nothing to update", and with this set it means the answer is unknown -
+// the one distinction a consumer reading stdout alone cannot make
+// otherwise, since the human warning goes to stderr.
+type UpdateCheckReport struct {
+	GameID       string          `json:"game_id"`
+	Profile      string          `json:"profile"`
+	Updates      []domain.Update `json:"updates"`
+	Skipped      UpdateSkips     `json:"skipped"`
+	ErrorMessage string          `json:"error,omitempty"`
+}
+
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
 // that is both pinned and local counts once, as pinned, so Total never exceeds
 // len(installed).

@@ -720,6 +720,19 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Updates deliberately left nil (no `omitempty` on the tag) to
+			// pin that a check with nothing to report marshals as "[]", not
+			// "null", and ErrorMessage left empty to pin that a COMPLETE
+			// check carries no "error" key at all.
+			"update_check_report",
+			core.UpdateCheckReport{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Updates: nil,
+				Skipped: core.UpdateSkips{Pinned: 2, Local: 1},
+			},
+		},
+		{
 			"update_skips",
 			core.UpdateSkips{Pinned: 3, Local: 2},
 		},
@@ -800,6 +813,7 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"rollback_result",
 			core.RollbackResult{
+				Mod:     domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.2", FileIDs: []string{"file-0"}},
 				ModName: "Sample Mod", FromVersion: "1.2.3", ToVersion: "1.2.2",
 				Status:   core.UpdateRolledBack,
 				Warnings: []string{"could not sync merged pak"},

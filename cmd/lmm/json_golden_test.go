@@ -410,3 +410,70 @@ func TestJSONGolden_GameList(t *testing.T) {
 		assertJSONCLIGolden(t, "game_list_empty", out)
 	})
 }
+
+// --- update ---
+
+func TestJSONGolden_Update(t *testing.T) {
+	t.Run("bulk", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+		setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+		src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+		src.AddDownload("a-new", []byte("new"))
+		seedLocalMod(t, svc, game, "localA", "Local A")
+
+		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+		assertJSONCLIGolden(t, "update_bulk", out)
+	})
+
+	t.Run("bulk_none", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, _ := setupDoUpdateTest(t)
+		seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+
+		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+		assertJSONCLIGolden(t, "update_bulk_none", out)
+	})
+
+	t.Run("single_updated", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+		src.AddDownload("new-1", []byte("new-content"))
+		src.changelogs["mod1"] = "<b>Fixed</b> bugs.<br>More &amp; more."
+
+		out := captureStdout(t, func() error {
+			return applySingleUpdate(context.Background(), svc, game, mod, "default")
+		})
+		assertJSONCLIGolden(t, "update_single_updated", out)
+	})
+
+	t.Run("single_locked", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+		setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
+		src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+		src.AddDownload("new-1", []byte("new-content"))
+
+		out := captureStdout(t, func() error {
+			return applySingleUpdate(context.Background(), svc, game, mod, "default")
+		})
+		assertJSONCLIGolden(t, "update_single_locked", out)
+	})
+
+	t.Run("rollback", func(t *testing.T) {
+		svc, game, _ := setupRollbackReadyMod(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doUpdateRollback(context.Background(), svc, game, "mod1")
+		})
+		assertJSONCLIGolden(t, "update_rollback", out)
+	})
+}

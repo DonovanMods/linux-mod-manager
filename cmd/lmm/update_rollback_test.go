@@ -146,13 +146,14 @@ func TestDoUpdateRollback_Locked_JSON_SkippedDocument(t *testing.T) {
 		return doUpdateRollback(context.Background(), svc, game, "mod1")
 	})
 
-	var doc singleUpdateJSON
+	var doc core.RollbackResult
 	decodeSingleDoc(t, out, &doc)
-	assert.Equal(t, "mod1", doc.ModID)
-	assert.Equal(t, "Mod One", doc.Name)
+	assert.Equal(t, "mod1", doc.Mod.ModID)
+	assert.Equal(t, "test-src", doc.Mod.SourceID)
+	assert.Equal(t, "Mod One", doc.ModName)
 	assert.Equal(t, "2.0", doc.FromVersion)
 	assert.Equal(t, "1.0", doc.ToVersion)
-	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "skipped", doc.Status.String())
 	assert.Equal(t, "locked", doc.Reason)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")

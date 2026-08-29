@@ -63,12 +63,12 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_JSON(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	var doc singleUpdateJSON
+	var doc core.UpdateApplyResult
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
-	assert.Equal(t, "mod1", doc.ModID)
+	assert.Equal(t, "mod1", doc.Mod.ModID)
 	assert.Equal(t, "1.0", doc.FromVersion)
 	assert.Equal(t, "2.0", doc.ToVersion)
-	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "skipped", doc.Status.String())
 	assert.Equal(t, "locked", doc.Reason)
 }
 
@@ -115,12 +115,12 @@ func TestApplySingleUpdate_LockedAndPinned_JSON(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	var doc singleUpdateJSON
+	var doc core.UpdateApplyResult
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
-	assert.Equal(t, "mod1", doc.ModID)
+	assert.Equal(t, "mod1", doc.Mod.ModID)
 	assert.Equal(t, "1.0", doc.FromVersion)
 	assert.Empty(t, doc.ToVersion)
-	assert.Equal(t, "skipped", doc.Status)
+	assert.Equal(t, "skipped", doc.Status.String())
 	assert.Equal(t, "pinned", doc.Reason)
 }
 
@@ -179,7 +179,7 @@ func TestApplyUpdate_Locked_CoreGateBackstop(t *testing.T) {
 	plan, err := svc.PlanUpdate(context.Background(), game, "default", mod.SourceID, mod.ID)
 	require.NoError(t, err)
 
-	err = applyUpdate(context.Background(), svc, game, plan)
+	_, err = applyUpdate(context.Background(), svc, game, plan)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked, "the core gate must still refuse even when a CLI pre-check is bypassed")
 
@@ -247,7 +247,9 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 // table's "[locked@<version>]" marker (#143 polish): a locked mod's updates[]
 // entry must carry "locked": true so a JSON consumer can tell that a locked
 // auto-policy mod will not be applied, and an unlocked entry alongside it must
-// stay false (and, being omitempty, absent from the raw document).
+// stay false - now emitted explicitly rather than omitted (#302: under
+// encoding/json/v2, `omitempty` drops only empty JSON values - "", null, {},
+// [] - never a false bool; `omitzero` is the tag that would).
 func TestDoUpdate_BulkJSON_MarksLockedEntries(t *testing.T) {
 	withJSONOutput(t)
 	svc, game, src := setupDoUpdateTest(t)
@@ -268,19 +270,21 @@ func TestDoUpdate_BulkJSON_MarksLockedEntries(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	var doc updateJSONOutput
+	var doc core.UpdateCheckReport
 	require.NoError(t, json.Unmarshal([]byte(out), &doc))
 	require.Len(t, doc.Updates, 2)
 
-	byID := map[string]updateModJSON{}
+	byID := map[string]domain.Update{}
 	for _, u := range doc.Updates {
-		byID[u.ModID] = u
+		byID[u.InstalledMod.ID] = u
 	}
 	require.Contains(t, byID, "modA")
 	require.Contains(t, byID, "modB")
 	assert.True(t, byID["modA"].Locked, "locked mod's entry must carry locked: true")
 	assert.False(t, byID["modB"].Locked, "unlocked mod's entry must stay unmarked")
-	assert.NotContains(t, out, `"locked": false`, "locked is omitempty: absent, not false, on unlocked entries")
+	assert.Contains(t, out, `"locked": false`,
+		"v2 (#302): domain.Update.Locked's `omitempty` no longer drops a false bool - "+
+			"encoding/json/v2 omits only empty JSON values, so an unlocked entry now says so explicitly")
 }
 
 // TestDoUpdate_NoAutoUpdates_StillReportsLockedSkip covers the "no-auto
