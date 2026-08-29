@@ -13,7 +13,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -265,15 +264,10 @@ func saveGameConfig(ctx context.Context, cmd *cobra.Command, service *core.Servi
 		return fmt.Errorf("saving game: %w", err)
 	}
 
-	// Create default profile
-	defaultProfile := &domain.Profile{
-		Name:       "default",
-		GameID:     gameSlug,
-		Mods:       nil,
-		LinkMethod: domain.LinkSymlink,
-		IsDefault:  true,
-	}
-	if err := config.SaveProfile(service.ConfigDir(), defaultProfile); err != nil {
+	// Create default profile - the same core helper 'lmm game detect' uses
+	// (ApplyGameDetect), so both call sites share the unconditional
+	// overwrite-on-repair semantics documented there.
+	if _, err := service.NewProfileManager().CreateOrResetDefault(gameSlug); err != nil {
 		return fmt.Errorf("creating default profile: %w", err)
 	}
 

@@ -63,7 +63,7 @@ func captureStdoutAndStderr(t *testing.T, fn func() error) (stdout, stderr strin
 // a fully deterministic empty scan (empty mod_path, no installed mods).
 func TestRunImportScan_ExtractModeWarning_ExactOutput(t *testing.T) {
 	svc, game := setupDoImportTest(t)
-	importSkipMatch = true // isolate from tryMatchSources entirely
+	importSkipMatch = true // isolate from core's matchScannedMod entirely
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())

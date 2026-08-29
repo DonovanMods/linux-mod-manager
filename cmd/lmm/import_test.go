@@ -125,7 +125,7 @@ func (s *fakeMatchSource) CheckUpdates(ctx context.Context, installed []domain.I
 // TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash pins the
 // no-match summary rendering directly against ScanModPath's real default
 // (domain.SourceLocal), with --skip-match set so the assertion is isolated
-// from tryMatchSources entirely.
+// from core's matchScannedMod entirely.
 func TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	game.DeployMode = domain.DeployCopy
@@ -388,8 +388,9 @@ func TestDoImport_ArchiveWithID_FileListingFails_DegradesToMarkerless(t *testing
 // FileIDs, while keeping the manual-download semantics scan imports always had.
 func TestRunImportScan_MatchedSource_ResolvesFileIDAndStampsMarker(t *testing.T) {
 	svc, game := setupDoImportTest(t)
-	// tryMatchSources resolves sources via SourcesForGame, which consults the
-	// service's own game registry - the game must actually be registered.
+	// core's matchScannedMod resolves sources via SourcesForGame, which
+	// consults the service's own game registry - the game must actually be
+	// registered.
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	game.DeployMode = domain.DeployCopy
 	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "AcmeMod-1.0.zip"), []byte("payload"), 0644))

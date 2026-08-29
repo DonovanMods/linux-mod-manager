@@ -11,7 +11,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
 )
 
@@ -110,7 +109,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	// (per #201) treat every mod as absent from the load order, instead of
 	// reporting the same error every other command honors (#203 release
 	// review).
-	profileYAML, err := config.LoadProfile(service.ConfigDir(), game.ID, profileName)
+	profileYAML, err := service.NewProfileManager().Get(game.ID, profileName)
 	if err != nil && !errors.Is(err, domain.ErrProfileNotFound) {
 		return fmt.Errorf("loading profile: %w", err)
 	}
@@ -266,8 +265,9 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	return nil
 }
 
-func runListProfiles(cmd *cobra.Command, service interface{ ConfigDir() string }, gameID, gameName string) error {
-	names, err := config.ListProfiles(service.ConfigDir(), gameID)
+func runListProfiles(cmd *cobra.Command, service *core.Service, gameID, gameName string) error {
+	pm := service.NewProfileManager()
+	names, err := pm.ListNames(gameID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
@@ -293,7 +293,7 @@ func runListProfiles(cmd *cobra.Command, service interface{ ConfigDir() string }
 
 	fmt.Printf("Profiles for %s (%s):\n", gameName, gameID)
 	for _, name := range names {
-		prof, err := config.LoadProfile(service.ConfigDir(), gameID, name)
+		prof, err := pm.Get(gameID, name)
 		if err == nil && prof.IsDefault {
 			fmt.Printf("  %s (default)\n", name)
 		} else {

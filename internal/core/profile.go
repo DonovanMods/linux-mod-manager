@@ -54,6 +54,28 @@ func (pm *ProfileManager) Create(gameID, name string) (*domain.Profile, error) {
 	return profile, nil
 }
 
+// CreateOrResetDefault creates gameID's "default" profile, or resets it to
+// a fresh empty state (no mods) if one already exists. 'lmm game add' and
+// 'lmm game detect' have both always overwritten the default profile
+// unconditionally when (re-)configuring a game - re-running either against
+// an already-configured game intentionally replaces its default profile's
+// mod list rather than merge-preserving it (v2 Phase 2 Task 21, preserving
+// that behaviour byte-for-byte). Unlike Create, this bypasses the
+// existence check on purpose: Create's "profile already exists" error is
+// right for standalone profile creation, but wrong for a
+// create-or-repair call site.
+func (pm *ProfileManager) CreateOrResetDefault(gameID string) (*domain.Profile, error) {
+	profile := &domain.Profile{
+		Name:      "default",
+		GameID:    gameID,
+		IsDefault: true,
+	}
+	if err := config.SaveProfile(pm.configDir, profile); err != nil {
+		return nil, err
+	}
+	return profile, nil
+}
+
 // List returns all profiles for a game
 func (pm *ProfileManager) List(gameID string) ([]*domain.Profile, error) {
 	names, err := config.ListProfiles(pm.configDir, gameID)
@@ -71,6 +93,13 @@ func (pm *ProfileManager) List(gameID string) ([]*domain.Profile, error) {
 	}
 
 	return profiles, nil
+}
+
+// ListNames returns every profile's bare name (the profiles directory's
+// filenames, minus ".yaml") without loading or validating each one -
+// tolerant of a profile file List/Get would refuse to parse.
+func (pm *ProfileManager) ListNames(gameID string) ([]string, error) {
+	return config.ListProfiles(pm.configDir, gameID)
 }
 
 // loadProfile is Get's file-read step, indirected through a package

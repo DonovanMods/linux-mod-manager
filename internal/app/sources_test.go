@@ -262,3 +262,123 @@ directory:
 	assert.Contains(t, warnings, `warning: skipping source "taken": id already in use`)
 	assert.Contains(t, warnings, `warning: skipping source "missing-path":`)
 }
+
+// TestLoadSourceDefinitions pins the cmd/lmm-facing wrapper (v2 Phase 2 Task
+// 22): 'lmm source list' needs both the loaded definitions and the per-file
+// load errors, without importing internal/storage/config itself.
+func TestLoadSourceDefinitions(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeSourceYAML(t, filepath.Join(cfgDir, "sources"), "good.yaml", fmt.Sprintf(`
+id: good-src
+name: Good Src
+type: directory
+directory:
+  path: %s
+`, t.TempDir()))
+	writeSourceYAML(t, filepath.Join(cfgDir, "sources"), "broken.yaml", "id: [unclosed")
+
+	defs, loadErrs, err := LoadSourceDefinitions(cfgDir)
+	require.NoError(t, err)
+	require.Len(t, defs, 1)
+	assert.Equal(t, "good-src", defs[0].ID)
+	require.Len(t, loadErrs, 1)
+	assert.Equal(t, "broken.yaml", loadErrs[0].File)
+}
+
+// TestLoadSourceDefinitionFile pins 'lmm source validate's single-file load.
+func TestLoadSourceDefinitionFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "good.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+id: my-mods
+name: My Mods
+type: directory
+directory:
+  path: `+t.TempDir()+`
+`), 0644))
+
+	def, err := LoadSourceDefinitionFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "my-mods", def.ID)
+}
+
+func TestLoadSourceDefinitionFile_Invalid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+id: BAD_ID
+name: Bad
+type: directory
+directory:
+  path: ~/x
+`), 0644))
+
+	_, err := LoadSourceDefinitionFile(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must match")
+}
+
+// TestConstructSource pins the bare-construction query 'lmm source list'
+// uses to recover an unregistered definition's construction error, without
+// performing any live probe (directory scan, manifest fetch, API call).
+func TestConstructSource(t *testing.T) {
+	src, err := ConstructSource(source.SourceDefinition{
+		ID: "dir-src", Name: "Dir Src", Type: source.TypeDirectory,
+		Directory: &source.DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "dir-src", src.ID())
+}
+
+func TestConstructSource_ConstructionFailure(t *testing.T) {
+	_, err := ConstructSource(source.SourceDefinition{
+		ID: "missing", Name: "Missing", Type: source.TypeDirectory,
+		Directory: &source.DirectoryConfig{Path: "/this/path/should/not/exist/lmm-test-fixture"},
+	})
+	assert.Error(t, err)
+}
+
+// TestProbeSource_Directory pins 'lmm source validate --probe's directory/
+// manifest summary format.
+func TestProbeSource_Directory(t *testing.T) {
+	svc := newTestService(t)
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "SomeMod"), 0755))
+
+	summary, err := ProbeSource(t.Context(), svc, source.SourceDefinition{
+		ID: "probe-dir", Name: "Probe Dir", Type: source.TypeDirectory,
+		Directory: &source.DirectoryConfig{Path: root},
+	}, "")
+	require.NoError(t, err)
+	assert.Contains(t, summary, "ok")
+	assert.Contains(t, summary, "1 mod(s)")
+}
+
+// TestProbeSource_APIWithoutSearchRequiresProbeID pins the "no search
+// endpoint" guard: an api definition whose only endpoint is get_mod refuses
+// to probe without an explicit mod id.
+func TestProbeSource_APIWithoutSearchRequiresProbeID(t *testing.T) {
+	svc := newTestService(t)
+
+	_, err := ProbeSource(t.Context(), svc, source.SourceDefinition{
+		ID: "probe-api", Name: "Probe API", Type: source.TypeAPI,
+		API: &source.APIConfig{
+			BaseURL: "https://api.x.test",
+			Endpoints: source.APIEndpoints{
+				GetMod: &source.EndpointConfig{Path: "/mods/{mod_id}"},
+			},
+			Mappings: source.APIMappings{Mod: map[string]string{"id": "id", "name": "name"}},
+		},
+	}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--id")
+}
+
+func TestProbeSource_ConstructionFailure(t *testing.T) {
+	svc := newTestService(t)
+
+	_, err := ProbeSource(t.Context(), svc, source.SourceDefinition{
+		ID: "bad", Name: "Bad", Type: source.TypeDirectory,
+		Directory: &source.DirectoryConfig{Path: "/this/path/should/not/exist/lmm-test-fixture"},
+	}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "constructing source")
+}

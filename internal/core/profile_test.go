@@ -48,6 +48,62 @@ func TestProfileManager_Create_DuplicateName(t *testing.T) {
 	assert.Error(t, err) // Should fail - duplicate name
 }
 
+// TestProfileManager_CreateOrResetDefault_CreatesWhenAbsent pins the "no
+// existing profile" leg: a fresh IsDefault profile named "default" with no
+// mods, same as pm.Create would produce for a brand-new game.
+func TestProfileManager_CreateOrResetDefault_CreatesWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	pm := core.NewProfileManager(dir, database)
+
+	profile, err := pm.CreateOrResetDefault("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, "default", profile.Name)
+	assert.Equal(t, "skyrim-se", profile.GameID)
+	assert.True(t, profile.IsDefault)
+	assert.Empty(t, profile.Mods)
+
+	saved, err := pm.Get("skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, saved.IsDefault)
+}
+
+// TestProfileManager_CreateOrResetDefault_ResetsExisting pins v2 Phase 2
+// Task 21's documented overwrite semantics: 'lmm game add' and 'lmm game
+// detect' repair have always unconditionally replaced an existing default
+// profile's mod list (config.SaveProfile has no existence check). Unlike
+// pm.Create, which errors on an already-existing profile name, this
+// silently resets it - a game with mods already recorded in "default"
+// loses them.
+func TestProfileManager_CreateOrResetDefault_ResetsExisting(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.CreateOrResetDefault("skyrim-se")
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod("skyrim-se", "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
+
+	before, err := pm.Get("skyrim-se", "default")
+	require.NoError(t, err)
+	require.NotEmpty(t, before.Mods, "test setup: profile must have a mod before the reset")
+
+	profile, err := pm.CreateOrResetDefault("skyrim-se")
+	require.NoError(t, err)
+	assert.Empty(t, profile.Mods)
+	assert.True(t, profile.IsDefault)
+
+	after, err := pm.Get("skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Empty(t, after.Mods, "resetting an existing default profile must wipe its mod list")
+}
+
 func TestProfileManager_Create_RejectsPathTraversalName(t *testing.T) {
 	// Each payload is a func of the test's temp root so path-shaped payloads
 	// stay inside it — even a guard regression can only touch the sandbox.
@@ -170,6 +226,60 @@ func TestProfileManager_List(t *testing.T) {
 	profiles, err := pm.List("skyrim-se")
 	require.NoError(t, err)
 	assert.Len(t, profiles, 2)
+}
+
+// TestProfileManager_ListNames pins the bare-names query cmd/lmm's
+// 'list --profiles' needs (v2 Phase 2 Task 22): unlike List, which loads
+// every profile and therefore silently drops one whose YAML fails to
+// parse, ListNames only enumerates the profiles directory - the same
+// filenames List's own directory scan sees, before any per-file
+// config.LoadProfile call.
+func TestProfileManager_ListNames(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "survival")
+	require.NoError(t, err)
+	_, err = pm.Create("skyrim-se", "combat")
+	require.NoError(t, err)
+
+	names, err := pm.ListNames("skyrim-se")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"survival", "combat"}, names)
+}
+
+// TestProfileManager_ListNames_SurvivesUnparseableProfile is the case List
+// can't handle: a profile file present on disk but not valid profile YAML
+// still has its bare name returned by ListNames, where List silently skips
+// it (List's own loop: `if err != nil { continue }`).
+func TestProfileManager_ListNames_SurvivesUnparseableProfile(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+	_, err = pm.Create("skyrim-se", "survival")
+	require.NoError(t, err)
+
+	profileDir := filepath.Join(dir, "games", "skyrim-se", "profiles")
+	require.NoError(t, os.WriteFile(filepath.Join(profileDir, "broken.yaml"), []byte("link_method: bogus\n"), 0644))
+
+	names, err := pm.ListNames("skyrim-se")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"survival", "broken"}, names)
+
+	profiles, err := pm.List("skyrim-se")
+	require.NoError(t, err)
+	assert.Len(t, profiles, 1, "List silently drops the unparseable profile - the behavior ListNames exists to avoid")
 }
 
 func TestProfileManager_Get(t *testing.T) {

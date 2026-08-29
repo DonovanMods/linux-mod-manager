@@ -125,6 +125,23 @@ func (m *DeployMode) UnmarshalText(b []byte) error {
 	return nil
 }
 
+// DetectedGame is a Steam game found on disk that lmm knows how to
+// configure. Moved verbatim from internal/source/steam.DetectedGame (v2
+// Phase 2 Task 21, Ruling 8): app.DetectGames wraps the Steam-specific scan
+// and returns this domain type so core can consume detected games (via
+// GameFromDetected) without importing a concrete source. steam keeps
+// DetectedGame as a type alias for this.
+type DetectedGame struct {
+	SteamAppID  string            `json:"steam_app_id"`          // Steam App ID
+	Slug        string            `json:"slug"`                  // lmm game ID (from known games list)
+	Name        string            `json:"name"`                  // Display name
+	InstallPath string            `json:"install_path"`          // Absolute path to game install (e.g. .../common/Skyrim Special Edition)
+	ModPath     string            `json:"mod_path"`              // Absolute path to mod directory (InstallPath + ModPath relative)
+	NexusID     string            `json:"nexus_id,omitempty"`    // NexusMods game domain ID. Optional: "" for games with no NexusMods presence (#177).
+	DeployMode  string            `json:"deploy_mode,omitempty"` // games.yaml's deploy_mode string, passed through from GameInfo.DeployMode. Optional: "" means the default (extract).
+	Sources     map[string]string `json:"sources,omitempty"`     // games.yaml's sources map, passed through from GameInfo.Sources. Optional: nil means "derive {nexusmods: NexusID}".
+}
+
 // ValidDeployModes is ValidLinkMethods' counterpart for ParseDeployMode.
 const ValidDeployModes = "extract, copy, compile"
 

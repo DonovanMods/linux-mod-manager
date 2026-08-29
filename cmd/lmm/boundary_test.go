@@ -28,11 +28,7 @@ var allowedImports = []string{
 // Phase 2 step that removes it. An entry whose import disappears must be
 // deleted from this map (TestImportBoundary fails otherwise) so the list only
 // ever shrinks. When it is empty, delete the map and this comment.
-var boundaryAllowList = map[string]string{
-	"internal/source/custom":  "lmm source list/validate --probe re-derive definitions; Phase 2 #8",
-	"internal/source/steam":   "lmm game detect scans Steam libraries in cmd; Phase 2 #7",
-	"internal/storage/config": "profiles/games/config read directly by 7 commands; Phase 2 #7-#8",
-}
+var boundaryAllowList = map[string]string{}
 
 // checkBoundary returns one message per problem: an intra-module import that
 // is neither allowed nor allow-listed, or an allow-list entry whose import no

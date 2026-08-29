@@ -8,10 +8,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/steam"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -108,20 +107,8 @@ func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault stri
 		return fmt.Errorf("game not found: %s", newDefault)
 	}
 
-	// Load config
-	svcCfg, err := getServiceConfig()
-	if err != nil {
+	if err := service.SetDefaultGame(cmd.Context(), newDefault); err != nil {
 		return err
-	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	// Update and save
-	cfg.DefaultGame = newDefault
-	if err := cfg.Save(svcCfg.ConfigDir); err != nil {
-		return fmt.Errorf("saving config: %w", err)
 	}
 
 	cmd.Printf("Default game set to: %s (%s)\n", game.Name, newDefault)
@@ -133,12 +120,12 @@ func runGameShowDefault(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
+	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if cfg.DefaultGame == "" {
+	if defaultGame == "" {
 		cmd.Println("No default game set")
 		cmd.Println("Use 'lmm game set-default <game-id>' to set one")
 		return nil
@@ -147,13 +134,13 @@ func runGameShowDefault(cmd *cobra.Command, args []string) error {
 	// Try to get game name for display
 	if service, err := initService(cmd.Context()); err == nil {
 		defer closeService(service)
-		if game, err := service.GetGame(cfg.DefaultGame); err == nil {
-			cmd.Printf("Default game: %s (%s)\n", game.Name, cfg.DefaultGame)
+		if game, err := service.GetGame(defaultGame); err == nil {
+			cmd.Printf("Default game: %s (%s)\n", game.Name, defaultGame)
 			return nil
 		}
 	}
 
-	cmd.Printf("Default game: %s\n", cfg.DefaultGame)
+	cmd.Printf("Default game: %s\n", defaultGame)
 	return nil
 }
 
@@ -162,23 +149,21 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
+	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if cfg.DefaultGame == "" {
+	if defaultGame == "" {
 		cmd.Println("No default game was set")
 		return nil
 	}
 
-	oldDefault := cfg.DefaultGame
-	cfg.DefaultGame = ""
-	if err := cfg.Save(svcCfg.ConfigDir); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+	if err := svcCfg.ClearDefaultGame(cmd.Context()); err != nil {
+		return err
 	}
 
-	cmd.Printf("Cleared default game (was: %s)\n", oldDefault)
+	cmd.Printf("Cleared default game (was: %s)\n", defaultGame)
 	return nil
 }
 
@@ -188,7 +173,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	games, warnings, err := steam.DetectGames(svcCfg.ConfigDir)
+	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir)
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}
@@ -211,13 +196,13 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 // library scan. service's ConfigDir is used both for the existing-games
 // lookup (to mark/exclude already-configured games, #205 item 2) and for
 // saving newly selected ones.
-func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, games []steam.DetectedGame) error {
+func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, games []domain.DetectedGame) error {
 	if len(games) == 0 {
 		cmd.Println("No moddable Steam games found.")
 		return nil
 	}
 
-	existingGames, err := config.LoadGames(service.ConfigDir())
+	existingGames, err := service.LoadGamesFromDisk()
 	if err != nil {
 		return fmt.Errorf("loading games: %w", err)
 	}
@@ -251,29 +236,23 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return nil
 	}
 
-	for _, n := range indices {
-		g := games[n-1]
-		game, err := gameFromDetected(g)
-		if err != nil {
-			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
-		}
-		if err := service.SaveGame(ctx, game); err != nil {
-			return fmt.Errorf("saving game %s: %w", g.Slug, err)
-		}
-		// No LinkMethod: a detected game's default profile should inherit the
-		// game/global setting, not pin an override.
-		defaultProfile := &domain.Profile{
-			Name:      "default",
-			GameID:    g.Slug,
-			Mods:      nil,
-			IsDefault: true,
-		}
-		if err := config.SaveProfile(service.ConfigDir(), defaultProfile); err != nil {
-			return fmt.Errorf("creating default profile for %s: %w", g.Slug, err)
-		}
-		cmd.Printf("Added: %s (%s)\n", g.Name, g.Slug)
+	selected := make([]domain.DetectedGame, len(indices))
+	for i, n := range indices {
+		selected[i] = games[n-1]
 	}
-	return nil
+
+	result, applyErr := service.ApplyGameDetect(ctx, selected)
+	// ApplyGameDetect converts and persists one game at a time, stopping at
+	// the first failing game (conversion or persistence); result.Profiles
+	// holds exactly the games that fully completed (games.yaml write +
+	// default profile), one-for-one with selected's leading entries in the
+	// same order - so this prints "Added:" for precisely the games
+	// doGameDetect's old interleaved loop would have printed before hitting
+	// the same error.
+	for i := range result.Profiles {
+		cmd.Printf("Added: %s (%s)\n", selected[i].Name, selected[i].Slug)
+	}
+	return applyErr
 }
 
 // gameDetectSelectionIndices parses the detect prompt's answer into the
@@ -290,7 +269,7 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 // add' has always performed unconditionally (it has no existing-ID guard
 // either) - #205 asks only for visibility into what's already configured,
 // not a merge-preserving repair.
-func gameDetectSelectionIndices(line string, games []steam.DetectedGame, existingGames map[string]*domain.Game) ([]int, error) {
+func gameDetectSelectionIndices(line string, games []domain.DetectedGame, existingGames map[string]*domain.Game) ([]int, error) {
 	line = strings.TrimSpace(strings.ToLower(line))
 	if line == "" || line == "n" || line == "none" {
 		return nil, nil
@@ -314,43 +293,4 @@ func gameDetectSelectionIndices(line string, games []steam.DetectedGame, existin
 		indices = append(indices, n)
 	}
 	return indices, nil
-}
-
-// gameFromDetected converts one steam.DetectedGame into the domain.Game
-// runGameDetect saves. g.Sources, when the known-games entry supplied one
-// (#177: games with a non-NexusMods or multi-source setup, e.g. Icarus),
-// wins outright; otherwise this derives the single-entry {nexusmods:
-// g.NexusID} map every detected game produced before Sources existed, so
-// every pre-#177 known game generates byte-for-byte the same games.yaml
-// block it always has. A known-games entry setting NEITHER is
-// misconfigured - every legitimate entry sets at least one - and used to
-// silently produce {"nexusmods": ""}, a garbage source mapping that would
-// propagate into games.yaml unnoticed; that is now a fail-loud error naming
-// the game instead (#203 release review). g.DeployMode goes through
-// domain.ParseDeployMode, which already treats "" as DeployExtract (today's
-// default); an unrecognized non-empty value in the known-games schema
-// (steam-games.yaml, built-in or user override) is a load-time error rather
-// than a silent fallback (#172).
-func gameFromDetected(g steam.DetectedGame) (*domain.Game, error) {
-	deployMode, ok := domain.ParseDeployMode(g.DeployMode)
-	if !ok {
-		return nil, fmt.Errorf("%w: steam-games.yaml: game %q: deploy_mode %q (valid: %s)",
-			domain.ErrInvalidDeployMode, g.Slug, g.DeployMode, domain.ValidDeployModes)
-	}
-	sources := g.Sources
-	if len(sources) == 0 {
-		if g.NexusID == "" {
-			return nil, fmt.Errorf("game %q: known-games entry has no sources and no nexus_id - set at least one", g.Slug)
-		}
-		sources = map[string]string{"nexusmods": g.NexusID}
-	}
-	return &domain.Game{
-		ID:          g.Slug,
-		Name:        g.Name,
-		InstallPath: g.InstallPath,
-		ModPath:     g.ModPath,
-		SourceIDs:   sources,
-		LinkMethod:  domain.LinkSymlink,
-		DeployMode:  deployMode,
-	}, nil
 }

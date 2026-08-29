@@ -12,7 +12,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -68,7 +67,7 @@ func doStatus(ctx context.Context, service *core.Service) error {
 	}
 
 	// Load config to check for default game
-	cfg, _ := config.Load(service.ConfigDir())
+	defaultGame, _ := service.DefaultGame(ctx)
 
 	// Show summary of all games
 	fmt.Println("Configured Games:")
@@ -109,7 +108,7 @@ func doStatus(ctx context.Context, service *core.Service) error {
 
 		// Mark default game
 		gameName := game.Name
-		if cfg != nil && cfg.DefaultGame == game.ID {
+		if game.ID == defaultGame {
 			gameName += " (default)"
 		}
 
@@ -179,7 +178,7 @@ type statusGameJSON struct {
 }
 
 func outputStatusJSON(ctx context.Context, service *core.Service, games []*domain.Game) error {
-	cfg, _ := config.Load(service.ConfigDir())
+	defaultGame, _ := service.DefaultGame(ctx)
 	pm := service.NewProfileManager()
 
 	out := statusJSONOutput{Games: make([]statusGameJSON, 0, len(games))}
@@ -195,7 +194,7 @@ func outputStatusJSON(ctx context.Context, service *core.Service, games []*domai
 			modCount = len(mods)
 		}
 		linkMethod := service.GetGameLinkMethod(game)
-		isDefault := cfg != nil && cfg.DefaultGame == game.ID
+		isDefault := game.ID == defaultGame
 		out.Games = append(out.Games, statusGameJSON{
 			ID:          game.ID,
 			Name:        game.Name,
