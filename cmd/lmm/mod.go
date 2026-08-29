@@ -251,6 +251,12 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
+	// Ruling 15: the ModSettingResult document, in place of the console
+	// readout - policyStr below is just result.Mod.UpdatePolicy in words.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
 	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), result.Mod.Name, policyStr)
 	if modSetPin {
 		fmt.Printf(" (v%s)", result.Mod.Version)
@@ -349,6 +355,12 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return err
 	}
 
+	// Ruling 15: the ModSettingResult document. result.LockedVersion is
+	// target, so the convergence hint below is derivable from it.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
 	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), result.Mod.Name, target)
 	// Locking is a metadata write, not a deploy (design decision): when the
 	// target differs from what is actually installed, the game directory
@@ -389,6 +401,11 @@ func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, 
 	result, err := service.ClearModLock(ctx, modSource, modID, game.ID, profileName)
 	if err != nil {
 		return err
+	}
+
+	// Ruling 15: the ModSettingResult document.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), result.Mod.Name, policyToString(result.Mod.UpdatePolicy))
@@ -438,6 +455,12 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 	printModNotes(result.Notes)
 	printModWarnings(result.Warnings)
+
+	// Ruling 15: the EnableResult document - Changed and the diagnostics
+	// the two printers above would have rendered are all in it.
+	if jsonOutput {
+		return emitJSON(result)
+	}
 
 	if !result.Changed {
 		fmt.Printf("%s is already enabled.\n", mod.Name)
@@ -492,6 +515,11 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	printModNotes(result.Notes)
 	printModWarnings(result.Warnings)
 
+	// Ruling 15: the DisableResult document (see doModEnable's twin).
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
 	if !result.Changed {
 		fmt.Printf("%s is already disabled.\n", mod.Name)
 		return nil
@@ -512,7 +540,10 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 // otherwise (EnableMod/DisableMod both return a nil result on some error
 // paths - see their own doc comments in flows.go).
 func printModNotes(notes []string) {
-	if !verbose {
+	// Ruling 15: nothing but the document under --json - the Result carries
+	// Notes itself. Guarded here, not at each call site, because the error
+	// paths call this too.
+	if !verbose || jsonOutput {
 		return
 	}
 	for _, n := range notes {
@@ -525,6 +556,9 @@ func printModNotes(notes []string) {
 // these must reach the user regardless of --verbose. Today the only
 // producer is a merged-pak sync failure; nil-safe like printModNotes.
 func printModWarnings(warnings []string) {
+	if jsonOutput {
+		return
+	}
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -734,6 +768,13 @@ func doModConvert(ctx context.Context, service *core.Service, game *domain.Game,
 	result, err := service.SetModConvertPaks(ctx, modSource, modID, game.ID, profileName, convert)
 	if err != nil {
 		return fmt.Errorf("setting pak conversion for %s: %w", mod.Name, err)
+	}
+
+	// Ruling 15: the ModSettingResult document - result.ConvertPaks is the
+	// on/off state, and the notes below are advice derived from the game's
+	// own config, not from the result.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	state := "on"

@@ -129,9 +129,15 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 		}
 	}
 
-	result, err := service.ApplyRelinkMod(ctx, game, plan, opts, sink)
+	result, err := service.ApplyRelinkMod(ctx, game, plan, opts, quietSink(sink))
 	if err != nil {
 		return err
+	}
+
+	// Ruling 15: the RelinkResult document - NoChanges and Changes below
+	// are both fields of it.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	if result.NoChanges {

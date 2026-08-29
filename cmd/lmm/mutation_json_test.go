@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -160,4 +161,114 @@ func TestDoPurge_JSON_ConfirmationRequiredEmitsNoDocument(t *testing.T) {
 	require.ErrorIs(t, err, core.ErrConfirmationRequired)
 	assert.Empty(t, stdout, "a refused prompt emits no result document")
 	assert.Empty(t, stderr)
+}
+
+// --- mod enable / disable ---
+
+// withModSourceFlags points `lmm mod`'s -s/-p globals at the fixture's
+// source and default profile, restoring them afterwards -
+// setupDoModLockTest does this itself, but the enable/disable fixtures
+// build on setupDoDeployTest, which does not.
+func withModSourceFlags(t *testing.T) {
+	t.Helper()
+	oldSource, oldProfile := modSource, modProfile
+	modSource, modProfile = "src", ""
+	t.Cleanup(func() { modSource, modProfile = oldSource, oldProfile })
+}
+
+func TestJSONGolden_ModToggle(t *testing.T) {
+	t.Run("enable", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+			Mod:          domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: game.ID},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      false,
+		}))
+		game.SourceIDs = map[string]string{"src": game.ID}
+		withModSourceFlags(t)
+
+		out := runJSONCommand(t, func() error {
+			return doModEnable(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_enable_result", out)
+	})
+
+	t.Run("disable", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		game.SourceIDs = map[string]string{"src": game.ID}
+		withModSourceFlags(t)
+
+		out := runJSONCommand(t, func() error {
+			return doModDisable(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_disable_result", out)
+	})
+}
+
+// --- mod lock / unlock / set-update / convert ---
+
+func TestJSONGolden_ModSettings(t *testing.T) {
+	t.Run("lock", func(t *testing.T) {
+		svc, game, _ := setupDoModLockTest(t)
+		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
+
+		out := runJSONCommand(t, func() error {
+			return doModLock(context.Background(), svc, game, "a", "")
+		})
+		assertJSONCLIGolden(t, "mod_lock_result", out)
+	})
+
+	t.Run("unlock", func(t *testing.T) {
+		svc, game, _ := setupDoModLockTest(t)
+		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
+		require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", ""))
+
+		out := runJSONCommand(t, func() error {
+			return doModUnlock(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_unlock_result", out)
+	})
+
+	t.Run("set_update", func(t *testing.T) {
+		svc, game, _ := setupDoModLockTest(t)
+		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
+		oldAuto, oldPin := modSetAuto, modSetPin
+		modSetAuto, modSetPin = true, false
+		t.Cleanup(func() { modSetAuto, modSetPin = oldAuto, oldPin })
+
+		out := runJSONCommand(t, func() error {
+			return doModSetUpdate(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_set_update_result", out)
+	})
+
+	t.Run("convert", func(t *testing.T) {
+		svc, game, _ := setupDoModConvertTest(t)
+		// Saved so modSettingResult's own GetGame finds the compile-mode
+		// game and populates ModSettingResult.ConvertPaks - the datum this
+		// command's plain output states as "pak conversion: on|off".
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
+
+		out := runJSONCommand(t, func() error {
+			return doModConvert(context.Background(), svc, game, "a", false)
+		})
+		assertJSONCLIGolden(t, "mod_convert_result", out)
+	})
+}
+
+// --- mod edit ---
+
+func TestJSONGolden_ModEdit(t *testing.T) {
+	svc, game, _ := setupDoModEditTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	editName = "Renamed Mod"
+
+	out := runJSONCommand(t, func() error {
+		return doModEdit(context.Background(), svc, game, "a")
+	})
+	assertJSONCLIGolden(t, "mod_edit_result", out)
 }
