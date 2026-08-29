@@ -7,14 +7,14 @@
 // Shape note (why there is no Plan here). Ruling 6 and the spec's
 // "Plan/Apply is the shape of every mutation" both hold for flows whose
 // decision can be previewed WITHOUT mutating. Archive import cannot: the
-// only decision point is the file-conflict overwrite prompt, and conflicts
+// only decision point is the file-conflict overwrite question, and conflicts
 // are computed from the mod's CACHE ENTRY, which does not exist until the
-// archive has been extracted into it - the same reason ApplyInstall keeps
-// InstallOptions.ConfirmConflicts rather than pre-computing conflicts in
-// PlanInstall (see that field's doc comment and InstallPlan.Conflicts').
-// So the cache write and the install are one mutation, and the prompt stays
-// a callback for Phase 2. Phase 3 removes the callback along with
-// ConfirmInstall/ConfirmConflicts everywhere.
+// archive has been extracted into it - the same reason ApplyInstall computes
+// its own conflicts mid-Apply rather than in PlanInstall (see
+// InstallOptions.AcceptConflicts' doc comment and InstallPlan.Conflicts').
+// So the cache write and the install are one mutation; v2 Phase 3 Ruling 1
+// makes the decision point a typed error (*ConflictError) the frontend
+// answers with opts.AcceptConflicts, so core never calls back into it.
 package core
 
 import (
@@ -40,26 +40,26 @@ type ImportArchiveOptions struct {
 	ModID    string
 
 	// Force is `--force`: it skips the conflict CHECK entirely (not merely
-	// the prompt - ConfirmConflicts is never called), and it downgrades a
+	// the refusal - GetConflicts is never called), and it downgrades a
 	// failed install.before_all/before_each hook from fatal to a warning.
 	Force bool
 	// SkipHooks runs no hooks at all (the CLI's --no-hooks).
 	SkipHooks bool
 
-	// ConfirmConflicts gates the deploy step when the archive's files would
-	// overwrite another mod's deployed files. Ruling 6: the prompt stays a
-	// callback for Phase 2 (removed in Phase 3) because the conflict list
-	// cannot be computed before the archive is cached - see this file's
-	// package comment.
+	// AcceptConflicts answers the deploy-step conflict gate up front: the
+	// caller has already decided that overwriting another mod's deployed
+	// files is fine. Force implies it.
 	//
-	// Called with the freshly-computed, NON-EMPTY conflict list only when
-	// !Force and ConfirmConflicts is non-nil; Force skips the check
-	// entirely, and a nil callback likewise proceeds silently (a caller that
-	// does not want blocking behaviour). Returning false aborts with the
-	// pre-lift CLI's own error text, "import cancelled", leaving exactly the
-	// state a decline left there: the archive is already in the cache and
-	// nothing is deployed, saved or added to the profile.
-	ConfirmConflicts func(conflicts []Conflict) bool
+	// Left false (the default), a non-empty conflict list makes
+	// ImportArchive return *ConflictError carrying it, before the hooks,
+	// the deploy, the DB row and the profile ref - exactly the state a
+	// declined prompt used to leave: the archive is already in the cache
+	// (a cache fill is not a mutation of managed state - Ruling 1) and
+	// nothing else has changed. A frontend that prompts re-runs
+	// ImportArchive with this set; the conflict list cannot be computed
+	// before the archive is cached, which is why it is a mid-Apply typed
+	// error rather than a Plan field - see this file's package comment.
+	AcceptConflicts bool
 }
 
 // ImportArchiveResult reports ImportArchive's outcome. As with every other
@@ -142,8 +142,9 @@ type ImportArchiveResult struct {
 // sink may be nil.
 //
 // It is ONE mutation and runs under beginOp: the cache write and the install
-// are the same operation, and the only decision point in between is
-// opts.ConfirmConflicts (see this file's package comment).
+// are the same operation, and the only decision point in between is the
+// conflict gate opts.AcceptConflicts answers (see this file's package
+// comment).
 func (s *Service) ImportArchive(ctx context.Context, game *domain.Game, profileName, archivePath string, opts ImportArchiveOptions, sink EventSink) (*ImportArchiveResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -273,8 +274,8 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		switch {
 		case cerr != nil:
 			note(ImportArchiveNote, "Warning: could not check conflicts: %v", cerr)
-		case len(conflicts) > 0 && opts.ConfirmConflicts != nil && !opts.ConfirmConflicts(conflicts):
-			return result, fmt.Errorf("import cancelled")
+		case len(conflicts) > 0 && !opts.AcceptConflicts:
+			return result, &ConflictError{Conflicts: conflicts}
 		}
 	}
 

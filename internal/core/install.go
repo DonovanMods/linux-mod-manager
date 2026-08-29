@@ -639,39 +639,34 @@ type InstallOptions struct {
 	Force     bool
 	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
 
-	// ConfirmConflicts gates the STRICT (no-deps) path's deploy step
-	// (applyInstallPrimary), restoring the pre-extraction CLI's blocking
-	// conflict prompt at its ORIGINAL position: AFTER the primary is
-	// downloaded and extracted to cache and BEFORE it is deployed - the
-	// exact point confirmInstallConflicts occupied in doInstall
-	// (cmd/lmm/install.go), since installer.GetConflicts can only inspect a
-	// mod's cache once something has actually been downloaded into it (see
-	// InstallPlan.Conflicts' doc comment for why a pre-download PlanInstall
-	// call can't do this for a mod that has never been cached before - the
-	// C1 review finding this field fixes: conflicts had regressed into
-	// PlanInstall alone, which silently missed every uncached mod's
-	// conflicts and, for an already-cached one, prompted at the wrong
-	// position).
+	// AcceptConflicts answers the STRICT (no-deps) path's conflict gate in
+	// applyInstallPrimary up front: the caller has already decided that
+	// overwriting another mod's deployed files is fine, so ApplyInstall
+	// neither computes nor refuses on conflicts. Force implies it.
 	//
-	// Called with the freshly-computed, non-empty conflict list ONLY when
-	// !Force and ConfirmConflicts is non-nil - Force skips the check
-	// entirely without ever calling it (matching doInstall's own "if
-	// !installForce" gate), and a nil ConfirmConflicts likewise skips it
-	// (proceeds silently), for a caller that doesn't want the STRICT path's
-	// blocking behavior at all (the BATCH path - applyInstallBatchMod - has
-	// its own separate, always-non-blocking inline warning and never
-	// consults this field).
+	// The gate itself sits at the pre-extraction CLI's ORIGINAL prompt
+	// position: AFTER the primary is downloaded and extracted to cache and
+	// BEFORE it is deployed - the exact point confirmInstallConflicts
+	// occupied in doInstall (cmd/lmm/install.go), since
+	// installer.GetConflicts can only inspect a mod's cache once something
+	// has actually been downloaded into it (see InstallPlan.Conflicts' doc
+	// comment for why a pre-download PlanInstall call can't do this for a
+	// mod that has never been cached before).
 	//
-	// Returning false aborts the install with the exact error
-	// confirmInstallConflicts' decline produced ("installation cancelled"),
-	// leaving the same state a decline left in doInstall: before_all/
-	// before_each hooks already ran, the download is already cached (a
-	// fresh/upgrade install's cache entry is left in place; a same-version
-	// reinstall's staged reinstall-cache-transaction is rolled back via its
-	// existing deferred Rollback, restoring the live cache/deployed files
-	// exactly as they were), and nothing is deployed or saved to the DB/
-	// profile.
-	ConfirmConflicts func(conflicts []Conflict) bool
+	// Left false (the default), a non-empty conflict list makes ApplyInstall
+	// return *ConflictError carrying it - no callback into the frontend
+	// (v2 Phase 3 Ruling 1). The refusal state is exactly what a declined
+	// prompt used to leave: before_all/before_each hooks already ran, the
+	// download is already cached (a fresh/upgrade install's cache entry is
+	// left in place; a same-version reinstall's staged
+	// reinstall-cache-transaction is rolled back via its existing deferred
+	// Rollback, restoring the live cache/deployed files exactly as they
+	// were), and nothing is deployed or saved to the DB/profile. A frontend
+	// that prompts re-runs ApplyInstall with this set.
+	//
+	// The BATCH path (applyInstallBatchMod) never consults it: it has its
+	// own separate, always-non-blocking inline conflict warning.
+	AcceptConflicts bool
 }
 
 // InstalledRef identifies one mod on an InstallResult.Installed/Skipped/
@@ -1127,12 +1122,12 @@ func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPl
 //     before this is ever called, while opts.TargetVersion/TargetFileIDs
 //     pins are folded into plan.Files HERE, up front, when the caller's
 //     selection doesn't already satisfy them (#140 - see
-//     resolveStrictInstallFiles) - but the blocking conflict prompt is NOT:
-//     it fires INSIDE applyInstallPrimary itself, post-download/pre-deploy,
-//     via opts.ConfirmConflicts - see that field's doc comment for why a
-//     caller-side, plan.Conflicts-driven prompt can never detect an
-//     uncached mod's conflicts, the C1 review finding this restores
-//     fidelity for).
+//     resolveStrictInstallFiles) - but the conflict gate is NOT: it fires
+//     INSIDE applyInstallPrimary itself, post-download/pre-deploy, and an
+//     unaccepted conflict returns *ConflictError - see
+//     opts.AcceptConflicts' doc comment for why a caller-side,
+//     plan.Conflicts-driven prompt can never detect an uncached mod's
+//     conflicts, the C1 review finding this restores fidelity for).
 //   - Non-empty: the BATCH path - plan.Dependencies (in plan order) THEN
 //     plan.Mod all install via applyInstallBatchMod, IDENTICALLY, matching
 //     batchInstallMods' own "every mod in the list is treated the same"
@@ -1943,18 +1938,18 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		emit(StepEvent{Scope: modScope, Phase: InstallExtracting})
 	}
 
-	// Conflict confirmation restored to doInstall's ORIGINAL position (C1
+	// The conflict gate sits at doInstall's ORIGINAL prompt position (C1
 	// review finding): AFTER the primary is downloaded/extracted to cache,
 	// BEFORE it is deployed - installer.GetConflicts can only see what's
 	// actually in the cache at this point, so this is the earliest point a
 	// fresh (never-before-cached) mod's conflicts can be detected at all.
-	// See InstallOptions.ConfirmConflicts' doc comment for the exact
-	// Force/nil-callback gating and decline-state fidelity this reproduces.
-	if !opts.Force && opts.ConfirmConflicts != nil {
+	// Ruling 1: an unaccepted conflict is a typed error the frontend
+	// answers by re-running with AcceptConflicts, never a callback. See
+	// InstallOptions.AcceptConflicts' doc comment for the exact gating and
+	// the refusal state this leaves behind.
+	if !opts.Force && !opts.AcceptConflicts {
 		if conflicts, err := installer.GetConflicts(ctx, game, &mod, plan.Profile); err == nil && len(conflicts) > 0 {
-			if !opts.ConfirmConflicts(conflicts) {
-				return nil, fmt.Errorf("installation cancelled")
-			}
+			return nil, &ConflictError{Conflicts: conflicts}
 		}
 	}
 

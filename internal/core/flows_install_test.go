@@ -2273,13 +2273,16 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 	assert.Equal(t, "1.0", installed.Version, "DB row must be unchanged")
 }
 
-// --- ApplyInstall: ConfirmConflicts (C1 review finding) ---
+// --- ApplyInstall: conflicts (Ruling 1 - *ConflictError / AcceptConflicts) ---
 //
-// These tests guard InstallOptions.ConfirmConflicts, the post-download/
-// pre-deploy conflict confirmation hook restored to applyInstallPrimary's
-// ORIGINAL (pre-extraction doInstall) position - see that field's own doc
-// comment. Two twin arrangements exercise the two ways applyInstallPrimary
-// can reach the check:
+// These tests guard the post-download/pre-deploy conflict gate in
+// applyInstallPrimary - the check that sits at the pre-extraction CLI's own
+// prompt position (see InstallOptions.AcceptConflicts' doc comment). v2
+// Phase 3 Task 8 replaced the ConfirmConflicts callback with a typed error:
+// core computes the conflicts and returns *core.ConflictError before it
+// deploys or writes anything, and the frontend answers by re-running
+// ApplyInstall with AcceptConflicts set. Two twin arrangements exercise the
+// two ways applyInstallPrimary can reach the check:
 //
 //   - "fresh install": the primary has NEVER been cached before -
 //     installer.GetConflicts can only see the conflict once the download
@@ -2320,91 +2323,85 @@ func applyInstallConflictFixture(t *testing.T) (svc *core.Service, game *domain.
 	return svc, game, gameDir
 }
 
-func TestService_ApplyInstall_ConfirmConflicts_FreshInstall(t *testing.T) {
-	t.Run("invoked post-download with the detected conflict; plan-time Conflicts stayed empty", func(t *testing.T) {
-		svc, game, _ := applyInstallConflictFixture(t)
+func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
+	t.Run("unaccepted conflicts return *ConflictError with the post-download list; plan-time Conflicts stayed empty", func(t *testing.T) {
+		svc, game, gameDir := applyInstallConflictFixture(t)
 
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
 		require.NoError(t, err)
 		require.Empty(t, plan.Conflicts, "an uncached mod's plan must never report conflicts - see InstallPlan.Conflicts' doc comment")
 
-		var received []core.Conflict
-		var calls int
-		opts := core.InstallOptions{ConfirmConflicts: func(conflicts []core.Conflict) bool {
-			calls++
-			received = conflicts
-			return true
-		}}
-		result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
-		require.NoError(t, err)
-		assert.Equal(t, 1, calls, "ConfirmConflicts must be called exactly once - only detectable AFTER download, never by PlanInstall")
-		require.Len(t, received, 1)
-		assert.Equal(t, "shared.esp", received[0].RelativePath)
-		assert.Equal(t, "other", received[0].CurrentModID)
-		assert.Equal(t, []string{"New Mod"}, installedRefNames(result.Installed))
-	})
-
-	t.Run("decline aborts with the base CLI's exact error, leaving the download cached but nothing deployed or saved", func(t *testing.T) {
-		svc, game, gameDir := applyInstallConflictFixture(t)
-
-		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
-		require.NoError(t, err)
-
-		opts := core.InstallOptions{ConfirmConflicts: func(conflicts []core.Conflict) bool { return false }}
-		result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.Error(t, err)
-		assert.EqualError(t, err, "installation cancelled")
+
+		var conflictErr *core.ConflictError
+		require.ErrorAs(t, err, &conflictErr, "the conflict must surface as a typed error, never a callback")
+		assert.ErrorIs(t, err, domain.ErrFileConflict, "*ConflictError must unwrap to the domain sentinel")
+		require.Len(t, conflictErr.Conflicts, 1, "only detectable AFTER download, never by PlanInstall")
+		assert.Equal(t, "shared.esp", conflictErr.Conflicts[0].RelativePath)
+		assert.Equal(t, "other", conflictErr.Conflicts[0].CurrentModID)
+
+		// End state: the cache fill happened (it is not a mutation of
+		// managed state - Ruling 1), and NOTHING else did.
 		require.NotNil(t, result, "a partial result must be returned alongside the error")
 		assert.Empty(t, result.Installed)
+		assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "newmod", "1.0"), "the download must remain cached - the re-run with AcceptConflicts reuses this entry")
 
-		assert.True(t, svc.GetGameCache(game).Exists("g1", "src", "newmod", "1.0"), "the download must remain cached on decline - a fresh install has no reinstall-cache-transaction to roll back")
 		_, dbErr := svc.GetInstalledMod(context.Background(), "src", "newmod", "g1", "default")
-		assert.Error(t, dbErr, "declining must leave zero DB mutations")
+		assert.Error(t, dbErr, "an unaccepted conflict must leave zero DB mutations")
+
+		profile, perr := svc.NewProfileManager().Get("g1", "default")
+		if perr == nil {
+			for _, ref := range profile.Mods {
+				assert.NotEqual(t, "newmod", ref.ModID, "an unaccepted conflict must leave zero profile mutations")
+			}
+		}
 
 		content, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
 		require.NoError(t, err)
 		assert.Equal(t, "original-other-content", string(content), "the conflicting mod's deployed file must survive untouched")
 	})
 
-	t.Run("Force skips the check even when ConfirmConflicts is set", func(t *testing.T) {
-		svc, game, _ := applyInstallConflictFixture(t)
+	t.Run("AcceptConflicts deploys - the frontend's re-run after its own prompt", func(t *testing.T) {
+		svc, game, gameDir := applyInstallConflictFixture(t)
 
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
 		require.NoError(t, err)
 
-		called := false
-		opts := core.InstallOptions{Force: true, ConfirmConflicts: func(conflicts []core.Conflict) bool {
-			called = true
-			return false // would abort the install if it were ever invoked
-		}}
-		result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+		_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+		require.ErrorAs(t, err, new(*core.ConflictError), "sanity: the first run must refuse")
+
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{AcceptConflicts: true}, nil)
 		require.NoError(t, err)
-		assert.False(t, called, "--force must skip the conflict check entirely, matching the pre-extraction CLI's own \"if !installForce\" gate")
 		assert.Equal(t, []string{"New Mod"}, installedRefNames(result.Installed))
+
+		content, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
+		require.NoError(t, err)
+		assert.Equal(t, "new-content", string(content), "accepting must overwrite the conflicting file")
 	})
 
-	t.Run("nil ConfirmConflicts proceeds silently, matching a caller that opts out", func(t *testing.T) {
+	t.Run("Force implies AcceptConflicts - the check never runs", func(t *testing.T) {
 		svc, game, _ := applyInstallConflictFixture(t)
 
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
 		require.NoError(t, err)
 
-		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
-		require.NoError(t, err)
+		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, nil)
+		require.NoError(t, err, "--force must skip the conflict check entirely, matching the pre-extraction CLI's own \"if !installForce\" gate")
 		assert.Equal(t, []string{"New Mod"}, installedRefNames(result.Installed))
 	})
 }
 
-// TestService_ApplyInstall_ConfirmConflicts_SameVersionReinstall_DeclineLeavesOriginalDeployedContentUntouched
+// TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeployedContentUntouched
 // is the reinstall-cache-transaction twin of the fresh-install leg above:
 // mod1 is already installed+deployed (and its ORIGINAL cache entry already
 // overlaps "other" - see the fixture's own note on why the freshly
 // re-downloaded content isn't what this leg's GetConflicts call inspects),
-// then reinstalled at the SAME version. Declining must roll back the
-// staged reinstall-cache-transaction via its existing deferred Rollback,
-// restoring the live cache/deployed files exactly as they were - mirroring
-// TestService_ApplyInstall_ReplacePath's "download fails" subtest.
-func TestService_ApplyInstall_ConfirmConflicts_SameVersionReinstall_DeclineLeavesOriginalDeployedContentUntouched(t *testing.T) {
+// then reinstalled at the SAME version. Returning *ConflictError must roll
+// back the staged reinstall-cache-transaction via its existing deferred
+// Rollback, restoring the live cache/deployed files exactly as they were -
+// mirroring TestService_ApplyInstall_ReplacePath's "download fails" subtest.
+func TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeployedContentUntouched(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
@@ -2441,10 +2438,9 @@ func TestService_ApplyInstall_ConfirmConflicts_SameVersionReinstall_DeclineLeave
 	// TestDoInstall_ConflictPrompt_ForceSkipsPrompt, in cmd/lmm/install_test.go).
 	require.Len(t, plan.Conflicts, 1)
 
-	opts := core.InstallOptions{ConfirmConflicts: func(conflicts []core.Conflict) bool { return false }}
-	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.Error(t, err)
-	assert.EqualError(t, err, "installation cancelled")
+	require.ErrorAs(t, err, new(*core.ConflictError))
 	require.NotNil(t, result)
 	assert.Empty(t, result.Installed)
 
