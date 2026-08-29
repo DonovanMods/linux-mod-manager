@@ -238,6 +238,30 @@ func TestJSONGolden_Search(t *testing.T) {
 		assertJSONCLIGolden(t, "search_hits", out)
 	})
 
+	// "capped" pins Important #3 / #302: --limit truncates the RETURNED
+	// Mods while total_results keeps the untruncated hit count - the
+	// document a caller applying --limit and `lmm serve` (no --limit at
+	// all) must NOT be able to tell apart from a caller mutating the result
+	// after the fact.
+	t.Run("capped", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		svc.RegisterSource(&goldenSearchSource{mods: []domain.Mod{
+			{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", Author: "Ann", GameID: game.ID, Category: "Utilities"},
+			{ID: "m", SourceID: "src", Name: "Mod M", Version: "2.0", Author: "Mel", GameID: game.ID, Category: "Gameplay"},
+			{ID: "z", SourceID: "src", Name: "Mod Z", Version: "3.1", Author: "Zed", GameID: game.ID, Category: "Gameplay"},
+		}})
+		game.SourceIDs = map[string]string{"src": game.ID}
+		withSearchFlags(t, "", 2)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doSearch(context.Background(), svc, game, []string{"mod"})
+		})
+		assertJSONCLIGolden(t, "search_capped", out)
+	})
+
 	t.Run("empty", func(t *testing.T) {
 		svc, game := setupDoDeployTest(t)
 		require.NoError(t, svc.SaveGame(context.Background(), game))

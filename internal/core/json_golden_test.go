@@ -631,7 +631,7 @@ func TestJSONGoldens(t *testing.T) {
 				LinkMethod:          domain.LinkSymlink,
 				EffectiveLinkMethod: domain.LinkHardlink,
 				LinkMethodSource:    "profile",
-				CachePath:           "/home/user/.local/share/lmm",
+				ResolvedCachePath:   "/home/user/.local/share/lmm",
 				Profiles:            []core.ProfileSummary{{Name: "default", ModCount: 3, IsDefault: true}},
 				ActiveProfile:       "default",
 				InstalledModCount:   3,

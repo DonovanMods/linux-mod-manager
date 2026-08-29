@@ -808,11 +808,13 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// core gate's raw error.
 	if plan.Locked {
 		if jsonOutput {
-			// Nothing was written, so Mod.Version is still the installed
-			// one; ToVersion carries the rollback target - the same
-			// convention applySingleUpdate's own refusal branches follow.
+			// Nothing was written, so nothing changed - but Mod.Version is
+			// still the version rolled back TO, per RollbackResult.Mod's own
+			// doc comment, on every branch including this refusal one (final
+			// review, Important #4 / #302): here that's the same value as
+			// ToVersion below, since core never applies past this refusal.
 			return emitJSON(&core.RollbackResult{
-				Mod:         domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.LockedVersion, Locked: true},
+				Mod:         domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.ToVersion, Locked: true},
 				ModName:     plan.Mod.Name,
 				FromVersion: plan.FromVersion,
 				ToVersion:   plan.ToVersion,

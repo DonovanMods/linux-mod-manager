@@ -160,6 +160,31 @@ func TestStatus_NoGamesIsEmptyNotNil(t *testing.T) {
 	assert.Empty(t, report.Games)
 }
 
+// TestStatus_ConvertPaksOnlyForCompileGames covers the same tri-state
+// ConvertPaks pointer TestListMods_ConvertPaksOnlyForCompileGames pins for
+// ModListing (final review, Important #5 / #302): nil means "not
+// applicable" for a non-DeployCompile game, non-nil (carrying the game's own
+// value) for one that is.
+func TestStatus_ConvertPaksOnlyForCompileGames(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	extract := &domain.Game{ID: "extract-game", Name: "Extract", ModPath: t.TempDir()}
+	compile := &domain.Game{ID: "compile-game", Name: "Compile", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
+	require.NoError(t, svc.SaveGame(ctx, extract))
+	require.NoError(t, svc.SaveGame(ctx, compile))
+
+	report := svc.Status(ctx)
+	require.Len(t, report.Games, 2)
+
+	byID := map[string]core.GameSummary{}
+	for _, g := range report.Games {
+		byID[g.ID] = g
+	}
+	assert.Nil(t, byID["extract-game"].ConvertPaks)
+	require.NotNil(t, byID["compile-game"].ConvertPaks)
+	assert.True(t, *byID["compile-game"].ConvertPaks)
+}
+
 // TestGameStatus_ActiveProfileDetail covers the per-game detail `lmm status
 // --game X` renders: the profile list, the active profile's installed/
 // enabled counts, and its never-deployed state.
@@ -250,7 +275,28 @@ func TestGameStatus_NoProfilesIsEmptyNotNil(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, st.Profiles)
 	assert.Empty(t, st.ActiveProfile)
-	assert.Equal(t, svc.GetGameCachePath(game), st.CachePath)
+	assert.Equal(t, svc.GetGameCachePath(game), st.ResolvedCachePath)
+}
+
+// TestGameStatus_ConvertPaksOnlyForCompileGames is GameStatus's counterpart
+// to TestStatus_ConvertPaksOnlyForCompileGames (final review, Important #5 /
+// #302).
+func TestGameStatus_ConvertPaksOnlyForCompileGames(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+
+	extract := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(ctx, extract))
+	st, err := svc.GameStatus(ctx, extract)
+	require.NoError(t, err)
+	assert.Nil(t, st.ConvertPaks)
+
+	compile := &domain.Game{ID: "g2", Name: "Compile Game", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true}
+	require.NoError(t, svc.SaveGame(ctx, compile))
+	st, err = svc.GameStatus(ctx, compile)
+	require.NoError(t, err)
+	require.NotNil(t, st.ConvertPaks)
+	assert.True(t, *st.ConvertPaks)
 }
 
 // --- Search ---
@@ -346,6 +392,60 @@ func TestSearch_ErrorsPropagateUnwrapped(t *testing.T) {
 	assert.ErrorIs(t, err, source.ErrNotSupported)
 }
 
+// TestSearch_LimitCapsMods pins SearchOptions.Limit (final review, Important
+// #3 / #302): the cap applies to the RETURNED Mods, while TotalResults keeps
+// the untruncated hit count regardless - the two fields' own documented
+// contract, and the reason this cap lives here instead of a caller
+// truncating the result after the fact (a caller and `lmm serve` rendering
+// the same call must see the identical document).
+func TestSearch_LimitCapsMods(t *testing.T) {
+	src := &searchStubSource{id: "alpha", result: source.SearchResult{
+		Mods: mods("alpha", "a", "b", "c"), TotalCount: 3,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{Limit: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 3, report.TotalResults, "TotalResults stays the untruncated hit count")
+	require.Len(t, report.Mods, 2, "Mods is capped to Limit")
+	assert.Equal(t, "a", report.Mods[0].ID)
+	assert.Equal(t, "b", report.Mods[1].ID)
+}
+
+// TestSearch_NonPositiveLimitDoesNotTruncate mirrors the historical
+// negative-limit-panic fix (#57, formerly pinned against cmd/lmm's own
+// limitResults helper before the cap moved into core): a zero or negative
+// Limit must leave Mods untouched, not truncate to nothing or panic on a
+// negative slice bound.
+func TestSearch_NonPositiveLimitDoesNotTruncate(t *testing.T) {
+	for _, limit := range []int{0, -1} {
+		src := &searchStubSource{id: "alpha", result: source.SearchResult{
+			Mods: mods("alpha", "a", "b", "c"), TotalCount: 3,
+		}}
+		svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+		report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{Limit: limit})
+		require.NoError(t, err)
+		assert.Equal(t, 3, report.TotalResults)
+		assert.Len(t, report.Mods, 3, "limit %d must not truncate", limit)
+	}
+}
+
+// TestSearch_LimitAboveLenIsNoop pins the boundary opposite
+// TestSearch_LimitCapsMods: a Limit at or above the hit count changes
+// nothing.
+func TestSearch_LimitAboveLenIsNoop(t *testing.T) {
+	src := &searchStubSource{id: "alpha", result: source.SearchResult{
+		Mods: mods("alpha", "a"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.TotalResults)
+	require.Len(t, report.Mods, 1)
+}
+
 // --- ListGameEntries ---
 
 // TestListGameEntries_ByIDWithDefaultMarked covers `lmm game list`: every
@@ -372,6 +472,29 @@ func TestListGameEntries_NoGamesIsEmptyNotNil(t *testing.T) {
 	entries, err := newFlowsTestService(t).ListGameEntries(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, entries)
+}
+
+// TestListGameEntries_ConvertPaksOnlyForCompileGames is GameListEntry's
+// counterpart to TestListMods_ConvertPaksOnlyForCompileGames (final review,
+// Important #5 / #302).
+func TestListGameEntries_ConvertPaksOnlyForCompileGames(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: "extract-game", Name: "Extract", ModPath: t.TempDir()}))
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{
+		ID: "compile-game", Name: "Compile", ModPath: t.TempDir(), DeployMode: domain.DeployCompile, ConvertPaks: true,
+	}))
+
+	entries, err := svc.ListGameEntries(ctx)
+	require.NoError(t, err)
+
+	byID := map[string]core.GameListEntry{}
+	for _, e := range entries {
+		byID[e.ID] = e
+	}
+	assert.Nil(t, byID["extract-game"].ConvertPaks)
+	require.NotNil(t, byID["compile-game"].ConvertPaks)
+	assert.True(t, *byID["compile-game"].ConvertPaks)
 }
 
 // --- VerifyReport ---

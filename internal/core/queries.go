@@ -139,7 +139,11 @@ func (s *Service) ListProfileNames(gameID string) (*ProfileNames, error) {
 // access and the "link_method" JSON key (the same mechanism ModListing.
 // ConvertPaks relies on). Game.LinkMethodExplicit says which of the two
 // levels it came from, so a renderer can mark a per-game override without a
-// second call.
+// second call. ConvertPaks shadows the embedded Game.ConvertPaks the same
+// way, for the same reason (final review, Important #5 / #302): nil when
+// the game is not DeployCompile (pak conversion does not apply at all),
+// non-nil when it is - never an always-emitted false claiming "off" for a
+// game the setting has no effect on.
 type GameSummary struct {
 	domain.Game
 	LinkMethod domain.LinkMethod `json:"link_method"`
@@ -148,8 +152,9 @@ type GameSummary struct {
 	// ModCount is how many mods are installed in the game's ACTIVE profile
 	// (zero when it has no default profile), matching the "mods in active
 	// profile" the status table footnotes.
-	ModCount  int  `json:"mod_count"`
-	IsDefault bool `json:"is_default"`
+	ModCount    int   `json:"mod_count"`
+	IsDefault   bool  `json:"is_default"`
+	ConvertPaks *bool `json:"convert_paks,omitzero"`
 }
 
 // StatusReport is everything `lmm status` renders with no game named: every
@@ -179,8 +184,13 @@ type ProfileSummary struct {
 //     With no profile override the two methods are equal. As the shallower
 //     field, LinkMethod shadows the embedded Game.LinkMethod for both field
 //     access and the "link_method" JSON key.
-//   - CachePath is the game's resolved cache root (its own CachePath when
-//     set, else the global cache dir); Game.CachePath distinguishes the two.
+//   - ResolvedCachePath is the game's RESOLVED cache root: its own
+//     Game.CachePath when the config sets one, else the global cache dir
+//     (final review, Important #1 / #302: named distinctly, rather than
+//     shadowing Game.CachePath under the same "cache_path" key, so a
+//     consumer can see BOTH the configured per-game override, if any, and
+//     what the resolver actually returned - the pre-#302 shadowing wire
+//     shape made the override invisible whenever one was set).
 //   - ActiveProfile is empty when the game has no default profile - an
 //     ordinary state, not an error - and the counts below are then zero.
 //   - LastDeploy is nil for a profile that has never been deployed.
@@ -188,18 +198,22 @@ type ProfileSummary struct {
 //     (#221 design §5): mods whose prebuilt .pak could not be converted into
 //     the merged pak on the last sync and stay raw-deployed instead. Always
 //     zero for a non-DeployCompile game.
+//   - ConvertPaks shadows the embedded Game.ConvertPaks (final review,
+//     Important #5 / #302): nil when the game is not DeployCompile, matching
+//     GameSummary's own field of the same name.
 type GameStatus struct {
 	domain.Game
 	LinkMethod          domain.LinkMethod `json:"link_method"`
 	EffectiveLinkMethod domain.LinkMethod `json:"effective_link_method"`
 	LinkMethodSource    string            `json:"link_method_source"`
-	CachePath           string            `json:"cache_path"`
+	ResolvedCachePath   string            `json:"resolved_cache_path"`
 	Profiles            []ProfileSummary  `json:"profiles"`
 	ActiveProfile       string            `json:"active_profile,omitempty"`
 	InstalledModCount   int               `json:"installed_mod_count"`
 	EnabledModCount     int               `json:"enabled_mod_count"`
 	LastDeploy          *time.Time        `json:"last_deploy,omitempty"`
 	ConversionFailures  int               `json:"conversion_failures"`
+	ConvertPaks         *bool             `json:"convert_paks,omitzero"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -229,13 +243,18 @@ func (s *Service) Status(ctx context.Context) *StatusReport {
 			modCount = len(mods)
 		}
 
-		report.Games = append(report.Games, GameSummary{
+		summary := GameSummary{
 			Game:       *game,
 			LinkMethod: s.getGameLinkMethod(game),
 			Profiles:   names,
 			ModCount:   modCount,
 			IsDefault:  game.ID == defaultGame,
-		})
+		}
+		if game.DeployMode == domain.DeployCompile {
+			v := game.ConvertPaks
+			summary.ConvertPaks = &v
+		}
+		report.Games = append(report.Games, summary)
 	}
 	return report
 }
@@ -262,11 +281,15 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		LinkMethod:          linkMethod,
 		EffectiveLinkMethod: linkMethod,
 		LinkMethodSource:    "global",
-		CachePath:           s.GetGameCachePath(game),
+		ResolvedCachePath:   s.GetGameCachePath(game),
 		Profiles:            make([]ProfileSummary, len(profiles)),
 	}
 	if game.LinkMethodExplicit {
 		status.LinkMethodSource = "game"
+	}
+	if game.DeployMode == domain.DeployCompile {
+		v := game.ConvertPaks
+		status.ConvertPaks = &v
 	}
 	for i, p := range profiles {
 		status.Profiles[i] = ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
@@ -338,23 +361,35 @@ type SearchHit struct {
 // source, and a source that ignores them simply returns unfiltered results.
 // PageSize is what each source is asked for; 0 lets every source apply its
 // own default. Search always requests page 0 - callers that page use
-// searchAllSources/SearchMods directly.
+// searchAllSources/SearchMods directly. Limit caps how many hits
+// SearchReport.Mods returns (0 or negative applies no cap, matching a
+// non-positive PageSize's "no opinion" convention); SearchReport.TotalResults
+// always reports the untruncated count regardless (final review, Important
+// #3 / #302: the cap lives here, in core, so a caller applying its own
+// --limit and `lmm serve` rendering the same call see the identical
+// document, instead of a caller truncating core's result after the fact).
 type SearchOptions struct {
 	SourceID string
 	Category string
 	Tags     []string
 	PageSize int
+	Limit    int
 }
 
 // SearchReport is everything `lmm search` renders: the hits, the per-source
 // failures that did not stop the search, and the two counts a frontend needs
 // to say something honest about an empty result.
 //
-//   - TotalResults is how many hits the sources returned; core never
-//     truncates, so it always equals len(Mods) on THIS type. A frontend
-//     that caps its own displayed list (e.g. the CLI's --limit) compares
-//     its shown count against this field, which stays the untruncated
-//     total (final review, Minor #2 / #301).
+//   - Mods is the slice actually RETURNED: every hit found when
+//     SearchOptions.Limit is unset, or the first Limit of them when it's
+//     set - it may be a --limit-capped subset, not necessarily every hit
+//     the sources found.
+//   - TotalResults is the TOTAL NUMBER OF HITS the sources returned, BEFORE
+//     any Limit cap - it can exceed len(Mods) when Limit truncated the
+//     list, and equals len(Mods) whenever Limit didn't (final review,
+//     Important #3 / #302: this doc previously claimed TotalResults always
+//     equals len(Mods), which stopped being true the moment a cap was
+//     possible on this type).
 //   - AttemptedCount is how many of the game's sources actually had a search
 //     attempted (capability-less sources are skipped silently). Zero means
 //     NONE of them can search at all - indistinguishable from a genuine
@@ -402,9 +437,17 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 	}
 
 	report.TotalResults = len(found)
-	report.Mods = make([]SearchHit, len(found))
 	if len(found) == 0 {
+		report.Mods = make([]SearchHit, 0)
 		return report, nil
+	}
+
+	// The Limit cap applies to what's RETURNED, never to TotalResults above -
+	// a non-positive Limit leaves the full list untouched, matching
+	// SearchOptions.PageSize's own "no opinion" convention.
+	visible := found
+	if opts.Limit > 0 && len(visible) > opts.Limit {
+		visible = visible[:opts.Limit]
 	}
 
 	installed, _ := s.GetInstalledMods(ctx, game.ID, profileName)
@@ -412,7 +455,8 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 	for _, im := range installed {
 		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true
 	}
-	for i, mod := range found {
+	report.Mods = make([]SearchHit, len(visible))
+	for i, mod := range visible {
 		report.Mods[i] = SearchHit{Mod: mod, Installed: installedKeys[domain.ModKey(mod.SourceID, mod.ID)]}
 	}
 	return report, nil
@@ -421,9 +465,14 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 // GameListEntry is one row of `lmm game list`: a configured game plus
 // whether it is the default one. An explicit boolean rather than a marker
 // baked into the ID, so a consumer never string-matches to find out.
+// ConvertPaks shadows the embedded Game.ConvertPaks, matching GameSummary/
+// GameStatus (final review, Important #5 / #302): nil when the game is not
+// DeployCompile, rather than an always-emitted false claiming the setting is
+// "off" for a game it has no effect on.
 type GameListEntry struct {
 	domain.Game
-	Default bool `json:"default"`
+	Default     bool  `json:"default"`
+	ConvertPaks *bool `json:"convert_paks,omitzero"`
 }
 
 // ListGameEntries returns every configured game, ordered by ID (ListGames'),
@@ -439,7 +488,12 @@ func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) 
 	games := s.ListGames()
 	entries := make([]GameListEntry, len(games))
 	for i, game := range games {
-		entries[i] = GameListEntry{Game: *game, Default: game.ID == defaultGame}
+		entry := GameListEntry{Game: *game, Default: game.ID == defaultGame}
+		if game.DeployMode == domain.DeployCompile {
+			v := game.ConvertPaks
+			entry.ConvertPaks = &v
+		}
+		entries[i] = entry
 	}
 	return entries, nil
 }

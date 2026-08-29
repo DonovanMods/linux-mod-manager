@@ -195,10 +195,10 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 	}
 
 	// Show cache path
-	if st.Game.CachePath != "" {
-		fmt.Printf("  Cache Path: %s (per-game)\n", st.Game.CachePath)
+	if st.CachePath != "" {
+		fmt.Printf("  Cache Path: %s (per-game)\n", st.CachePath)
 	} else if verbose {
-		fmt.Printf("  Cache Path: %s (global default)\n", st.CachePath)
+		fmt.Printf("  Cache Path: %s (global default)\n", st.ResolvedCachePath)
 	}
 
 	// Show source mappings in verbose mode

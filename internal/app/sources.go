@@ -188,12 +188,24 @@ func ProbeSource(ctx context.Context, svc *core.Service, def source.SourceDefini
 // the wire - a JSON consumer classifies a source's auth state without
 // parsing English, and a text/JSON-view renderer that still wants those
 // exact words derives them from this enum instead (cmd/lmm/source.go).
+//
+// AuthUnknown is the zero value, deliberately never assigned by authState:
+// a source that registered always gets one of the other three. It exists
+// so SourceInfo.Auth's omitzero tag has a true "never determined" state to
+// fall back to for a definition that never registered at all (an error
+// row) - final review, Important #2 / #302: before this, an error row's
+// unset Auth field was indistinguishable from AuthNone ("no auth capability
+// at all"), a claim never actually evaluated for it.
 type AuthState int
 
 const (
+	// AuthUnknown means this row's auth state was never determined - the
+	// zero value, seen only on an error row (a source definition that never
+	// registered, so authState was never called for it).
+	AuthUnknown AuthState = iota
 	// AuthNone means the source has no auth capability at all - the old
 	// display string's "n/a".
-	AuthNone AuthState = iota
+	AuthNone
 	// AuthRequired means the source can authenticate but hasn't - "no".
 	AuthRequired
 	// AuthAuthenticated means the source has authenticated - "yes".
@@ -202,6 +214,7 @@ const (
 
 // authStateNames maps each AuthState to its wire name. Keep in declaration order.
 var authStateNames = [...]string{
+	AuthUnknown:       "unknown",
 	AuthNone:          "none",
 	AuthRequired:      "required",
 	AuthAuthenticated: "authenticated",
@@ -235,6 +248,13 @@ func (a *AuthState) UnmarshalText(b []byte) error {
 //   - Type is the source's own TypeLabel ("built-in", "directory",
 //     "manifest", "api") or "error" for a definition that failed to load,
 //     collided with a registered ID, or failed to construct.
+//   - Auth is omitzero (final review, Important #2 / #302): an error row's
+//     auth state was never determined (it never registered, so authState
+//     was never called for it), so it carries no "auth" key at all rather
+//     than falsely asserting AuthNone's "no auth capability" - which
+//     authState never actually evaluated for it. A registered source always
+//     gets one of AuthState's other three values, so this never drops a key
+//     for a real row.
 //   - Capabilities is the source's enabled capability names, in a fixed
 //     order (search, deps, updates, auth, versions) - not the pre-#301
 //     comma-joined display string; a text renderer that wants the old
@@ -252,7 +272,7 @@ type SourceInfo struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	Type         string    `json:"type"`
-	Auth         AuthState `json:"auth"`
+	Auth         AuthState `json:"auth,omitzero"`
 	Capabilities []string  `json:"capabilities"`
 	InUse        bool      `json:"in_use,omitzero"`
 	Err          error     `json:"-"`

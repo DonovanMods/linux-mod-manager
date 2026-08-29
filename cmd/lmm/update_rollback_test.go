@@ -150,6 +150,7 @@ func TestDoUpdateRollback_Locked_JSON_SkippedDocument(t *testing.T) {
 	decodeSingleDoc(t, out, &doc)
 	assert.Equal(t, "mod1", doc.Mod.ModID)
 	assert.Equal(t, "test-src", doc.Mod.SourceID)
+	assert.Equal(t, "1.0", doc.Mod.Version, "Mod.Version is the version rolled back TO, even on this refused-locked branch - not the lock's own version (final review, Important #4 / #302)")
 	assert.Equal(t, "Mod One", doc.ModName)
 	assert.Equal(t, "2.0", doc.FromVersion)
 	assert.Equal(t, "1.0", doc.ToVersion)

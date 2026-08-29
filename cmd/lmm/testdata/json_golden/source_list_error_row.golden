@@ -39,7 +39,6 @@
     "id": "broken-mods",
     "name": "",
     "type": "error",
-    "auth": "none",
     "capabilities": [],
     "error": "directory source path: stat /nonexistent/lmm-golden: no such file or directory"
   }

@@ -15,7 +15,6 @@
         "uninstall": {}
       },
       "deploy_mode": "extract",
-      "convert_paks": false,
       "convert_paks_explicit": false,
       "link_method": "symlink",
       "profiles": [
@@ -39,7 +38,6 @@
         "uninstall": {}
       },
       "deploy_mode": "extract",
-      "convert_paks": false,
       "convert_paks_explicit": false,
       "link_method": "symlink",
       "profiles": [

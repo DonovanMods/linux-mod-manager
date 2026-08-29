@@ -13,7 +13,6 @@
     "uninstall": {}
   },
   "deploy_mode": "extract",
-  "convert_paks": false,
   "convert_paks_explicit": false,
   "default": true
 }

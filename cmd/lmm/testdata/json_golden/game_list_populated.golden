@@ -12,9 +12,9 @@
       "uninstall": {}
     },
     "deploy_mode": "compile",
-    "convert_paks": true,
     "convert_paks_explicit": false,
-    "default": false
+    "default": false,
+    "convert_paks": true
   },
   {
     "id": "skyrim-se",
@@ -32,7 +32,6 @@
       "uninstall": {}
     },
     "deploy_mode": "extract",
-    "convert_paks": false,
     "convert_paks_explicit": false,
     "default": true
   }

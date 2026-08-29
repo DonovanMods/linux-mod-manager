@@ -96,19 +96,6 @@ func capabilityGapNotice(sourceID string, err error) (string, bool) {
 	return fmt.Sprintf("source %q does not support searching; install by ID instead: lmm install --source %s --id <mod-id>", sourceID, sourceID), true
 }
 
-// limitResults truncates results to at most limit entries for display -
-// the CLI's own --limit cap, applied to whatever core.Search returned (the
-// report's TotalResults keeps the untruncated count for the "Showing X of
-// Y" line). A non-positive limit (e.g. --limit 0 or a negative value)
-// leaves the slice untouched instead of truncating to nothing or panicking
-// on a negative slice bound (results[:-1]).
-func limitResults[T any](results []T, limit int) []T {
-	if limit > 0 && len(results) > limit {
-		results = results[:limit]
-	}
-	return results
-}
-
 // searchPageSize turns --limit into the page size requested from sources. A
 // positive limit is requested verbatim so `--limit 30` can actually fetch 30
 // results instead of being capped at each source's own default page size
@@ -144,6 +131,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		Category: searchCategory,
 		Tags:     searchTags,
 		PageSize: searchPageSize(searchLimit),
+		Limit:    searchLimit,
 	}
 	if searchSource == "" {
 		// Guard: game must have at least one configured source
@@ -221,15 +209,13 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return nil
 	}
 
-	// Apply result limit for display (report.TotalResults keeps the
-	// untruncated count for "Showing X of Y")
-	mods = limitResults(mods, searchLimit)
-
 	if jsonOutput {
-		// The report's own Mods, capped by --limit; TotalResults deliberately
-		// keeps the untruncated count so a consumer can tell a capped list
-		// from an exhaustive one (SearchReport's doc comment).
-		report.Mods = mods
+		// report.Mods already carries service.Search's own --limit-capped
+		// slice; TotalResults stays the untruncated count (SearchReport's
+		// doc comment). Final review, Important #3 / #302: the cap moved
+		// into core so this command and `lmm serve` render the identical
+		// document for the same call, instead of mutating the result after
+		// the fact.
 		return emitJSON(report)
 	}
 

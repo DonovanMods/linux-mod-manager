@@ -2,7 +2,6 @@
   "id": "nexusmods",
   "name": "",
   "type": "error",
-  "auth": "none",
   "capabilities": [],
   "error": "id already in use"
 }

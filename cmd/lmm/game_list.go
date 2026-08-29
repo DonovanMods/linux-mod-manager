@@ -74,7 +74,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 		convertPaksStr := ""
 		if g.DeployMode == domain.DeployCompile {
 			convertPaksStr = "off"
-			if g.ConvertPaks {
+			if g.Game.ConvertPaks {
 				convertPaksStr = "on"
 			}
 		}

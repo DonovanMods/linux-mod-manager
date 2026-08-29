@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -498,6 +500,7 @@ directory:
 	require.Equal(t, "error", collision.Type, "the colliding definition's row is an error row (appended after the built-in's own)")
 	assert.Equal(t, "id already in use", collision.ErrorMessage)
 	require.Error(t, collision.Err, "the structured error travels with its message")
+	assert.Equal(t, AuthUnknown, collision.Auth, "an error row's auth state was never determined - not AuthNone's evaluated 'no auth capability' claim (final review, Important #2 / #302)")
 
 	failed := byID["missing-path"]
 	assert.Equal(t, "error", failed.Type)
@@ -508,6 +511,19 @@ directory:
 	assert.Equal(t, "error", loadErr.Type, "a file that would not parse is keyed by its filename")
 	assert.NotEmpty(t, loadErr.ErrorMessage)
 	assert.Error(t, loadErr.Err)
+}
+
+// TestSourceInfo_ErrorRowMarshalsWithNoAuthKey pins the wire consequence of
+// AuthUnknown + omitzero (final review, Important #2 / #302): an error row
+// must carry no "auth" key at all, not the pre-fix "auth":"none" a consumer
+// could misread as an evaluated "no auth capability" claim.
+func TestSourceInfo_ErrorRowMarshalsWithNoAuthKey(t *testing.T) {
+	row := newSourceInfoError("broken-mods", errors.New("boom"))
+	assert.Equal(t, AuthUnknown, row.Auth)
+
+	b, err := json.Marshal(row)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), `"auth"`, "an error row's auth state was never determined, so the key must be absent")
 }
 
 // TestCapabilitySummary_IncludesVersions pins that capabilitySummary appends
@@ -529,6 +545,7 @@ func TestAuthState_StringMarshalUnmarshal(t *testing.T) {
 		state AuthState
 		want  string
 	}{
+		{AuthUnknown, "unknown"},
 		{AuthNone, "none"},
 		{AuthRequired, "required"},
 		{AuthAuthenticated, "authenticated"},

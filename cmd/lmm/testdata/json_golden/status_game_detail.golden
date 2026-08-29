@@ -7,17 +7,17 @@
     "src": "alpha"
   },
   "link_method_explicit": false,
+  "cache_path": "/cache/alpha",
   "hooks": {
     "install": {},
     "uninstall": {}
   },
   "deploy_mode": "extract",
-  "convert_paks": false,
   "convert_paks_explicit": false,
   "link_method": "symlink",
   "effective_link_method": "symlink",
   "link_method_source": "global",
-  "cache_path": "/cache/alpha",
+  "resolved_cache_path": "/cache/alpha",
   "profiles": [
     {
       "name": "default",
