@@ -361,6 +361,56 @@ func TestJSONGolden_GameDetect(t *testing.T) {
 	})
 }
 
+// TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames
+// covers Task 11 review Minor 5: when ApplyGameDetect saves one game and
+// then fails converting a second, doGameDetect's --json path used to return
+// the bare applyErr, so the error envelope never said which game(s) were
+// already persisted (the plain-text "Added:" loop, by contrast, always
+// prints every game result.Profiles names before returning applyErr - see
+// its own comment). The second game here has neither Sources nor a NexusID,
+// so GameFromDetected fails it deterministically.
+func TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames(t *testing.T) {
+	configDir = t.TempDir()
+	svc := newGameDetectTestService(t)
+	withJSONOutput(t)
+	oldAll := gameDetectAll
+	gameDetectAll = true
+	t.Cleanup(func() { gameDetectAll = oldAll })
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "no-source", Name: "No Source Game", InstallPath: "/games/no-source"},
+	}
+
+	var callErr error
+	stdout := captureStdout(t, func() error {
+		callErr = doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, []string{"steam library at /nowhere is unreadable"})
+		return nil
+	})
+
+	require.Error(t, callErr)
+	assert.Empty(t, stdout, "the --json partial-failure path must never emit a Result document")
+	assert.Empty(t, buf.String(), "no listing may be printed under --json")
+
+	var partialErr *gameDetectPartialError
+	require.ErrorAs(t, callErr, &partialErr, "the error must carry the partial result, not just applyErr")
+	assert.Equal(t, []string{"skyrim-se"}, partialErr.result.Saved)
+	assert.Equal(t, []string{"skyrim-se/default"}, partialErr.result.Profiles)
+	assert.Equal(t, []string{"steam library at /nowhere is unreadable"}, partialErr.result.Warnings,
+		"the scan warnings that preceded the apply must still reach the envelope's details")
+
+	envelope := captureStdout(t, func() error { reportError(callErr); return nil })
+	assert.Contains(t, envelope, "\"details\"")
+	assert.Contains(t, envelope, "\"saved\": [\n      \"skyrim-se\"\n    ]", "the envelope's details must name the persisted game")
+
+	saved, err := svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, "Skyrim Special Edition", saved.Name, "the successfully-persisted game must still be on disk")
+}
+
 // --- profile create / delete / reorder ---
 
 // withProfileDryRun turns one of the three new profile --dry-run flags on
