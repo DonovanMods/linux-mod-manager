@@ -54,3 +54,16 @@ func errorDetails(err error) any {
 		return nil
 	}
 }
+
+// quietSink is what a mutating command passes core in place of its console
+// event closure: sink for an ordinary run, nil under --json. Ruling 15
+// suppresses events under --json - the run emits exactly one document on
+// stdout and nothing else - and a nil sink is how core is told there is
+// nothing to report to, so the closure is never even installed rather than
+// installed and then ignored line by line.
+func quietSink(sink core.EventSink) core.EventSink {
+	if jsonOutput {
+		return nil
+	}
+	return sink
+}
