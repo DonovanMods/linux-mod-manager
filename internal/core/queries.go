@@ -287,3 +287,142 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 
 	return status, nil
 }
+
+// SearchHit is one search result plus whether it is already installed in
+// the profile the search was scoped to. The check is source-aware: a mod ID
+// is only unique within its source.
+type SearchHit struct {
+	domain.Mod
+	Installed bool `json:"installed"`
+}
+
+// SearchOptions narrows a Search.
+//
+// SourceID empty means "every source configured for the game" (the
+// aggregate path, whose per-source failures become Warnings rather than
+// errors); naming one restricts the search to it and makes any failure the
+// call's own error. Category/Tags are forwarded verbatim - support varies by
+// source, and a source that ignores them simply returns unfiltered results.
+// PageSize is what each source is asked for; 0 lets every source apply its
+// own default. Search always requests page 0 - callers that page use
+// SearchAllSources/SearchMods directly.
+type SearchOptions struct {
+	SourceID string
+	Category string
+	Tags     []string
+	PageSize int
+}
+
+// SearchReport is everything `lmm search` renders: the hits, the per-source
+// failures that did not stop the search, and the two counts a frontend needs
+// to say something honest about an empty result.
+//
+//   - TotalResults is how many hits the sources returned. A frontend that
+//     caps the displayed list compares it against what it shows.
+//   - AttemptedCount is how many of the game's sources actually had a search
+//     attempted (capability-less sources are skipped silently). Zero means
+//     NONE of them can search at all - indistinguishable from a genuine
+//     empty result unless a caller checks it (#58 item 3). It is -1 for a
+//     single named source: that path resolves to exactly one attempted
+//     source or fails outright, so it has no such case to distinguish.
+//   - Warnings stay structured (SourceID + error), never pre-formatted
+//     lines: rendering them is the frontend's job.
+type SearchReport struct {
+	GameID         string          `json:"game_id"`
+	Query          string          `json:"query"`
+	Mods           []SearchHit     `json:"mods"`
+	Warnings       []SourceWarning `json:"warnings"`
+	TotalResults   int             `json:"total_results"`
+	AttemptedCount int             `json:"attempted_count"`
+}
+
+// Search runs query against the game's sources (or the one named in opts)
+// and marks each hit that is already installed in profileName.
+//
+// Source failures are returned unwrapped so a caller can classify them
+// (source.ErrNotSupported, domain.ErrAuthRequired) and word its own notice;
+// in the aggregate path only an all-sources failure is an error at all.
+//
+// With no hits, the profile is never read: nothing can be marked installed,
+// and a search that found nothing must not fail on an unreadable profile.
+func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, query string, opts SearchOptions) (*SearchReport, error) {
+	report := &SearchReport{GameID: game.ID, Query: query, AttemptedCount: -1}
+
+	var found []domain.Mod
+	if opts.SourceID == "" {
+		agg, err := s.SearchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, 0, opts.PageSize)
+		if err != nil {
+			return nil, err
+		}
+		found = agg.Mods
+		report.Warnings = agg.Warnings
+		report.AttemptedCount = agg.AttemptedCount
+	} else {
+		result, err := s.SearchMods(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, 0, opts.PageSize)
+		if err != nil {
+			return nil, err
+		}
+		found = result.Mods
+	}
+
+	report.TotalResults = len(found)
+	report.Mods = make([]SearchHit, len(found))
+	if len(found) == 0 {
+		return report, nil
+	}
+
+	installed, _ := s.GetInstalledMods(ctx, game.ID, profileName)
+	installedKeys := make(map[string]bool, len(installed))
+	for _, im := range installed {
+		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true
+	}
+	for i, mod := range found {
+		report.Mods[i] = SearchHit{Mod: mod, Installed: installedKeys[domain.ModKey(mod.SourceID, mod.ID)]}
+	}
+	return report, nil
+}
+
+// GameListEntry is one row of `lmm game list`: a configured game plus
+// whether it is the default one. An explicit boolean rather than a marker
+// baked into the ID, so a consumer never string-matches to find out.
+type GameListEntry struct {
+	domain.Game
+	Default bool `json:"default"`
+}
+
+// ListGameEntries returns every configured game, ordered by ID (ListGames'),
+// with the default game marked. The error is the default-game lookup's:
+// unlike Status, a listing whose "which one is default" answer failed is
+// wrong rather than thin, and the setting is a single read for the whole
+// list.
+func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) {
+	defaultGame, err := s.DefaultGame(ctx)
+	if err != nil {
+		return nil, err
+	}
+	games := s.ListGames()
+	entries := make([]GameListEntry, len(games))
+	for i, game := range games {
+		entries[i] = GameListEntry{Game: *game, Default: game.ID == defaultGame}
+	}
+	return entries, nil
+}
+
+// VerifyReport is a VerifyResult plus the game/profile it describes - the
+// one document `lmm verify` (and serve) renders, so no frontend re-stamps
+// that identity onto the result itself.
+type VerifyReport struct {
+	GameID  string        `json:"game_id"`
+	Profile string        `json:"profile"`
+	Result  *VerifyResult `json:"result"`
+}
+
+// VerifyReport runs Verify against profileName and wraps its result with the
+// game/profile identity. sink receives the same progress events Verify emits.
+func (s *Service) VerifyReport(ctx context.Context, game *domain.Game, profileName string, opts VerifyOptions, sink EventSink) (*VerifyReport, error) {
+	result, err := s.Verify(ctx, game, profileName, opts, sink)
+	if err != nil {
+		return nil, err
+	}
+	return &VerifyReport{GameID: game.ID, Profile: profileName, Result: result}, nil
+}

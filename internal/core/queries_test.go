@@ -8,10 +8,13 @@ package core_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -248,4 +251,143 @@ func TestGameStatus_NoProfilesIsEmptyNotNil(t *testing.T) {
 	assert.Empty(t, st.Profiles)
 	assert.Empty(t, st.ActiveProfile)
 	assert.Equal(t, svc.GetGameCachePath(game), st.CachePath)
+}
+
+// --- Search ---
+
+// TestSearch_MarksInstalledAndCountsResults covers the join `lmm search`
+// needs: every hit carries whether it is already installed in the profile
+// searched against (source-aware - a mod ID is only unique within its
+// source), and the report names the game/query it answers.
+func TestSearch_MarksInstalledAndCountsResults(t *testing.T) {
+	src := &searchStubSource{id: "alpha", result: source.SearchResult{
+		Mods: mods("alpha", "installed-one", "not-installed"), TotalCount: 2,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+	seedNamedInstalledMod(t, svc, game, "alpha", "installed-one", "Installed One", "1.0", true, nil)
+	// Same mod ID under a DIFFERENT source must not count as installed.
+	seedNamedInstalledMod(t, svc, game, "beta", "not-installed", "Other Source", "1.0", true, nil)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, report)
+
+	assert.Equal(t, game.ID, report.GameID)
+	assert.Equal(t, "query", report.Query)
+	assert.Equal(t, 2, report.TotalResults)
+	require.Len(t, report.Mods, 2)
+
+	byID := map[string]core.SearchHit{}
+	for _, hit := range report.Mods {
+		byID[hit.ID] = hit
+	}
+	assert.True(t, byID["installed-one"].Installed)
+	assert.False(t, byID["not-installed"].Installed, "an ID installed under another source is not this hit")
+	assert.Equal(t, "installed-one", byID["installed-one"].Name, "the whole domain.Mod is embedded")
+}
+
+// TestSearch_AggregateWarningsAndAttemptedCount covers the aggregate path's
+// two extra signals: a per-source failure is a warning (not an error), and
+// AttemptedCount reports how many sources were actually searched - zero
+// meaning none of them can search at all (#58 item 3), which a caller
+// cannot otherwise tell from a genuine empty result.
+func TestSearch_AggregateWarningsAndAttemptedCount(t *testing.T) {
+	ok := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "found"), TotalCount: 1}}
+	broken := &searchStubSource{id: "beta", err: errors.New("network down")}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": ""}, ok, broken)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{})
+	require.NoError(t, err)
+	require.Len(t, report.Mods, 1)
+	require.Len(t, report.Warnings, 1)
+	assert.Equal(t, "beta", report.Warnings[0].SourceID)
+	assert.Error(t, report.Warnings[0].Err, "the structured warning keeps its error, not a pre-formatted line")
+	assert.Equal(t, 2, report.AttemptedCount)
+}
+
+// TestSearch_SingleSourceHasNoAttemptedCount pins that a named --source
+// reports AttemptedCount -1 ("not applicable"): that path either resolves to
+// exactly one source or fails outright, with no "zero capable sources" case
+// of its own to distinguish.
+func TestSearch_SingleSourceHasNoAttemptedCount(t *testing.T) {
+	src := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "found"), TotalCount: 1}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{SourceID: "alpha"})
+	require.NoError(t, err)
+	require.Len(t, report.Mods, 1)
+	assert.Equal(t, -1, report.AttemptedCount)
+	assert.Empty(t, report.Warnings)
+}
+
+// TestSearch_NoResultsIsEmptyNotNil pins the zero-hit shape: an empty
+// report (Mods marshalling as "[]"), not an error and not a nil slice.
+func TestSearch_NoResultsIsEmptyNotNil(t *testing.T) {
+	src := &searchStubSource{id: "alpha", result: source.SearchResult{}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	assert.Empty(t, report.Mods)
+	assert.Equal(t, 0, report.TotalResults)
+}
+
+// TestSearch_ErrorsPropagateUnwrapped pins that a source failure reaches the
+// caller as-is: the CLI matches source.ErrNotSupported/domain.ErrAuthRequired
+// on it to choose its own notice, so core must not bury it under a wrapper
+// of its own.
+func TestSearch_ErrorsPropagateUnwrapped(t *testing.T) {
+	src := &searchStubSource{id: "alpha", err: fmt.Errorf("searching: %w", source.ErrNotSupported)}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+	_, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{SourceID: "alpha"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, source.ErrNotSupported)
+}
+
+// --- ListGameEntries ---
+
+// TestListGameEntries_ByIDWithDefaultMarked covers `lmm game list`: every
+// configured game, ordered by ID, with the default game marked.
+func TestListGameEntries_ByIDWithDefaultMarked(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: "zeta", Name: "Zeta", ModPath: t.TempDir()}))
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: "alpha", Name: "Alpha", ModPath: t.TempDir()}))
+	require.NoError(t, svc.SetDefaultGame(ctx, "zeta"))
+
+	entries, err := svc.ListGameEntries(ctx)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.Equal(t, "alpha", entries[0].ID)
+	assert.Equal(t, "zeta", entries[1].ID)
+	assert.False(t, entries[0].Default)
+	assert.True(t, entries[1].Default)
+	assert.Equal(t, "Zeta", entries[1].Name, "the whole domain.Game is embedded")
+}
+
+// TestListGameEntries_NoGamesIsEmptyNotNil pins the zero-games shape.
+func TestListGameEntries_NoGamesIsEmptyNotNil(t *testing.T) {
+	entries, err := newFlowsTestService(t).ListGameEntries(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
+// --- VerifyReport ---
+
+// TestVerifyReport_WrapsResultWithIdentity covers the wrapper: the same
+// VerifyResult Verify returns, plus the game/profile it describes, so a
+// frontend renders one document instead of re-stamping the identity itself.
+func TestVerifyReport_WrapsResultWithIdentity(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	report, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	assert.Equal(t, "g1", report.GameID)
+	assert.Equal(t, "default", report.Profile)
+	require.NotNil(t, report.Result)
+	assert.False(t, report.Result.HasFiles, "an empty profile ran the #217 no-files path")
 }

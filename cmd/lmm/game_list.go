@@ -55,10 +55,9 @@ func runGameList(cmd *cobra.Command, args []string) error {
 }
 
 func doGameList(cmd *cobra.Command, service *core.Service) error {
-	games := service.ListGames()
-	sort.Slice(games, func(i, j int) bool { return games[i].ID < games[j].ID })
-
-	defaultGame, err := service.DefaultGame(cmd.Context())
+	// core.ListGameEntries returns the games ordered by ID with the default
+	// one marked; the only error it can report is the default-game lookup's.
+	games, err := service.ListGameEntries(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
@@ -77,7 +76,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 				ModPath:     g.ModPath,
 				DeployMode:  g.DeployMode.String(),
 				Sources:     sources,
-				Default:     g.ID == defaultGame,
+				Default:     g.Default,
 			}
 			// Populate convert_paks only for DeployCompile games
 			if g.DeployMode == domain.DeployCompile {
@@ -110,7 +109,7 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	}
 	for _, g := range games {
 		id := g.ID
-		if g.ID == defaultGame {
+		if g.Default {
 			id += " (default)"
 		}
 		convertPaksStr := ""

@@ -634,6 +634,37 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			"search_hit",
+			core.SearchHit{Mod: jsonGoldenMod, Installed: true},
+		},
+		{
+			// Warnings carries the structured SourceWarning (SourceID + the
+			// error's message, never a pre-formatted line), and Mods is left
+			// nil to pin that an empty result marshals as "[]", not "null".
+			"search_report",
+			core.SearchReport{
+				GameID: "skyrim-se", Query: "armor",
+				Mods:           nil,
+				Warnings:       []core.SourceWarning{{SourceID: "curseforge", ErrorMessage: "network down"}},
+				TotalResults:   0,
+				AttemptedCount: 2,
+			},
+		},
+		{
+			"game_list_entry",
+			core.GameListEntry{Game: jsonGoldenGame, Default: true},
+		},
+		{
+			"verify_report",
+			core.VerifyReport{
+				GameID: "skyrim-se", Profile: "default",
+				Result: &core.VerifyResult{
+					Findings: []core.VerifyFinding{{ModID: "42", ModName: "Sample Mod", FileID: "file-1", Status: "ok"}},
+					Issues:   0, Warnings: 1, Checked: 1, HasFiles: true,
+				},
+			},
+		},
+		{
 			"conflict",
 			core.Conflict{RelativePath: "Data/textures/armor/mesh.dds", CurrentSourceID: "nexusmods", CurrentModID: "7"},
 		},
