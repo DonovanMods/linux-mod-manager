@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -278,10 +279,48 @@ func TestApplyGameDetect_StopsAtFirstProfileFailure(t *testing.T) {
 
 	result, err := svc.ApplyGameDetect(context.Background(), games)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "creating default profile for bad/game")
+	// Exact-match, not Contains: a Contains check on this prefix alone
+	// passed both before and after the whole-branch review's Important #1
+	// fix (2026-08-29) - CreateOrResetDefault's now-removed inner "saving
+	// default profile: " wrap only added a substring in the middle of the
+	// message, which Contains couldn't see.
+	assert.EqualError(t, err, `creating default profile for bad/game: invalid game ID: "bad/game" must not contain path separators or ".."`)
 	assert.ErrorIs(t, err, domain.ErrInvalidGameID)
 	assert.Equal(t, []string{"skyrim-se", "bad/game"}, result.Saved)
 	assert.Equal(t, []string{"skyrim-se/default"}, result.Profiles)
+}
+
+// TestApplyGameDetect_ProfileWriteFailureNotDoubleWrapped pins the
+// whole-branch review's Important #1 fix (2026-08-29): a profile *write*
+// failure (as opposed to the path-validation failure above) must surface
+// exactly the pre-lift text - "creating default profile for <slug>: " (the
+// label 'lmm game detect' has always applied, see 'git show
+// 9cfaf37:cmd/lmm/game.go') directly wrapping config.SaveProfile's own
+// error, with no extra "saving default profile: " segment from
+// ProfileManager.CreateOrResetDefault in between. Reproduced the same way
+// the review did live on the twin binaries: a read-only <configDir>/games
+// directory forces SaveProfile's MkdirAll to fail.
+func TestApplyGameDetect_ProfileWriteFailureNotDoubleWrapped(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+
+	svc := newGameDetectTestService(t)
+	gamesDir := filepath.Join(svc.ConfigDir(), "games")
+	require.NoError(t, os.MkdirAll(gamesDir, 0755))
+	require.NoError(t, os.Chmod(gamesDir, 0555))
+	t.Cleanup(func() { _ = os.Chmod(gamesDir, 0755) })
+
+	games := []domain.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", NexusID: "skyrimspecialedition"},
+	}
+
+	result, err := svc.ApplyGameDetect(context.Background(), games)
+	require.Error(t, err)
+	want := fmt.Sprintf("creating default profile for skyrim-se: creating profiles dir: mkdir %s: permission denied", filepath.Join(gamesDir, "skyrim-se"))
+	assert.EqualError(t, err, want)
+	assert.Equal(t, []string{"skyrim-se"}, result.Saved)
+	assert.Empty(t, result.Profiles)
 }
 
 // TestApplyGameDetect_StopsAtFirstConversionFailure pins the same partial-

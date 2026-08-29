@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,4 +53,43 @@ func TestDoGameAdd_OverwritesExistingDefaultProfileMods(t *testing.T) {
 	profile, err := config.LoadProfile(configDir, "skyrimspecialedition", "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "'lmm game add' must wipe an existing default profile's mod list, matching 'lmm game detect's repair overwrite")
+}
+
+// TestDoGameAdd_ProfileWriteFailureNotDoubleWrapped pins the whole-branch
+// review's Important #1 fix (2026-08-29): a profile write failure on 'lmm
+// game add' must print exactly the pre-lift text - "creating default
+// profile: " (the label this call site has always applied, see 'git show
+// 9cfaf37:cmd/lmm/game_add.go') directly wrapping config.SaveProfile's own
+// error, not an extra "saving default profile: " segment from
+// ProfileManager.CreateOrResetDefault in between. Reproduced the same way
+// the review did live on the twin binaries: a read-only <configDir>/games
+// directory forces SaveProfile's MkdirAll to fail.
+func TestDoGameAdd_ProfileWriteFailureNotDoubleWrapped(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
+
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(nexusmods.New(nil, ""))
+
+	gamesDir := filepath.Join(configDir, "games")
+	require.NoError(t, os.MkdirAll(gamesDir, 0755))
+	require.NoError(t, os.Chmod(gamesDir, 0555))
+	t.Cleanup(func() { _ = os.Chmod(gamesDir, 0755) })
+
+	input := strings.Join([]string{
+		"1", // select nexusmods (only registered source)
+		"Skyrim Special Edition",
+		"skyrimspecialedition",
+		"/opt/games/skyrim",
+		"",
+	}, "\n") + "\n"
+
+	cmd, buf := newGameAddCmd()
+	reader := bufio.NewReader(strings.NewReader(input))
+
+	err := doGameAdd(context.Background(), cmd, reader, svc)
+	require.Error(t, err, "output so far:\n%s", buf.String())
+	want := fmt.Sprintf("creating default profile: creating profiles dir: mkdir %s: permission denied", filepath.Join(gamesDir, "skyrimspecialedition"))
+	assert.EqualError(t, err, want)
 }

@@ -71,7 +71,7 @@ func (pm *ProfileManager) CreateOrResetDefault(gameID string) (*domain.Profile, 
 		IsDefault: true,
 	}
 	if err := config.SaveProfile(pm.configDir, profile); err != nil {
-		return nil, fmt.Errorf("saving default profile: %w", err)
+		return nil, err
 	}
 	return profile, nil
 }
