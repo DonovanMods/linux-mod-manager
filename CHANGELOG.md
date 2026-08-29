@@ -113,7 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lmm profile sync` on a profile with nothing to sync no longer touches the merged pak. Creating
   a missing profile.yaml through an otherwise-empty sync reached the merged-pak sync, whose
   zero-enabled-mods branch uninstalls the game's existing merged pak; it now stops after creating
-  the profile, matching `lmm profile apply`'s no-changes behaviour. (#291)
+  the profile, matching `lmm profile apply`'s no-changes behaviour. (#290)
 - Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
   `hooks:`) (#295)
 
