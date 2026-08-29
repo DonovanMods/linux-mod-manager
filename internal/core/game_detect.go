@@ -76,7 +76,12 @@ type GameDetectResult struct {
 // games.yaml entry and the default profile's mod list; this mirrors 'lmm
 // game add's own overwrite semantics exactly
 // (ProfileManager.CreateOrResetDefault), preserved byte-for-byte from the
-// pre-lift cmd code (v2 Phase 2 Task 21).
+// pre-lift cmd code (v2 Phase 2 Task 21). One narrow text difference is
+// deliberately not reproduced: beginOp takes the lock before the loop, so a
+// context cancelled between the prompt read and this call now always
+// surfaces as the bare "context canceled" rather than the pre-lift
+// interleaved loop's "saving game <slug>: context canceled" (whole-branch
+// review Minor #1, 2026-08-29).
 func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGame) (*GameDetectResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

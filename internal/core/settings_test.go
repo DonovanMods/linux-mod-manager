@@ -125,6 +125,10 @@ func TestServiceConfig_DefaultGame_NoServiceRequired(t *testing.T) {
 // second, write-step load as a save failure. SetDefaultGame must report its
 // own load failure distinctly so the caller's wrap can be dropped.
 func TestServiceConfig_SetDefaultGame_LoadFailureReportsLoadNotSave(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod is not enforced for root")
+	}
+
 	dir := t.TempDir()
 	require.NoError(t, (&config.Config{DefaultGame: "old-game"}).Save(dir))
 

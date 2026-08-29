@@ -216,7 +216,9 @@ func TestRequireGame_WithDefault(t *testing.T) {
 	cfg := &config.Config{DefaultGame: "default-game"}
 	require.NoError(t, cfg.Save(tmpDir))
 
-	err := requireGame(nil)
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	err := requireGame(cmd)
 	assert.NoError(t, err)
 	assert.Equal(t, "default-game", gameID)
 }
@@ -228,7 +230,9 @@ func TestRequireGame_NoGameNoDefault(t *testing.T) {
 	dataDir = filepath.Join(tmpDir, "data")
 	gameID = "" // No flag
 
-	err := requireGame(nil)
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	err := requireGame(cmd)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no game specified")
 	assert.Contains(t, err.Error(), "game set-default")
@@ -263,6 +267,10 @@ func TestConfigDefaultGame_Persistence(t *testing.T) {
 // service against a valid config.yaml, then revoking read permission before
 // calling doGameSetDefault directly.
 func TestDoGameSetDefault_LoadFailureReportedAsLoadError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod is not enforced for root")
+	}
+
 	tmpDir := t.TempDir()
 	require.NoError(t, config.SaveGame(tmpDir, &domain.Game{ID: "test-game", Name: "Test Game"}))
 	require.NoError(t, (&config.Config{}).Save(tmpDir))

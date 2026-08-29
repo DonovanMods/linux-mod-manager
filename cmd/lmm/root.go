@@ -380,7 +380,7 @@ func requireGame(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	defaultGame, err := svcCfg.DefaultGame(context.Background())
+	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
 	if err == nil && defaultGame != "" {
 		gameID = defaultGame
 		if verbose {

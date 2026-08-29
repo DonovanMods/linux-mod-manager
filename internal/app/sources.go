@@ -176,5 +176,5 @@ func ProbeSource(ctx context.Context, svc *core.Service, def source.SourceDefini
 		}
 		return fmt.Sprintf("ok — get_mod %s returned %q", probeID, mod.Name), nil
 	}
-	return "", nil
+	return "", fmt.Errorf("unsupported source type %q", def.Type)
 }
