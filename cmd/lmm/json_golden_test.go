@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -380,5 +381,32 @@ func TestJSONGolden_SourceList(t *testing.T) {
 			"id: broken-mods\nname: Broken Mods\ntype: directory\ndirectory:\n  path: /nonexistent/lmm-golden\n"), 0o644))
 
 		assertJSONCLIGolden(t, "source_list_error_row", runGoldenSourceList(t, false))
+	})
+}
+
+// --- game list ---
+
+func TestJSONGolden_GameList(t *testing.T) {
+	t.Run("populated", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+			ID: "icarus", Name: "Icarus", InstallPath: "/games/icarus", ModPath: "/games/icarus/Mods",
+			DeployMode: domain.DeployCompile, ConvertPaks: true,
+		}))
+		cfg := &config.Config{DefaultGame: "skyrim-se"}
+		require.NoError(t, cfg.Save(svc.ConfigDir()))
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+		assertJSONCLIGolden(t, "game_list_populated", out)
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
+		assertJSONCLIGolden(t, "game_list_empty", out)
 	})
 }

@@ -1,0 +1,39 @@
+[
+  {
+    "id": "icarus",
+    "name": "Icarus",
+    "install_path": "/games/icarus",
+    "mod_path": "/games/icarus/Mods",
+    "source_ids": {},
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "deploy_mode": "compile",
+    "convert_paks": true,
+    "convert_paks_explicit": false,
+    "default": false
+  },
+  {
+    "id": "skyrim-se",
+    "name": "Skyrim SE",
+    "install_path": "/games/skyrim-se",
+    "mod_path": "/games/skyrim-se/Mods",
+    "source_ids": {
+      "src": "skyrim-se"
+    },
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "cache_path": "/cache/skyrim-se",
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "deploy_mode": "extract",
+    "convert_paks": false,
+    "convert_paks_explicit": false,
+    "default": true
+  }
+]
