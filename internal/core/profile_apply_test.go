@@ -482,6 +482,98 @@ func TestApplyProfileApply_EntryError_ReportsAndContinues(t *testing.T) {
 	}, phases)
 }
 
+// TestApplyProfileApply_EnableLoop_InstallFailure_NotesAndSkipsEnable pins
+// review Important 2(a): the enable loop's failure semantics are the one
+// asymmetry with its disable-loop neighbour. Disable reports "✓ Disabled"
+// unconditionally even after a failed Uninstall (SwitchDisableNote fires,
+// but so does SwitchDisabled); a failed enable-loop Install must instead
+// skip the mod entirely - a Note, no SwitchEnabled event, and the enabled
+// flag left false in the DB - exactly as doProfileApply's `continue` did.
+func TestApplyProfileApply_EnableLoop_InstallFailure_NotesAndSkipsEnable(t *testing.T) {
+	svc, game := newApplyTestService(t)
+	pm := svc.NewProfileManager()
+
+	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToEnable, 1)
+
+	// Prune the cache entry PlanProfileApply saw between plan and apply, so
+	// installer.Install fails deterministically ("mod not in cache") -
+	// the same external-pruning race M2's doc comment names for the
+	// Replace-vs-Install decision, reused here on purpose to force the
+	// enable loop's own failure branch without touching filesystem
+	// permissions.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Delete(game.ID, "src", "off", "1.0"))
+
+	sink, events := core.RecordEvents()
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, sink)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Enabled, "a failed deploy must not count as an enable")
+	require.Len(t, result.Notes, 1)
+	assert.Contains(t, result.Notes[0], "Warning: failed to deploy Test Mod: ")
+
+	phases := applyModPhases(*events)
+	assert.Equal(t, []core.DeployPhase{core.SwitchEnableNote}, phases, "no SwitchEnabled event may follow a failed deploy")
+
+	off, err := svc.GetInstalledMod(context.Background(), "src", "off", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, off.Enabled, "the enabled flag must be left unset")
+}
+
+// TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailure
+// pins review Important 2(b): a download failure inside the install loop
+// still emits SwitchDownloadDone right after SwitchDownloadFailed (the
+// unconditional Println terminating doProfileApply's carriage-returned
+// progress line, on the failure path too), the failed mod is recorded and
+// skipped, and the loop continues on to install a later healthy entry.
+func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailure(t *testing.T) {
+	svc, game := newApplyTestService(t)
+	pm := svc.NewProfileManager()
+
+	// perModFileSource keys its one downloadable file by the mod's own ID
+	// (flows_install_test.go), so "bad" and "good" can be given independent
+	// download outcomes on the same mockSourceWithDownloads server: "bad"
+	// gets no registered payload and 404s, "good" downloads cleanly.
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	t.Cleanup(mock.Close)
+	mock.AddMod(game.ID, &domain.Mod{ID: "bad", SourceID: "src", Name: "Bad Mod", Version: "1.0", GameID: game.ID})
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "good", SourceID: "src", Name: "Good Mod", Version: "1.0", GameID: game.ID}, "good.esp", "plugin content")
+	svc.RegisterSource(mock)
+
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bad"}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "good"}))
+
+	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 2)
+	require.Empty(t, plan.ToInstall[0].Error)
+	require.Empty(t, plan.ToInstall[1].Error)
+
+	sink, events := core.RecordEvents()
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, sink)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed, "the healthy mod must still install")
+	require.Len(t, result.Failed, 1)
+	assert.Contains(t, result.Failed[0], "bad")
+	assert.Contains(t, result.Failed[0], "download failed")
+
+	phases := applyModPhases(*events)
+	assert.Equal(t, []core.DeployPhase{
+		core.SwitchInstalling, core.SwitchInstallingMod, core.SwitchDownloadFailed, core.SwitchDownloadDone,
+		core.SwitchInstallingMod, core.SwitchDownloadDone, core.SwitchInstalled,
+	}, phases, "SwitchDownloadDone must follow SwitchDownloadFailed just as it follows a successful download")
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "bad", game.ID, "default")
+	assert.Error(t, err, "a mod whose download failed must not be installed")
+	good, err := svc.GetInstalledMod(context.Background(), "src", "good", game.ID, "default")
+	require.NoError(t, err, "the loop must continue past the failure")
+	assert.True(t, good.Enabled)
+}
+
 // TestApplyProfileApply_LockedRef_UpsertRefusalIsNote pins ruling 9: the
 // post-install UpsertMod is refused by a LOCKED profile ref (#143), and the
 // flow records that as a Note (the CLI's --verbose-only warning) without
