@@ -587,16 +587,6 @@ func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, erro
 	return source.CapabilitiesOf(src), nil
 }
 
-// GetDownloadURL gets the download URL for a specific mod file
-func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *domain.Mod, fileID string) (string, error) {
-	src, err := s.registry.Get(sourceID)
-	if err != nil {
-		return "", err
-	}
-
-	return src.GetDownloadURL(ctx, mod, fileID)
-}
-
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
 // Returns the download result including files extracted and checksum.
 // Multiple files from the same mod can be downloaded to the same cache location.
@@ -618,16 +608,6 @@ func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain
 
 func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, sink)
-}
-
-// DownloadModToCache downloads a mod file, extracts it, and stores it in the provided cache.
-func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	return s.downloadModToCache(ctx, gameCache, sourceID, game, mod, file, sink)
 }
 
 func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
@@ -1546,16 +1526,6 @@ func (s *Service) setModLinkMethod(ctx context.Context, sourceID, modID, gameID,
 	return s.db.SetModLinkMethod(ctx, sourceID, modID, gameID, profileName, linkMethod)
 }
 
-// SetModFileIDs updates the file IDs for an installed mod
-func (s *Service) SetModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.setModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
-}
-
 func (s *Service) setModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
 	return s.db.SetModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
 }
@@ -1610,7 +1580,7 @@ func (s *Service) saveInstalledMod(ctx context.Context, mod *domain.InstalledMod
 	return s.db.SaveInstalledMod(ctx, mod)
 }
 
-// SetModVersion corrects an installed mod's recorded version without
+// setModVersion corrects an installed mod's recorded version without
 // shifting PreviousVersion (unlike a real version update) or re-keying its
 // file-ID rows (unlike SaveInstalledMod's full-row upsert, whose
 // replaceModFileIDsTx would silently wipe stored checksums even when the
@@ -1618,15 +1588,6 @@ func (s *Service) saveInstalledMod(ctx context.Context, mod *domain.InstalledMod
 // For repairing a version string known to be WRONG (verify --fix's
 // version-record repair, issue #94), where the file IDs and their
 // checksums are already correct.
-func (s *Service) SetModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.setModVersion(ctx, sourceID, modID, gameID, profileName, version)
-}
-
 func (s *Service) setModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
 	return s.db.SetModVersion(ctx, sourceID, modID, gameID, profileName, version)
 }
