@@ -119,7 +119,7 @@ func TestApplyImport_DeployCompile_SyncsMergedPak(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Missing, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Installed)
 

@@ -2278,7 +2278,7 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 // These tests guard the post-download/pre-deploy conflict gate in
 // applyInstallPrimary - the check that sits at the pre-extraction CLI's own
 // prompt position (see InstallOptions.AcceptConflicts' doc comment). v2
-// Phase 3 Task 8 replaced the ConfirmConflicts callback with a typed error:
+// Phase 3 Task 8 replaced the old confirmation callback with a typed error:
 // core computes the conflicts and returns *core.ConflictError before it
 // deploys or writes anything, and the frontend answers by re-running
 // ApplyInstall with AcceptConflicts set. Two twin arrangements exercise the
