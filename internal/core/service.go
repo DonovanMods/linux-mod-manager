@@ -46,11 +46,11 @@ type DownloadModResult struct {
 // List*, Plan*, Search*, CheckGameUpdates, Verify without Fix) may run
 // concurrently with each other and with at most one in-flight mutation;
 // mutating operations (Apply*, DeployProfile, PurgeProfile, UninstallMod,
-// EnableMod/DisableMod, Set*, Save*, Delete*, Reorder*, SyncMergedPak,
-// ConvergeDeployedFiles unless dry-run, Verify with Fix) are serialized
-// service-wide through a one-slot semaphore acquired with the caller's
-// ctx, so a waiter is itself cancellable. Reads during a mutation observe
-// WAL snapshot state, which is per-mod consistent (spec §3).
+// EnableMod/DisableMod, Set*, Save*, Delete*, Reorder*, SyncMergedPak, Verify
+// with Fix) are serialized service-wide through a one-slot semaphore
+// acquired with the caller's ctx, so a waiter is itself cancellable. Reads
+// during a mutation observe WAL snapshot state, which is per-mod consistent
+// (spec §3).
 //
 // NewProfileManager returns a ProfileManager whose file mutations are NOT
 // serialized through this semaphore; Phase 2 lifts those flows into

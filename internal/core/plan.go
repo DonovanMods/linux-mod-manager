@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
@@ -55,4 +57,36 @@ func (s *Service) checkPlanFresh(ctx context.Context, gameID, profileName string
 		return fmt.Errorf("%w: %s/%s", ErrStalePlan, gameID, profileName)
 	}
 	return nil
+}
+
+// isDeployedNow reports whether the game-dir-relative path f currently
+// exists under game.ModPath. A removal-direction union names everything a
+// mod COULD have deployed; only what is on disk right now is what an
+// undeploy would actually touch (Task 24 review, Minor #1). Lstat, not
+// Stat - a dangling symlink is still a deployed path to remove.
+func isDeployedNow(game *domain.Game, f string) bool {
+	_, err := os.Lstat(filepath.Join(game.ModPath, f))
+	return err == nil
+}
+
+// uninstallHookNames lists the uninstall.* hooks a pass would run, in run
+// order - the vocabulary shared by `lmm uninstall`, `lmm purge`, and a
+// `lmm deploy --purge` pass. Only configured hooks are named, and SkipHooks
+// (the CLI's --no-hooks) suppresses every one of them.
+func uninstallHookNames(hooks *ResolvedHooks, skipHooks bool) []string {
+	if skipHooks {
+		return nil
+	}
+	var names []string
+	for _, h := range []struct{ name, command string }{
+		{"uninstall.before_all", hooks.GetUninstallBeforeAll()},
+		{"uninstall.before_each", hooks.GetUninstallBeforeEach()},
+		{"uninstall.after_each", hooks.GetUninstallAfterEach()},
+		{"uninstall.after_all", hooks.GetUninstallAfterAll()},
+	} {
+		if h.command != "" {
+			names = append(names, h.name)
+		}
+	}
+	return names
 }

@@ -214,7 +214,7 @@ func (r *verifyRun) resolveLast(status, note string) {
 // entirely).
 //
 // #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
-// deploy-convergence sweep (ConvergeDeployedFiles) that close out every run,
+// deploy-convergence sweep (convergeDeployedFiles) that close out every run,
 // including the #217 empty-profile path, which now runs nothing BUT that
 // sweep. The CLI does not call this yet - it still runs its own doVerify; a
 // later task (#224 Task 7) swaps it onto Verify.
@@ -328,12 +328,12 @@ func (r *verifyRun) syncMergedPakPass() {
 
 // convergencePass ports cmd/lmm/verify.go's reportConvergencePass verbatim
 // (originally cmd/lmm/verify.go:865-916): reconciles the game dir against
-// current reality (ConvergeDeployedFiles) - deployed_files rows no longer
+// current reality (convergeDeployedFiles) - deployed_files rows no longer
 // provided by any installed mod, and dangling cache-rooted symlinks with no
 // row at all - and reports every stale/dangling path found. dryRun mirrors
 // !opts.Fix: a plain verify pass reports candidates without mutating
 // anything (each becomes a stale_deployment warning); --fix acts, and each
-// path ConvergeDeployedFiles actually removed becomes a fixed_stale_
+// path convergeDeployedFiles actually removed becomes a fixed_stale_
 // deployment row instead - resolved, not outstanding, the same convention
 // every other successful --fix repair in this engine follows (it does NOT
 // add to Warnings). Runs both in the main flow (after perFileWalk/the
@@ -348,7 +348,7 @@ func (r *verifyRun) syncMergedPakPass() {
 // rendering contract up on the CLI side.
 //
 // Per-item convergence failures (an Undeploy or sweep os.Remove that
-// failed) are joined into one error by ConvergeDeployedFiles rather than
+// failed) are joined into one error by convergeDeployedFiles rather than
 // aborting the whole pass (ConvergeResult's own doc comment) - surfaced
 // here the same way every other per-item problem in this engine is: a
 // skipped row plus a warning, not a fatal Verify failure.

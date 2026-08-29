@@ -1471,7 +1471,7 @@ func TestVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingStillRepaired(t *t
 
 // strayDanglingSymlink plants a symlink in game.ModPath pointing INTO the
 // game's own cache root at a path that was never actually stored - the
-// simplest ConvergeDeployedFiles candidate (converge_test.go's own
+// simplest convergeDeployedFiles candidate (converge_test.go's own
 // TestConverge_DanglingCacheLinkSwept fixture): no deployed_files row is
 // needed at all, only a dangling cache-rooted symlink.
 func strayDanglingSymlink(t *testing.T, svc *core.Service, game *domain.Game, name string) {

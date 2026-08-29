@@ -405,7 +405,7 @@ func renderVerifyFinding(ev core.VerifyEvent) {
 		fmt.Printf("  %s %s - CONVERSION FAILED (%s) - deploying raw; fix the mod or run 'lmm mod convert %s off' to silence\n", colorYellow("?"), f.ModName, f.Note, f.ModID)
 
 	case "stale_deployment":
-		// #168/#212 - FileID carries the deployed path (ConvergeDeployedFiles
+		// #168/#212 - FileID carries the deployed path (convergeDeployedFiles
 		// reports per-path, not per-mod-file).
 		fmt.Printf("%s %s - STALE DEPLOYMENT (%s)\n", colorYellow("?"), f.FileID, f.Note)
 
@@ -443,7 +443,7 @@ func renderVerifySkipped(f core.VerifyFinding) {
 	case strings.HasPrefix(f.Note, "could not check version: "):
 		fmt.Printf("%s %s - could not check version (source unreachable)\n", colorYellow("?"), f.ModName)
 
-	// convergencePass: a per-item ConvergeDeployedFiles failure - Note is
+	// convergencePass: a per-item convergeDeployedFiles failure - Note is
 	// already the full "convergence: <err>" text.
 	case strings.HasPrefix(f.Note, "convergence: "):
 		fmt.Printf("%s %s\n", colorYellow("?"), f.Note)

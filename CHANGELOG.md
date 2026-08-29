@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off. (#281)
+- `lmm deploy --dry-run` prints what a deploy would do — the mods it would touch in load order,
+  the files each would link (and any stale ones it would remove), what a `--purge` pass would
+  remove first, the merged-artifact readout on a compile game, and the hooks that would run —
+  without changing anything. `--verbose` adds the per-file detail. (#293)
+- `lmm uninstall --dry-run` prints what an uninstall would do — which mod the ID resolves to
+  (with its source, so a bare ID's first-match rule is visible), how many files would leave the
+  game directory, what happens to the cache, and the hooks that would run — without changing
+  anything. `--verbose` lists the files. On a compile-mode game it also states that the profile's
+  merged artifact would be resynced afterwards; that line is unconditional on compile games, not
+  gated on whether a resync would actually change anything. (#293)
+- `lmm purge --dry-run` prints what a purge would do — the mods it would undeploy, what happens
+  to their records, and the hooks that would run — without changing anything and without
+  prompting. On a compile-mode game it also states that the profile's merged artifact would be
+  removed too; that line is unconditional on compile games, not gated on whether anything would
+  actually be removed. (#293)
 
 ### Removed
 
@@ -117,6 +132,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind new `app.LoadSourceDefinitions`/`LoadSourceDefinitionFile`/`ConstructSource`/
   `ProbeSource` queries. `cmd/lmm`'s `boundaryAllowList` is now empty. No user-visible change: CLI
   output is byte-identical. (#292)
+- Internal: the deploy flow gains a Plan/Apply pair — `core.PlanDeploy` returns a `DeployPlan`
+  (per-mod link/remove file sets, the purge set, the hook list and the DeployCompile `MergePlan`)
+  and `core.ApplyDeploy` carries it out, refusing a plan whose installed-mod set has moved
+  (`ErrStalePlan`). `DeployProfile` stays as the Plan+Apply convenience, the flow moves out of
+  `flows.go` into `internal/core/deploy.go`, and `ConvergeDeployedFiles` is unexported (verify's
+  `--fix` pass was its only caller). No user-visible change to existing invocations: CLI output is
+  byte-identical. (#293)
+- Internal: the uninstall and purge flows gain Plan/Apply pairs — `core.PlanUninstall` resolves
+  the mod (including the bare-ID first-match rule the CLI used to apply inline) and returns an
+  `UninstallPlan`; `core.PlanPurge` returns the installed set the confirmation prompt counts and
+  `ApplyPurge` purges that same object; both refuse a stale plan (`ErrStalePlan`).
+  `UninstallMod`/`PurgeProfile` stay as the Plan+Apply conveniences, and the flows move out of
+  `flows.go` into `internal/core/uninstall.go` and `internal/core/purge.go`. No user-visible change
+  to existing invocations: CLI output is byte-identical. (#293)
 
 ### Fixed
 

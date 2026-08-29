@@ -1,0 +1,17 @@
+## stdout
+Purge plan for profile "default" (dry run)
+
+Would undeploy 1 mod(s) from Game (profile: default)
+Mod records will be preserved. Use 'lmm deploy' to restore.
+
+Purging mods from Game...
+
+  ✓ Bear Mount
+
+Would purge: 1 mod(s)
+The profile's merged artifact would be removed too
+## stderr
+## error
+<nil>
+## tree
+<empty>

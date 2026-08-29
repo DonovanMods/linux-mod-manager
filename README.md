@@ -785,6 +785,7 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `lmm install --source ID` / `-s`                   | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically)                    |
 | `lmm uninstall <mod-id>`                           | Uninstall a mod                                                                                                                                      |
 | `lmm uninstall <mod-id> --keep-cache`              | Uninstall but keep the cached mod files                                                                                                              |
+| `lmm uninstall <mod-id> --dry-run`                 | Preview what an uninstall would do                                                                                                                   |
 | `lmm import`                                       | Scan `mod_path` for untracked mods and import them (see [Import](#import) below)                                                                     |
 | `lmm import <archive-path>`                        | Import one local mod archive                                                                                                                         |
 | `lmm list`                                         | List installed mods                                                                                                                                  |
@@ -831,7 +832,9 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `lmm deploy <mod-id>`                              | Deploy specific mod from cache                                                                                                                       |
 | `lmm deploy --method hardlink`                     | Deploy using different link method                                                                                                                   |
 | `lmm deploy --purge`                               | Purge then deploy all mods                                                                                                                           |
+| `lmm deploy --dry-run`                             | Preview what a deploy would do                                                                                                                       |
 | `lmm purge`                                        | Remove all mods from game directory                                                                                                                  |
+| `lmm purge --dry-run`                              | Preview what a purge would do (no confirmation prompt)                                                                                               |
 | `lmm conflicts`                                    | Show file conflicts in current profile                                                                                                               |
 | `lmm source list`                                  | List built-in and user-defined mod sources                                                                                                           |
 | `lmm source validate <file>`                       | Validate a user-defined source definition                                                                                                            |
@@ -849,6 +852,13 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `0`  | Success                                                     |
 | `1`  | Error                                                       |
 | `2`  | Cancelled by the user (e.g. declined a confirmation prompt) |
+
+`--dry-run` always exits `0` once it renders a plan, even when the plan's own data records a
+selection that is certain to fail once applied (e.g. an unknown or disabled mod ID) — a plan is
+data, not an attempt. `lmm deploy <id> --dry-run` therefore exits `0` for a mod ID the live
+`lmm deploy <id>` would reject with exit `1`. A scripted pre-flight check cannot rely on
+`--dry-run`'s exit code alone to detect a doomed deploy/uninstall/purge ahead of time; `--dry-run`
+does not currently support `--json`.
 
 ### Import
 

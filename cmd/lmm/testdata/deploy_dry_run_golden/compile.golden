@@ -1,0 +1,16 @@
+## stdout
+Deploy plan for profile "default" (dry run)
+
+Deploying 3 mod(s) — compile mode...
+
+  ✓ Bear Mount (merged)
+  ✓ Raw Pak Mod (raw)
+  ✓ Loose Mod
+
+Merged 1 mod(s) → zzz_LMM_Merged_P.pak (1 deployed raw)
+Would deploy: 3
+## stderr
+## error
+<nil>
+## tree
+<empty>

@@ -1,0 +1,14 @@
+{
+  "ref": {
+    "source_id": "nexusmods",
+    "mod_id": "42",
+    "version": "1.2.3",
+    "locked": false
+  },
+  "name": "Sample Mod",
+  "class": "merged",
+  "link": [
+    "Data/Sample.esp"
+  ],
+  "remove": []
+}

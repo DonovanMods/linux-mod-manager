@@ -1,0 +1,409 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"flag"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// --- v2 Phase 2 Unit M Task 24: `lmm deploy --dry-run` ---
+//
+// --dry-run is NEW output behind a NEW flag, so these goldens are recorded
+// in the task that introduces it (unlike the pre-lift characterization
+// goldens elsewhere in this package, which are recorded on the PRE-lift
+// tree). The freeze this package's other goldens enjoy ("a diff is a
+// defect, never a re-record") applies here too, but only to a golden whose
+// recorded behaviour is itself correct: it protects behaviour, not whatever
+// happened to get typed first. purge_verbose.golden was re-recorded by the
+// Task 24 review's fix wave (#293) because its ORIGINAL fixture demonstrated
+// the very over-listing bug Minor #1 fixed (2 cached-but-undeployed paths
+// listed as "would purge" over an empty game tree) - that recording was
+// never a contract to preserve. See purge_verbose_nothing_deployed.golden
+// for the now-separate "nothing currently deployed" case.
+//
+// Each golden has four sections: stdout, stderr, the returned error, and the
+// game directory's contents afterwards. That last section is the point of a
+// dry run - it must be byte-identical before and after, which is why every
+// scenario records it rather than asserting it ad hoc.
+//
+// Format (all lines below are dry-run-only):
+//
+//	Deploy plan for profile "<name>" (dry run)
+//	<blank>
+//	[Would purge N file(s) before deploy...        -- only with --purge
+//	[    - <path>                                  -- only under --verbose
+//	<blank>]
+//	Deploying N mod(s) using <method>...           -- the live header verbatim
+//	<blank>                                        -- ("— compile mode..." on a compile game)
+//	  ✓ <mod>[ (merged)|( raw)]                    -- the live per-mod lines,
+//	  ✗ <mod> - <reason>                              rendered through doDeploy's own
+//	  ⚠ <mod> - cache missing, re-downloading...      progress closure - the ⚠/✓ pair
+//	  ✓ <mod>                                         is a cache-missing mod (counts as
+//	[    + <linked path>                              deployable, never a red ✗)
+//	     - <removed path>]                         -- only under --verbose
+//	[<blank>
+//	Merged N mod(s) → <artifact>[ (M deployed raw)]]
+//	<blank, unless the merge footer already printed one>
+//	Would deploy: N[, Skipped: M]
+//	[<blank>
+//	Hooks that would run: <a, b, c>]
+//
+// An empty selection prints the live path's own "No mods to deploy." /
+// "No enabled mods to deploy. Use --all to deploy disabled mods." line
+// instead of everything from the deploy header down.
+
+var updateDeployDryRunGoldens = flag.Bool("update-deploy-dry-run", false, "rewrite `lmm deploy --dry-run` goldens from current output")
+
+// deployDryRunFixture is one scenario: an already-seeded service/game plus
+// the positional args doDeploy is called with. The deploy flag globals are
+// set by the fixture itself (setupDoDeployTest resets them all).
+type deployDryRunFixture struct {
+	svc  *core.Service
+	game *domain.Game
+	args []string
+}
+
+// dumpTree renders a directory's contents - every regular file and symlink,
+// relative and sorted - so a dry run's "changed nothing" claim is recorded,
+// not assumed. Used for both the game directory (the golden's "## tree"
+// section) and the cache directory (part of dryRunState below).
+func dumpTree(t *testing.T, root string) string {
+	t.Helper()
+	var paths []string
+	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		paths = append(paths, rel)
+		return nil
+	}))
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		return "<empty>\n"
+	}
+	return strings.Join(paths, "\n") + "\n"
+}
+
+// dryRunState is the full-service snapshot Task 24 review Minor #3 asks
+// for: not just the game directory (the one thing the original harness
+// diffed - a real assertion for creation, since 10 of the 11 original
+// fixtures started from an empty game dir, but only stale_removal_verbose
+// could have caught an accidental REMOVAL), but the cache tree, the
+// installed-mods DB rows, and the profile YAML on disk too - so "a dry run
+// changes nothing" is a claim about the whole service, not just its most
+// visible corner.
+type dryRunState struct {
+	gameTree    string
+	cacheTree   string
+	profileYAML string
+	mods        []domain.InstalledMod
+}
+
+func snapshotDryRunState(t *testing.T, svc *core.Service, game *domain.Game, profileName string) dryRunState {
+	t.Helper()
+	mods, err := svc.GetInstalledMods(context.Background(), game.ID, profileName)
+	require.NoError(t, err)
+	profilePath := filepath.Join(configDir, "games", game.ID, "profiles", profileName+".yaml")
+	profileYAML, err := os.ReadFile(profilePath)
+	require.NoError(t, err, "fixture: every dry-run scenario deploys against an existing profile file")
+	return dryRunState{
+		gameTree:    dumpTree(t, game.ModPath),
+		cacheTree:   dumpTree(t, svc.GetGameCachePath(game)),
+		profileYAML: string(profileYAML),
+		mods:        mods,
+	}
+}
+
+// runDeployDryRunGolden drives doDeploy with --dry-run for one scenario and
+// compares (or, with -update-deploy-dry-run, records) the transcript.
+func runDeployDryRunGolden(t *testing.T, name string, setup func(t *testing.T) deployDryRunFixture) {
+	t.Helper()
+	fx := setup(t)
+	deployDryRun = true
+	t.Cleanup(func() { deployDryRun = false })
+
+	profileName, err := resolveProfile(fx.svc, fx.game.ID, deployProfile)
+	require.NoError(t, err)
+	before := snapshotDryRunState(t, fx.svc, fx.game, profileName)
+
+	stdout, stderr, runErr := captureStdoutStderrErr(t, func() error {
+		return doDeploy(context.Background(), fx.svc, fx.game, fx.args)
+	})
+
+	errText := "<nil>"
+	if runErr != nil {
+		errText = runErr.Error()
+	}
+	after := snapshotDryRunState(t, fx.svc, fx.game, profileName)
+	assert.Equal(t, before.gameTree, after.gameTree, "a dry run must not touch the game directory")
+	assert.Equal(t, before.cacheTree, after.cacheTree, "a dry run must not touch the cache directory")
+	assert.Equal(t, before.profileYAML, after.profileYAML, "a dry run must not touch the profile file")
+	assert.Equal(t, before.mods, after.mods, "a dry run must not touch the installed-mods DB rows")
+
+	var buf bytes.Buffer
+	buf.WriteString("## stdout\n")
+	buf.WriteString(stdout)
+	buf.WriteString("## stderr\n")
+	buf.WriteString(stderr)
+	buf.WriteString("## error\n")
+	buf.WriteString(errText)
+	buf.WriteString("\n## tree\n")
+	buf.WriteString(after.gameTree)
+
+	path := filepath.Join("testdata", "deploy_dry_run_golden", name+".golden")
+	if *updateDeployDryRunGoldens {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, buf.Bytes(), 0o644))
+		return
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err, "golden missing - record it with -update-deploy-dry-run")
+	require.Equal(t, string(want), buf.String(), "`lmm deploy --dry-run` output drifted from the recorded golden")
+}
+
+func TestDeployDryRunGoldens(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) deployDryRunFixture
+	}{
+		{"two_mods", twoModsDryRunFixture},
+		{"two_mods_verbose", func(t *testing.T) deployDryRunFixture {
+			fx := twoModsDryRunFixture(t)
+			setVerboseForTest(t, true)
+			return fx
+		}},
+		{"method_override", func(t *testing.T) deployDryRunFixture {
+			fx := twoModsDryRunFixture(t)
+			deployMethod = "copy"
+			return fx
+		}},
+		{"purge_verbose", func(t *testing.T) deployDryRunFixture {
+			fx := purgeVerboseDryRunFixture(t)
+			deployPurge = true
+			setVerboseForTest(t, true)
+			return fx
+		}},
+		{"purge_verbose_nothing_deployed", func(t *testing.T) deployDryRunFixture {
+			fx := twoModsDryRunFixture(t)
+			deployPurge = true
+			setVerboseForTest(t, true)
+			return fx
+		}},
+		{"cache_missing", cacheMissingDryRunFixture},
+		{"hooks", hooksDryRunFixture},
+		{"stale_removal_verbose", func(t *testing.T) deployDryRunFixture {
+			fx := staleRemovalDryRunFixture(t)
+			setVerboseForTest(t, true)
+			return fx
+		}},
+		{"disabled_mod", disabledModDryRunFixture},
+		{"unknown_mod", unknownModDryRunFixture},
+		{"no_mods", noModsDryRunFixture},
+		{"no_mods_all", func(t *testing.T) deployDryRunFixture {
+			fx := noModsDryRunFixture(t)
+			deployAll = true
+			return fx
+		}},
+		{"purge_all_disabled_with_hooks", func(t *testing.T) deployDryRunFixture {
+			fx := purgeAllDisabledWithHooksDryRunFixture(t)
+			deployPurge = true
+			return fx
+		}},
+		{"compile", compileDryRunFixture},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runDeployDryRunGolden(t, tt.name, tt.setup)
+		})
+	}
+}
+
+// setVerboseForTest flips the package-level verbose flag for one test.
+func setVerboseForTest(t *testing.T, v bool) {
+	t.Helper()
+	old := verbose
+	verbose = v
+	t.Cleanup(func() { verbose = old })
+}
+
+func twoModsDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
+	return deployDryRunFixture{svc: svc, game: game}
+}
+
+// linkDeployedFileForTest symlinks a cached mod file into the game
+// directory, mirroring what a real deploy would have produced, so a fixture
+// can start from an already-deployed state without running a full deploy.
+func linkDeployedFileForTest(t *testing.T, svc *core.Service, game *domain.Game, modID, fileName string) {
+	t.Helper()
+	versionDir := svc.GetGameCache(game).ModPath(game.ID, "src", modID, "1.0")
+	require.NoError(t, os.Symlink(filepath.Join(versionDir, fileName), filepath.Join(game.ModPath, fileName)))
+}
+
+// purgeVerboseDryRunFixture is twoModsDryRunFixture with both mods already
+// linked into the game directory - Task 24 review, Minor #1: a --purge plan
+// lists only paths actually deployed right now, so the "purge_verbose"
+// golden needs a fixture where something really is deployed to demonstrate
+// that (see "purge_verbose_nothing_deployed" for the other half).
+func purgeVerboseDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	fx := twoModsDryRunFixture(t)
+	linkDeployedFileForTest(t, fx.svc, fx.game, "a", "a.esp")
+	linkDeployedFileForTest(t, fx.svc, fx.game, "b", "b.esp")
+	return fx
+}
+
+// cacheMissingDryRunFixture seeds an installed, profiled, enabled mod with
+// NO cache entry - the one shape Important #2 covers: the live deploy heals
+// this by re-downloading from source and then deploying it, so the plan
+// must render it as deployable (a "⚠ … re-downloading" + "✓ …" pair), not a
+// red "✗ … Skipped".
+func cacheMissingDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "gone", SourceID: "src", Name: "Gone Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	if _, err := pm.Get(game.ID, "default"); err != nil {
+		require.ErrorIs(t, err, domain.ErrProfileNotFound)
+		_, err := pm.Create(game.ID, "default")
+		require.NoError(t, err)
+	}
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "gone", Version: "1.0"}))
+	return deployDryRunFixture{svc: svc, game: game}
+}
+
+// hooksDryRunFixture configures two install hooks so the plan's hook readout
+// has something to list.
+func hooksDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	fx := twoModsDryRunFixture(t)
+	script := filepath.Join(t.TempDir(), "hook.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/bash\nexit 0\n"), 0o755))
+	fx.game.Hooks = domain.GameHooks{
+		Install: domain.HookConfig{BeforeAll: script, AfterEach: script},
+	}
+	require.NoError(t, fx.svc.SaveGame(context.Background(), fx.game))
+	return fx
+}
+
+// staleRemovalDryRunFixture seeds #210's self-heal shape - a cache entry
+// whose recorded manifests claim nothing while a stale file sits on disk,
+// already linked into the game dir - so the plan has a Remove path to list.
+func staleRemovalDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	seedNarrowedStaleCLIMod(t, svc, game, "stale", "Stale Mod", "Stale_P.pak")
+	return deployDryRunFixture{svc: svc, game: game}
+}
+
+// seedDisabledMod is seedDeployableMod's disabled twin: cached and in the
+// profile, but Enabled=false, so `lmm deploy <id>` refuses it without --all.
+func seedDisabledMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, fileName string) {
+	t.Helper()
+	seedDeployableMod(t, svc, game, modID, name, fileName)
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: "src", Name: name, Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      false,
+	}))
+}
+
+// seedNarrowedStaleCLIMod mirrors internal/core's seedNarrowedStaleMod for
+// this package: a cache entry holding a stale unclaimed pak plus a recorded
+// zero-member marker AND a retained source, already linked into the game dir
+// - the one shape whose plan lists a Remove path.
+func seedNarrowedStaleCLIMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, stalePath string) {
+	t.Helper()
+	seedDeployableMod(t, svc, game, modID, name, stalePath)
+	versionDir := svc.GetGameCache(game).ModPath(game.ID, "src", modID, "1.0")
+	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "exmodz", nil))
+	require.NoError(t, os.WriteFile(filepath.Join(versionDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
+	require.NoError(t, os.Symlink(filepath.Join(versionDir, stalePath), filepath.Join(game.ModPath, stalePath)))
+}
+
+// purgeAllDisabledWithHooksDryRunFixture is the exact repro from the final
+// review's Important #1: one disabled mod (excluded from the whole-profile
+// selection, so plan.Mods ends up empty and the plan's early-return branch
+// fires), both hook families configured. The uninstall.* hooks still list
+// in the plan (planDeployHooks counts every installed mod for the purge
+// pass, not just enabled ones) even though nothing would deploy; the
+// install.* hooks must NOT list, since the deploy loop returns before
+// running them when the selection is empty.
+func purgeAllDisabledWithHooksDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	seedDisabledMod(t, svc, game, "off", "Disabled Mod", "off.esp")
+	script := filepath.Join(t.TempDir(), "hook.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/bash\nexit 0\n"), 0o755))
+	game.Hooks = domain.GameHooks{
+		Install:   domain.HookConfig{BeforeAll: script, AfterEach: script},
+		Uninstall: domain.HookConfig{BeforeAll: script, BeforeEach: script, AfterEach: script, AfterAll: script},
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	return deployDryRunFixture{svc: svc, game: game}
+}
+
+func disabledModDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "g1"}
+	seedDisabledMod(t, svc, game, "off", "Disabled Mod", "off.esp")
+	return deployDryRunFixture{svc: svc, game: game, args: []string{"off"}}
+}
+
+func unknownModDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	game.SourceIDs = map[string]string{"src": "g1"}
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	return deployDryRunFixture{svc: svc, game: game, args: []string{"nope"}}
+}
+
+func noModsDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	return deployDryRunFixture{svc: svc, game: game}
+}
+
+func compileDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game, _ := setupDoDeployCompileTest(t)
+	seedCompileExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
+	seedCompilePakMod(t, svc, game, "raw-pak", "Raw Pak Mod", "raw.pak")
+	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false))
+	seedDeployableMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
+	return deployDryRunFixture{svc: svc, game: game}
+}
