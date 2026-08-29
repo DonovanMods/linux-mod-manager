@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -181,5 +182,72 @@ func TestJSONGolden_Status(t *testing.T) {
 			return showGameStatusJSON(context.Background(), svc, game.ID)
 		})
 		assertJSONCLIGolden(t, "status_game_detail", out)
+	})
+}
+
+// --- search ---
+
+// goldenSearchSource is a registered, search-capable source returning a
+// fixed two-mod result - fakeInstallSource's Search deliberately returns
+// nothing, and every other test source in this package is built to prove a
+// capability GAP rather than a populated result.
+type goldenSearchSource struct{ mods []domain.Mod }
+
+func (s *goldenSearchSource) ID() string      { return "src" }
+func (s *goldenSearchSource) Name() string    { return "Golden Source" }
+func (s *goldenSearchSource) AuthURL() string { return "" }
+func (s *goldenSearchSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, nil
+}
+func (s *goldenSearchSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{Mods: s.mods, TotalCount: len(s.mods)}, nil
+}
+func (s *goldenSearchSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	return nil, domain.ErrModNotFound
+}
+func (s *goldenSearchSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+func (s *goldenSearchSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
+func (s *goldenSearchSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", nil
+}
+func (s *goldenSearchSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+func TestJSONGolden_Search(t *testing.T) {
+	t.Run("hits", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		svc.RegisterSource(&goldenSearchSource{mods: []domain.Mod{
+			{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", Author: "Ann", GameID: game.ID, Category: "Utilities"},
+			{ID: "z", SourceID: "src", Name: "Mod Z", Version: "3.1", Author: "Zed", GameID: game.ID, Category: "Gameplay"},
+		}})
+		game.SourceIDs = map[string]string{"src": game.ID}
+		withSearchFlags(t, "", 10)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doSearch(context.Background(), svc, game, []string{"mod"})
+		})
+		assertJSONCLIGolden(t, "search_hits", out)
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		svc, game := setupDoDeployTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		svc.RegisterSource(&goldenSearchSource{})
+		game.SourceIDs = map[string]string{"src": game.ID}
+		withSearchFlags(t, "", 10)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doSearch(context.Background(), svc, game, []string{"nothing"})
+		})
+		assertJSONCLIGolden(t, "search_empty", out)
 	})
 }

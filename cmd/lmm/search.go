@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -23,22 +22,6 @@ var (
 	searchCategory string
 	searchTags     []string
 )
-
-type searchJSONOutput struct {
-	GameID   string          `json:"game_id"`
-	Query    string          `json:"query"`
-	Mods     []searchModJSON `json:"mods"`
-	Warnings []string        `json:"warnings,omitempty"`
-}
-
-type searchModJSON struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Author    string `json:"author"`
-	Version   string `json:"version"`
-	Source    string `json:"source"`
-	Installed bool   `json:"installed"`
-}
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
@@ -204,10 +187,6 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	for _, w := range report.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
 	}
-	warningStrs := make([]string, len(report.Warnings))
-	for i, w := range report.Warnings {
-		warningStrs[i] = fmt.Sprintf("source %s: %v", w.SourceID, w.Err)
-	}
 
 	mods, totalResults := report.Mods, report.TotalResults
 
@@ -231,13 +210,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 			if honestNotice != "" {
 				fmt.Fprintln(os.Stderr, honestNotice)
 			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			out := searchJSONOutput{GameID: game.ID, Query: query, Mods: []searchModJSON{}, Warnings: warningStrs}
-			if err := enc.Encode(out); err != nil {
-				return fmt.Errorf("encoding json: %w", err)
-			}
-			return nil
+			return emitJSON(report)
 		}
 
 		if honestNotice != "" {
@@ -253,23 +226,11 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	mods = limitResults(mods, searchLimit)
 
 	if jsonOutput {
-		out := searchJSONOutput{GameID: game.ID, Query: query, Mods: make([]searchModJSON, len(mods)), Warnings: warningStrs}
-		for i, mod := range mods {
-			out.Mods[i] = searchModJSON{
-				ID:        mod.ID,
-				Name:      mod.Name,
-				Author:    mod.Author,
-				Version:   mod.Version,
-				Source:    mod.SourceID,
-				Installed: mod.Installed,
-			}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		// The report's own Mods, capped by --limit; TotalResults deliberately
+		// keeps the untruncated count so a consumer can tell a capped list
+		// from an exhaustive one (SearchReport's doc comment).
+		report.Mods = mods
+		return emitJSON(report)
 	}
 
 	// Print results

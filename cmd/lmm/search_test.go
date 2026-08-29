@@ -465,7 +465,7 @@ func TestDoSearch_NoSearchableSources_JSON_NoticeGoesToStderr(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var out searchJSONOutput
+	var out core.SearchReport
 	require.NoError(t, json.Unmarshal([]byte(stdout), &out), "stdout must stay a single valid JSON document")
 	assert.Empty(t, out.Mods)
 	assert.Contains(t, stderr, "support searching")
