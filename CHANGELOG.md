@@ -148,6 +148,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to existing invocations: CLI output is byte-identical. (#293)
 - Internal: `SwitchPlan`/`ImportPlan` carry the stale-plan snapshot; `UpdateModVersion`/
   `ApplyModUpdate` unexported (Phase 2 close, #272)
+- Internal: `core` no longer imports any concrete source package. The `file://` download gate
+  (only a directory source may serve a local-file URL) now asserts a new `source.LocalFileServer`
+  capability interface instead of the concrete `*custom.Directory` type; core's import-boundary
+  test covers every `internal/source/*` package. No behavior change: the same sources are allowed,
+  and a refusal reads the same error text. (#300)
+- Internal: `Service.GetDownloadURL`, `DownloadModToCache`, `SetModFileIDs`, and `SetModVersion` —
+  exported methods with zero callers anywhere in the codebase, including tests — deleted. (#301)
 
 ### Fixed
 
@@ -162,6 +169,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the profile, matching `lmm profile apply`'s no-changes behaviour. (#290)
 - Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
   `hooks:`) (#295)
+- `lmm profile reorder`'s ambiguous-mod-ID error lists the matching `source:modid` candidates
+  sorted by source ID, instead of Go's randomized map iteration order. (#298)
+- `lmm profile sync`'s add/remove/update buckets are listed in a fixed, deterministic order
+  (additions and updates in the order the mods were installed, removals in profile order),
+  instead of Go's randomized map iteration order. (#298)
+- `lmm status` and `lmm game list` order games by game ID, instead of Go's randomized map
+  iteration order. (#299)
 
 ## [1.30.1] - 2026-08-08
 
