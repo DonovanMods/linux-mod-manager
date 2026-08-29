@@ -109,6 +109,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core.GameFromDetected`/`core.ApplyGameDetect`, sharing a new
   `ProfileManager.CreateOrResetDefault` with `lmm game add`'s default-profile creation. No
   user-visible change: CLI output is byte-identical. (#292)
+- Internal: `cmd/lmm`'s remaining direct `storage/config`/`source/custom` reads move behind
+  `core`/`app` queries — `core.Service`/`core.ServiceConfig` gain `DefaultGame`/`SetDefaultGame`/
+  `ClearDefaultGame`, `core.ProfileManager` gains `ListNames` (preserving `list --profiles`'
+  tolerance of an unparseable profile that `List` would silently skip), and `SourceDefinition`
+  (with its `Type*`/`*Config` types) moves from `internal/source/custom` to `internal/source`
+  behind new `app.LoadSourceDefinitions`/`LoadSourceDefinitionFile`/`ConstructSource`/
+  `ProbeSource` queries. `cmd/lmm`'s `boundaryAllowList` is now empty. No user-visible change: CLI
+  output is byte-identical. (#292)
 
 ### Fixed
 
