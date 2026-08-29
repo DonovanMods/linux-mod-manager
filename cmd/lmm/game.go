@@ -108,7 +108,7 @@ func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault stri
 	}
 
 	if err := service.SetDefaultGame(cmd.Context(), newDefault); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+		return err
 	}
 
 	cmd.Printf("Default game set to: %s (%s)\n", game.Name, newDefault)
@@ -160,7 +160,7 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := svcCfg.ClearDefaultGame(cmd.Context()); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+		return err
 	}
 
 	cmd.Printf("Cleared default game (was: %s)\n", defaultGame)
@@ -202,9 +202,9 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return nil
 	}
 
-	existingGames := make(map[string]*domain.Game)
-	for _, g := range service.ListGames() {
-		existingGames[g.ID] = g
+	existingGames, err := service.LoadGamesFromDisk()
+	if err != nil {
+		return fmt.Errorf("loading games: %w", err)
 	}
 
 	cmd.Printf("Found %d moddable game(s):\n", len(games))

@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -236,4 +238,36 @@ func TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted(t *testi
 	profile, err := config.LoadProfile(configDir, "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.True(t, profile.IsDefault)
+}
+
+// TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames pins Task
+// 22 review Important #1's third occurrence (2026-08-28): pre-lift,
+// doGameDetect read games.yaml fresh via config.LoadGames on every call,
+// wrapping a failure as "loading games: %w". 989eb71 switched to
+// service.ListGames(), the in-memory snapshot NewService already loaded
+// once - which can't fail, silently dropping this error path. Reachable via
+// a games.yaml that goes unreadable between NewService's own load and this
+// call - simulated here by opening the service against a valid games.yaml,
+// then revoking read permission before calling doGameDetect.
+func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition"}))
+
+	svc := newGameDetectTestService(t)
+
+	gamesPath := filepath.Join(configDir, "games.yaml")
+	require.NoError(t, os.Chmod(gamesPath, 0000))
+	t.Cleanup(func() { _ = os.Chmod(gamesPath, 0o644) })
+
+	games := []steam.DetectedGame{
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+	}
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	reader := bufio.NewReader(strings.NewReader("all\n"))
+
+	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loading games:")
 }

@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
@@ -247,4 +250,36 @@ func TestConfigDefaultGame_Persistence(t *testing.T) {
 	loaded, err := config.Load(tmpDir)
 	require.NoError(t, err)
 	assert.Equal(t, "my-game", loaded.DefaultGame)
+}
+
+// TestDoGameSetDefault_LoadFailureReportedAsLoadError pins Task 22 review
+// Important #1's first occurrence (2026-08-28): pre-lift, doGameSetDefault
+// distinguished a config.Load failure ("loading config: %w") from a
+// cfg.Save failure ("saving config: %w"). service.SetDefaultGame does both
+// steps as one call, and 989eb71's cmd wrap around it
+// (fmt.Errorf("saving config: %w", err)) mislabels a load failure as a save
+// failure. Reachable via a config.yaml that goes unreadable between
+// NewService's own load and this call - simulated here by opening the
+// service against a valid config.yaml, then revoking read permission before
+// calling doGameSetDefault directly.
+func TestDoGameSetDefault_LoadFailureReportedAsLoadError(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, config.SaveGame(tmpDir, &domain.Game{ID: "test-game", Name: "Test Game"}))
+	require.NoError(t, (&config.Config{}).Save(tmpDir))
+
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: tmpDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	require.NoError(t, os.Chmod(configPath, 0000))
+	t.Cleanup(func() { _ = os.Chmod(configPath, 0o644) })
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	err = doGameSetDefault(cmd, svc, "test-game")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loading config:", "a load failure must be reported as a load error, not a save error")
+	assert.NotContains(t, err.Error(), "saving config:")
 }

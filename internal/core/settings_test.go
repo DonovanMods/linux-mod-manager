@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -110,4 +111,30 @@ func TestServiceConfig_DefaultGame_NoServiceRequired(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "a bare read must not create lmm.db or games.yaml")
+}
+
+// TestServiceConfig_SetDefaultGame_LoadFailureReportsLoadNotSave pins Task
+// 22 review Important #1's second occurrence (2026-08-28): cmd/lmm's
+// runGameClearDefault reads the default game through
+// ServiceConfig.DefaultGame (correctly wrapped "loading config: %w" by the
+// caller), then writes through ServiceConfig.ClearDefaultGame ->
+// SetDefaultGame, which does its own independent config.Load before Save -
+// a second read the pre-lift code never performed (it reused the
+// already-loaded cfg). cmd's outer wrap around ClearDefaultGame
+// (fmt.Errorf("saving config: %w", err)) mislabeled a failure of that
+// second, write-step load as a save failure. SetDefaultGame must report its
+// own load failure distinctly so the caller's wrap can be dropped.
+func TestServiceConfig_SetDefaultGame_LoadFailureReportsLoadNotSave(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, (&config.Config{DefaultGame: "old-game"}).Save(dir))
+
+	configPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.Chmod(configPath, 0000))
+	t.Cleanup(func() { _ = os.Chmod(configPath, 0o644) })
+
+	cfg := core.ServiceConfig{ConfigDir: dir}
+	err := cfg.SetDefaultGame(context.Background(), "new-game")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loading config:", "a load failure must be reported as a load error, not a save error")
+	assert.NotContains(t, err.Error(), "saving config:")
 }

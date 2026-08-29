@@ -1236,6 +1236,16 @@ func (s *Service) ListGames() []*domain.Game {
 	return s.gamesSnapshot()
 }
 
+// LoadGamesFromDisk re-reads games.yaml directly from disk, unlike ListGames
+// which returns the in-memory snapshot NewService loaded at Open. 'lmm game
+// detect' uses this for its existing-games lookup so that a games.yaml gone
+// unreadable between NewService's load and the detect prompt surfaces as an
+// error there, matching the always-fresh read the pre-Task-22 code
+// performed (v2 Phase 2 Task 22 fix, #292).
+func (s *Service) LoadGamesFromDisk() (map[string]*domain.Game, error) {
+	return config.LoadGames(s.configDir)
+}
+
 // SaveGame persists game to games.yaml and publishes it to this Service's
 // in-memory game set atomically. It replaces an existing entry with the
 // same ID. Readers (GetGame, ListGames, SourcesForGame, …) may run
