@@ -503,16 +503,72 @@ type UpdateOptions struct {
 	SkipHooks bool
 }
 
+// UpdateStatus classifies the outcome an UpdateApplyResult reports - the
+// core-side counterpart of cmd/lmm/update.go's singleUpdateJSON.Status
+// strings (v2 Phase 3 Task 2, #301), so a future --json switch (Unit O) can
+// emit UpdateApplyResult directly instead of the CLI's own hand-built
+// document. The zero value (UpdateUpdated) is never observed on a result
+// whose Name is still empty - see UpdateApplyResult's doc comment.
+type UpdateStatus int
+
+const (
+	UpdateUpdated UpdateStatus = iota
+	UpdateUpToDate
+	UpdateSkipped
+	UpdateRecompiled
+	UpdateRecompileAvailable
+	UpdateAvailable
+	UpdateRolledBack
+)
+
+// updateStatusNames maps each UpdateStatus to its wire name. Keep in
+// declaration order.
+var updateStatusNames = [...]string{
+	UpdateUpdated:            "updated",
+	UpdateUpToDate:           "up_to_date",
+	UpdateSkipped:            "skipped",
+	UpdateRecompiled:         "recompiled",
+	UpdateRecompileAvailable: "recompile_available",
+	UpdateAvailable:          "available",
+	UpdateRolledBack:         "rolled_back",
+}
+
+// String returns the status's wire name.
+func (s UpdateStatus) String() string {
+	if s >= 0 && int(s) < len(updateStatusNames) && updateStatusNames[s] != "" {
+		return updateStatusNames[s]
+	}
+	return fmt.Sprintf("update_status(%d)", int(s))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (s UpdateStatus) MarshalText() ([]byte, error) { return []byte(s.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (s *UpdateStatus) UnmarshalText(b []byte) error {
+	for i, n := range updateStatusNames {
+		if n == string(b) {
+			*s = UpdateStatus(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown update status %q", b)
+}
+
 // UpdateApplyResult reports the outcome of ApplyUpdate. As with
 // DeployResult/UninstallResult/SwitchResult/InstallResult, every entry below
 // is always recorded - there is no verbosity concept in core.
 //
-//   - Applied holds a single "<name> <old version> → <new version>" entry
-//     (matching what the CLI prints, e.g. "SkyUI 5.1 → 5.2") once the WHOLE
-//     sequence - download, hooks, Replace, and all three DB/profile writes -
-//     has succeeded. Empty on any failure; ApplyUpdate applies exactly one
-//     domain.Update per call (the CLI's own update loop calls it once per
-//     mod), so this is never more than a single entry.
+//   - Mod/Name/FromVersion/ToVersion/Changelog/Status identify what was
+//     applied - populated together, atomically, once the WHOLE sequence -
+//     download, hooks, Replace, and all three DB/profile writes - has
+//     succeeded (v2 Phase 3 Task 2, #301: structured replacement for the
+//     pre-extraction CLI's single "<name> <old version> → <new version>"
+//     joined string). Name stays empty on any failure; ApplyUpdate applies
+//     exactly one domain.Update per call (the CLI's own update loop calls
+//     it once per mod), so a caller checking "did anything apply" should
+//     check Name, not Status (whose zero value, UpdateUpdated, is itself a
+//     valid status).
 //   - Warnings holds diagnostics applyUpdate printed unconditionally:
 //     uninstall.before_each/install.before_each (when forced), and
 //     uninstall.after_each/install.after_each hook failures (always
@@ -532,9 +588,15 @@ type UpdateOptions struct {
 // On error, the returned result carries any diagnostics accumulated before
 // the failure; callers should surface them alongside the error.
 type UpdateApplyResult struct {
-	Applied  []string `json:"applied"`
-	Warnings []string `json:"warnings,omitempty"`
-	Notes    []string `json:"notes,omitempty"`
+	Mod         domain.ModReference `json:"mod"`
+	Name        string              `json:"name"`
+	FromVersion string              `json:"from_version"`
+	ToVersion   string              `json:"to_version"`
+	Changelog   string              `json:"changelog,omitempty"`
+	Status      UpdateStatus        `json:"status"`
+	Reason      string              `json:"reason,omitempty"`
+	Warnings    []string            `json:"warnings,omitempty"`
+	Notes       []string            `json:"notes,omitempty"`
 }
 
 // ErrModLocked reports an update apply refused because the profile ref is
@@ -843,7 +905,12 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		return result, fmt.Errorf("updating profile: %w", err)
 	}
 
-	result.Applied = append(result.Applied, fmt.Sprintf("%s %s → %s", mod.Name, mod.Version, effectiveVersion))
+	result.Mod = modRef
+	result.Name = mod.Name
+	result.FromVersion = mod.Version
+	result.ToVersion = effectiveVersion
+	result.Changelog = upd.Changelog
+	result.Status = UpdateUpdated
 
 	// #197 postsmoke fix: also emit UpdateWarning - appending to
 	// result.Warnings alone is not loud enough, since applyUpdate

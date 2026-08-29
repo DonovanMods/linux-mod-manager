@@ -1032,10 +1032,10 @@ func (s *Service) ApplyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 
 func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, profileName string, sink EventSink) (*UpdateApplyResult, error) {
 	result := &UpdateApplyResult{}
-	// Resolved up front: the Applied entry below reports the merged
-	// artifact by the name only the compile source knows (#256), and a
-	// regen request for a game without one is a misconfiguration worth
-	// failing loud on before touching anything.
+	// Resolved up front: Name below reports the merged artifact by the name
+	// only the compile source knows (#256), and a regen request for a game
+	// without one is a misconfiguration worth failing loud on before
+	// touching anything.
 	mc, err := s.mergeCompilerForGame(game)
 	if err != nil {
 		return result, err
@@ -1045,7 +1045,8 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 		return result, err
 	}
 	result.Warnings = warnings
-	result.Applied = []string{mc.MergedArtifactName()}
+	result.Name = mc.MergedArtifactName()
+	result.Status = UpdateRecompiled
 	if sink != nil {
 		sink(StepEvent{Scope: Scope{Op: OpMergeRegen}, Phase: UpdateDownloadDone})
 	}

@@ -1,5 +1,19 @@
 {
-  "applied": [],
+  "mod": {
+    "source_id": "nexusmods",
+    "mod_id": "42",
+    "version": "1.2.4",
+    "file_ids": [
+      "file-1"
+    ],
+    "locked": false
+  },
+  "name": "Sample Mod",
+  "from_version": "1.2.3",
+  "to_version": "1.2.4",
+  "changelog": "Fixed a crash on load.",
+  "status": "updated",
+  "reason": "locked",
   "warnings": [
     "could not sync merged pak"
   ],

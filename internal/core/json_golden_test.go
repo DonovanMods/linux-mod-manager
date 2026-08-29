@@ -651,13 +651,20 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
-			// Applied is deliberately left nil to pin that a nil slice
-			// marshals as "[]", not "null".
+			// Every optional key populated at once (Changelog/Reason rarely
+			// co-occur on a real result), same convention as install_plan
+			// above - the golden's job is to pin every key's wire shape.
 			"update_apply_result",
 			core.UpdateApplyResult{
-				Applied:  nil,
-				Warnings: []string{"could not sync merged pak"},
-				Notes:    []string{"applied update for Sample Mod"},
+				Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.4", FileIDs: []string{"file-1"}},
+				Name:        "Sample Mod",
+				FromVersion: "1.2.3",
+				ToVersion:   "1.2.4",
+				Changelog:   "Fixed a crash on load.",
+				Status:      core.UpdateUpdated,
+				Reason:      "locked",
+				Warnings:    []string{"could not sync merged pak"},
+				Notes:       []string{"applied update for Sample Mod"},
 			},
 		},
 		{
