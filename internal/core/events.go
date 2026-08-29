@@ -25,6 +25,10 @@ const (
 	OpUpdate      Op = "update"
 	OpRollback    Op = "rollback"
 	OpImport      Op = "import"
+	// OpAdopt is `lmm import`'s SCAN mode - bringing untracked mod_path
+	// entries under management (v2 Phase 2 Unit K / #291). Distinct from
+	// OpImport, which is archive import and profile import.
+	OpAdopt       Op = "adopt"
 	OpMergeRegen  Op = "merge_regen"
 	OpVerify      Op = "verify"
 	OpUpdateCheck Op = "update_check"

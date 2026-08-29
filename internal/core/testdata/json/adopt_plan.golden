@@ -1,0 +1,67 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "scan": {
+    "tracked": [],
+    "untracked": [
+      {
+        "file_path": "/games/skyrim/Data/sample-mod-1.2.3.zip",
+        "file_name": "sample-mod-1.2.3.zip",
+        "mod": {
+          "id": "42",
+          "source_id": "nexusmods",
+          "name": "Sample Mod",
+          "version": "1.2.3",
+          "author": "",
+          "summary": "",
+          "description": "",
+          "game_id": "skyrim-se",
+          "category": "",
+          "downloads": 0,
+          "picture_url": "",
+          "source_url": "",
+          "files": [],
+          "dependencies": [],
+          "updated_at": "2026-08-27T12:00:00Z"
+        },
+        "matched_source": "local",
+        "already_tracked": false
+      }
+    ],
+    "backfill": [],
+    "extract_mode_warning": false
+  },
+  "matches": [
+    {
+      "untracked": {
+        "file_path": "/games/skyrim/Data/sample-mod-1.2.3.zip",
+        "file_name": "sample-mod-1.2.3.zip",
+        "mod": {
+          "id": "42",
+          "source_id": "nexusmods",
+          "name": "Sample Mod",
+          "version": "1.2.3",
+          "author": "",
+          "summary": "",
+          "description": "",
+          "game_id": "skyrim-se",
+          "category": "",
+          "downloads": 0,
+          "picture_url": "",
+          "source_url": "",
+          "files": [],
+          "dependencies": [],
+          "updated_at": "2026-08-27T12:00:00Z"
+        },
+        "matched_source": "local",
+        "already_tracked": false
+      },
+      "error": "search failed: rate limited",
+      "file_error": "listing source files: rate limited"
+    }
+  ],
+  "duplicates": [
+    "already-installed-1.0.zip"
+  ],
+  "skip_match": false
+}

@@ -1060,6 +1060,48 @@ const (
 	// the swallowed lock refusal Ruling 9 preserves byte-for-byte - mirroring
 	// doProfileSync's "  Warning: could not update %s:%s: %v".
 	SyncUpdateNote
+
+	// --- v2 Phase 2 Unit K (#291): ApplyAdoptBackfill/ApplyAdopt progress
+	// events. Every Detail below is the printed line MINUS its leading
+	// indent, following SyncAddNote's convention, so a byte-identical
+	// frontend prints `fmt.Printf("<indent>%s\n", detail)` and nothing else.
+	// The indent and the --verbose gating differ per phase; see each
+	// constant. ---
+
+	// AdoptBackfillNote fires when one backfill candidate's metadata could
+	// not be refreshed - the source fetch failed, or the save did. Detail is
+	// "<mod name>: metadata fetch failed: <err>" or "<mod name>: metadata
+	// save failed: <err>"; both render the same way (--verbose-gated stdout,
+	// 2-space indent), and both leave the row untouched.
+	AdoptBackfillNote
+	// AdoptBackfilled fires for each row whose metadata was refreshed and
+	// saved. Detail is "✓ <mod name>: metadata updated (author: <author>)",
+	// --verbose-gated stdout at a 2-space indent.
+	AdoptBackfilled
+	// AdoptDuplicateSkipped fires when an untracked entry duplicates an
+	// already-adopted or already-installed mod. Detail is
+	// `⊘ <file>: skipped (duplicate of "<name>")` - unconditional stdout,
+	// 2-space indent.
+	AdoptDuplicateSkipped
+	// AdoptAdopted fires for each successfully adopted entry. Detail is
+	// "✓ <mod name>" - unconditional stdout, 2-space indent.
+	AdoptAdopted
+	// AdoptFailed fires when an entry could not be adopted (its cache write
+	// or DB save failed). Detail is "✗ <file>: <err>" - unconditional
+	// stdout, 2-space indent.
+	AdoptFailed
+	// AdoptNote is a per-entry diagnostic that did NOT stop the adoption:
+	// the completion marker could not be stamped, the profile ref could not
+	// be upserted, or the merged-pak sync itself failed. Detail is
+	// "Warning: could not ..." - --verbose-gated stdout at a 4-space indent
+	// (one level deeper than the per-entry line it follows).
+	AdoptNote
+	// AdoptSyncWarning carries one warning produced BY a successful
+	// merged-pak sync. Detail is the bare warning text - unconditional
+	// STDERR, rendered as "Warning: <detail>". AdoptResult.Warnings holds the
+	// same strings for non-streaming callers; a frontend renders one or the
+	// other, never both.
+	AdoptSyncWarning
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1089,6 +1131,8 @@ var deployPhaseNames = [...]string{
 	InstallLockRefusal: "install_lock_refusal", InstallChecksumSaveFailed: "install_checksum_save_failed",
 	InstallMergedPakSyncFailed: "install_merged_pak_sync_failed",
 	SyncAddNote:                "sync_add_note", SyncRemoveNote: "sync_remove_note", SyncUpdateNote: "sync_update_note",
+	AdoptBackfillNote: "adopt_backfill_note", AdoptBackfilled: "adopt_backfilled", AdoptDuplicateSkipped: "adopt_duplicate_skipped",
+	AdoptAdopted: "adopt_adopted", AdoptFailed: "adopt_failed", AdoptNote: "adopt_note", AdoptSyncWarning: "adopt_sync_warning",
 }
 
 // String returns the phase's wire name.
