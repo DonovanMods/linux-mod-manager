@@ -17,10 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lmm uninstall --dry-run` prints what an uninstall would do — which mod the ID resolves to
   (with its source, so a bare ID's first-match rule is visible), how many files would leave the
   game directory, what happens to the cache, and the hooks that would run — without changing
-  anything. `--verbose` lists the files. (#293)
+  anything. `--verbose` lists the files. On a compile-mode game it also states that the profile's
+  merged artifact would be resynced afterwards; that line is unconditional on compile games, not
+  gated on whether a resync would actually change anything. (#293)
 - `lmm purge --dry-run` prints what a purge would do — the mods it would undeploy, what happens
   to their records, and the hooks that would run — without changing anything and without
-  prompting. (#293)
+  prompting. On a compile-mode game it also states that the profile's merged artifact would be
+  removed too; that line is unconditional on compile games, not gated on whether anything would
+  actually be removed. (#293)
 
 ### Removed
 

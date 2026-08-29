@@ -198,6 +198,15 @@ type UninstallResult struct {
 // slot, for callers with nothing to show between the two (core's own tests);
 // it takes the resolved sourceID directly rather than re-running the plan's
 // bare-ID disambiguation. Frontends plan first, render, then apply.
+//
+// Convenience = PlanUninstall + ApplyUninstall; kept exported for core tests
+// and for frontends that want one call, even though it has no non-test
+// caller today (Task 25 review Important #1; ruling recorded in the
+// 2026-08-29 decisions-log row of docs/plans/2026-08-27-v2-core-refactor-design.md).
+// No freshness check: with no plan, there is nothing for ApplyUninstall's
+// checkPlanFresh to compare against, so a profile mutated between resolution
+// and this call is not caught the way the Plan+Apply pair catches it
+// (Task 25 review Minor #5).
 func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

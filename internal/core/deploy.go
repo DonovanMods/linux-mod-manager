@@ -563,6 +563,11 @@ func (s *Service) applyDeploy(ctx context.Context, game *domain.Game, plan *Depl
 // for callers with no prompt to show between the two (core's own flows and
 // tests). Frontends plan first, render, then apply.
 //
+// Convenience = PlanDeploy + ApplyDeploy; kept exported for core tests and
+// for frontends that want one call, even though it has no non-test caller
+// today (Task 25 review Important #1; ruling recorded in the 2026-08-29
+// decisions-log row of docs/plans/2026-08-27-v2-core-refactor-design.md).
+//
 // sink may be nil. When non-nil, it is called synchronously from this
 // function for every notable event - see DeployPhase's constants for what
 // each one means, and each event type's own doc comment for the payload it

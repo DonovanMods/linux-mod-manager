@@ -314,6 +314,15 @@ type PurgeResult struct {
 // for callers with no prompt to show between the two (core's own tests) -
 // which is why it takes the mod set directly. Frontends plan first, prompt
 // against the plan, then apply it.
+//
+// Convenience = PlanPurge + ApplyPurge; kept exported for core tests and
+// for frontends that want one call, even though it has no non-test caller
+// today (Task 25 review Important #1; ruling recorded in the 2026-08-29
+// decisions-log row of docs/plans/2026-08-27-v2-core-refactor-design.md).
+// No freshness check: with no plan, there is nothing for ApplyPurge's
+// checkPlanFresh to compare against, so a profile mutated between the
+// caller's mod fetch and this call is not caught the way the Plan+Apply
+// pair catches it (Task 25 review Minor #5).
 func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, sink EventSink) (*PurgeResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

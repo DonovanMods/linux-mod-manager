@@ -184,6 +184,11 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 // removes the profile's merged artifact (purgeMergedPak) - an effect outside
 // the plan type, so the render states it in a line of its own rather than
 // letting the mod count read as the whole story.
+//
+// Exit code: like `deploy --dry-run` and `uninstall --dry-run`, a dry run
+// that renders successfully returns nil. A game/profile that cannot be
+// resolved at all is still a PlanPurge error and fails normally, exactly as
+// the live path does.
 func renderPurgePlan(plan *core.PurgePlan, game *domain.Game, progress func(core.Event)) {
 	fmt.Printf("Purge plan for profile %q (dry run)\n\n", plan.Profile)
 

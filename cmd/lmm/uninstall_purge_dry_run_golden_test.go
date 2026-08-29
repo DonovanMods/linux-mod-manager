@@ -124,7 +124,11 @@ func runDryRunGolden(t *testing.T, dir, name string, setup func(t *testing.T) dr
 func setupUninstallDryRun(t *testing.T, modID string) dryRunGoldenFixture {
 	t.Helper()
 	svc, game := setupDoPurgeTest(t) // the same seeding shape, without the undeploy obstruction
+	oldSource, oldProfile, oldKeep, oldForce := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce
 	uninstallSource, uninstallProfile, uninstallKeep, uninstallForce = "", "", false, false
+	t.Cleanup(func() {
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce = oldSource, oldProfile, oldKeep, oldForce
+	})
 	uninstallDryRun = true
 	t.Cleanup(func() { uninstallDryRun = false })
 	seedPurgeableMod(t, svc, game, "a", "Mod A", "a.esp")
