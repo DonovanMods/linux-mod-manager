@@ -197,10 +197,15 @@ Per command:
 profiles}`).
 - `lmm status` → `core.StatusReport`; `lmm status -g <id>` →
   `core.GameStatus`. Each game row is the whole `domain.Game` (source_ids,
-  link_method_explicit, hooks, deploy_mode, convert_paks,
-  convert_paks_explicit), and `is_default`, `installed_mod_count`,
-  `enabled_mod_count` and `conversion_failures` are always present rather
-  than omitted when zero.
+  link_method_explicit, hooks, deploy_mode, convert_paks_explicit), and
+  `is_default`, `installed_mod_count`, `enabled_mod_count` and
+  `conversion_failures` are always present rather than omitted when zero.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state convention `list --json` already used for
+  mods. `lmm status -g <id> --json`'s `cache_path` also changes meaning: it
+  used to be the _resolved_ cache root and is now the _configured per-game
+  override_ (absent when unset); the resolved value moved to the new
+  `resolved_cache_path`, which is always present.
 - `lmm search` → `core.SearchReport`. Each hit is the whole `domain.Mod`
   plus `installed` (`source` → `source_id`); `warnings` is now
   `[{source_id, error}]` instead of pre-formatted strings and is always
@@ -219,12 +224,14 @@ profiles}`).
 - `lmm source list` → `[]app.SourceInfo`. Now indented like every other
   document (it was the last compact one). `auth` is the enum
   `none|required|authenticated` (was `n/a|no|yes`) and `capabilities` is a
-  string array (was a comma-joined string).
+  string array (was a comma-joined string). An error row (a source that
+  failed to construct) now omits the `auth` key entirely, rather than
+  carrying it as `""`.
 - `lmm game list` → `[]core.GameListEntry`. Each row is the whole
-  `domain.Game` plus `default`: `sources` → `source_ids`, `convert_paks` is
-  always present (read `deploy_mode` for whether it applies), and
-  link_method, link_method_explicit, cache_path, hooks and
-  convert_paks_explicit are new.
+  `domain.Game` plus `default`: `sources` → `source_ids`, and link_method,
+  link_method_explicit, cache_path, hooks and convert_paks_explicit are new.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state `list --json` already used for mods.
 - `lmm update` (bulk) → `core.UpdateCheckReport`. Each `updates[]` entry is a
   `domain.Update`: the installed mod under `installed_mod` (carrying
   `update_policy`) plus `new_version`, replacing the flat
@@ -242,6 +249,12 @@ profiles}`).
   omitted (`encoding/json/v2` omits only empty JSON values — `""`, `null`,
   `{}`, `[]`); `lmm update --json`'s unlocked `updates[]` entries therefore
   carry `"locked": false` explicitly.
+- `encoding/json/v2` no longer HTML-escapes the angle-bracket and ampersand
+  characters the way `encoding/json` did; string fields that can carry
+  markup (`mod show`'s `description`, `update <mod-id>`'s `changelog`) may
+  now contain those characters literally instead of as escape sequences.
+  Semantically identical after decoding, but pasting lmm's JSON directly
+  into an HTML/script context is no longer incidentally safe.
 
 ### Fixed
 

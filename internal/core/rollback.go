@@ -184,10 +184,13 @@ type RollbackOptions struct {
 // error.
 type RollbackResult struct {
 	// Mod identifies what was rolled back, with Version = the version rolled
-	// back TO - the same convention UpdateApplyResult.Mod follows (v2 Phase 3
-	// Task 6, #302: rollback's own document had no mod reference at all, so
+	// back TO - the convention core's own results follow (v2 Phase 3 Task 6,
+	// #302: rollback's own document had no mod reference at all, so
 	// `lmm update rollback --json` could not say which mod, or which source,
-	// it was reporting on).
+	// it was reporting on). cmd/lmm/update.go's planUpdateResult sets
+	// UpdateApplyResult.Mod.Version differently for its own not-applied
+	// branches (pinned/up-to-date/locked/dry-run) - see that function's own
+	// doc comment.
 	Mod         domain.ModReference `json:"mod"`
 	ModName     string              `json:"mod_name"`
 	FromVersion string              `json:"from_version"`
