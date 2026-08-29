@@ -77,3 +77,30 @@ func (i *Importer) ScanModPathForTest(ctx context.Context, game *domain.Game, in
 func (i *Importer) FindDuplicateModForTest(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
 	return i.findDuplicateMod(modName, installedMods)
 }
+
+// NewImporterForTest exposes newImporter, which the archive-import lift
+// (#291) unexported: the scan/adopt/import flows are production's only
+// callers, but core's own tests drive a real Import round-trip through the
+// service-backed importer (the standalone core.NewImporter cannot resolve a
+// DeployCompile game's merge compiler).
+func (s *Service) NewImporterForTest(game *domain.Game) *Importer {
+	return s.newImporter(game)
+}
+
+// MarkImportedFileCompleteForTest exposes markImportedFileComplete behind the
+// same beginOp gate the exported wrapper the lift removed used to take.
+func (s *Service) MarkImportedFileCompleteForTest(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.markImportedFileComplete(ctx, game, mod, fileID)
+}
+
+// NewInstallerWithLinkerForTest exposes newInstallerWithLinker + getLinker,
+// both unexported by the same lift, as the one call core's tests actually
+// make: an Installer that deploys with an explicitly chosen link method.
+func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain.LinkMethod) *Installer {
+	return s.newInstallerWithLinker(game, s.getLinker(method))
+}

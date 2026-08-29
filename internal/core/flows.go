@@ -1490,7 +1490,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 		linkMethod = method
 	}
-	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
+	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	var modsToDeploy []*domain.InstalledMod
 	if opts.ModID != "" {

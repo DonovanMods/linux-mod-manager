@@ -79,8 +79,8 @@ type ImportArchiveOptions struct {
 //     event phase tells the two apart).
 //   - HookWarnings holds the non-fatal install.after_each/after_all
 //     failures, in call order. They are NOT events: the pre-lift CLI
-//     accumulated them and printed them together at the very end
-//     (printHookWarnings), so the frontend prints this slice as
+//     accumulated them and printed them together at the very end, so the
+//     frontend prints this slice as
 //     `Warning: %s` after the flow returns. Nothing in the flow can fail
 //     once they are populated.
 //
@@ -179,7 +179,7 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		step(phase, msg)
 	}
 
-	imported, err := s.NewImporter(game).Import(ctx, archivePath, game, ImportOptions{
+	imported, err := s.newImporter(game).Import(ctx, archivePath, game, ImportOptions{
 		SourceID:    opts.SourceID,
 		ModID:       opts.ModID,
 		ProfileName: profileName,
@@ -262,7 +262,7 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	if err != nil {
 		return result, err
 	}
-	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
+	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	if !opts.Force {
 		conflicts, cerr := installer.GetConflicts(ctx, game, result.Mod, profileName)
@@ -407,7 +407,7 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 	// asserted the mod identity via --id), so the cache entry can be
 	// marker-stamped and the row records real FileIDs. Non-fatal: an
 	// offline/failed listing keeps today's marker-less import.
-	file, ferr := s.ResolveImportedFile(ctx, opts.SourceID, mod, filepath.Base(archivePath), result.Mod.Version, true)
+	file, ferr := s.resolveImportedFile(ctx, opts.SourceID, mod, filepath.Base(archivePath), result.Mod.Version, true)
 	if ferr != nil {
 		warn("could not resolve source file for archive: %v", ferr)
 		return nil

@@ -1308,8 +1308,9 @@ func (s *Service) GetInstalledModsInProfileOrder(ctx context.Context, gameID, pr
 	return ordered, nil
 }
 
-// GetLinker returns a linker for the given method
-func (s *Service) GetLinker(method domain.LinkMethod) linker.Linker {
+// getLinker returns a linker for the given method. Unexported with the
+// archive-import lift (#291), which removed cmd's last caller.
+func (s *Service) getLinker(method domain.LinkMethod) linker.Linker {
 	return linker.New(method)
 }
 
@@ -1349,9 +1350,14 @@ func (s *Service) GetEffectiveLinkMethod(ctx context.Context, game *domain.Game,
 	return s.GetGameLinkMethod(game), nil
 }
 
-// GetInstaller returns an Installer configured for the given game
+// GetInstaller returns an Installer configured for the given game.
+//
+// It stays EXPORTED with no production cmd caller (every flow builds its own
+// installer internally): cmd/lmm's tests seed deployed-file fixtures by
+// installing through it, and core's export_test.go shims are invisible to
+// package main. Same reason DownloadMod and SaveFileChecksum stay exported.
 func (s *Service) GetInstaller(game *domain.Game) *Installer {
-	return s.NewInstallerWithLinker(game, s.GetLinker(s.GetGameLinkMethod(game)))
+	return s.newInstallerWithLinker(game, s.getLinker(s.GetGameLinkMethod(game)))
 }
 
 // getInstallerForProfile returns an Installer whose linker honors
@@ -1365,13 +1371,15 @@ func (s *Service) getInstallerForProfile(ctx context.Context, game *domain.Game,
 	if err != nil {
 		return nil, err
 	}
-	return s.NewInstallerWithLinker(game, s.GetLinker(method)), nil
+	return s.newInstallerWithLinker(game, s.getLinker(method)), nil
 }
 
-// NewInstallerWithLinker returns an Installer for the given game using a
-// caller-supplied linker — used when the CLI overrides the game's default
-// link method (e.g. `lmm deploy --method`).
-func (s *Service) NewInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
+// newInstallerWithLinker returns an Installer for the given game using a
+// caller-supplied linker — used where a flow overrides the game's default
+// link method (e.g. `lmm deploy --method`). Unexported with the archive-
+// import lift (#291), which removed cmd's last caller; an Installer is a
+// core primitive no frontend touches (see getInstallerForProfile).
+func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
 	installer := NewInstaller(s.GetGameCache(game), lnk, s.db)
 	installer.SetLogger(s.log)
 	return installer

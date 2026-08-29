@@ -195,7 +195,7 @@ func (s *Service) scanLocal(ctx context.Context, game *domain.Game, opts ScanOpt
 		return nil, nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
-	results, err := s.NewImporter(game).scanModPath(ctx, game, installedMods, opts)
+	results, err := s.newImporter(game).scanModPath(ctx, game, installedMods, opts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("scanning mod_path: %w", err)
 	}
@@ -254,7 +254,7 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 
 	// Both the duplicate preview and the staleness snapshot read the SAME
 	// installed-mod set the scan classified against - one read, one view.
-	importer := s.NewImporter(game)
+	importer := s.newImporter(game)
 	for _, r := range scan.Untracked {
 		if r.Mod == nil {
 			continue
@@ -302,7 +302,7 @@ func (s *Service) matchUntracked(ctx context.Context, game *domain.Game, r *Scan
 	// FileName match only - a name-search match is not strong enough
 	// evidence for a version-based guess. Non-fatal: failure keeps the
 	// marker-less adoption.
-	file, ferr := s.ResolveImportedFile(ctx, matched.SourceID, matched, r.FileName, r.Mod.Version, false)
+	file, ferr := s.resolveImportedFile(ctx, matched.SourceID, matched, r.FileName, r.Mod.Version, false)
 	if ferr != nil {
 		m.FileError = ferr.Error()
 		return
@@ -487,7 +487,7 @@ func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 	// The duplicate set starts from what is installed now and grows with
 	// each adoption, so a batch cannot adopt the same mod twice.
 	currentMods, _ := s.GetInstalledMods(ctx, plan.GameID, plan.Profile)
-	importer := s.NewImporter(game)
+	importer := s.newImporter(game)
 
 	for _, m := range plan.Matches {
 		if err := ctx.Err(); err != nil {
