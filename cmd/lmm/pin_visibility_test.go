@@ -17,7 +17,8 @@ import (
 // setPolicy overwrites a seeded mod's update policy.
 func setPolicy(t *testing.T, svc *core.Service, game *domain.Game, modID string, policy domain.UpdatePolicy) {
 	t.Helper()
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "src", modID, game.ID, "default", policy))
+	_, settingErr14 := svc.SetModUpdatePolicy(context.Background(), "src", modID, game.ID, "default", policy)
+	require.NoError(t, settingErr14)
 }
 
 // listVerbose runs doList with --verbose and returns stdout.

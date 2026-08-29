@@ -403,7 +403,8 @@ func compileDryRunFixture(t *testing.T) deployDryRunFixture {
 	svc, game, _ := setupDoDeployCompileTest(t)
 	seedCompileExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
 	seedCompilePakMod(t, svc, game, "raw-pak", "Raw Pak Mod", "raw.pak")
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false))
+	_, settingErr1 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false)
+	require.NoError(t, settingErr1)
 	seedDeployableMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
 	return deployDryRunFixture{svc: svc, game: game}
 }

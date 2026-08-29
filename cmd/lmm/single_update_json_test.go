@@ -114,7 +114,8 @@ func TestApplySingleUpdate_JSON(t *testing.T) {
 		// PlanUpdate (#289) re-reads the mod from the DB, so a policy change
 		// that never reached the DB is no longer masked by trusting the
 		// caller's in-memory copy the way pre-lift applySingleUpdate did.
-		require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned))
+		_, settingErr15 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned)
+		require.NoError(t, settingErr15)
 
 		out := captureStdout(t, func() error {
 			return applySingleUpdate(context.Background(), svc, game, mod, "default")

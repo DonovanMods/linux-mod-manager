@@ -209,6 +209,13 @@ game add` and `lmm auth login` have no non-interactive form yet (a flag-driven o
   follow-up issue) and reject `--json` outright with `this command is interactive-only and does
 not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all`/`--select`)
   both already have one. (#303)
+- Internal: `lmm mod edit`, `lmm mod files`, and `lmm mod lock`/`unlock`/`set-update`/`convert`
+  get core flows instead of driving `ProfileManager`/DB writes directly from `cmd/lmm`.
+  `core.PlanRelinkMod`/`ApplyRelinkMod` back `mod edit` (a metadata-only edit or a re-link to a
+  different source/mod ID); `core.ModFiles` backs `mod files`; `core.Service.SetModLock`/
+  `ClearModLock`/`SetModUpdatePolicy`/`SetModConvertPaks` all return a `*core.ModSettingResult`
+  (the mod's full post-write lock/policy/pak-conversion snapshot). No user-visible change: CLI
+  output is byte-identical. (#303)
 
 ### Changed — JSON output (v2)
 

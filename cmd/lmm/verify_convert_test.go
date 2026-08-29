@@ -316,7 +316,8 @@ func TestVerifyNeedsReingest_ModOptedOut_NotFlagged(t *testing.T) {
 
 	const modID, version, fileID = "opted-out-pak-mod", "1.0", "OptedOut.pak"
 	seedLegacyPakModCLI(t, svc, game, "fake-compiler", modID, version, fileID, []byte("legacy-pak-bytes"))
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", modID, game.ID, "default", false))
+	_, settingErr16 := svc.SetModConvertPaks(context.Background(), "fake-compiler", modID, game.ID, "default", false)
+	require.NoError(t, settingErr16)
 
 	verifyProfile = "default"
 	jsonOutput = true

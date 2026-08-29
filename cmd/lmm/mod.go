@@ -225,9 +225,8 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 		return err
 	}
 
-	// Get the mod to verify it exists and get its name
-	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
-	if err != nil {
+	// Verify the mod exists before touching its policy
+	if _, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName); err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
@@ -247,13 +246,14 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	// Update the policy
-	if err := service.SetModUpdatePolicy(ctx, modSource, modID, game.ID, profileName, policy); err != nil {
+	result, err := service.SetModUpdatePolicy(ctx, modSource, modID, game.ID, profileName, policy)
+	if err != nil {
 		return fmt.Errorf("failed to update policy: %w", err)
 	}
 
-	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), mod.Name, policyStr)
+	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), result.Mod.Name, policyStr)
 	if modSetPin {
-		fmt.Printf(" (v%s)", mod.Version)
+		fmt.Printf(" (v%s)", result.Mod.Version)
 	}
 	fmt.Println()
 
@@ -344,16 +344,17 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		}
 	}
 
-	if err := pm.SetModLock(game.ID, profileName, modSource, modID, version); err != nil {
+	result, err := service.SetModLock(ctx, modSource, modID, game.ID, profileName, version)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), mod.Name, target)
+	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), result.Mod.Name, target)
 	// Locking is a metadata write, not a deploy (design decision): when the
 	// target differs from what is actually installed, the game directory
 	// won't match the lock until convergence, so say so.
-	if target != mod.Version {
-		fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", mod.Version)
+	if target != result.Mod.Version {
+		fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", result.Mod.Version)
 	}
 
 	return nil
@@ -381,17 +382,16 @@ func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, 
 		return err
 	}
 
-	mod, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
-	if err != nil {
+	if _, err := service.GetInstalledMod(ctx, modSource, modID, game.ID, profileName); err != nil {
 		return fmt.Errorf("mod not found: %s", modID)
 	}
 
-	pm := service.NewProfileManager()
-	if err := pm.ClearModLock(game.ID, profileName, modSource, modID); err != nil {
+	result, err := service.ClearModLock(ctx, modSource, modID, game.ID, profileName)
+	if err != nil {
 		return err
 	}
 
-	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), mod.Name, policyToString(mod.UpdatePolicy))
+	fmt.Printf("%s %s unlocked (update policy: %s)\n", colorGreen("✓"), result.Mod.Name, policyToString(result.Mod.UpdatePolicy))
 	return nil
 }
 
@@ -547,23 +547,15 @@ func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID
 		return err
 	}
 
-	// Get mod info for display
-	mod, err := svc.GetInstalledMod(ctx, modSource, modID, game.ID, profileName)
+	report, err := svc.ModFiles(ctx, game, profileName, modSource, modID)
 	if err != nil {
-		return fmt.Errorf("mod not found: %s", modID)
+		return err
 	}
 
-	// Get deployed files from database
-	files, err := svc.GetDeployedFilesForMod(ctx, game.ID, profileName, modSource, modID)
-	if err != nil {
-		return fmt.Errorf("getting deployed files: %w", err)
-	}
+	fmt.Printf("Files deployed by %s (%s):\n\n", report.Mod.Name, modID)
 
-	fmt.Printf("Files deployed by %s (%s):\n\n", mod.Name, modID)
-
-	if len(files) == 0 {
-		gameCache := svc.GetGameCache(game)
-		if game.DeployMode == domain.DeployCompile && core.HasRetainedCompileSource(gameCache, game.ID, mod.SourceID, modID, mod.Version, mod.FileIDs) {
+	if len(report.Files) == 0 {
+		if report.MergedPakOnly {
 			fmt.Println("  No files of its own - this mod participates in the profile's merged pak.")
 			fmt.Printf("  (See zzz_LMM_Merged_P.pak; run `lmm verify` to check the merged pak is up to date)\n")
 			return nil
@@ -573,10 +565,10 @@ func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID
 		return nil
 	}
 
-	for _, f := range files {
-		fmt.Printf("  %s\n", f)
+	for _, f := range report.Files {
+		fmt.Printf("  %s\n", f.Path)
 	}
-	fmt.Printf("\nTotal: %d file(s)\n", len(files))
+	fmt.Printf("\nTotal: %d file(s)\n", len(report.Files))
 
 	return nil
 }
@@ -739,7 +731,8 @@ func doModConvert(ctx context.Context, service *core.Service, game *domain.Game,
 		return fmt.Errorf("mod %s has no pak merge source: pak conversion does not apply", modID)
 	}
 
-	if err := service.SetModConvertPaks(ctx, modSource, modID, game.ID, profileName, convert); err != nil {
+	result, err := service.SetModConvertPaks(ctx, modSource, modID, game.ID, profileName, convert)
+	if err != nil {
 		return fmt.Errorf("setting pak conversion for %s: %w", mod.Name, err)
 	}
 
@@ -747,7 +740,7 @@ func doModConvert(ctx context.Context, service *core.Service, game *domain.Game,
 	if !convert {
 		state = "off"
 	}
-	fmt.Printf("%s %s pak conversion: %s\n", colorGreen("✓"), mod.Name, state)
+	fmt.Printf("%s %s pak conversion: %s\n", colorGreen("✓"), result.Mod.Name, state)
 	switch {
 	case game.DeployMode != domain.DeployCompile:
 		fmt.Println("  note: this game is not merge-compile (deploy_mode: compile); the flag has no effect until it is")

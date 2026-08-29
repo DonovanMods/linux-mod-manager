@@ -365,14 +365,16 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 
 	// mod1: auto-policy, succeeds.
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"m1-old"}, map[string][]byte{"mod1-old.esp": []byte("old1")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto))
+	_, settingErr17 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr17)
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "m1-new", FileName: "mod1-new.esp", IsPrimary: true}})
 	src.AddDownload("m1-new", []byte("new1"))
 
 	// mod2: auto-policy, download fails (no AddDownload registered).
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod2", "Mod Two", "1.0", []string{"m2-old"}, map[string][]byte{"mod2-old.esp": []byte("old2")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod2", "g1", "default", domain.UpdateAuto))
+	_, settingErr18 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod2", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr18)
 	src.AddMod(&domain.Mod{ID: "mod2", SourceID: "test-src", Name: "Mod Two", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "m2-new", FileName: "mod2-new.esp", IsPrimary: true}})
 
@@ -420,7 +422,8 @@ func TestDoUpdate_BulkApply_ChecksSourceExactlyOnce(t *testing.T) {
 	for i := 1; i <= modCount; i++ {
 		id := fmt.Sprintf("mod%d", i)
 		seedInstalledForUpdate(t, svc, game, "test-src", id, id, "1.0", []string{id + "-old"}, map[string][]byte{id + "-old.esp": []byte("old")})
-		require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", id, "g1", "default", domain.UpdateAuto))
+		_, settingErr19 := svc.SetModUpdatePolicy(context.Background(), "test-src", id, "g1", "default", domain.UpdateAuto)
+		require.NoError(t, settingErr19)
 		src.AddMod(&domain.Mod{ID: id, SourceID: "test-src", Name: id, Version: "2.0", GameID: "g1"},
 			[]domain.DownloadableFile{{ID: id + "-new", FileName: id + "-new.esp", IsPrimary: true}})
 		src.AddDownload(id+"-new", []byte("new"))
@@ -451,7 +454,8 @@ func TestDoUpdate_DryRun_ZeroSideEffectsAndOutputUnchanged(t *testing.T) {
 	updateDryRun = true
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto))
+	_, settingErr20 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr20)
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
 	// Deliberately no AddDownload - if ApplyUpdate were ever called, the
