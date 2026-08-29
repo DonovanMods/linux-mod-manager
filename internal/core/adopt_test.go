@@ -136,7 +136,7 @@ func TestScanLocal_ExtractModeWarningOnEmptyScan(t *testing.T) {
 	svc, game := newAdoptTestService(t)
 	game.DeployMode = domain.DeployExtract
 
-	scan, err := svc.ScanLocal(context.Background(), game, "default", core.ScanOptions{ProfileName: "default"})
+	scan, err := svc.ScanLocal(context.Background(), game, core.ScanOptions{ProfileName: "default"})
 	require.NoError(t, err)
 
 	assert.True(t, scan.ExtractModeWarning)
@@ -156,7 +156,7 @@ func TestScanLocal_SplitsTrackedAndUntracked(t *testing.T) {
 	// so the tracked fixture is named for the file it owns.
 	seedSyncInstalledMod(t, svc, game, domain.SourceLocal, "existing-id", "CoolMod-2.0", "1.0", "default", true, nil)
 
-	scan, err := svc.ScanLocal(context.Background(), game, "default", core.ScanOptions{ProfileName: "default"})
+	scan, err := svc.ScanLocal(context.Background(), game, core.ScanOptions{ProfileName: "default"})
 	require.NoError(t, err)
 
 	assert.False(t, scan.ExtractModeWarning, "a copy-mode game gets no extract caveat")
@@ -183,7 +183,7 @@ func TestScanLocal_BackfillCandidates_SourceLinkedRowsMissingMetadata(t *testing
 		ProfileName: "default", Enabled: true, UpdatePolicy: domain.UpdateNotify,
 	}))
 
-	scan, err := svc.ScanLocal(context.Background(), game, "default", core.ScanOptions{ProfileName: "default"})
+	scan, err := svc.ScanLocal(context.Background(), game, core.ScanOptions{ProfileName: "default"})
 	require.NoError(t, err)
 
 	require.Len(t, scan.Backfill, 1)

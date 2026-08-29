@@ -441,10 +441,21 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	ctx := cmd.Context()
 
 	// The caveat and the "Scanning..." notice print BEFORE any core call, as
-	// they always have: a game with a missing or unconfigured mod_path fails
-	// inside PlanAdopt, and the pre-lift engine had already printed both
-	// lines by then. core.LocalScan.ExtractModeWarning carries the same rule
-	// for a frontend that renders a finished plan instead of a live stream.
+	// they always have for the scan failure this preserves exactly: a game
+	// with a missing or unconfigured mod_path fails inside PlanAdopt, and the
+	// pre-lift engine had already printed both lines by then.
+	//
+	// ONE recorded delta (Task 18 review, important 1; decisions log
+	// 2026-08-28): core.ScanLocal reads the installed-mod set BEFORE it
+	// scans, where the pre-lift engine read it before printing "Scanning".
+	// So a DB read failure - and only that - now surfaces one line later
+	// than it used to. Restoring exact parity would cost a redundant read
+	// here and push engine sequencing back into cmd.
+	//
+	// core.LocalScan.ExtractModeWarning carries the same caveat rule for a
+	// frontend that renders a finished plan instead of a live stream; it is
+	// deliberately not read here, since it exists only after the scan has
+	// already succeeded.
 	if game.DeployMode != domain.DeployCopy {
 		fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
 		fmt.Println("      Uninstall will only remove the database entry, not the files.")

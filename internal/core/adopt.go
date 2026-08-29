@@ -62,6 +62,13 @@ type LocalScan struct {
 	// ExtractModeWarning is true for a game that is not in copy mode, where
 	// adoption tracks mods in place without caching them - the caveat the
 	// CLI prints before the scan.
+	//
+	// The CLI does NOT render from this field: its caveat must print BEFORE
+	// the scan can fail (see runImportScan), and this field only exists once
+	// the scan has already succeeded, so cmd derives the same fact from
+	// game.DeployMode itself. The field carries the rule for a frontend that
+	// renders a finished LocalScan rather than a live stream - `lmm serve`
+	// is its intended consumer; nothing in-tree reads it today.
 	ExtractModeWarning bool `json:"extract_mode_warning"`
 }
 
@@ -167,19 +174,30 @@ type AdoptResult struct {
 // ScanLocal scans game's mod_path for entries lmm does not track yet and
 // reports them split into Tracked/Untracked, alongside the installed rows
 // whose source metadata is incomplete (Backfill) and whether this game's
-// deploy mode makes adoption an in-place, uncached affair.
+// deploy mode makes adoption an in-place, uncached affair. The profile
+// scanned against is opts.ProfileName.
 //
 // It is side-effect-free: no DB writes, no filesystem changes, no source
 // calls.
-func (s *Service) ScanLocal(ctx context.Context, game *domain.Game, profileName string, opts ScanOptions) (*LocalScan, error) {
-	installedMods, err := s.GetInstalledMods(ctx, game.ID, profileName)
+func (s *Service) ScanLocal(ctx context.Context, game *domain.Game, opts ScanOptions) (*LocalScan, error) {
+	scan, _, err := s.scanLocal(ctx, game, opts)
+	return scan, err
+}
+
+// scanLocal is ScanLocal's internal twin: it ALSO returns the installed-mod
+// set the scan was computed against, so PlanAdopt can build its duplicate
+// preview and its staleness snapshot from the same read instead of asking
+// the DB three times for three views that could disagree (Task 18 review,
+// minor 3). The pre-lift engine likewise read the set exactly once.
+func (s *Service) scanLocal(ctx context.Context, game *domain.Game, opts ScanOptions) (*LocalScan, []domain.InstalledMod, error) {
+	installedMods, err := s.GetInstalledMods(ctx, game.ID, opts.ProfileName)
 	if err != nil {
-		return nil, fmt.Errorf("getting installed mods: %w", err)
+		return nil, nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
 	results, err := s.NewImporter(game).scanModPath(ctx, game, installedMods, opts)
 	if err != nil {
-		return nil, fmt.Errorf("scanning mod_path: %w", err)
+		return nil, nil, fmt.Errorf("scanning mod_path: %w", err)
 	}
 
 	scan := &LocalScan{ExtractModeWarning: game.DeployMode != domain.DeployCopy}
@@ -201,7 +219,7 @@ func (s *Service) ScanLocal(ctx context.Context, game *domain.Game, profileName 
 		scan.Backfill = append(scan.Backfill, im)
 	}
 
-	return scan, nil
+	return scan, installedMods, nil
 }
 
 // PlanAdopt scans game's mod_path and resolves every untracked entry
@@ -209,7 +227,7 @@ func (s *Service) ScanLocal(ctx context.Context, game *domain.Game, profileName 
 // consume. It performs source READS (search, and one file listing per
 // match) but writes nothing.
 func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName string, opts AdoptOptions) (*AdoptPlan, error) {
-	scan, err := s.ScanLocal(ctx, game, profileName, ScanOptions{ProfileName: profileName, DryRun: opts.DryRun})
+	scan, installedMods, err := s.scanLocal(ctx, game, ScanOptions{ProfileName: profileName, DryRun: opts.DryRun})
 	if err != nil {
 		return nil, err
 	}
@@ -234,10 +252,8 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 		plan.Matches[i].Untracked = scan.Untracked[i]
 	}
 
-	installedMods, err := s.GetInstalledMods(ctx, game.ID, profileName)
-	if err != nil {
-		return nil, fmt.Errorf("getting installed mods: %w", err)
-	}
+	// Both the duplicate preview and the staleness snapshot read the SAME
+	// installed-mod set the scan classified against - one read, one view.
 	importer := s.NewImporter(game)
 	for _, r := range scan.Untracked {
 		if r.Mod == nil {
@@ -247,12 +263,7 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 			plan.Duplicates = append(plan.Duplicates, r.FileName)
 		}
 	}
-
-	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
-	if err != nil {
-		return nil, err
-	}
-	plan.snapshot = snapshot
+	plan.snapshot = snapshotOf(installedMods)
 
 	return plan, nil
 }
