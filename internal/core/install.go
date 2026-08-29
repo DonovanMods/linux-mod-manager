@@ -1809,6 +1809,46 @@ type fileChecksum struct {
 	fileID, checksum string
 }
 
+// checksumFromCache computes a checksum for fileID's ALREADY-CACHED content
+// when fillPrimaryCache's cache-first guard (2026-08-29 ruling) skips the
+// download entirely (task-8 review, Important 2) - the warm-cache
+// counterpart to downloadModToCache's own DownloadModResult.Checksum, so a
+// cached install still has something for deployPrimary's SaveFileChecksum
+// loop to save instead of leaving the row NO CHECKSUM until the next
+// `verify --fix` re-ingests.
+//
+// A retained compile source (cache.RetainedSourceName - the validate+retain
+// model, #210/#221) is hashed directly when present: it is an untouched copy
+// of the ORIGINAL downloaded bytes, so this reproduces the exact value a
+// fresh download would have computed. Everything else has no retained
+// original to re-hash - a plain DeployExtract archive's cache entry holds
+// only its EXTRACTED members, never the archive itself - so its checksum is
+// computed from what IS on disk instead, via the same digestDirectoryMembers
+// fold ingestLocalToCache's directory branch already uses for #164: a real,
+// stable fingerprint of the cache's current content that a later read
+// reproduces bit for bit, even though it cannot equal the archive-level hash
+// a fresh download once produced. A fileID with no recorded members (a
+// legacy pre-manifest entry) returns "" - honest emptiness, the same
+// convention ingestLocalToCache's own empty-directory case uses.
+func checksumFromCache(gameCache *cache.Cache, gameID, sourceID, modID, version, fileID string) (string, error) {
+	retainedPath := gameCache.GetFilePath(gameID, sourceID, modID, version, cache.RetainedSourceName(fileID))
+	if _, err := os.Stat(retainedPath); err == nil {
+		return md5File(retainedPath)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
+	if err != nil {
+		return "", err
+	}
+	members := manifests[fileID].Members
+	if len(members) == 0 {
+		return "", nil
+	}
+	return digestDirectoryMembers(gameCache.ModPath(gameID, sourceID, modID, version), members)
+}
+
 // primaryStage is the STRICT path's cache fill handed to its deploy half.
 // The two halves are separate functions because the ruled Apply order
 // (2026-08-29) puts install.before_all BETWEEN them: the cache fill and the
@@ -1990,6 +2030,19 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 			}
 
 			result.FilesDeployed += downloadResult.FilesExtracted
+		} else if !opts.SkipVerify {
+			// Ruling 2 (task-8 review, Important 2): the cache-first guard
+			// skips the download for ANY install, not only the accept
+			// re-run - so this is the only place left that can still save a
+			// checksum for it. No InstallChecksumComputed event: emitting
+			// one would print a "Checksum: ..." line the warm path never
+			// printed before (Important 1's recorded exceptions aside, a
+			// warm fill prints nothing at all - see the CHANGELOG's #303
+			// bullet), and this is a silent DB-only repair of that gap, not
+			// a new user-visible step.
+			if checksum, csErr := checksumFromCache(downloadCache, game.ID, mod.SourceID, mod.ID, mod.Version, file.ID); csErr == nil && checksum != "" {
+				st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: checksum})
+			}
 		}
 
 		st.downloadedFileIDs = append(st.downloadedFileIDs, file.ID)

@@ -662,6 +662,50 @@ func TestService_ApplyInstall_FreshInstallEndToEnd(t *testing.T) {
 	assert.Equal(t, "mod1", profile.Mods[0].ModID)
 }
 
+// TestService_ApplyInstall_KeepCacheReinstall_SavesChecksumFromCache pins the
+// coordinator's Important 2 ruling on the task-8 review: fillPrimaryCache's
+// cache-first guard (2026-08-29) is evaluated on EVERY STRICT install, not
+// only the conflict accept re-run, so `lmm uninstall --keep-cache` followed
+// by a plain `lmm install` also finds the cache warm and skips the download
+// - and before this fix skipped computing a checksum right along with it,
+// leaving the new DB row (installed_mod_files is recreated from scratch by
+// SaveInstalledMod/replaceModFileIDsTx - the old row, checksum included, is
+// gone) with nothing to report until the next `verify --fix` re-ingests.
+// RED on d6e826e: files[0].Checksum is empty after the reinstall.
+func TestService_ApplyInstall_KeepCacheReinstall_SavesChecksumFromCache(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, mock.DownloadCount(), "sanity: the first install actually downloaded")
+
+	_, err = svc.UninstallMod(context.Background(), game, "default", "src", "mod1", core.UninstallOptions{KeepCache: true})
+	require.NoError(t, err)
+	require.True(t, svc.GetGameCache(game).HasFileIDs("g1", "src", "mod1", "1.0", []string{"mod1"}), "sanity: --keep-cache must leave the cache entry complete")
+
+	plan2, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan2, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
+	assert.Equal(t, 1, mock.DownloadCount(), "the warm cache must be reused, not re-downloaded")
+
+	files, err := svc.GetFilesWithChecksums(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.NotEmpty(t, files[0].Checksum, "a cached install must still save a checksum, not leave `verify` reporting NO CHECKSUM")
+}
+
 // TestService_ApplyInstall_HookOrder proves install.before_all ->
 // install.before_each -> (deploy) -> install.after_each -> install.after_all
 // ordering for a single-mod (no dependencies) plan, mirroring
@@ -2457,6 +2501,18 @@ func TestService_ApplyInstall_Conflicts_DeclineThenAccept_DownloadsExactlyOnce(t
 	content, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
 	require.NoError(t, err)
 	assert.Equal(t, "new-content", string(content), "the warm cache entry is what gets deployed")
+
+	// Important 2 (task-8 review): the warm-fill skip that makes the accept
+	// re-run download-free must not ALSO make it checksum-free.
+	files, err := svc.GetFilesWithChecksums(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	var newmodChecksum string
+	for _, f := range files {
+		if f.ModID == "newmod" {
+			newmodChecksum = f.Checksum
+		}
+	}
+	assert.NotEmpty(t, newmodChecksum, "the accept re-run's cache-warm install must still save a checksum")
 }
 
 // TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeployedContentUntouched
