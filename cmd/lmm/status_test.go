@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
@@ -163,7 +164,7 @@ func TestDoStatus_OrdersGamesByID(t *testing.T) {
 	out = captureStdout(t, func() error {
 		return doStatus(context.Background(), svc)
 	})
-	var decoded statusJSONOutput
+	var decoded core.StatusReport
 	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
 	require.Len(t, decoded.Games, 3)
 	gotIDs := []string{decoded.Games[0].ID, decoded.Games[1].ID, decoded.Games[2].ID}
@@ -173,7 +174,7 @@ func TestDoStatus_OrdersGamesByID(t *testing.T) {
 // TestStatusCmd_JSONOutput verifies status --json output structure (JSON contract / E2E shape).
 // Encodes the same struct used by status --json and asserts round-trip and expected keys.
 func TestStatusCmd_JSONOutput(t *testing.T) {
-	out := statusJSONOutput{Games: []statusGameJSON{}}
+	out := core.StatusReport{Games: []core.GameSummary{}}
 	data, err := json.Marshal(out)
 	require.NoError(t, err)
 
@@ -357,7 +358,7 @@ func TestShowGameStatusJSON_AfterDeploy_IncludesLastDeploy(t *testing.T) {
 		return showGameStatusJSON(context.Background(), svc, game.ID)
 	})
 
-	var decoded statusGameDetailJSON
+	var decoded core.GameStatus
 	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
 	require.NotNil(t, decoded.LastDeploy)
 	assert.WithinDuration(t, time.Now(), *decoded.LastDeploy, time.Minute)
@@ -389,7 +390,7 @@ func TestShowGameStatus_ConversionFailures_ShownInTextAndJSON(t *testing.T) {
 	assert.Contains(t, textOut, "lmm verify")
 
 	jsonOut := captureStdout(t, func() error { return showGameStatusJSON(context.Background(), svc, game.ID) })
-	var decoded statusGameDetailJSON
+	var decoded core.GameStatus
 	require.NoError(t, json.Unmarshal([]byte(jsonOut), &decoded))
 	assert.Equal(t, 1, decoded.ConversionFailures)
 }

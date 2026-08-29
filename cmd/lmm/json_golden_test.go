@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -116,5 +119,67 @@ func TestJSONGolden_List(t *testing.T) {
 			return runListProfiles(&cobra.Command{}, svc, game.ID, game.Name)
 		})
 		assertJSONCLIGolden(t, "list_profiles", out)
+	})
+}
+
+// --- status ---
+
+// goldenStatusGame is a fully-populated game whose every path is a literal,
+// so a status golden never has to scrub one.
+func goldenStatusGame(id, name string) *domain.Game {
+	return &domain.Game{
+		ID: id, Name: name,
+		InstallPath: "/games/" + id,
+		ModPath:     "/games/" + id + "/Mods",
+		CachePath:   "/cache/" + id,
+		LinkMethod:  domain.LinkSymlink,
+		SourceIDs:   map[string]string{"src": id},
+	}
+}
+
+func TestJSONGolden_Status(t *testing.T) {
+	withStatusFlags := func(t *testing.T, id string) {
+		t.Helper()
+		oldGame, oldJSON, oldVerbose := gameID, jsonOutput, verbose
+		gameID, jsonOutput, verbose = id, true, false
+		t.Cleanup(func() { gameID, jsonOutput, verbose = oldGame, oldJSON, oldVerbose })
+	}
+
+	t.Run("summary", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withStatusFlags(t, "")
+		for _, g := range []*domain.Game{goldenStatusGame("zulu", "Zulu"), goldenStatusGame("alpha", "Alpha")} {
+			require.NoError(t, svc.SaveGame(context.Background(), g))
+			_, err := svc.NewProfileManager().Create(g.ID, "default")
+			require.NoError(t, err)
+		}
+
+		out := captureStdout(t, func() error { return doStatus(context.Background(), svc) })
+		assertJSONCLIGolden(t, "status_summary", out)
+	})
+
+	t.Run("no_games", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withStatusFlags(t, "")
+
+		out := captureStdout(t, func() error { return doStatus(context.Background(), svc) })
+		assertJSONCLIGolden(t, "status_no_games", out)
+	})
+
+	t.Run("game_detail", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		withStatusFlags(t, "alpha")
+		game := goldenStatusGame("alpha", "Alpha")
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+		pm := svc.NewProfileManager()
+		_, err := pm.Create(game.ID, "default")
+		require.NoError(t, err)
+		_, err = pm.Create(game.ID, "survival")
+		require.NoError(t, err)
+
+		out := captureStdout(t, func() error {
+			return showGameStatusJSON(context.Background(), svc, game.ID)
+		})
+		assertJSONCLIGolden(t, "status_game_detail", out)
 	})
 }
