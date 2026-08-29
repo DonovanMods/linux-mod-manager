@@ -785,6 +785,7 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `lmm install --source ID` / `-s`                   | Use a specific source (default: sole configured source; prompts when several are configured, `-y` picks the first alphabetically)                    |
 | `lmm uninstall <mod-id>`                           | Uninstall a mod                                                                                                                                      |
 | `lmm uninstall <mod-id> --keep-cache`              | Uninstall but keep the cached mod files                                                                                                              |
+| `lmm uninstall <mod-id> --dry-run`                 | Preview what an uninstall would do                                                                                                                   |
 | `lmm import`                                       | Scan `mod_path` for untracked mods and import them (see [Import](#import) below)                                                                     |
 | `lmm import <archive-path>`                        | Import one local mod archive                                                                                                                         |
 | `lmm list`                                         | List installed mods                                                                                                                                  |
@@ -833,6 +834,7 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `lmm deploy --purge`                               | Purge then deploy all mods                                                                                                                           |
 | `lmm deploy --dry-run`                             | Preview what a deploy would do                                                                                                                       |
 | `lmm purge`                                        | Remove all mods from game directory                                                                                                                  |
+| `lmm purge --dry-run`                              | Preview what a purge would do (no confirmation prompt)                                                                                               |
 | `lmm conflicts`                                    | Show file conflicts in current profile                                                                                                               |
 | `lmm source list`                                  | List built-in and user-defined mod sources                                                                                                           |
 | `lmm source validate <file>`                       | Validate a user-defined source definition                                                                                                            |

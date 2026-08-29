@@ -148,17 +148,18 @@ func setupDoPurgeTest(t *testing.T) (*core.Service, *domain.Game) {
 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
-	oldProfile, oldUninstall, oldYes, oldForce, oldNoColor, oldNoHooks :=
-		purgeProfile, purgeUninstall, purgeYes, purgeForce, noColor, noHooks
+	oldProfile, oldUninstall, oldYes, oldForce, oldDryRun, oldNoColor, oldNoHooks :=
+		purgeProfile, purgeUninstall, purgeYes, purgeForce, purgeDryRun, noColor, noHooks
 	purgeProfile = ""
 	purgeUninstall = false
 	purgeYes = true
 	purgeForce = false
+	purgeDryRun = false
 	noColor = true
 	noHooks = false
 	t.Cleanup(func() {
-		purgeProfile, purgeUninstall, purgeYes, purgeForce, noColor, noHooks =
-			oldProfile, oldUninstall, oldYes, oldForce, oldNoColor, oldNoHooks
+		purgeProfile, purgeUninstall, purgeYes, purgeForce, purgeDryRun, noColor, noHooks =
+			oldProfile, oldUninstall, oldYes, oldForce, oldDryRun, oldNoColor, oldNoHooks
 	})
 
 	return svc, game

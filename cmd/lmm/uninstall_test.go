@@ -140,13 +140,16 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 	require.NoError(t, err)
 	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
 
-	oldSource, oldProfile, oldKeep, oldForce := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce
+	oldSource, oldProfile, oldKeep, oldForce, oldDryRun :=
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, uninstallDryRun
 	uninstallSource = ""
 	uninstallProfile = ""
 	uninstallKeep = false
 	uninstallForce = false
+	uninstallDryRun = false
 	t.Cleanup(func() {
-		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce = oldSource, oldProfile, oldKeep, oldForce
+		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, uninstallDryRun =
+			oldSource, oldProfile, oldKeep, oldForce, oldDryRun
 	})
 
 	return svc, game

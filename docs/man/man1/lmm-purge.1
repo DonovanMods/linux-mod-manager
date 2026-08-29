@@ -22,14 +22,24 @@ Mod records are preserved in the database, so you can deploy them later
 with 'lmm deploy'. Use --uninstall to also remove the database records.
 
 .PP
+Use --dry-run to print what the purge would do - which mods would be
+undeployed and what happens to their records - without changing anything
+and without prompting.
+
+.PP
 Examples:
   lmm purge --game skyrim-se
   lmm purge --game skyrim-se --profile survival
   lmm purge --game skyrim-se --uninstall
+  lmm purge --game skyrim-se --dry-run
   lmm purge --game skyrim-se --yes
 
 
 .SH OPTIONS
+\fB--dry-run\fP[=false]
+	print what the purge would do without changing anything
+
+.PP
 \fB-f\fP, \fB--force\fP[=false]
 	continue even if hooks fail
 

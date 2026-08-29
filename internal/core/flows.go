@@ -1536,7 +1536,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				Deployed:     true, // review finding 3: Install/Replace above just succeeded
 				FileIDs:      downloadedFileIDs,
 			}
-			installedMod.Mod.GameID = game.ID
+			installedMod.GameID = game.ID
 			if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 				fail(fmt.Sprintf("save failed: %v", err))
 				continue

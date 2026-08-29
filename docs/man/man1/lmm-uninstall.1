@@ -23,14 +23,24 @@ more than one source, pass -s/--source to name the one you mean. Use
 --force to continue uninstalling even if an uninstall hook fails.
 
 .PP
+Use --dry-run to print what the uninstall would do - which mod it resolves
+to, which files would leave the game directory, what happens to the cache -
+without changing anything.
+
+.PP
 Examples:
   lmm uninstall 12345 --game skyrim-se
   lmm uninstall 12345 --game skyrim-se --profile survival
   lmm uninstall 12345 --game skyrim-se --keep-cache
+  lmm uninstall 12345 --game skyrim-se --dry-run
   lmm uninstall 12345 --game skyrim-se --source curseforge
 
 
 .SH OPTIONS
+\fB--dry-run\fP[=false]
+	print what the uninstall would do without changing anything
+
+.PP
 \fB-f\fP, \fB--force\fP[=false]
 	continue even if hooks fail
 
