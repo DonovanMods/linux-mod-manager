@@ -536,6 +536,37 @@ func TestApplyAdopt_ExtractMode_TracksInPlaceWithoutCaching(t *testing.T) {
 	assert.Empty(t, cacheMatches, "extract-mode adoption tracks in place, without caching")
 }
 
+// TestApplyAdopt_DeployCompile_SyncsMergedPak pins #197's tail on the adopt
+// path: registering a mod is a mod-set change, so the merged pak is synced
+// after every adoption. The game's only mods are local (no merge sources),
+// so the sync takes its uninstall-to-zero branch and clears the merged pak
+// that was there - proving it ran at all.
+func TestApplyAdopt_DeployCompile_SyncsMergedPak(t *testing.T) {
+	svc, game := newAdoptTestService(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	// "merged-pak"/"merged" mirror core's private mergedPakModID/
+	// mergedPakVersion (same convention as merged_pak_hooks_test.go).
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
+
+	// A non-copy game scans mod_path for DIRECTORIES.
+	require.NoError(t, os.MkdirAll(filepath.Join(game.ModPath, "LooseMod-1.0"), 0755))
+
+	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{SkipMatch: true})
+	require.NoError(t, err)
+	require.Len(t, plan.Matches, 1)
+
+	result, err := svc.ApplyAdopt(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Adopted)
+
+	assert.False(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+		"adopting a mod must sync the merged pak")
+}
+
 // TestApplyAdopt_WithinBatchDuplicate_SkipsTheSecond pins the growing
 // duplicate set: two files whose names normalize to the same mod adopt once,
 // even though neither duplicates anything installed at plan time.
