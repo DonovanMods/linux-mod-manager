@@ -1,10 +1,22 @@
 {
   "installed": [],
   "skipped": [
-    "OptionalAddon: already installed"
+    {
+      "source_id": "nexusmods",
+      "mod_id": "43",
+      "name": "OptionalAddon",
+      "version": "1.0.0",
+      "reason": "already installed"
+    }
   ],
   "failed": [
-    "BrokenMod"
+    {
+      "source_id": "nexusmods",
+      "mod_id": "44",
+      "name": "BrokenMod",
+      "version": "1.0.0",
+      "reason": "already installed"
+    }
   ],
   "files_deployed": 7,
   "merged_pak_sync_failed": true,

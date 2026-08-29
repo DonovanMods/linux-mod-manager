@@ -884,7 +884,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	fmt.Printf("\n--- Summary ---\n")
 	fmt.Printf("Installed: %d\n", len(result.Installed))
 	if len(result.Failed) > 0 {
-		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(result.Failed, ", "))
+		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(installedRefNames(result.Failed), ", "))
 	}
 
 	return nil
@@ -1103,7 +1103,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 	fmt.Printf("\n--- Summary ---\n")
 	fmt.Printf("Installed: %d\n", len(result.Installed))
 	if len(result.Failed) > 0 {
-		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(result.Failed, ", "))
+		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(installedRefNames(result.Failed), ", "))
 	}
 
 	return nil
@@ -1225,8 +1225,11 @@ func showInstallPlan(plan *core.InstallPlan) {
 	// #52 item 10: a GetDependencies failure that WASN'T just "this source
 	// lacks the capability" - matching the existing "Warning: %s" stderr
 	// style used elsewhere in this file (e.g. line ~522/558/620/649).
+	// core.DependencyWarning carries SourceID/ModID/Message as structured
+	// data (v2 Phase 3 Task 2, #301); this reconstructs the historical
+	// "<sourceID:modID>: <error>" line byte-for-byte.
 	for _, w := range plan.DependencyWarnings {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		fmt.Fprintf(os.Stderr, "Warning: %s: %s\n", domain.ModKey(w.SourceID, w.ModID), w.Message)
 	}
 }
 
@@ -1236,4 +1239,15 @@ func truncateChecksum(checksum string) string {
 		return checksum[:12] + "..."
 	}
 	return checksum
+}
+
+// installedRefNames extracts each entry's Name - InstallResult.Installed/
+// Failed carry structured core.InstalledRef data (v2 Phase 3 Task 2, #301);
+// the terminal summary only ever displays the name.
+func installedRefNames(refs []core.InstalledRef) []string {
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		names[i] = r.Name
+	}
+	return names
 }

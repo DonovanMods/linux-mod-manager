@@ -236,7 +236,7 @@ func TestJSONGoldens(t *testing.T) {
 				Dependencies:        nil,
 				MissingDependencies: []domain.ModReference{{SourceID: "nexusmods", ModID: "99"}},
 				CycleDetected:       true,
-				DependencyWarnings:  []string{"nexusmods:99: fetch failed"},
+				DependencyWarnings:  []core.DependencyWarning{{SourceID: "nexusmods", ModID: "99", Message: "fetch failed"}},
 				Conflicts: []core.Conflict{
 					{RelativePath: "Data/textures/armor/mesh.dds", CurrentSourceID: "nexusmods", CurrentModID: "7"},
 				},
@@ -456,14 +456,26 @@ func TestJSONGoldens(t *testing.T) {
 			// marshals as "[]", not "null".
 			"install_result",
 			core.InstallResult{
-				Installed:           nil,
-				Skipped:             []string{"OptionalAddon: already installed"},
-				Failed:              []string{"BrokenMod"},
+				Installed: nil,
+				Skipped: []core.InstalledRef{
+					{SourceID: "nexusmods", ModID: "43", Name: "OptionalAddon", Version: "1.0.0", Reason: "already installed"},
+				},
+				Failed: []core.InstalledRef{
+					{SourceID: "nexusmods", ModID: "44", Name: "BrokenMod", Version: "1.0.0", Reason: "already installed"},
+				},
 				FilesDeployed:       7,
 				MergedPakSyncFailed: true,
 				Warnings:            []string{"merged pak sync failed"},
 				Notes:               []string{"installed dependency Realistic Needs"},
 			},
+		},
+		{
+			"installed_ref",
+			core.InstalledRef{SourceID: "nexusmods", ModID: "43", Name: "OptionalAddon", Version: "1.0.0", Reason: "already installed"},
+		},
+		{
+			"dependency_warning",
+			core.DependencyWarning{SourceID: "nexusmods", ModID: "99", Message: "fetch failed"},
 		},
 		{
 			"verify_options",
