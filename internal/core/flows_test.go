@@ -1396,7 +1396,8 @@ func TestService_DeployProfile_MissingCacheAndFetchFailure_SkipsMod(t *testing.T
 	require.NotNil(t, result)
 	assert.Equal(t, 0, result.Deployed)
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "failed to fetch")
+	assert.Equal(t, "Test Mod", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "failed to fetch")
 }
 
 // TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloadFailedEvent
@@ -1439,7 +1440,8 @@ func TestService_DeployProfile_MissingCacheAndDownloadFailure_EmitsDeployDownloa
 
 	assert.Equal(t, 0, result.Deployed)
 	require.Len(t, result.Skipped, 1, "accounting must be unchanged: exactly one Skipped entry")
-	assert.Contains(t, result.Skipped[0], "Download Fail Mod: download failed:")
+	assert.Equal(t, "Download Fail Mod", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "download failed:")
 
 	var failEvt *core.ModEvent
 	for _, e := range *seen {
@@ -1501,8 +1503,8 @@ func TestService_DeployProfile_StoredFileIDsGone_SkipsModWithClearError(t *testi
 
 	assert.Equal(t, 0, result.Deployed, "the mod must not be deployed via fallback substitution")
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "no longer available upstream")
-	assert.Contains(t, result.Skipped[0], "stale-id")
+	assert.Contains(t, result.Skipped[0].Reason, "no longer available upstream")
+	assert.Contains(t, result.Skipped[0].Reason, "stale-id")
 
 	var sawSkipped bool
 	phases, _ := phasesOf(*seen)
@@ -1713,8 +1715,8 @@ exit 0`)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed)
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "Bad Mod")
-	assert.Contains(t, result.Skipped[0], "install.before_each hook failed")
+	assert.Equal(t, "Bad Mod", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "install.before_each hook failed")
 
 	_, err = os.Lstat(filepath.Join(gameDir, "good.esp"))
 	assert.NoError(t, err, "the other mod must still deploy")
@@ -4437,8 +4439,9 @@ exit 0`)
 	assert.True(t, strings.HasPrefix(found.Detail, "uninstall.before_each hook failed: "),
 		"Detail must carry the baked prefix the CLI prints after \"Skipped <name>: \"")
 	require.Len(t, result.Skipped, 1)
-	assert.Equal(t, "Bad Mod: "+found.Detail, result.Skipped[0],
-		"the Skipped entry must be the event's Detail behind the name prefix")
+	assert.Equal(t, "Bad Mod", result.Skipped[0].Name)
+	assert.Equal(t, found.Detail, result.Skipped[0].Reason,
+		"the Skipped entry's Reason must be the event's Detail verbatim")
 
 	_, err = os.Lstat(filepath.Join(gameDir, "bad.esp"))
 	assert.NoError(t, err, "a before_each-skipped mod must stay deployed")
@@ -4641,7 +4644,8 @@ func TestService_PurgeProfile_Uninstall_DeleteRecordFailure_CountsFailedSkipsAft
 
 	assert.Zero(t, result.Purged)
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "Test Mod: failed to remove record:")
+	assert.Equal(t, "Test Mod", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "failed to remove record:")
 	require.NotEmpty(t, result.Notes)
 	assert.Contains(t, result.Notes[0], "⚠ Test Mod - failed to remove record:")
 
@@ -4775,8 +4779,8 @@ func TestService_DeployProfile_CancelledDuringLastModRedownload_RecordsSkipAndEr
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Deployed, "the first mod deployed before the cancellation")
 	require.Len(t, result.Skipped, 1, "the cancelled mod must be recorded as skipped, not silently dropped")
-	assert.Contains(t, result.Skipped[0], "Last Mod")
-	assert.Contains(t, result.Skipped[0], "cancelled")
+	assert.Equal(t, "Last Mod", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "cancelled")
 }
 
 // TestService_QueriesRunDuringMutation pins the contract end to end under

@@ -40,7 +40,7 @@ type purgeSpec struct {
 	emit     func(Event)
 	warnings *[]string
 	notes    *[]string
-	skipped  *[]string
+	skipped  *[]InstalledRef
 	purged   *int
 }
 
@@ -106,7 +106,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 				spec.emit(WarningEvent{Scope: scope, Phase: PurgeWarning, Message: msg})
 			} else {
 				detail := fmt.Sprintf("uninstall.before_each hook failed: %v", err)
-				*spec.skipped = append(*spec.skipped, fmt.Sprintf("%s: %s", mod.Name, detail))
+				*spec.skipped = append(*spec.skipped, skippedRef(&mod, detail))
 				spec.emit(ModEvent{Scope: scope, Phase: PurgeModSkipped, Detail: detail})
 			}
 			continue
@@ -129,7 +129,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 				msg := fmt.Sprintf("⚠ %s - failed to remove record: %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
 				spec.emit(StepEvent{Scope: scope, Phase: PurgeNote, Detail: msg})
-				*spec.skipped = append(*spec.skipped, fmt.Sprintf("%s: failed to remove record: %v", mod.Name, err))
+				*spec.skipped = append(*spec.skipped, skippedRef(&mod, fmt.Sprintf("failed to remove record: %v", err)))
 				continue
 			}
 			if err := s.NewProfileManager().RemoveMod(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
@@ -282,15 +282,17 @@ type PurgeOptions struct {
 // PurgeResult reports the outcome of PurgeProfile. Warnings and Notes
 // follow DeployResult's display contract (Warnings: unconditional stderr;
 // Notes: --verbose-gated stdout, historical text baked in). Skipped holds
-// one "<name>: <reason>" entry per mod that was NOT fully purged (a
-// before_each-skipped mod, or an --uninstall record-delete failure);
-// len(Skipped) is doPurge's historical `failed` counter, so the CLI's
-// "Purged: N, Failed: M" summary comes from Purged and len(Skipped).
+// one InstalledRef per mod that was NOT fully purged (a before_each-skipped
+// mod, or an --uninstall record-delete failure), naming the mod and
+// carrying the reason as data rather than as a pre-formatted
+// "<name>: <reason>" line (spec §4); len(Skipped) is doPurge's historical
+// `failed` counter, so the CLI's "Purged: N, Failed: M" summary comes from
+// Purged and len(Skipped).
 type PurgeResult struct {
-	Purged   int      `json:"purged"`
-	Skipped  []string `json:"skipped,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
-	Notes    []string `json:"notes,omitempty"`
+	Purged   int            `json:"purged"`
+	Skipped  []InstalledRef `json:"skipped,omitempty"`
+	Warnings []string       `json:"warnings,omitempty"`
+	Notes    []string       `json:"notes,omitempty"`
 }
 
 // PurgeProfile undeploys every mod in mods from game's directory - the

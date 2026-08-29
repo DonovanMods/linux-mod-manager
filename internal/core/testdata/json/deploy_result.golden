@@ -1,7 +1,13 @@
 {
   "deployed": 5,
   "skipped": [
-    "OptionalAddon: no files selected"
+    {
+      "source_id": "nexusmods",
+      "mod_id": "7",
+      "name": "OptionalAddon",
+      "version": "0.9",
+      "reason": "no files selected"
+    }
   ],
   "warnings": [
     "merge sync produced 1 raw fallback"

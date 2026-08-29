@@ -473,7 +473,7 @@ func TestApplyProfileApply_EntryError_ReportsAndContinues(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed, "the healthy mod must still install")
 	require.Len(t, result.Failed, 1)
-	assert.Contains(t, result.Failed[0], "ghost")
+	assert.Equal(t, "ghost", result.Failed[0].ModID)
 
 	phases := applyModPhases(*events)
 	assert.Equal(t, []core.DeployPhase{
@@ -558,8 +558,8 @@ func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailur
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed, "the healthy mod must still install")
 	require.Len(t, result.Failed, 1)
-	assert.Contains(t, result.Failed[0], "bad")
-	assert.Contains(t, result.Failed[0], "download failed")
+	assert.Equal(t, "bad", result.Failed[0].ModID)
+	assert.Contains(t, result.Failed[0].Reason, "download failed")
 
 	phases := applyModPhases(*events)
 	assert.Equal(t, []core.DeployPhase{

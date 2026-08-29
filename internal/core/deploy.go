@@ -140,21 +140,22 @@ func (c *DeployModClass) UnmarshalText(b []byte) error {
 // slices remain here, unconditionally, for callers that only want the
 // final, order-independent summary.
 //
-// Skipped carries one "<mod name>: <reason>" entry per mod that did not
-// deploy, for any reason (hook failure, download failure, install
-// failure); the pre-extraction CLI printed each of these unconditionally
-// as it happened; the DeployBeforeEachSkipped/DeployDownloadFailed/
-// DeploySkipped events carry the same reason text in real time for callers
-// that want to print them as they occur instead of (or in addition to) at
-// the end.
+// Skipped carries one InstalledRef per mod that did not deploy, for any
+// reason (hook failure, download failure, install failure), naming the mod
+// and carrying the reason as data rather than as a pre-formatted
+// "<name>: <reason>" line (spec §4 - JSON carries data, never formatted
+// text); the pre-extraction CLI printed each of these unconditionally as it
+// happened; the DeployBeforeEachSkipped/DeployDownloadFailed/DeploySkipped
+// events carry the same reason text in real time for callers that want to
+// print them as they occur instead of (or in addition to) at the end.
 //
 // On error, the returned result carries any diagnostics accumulated before
 // the failure; callers should surface them alongside the error.
 type DeployResult struct {
-	Deployed int      `json:"deployed"`
-	Skipped  []string `json:"skipped,omitempty"`
-	Warnings []string `json:"warnings,omitempty"`
-	Notes    []string `json:"notes,omitempty"`
+	Deployed int            `json:"deployed"`
+	Skipped  []InstalledRef `json:"skipped,omitempty"`
+	Warnings []string       `json:"warnings,omitempty"`
+	Notes    []string       `json:"notes,omitempty"`
 
 	// MergedArtifact/MergedMods/RawFallbacks mirror the DeployMergeSynced
 	// event for callers with no event sink (#255 - a caller may pass
@@ -712,7 +713,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
 			reason := fmt.Sprintf("install.before_each hook failed: %v", err)
 			emit(ModEvent{Scope: scope, Phase: DeployBeforeEachSkipped, Detail: reason})
-			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+			result.Skipped = append(result.Skipped, skippedRef(mod, reason))
 			continue
 		}
 
@@ -731,7 +732,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		if err := installer.Install(ctx, game, &mod.Mod, profileName); err != nil {
 			reason := err.Error()
 			emit(ModEvent{Scope: scope, Phase: DeploySkipped, Detail: reason})
-			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+			result.Skipped = append(result.Skipped, skippedRef(mod, reason))
 			continue
 		}
 
@@ -812,7 +813,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, scope Scope, emit func(Event), result *DeployResult) bool {
 	skip := func(reason string) bool {
 		emit(ModEvent{Scope: scope, Phase: DeploySkipped, Detail: reason})
-		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+		result.Skipped = append(result.Skipped, skippedRef(mod, reason))
 		return true
 	}
 
@@ -862,7 +863,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		if _, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
 			reason := fmt.Sprintf("download failed: %v", err)
 			emit(ModEvent{Scope: scope, Phase: DeployDownloadFailed, Detail: reason})
-			result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
+			result.Skipped = append(result.Skipped, skippedRef(mod, reason))
 			return true
 		}
 	}

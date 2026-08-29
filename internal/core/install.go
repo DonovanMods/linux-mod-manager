@@ -684,6 +684,14 @@ type InstalledRef struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+// skippedRef builds the InstalledRef a flow records when a mod is not
+// processed: the mod's identity plus the reason, as data. Shared by
+// DeployResult.Skipped and PurgeResult.Skipped so the two can never drift
+// in which identity fields they populate.
+func skippedRef(mod *domain.InstalledMod, reason string) InstalledRef {
+	return InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version, Reason: reason}
+}
+
 // InstallResult reports the outcome of ApplyInstall. As with DeployResult/
 // UninstallResult/SwitchResult, every entry below is always recorded - there
 // is no verbosity concept in core.
