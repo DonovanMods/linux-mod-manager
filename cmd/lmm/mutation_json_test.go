@@ -13,6 +13,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -754,4 +755,21 @@ func TestDoInstall_JSON_ForceAcceptsConflicts(t *testing.T) {
 	var doc core.InstallResult
 	decodeSingleDoc(t, out, &doc)
 	assert.Len(t, doc.Installed, 1)
+}
+
+// TestLogLevel_UnderJSON_StillWritesToStderr pins the single carve-out in
+// Ruling 15's "stderr stays empty" rule: --log-level diagnostics are not
+// output, and --json does not silence them. newCLILogger is the one place
+// the CLI builds that logger (initServiceWith hands it os.Stderr), and it
+// consults nothing but the level - so a --json run still gets its
+// diagnostics on stderr, alongside the one document on stdout.
+func TestLogLevel_UnderJSON_StillWritesToStderr(t *testing.T) {
+	withJSONOutput(t)
+
+	var buf bytes.Buffer
+	logger, err := newCLILogger("warn", &buf)
+	require.NoError(t, err)
+	logger.Warn("diagnostic", "k", "v")
+
+	assert.Contains(t, buf.String(), "level=WARN msg=diagnostic k=v")
 }
