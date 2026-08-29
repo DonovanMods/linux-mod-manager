@@ -7,6 +7,17 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
+// SettingsResult reports the state of the settings a mutation just wrote -
+// today the whole of config.yaml a frontend can change from the CLI: the
+// configured default game, empty after `lmm game clear-default`. It is the
+// document `lmm game set-default`/`clear-default` emit under --json
+// (v2 Phase 3 Ruling 15), which is why the effect is reported as the
+// resulting VALUE rather than as the "set"/"cleared" verb that produced it:
+// a caller re-reading the setting after either command sees the same field.
+type SettingsResult struct {
+	DefaultGame string `json:"default_game"`
+}
+
 // loadDefaultGame reads configDir's default game. Both (*Service).DefaultGame
 // and ServiceConfig.DefaultGame share this so a load failure is reported
 // identically regardless of receiver.

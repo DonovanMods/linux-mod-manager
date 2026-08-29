@@ -331,6 +331,32 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// v2 Phase 3 Ruling 15: the document `lmm profile
+			// create/delete/reorder` emit. The nested domain.Profile is
+			// pinned in full by domain's own golden, so this one only has
+			// to pin the single-key wrapper around it.
+			"profile_result",
+			core.ProfileResult{
+				Profile: domain.Profile{
+					Name:   "default",
+					GameID: "skyrim-se",
+					Mods: []domain.ModReference{
+						{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+					},
+					LinkMethod: domain.LinkSymlink,
+					IsDefault:  true,
+				},
+			},
+		},
+		{
+			// v2 Phase 3 Ruling 15: the document `lmm game
+			// set-default`/`clear-default` emit. A cleared default is the
+			// empty string, which is why the field carries no omitempty -
+			// "cleared" must be visible on the wire, not absent.
+			"settings_result",
+			core.SettingsResult{DefaultGame: "skyrim-se"},
+		},
+		{
 			"profile_apply_result",
 			core.ProfileApplyResult{
 				Disabled:  1,
