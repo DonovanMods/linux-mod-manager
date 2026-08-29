@@ -671,6 +671,7 @@ func TestJSONGoldens(t *testing.T) {
 			"rollback_result",
 			core.RollbackResult{
 				ModName: "Sample Mod", FromVersion: "1.2.3", ToVersion: "1.2.2",
+				Status:   core.UpdateRolledBack,
 				Warnings: []string{"could not sync merged pak"},
 				Notes:    []string{"rolled back Sample Mod"},
 			},

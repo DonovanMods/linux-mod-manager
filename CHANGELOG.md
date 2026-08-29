@@ -155,6 +155,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a refusal reads the same error text. (#300)
 - Internal: `Service.GetDownloadURL`, `DownloadModToCache`, `SetModFileIDs`, and `SetModVersion` —
   exported methods with zero callers anywhere in the codebase, including tests — deleted. (#301)
+- Internal: core results carry structured data instead of pre-formatted display strings, so a JSON
+  frontend can render them without re-parsing English. `InstallResult.Installed/Skipped/Failed`
+  become `[]InstalledRef` (source ID, mod ID, name, version, reason), `InstallPlan.DependencyWarnings`
+  becomes `[]DependencyWarning`, `UpdateApplyResult.Applied` splits into
+  `Mod`/`Name`/`FromVersion`/`ToVersion`/`Changelog` plus a `Status` enum (`UpdateStatus`:
+  `updated`, `up_to_date`, `skipped`, `recompiled`, `recompile_available`, `available`,
+  `rolled_back`) and a raw `Reason`, and `RollbackResult` adopts the same `Status`/`Reason` pair.
+  CLI output is byte-identical. (#301)
 
 ### Fixed
 
