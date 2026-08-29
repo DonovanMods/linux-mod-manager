@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/app"
@@ -69,40 +68,6 @@ Examples:
 		// row. Silence the warnings for this command's own service init; the
 		// rows below are the canonical report here.
 		return withServiceOpts(cmd, app.Options{WarnWriter: io.Discard}, func(ctx context.Context, svc *core.Service) error {
-			cfg, err := getServiceConfig()
-			if err != nil {
-				return err
-			}
-			defs, loadErrs, err := app.LoadSourceDefinitions(cfg.ConfigDir)
-			if err != nil {
-				return fmt.Errorf("loading source definitions: %w", err)
-			}
-
-			// Reclassify each definition against what actually ended up registered
-			// (registerCustomSources may have skipped it on ID collision or
-			// construction failure) so the list reflects reality rather than just
-			// "a definition with this ID exists".
-			var errRows []sourceInfo
-			for _, d := range defs {
-				registered, err := svc.GetSource(d.ID)
-				switch {
-				case err == nil && isCustomSource(registered):
-					// Registered successfully as this definition's own custom
-					// source; its row (built below from svc.ListSources()) will
-					// carry the correct TypeLabel() on its own — nothing to
-					// record here.
-				case err == nil:
-					// Something else (a built-in, or another def) already held this ID.
-					errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: "id already in use"})
-				default:
-					// Nothing registered under this ID: construction must have failed.
-					// Re-run it to recover the actual error for display.
-					if _, cerr := app.ConstructSource(d); cerr != nil {
-						errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: cerr.Error()})
-					}
-				}
-			}
-
 			// Resolve a game context WITHOUT erroring when absent (design §5:
 			// "the command must keep working with zero games configured").
 			// requireGame's own error is deliberately swallowed here — and
@@ -117,67 +82,38 @@ Examples:
 			// other command's game resolution.
 			var gameCtx *domain.Game
 			if requireErr := requireGame(cmd); requireErr == nil {
-				gameCtx, err = svc.GetGame(gameID)
+				g, err := svc.GetGame(gameID)
 				if err != nil {
 					return err
 				}
+				gameCtx = g
 			}
 
-			// srcs is the base row set: every registered source (built-in +
-			// custom) by default, or - with a resolvable game and no --all -
-			// just that game's configured+registered subset (SourcesForGame).
-			// inUseIDs stays nil except in the --all-with-game combination,
-			// which is the one case that needs to mark a subset of the FULL
-			// list rather than simply restricting to it.
-			// ListSources is registry-map order (nondeterministic, and a
-			// pre-existing quirk of this command); sort so the full-registry
-			// views are stable and consistent with SourcesForGame's sorted
-			// scoped view.
-			srcs := svc.ListSources()
-			sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID() < srcs[j].ID() })
-			var inUseIDs map[string]bool
-			switch {
-			case gameCtx != nil && !sourceAll:
-				srcs, err = svc.SourcesForGame(gameCtx.ID)
-				if err != nil {
-					return err
-				}
-			case gameCtx != nil:
-				scoped, err := svc.SourcesForGame(gameCtx.ID)
-				if err != nil {
-					return err
-				}
-				inUseIDs = make(map[string]bool, len(scoped))
-				for _, s := range scoped {
-					inUseIDs[s.ID()] = true
-				}
+			// app.SourceInfos owns the row assembly: the registry, the
+			// game scoping, and the definitions-vs-reality reclassification
+			// that only app can do (it alone sees the definitions on disk and
+			// can re-run a failed construction). The IN USE column belongs to
+			// the one combination that marks a subset of the FULL list rather
+			// than restricting to it.
+			infos, err := app.SourceInfos(ctx, svc, gameCtx, sourceAll)
+			if err != nil {
+				return err
 			}
-			showInUseColumn := inUseIDs != nil
+			showInUseColumn := gameCtx != nil && sourceAll
 
 			// make(...,0,...), not `var rows []sourceInfo`: a nil slice encodes
 			// to JSON `null`, but `source list --json` should always emit an
 			// array — empty when there is nothing to report (#52 item 13).
-			rows := make([]sourceInfo, 0, len(srcs)+len(errRows)+len(loadErrs))
-			for _, src := range srcs {
+			rows := make([]sourceInfo, 0, len(infos))
+			for _, info := range infos {
 				rows = append(rows, sourceInfo{
-					ID:           src.ID(),
-					Name:         src.Name(),
-					Type:         source.TypeLabelOf(src),
-					Auth:         authState(src),
-					Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
-					InUse:        inUseIDs[src.ID()],
-				})
-			}
-			// Broken-definition error rows stay visible in every view (design
-			// §5): they never registered, so they have no game association to
-			// scope by, and hiding them would bury exactly the diagnostics a
-			// user debugging their YAML needs.
-			rows = append(rows, errRows...)
-			for _, le := range loadErrs {
-				rows = append(rows, sourceInfo{
-					ID:    le.File,
-					Type:  "error",
-					Error: le.Err.Error(),
+					ID:           info.ID,
+					Name:         info.Name,
+					Type:         info.Type,
+					Auth:         info.Auth,
+					Capabilities: info.Capabilities,
+					InUse:        info.InUse,
+					Error:        info.ErrorMessage,
 				})
 			}
 
@@ -256,57 +192,6 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "probe: %s\n", summary)
 	return nil
-}
-
-// isCustomSource reports whether src is a user-defined source (as opposed to
-// a built-in like NexusMods/CurseForge): a self-reported type of exactly
-// "directory", "manifest", or "api". "built-in" and the "unknown" fallback
-// both answer false — conservative on the unknown side so the definitions
-// reclassify loop (the only call site) reports a collision/error row rather
-// than assuming an unlabeled source is the definition's own. Unreachable in
-// practice: LoadSourceDefinitions guarantees ID uniqueness within a load, so
-// a registered source matching a definition's ID is either a built-in or
-// that definition's own constructed source — never an unrelated third party.
-func isCustomSource(src source.ModSource) bool {
-	switch source.TypeLabelOf(src) {
-	case "directory", "manifest", "api":
-		return true
-	}
-	return false
-}
-
-// authState reports a source's authentication status for display.
-func authState(src source.ModSource) string {
-	if !source.CapabilitiesOf(src).Auth {
-		return "n/a"
-	}
-	if a, ok := src.(interface{ IsAuthenticated() bool }); ok {
-		if a.IsAuthenticated() {
-			return "yes"
-		}
-		return "no"
-	}
-	return "yes"
-}
-
-// capabilitySummary renders capabilities as a compact list, e.g. "search,updates".
-func capabilitySummary(c source.Capabilities) string {
-	out := ""
-	add := func(enabled bool, name string) {
-		if !enabled {
-			return
-		}
-		if out != "" {
-			out += ","
-		}
-		out += name
-	}
-	add(c.Search, "search")
-	add(c.Dependencies, "deps")
-	add(c.Updates, "updates")
-	add(c.Auth, "auth")
-	add(c.Versions, "versions")
-	return out
 }
 
 func init() {

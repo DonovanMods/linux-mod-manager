@@ -163,6 +163,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `updated`, `up_to_date`, `skipped`, `recompiled`, `recompile_available`, `available`,
   `rolled_back`) and a raw `Reason`, and `RollbackResult` adopts the same `Status`/`Reason` pair.
   CLI output is byte-identical. (#301)
+- Internal: the read-only commands gain core query types — `internal/core/queries.go` adds
+  `ModList`/`ModListing` (`ListMods`), `StatusReport`/`GameSummary` (`Status`),
+  `GameStatus`/`ProfileSummary` (`GameStatus`), `SearchReport`/`SearchHit` (`Search`),
+  `GameListEntry` (`ListGameEntries`) and `VerifyReport` (`VerifyReport`), and
+  `internal/app` adds `SourceInfo`/`SourceInfos` (the source-definition half of `lmm source
+list` is only visible to app). Each carries snake_case json tags and a recorded golden. The
+  joins `lmm list`, `lmm status`, `lmm search`, `lmm game list`, `lmm source list` and `lmm
+verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
+  the query types; CLI output — text and JSON — is unchanged. (#301)
 
 ### Fixed
 

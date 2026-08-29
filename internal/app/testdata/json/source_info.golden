@@ -1,0 +1,8 @@
+{
+  "id": "nexusmods",
+  "name": "NexusMods",
+  "type": "built-in",
+  "auth": "yes",
+  "capabilities": "search,deps,updates,auth,versions",
+  "in_use": true
+}
