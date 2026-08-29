@@ -753,8 +753,12 @@ func applyRecompile(ctx context.Context, service *core.Service, game *domain.Gam
 		// identity onto it must never have to nil-check.
 		result = &core.UpdateApplyResult{}
 	}
-	for _, w := range result.Warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	// Under --json, printing here would both leak onto stderr and duplicate
+	// the warnings the caller re-attaches to the document below (Ruling 15).
+	if !jsonOutput {
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
 	}
 	return result, err
 }

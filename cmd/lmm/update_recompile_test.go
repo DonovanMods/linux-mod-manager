@@ -294,3 +294,31 @@ func TestApplySingleUpdate_Recompile_PrintsMergeWarnings(t *testing.T) {
 	_, _ = buf.ReadFrom(r)
 	assert.Contains(t, buf.String(), "asset collision: fixture warning", "a merge warning must reach the CLI, not be silently dropped")
 }
+
+// TestApplySingleUpdate_Recompile_JSON_MergeWarningsNoStderrLeak is
+// TestApplySingleUpdate_Recompile_PrintsMergeWarnings' --json sibling and
+// pins Task 11 re-review round 2 (the applyRecompile leak the round-1
+// re-review flagged as the same defect class as New Finding 1):
+// applyRecompile's own unconditional stderr print of ApplyMergedPakRegen's
+// merge warnings ran even under --json, both leaking onto stderr and
+// duplicating the warnings the jsonOutput branch below re-attaches to the
+// document.
+func TestApplySingleUpdate_Recompile_JSON_MergeWarningsNoStderrLeak(t *testing.T) {
+	svc, game, compiler, _ := setupDoUpdateRecompileTest(t)
+	compiler.mergeWarnings = []string{"asset collision: fixture warning"}
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = false })
+
+	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", "icarus", "default")
+	require.NoError(t, err)
+
+	stdout, stderr, applyErr := captureStdoutStderrErr(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+	require.NoError(t, applyErr)
+	assert.Empty(t, stderr, "a merge warning must not leak to stderr under --json (Ruling 15)")
+
+	var doc core.UpdateApplyResult
+	require.NoError(t, json.Unmarshal([]byte(stdout), &doc))
+	assert.Contains(t, doc.Warnings, "asset collision: fixture warning", "the warning must still reach the document")
+}
