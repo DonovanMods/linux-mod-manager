@@ -588,6 +588,13 @@ func TestJSONGoldens(t *testing.T) {
 			core.ModList{GameID: "skyrim-se", Profile: "default", Mods: nil},
 		},
 		{
+			// Profiles deliberately populated: ModList above already pins a
+			// nil list field encoding as "[]", and what this type adds is
+			// the game_id stamp beside the names.
+			"profile_names",
+			core.ProfileNames{GameID: "skyrim-se", Profiles: []string{"default", "survival"}},
+		},
+		{
 			// Profiles is deliberately left nil (no `omitempty` on the tag) to
 			// pin that a game with no profiles marshals as "[]", not "null".
 			"game_summary",

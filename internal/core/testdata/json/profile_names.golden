@@ -1,0 +1,7 @@
+{
+  "game_id": "skyrim-se",
+  "profiles": [
+    "default",
+    "survival"
+  ]
+}

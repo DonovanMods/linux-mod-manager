@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestList_DisplaysProfileLoadOrder_NotInstallOrder(t *testing.T) {
 
 	t.Run("json", func(t *testing.T) {
 		raw := listVerbose(t, svc, game, true)
-		var out listJSONOutput
+		var out core.ModList
 		require.NoError(t, json.Unmarshal([]byte(raw), &out))
 		require.Len(t, out.Mods, 2)
 		assert.Equal(t, "b", out.Mods[0].ID)

@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -15,35 +13,6 @@ import (
 
 var listProfile string
 var listProfiles bool
-
-type listJSONOutput struct {
-	GameID  string        `json:"game_id"`
-	Profile string        `json:"profile"`
-	Mods    []listModJSON `json:"mods"`
-}
-
-type listModJSON struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Version  string `json:"version"`
-	Source   string `json:"source"`
-	Enabled  bool   `json:"enabled"`
-	Deployed bool   `json:"deployed"`
-	Method   string `json:"link_method"`
-	// UpdatePolicy is "notify", "auto", or "pinned". Emitted unconditionally,
-	// not gated on --verbose: a JSON consumer has no other way to see that a
-	// mod is held back from updates.
-	UpdatePolicy string `json:"update_policy"`
-	// Locked/LockedVersion (#97) are additive fields (JSON-contract-
-	// additions-are-MINOR precedent): Locked is emitted unconditionally like
-	// UpdatePolicy above, LockedVersion only when actually locked so an
-	// unlocked mod's JSON row doesn't carry a stray empty string.
-	Locked        bool   `json:"locked"`
-	LockedVersion string `json:"locked_version,omitempty"`
-	// ConvertPaks (#221) is an additive field (JSON-contract-additions-are-MINOR
-	// precedent): present only for merge-compile games.
-	ConvertPaks *bool `json:"convert_paks,omitempty"`
-}
 
 var listCmd = &cobra.Command{
 	Use:   "list",
@@ -101,32 +70,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	mods := list.Mods
 
 	if jsonOutput {
-		out := listJSONOutput{GameID: list.GameID, Profile: list.Profile, Mods: make([]listModJSON, len(mods))}
-		for i, mod := range mods {
-			sourceDisplay := mod.SourceID
-			if mod.SourceID == domain.SourceLocal {
-				sourceDisplay = "local"
-			}
-			out.Mods[i] = listModJSON{
-				ID:            mod.ID,
-				Name:          mod.Name,
-				Version:       mod.Version,
-				Source:        sourceDisplay,
-				Enabled:       mod.Enabled,
-				Deployed:      mod.Deployed,
-				Method:        mod.LinkMethod.String(),
-				UpdatePolicy:  policyToString(mod.UpdatePolicy),
-				Locked:        mod.Locked,
-				LockedVersion: mod.LockedVersion,
-				ConvertPaks:   mod.ConvertPaks,
-			}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		return emitJSON(list)
 	}
 
 	if len(mods) == 0 {
@@ -222,23 +166,14 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 
 func runListProfiles(cmd *cobra.Command, service *core.Service, gameID, gameName string) error {
 	pm := service.NewProfileManager()
-	names, err := pm.ListNames(gameID)
+	profiles, err := service.ListProfileNames(gameID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
+	names := profiles.Profiles
 
 	if jsonOutput {
-		type listProfilesJSON struct {
-			GameID   string   `json:"game_id"`
-			Profiles []string `json:"profiles"`
-		}
-		out := listProfilesJSON{GameID: gameID, Profiles: names}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		return emitJSON(profiles)
 	}
 
 	if len(names) == 0 {

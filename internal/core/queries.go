@@ -104,6 +104,28 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 	return list, nil
 }
 
+// ProfileNames is everything `lmm list --profiles` renders: a game's profile
+// names in ProfileManager.List order. A bare []string would carry the names
+// with no statement of which game they belong to; the wrapper keeps the
+// document self-describing, matching ModList's own game_id/profile stamp.
+type ProfileNames struct {
+	GameID   string   `json:"game_id"`
+	Profiles []string `json:"profiles"`
+}
+
+// ListProfileNames returns gameID's profile names, in ProfileManager.List
+// order. A profile whose YAML fails to load is still listed by name (the
+// name comes from the directory entry, not the file's contents), so a
+// malformed profile never disappears from the listing that would let a user
+// find it.
+func (s *Service) ListProfileNames(gameID string) (*ProfileNames, error) {
+	names, err := s.NewProfileManager().ListNames(gameID)
+	if err != nil {
+		return nil, err
+	}
+	return &ProfileNames{GameID: gameID, Profiles: names}, nil
+}
+
 // GameSummary is one row of a StatusReport: a configured game plus the
 // counts `lmm status` shows next to it.
 //
