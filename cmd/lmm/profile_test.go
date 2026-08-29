@@ -296,7 +296,16 @@ func TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing
 
 	require.NoError(t, switchErr)
 	assert.NotContains(t, out, "Proceed?")
-	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
+	// v2 Phase 3 Ruling 15: under --json the run's whole output is the
+	// SwitchResult document; the "✓ Switched" line is suppressed, so the
+	// switch is asserted from the document and from the active profile.
+	var doc core.SwitchResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, 1, doc.Disabled)
+
+	active, err := pm.GetDefault(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "target", active.Name)
 }
 
 // TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput guards

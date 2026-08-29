@@ -165,8 +165,11 @@ var (
 	profileImportNoInstall bool
 	profileImportYes       bool
 	profileApplyYes        bool
+	profileApplyDryRun     bool
 	profileSwitchYes       bool
+	profileSwitchDryRun    bool
 	profileSyncYes         bool
+	profileSyncDryRun      bool
 	profileReorderProfile  string
 )
 
@@ -183,6 +186,7 @@ func init() {
 
 	// Switch flags
 	profileSwitchCmd.Flags().BoolVarP(&profileSwitchYes, "yes", "y", false, "auto-confirm the switch")
+	profileSwitchCmd.Flags().BoolVar(&profileSwitchDryRun, "dry-run", false, "print what the switch would do without changing anything")
 
 	// Import flags
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
@@ -191,9 +195,11 @@ func init() {
 
 	// Sync flags
 	profileSyncCmd.Flags().BoolVarP(&profileSyncYes, "yes", "y", false, "auto-confirm the sync")
+	profileSyncCmd.Flags().BoolVar(&profileSyncDryRun, "dry-run", false, "print what the sync would do without changing anything")
 
 	// Apply flags
 	profileApplyCmd.Flags().BoolVarP(&profileApplyYes, "yes", "y", false, "auto-confirm changes")
+	profileApplyCmd.Flags().BoolVar(&profileApplyDryRun, "dry-run", false, "print what the apply would do without changing anything")
 
 	// Reorder flags
 	profileReorderCmd.Flags().StringVarP(&profileReorderProfile, "profile", "p", "", "profile (default: active profile)")
@@ -262,6 +268,11 @@ func doProfileCreate(service *core.Service, game *domain.Game, name string) erro
 		return fmt.Errorf("creating profile: %w", err)
 	}
 
+	// Ruling 15: the ProfileResult document - the profile as created.
+	if jsonOutput {
+		return emitJSON(&core.ProfileResult{Profile: *profile})
+	}
+
 	fmt.Printf("✓ Created profile: %s\n", profile.Name)
 	return nil
 }
@@ -275,8 +286,29 @@ func runProfileDelete(cmd *cobra.Command, args []string) error {
 func doProfileDelete(service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
+	// Under --json the document reports WHICH profile was deleted, which
+	// means reading it before it is gone; the read happens only on that
+	// path so the plain path's behaviour (and its single Delete call) is
+	// unchanged. A load failure here is not fatal: Delete below reports a
+	// missing profile authoritatively, and a readable-but-unparseable
+	// profile still deletes - the document then names it and nothing else.
+	var deleted domain.Profile
+	if jsonOutput {
+		if p, err := pm.Get(game.ID, name); err == nil {
+			deleted = *p
+		} else {
+			deleted = domain.Profile{Name: name, GameID: game.ID}
+		}
+	}
+
 	if err := pm.Delete(game.ID, name); err != nil {
 		return fmt.Errorf("deleting profile: %w", err)
+	}
+
+	// Ruling 15: the ProfileResult document - the profile as it stood
+	// immediately before the delete (see core.ProfileResult).
+	if jsonOutput {
+		return emitJSON(&core.ProfileResult{Profile: deleted})
 	}
 
 	fmt.Printf("✓ Deleted profile: %s\n", name)
@@ -300,47 +332,84 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		return err
 	}
 
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// preview - including the already-active and no-changes readouts, both
+	// of which the plan itself states (AlreadyActive/NoChanges).
+	if profileSwitchDryRun && jsonOutput {
+		return emitJSON(plan)
+	}
+
 	if plan.AlreadyActive {
+		if jsonOutput {
+			// A run that changes nothing still owes a document: the
+			// Result an empty switch produces.
+			return emitJSON(&core.SwitchResult{})
+		}
 		fmt.Printf("Already on profile: %s\n", targetName)
 		return nil
 	}
 
-	fmt.Printf("Switching to profile: %s\n\n", targetName)
+	if !jsonOutput {
+		if profileSwitchDryRun {
+			fmt.Printf("Switch plan for profile %q (dry run)\n\n", targetName)
+		} else {
+			fmt.Printf("Switching to profile: %s\n\n", targetName)
+		}
+	}
 
 	if plan.NoChanges {
 		// No mod changes, just switch the default - ApplyProfileSwitch's
 		// three loops are all empty, so this is exactly a SetDefault call.
-		if _, err := service.ApplyProfileSwitch(ctx, game, plan, nil); err != nil {
+		// A dry run must not make even that one write.
+		if profileSwitchDryRun {
+			return nil
+		}
+		result, err := service.ApplyProfileSwitch(ctx, game, plan, nil)
+		if err != nil {
 			return err
+		}
+		if jsonOutput {
+			return emitJSON(result)
 		}
 		fmt.Printf("✓ Switched to profile: %s\n", targetName)
 		return nil
 	}
 
-	if len(plan.ToDisable) > 0 {
-		fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
-		for _, im := range plan.ToDisable {
-			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+	// The preview is the plan rendered for the human about to confirm it;
+	// under --json the document is the whole output (Ruling 15).
+	if !jsonOutput {
+		if len(plan.ToDisable) > 0 {
+			fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
+			for _, im := range plan.ToDisable {
+				fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+			}
+		}
+
+		if len(plan.ToEnable) > 0 {
+			fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
+			for _, im := range plan.ToEnable {
+				fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
+			}
+		}
+
+		if len(plan.ToInstall) > 0 {
+			fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
+			for _, ref := range plan.ToInstall {
+				fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+			}
 		}
 	}
 
-	if len(plan.ToEnable) > 0 {
-		fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
-		for _, im := range plan.ToEnable {
-			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
-		}
-	}
-
-	if len(plan.ToInstall) > 0 {
-		fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
-		for _, ref := range plan.ToInstall {
-			fmt.Printf("  ↓ %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
-		}
+	// A dry run stops here: it has shown the plan and must change nothing.
+	if profileSwitchDryRun {
+		return nil
 	}
 
 	// Confirm unless --yes
 	if !profileSwitchYes {
-		fmt.Print("\nProceed? [Y/n]: ")
+		if !jsonOutput {
+			fmt.Print("\nProceed? [Y/n]: ")
+		}
 		input, err := readPromptLine()
 		if err != nil {
 			return err
@@ -398,13 +467,19 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	result, err := service.ApplyProfileSwitch(ctx, game, plan, progress)
+	result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error (ApplyProfileSwitch's
 		// error-path convention returns them alongside it) were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
 	}
+
+	// Ruling 15: the SwitchResult document, which carries Warnings itself.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
 	// #197 postsmoke fix: SwitchResult.Warnings (unconditional stderr,
 	// unlike .Notes above) - today, only a merged-pak sync failure for the
 	// target profile. Previously this whole result was discarded.
@@ -468,23 +543,26 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	// Show summary - printed purely from the plan, matching the
-	// pre-extraction CLI's preview exactly.
-	fmt.Printf("Importing profile: %s\n\n", plan.Profile.Name)
-	totalMods := len(plan.Installed) + len(plan.NeedsRedownload) + len(plan.Missing)
-	fmt.Printf("Found %d mod(s) in profile.\n", totalMods)
-	if len(plan.Installed) > 0 {
-		fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
-	}
-	if len(plan.NeedsRedownload) > 0 {
-		fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
-		for _, ref := range plan.NeedsRedownload {
-			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+	// pre-extraction CLI's preview exactly. Not under --json: the document
+	// is the run's whole output (Ruling 15).
+	if !jsonOutput {
+		fmt.Printf("Importing profile: %s\n\n", plan.Profile.Name)
+		totalMods := len(plan.Installed) + len(plan.NeedsRedownload) + len(plan.Missing)
+		fmt.Printf("Found %d mod(s) in profile.\n", totalMods)
+		if len(plan.Installed) > 0 {
+			fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
 		}
-	}
-	if len(plan.Missing) > 0 {
-		fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
-		for _, ref := range plan.Missing {
-			fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+		if len(plan.NeedsRedownload) > 0 {
+			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
+			for _, ref := range plan.NeedsRedownload {
+				fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+			}
+		}
+		if len(plan.Missing) > 0 {
+			fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
+			for _, ref := range plan.Missing {
+				fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+			}
 		}
 	}
 
@@ -497,7 +575,9 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		if profileImportYes {
 			opts.Install = true
 		} else {
-			fmt.Print("\nDownload and install mods? [Y/n]: ")
+			if !jsonOutput {
+				fmt.Print("\nDownload and install mods? [Y/n]: ")
+			}
 			input, err := readPromptLine()
 			if err != nil {
 				// A genuine stdin read failure, not an ordinary decline (see
@@ -509,6 +589,8 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			if input != "" && input != "y" && input != "yes" {
 				declined = true
 				fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
+				// Unreachable under --json: readPromptLine above refuses to
+				// read stdin there (Ruling 2), so a decline is impossible.
 			} else {
 				opts.Install = true
 			}
@@ -550,13 +632,19 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	result, err := service.ApplyImport(ctx, game, plan, opts, progress)
+	result, err := service.ApplyImport(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
 		// above, live, via progress. ApplyImport's own error is already
 		// appropriately wrapped (e.g. "importing profile: %w" for a failed
 		// save) or bare (ctx cancellation) - no additional wrapping here.
 		return err
+	}
+
+	// Ruling 15: the ProfileImportResult document, which carries Warnings
+	// and the Installed/Failed/Skipped counters the summary below renders.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	// #197 postsmoke fix: result.Warnings was never read - a merged-pak
@@ -602,55 +690,84 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		return err
 	}
 
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// preview - the plan itself states NoChanges/Missing.
+	if profileSyncDryRun && jsonOutput {
+		return emitJSON(plan)
+	}
+
 	if plan.NoChanges {
 		// The pre-lift engine called pm.Create unconditionally before ever
 		// computing the diff, so a missing profile always got a profile.yaml
 		// even with nothing to sync into it. ApplyProfileSync still must be
 		// reached for that side effect - it creates on plan.Missing
-		// regardless of the buckets.
-		if plan.Missing {
-			if _, err := service.ApplyProfileSync(ctx, game, plan, nil); err != nil {
+		// regardless of the buckets. A dry run makes no such write.
+		var result *core.ProfileSyncResult
+		if plan.Missing && !profileSyncDryRun {
+			var err error
+			if result, err = service.ApplyProfileSync(ctx, game, plan, nil); err != nil {
 				return err
 			}
+		}
+		if jsonOutput {
+			if result == nil {
+				result = &core.ProfileSyncResult{}
+			}
+			return emitJSON(result)
 		}
 		fmt.Printf("Profile %s is already in sync.\n", profileName)
 		return nil
 	}
 
-	fmt.Printf("Syncing profile: %s\n\n", profileName)
+	// The preview is the plan rendered for the human about to confirm it;
+	// under --json the document is the whole output (Ruling 15).
+	if !jsonOutput {
+		if profileSyncDryRun {
+			fmt.Printf("Sync plan for profile %q (dry run)\n\n", profileName)
+		} else {
+			fmt.Printf("Syncing profile: %s\n\n", profileName)
+		}
 
-	if len(plan.ToAdd) > 0 {
-		fmt.Println("Will add to profile:")
-		for _, ref := range plan.ToAdd {
-			if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
-				fmt.Printf("  + %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
-			} else {
-				fmt.Printf("  + %s:%s\n", ref.SourceID, ref.ModID)
+		if len(plan.ToAdd) > 0 {
+			fmt.Println("Will add to profile:")
+			for _, ref := range plan.ToAdd {
+				if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+					fmt.Printf("  + %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
+				} else {
+					fmt.Printf("  + %s:%s\n", ref.SourceID, ref.ModID)
+				}
+			}
+		}
+
+		if len(plan.ToRemove) > 0 {
+			fmt.Println("Will remove from profile:")
+			for _, ref := range plan.ToRemove {
+				fmt.Printf("  - %s:%s\n", ref.SourceID, ref.ModID)
+			}
+		}
+
+		if len(plan.ToUpdate) > 0 {
+			fmt.Println("Will update FileIDs for:")
+			for _, ref := range plan.ToUpdate {
+				if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+					fmt.Printf("  ~ %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
+				} else {
+					fmt.Printf("  ~ %s:%s\n", ref.SourceID, ref.ModID)
+				}
 			}
 		}
 	}
 
-	if len(plan.ToRemove) > 0 {
-		fmt.Println("Will remove from profile:")
-		for _, ref := range plan.ToRemove {
-			fmt.Printf("  - %s:%s\n", ref.SourceID, ref.ModID)
-		}
-	}
-
-	if len(plan.ToUpdate) > 0 {
-		fmt.Println("Will update FileIDs for:")
-		for _, ref := range plan.ToUpdate {
-			if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
-				fmt.Printf("  ~ %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
-			} else {
-				fmt.Printf("  ~ %s:%s\n", ref.SourceID, ref.ModID)
-			}
-		}
+	// A dry run stops here: it has shown the plan and must change nothing.
+	if profileSyncDryRun {
+		return nil
 	}
 
 	// Confirm unless --yes
 	if !profileSyncYes {
-		fmt.Print("\nProceed? [Y/n]: ")
+		if !jsonOutput {
+			fmt.Print("\nProceed? [Y/n]: ")
+		}
 		input, err := readPromptLine()
 		if err != nil {
 			return err
@@ -679,9 +796,15 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		}
 	}
 
-	result, err := service.ApplyProfileSync(ctx, game, plan, progress)
+	result, err := service.ApplyProfileSync(ctx, game, plan, quietSink(progress))
 	if err != nil {
 		return err
+	}
+
+	// Ruling 15: the ProfileSyncResult document, which carries Warnings
+	// itself.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	// #197: unconditional stderr, unlike the --verbose-gated warnings above -
@@ -727,6 +850,11 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
+		// Ruling 15: the load-order READOUT is the same profile document a
+		// reorder emits - profile.Mods IS the load order, in order.
+		if jsonOutput {
+			return emitJSON(&core.ProfileResult{Profile: *profile})
+		}
 		// Show current load order
 		if len(profile.Mods) == 0 {
 			fmt.Printf("No mods in profile %s.\n", profileName)
@@ -768,6 +896,18 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 	if err := service.ReorderProfileMods(ctx, game.ID, profileName, newRefs); err != nil {
 		return fmt.Errorf("reordering: %w", err)
 	}
+
+	// Ruling 15: the ProfileResult document - the profile as it now stands,
+	// re-read so the document reports what was persisted rather than what
+	// was requested.
+	if jsonOutput {
+		profile, err := getProfileManager(service).Get(game.ID, profileName)
+		if err != nil {
+			return fmt.Errorf("loading profile: %w", err)
+		}
+		return emitJSON(&core.ProfileResult{Profile: *profile})
+	}
+
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)
 	return nil
 }
@@ -792,37 +932,65 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		return err
 	}
 
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// preview is rendered.
+	if profileApplyDryRun && jsonOutput {
+		return emitJSON(plan)
+	}
+
 	if plan.NoChanges {
+		if jsonOutput {
+			// Nothing to do is still a run that owes a document: the
+			// Result an apply with no work produces.
+			return emitJSON(&core.ProfileApplyResult{})
+		}
 		fmt.Printf("System already matches profile %s.\n", profileName)
 		return nil
 	}
 
-	fmt.Printf("Applying profile: %s\n\n", profileName)
+	// The preview is the plan rendered for the human about to confirm it.
+	// Under --json it is not printed at all (the document is the whole
+	// output, Ruling 15); under --dry-run the header names it a dry run,
+	// matching `deploy --dry-run`'s "<verb> plan for profile %q (dry run)".
+	if !jsonOutput {
+		if profileApplyDryRun {
+			fmt.Printf("Apply plan for profile %q (dry run)\n\n", profileName)
+		} else {
+			fmt.Printf("Applying profile: %s\n\n", profileName)
+		}
 
-	if len(plan.ToDisable) > 0 {
-		fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
-		for _, im := range plan.ToDisable {
-			fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+		if len(plan.ToDisable) > 0 {
+			fmt.Printf("Will disable %d mod(s):\n", len(plan.ToDisable))
+			for _, im := range plan.ToDisable {
+				fmt.Printf("  - %s (%s)\n", im.Name, im.ID)
+			}
+		}
+
+		if len(plan.ToEnable) > 0 {
+			fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
+			for _, im := range plan.ToEnable {
+				fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
+			}
+		}
+
+		if len(plan.ToInstall) > 0 {
+			fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
+			for _, entry := range plan.ToInstall {
+				fmt.Printf("  ↓ %s:%s v%s\n", entry.Ref.SourceID, entry.Ref.ModID, entry.Ref.Version)
+			}
 		}
 	}
 
-	if len(plan.ToEnable) > 0 {
-		fmt.Printf("Will enable %d mod(s):\n", len(plan.ToEnable))
-		for _, im := range plan.ToEnable {
-			fmt.Printf("  + %s (%s)\n", im.Name, im.ID)
-		}
-	}
-
-	if len(plan.ToInstall) > 0 {
-		fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
-		for _, entry := range plan.ToInstall {
-			fmt.Printf("  ↓ %s:%s v%s\n", entry.Ref.SourceID, entry.Ref.ModID, entry.Ref.Version)
-		}
+	// A dry run stops here: it has shown the plan and must change nothing.
+	if profileApplyDryRun {
+		return nil
 	}
 
 	// Confirm unless --yes
 	if !profileApplyYes {
-		fmt.Print("\nProceed? [Y/n]: ")
+		if !jsonOutput {
+			fmt.Print("\nProceed? [Y/n]: ")
+		}
 		input, err := readPromptLine()
 		if err != nil {
 			return err
@@ -875,11 +1043,17 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		}
 	}
 
-	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, progress)
+	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
 		// live via progress - nothing left to print here.
 		return err
+	}
+
+	// Ruling 15: the ProfileApplyResult document, which carries Warnings
+	// itself - so the unconditional stderr line below is not printed.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	// #197: unconditional stderr, unlike the --verbose-gated Notes above -

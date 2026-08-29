@@ -1,0 +1,36 @@
+{
+  "game_id": "g1",
+  "from": "default",
+  "to": "other",
+  "to_enable": [],
+  "to_disable": [
+    {
+      "id": "a",
+      "source_id": "src",
+      "name": "Mod A",
+      "version": "1.0",
+      "author": "",
+      "summary": "",
+      "description": "",
+      "game_id": "g1",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "0001-01-01T00:00:00Z",
+      "profile_name": "default",
+      "update_policy": "notify",
+      "installed_at": "<TIME>",
+      "enabled": true,
+      "deployed": false,
+      "link_method": "symlink",
+      "manual_download": false,
+      "convert_paks": true
+    }
+  ],
+  "to_install": [],
+  "no_changes": false,
+  "already_active": false
+}

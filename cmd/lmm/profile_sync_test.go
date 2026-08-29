@@ -286,10 +286,18 @@ func TestDoProfileSync_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T
 
 	require.NoError(t, syncErr)
 	assert.NotContains(t, out, "Proceed?")
-	assert.Equal(t, "Syncing profile: default\n\n"+
-		"Will add to profile:\n"+
-		"  + Add One (src:add1)\n"+
-		"✓ Synced profile: default\n", out)
+	// v2 Phase 3 Ruling 15: under --json the run's whole output is the
+	// ProfileSyncResult document - the preview and the "✓ Synced" line the
+	// plain path prints are suppressed, so the sync is asserted from the
+	// document (and from the profile itself).
+	var doc core.ProfileSyncResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, 1, doc.Added)
+
+	profile, err := getProfileManager(svc).Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "add1", profile.Mods[0].ModID)
 }
 
 // TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly pins Ruling 9:

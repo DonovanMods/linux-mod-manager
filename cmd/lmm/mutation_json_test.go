@@ -357,3 +357,224 @@ func TestJSONGolden_GameDetect(t *testing.T) {
 		assert.Empty(t, games, "nothing may be saved when the prompt is refused")
 	})
 }
+
+// --- profile create / delete / reorder ---
+
+// withProfileDryRun turns one of the three new profile --dry-run flags on
+// for the duration of a test.
+func withProfileDryRun(t *testing.T, flag *bool) {
+	t.Helper()
+	old := *flag
+	*flag = true
+	t.Cleanup(func() { *flag = old })
+}
+
+// withProfileSwitchYes / withProfileSyncYes answer switch's and sync's
+// "Proceed?" prompts from the flag, which is the only way to reach their
+// apply step under --json (Ruling 2).
+func withProfileSwitchYes(t *testing.T) {
+	t.Helper()
+	old := profileSwitchYes
+	profileSwitchYes = true
+	t.Cleanup(func() { profileSwitchYes = old })
+}
+
+func withProfileSyncYes(t *testing.T) {
+	t.Helper()
+	old := profileSyncYes
+	profileSyncYes = true
+	t.Cleanup(func() { profileSyncYes = old })
+}
+
+func TestJSONGolden_ProfileManagement(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileCreate(svc, game, "survival")
+		})
+		assertJSONCLIGolden(t, "profile_create_result", out)
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		_, err := getProfileManager(svc).Create(game.ID, "survival")
+		require.NoError(t, err)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileDelete(svc, game, "survival")
+		})
+		assertJSONCLIGolden(t, "profile_delete_result", out)
+	})
+
+	t.Run("reorder", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
+
+		out := runJSONCommand(t, func() error {
+			return doProfileReorder(context.Background(), svc, game, []string{"b", "a"})
+		})
+		assertJSONCLIGolden(t, "profile_reorder_result", out)
+	})
+}
+
+// --- profile apply / switch / sync / import ---
+
+func TestJSONGolden_ProfileApply(t *testing.T) {
+	t.Run("result", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		pm := getProfileManager(svc)
+		seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true, map[string][]byte{"dis1.esp": []byte("dis")})
+		seedApplyCandidateMod(t, svc, game, "src", "en1", "En One", "1.0", false, map[string][]byte{"en1.esp": []byte("en")})
+		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
+		applyYes(t)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileApply(context.Background(), svc, game, nil)
+		})
+		assertJSONCLIGolden(t, "profile_apply_result", out)
+	})
+
+	t.Run("dry_run_plan", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		pm := getProfileManager(svc)
+		seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true, map[string][]byte{"dis1.esp": []byte("dis")})
+		seedApplyCandidateMod(t, svc, game, "src", "en1", "En One", "1.0", false, map[string][]byte{"en1.esp": []byte("en")})
+		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
+		withProfileDryRun(t, &profileApplyDryRun)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileApply(context.Background(), svc, game, nil)
+		})
+		assertJSONCLIGolden(t, "profile_apply_dry_run", out)
+	})
+}
+
+func TestJSONGolden_ProfileSwitch(t *testing.T) {
+	t.Run("result", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		pm := getProfileManager(svc)
+		_, err := pm.Create(game.ID, "other")
+		require.NoError(t, err)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		withProfileSwitchYes(t)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "other")
+		})
+		assertJSONCLIGolden(t, "profile_switch_result", out)
+	})
+
+	t.Run("dry_run_plan", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		pm := getProfileManager(svc)
+		_, err := pm.Create(game.ID, "other")
+		require.NoError(t, err)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+		withProfileDryRun(t, &profileSwitchDryRun)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "other")
+		})
+		assertJSONCLIGolden(t, "profile_switch_dry_run", out)
+	})
+}
+
+func TestJSONGolden_ProfileSync(t *testing.T) {
+	t.Run("result", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		seedSyncInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", "default", true, nil)
+		withProfileSyncYes(t)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileSync(context.Background(), svc, game, nil)
+		})
+		assertJSONCLIGolden(t, "profile_sync_result", out)
+	})
+
+	t.Run("dry_run_plan", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		seedSyncInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", "default", true, nil)
+		withProfileDryRun(t, &profileSyncDryRun)
+
+		out := runJSONCommand(t, func() error {
+			return doProfileSync(context.Background(), svc, game, nil)
+		})
+		assertJSONCLIGolden(t, "profile_sync_dry_run", out)
+	})
+}
+
+func TestJSONGolden_ProfileImport(t *testing.T) {
+	svc, game, _ := setupDoProfileImportTest(t)
+	data := buildImportProfileData(t, game.ID, "imported", nil)
+
+	out := runJSONCommand(t, func() error {
+		return doProfileImport(context.Background(), svc, game, data)
+	})
+	assertJSONCLIGolden(t, "profile_import_result", out)
+}
+
+// --- the new profile --dry-run flags, plain text ---
+//
+// apply/switch/sync gained --dry-run in this task (the flag `--dry-run
+// --json` needs in order to emit a Plan). All of it is new output behind a
+// new flag, so no existing invocation changes; these pin the new lines and,
+// more importantly, that a dry run writes nothing.
+
+func TestDoProfileApply_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true, map[string][]byte{"dis1.esp": []byte("dis")})
+	withProfileDryRun(t, &profileApplyDryRun)
+
+	out := captureStdout(t, func() error {
+		return doProfileApply(context.Background(), svc, game, nil)
+	})
+
+	assert.Equal(t, "Apply plan for profile \"default\" (dry run)\n\n"+
+		"Will disable 1 mod(s):\n"+
+		"  - Dis One (dis1)\n", out)
+
+	mod, err := svc.GetInstalledMod(context.Background(), "src", "dis1", game.ID, "default")
+	require.NoError(t, err)
+	assert.True(t, mod.Enabled, "a dry run must not disable anything")
+}
+
+func TestDoProfileSwitch_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	withProfileDryRun(t, &profileSwitchDryRun)
+
+	out := captureStdout(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	assert.Equal(t, "Switch plan for profile \"target\" (dry run)\n\n"+
+		"Will disable 1 mod(s):\n"+
+		"  - Disable Me (disable-me)\n", out)
+
+	active, err := pm.GetDefault(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "default", active.Name, "a dry run must not switch the active profile")
+}
+
+func TestDoProfileSync_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
+	withProfileDryRun(t, &profileSyncDryRun)
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	assert.Equal(t, "Sync plan for profile \"default\" (dry run)\n\n"+
+		"Will add to profile:\n"+
+		"  + Add One (src:add1)\n", out)
+
+	profile, err := getProfileManager(svc).Get(game.ID, "default")
+	require.NoError(t, err)
+	assert.Empty(t, profile.Mods, "a dry run must not write the profile")
+}
