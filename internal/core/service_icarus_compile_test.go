@@ -524,7 +524,7 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	require.True(t, badManifests["pak"].Recorded)
 	require.Equal(t, []string{"badmod.pak"}, badManifests["pak"].Members, "a failed conversion must keep its raw pak deployed")
 
-	outcomes, ok := svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok := svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	byMod := make(map[string]core.MergedFingerprintEntry, len(outcomes))
 	for _, o := range outcomes {
@@ -559,7 +559,7 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"goodmod.pak"}, goodManifests["pak"].Members, "opting out must flip goodmod back to raw deploy")
 
-	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	for _, o := range outcomes {
 		require.NotEqual(t, "goodmod", o.ModID, "an opted-out mod must not appear in the merge fingerprint")

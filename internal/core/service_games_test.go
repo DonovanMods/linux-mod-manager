@@ -9,8 +9,32 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestService_ListGames_OrderedByGameID pins Ruling 4 (#299): ListGames
+// (games.go, gamesSnapshot's caller - consumed by lmm status/lmm game list)
+// orders its result by game ID, not whatever order Go's games map iteration
+// happens to produce this run. IDs are seeded deliberately out of order.
+func TestService_ListGames_OrderedByGameID(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+
+	for _, id := range []string{"zulu", "mike", "alpha", "yankee", "bravo"} {
+		require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: id, Name: id, ModPath: t.TempDir()}))
+	}
+
+	games := svc.ListGames()
+	require.Len(t, games, 5)
+	got := make([]string, len(games))
+	for i, g := range games {
+		got[i] = g.ID
+	}
+	assert.Equal(t, []string{"alpha", "bravo", "mike", "yankee", "zulu"}, got)
+}
 
 // TestService_SaveGame_ConcurrentWithReaders pins the games-map contract: a
 // writer and many readers may interleave freely (run with -race).

@@ -236,7 +236,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	}
 
 	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter}
-	result, err := svc.Verify(cmd.Context(), game, profile, opts, func(e core.Event) {
+	report, err := svc.VerifyReport(cmd.Context(), game, profile, opts, func(e core.Event) {
 		ev, ok := e.(core.VerifyEvent)
 		if !ok {
 			return
@@ -252,6 +252,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	if err != nil {
 		return err
 	}
+	result := report.Result
 
 	if jsonOutput {
 		// Always a non-nil slice (even with zero findings, e.g. an
@@ -263,7 +264,7 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(verifyJSONOutput{GameID: game.ID, Profile: profile, Files: jsonFiles, Issues: result.Issues, Warnings: result.Warnings}); err != nil {
+		if err := enc.Encode(verifyJSONOutput{GameID: report.GameID, Profile: report.Profile, Files: jsonFiles, Issues: result.Issues, Warnings: result.Warnings}); err != nil {
 			return fmt.Errorf("encoding json: %w", err)
 		}
 		return nil

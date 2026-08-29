@@ -41,7 +41,7 @@ type ProfileApplyPlan struct {
 	// ToInstall is the (re)install list, in the order doProfileApply built
 	// it: first the entries the installed-mods pass produced - #96
 	// version-drift convergences and cache-miss re-downloads, in
-	// OrderByProfile order - then the profile's own not-installed mods, in
+	// orderByProfile order - then the profile's own not-installed mods, in
 	// profile order. It is ONE ordered list rather than the task brief's
 	// separate to_install/to_reinstall buckets precisely because those two
 	// groups interleave: a cache-miss re-download can precede a
@@ -156,7 +156,7 @@ type ProfileApplyResult struct {
 // speculatively, render it, and discard it.
 //
 // The three buckets are built exactly as doProfileApply built them,
-// including their deterministic ordering (OrderByProfile for the
+// including their deterministic ordering (orderByProfile for the
 // installed-mods pass, profile order for the profile pass - never Go map
 // order). Each ToInstall entry is then resolved against its source; a
 // resolution failure fails that ONE entry (recorded as Error text) rather
@@ -189,10 +189,10 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 	gameCache := s.GetGameCache(game)
 
 	// Pass 1 - installed mods against the profile. Deterministic order:
-	// OrderByProfile(profile, installedMods), not a range over
+	// orderByProfile(profile, installedMods), not a range over
 	// installedByKey (which iterates map order); installedByKey stays for
 	// the membership lookup in pass 2.
-	ordered := OrderByProfile(profile, installedMods)
+	ordered := orderByProfile(profile, installedMods)
 	for i := range ordered {
 		im := &ordered[i]
 		key := domain.ModKey(im.SourceID, im.ID)

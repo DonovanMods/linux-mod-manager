@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -91,63 +90,24 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		return err
 	}
 
-	mods, err := service.GetInstalledMods(ctx, game.ID, profileName)
+	// core.ListMods owns the whole join - the DB rows, the profile YAML's
+	// lock state (#97), the load order (#201, OrderByProfile: a mod absent
+	// from the order is placed first, never dropped) and per-mod pak-
+	// conversion applicability (#221) - so this command only renders it.
+	list, err := service.ListMods(ctx, game, profileName)
 	if err != nil {
-		return fmt.Errorf("getting installed mods: %w", err)
+		return err
 	}
-
-	// #97: lock state lives on the profile YAML ref, not the DB row
-	// GetInstalledMods above already returned - load it separately and key
-	// by domain.ModKey for O(1) lookup per mod below (a precomputed map,
-	// not per-row FindRef, since this loops over every mod). Tolerant ONLY
-	// of a genuinely missing profile.yaml (domain.ErrProfileNotFound) - a
-	// fresh profile with no YAML on disk yet just means nothing shows as
-	// locked, not a failed listing. Any OTHER LoadProfile error, including
-	// #172's fail-loud link_method validation, must surface immediately
-	// instead of silently degrading: swallowing it here used to mean an
-	// invalid profile YAML made `lmm list` quietly show no lock info AND
-	// (per #201) treat every mod as absent from the load order, instead of
-	// reporting the same error every other command honors (#203 release
-	// review).
-	profileYAML, err := service.NewProfileManager().Get(game.ID, profileName)
-	if err != nil && !errors.Is(err, domain.ErrProfileNotFound) {
-		return fmt.Errorf("loading profile: %w", err)
-	}
-	lockedByKey := map[string]domain.ModReference{}
-	if profileYAML != nil {
-		for _, ref := range profileYAML.Mods {
-			if ref.Locked {
-				lockedByKey[domain.ModKey(ref.SourceID, ref.ModID)] = ref
-			}
-		}
-	}
-
-	// #201: display the profile's load order - the order that actually
-	// decides merge precedence (later = merged later = wins) - not
-	// installed_at (GetInstalledMods' own DB order), which has no
-	// relationship to it. core.OrderByProfile, not the deploy-only
-	// GetInstalledModsInProfileOrder seam: that one deliberately OMITS a
-	// mod absent from the profile's load order (correct for deploy - an
-	// untracked mod must never silently deploy), which would make such a
-	// mod vanish from a listing instead of just being placed first (lowest
-	// priority, since it has no claim to "final say"). OrderByProfile is
-	// the never-omitting seam that keeps every installed mod visible in
-	// the listing.
-	mods = core.OrderByProfile(profileYAML, mods)
+	mods := list.Mods
 
 	if jsonOutput {
-		out := listJSONOutput{GameID: game.ID, Profile: profileName, Mods: make([]listModJSON, len(mods))}
+		out := listJSONOutput{GameID: list.GameID, Profile: list.Profile, Mods: make([]listModJSON, len(mods))}
 		for i, mod := range mods {
 			sourceDisplay := mod.SourceID
 			if mod.SourceID == domain.SourceLocal {
 				sourceDisplay = "local"
 			}
-			lockedRef, locked := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]
-			lockedVersion := ""
-			if locked {
-				lockedVersion = lockedRef.Version
-			}
-			row := listModJSON{
+			out.Mods[i] = listModJSON{
 				ID:            mod.ID,
 				Name:          mod.Name,
 				Version:       mod.Version,
@@ -156,15 +116,10 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 				Deployed:      mod.Deployed,
 				Method:        mod.LinkMethod.String(),
 				UpdatePolicy:  policyToString(mod.UpdatePolicy),
-				Locked:        locked,
-				LockedVersion: lockedVersion,
+				Locked:        mod.Locked,
+				LockedVersion: mod.LockedVersion,
+				ConvertPaks:   mod.ConvertPaks,
 			}
-			// Populate ConvertPaks only for merge-compile games with pak merge source
-			if game.DeployMode == domain.DeployCompile && service.ModHasPakMergeSource(game, &mod) {
-				v := mod.ConvertPaks
-				row.ConvertPaks = &v
-			}
-			out.Mods[i] = row
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -221,12 +176,12 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 				sourceDisplay = "(local)"
 			}
 			locked := "-"
-			if lockedRef, ok := lockedByKey[domain.ModKey(mod.SourceID, mod.ID)]; ok {
-				locked = lockedRef.Version
+			if mod.Locked {
+				locked = mod.LockedVersion
 			}
 			convert := "-"
-			if game.DeployMode == domain.DeployCompile && service.ModHasPakMergeSource(game, &mod) {
-				if mod.ConvertPaks {
+			if mod.ConvertPaks != nil {
+				if *mod.ConvertPaks {
 					convert = "on"
 				} else {
 					convert = "off"

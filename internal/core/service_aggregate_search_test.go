@@ -93,7 +93,7 @@ func TestSearchAllSourcesMergesAndTags(t *testing.T) {
 	}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": "mapped-beta"}, a, b)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "cool", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "cool", "", nil, 0, 10)
 	require.NoError(t, err)
 	assert.Empty(t, res.Warnings)
 	assert.Equal(t, 9, res.TotalCount)
@@ -117,7 +117,7 @@ func TestSearchAllSourcesFailureIsWarning(t *testing.T) {
 	flaky := &searchStubSource{id: "remote", err: fmt.Errorf("dial tcp: connection refused")}
 	svc, game := newAggregateTestService(t, map[string]string{"local": "", "remote": ""}, ok, flaky)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "mod", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "mod", "", nil, 0, 10)
 	require.NoError(t, err, "one flaky source must not fail the aggregate")
 	require.Len(t, res.Mods, 1)
 	assert.Equal(t, "local", res.Mods[0].SourceID)
@@ -134,7 +134,7 @@ func TestSearchAllSourcesSkipsNonSearching(t *testing.T) {
 		err: fmt.Errorf("should never be called")}}
 	svc, game := newAggregateTestService(t, map[string]string{"manifest": "", "id-only-api": ""}, searcher, idOnly)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10)
 	require.NoError(t, err)
 	assert.Empty(t, res.Warnings, "non-searching sources are skipped silently, not warned")
 	require.Len(t, res.Mods, 1)
@@ -144,7 +144,7 @@ func TestSearchAllSourcesUnregisteredMappedSourceWarns(t *testing.T) {
 	ok := &searchStubSource{id: "real", result: source.SearchResult{Mods: mods("real", "x"), TotalCount: 1}}
 	svc, game := newAggregateTestService(t, map[string]string{"real": "", "ghost": ""}, ok)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "x", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "x", "", nil, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, res.Warnings, 1)
 	assert.Equal(t, "ghost", res.Warnings[0].SourceID)
@@ -156,7 +156,7 @@ func TestSearchAllSourcesAllFailedIsError(t *testing.T) {
 	f2 := &searchStubSource{id: "s2", err: errors.New("boom2")}
 	svc, game := newAggregateTestService(t, map[string]string{"s1": "", "s2": ""}, f1, f2)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "x", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "x", "", nil, 0, 10)
 	require.Error(t, err)
 	assert.Len(t, res.Warnings, 2)
 	assert.Empty(t, res.Mods)
@@ -164,7 +164,7 @@ func TestSearchAllSourcesAllFailedIsError(t *testing.T) {
 
 func TestSearchAllSourcesUnknownGame(t *testing.T) {
 	svc, _ := newAggregateTestService(t, map[string]string{})
-	_, err := svc.SearchAllSources(context.Background(), "nope", "x", "", nil, 0, 10)
+	_, err := svc.SearchAllSourcesForTest(context.Background(), "nope", "x", "", nil, 0, 10)
 	assert.Error(t, err)
 }
 
@@ -188,7 +188,7 @@ func TestSearchAllSourcesExhaustedWhenEveryCatalogFitsOnPageOne(t *testing.T) {
 	a, b, c := newTenModSource("alpha"), newTenModSource("beta"), newTenModSource("gamma")
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": "", "gamma": ""}, a, b, c)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, 30, res.TotalCount, "summed across sources, per AggregateSearchResult.TotalCount's contract")
 	assert.True(t, res.Exhausted, "every source's own TotalCount says page 0 was its last page")
@@ -205,7 +205,7 @@ func TestSearchAllSourcesNotExhaustedWhenASourceHasMore(t *testing.T) {
 	}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": "", "beta": ""}, exhausted, hasMore)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10)
 	require.NoError(t, err)
 	assert.False(t, res.Exhausted, "beta has 25 total and only returned page 0's 10, so more remain")
 }
@@ -218,7 +218,7 @@ func TestSearchAllSourcesExhaustedFallsBackToShortPageWhenTotalUnknown(t *testin
 	shortPage := &searchStubSource{id: "alpha", result: source.SearchResult{Mods: mods("alpha", "m1"), TotalCount: 0}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, shortPage)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10)
 	require.NoError(t, err)
 	assert.True(t, res.Exhausted, "a short page (1 < pageSize 10) with no reported total means no more")
 }
@@ -237,7 +237,7 @@ func TestSearchAllSourcesAttemptedCountZeroWhenNoCapableSources(t *testing.T) {
 	idOnly := &capsStubSource{&searchStubSource{id: "id-only-api", caps: &caps, err: fmt.Errorf("should never be called")}}
 	svc, game := newAggregateTestService(t, map[string]string{"id-only-api": ""}, idOnly)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "m", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "m", "", nil, 0, 10)
 	require.NoError(t, err, "zero capable sources is not itself a failure")
 	assert.Equal(t, 0, res.AttemptedCount)
 	assert.Empty(t, res.Mods)
@@ -250,7 +250,7 @@ func TestSearchAllSourcesAttemptedCountReflectsRealAttempts(t *testing.T) {
 	empty := &searchStubSource{id: "alpha", result: source.SearchResult{}}
 	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, empty)
 
-	res, err := svc.SearchAllSources(context.Background(), game.ID, "nothing-matches", "", nil, 0, 10)
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "nothing-matches", "", nil, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.AttemptedCount)
 	assert.Empty(t, res.Mods)

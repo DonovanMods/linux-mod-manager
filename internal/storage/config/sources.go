@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,7 +33,7 @@ func (e SourceLoadError) Unwrap() error {
 // <configDir>/sources. A missing directory yields no definitions and no error.
 // Per-file parse/validation failures (including duplicate IDs) are returned as
 // SourceLoadErrors; the hard error is reserved for an unreadable directory.
-func LoadSourceDefinitions(configDir string) ([]custom.SourceDefinition, []SourceLoadError, error) {
+func LoadSourceDefinitions(configDir string) ([]source.SourceDefinition, []SourceLoadError, error) {
 	dir := filepath.Join(configDir, "sources")
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -43,7 +43,7 @@ func LoadSourceDefinitions(configDir string) ([]custom.SourceDefinition, []Sourc
 		return nil, nil, fmt.Errorf("reading sources directory %s: %w", dir, err)
 	}
 
-	var defs []custom.SourceDefinition
+	var defs []source.SourceDefinition
 	var loadErrs []SourceLoadError
 	seen := make(map[string]string) // id -> filename that claimed it
 
@@ -73,18 +73,18 @@ func LoadSourceDefinitions(configDir string) ([]custom.SourceDefinition, []Sourc
 }
 
 // LoadSourceDefinitionFile reads and validates a single source definition file.
-func LoadSourceDefinitionFile(path string) (custom.SourceDefinition, error) {
+func LoadSourceDefinitionFile(path string) (source.SourceDefinition, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return custom.SourceDefinition{}, fmt.Errorf("reading definition: %w", err)
+		return source.SourceDefinition{}, fmt.Errorf("reading definition: %w", err)
 	}
 
-	var def custom.SourceDefinition
+	var def source.SourceDefinition
 	if err := yaml.Unmarshal(data, &def); err != nil {
-		return custom.SourceDefinition{}, fmt.Errorf("parsing YAML: %w", err)
+		return source.SourceDefinition{}, fmt.Errorf("parsing YAML: %w", err)
 	}
 	if err := def.Validate(); err != nil {
-		return custom.SourceDefinition{}, fmt.Errorf("invalid definition: %w", err)
+		return source.SourceDefinition{}, fmt.Errorf("invalid definition: %w", err)
 	}
 
 	return def, nil

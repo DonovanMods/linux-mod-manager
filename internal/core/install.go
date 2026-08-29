@@ -88,10 +88,14 @@ type InstallPlan struct {
 	// to "no dependencies found for that mod" and the plan still succeeds -
 	// this field exists purely so a caller can tell the user dependency
 	// resolution didn't run cleanly, the same way MissingDependencies/
-	// CycleDetected surface their own non-fatal degradations. Each entry is
-	// "<sourceID:modID>: <error>", already formatted for direct display
-	// (see resolveInstallDependencies).
-	DependencyWarnings []string `json:"dependency_warnings,omitempty"`
+	// CycleDetected surface their own non-fatal degradations. Each entry
+	// names the mod whose GetDependencies call failed (SourceID/ModID) and
+	// carries the raw error text (Message) - structured data, not the
+	// pre-extraction CLI's "<sourceID:modID>: <error>" joined string (v2
+	// Phase 3 Task 2, #301: a caller reconstructs that exact text via
+	// domain.ModKey(w.SourceID, w.ModID)+": "+w.Message - see
+	// resolveInstallDependencies).
+	DependencyWarnings []DependencyWarning `json:"dependency_warnings,omitempty"`
 
 	// Conflicts lists files installing Mod would overwrite from OTHER
 	// installed mods, exactly as installer.GetConflicts reports them - but
@@ -158,6 +162,19 @@ type InstallPlan struct {
 	// a displayable fact, and a JSON frontend re-plans rather than
 	// round-tripping one.
 	snapshot installedSnapshot `json:"-"`
+}
+
+// DependencyWarning is one InstallPlan.DependencyWarnings entry: a
+// GetDependencies call that failed for (SourceID, ModID) with something
+// other than source.ErrNotSupported, carrying the raw error text as Message
+// rather than a pre-joined "<sourceID:modID>: <error>" string (v2 Phase 3
+// Task 2, #301 - JSON carries data, never formatted text). See
+// InstallPlan.DependencyWarnings' doc comment for how a plain-text renderer
+// reconstructs the historical joined line.
+type DependencyWarning struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	Message  string `json:"message"`
 }
 
 // InstallPlanEntry is one mod's worth of a PlanInstallMany plan: what the
@@ -484,7 +501,7 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 // miss - LMM ids are user-chosen in games.yaml, so a collision with another
 // game's LMM id would translate the already-translated id and silently fetch
 // dependencies from the wrong game.
-func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID, gameID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool, warnings []string) {
+func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID, gameID string, target *domain.Mod, installedIDs map[string]bool) (deps []domain.Mod, missing []domain.ModReference, cycleDetected bool, warnings []DependencyWarning) {
 	visited := make(map[string]bool)
 	stack := make(map[string]bool) // keys currently being visited (cycle detection)
 
@@ -504,7 +521,7 @@ func (s *Service) resolveInstallDependencies(ctx context.Context, sourceID, game
 			// only a REAL failure (not a plain capability gap) is worth
 			// telling the caller about.
 			if !errors.Is(err, source.ErrNotSupported) {
-				warnings = append(warnings, fmt.Sprintf("%s: %v", key, err))
+				warnings = append(warnings, DependencyWarning{SourceID: mod.SourceID, ModID: mod.ID, Message: err.Error()})
 			}
 			return
 		}
@@ -657,6 +674,19 @@ type InstallOptions struct {
 	ConfirmConflicts func(conflicts []Conflict) bool
 }
 
+// InstalledRef identifies one mod on an InstallResult.Installed/Skipped/
+// Failed entry (v2 Phase 3 Task 2, #301: replaces the pre-extraction CLI's
+// "<name>: <reason>" joined strings with structured data - JSON carries
+// data, never formatted text). Version is the version that was (or would
+// have been) installed; Reason is set only on a Skipped/Failed entry.
+type InstalledRef struct {
+	SourceID string `json:"source_id"`
+	ModID    string `json:"mod_id"`
+	Name     string `json:"name"`
+	Version  string `json:"version,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // InstallResult reports the outcome of ApplyInstall. As with DeployResult/
 // UninstallResult/SwitchResult, every entry below is always recorded - there
 // is no verbosity concept in core.
@@ -686,28 +716,32 @@ type InstallOptions struct {
 // On error, the returned result carries any diagnostics/counts accumulated
 // before the failure; callers should surface them alongside the error.
 type InstallResult struct {
-	// Installed holds display names in install order: dependencies first,
-	// then the primary. In the STRICT (no-deps) path, a primary failure is
-	// FATAL - it returns an error instead of appending here. In the BATCH
-	// (Dependencies-present) path, the primary follows the exact same
-	// skip-and-continue semantics as every dependency (Fix wave 1 - see
-	// task-2-report.md's "Fix wave 1" entry) - a primary failure there
-	// populates Failed/Skipped below instead of returning an error.
-	Installed []string `json:"installed"`
-	// Skipped holds "<name>: <reason>" entries for any mod that failed in
-	// the BATCH (Dependencies-present) path - dependency OR primary alike
+	// Installed holds one entry per mod in install order: dependencies
+	// first, then the primary. In the STRICT (no-deps) path, a primary
+	// failure is FATAL - it returns an error instead of appending here. In
+	// the BATCH (Dependencies-present) path, the primary follows the exact
+	// same skip-and-continue semantics as every dependency (Fix wave 1 -
+	// see task-2-report.md's "Fix wave 1" entry) - a primary failure there
+	// populates Failed/Skipped below instead of returning an error. Reason
+	// is always empty here (see DependencyWarnings' Skipped/Failed
+	// counterpart for that).
+	Installed []InstalledRef `json:"installed"`
+	// Skipped holds one entry (Reason populated) per mod that failed in the
+	// BATCH (Dependencies-present) path - dependency OR primary alike
 	// (Fix wave 1 restored the primary's participation; see InstallOptions'
 	// Force doc comment). Always empty in the STRICT (no-deps) path, since
-	// a primary failure there returns an error instead.
-	Skipped []string `json:"skipped,omitempty"`
-	// Failed holds JUST the display names (no reason - see Skipped for
-	// that) of every BATCH-path mod that failed, dependency or primary
-	// alike, in the SAME order Skipped uses - mirrors batchInstallMods' own
-	// `failed []string` accumulator, which the pre-extraction CLI's
-	// restored terminal "--- Summary ---\nInstalled: %d\nFailed: %d (%s)\n"
-	// block joins verbatim (task-2-report.md's Fix wave 1). Always empty
-	// in the STRICT (no-deps) path.
-	Failed []string `json:"failed,omitempty"`
+	// a primary failure there returns an error instead. A plain-text
+	// renderer wanting the pre-extraction CLI's "<name>: <reason>" line
+	// reconstructs it via fmt.Sprintf("%s: %s", r.Name, r.Reason).
+	Skipped []InstalledRef `json:"skipped,omitempty"`
+	// Failed holds the SAME entries as Skipped, in the same order - mirrors
+	// batchInstallMods' own parallel `failed []string` accumulator, which
+	// the pre-extraction CLI's restored terminal "--- Summary ---\n
+	// Installed: %d\nFailed: %d (%s)\n" block joined by name alone
+	// (task-2-report.md's Fix wave 1) - a renderer wanting that exact line
+	// reads each entry's Name and ignores Reason. Always empty in the
+	// STRICT (no-deps) path.
+	Failed []InstalledRef `json:"failed,omitempty"`
 
 	// FilesDeployed is the number of files extracted for the STRICT path's
 	// PRIMARY mod across all of plan.Files - mirrors doInstall's
@@ -1519,8 +1553,9 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// with an event of its own, because the skip reason and the sentence a
 	// frontend prints are not always the same string (see the lock gate).
 	fail := func(reason string) {
-		result.Skipped = append(result.Skipped, fmt.Sprintf("%s: %s", mod.Name, reason))
-		result.Failed = append(result.Failed, mod.Name)
+		ref := InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version, Reason: reason}
+		result.Skipped = append(result.Skipped, ref)
+		result.Failed = append(result.Failed, ref)
 	}
 	skip := func(label, reason string) {
 		emit(ModEvent{Scope: scope, Phase: InstallDepSkipped, Detail: fmt.Sprintf("%s: %s", label, reason)})
@@ -1726,7 +1761,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
 
-	result.Installed = append(result.Installed, mod.Name)
+	result.Installed = append(result.Installed, InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version})
 	emit(ModEvent{Scope: scope, Phase: InstallDepInstalled, FilesExtracted: filesExtracted})
 
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {
@@ -2028,7 +2063,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 	}
 
-	result.Installed = append(result.Installed, mod.Name)
+	result.Installed = append(result.Installed, InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version})
 	emit(ModEvent{Scope: modScope, Phase: InstallDone})
 
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.after_each", hooks.GetInstallAfterEach()); err != nil {

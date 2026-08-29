@@ -154,3 +154,37 @@ func (s *Service) ConvergeDeployedFilesForTest(ctx context.Context, game *domain
 	}
 	return s.convergeDeployedFiles(ctx, game, profileName, dryRun)
 }
+
+// OrderByProfileForTest exposes orderByProfile, unexported by the task-3
+// review (final review, Important #3 / #301): every remaining caller
+// (deploy, conflicts, profile_apply, the switch flow, ListMods) is
+// core-internal, but flows_test.go table-drives the ordering contract
+// directly.
+func OrderByProfileForTest(profile *domain.Profile, mods []domain.InstalledMod) []domain.InstalledMod {
+	return orderByProfile(profile, mods)
+}
+
+// MergedPakOutcomesForTest exposes mergedPakOutcomes, unexported by the same
+// review: GameStatus and verify's conversionOutcomesPass are production's
+// only remaining callers, but core's own pak-conversion/Icarus-compile tests
+// read the stored fingerprint directly to assert on it.
+func (s *Service) MergedPakOutcomesForTest(ctx context.Context, game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
+	return s.mergedPakOutcomes(ctx, game, profileName)
+}
+
+// SearchAllSourcesForTest exposes searchAllSources, unexported by the same
+// review: Search (via core.SearchReport) is production's only remaining
+// caller, but core's own aggregate-search tests drive it directly to assert
+// on AggregateSearchResult's warnings/counts.
+func (s *Service) SearchAllSourcesForTest(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
+	return s.searchAllSources(ctx, gameID, query, category, tags, page, pageSize)
+}
+
+// VerifyForTest exposes verifyGated, unexported by the same review:
+// VerifyReport (via core.VerifyReport) is production's only remaining
+// caller - cmd/lmm/verify.go calls that, not this - but core's own verify
+// tests drive a run directly to inspect its VerifyResult, without
+// VerifyReport's GameID/Profile wrapping.
+func (s *Service) VerifyForTest(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	return s.verifyGated(ctx, game, profile, opts, sink)
+}

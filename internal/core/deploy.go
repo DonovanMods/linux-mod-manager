@@ -310,7 +310,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	purgeMods := 0
 	if opts.Purge {
 		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
-		mods := OrderByProfile(profile, installedMods)
+		mods := orderByProfile(profile, installedMods)
 		purgeMods = len(mods)
 		seen := make(map[string]bool)
 		for i := range mods {
@@ -609,10 +609,10 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 			return result, fmt.Errorf("getting installed mods: %w", err)
 		}
 		// Deterministic purge order: profile.Mods order (nil-safe - an
-		// unreadable profile falls back to OrderByProfile's nil handling
+		// unreadable profile falls back to orderByProfile's nil handling
 		// rather than aborting the purge).
 		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
-		mods = OrderByProfile(profile, mods)
+		mods = orderByProfile(profile, mods)
 		enabledBeforePurge = make(map[string]bool)
 		for _, m := range mods {
 			if m.Enabled {

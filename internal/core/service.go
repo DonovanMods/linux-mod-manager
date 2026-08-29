@@ -19,7 +19,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
@@ -243,7 +242,7 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 // sources (game.SourceIDs keys) that are currently registered, sorted by
 // ID(). A SourceIDs key with no matching registration is silently skipped -
 // this function has no per-item error channel, only resolved ModSource
-// values come back - matching SearchAllSources's existing tolerance for the
+// values come back - matching searchAllSources's existing tolerance for the
 // same situation. An unknown game is the only error case.
 func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	game, ok := s.game(gameID)
@@ -363,7 +362,7 @@ type AggregateSearchResult struct {
 	Exhausted bool `json:"exhausted"`
 	// AttemptedCount is how many of the game's configured sources actually
 	// had a search attempted against them - capability-less sources are
-	// skipped silently (see SearchAllSources's doc comment) and never
+	// skipped silently (see searchAllSources's doc comment) and never
 	// counted here. Zero means NONE of the game's sources support searching
 	// at all, which is indistinguishable from a genuine zero-result search
 	// unless a caller checks this field - the honesty-notice fix (#58 item
@@ -376,7 +375,7 @@ type AggregateSearchResult struct {
 // page/pageSize request) might have a page N+1, using the per-single-source
 // heuristic (TotalCount bounds it precisely when the source reports one;
 // otherwise a full page might mean more, a short one means none) - applied
-// here per CONTRIBUTING SOURCE so SearchAllSources can tell a
+// here per CONTRIBUTING SOURCE so searchAllSources can tell a
 // truly-exhausted merge from one that might still have more (see
 // AggregateSearchResult.Exhausted's doc comment).
 // pageSize <= 0 (e.g. the CLI's "let the source apply its own default" case,
@@ -391,12 +390,12 @@ func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
 	return len(res.Mods) == pageSize
 }
 
-// SearchAllSources searches every source configured for a game concurrently
+// searchAllSources searches every source configured for a game concurrently
 // and merges the results (design §5). Per-source failures become Warnings —
 // one flaky API must not hide local modlets; only all-sources-failed is an
 // error. Sources without search capability are skipped silently. Pagination
 // is per-source: page N requests page N from each source and merges.
-func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
+func (s *Service) searchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
 	game, ok := s.game(gameID)
 	if !ok {
 		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
@@ -577,7 +576,7 @@ func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod
 }
 
 // SourceCapabilities reports sourceID's declared capabilities (#97: static
-// lock gating). Mirrors SearchAllSources' registry access (service.go's
+// lock gating). Mirrors searchAllSources' registry access (service.go's
 // source.CapabilitiesOf(src) call).
 func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, error) {
 	src, err := s.registry.Get(sourceID)
@@ -585,16 +584,6 @@ func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, erro
 		return source.Capabilities{}, err
 	}
 	return source.CapabilitiesOf(src), nil
-}
-
-// GetDownloadURL gets the download URL for a specific mod file
-func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *domain.Mod, fileID string) (string, error) {
-	src, err := s.registry.Get(sourceID)
-	if err != nil {
-		return "", err
-	}
-
-	return src.GetDownloadURL(ctx, mod, fileID)
 }
 
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
@@ -620,16 +609,6 @@ func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain
 	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, sink)
 }
 
-// DownloadModToCache downloads a mod file, extracts it, and stores it in the provided cache.
-func (s *Service) DownloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	return s.downloadModToCache(ctx, gameCache, sourceID, game, mod, file, sink)
-}
-
 func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 
 	// Note: We intentionally do NOT check if cache exists here.
@@ -650,11 +629,12 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 
 	if localPath, ok := strings.CutPrefix(url, "file://"); ok {
-		// Only directory sources are allowed to serve local files. A remote
-		// source (NexusMods, CurseForge, a compromised custom API/manifest
-		// source, ...) returning file:// must never be trusted to read
-		// arbitrary paths off disk into the cache.
-		if _, isDirectorySource := src.(*custom.Directory); !isDirectorySource {
+		// Only a source.LocalFileServer is allowed to serve local files. A
+		// remote source (NexusMods, CurseForge, a compromised custom
+		// API/manifest source, ...) returning file:// must never be trusted
+		// to read arbitrary paths off disk into the cache.
+		lfs, servesLocal := src.(source.LocalFileServer)
+		if !servesLocal || !lfs.ServesLocalFiles() {
 			return nil, fmt.Errorf("source %q returned a local file:// URL but is not a directory source", sourceID)
 		}
 		return s.ingestLocalToCache(ctx, gameCache, game, mod, file, localPath)
@@ -1277,7 +1257,9 @@ func (s *Service) game(id string) (*domain.Game, bool) {
 	return g, ok
 }
 
-// gamesSnapshot returns the games in a fresh slice under the read lock.
+// gamesSnapshot returns the games in a fresh slice under the read lock,
+// ordered by game ID (Ruling 4, #299) rather than Go's own map iteration
+// order - ListGames' callers (lmm status, lmm game list) need a stable order.
 func (s *Service) gamesSnapshot() []*domain.Game {
 	s.gamesMu.RLock()
 	defer s.gamesMu.RUnlock()
@@ -1285,6 +1267,7 @@ func (s *Service) gamesSnapshot() []*domain.Game {
 	for _, g := range s.games {
 		out = append(out, g)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
@@ -1324,9 +1307,9 @@ func (s *Service) getLinker(method domain.LinkMethod) linker.Linker {
 	return linker.New(method)
 }
 
-// GetGameLinkMethod returns the effective link method for a game.
+// getGameLinkMethod returns the effective link method for a game.
 // Uses the game's explicit setting if configured, otherwise falls back to global default.
-func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
+func (s *Service) getGameLinkMethod(game *domain.Game) domain.LinkMethod {
 	if game.LinkMethodExplicit {
 		return game.LinkMethod
 	}
@@ -1352,12 +1335,12 @@ func (s *Service) GetEffectiveLinkMethod(ctx context.Context, game *domain.Game,
 		if errors.Is(err, domain.ErrInvalidLinkMethod) {
 			return 0, fmt.Errorf("resolving effective link method: %w", err)
 		}
-		return s.GetGameLinkMethod(game), nil
+		return s.getGameLinkMethod(game), nil
 	}
 	if profile.LinkMethodExplicit {
 		return profile.LinkMethod, nil
 	}
-	return s.GetGameLinkMethod(game), nil
+	return s.getGameLinkMethod(game), nil
 }
 
 // GetInstaller returns an Installer configured for the given game.
@@ -1367,7 +1350,7 @@ func (s *Service) GetEffectiveLinkMethod(ctx context.Context, game *domain.Game,
 // installing through it, and core's export_test.go shims are invisible to
 // package main. Same reason DownloadMod and SaveFileChecksum stay exported.
 func (s *Service) GetInstaller(game *domain.Game) *Installer {
-	return s.newInstallerWithLinker(game, s.getLinker(s.GetGameLinkMethod(game)))
+	return s.newInstallerWithLinker(game, s.getLinker(s.getGameLinkMethod(game)))
 }
 
 // getInstallerForProfile returns an Installer whose linker honors
@@ -1546,16 +1529,6 @@ func (s *Service) setModLinkMethod(ctx context.Context, sourceID, modID, gameID,
 	return s.db.SetModLinkMethod(ctx, sourceID, modID, gameID, profileName, linkMethod)
 }
 
-// SetModFileIDs updates the file IDs for an installed mod
-func (s *Service) SetModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.setModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
-}
-
 func (s *Service) setModFileIDs(ctx context.Context, sourceID, modID, gameID, profileName string, fileIDs []string) error {
 	return s.db.SetModFileIDs(ctx, sourceID, modID, gameID, profileName, fileIDs)
 }
@@ -1610,7 +1583,7 @@ func (s *Service) saveInstalledMod(ctx context.Context, mod *domain.InstalledMod
 	return s.db.SaveInstalledMod(ctx, mod)
 }
 
-// SetModVersion corrects an installed mod's recorded version without
+// setModVersion corrects an installed mod's recorded version without
 // shifting PreviousVersion (unlike a real version update) or re-keying its
 // file-ID rows (unlike SaveInstalledMod's full-row upsert, whose
 // replaceModFileIDsTx would silently wipe stored checksums even when the
@@ -1618,15 +1591,6 @@ func (s *Service) saveInstalledMod(ctx context.Context, mod *domain.InstalledMod
 // For repairing a version string known to be WRONG (verify --fix's
 // version-record repair, issue #94), where the file IDs and their
 // checksums are already correct.
-func (s *Service) SetModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.setModVersion(ctx, sourceID, modID, gameID, profileName, version)
-}
-
 func (s *Service) setModVersion(ctx context.Context, sourceID, modID, gameID, profileName, version string) error {
 	return s.db.SetModVersion(ctx, sourceID, modID, gameID, profileName, version)
 }
@@ -1651,11 +1615,14 @@ func (s *Service) GetDeployedFilesForMod(ctx context.Context, gameID, profileNam
 	return s.db.GetDeployedFilesForMod(ctx, gameID, profileName, sourceID, modID)
 }
 
-// GetLastDeployTime returns the timestamp of the most recent deploy for the
+// getLastDeployTime returns the timestamp of the most recent deploy for the
 // given game/profile (#106a's dashboard "Last deploy" row), or nil if it has
 // never been deployed - see db.DB.GetLastDeployTime's own doc comment for
-// why nil is not an error.
-func (s *Service) GetLastDeployTime(ctx context.Context, gameID, profileName string) (*time.Time, error) {
+// why nil is not an error. Unexported (final review, Important #3 / #301):
+// GameStatus is the only caller left, cmd's --json switched from its own
+// hand-built read to service.GameStatus, and core.VerifyReport/Status don't
+// need a last-deploy timestamp at all.
+func (s *Service) getLastDeployTime(ctx context.Context, gameID, profileName string) (*time.Time, error) {
 	return s.db.GetLastDeployTime(ctx, gameID, profileName)
 }
 

@@ -113,15 +113,17 @@ func capabilityGapNotice(sourceID string, err error) (string, bool) {
 	return fmt.Sprintf("source %q does not support searching; install by ID instead: lmm install --source %s --id <mod-id>", sourceID, sourceID), true
 }
 
-// limitResults truncates mods to at most limit entries for display. A
-// non-positive limit (e.g. --limit 0 or a negative value) leaves mods
-// untouched instead of truncating to nothing or panicking on a negative
-// slice bound (mods[:-1]).
-func limitResults(mods []domain.Mod, limit int) []domain.Mod {
-	if limit > 0 && len(mods) > limit {
-		mods = mods[:limit]
+// limitResults truncates results to at most limit entries for display -
+// the CLI's own --limit cap, applied to whatever core.Search returned (the
+// report's TotalResults keeps the untruncated count for the "Showing X of
+// Y" line). A non-positive limit (e.g. --limit 0 or a negative value)
+// leaves the slice untouched instead of truncating to nothing or panicking
+// on a negative slice bound (results[:-1]).
+func limitResults[T any](results []T, limit int) []T {
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
 	}
-	return mods
+	return results
 }
 
 // searchPageSize turns --limit into the page size requested from sources. A
@@ -148,64 +150,66 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
-	var mods []domain.Mod
-	var warnings []core.SourceWarning
-	var totalResults int
-	// attemptedCount is only meaningful for the aggregate (searchSource == "")
-	// path below - it stays -1 ("not applicable") for a single named
-	// --source, which either resolves to exactly one attempted source or
-	// fails outright via resolveSource, with no "zero capable sources"
-	// case of its own to distinguish (#58 item 3).
-	attemptedCount := -1
+	// Resolved up front so core.Search can mark already-installed hits; it
+	// only reads the profile when there is something to mark.
+	profileName, err := resolveProfile(service, game.ID, searchProfile)
+	if err != nil {
+		return err
+	}
 
+	opts := core.SearchOptions{
+		Category: searchCategory,
+		Tags:     searchTags,
+		PageSize: searchPageSize(searchLimit),
+	}
 	if searchSource == "" {
 		// Guard: game must have at least one configured source
 		if err := noSourcesConfiguredErr(game); err != nil {
 			return err
 		}
-
 		if verbose {
 			fmt.Printf("Searching for %q in %s (all sources)...\n", query, game.Name)
-		}
-		agg, err := service.SearchAllSources(ctx, game.ID, query, searchCategory, searchTags, 0, searchPageSize(searchLimit))
-		if err != nil {
-			// No ErrAuthRequired special-case here: an all-sources failure's
-			// joined error already names each source and its reason (including
-			// auth), and a per-source auth hint lives in the warnings path.
-			return fmt.Errorf("search failed: %w", err)
-		}
-		mods, warnings = agg.Mods, agg.Warnings
-		totalResults = len(mods)
-		attemptedCount = agg.AttemptedCount
-		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
 		}
 	} else {
 		sourceToUse, err := resolveSource(service, game, searchSource, false)
 		if err != nil {
 			return err
 		}
+		opts.SourceID = sourceToUse
 		if verbose {
 			fmt.Printf("Searching for %q in %s (%s)...\n", query, game.Name, sourceToUse)
 		}
-		searchResult, err := service.SearchMods(ctx, sourceToUse, game.ID, query, searchCategory, searchTags, 0, searchPageSize(searchLimit))
-		if err != nil {
-			if notice, ok := capabilityGapNotice(sourceToUse, err); ok {
-				return errors.New(notice)
-			}
-			if errors.Is(err, domain.ErrAuthRequired) {
-				return authPromptError(sourceToUse)
-			}
-			return fmt.Errorf("search failed: %w", err)
-		}
-		mods = searchResult.Mods
-		totalResults = len(mods)
 	}
 
-	warningStrs := make([]string, len(warnings))
-	for i, w := range warnings {
+	// core.Search owns the search itself, the merge across sources and the
+	// installed-mod join; this command only classifies the failure and
+	// renders what came back.
+	report, err := service.Search(ctx, game, profileName, query, opts)
+	if err != nil {
+		if opts.SourceID == "" {
+			// No ErrAuthRequired special-case here: an all-sources failure's
+			// joined error already names each source and its reason (including
+			// auth), and a per-source auth hint lives in the warnings path.
+			return fmt.Errorf("search failed: %w", err)
+		}
+		if notice, ok := capabilityGapNotice(opts.SourceID, err); ok {
+			return errors.New(notice)
+		}
+		if errors.Is(err, domain.ErrAuthRequired) {
+			return authPromptError(opts.SourceID)
+		}
+		return fmt.Errorf("search failed: %w", err)
+	}
+
+	for _, w := range report.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
+	}
+	warningStrs := make([]string, len(report.Warnings))
+	for i, w := range report.Warnings {
 		warningStrs[i] = fmt.Sprintf("source %s: %v", w.SourceID, w.Err)
 	}
+
+	mods, totalResults := report.Mods, report.TotalResults
 
 	if len(mods) == 0 {
 		// #58 item 3: attemptedCount == 0 means NONE of the game's configured
@@ -216,7 +220,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// search, or an aggregate search that genuinely attempted and came
 		// up empty), preserving the original message there.
 		honestNotice := ""
-		if attemptedCount == 0 {
+		if report.AttemptedCount == 0 {
 			honestNotice = noSearchableSourcesNotice(game)
 		}
 
@@ -244,19 +248,8 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return nil
 	}
 
-	// Get installed mods to mark already-installed ones (source-aware: a mod
-	// ID is only unique within its source, so key on both).
-	profileName, err := resolveProfile(service, game.ID, searchProfile)
-	if err != nil {
-		return err
-	}
-	installedMods, _ := service.GetInstalledMods(ctx, game.ID, profileName)
-	installedKeys := make(map[string]bool)
-	for _, im := range installedMods {
-		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true
-	}
-
-	// Apply result limit for display (totalResults captured earlier per-branch for "Showing X of Y")
+	// Apply result limit for display (report.TotalResults keeps the
+	// untruncated count for "Showing X of Y")
 	mods = limitResults(mods, searchLimit)
 
 	if jsonOutput {
@@ -268,7 +261,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 				Author:    mod.Author,
 				Version:   mod.Version,
 				Source:    mod.SourceID,
-				Installed: installedKeys[domain.ModKey(mod.SourceID, mod.ID)],
+				Installed: mod.Installed,
 			}
 		}
 		enc := json.NewEncoder(os.Stdout)
@@ -298,7 +291,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 	var installedRows []bool
 	for _, mod := range mods {
 		installedMark := ""
-		installed := installedKeys[domain.ModKey(mod.SourceID, mod.ID)]
+		installed := mod.Installed
 		if installed {
 			installedMark = "[installed]"
 		}

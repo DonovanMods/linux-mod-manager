@@ -214,7 +214,7 @@ func TestService_ApplyInstall_Batch_TwoFreshMods(t *testing.T) {
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Mod A", "Mod B"}, result.Installed)
+	assert.Equal(t, []string{"Mod A", "Mod B"}, installedRefNames(result.Installed))
 	assert.Empty(t, result.Failed)
 	assert.Empty(t, result.Skipped)
 	assert.Empty(t, result.Warnings)
@@ -260,7 +260,7 @@ func TestService_ApplyInstall_Batch_ReinstallSameVersionPlusFresh(t *testing.T) 
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Mod A", "Mod B"}, result.Installed)
+	assert.Equal(t, []string{"Mod A", "Mod B"}, installedRefNames(result.Installed))
 	assert.Empty(t, result.Failed)
 	assert.Empty(t, result.Notes, "a clean uninstall + cache delete produces no verbose-only note")
 
@@ -300,9 +300,11 @@ func TestService_ApplyInstall_Batch_LockedRefDifferentVersion_SkippedBeforeUnins
 	require.NoError(t, err, "a locked ref skips its own mod, it never fails the batch")
 
 	assert.Empty(t, result.Installed)
-	assert.Equal(t, []string{"Mod A"}, result.Failed)
+	assert.Equal(t, []string{"Mod A"}, installedRefNames(result.Failed))
 	lockedRef := &domain.ModReference{SourceID: "test-src", ModID: "mod-a", Version: "1.0", Locked: true}
-	assert.Equal(t, []string{"Mod A: " + core.LockedRefRefusalError(*latest, "default", lockedRef).Error()}, result.Skipped)
+	require.Len(t, result.Skipped, 1)
+	assert.Equal(t, "Mod A", result.Skipped[0].Name)
+	assert.Equal(t, core.LockedRefRefusalError(*latest, "default", lockedRef).Error(), result.Skipped[0].Reason)
 
 	assert.Equal(t, []batchStateRow{
 		{SourceID: "test-src", ID: "mod-a", Version: "1.0", Enabled: true, Deployed: true, FileIDs: []string{"f1"}},
@@ -329,10 +331,11 @@ func TestService_ApplyInstall_Batch_FetchFailureSecondMod(t *testing.T) {
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Mod A"}, result.Installed)
-	assert.Equal(t, []string{"Mod B"}, result.Failed)
+	assert.Equal(t, []string{"Mod A"}, installedRefNames(result.Installed))
+	assert.Equal(t, []string{"Mod B"}, installedRefNames(result.Failed))
 	require.Len(t, result.Skipped, 1)
-	assert.Equal(t, "Mod B: failed to get mod files: "+assert.AnError.Error(), result.Skipped[0])
+	assert.Equal(t, "Mod B", result.Skipped[0].Name)
+	assert.Equal(t, "failed to get mod files: "+assert.AnError.Error(), result.Skipped[0].Reason)
 
 	assert.Equal(t, []batchStateRow{
 		{SourceID: "test-src", ID: "mod-a", Version: "1.0", Enabled: true, Deployed: true, FileIDs: []string{"a-file"}},
@@ -355,7 +358,7 @@ func TestService_ApplyInstall_Batch_FileConflictWarnsAndContinues(t *testing.T) 
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Mod A", "Mod B"}, result.Installed, "a file conflict warns, it never blocks the batch")
+	assert.Equal(t, []string{"Mod A", "Mod B"}, installedRefNames(result.Installed), "a file conflict warns, it never blocks the batch")
 	assert.Empty(t, result.Failed)
 
 	var conflictWarnings []string
@@ -385,7 +388,7 @@ func TestService_ApplyInstall_Batch_ForceWithFailingBeforeAll(t *testing.T) {
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{Force: true}, sink)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Mod A", "Mod B"}, result.Installed)
+	assert.Equal(t, []string{"Mod A", "Mod B"}, installedRefNames(result.Installed))
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "install.before_all hook failed (forced): ")
 
@@ -430,7 +433,7 @@ func TestService_ApplyInstall_Batch_FailingAfterEachWarnsPerModAndKeepsBothInsta
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "an after_each failure is non-fatal, per mod")
 
-	assert.Equal(t, []string{"Mod A", "Mod B"}, result.Installed)
+	assert.Equal(t, []string{"Mod A", "Mod B"}, installedRefNames(result.Installed))
 	require.Len(t, result.Warnings, 2)
 	assert.Contains(t, result.Warnings[0], "install.after_each hook failed for mod-a: ")
 	assert.Contains(t, result.Warnings[1], "install.after_each hook failed for mod-b: ")
@@ -488,7 +491,7 @@ func TestService_ApplyInstall_Batch_DeployCompile_SyncsMergedPakUnconditionally(
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"Bear Mount", "Wolf Mount"}, result.Installed)
+	assert.Equal(t, []string{"Bear Mount", "Wolf Mount"}, installedRefNames(result.Installed))
 	assert.False(t, result.MergedPakSyncFailed)
 	assert.Empty(t, result.Warnings)
 
@@ -515,7 +518,7 @@ func TestService_ApplyInstall_Batch_DeployCompile_SyncFailureRecordedNotFatal(t 
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "a merged-pak sync failure is loud, never fatal")
 
-	assert.Equal(t, []string{"Bear Mount", "Wolf Mount"}, result.Installed)
+	assert.Equal(t, []string{"Bear Mount", "Wolf Mount"}, installedRefNames(result.Installed))
 	assert.True(t, result.MergedPakSyncFailed)
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "syncing merged pak: ")

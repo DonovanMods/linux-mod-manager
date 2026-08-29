@@ -22,7 +22,7 @@ type ConflictModRef struct {
 // enabled mod in the profile provides. Owner is the mod whose copy of the
 // file is currently deployed per the deployed_files DB table; AlsoIn lists
 // every other provider, in profile load order (unlisted providers first,
-// mirroring OrderByProfile). LoadOrderWinner is the provider that comes LAST
+// mirroring orderByProfile). LoadOrderWinner is the provider that comes LAST
 // in that ordering - the one whose copy a fresh deploy would leave on disk,
 // since later-ordered mods deploy later and overwrite earlier ones. Stale
 // flags a conflict whose DB owner disagrees with the load-order winner (the
@@ -54,7 +54,7 @@ type ProfileConflict struct {
 // The profile's load order is read via the ProfileManager; a profile that
 // fails to load is treated as empty (nil), so every provider counts as
 // unlisted and ordering stays deterministic (sorted by key) rather than the
-// query aborting - mirroring OrderByProfile's nil handling. The query reads
+// query aborting - mirroring orderByProfile's nil handling. The query reads
 // the DB (GetInstalledMods, GetFileOwner) and walks each enabled mod's cache
 // directory (ListFiles); ctx is checked between per-mod cache walks so a
 // caller cancelling mid-query gets ctx.Err() promptly instead of paying for
@@ -115,7 +115,7 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 		}
 	}
 
-	// Load order: position in OrderByProfile's ordering (unlisted providers
+	// Load order: position in orderByProfile's ordering (unlisted providers
 	// first sorted by key, then profile.Mods order; last = winner). A
 	// load-failed profile degrades to nil, per the doc comment above.
 	profile, err := s.NewProfileManager().Get(game.ID, profileName)
@@ -123,7 +123,7 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 		profile = nil
 	}
 	orderIndex := make(map[string]int, len(enabled))
-	for i, m := range OrderByProfile(profile, enabled) {
+	for i, m := range orderByProfile(profile, enabled) {
 		orderIndex[domain.ModKey(m.SourceID, m.ID)] = i
 	}
 

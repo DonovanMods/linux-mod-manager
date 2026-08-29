@@ -126,7 +126,7 @@ func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 	require.Len(t, files, 4, "precondition: four checksum rows exist")
 
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, sink)
 	require.NoError(t, err)
 	events := verifyEvents(*rec)
 
@@ -197,7 +197,7 @@ func TestVerify_ContextCancelledDuringWalk(t *testing.T) {
 	svc, game := newVerifyTestServiceWithFiles(t, 5) // 5 deployed files
 	ctx, cancel := context.WithCancel(context.Background())
 	findings := 0
-	_, err := svc.Verify(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, func(e core.Event) {
+	_, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, func(e core.Event) {
 		ev, ok := e.(core.VerifyEvent)
 		if !ok {
 			return
@@ -225,7 +225,7 @@ func TestVerify_EmptyProfile_HasFilesFalse(t *testing.T) {
 	require.NoError(t, err)
 
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, sink)
 	require.NoError(t, err)
 	events := verifyEvents(*rec)
 
@@ -258,7 +258,7 @@ func TestVerify_ModFilter_LimitsRows(t *testing.T) {
 	seedVerifyMod(t, svc, game, "src", "mod-b", "Mod B", "1.0", []string{"b-file"}, true)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-b", game.ID, "default", "b-file", "checksum-b"))
 
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{ModFilter: "mod-a"}, nil)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{ModFilter: "mod-a"}, nil)
 	require.NoError(t, err)
 
 	require.True(t, result.HasFiles, "HasFiles reflects the unfiltered fetch")
@@ -300,7 +300,7 @@ func TestVerify_LocalTier_NeverTouchesNetwork(t *testing.T) {
 	seedVerifyMod(t, svc, game, "trap-src", "mod-a", "Mod A", "1.0", []string{"a-file"}, true)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "trap-src", "mod-a", game.ID, "default", "a-file", "checksum-a"))
 
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, result.Checked, "only the per-file walk's row - the version pass never ran")
@@ -378,7 +378,7 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	require.NoError(t, pm.SetModLock(game.ID, "default", "vsrc", "locked-mod", "2.0"))
 
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, sink)
 	require.NoError(t, err)
 	events := verifyEvents(*rec)
 
@@ -451,7 +451,7 @@ func TestVerify_VersionMismatchFinding_CarriesRecordedEffective(t *testing.T) {
 	seedVerifyMod(t, svc, game, "vsrc", "mismatch-mod", "Mismatch", "1.0", []string{"f1"}, true)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "mismatch-mod", game.ID, "default", "f1", "checksum-mismatch"))
 
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
 
 	mismatch, ok := findFindingByStatus(result.Findings, "version_mismatch")
@@ -475,7 +475,7 @@ func TestVerify_MissingFinding_CarriesVersion(t *testing.T) {
 	seedVerifyMod(t, svc, game, "src", "missing-mod", "Missing Mod", "1.5", []string{"missing-file"}, false)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "missing-mod", game.ID, "default", "missing-file", "checksum-missing"))
 
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, nil)
 	require.NoError(t, err)
 
 	missing, ok := findFindingByStatus(result.Findings, "missing")
@@ -552,7 +552,7 @@ func TestVerify_CompileGameStatuses(t *testing.T) {
 	// Go stale: enable a third exmodz mod WITHOUT syncing again.
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolfmod", "1.0", "exmodz-file", []byte("wolf-bytes"))
 
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, nil)
 	require.NoError(t, err)
 
 	staleFinding, ok := findFindingByStatus(result.Findings, "stale_compile")
@@ -637,7 +637,7 @@ func TestVerify_ContextCancelledMidVersionPass(t *testing.T) {
 	seedVerifyMod(t, svc, game, "csrc", "mod-b", "Mod B", "1.0", []string{"f1"}, true)
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "csrc", "mod-b", game.ID, "default", "f1", "cs-b"))
 
-	result, err := svc.Verify(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	result, err := svc.VerifyForTest(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
 
@@ -765,7 +765,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -786,7 +786,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "main", "old-checksum"))
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -809,7 +809,7 @@ func TestVerify_Fix_Missing_Redownload(t *testing.T) {
 		require.NoError(t, svc.SaveFileChecksum(context.Background(), "rsrc", "mod1", game.ID, "default", "1", "old-checksum"))
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -843,7 +843,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, true)
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -871,7 +871,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"main"}, true)
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -893,7 +893,7 @@ func TestVerify_Fix_NoChecksum_Redownload(t *testing.T) {
 		seedVerifyMod(t, svc, game, "rsrc", "mod1", "Mod One", "1.0", []string{"1"}, true)
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -1004,7 +1004,7 @@ func TestVerify_Fix_NeedsReingest_Redownload(t *testing.T) {
 		svc, game := newNeedsReingestFixGame(t, src, "fake-compiler")
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -1025,7 +1025,7 @@ func TestVerify_Fix_NeedsReingest_Redownload(t *testing.T) {
 		svc, game := newNeedsReingestFixGame(t, src, "fake-compiler")
 
 		sink, rec := core.RecordEvents()
-		result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 		require.NoError(t, err)
 		events := verifyEvents(*rec)
 
@@ -1055,7 +1055,7 @@ func TestVerify_Fix_SourceLocal_NoRepairAttempted(t *testing.T) {
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), domain.SourceLocal, "mod1", game.ID, "default", "1", "old-checksum"))
 
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
 	events := verifyEvents(*rec)
 
@@ -1134,7 +1134,7 @@ func addVersionRepairSibling(t *testing.T, svc *core.Service, game *domain.Game,
 func runVersionRepairFix(t *testing.T, svc *core.Service, game *domain.Game) (*core.VerifyResult, []core.VerifyEvent) {
 	t.Helper()
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Fix: true}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Fix: true}, sink)
 	require.NoError(t, err)
 	return result, verifyEvents(*rec)
 }
@@ -1497,7 +1497,7 @@ func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
 	strayDanglingSymlink(t, svc, game, "stray.pak")
 
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, sink)
 	require.NoError(t, err)
 	events := verifyEvents(*rec)
 
@@ -1535,7 +1535,7 @@ func TestVerify_EmptyProfile_DanglingLink_Fix(t *testing.T) {
 	strayDanglingSymlink(t, svc, game, "stray.pak")
 
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
 	events := verifyEvents(*rec)
 
@@ -1570,7 +1570,7 @@ func TestVerify_MainPath_ConvergenceAfterFileWalk(t *testing.T) {
 
 	strayDanglingSymlink(t, svc, game, "stray.pak")
 
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, []core.VerifyFinding{
@@ -1595,7 +1595,7 @@ func TestVerify_Fix_SyncMergedPak_WarningsSurfaceAsSyncEvents(t *testing.T) {
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 
 	sink, rec := core.RecordEvents()
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	events := verifyEvents(*rec)
@@ -1626,7 +1626,7 @@ func TestVerify_Fix_SyncMergedPak_NonCompileGame_NoWarningEvents(t *testing.T) {
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "src", "mod-ok", game.ID, "default", "ok-file", "checksum-ok"))
 
 	sink, rec := core.RecordEvents()
-	_, err = svc.Verify(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
+	_, err = svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Fix: true}, sink)
 	require.NoError(t, err)
 	events := verifyEvents(*rec)
 
@@ -1729,7 +1729,7 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	files, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
-	result, err := svc.Verify(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, nil)
 	require.NoError(t, err)
 
 	// The per-file walk's own row for every checksummed row, keyed by

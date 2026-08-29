@@ -99,7 +99,7 @@ func TestAggregateSearchEndToEnd(t *testing.T) {
 	svc, game := setupAggregateSources(t)
 	ctx := context.Background()
 
-	res, err := svc.SearchAllSources(ctx, game.ID, "cool", "", nil, 0, 20)
+	res, err := svc.SearchAllSourcesForTest(ctx, game.ID, "cool", "", nil, 0, 20)
 	require.NoError(t, err, "dead source must not fail the aggregate")
 
 	bySource := map[string][]string{}
@@ -174,14 +174,14 @@ func TestSearchAllSources_PageSizeAboveDefaultReturnsMoreThanDefaultCap(t *testi
 
 	// pageSize 0 (the CLI's pre-fix default): capped at the source's
 	// internal default of 20, even though 30 mods match.
-	capped, err := svc.SearchAllSources(context.Background(), game.ID, "testmod", "", nil, 0, 0)
+	capped, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "testmod", "", nil, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, capped.Mods, 20, "pageSize 0 must fall back to the source default cap")
 
 	// pageSize 30 (what the CLI now sends for --limit 30): all 30 matches
 	// come back, proving the ceiling is a CLI-layer default, not a
 	// core/source limitation.
-	full, err := svc.SearchAllSources(context.Background(), game.ID, "testmod", "", nil, 0, 30)
+	full, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "testmod", "", nil, 0, 30)
 	require.NoError(t, err)
 	assert.Len(t, full.Mods, 30, "pageSize 30 must return all 30 matching mods")
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -381,4 +382,178 @@ func TestProbeSource_ConstructionFailure(t *testing.T) {
 	}, "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "constructing source")
+}
+
+// --- SourceInfos (v2 Phase 3 Task 3, #301) ---
+
+// newDirectorySource builds a registered-able directory source with the
+// given ID, for the SourceInfos scoping tests.
+func newDirectorySource(t *testing.T, id string) source.ModSource {
+	t.Helper()
+	src, err := custom.NewDirectory(custom.SourceDefinition{
+		ID:        id,
+		Name:      strings.ToUpper(id),
+		Type:      custom.TypeDirectory,
+		Directory: &custom.DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	return src
+}
+
+// TestSourceInfos_FullRegistrySortedByID covers the no-game view: every
+// registered source, ordered by ID (ListSources is registry-map order), with
+// no in-use marking to do.
+func TestSourceInfos_FullRegistrySortedByID(t *testing.T) {
+	svc := newTestService(t)
+	svc.RegisterSource(newDirectorySource(t, "zulu"))
+	svc.RegisterSource(newDirectorySource(t, "alpha"))
+
+	rows, err := SourceInfos(t.Context(), svc, nil, false)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "alpha", rows[0].ID)
+	assert.Equal(t, "zulu", rows[1].ID)
+	assert.Equal(t, "ALPHA", rows[0].Name)
+	assert.Equal(t, "directory", rows[0].Type)
+	assert.Equal(t, AuthNone, rows[0].Auth, "a source with no auth capability reports AuthNone, not AuthRequired")
+	assert.Contains(t, rows[0].Capabilities, "search")
+	assert.False(t, rows[0].InUse)
+}
+
+// TestSourceInfos_ScopedToGame covers the default game-context view: only the
+// game's own configured sources, and no in-use marking (the whole list is in
+// use).
+func TestSourceInfos_ScopedToGame(t *testing.T) {
+	svc := newTestService(t)
+	svc.RegisterSource(newDirectorySource(t, "mapped"))
+	svc.RegisterSource(newDirectorySource(t, "unmapped"))
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), SourceIDs: map[string]string{"mapped": ""}}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+
+	rows, err := SourceInfos(t.Context(), svc, game, false)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "mapped", rows[0].ID)
+	assert.False(t, rows[0].InUse)
+}
+
+// TestSourceInfos_AllWithGameMarksInUse covers the one combination that needs
+// a marker rather than a filter: the full registry, with the game's own
+// sources flagged.
+func TestSourceInfos_AllWithGameMarksInUse(t *testing.T) {
+	svc := newTestService(t)
+	svc.RegisterSource(newDirectorySource(t, "mapped"))
+	svc.RegisterSource(newDirectorySource(t, "unmapped"))
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), SourceIDs: map[string]string{"mapped": ""}}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+
+	rows, err := SourceInfos(t.Context(), svc, game, true)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	byID := map[string]SourceInfo{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	assert.True(t, byID["mapped"].InUse)
+	assert.False(t, byID["unmapped"].InUse)
+}
+
+// TestSourceInfos_ErrorRows covers the three ways a definition fails to
+// become a source - an unparseable file, an ID already taken, and a
+// construction failure - all of which stay visible in every view (they never
+// registered, so they have no game to scope by), each carrying both the
+// structured error and its message.
+func TestSourceInfos_ErrorRows(t *testing.T) {
+	svc := newTestService(t)
+	// A BUILT-IN holds the colliding ID: a custom source registered under a
+	// definition's own ID is that definition's own source, not a collision.
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	srcDir := filepath.Join(svc.ConfigDir(), "sources")
+
+	writeSourceYAML(t, srcDir, "broken.yaml", "id: [unclosed")
+	writeSourceYAML(t, srcDir, "collide.yaml", fmt.Sprintf(`
+id: nexusmods
+name: Collide Src
+type: directory
+directory:
+  path: %s
+`, t.TempDir()))
+	writeSourceYAML(t, srcDir, "missing-path.yaml", `
+id: missing-path
+name: Missing Path
+type: directory
+directory:
+  path: /this/path/should/not/exist/lmm-test-fixture
+`)
+
+	rows, err := SourceInfos(t.Context(), svc, nil, false)
+	require.NoError(t, err)
+
+	byID := map[string]SourceInfo{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+
+	collision := byID["nexusmods"]
+	require.Equal(t, "error", collision.Type, "the colliding definition's row is an error row (appended after the built-in's own)")
+	assert.Equal(t, "id already in use", collision.ErrorMessage)
+	require.Error(t, collision.Err, "the structured error travels with its message")
+
+	failed := byID["missing-path"]
+	assert.Equal(t, "error", failed.Type)
+	assert.NotEmpty(t, failed.ErrorMessage)
+	assert.Error(t, failed.Err)
+
+	loadErr := byID["broken.yaml"]
+	assert.Equal(t, "error", loadErr.Type, "a file that would not parse is keyed by its filename")
+	assert.NotEmpty(t, loadErr.ErrorMessage)
+	assert.Error(t, loadErr.Err)
+}
+
+// TestCapabilitySummary_IncludesVersions pins that capabilitySummary appends
+// the "versions" token after "auth" (#96). Moved here from cmd/lmm with the
+// helper itself, when SourceInfos took over the row assembly.
+func TestCapabilitySummary_IncludesVersions(t *testing.T) {
+	assert.Equal(t, []string{"search", "deps", "updates", "auth", "versions"}, capabilitySummary(source.Capabilities{
+		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
+	}))
+	assert.Equal(t, []string{"search"}, capabilitySummary(source.Capabilities{Search: true}))
+}
+
+// TestAuthState_StringMarshalUnmarshal round-trips every AuthState value
+// through String/MarshalText/UnmarshalText (final review, Important #1 /
+// #301: "enum coverage" for the type source list --json now carries
+// directly, replacing the pre-#301 display string).
+func TestAuthState_StringMarshalUnmarshal(t *testing.T) {
+	tests := []struct {
+		state AuthState
+		want  string
+	}{
+		{AuthNone, "none"},
+		{AuthRequired, "required"},
+		{AuthAuthenticated, "authenticated"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.state.String())
+
+			b, err := tt.state.MarshalText()
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, string(b))
+
+			var got AuthState
+			require.NoError(t, got.UnmarshalText(b))
+			assert.Equal(t, tt.state, got)
+		})
+	}
+}
+
+// TestAuthState_UnmarshalTextRejectsUnknown pins the fail-loud contract every
+// other wire enum in this codebase follows (LinkMethod, UpdateStatus): an
+// unrecognized value is a parse error, not a silent zero-value fallback.
+func TestAuthState_UnmarshalTextRejectsUnknown(t *testing.T) {
+	var a AuthState
+	err := a.UnmarshalText([]byte("bogus"))
+	require.Error(t, err)
 }

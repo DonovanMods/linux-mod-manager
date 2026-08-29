@@ -103,6 +103,11 @@ func TestApplyRollbackSwapsVersions(t *testing.T) {
 	assert.Equal(t, "Mod One", result.ModName)
 	assert.Equal(t, "2.0", result.FromVersion)
 	assert.Equal(t, "1.0", result.ToVersion)
+	// #301: Status is the "did it happen" signal (ModName is populated as
+	// soon as the guards pass, so it cannot be one) and matches the
+	// "rolled_back" string cmd/lmm's rollback --json has always emitted.
+	assert.Equal(t, core.UpdateRolledBack, result.Status)
+	assert.Empty(t, result.Reason)
 	assert.Empty(t, result.Warnings)
 	assert.Empty(t, result.Notes)
 
@@ -155,6 +160,9 @@ func TestApplyRollbackMissingCache(t *testing.T) {
 	assert.Equal(t, "previous version 1.0 not found in cache", err.Error())
 	require.NotNil(t, result)
 	assert.Empty(t, result.ModName, "no identity fields should be populated before this guard")
+	// #301: a rollback that never happened is reported as skipped, so an
+	// error return can never read as a successful "rolled_back".
+	assert.Equal(t, core.UpdateSkipped, result.Status)
 }
 
 // TestApplyRollback_LockedRefRefusesRollback covers #97's whole contract for
@@ -188,6 +196,11 @@ func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
 	assert.Contains(t, err.Error(), "lmm mod unlock -s src -p default mod1")
 	require.NotNil(t, result)
 	assert.Empty(t, result.ModName, "no identity fields should be populated before this guard")
+	// #301: the refusal is reported as the same skipped/locked pair
+	// cmd/lmm's rollback --json emits for a locked ref, so a future JSON
+	// frontend can render the result directly.
+	assert.Equal(t, core.UpdateSkipped, result.Status)
+	assert.Equal(t, "locked", result.Reason)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)

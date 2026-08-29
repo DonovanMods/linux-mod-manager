@@ -60,6 +60,18 @@ func (s *failingDepsSource) GetDependencies(ctx context.Context, mod *domain.Mod
 // errBoom is a sentinel non-ErrNotSupported error for failingDepsSource.
 var errBoom = errors.New("boom: dependency service unavailable")
 
+// installedRefNames extracts each entry's Name, for tests below that only
+// care which mods ended up in InstallResult.Installed/Skipped/Failed - not
+// the structured (SourceID/ModID/Version/Reason) detail carried alongside it
+// (v2 Phase 3 Task 2, #301).
+func installedRefNames(refs []core.InstalledRef) []string {
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		names[i] = r.Name
+	}
+	return names
+}
+
 // sizedFileSource wraps mockSource but returns a single downloadable file of
 // a caller-chosen size, so TotalDownloadBytes' summing (and its "-1 when
 // unknown" fallback) can be tested independently of mockSource's own fixed,
@@ -326,8 +338,9 @@ func TestService_PlanInstall_DependencyResolutionErrorRecordedAsWarning(t *testi
 	assert.Empty(t, plan.MissingDependencies)
 	assert.False(t, plan.CycleDetected)
 	require.Len(t, plan.DependencyWarnings, 1)
-	assert.Contains(t, plan.DependencyWarnings[0], "root")
-	assert.Contains(t, plan.DependencyWarnings[0], errBoom.Error())
+	assert.Equal(t, "src", plan.DependencyWarnings[0].SourceID)
+	assert.Equal(t, "root", plan.DependencyWarnings[0].ModID)
+	assert.Contains(t, plan.DependencyWarnings[0].Message, errBoom.Error())
 }
 
 // TestService_PlanInstall_UnknownModReturnsErrModNotFound mirrors
@@ -620,7 +633,7 @@ func TestService_ApplyInstall_FreshInstallEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 	assert.Empty(t, result.Warnings)
 	assert.Empty(t, result.Notes)
 	assert.Empty(t, result.Skipped)
@@ -739,7 +752,7 @@ func TestService_ApplyInstall_ChecksumSaveFailure_WarningNotDoublePrefixed(t *te
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "a checksum-save failure must not fail the whole install")
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 
 	require.Len(t, result.Warnings, 1)
 	assert.True(t, strings.HasPrefix(result.Warnings[0], "failed to save checksum for file mod1: "), "got: %s", result.Warnings[0])
@@ -786,7 +799,7 @@ func TestService_ApplyInstall_DependencyInstallOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	assert.Equal(t, []string{"Dep Two", "Dep One", "Root"}, result.Installed, "dependencies must install before the primary, deepest first")
+	assert.Equal(t, []string{"Dep Two", "Dep One", "Root"}, installedRefNames(result.Installed), "dependencies must install before the primary, deepest first")
 	assert.Empty(t, result.Skipped)
 
 	for _, id := range []string{"dep2", "dep1", "root"} {
@@ -824,7 +837,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 
 		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"Mod One"}, result.Installed)
+		assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 
 		content, err := os.ReadFile(filepath.Join(gameDir, "mod1.esp"))
 		require.NoError(t, err)
@@ -853,7 +866,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 
 		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"Mod One"}, result.Installed)
+		assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 
 		_, err = os.Lstat(filepath.Join(gameDir, "mod1-old.esp"))
 		assert.True(t, os.IsNotExist(err), "old version's file must be undeployed")
@@ -1027,9 +1040,10 @@ func TestService_ApplyInstall_DownloadFailure(t *testing.T) {
 		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.NoError(t, err, "a dependency's download failure must not fail the whole install")
 		require.NotNil(t, result)
-		assert.Equal(t, []string{"Root"}, result.Installed)
+		assert.Equal(t, []string{"Root"}, installedRefNames(result.Installed))
 		require.Len(t, result.Skipped, 1)
-		assert.Contains(t, result.Skipped[0], "Dep One: download failed")
+		assert.Equal(t, "Dep One", result.Skipped[0].Name)
+		assert.Contains(t, result.Skipped[0].Reason, "download failed")
 
 		_, err = svc.GetInstalledMod(context.Background(), "src", "dep1", "g1", "default")
 		assert.Error(t, err, "the failed dependency must not be saved")
@@ -1219,7 +1233,7 @@ func TestService_ApplyInstall_BeforeAllHookFailure(t *testing.T) {
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "install.before_all hook failed")
 		assert.Contains(t, result.Warnings[0], "forced")
-		assert.Equal(t, []string{"Mod One"}, result.Installed)
+		assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 	})
 }
 
@@ -1263,7 +1277,7 @@ func TestService_ApplyInstall_PrimaryBeforeEachHookFailure(t *testing.T) {
 		require.Len(t, result.Warnings, 1)
 		assert.Contains(t, result.Warnings[0], "install.before_each hook failed")
 		assert.Contains(t, result.Warnings[0], "forced")
-		assert.Equal(t, []string{"Mod One"}, result.Installed)
+		assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 	})
 }
 
@@ -1304,9 +1318,10 @@ exit 0`)
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err, "a dependency's before_each failure must never fail the whole install, even without Force")
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Root"}, result.Installed)
+	assert.Equal(t, []string{"Root"}, installedRefNames(result.Installed))
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "Dep One: install.before_each hook failed")
+	assert.Equal(t, "Dep One", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "install.before_each hook failed")
 	assert.Empty(t, result.Warnings, "a dependency hook skip is never Force-gated, so it must never produce a Warning")
 }
 
@@ -1352,7 +1367,7 @@ func TestService_ApplyInstall_EditedPlanFilesHonored(t *testing.T) {
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 
 	_, err = os.Lstat(filepath.Join(gameDir, "main.esp"))
 	assert.NoError(t, err, "main file must be installed")
@@ -1401,7 +1416,7 @@ func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 
 	got, err := svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	require.NoError(t, err)
@@ -1481,7 +1496,7 @@ exit 0`)
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 
 	logContent, err := os.ReadFile(callLog)
 	require.NoError(t, err)
@@ -1533,7 +1548,7 @@ func TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion(t *testing.T)
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+	assert.Equal(t, []string{"Dep One", "Root"}, installedRefNames(result.Installed))
 
 	got, err := svc.GetInstalledMod(context.Background(), "src", "dep1", "g1", "default")
 	require.NoError(t, err)
@@ -1687,7 +1702,7 @@ func TestService_ApplyInstall_LockedRefExactVersion_Succeeds(t *testing.T) {
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err, "installing a locked mod at exactly its locked version is a legitimate converge/repair")
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Mod One"}, result.Installed)
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 	assert.Empty(t, result.Notes, "the profile upsert must succeed, not demote to a Note")
 
 	profile, err := svc.NewProfileManager().Get("g1", "default")
@@ -1780,10 +1795,11 @@ func TestService_ApplyInstall_LockedDependency_BatchPath_SkippedNotMoved(t *test
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.NoError(t, err, "a locked dependency skips - batch per-mod semantics, never fatal")
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Root"}, result.Installed, "the primary must still install")
-	assert.Equal(t, []string{"Dep One"}, result.Failed)
+	assert.Equal(t, []string{"Root"}, installedRefNames(result.Installed), "the primary must still install")
+	assert.Equal(t, []string{"Dep One"}, installedRefNames(result.Failed))
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "locked at v1.0", "the skip reason must name the lock")
+	assert.Equal(t, "Dep One", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "locked at v1.0", "the skip reason must name the lock")
 
 	// The locked dependency must be untouched: no DB row, no deploy, ref intact.
 	_, err = svc.GetInstalledMod(context.Background(), "src", "dep1", "g1", "default")
@@ -1872,10 +1888,11 @@ func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBefor
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "batch semantics: the locked primary skips, the run itself succeeds")
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Dep One"}, result.Installed, "the dependency must still install")
-	assert.Equal(t, []string{"Root"}, result.Failed)
+	assert.Equal(t, []string{"Dep One"}, installedRefNames(result.Installed), "the dependency must still install")
+	assert.Equal(t, []string{"Root"}, installedRefNames(result.Failed))
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "locked at v1.0", "the skip reason must name the lock")
+	assert.Equal(t, "Root", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "locked at v1.0", "the skip reason must name the lock")
 
 	// The deployed lock target's cache must survive: the loop's lock check
 	// must fire BEFORE the uninstall-existing block, not after it.
@@ -1971,7 +1988,7 @@ func TestService_ApplyInstall_ContextCancelledBetweenBatchMods_ReturnsPartialRes
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result, "diagnostics accumulated before cancellation must not be discarded")
-	assert.Equal(t, []string{"Dep One"}, result.Installed)
+	assert.Equal(t, []string{"Dep One"}, installedRefNames(result.Installed))
 
 	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
 	assert.ErrorIs(t, dbErr, domain.ErrModNotFound, "root must never have been installed - cancellation lands BETWEEN batch mods")
@@ -2033,11 +2050,12 @@ exit 0`)
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err, "the primary's before_each failure must never fail the whole install in the BATCH path, even without Force")
 	require.NotNil(t, result)
-	assert.Equal(t, []string{"Dep One"}, result.Installed, "only the dependency installs - the primary was skipped")
+	assert.Equal(t, []string{"Dep One"}, installedRefNames(result.Installed), "only the dependency installs - the primary was skipped")
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0], "Root: install.before_each hook failed")
+	assert.Equal(t, "Root", result.Skipped[0].Name)
+	assert.Contains(t, result.Skipped[0].Reason, "install.before_each hook failed")
 	require.Len(t, result.Failed, 1)
-	assert.Equal(t, "Root", result.Failed[0])
+	assert.Equal(t, "Root", result.Failed[0].Name)
 	assert.Empty(t, result.Warnings, "a BATCH-path hook skip is never Force-gated, so it must never produce a Warning")
 
 	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
@@ -2087,7 +2105,7 @@ func TestService_ApplyInstall_DependenciesPresent_InstalledEventCarriesFileCount
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+	assert.Equal(t, []string{"Dep One", "Root"}, installedRefNames(result.Installed))
 	assert.Equal(t, 0, result.FilesDeployed, "FilesDeployed is a STRICT-path-only accumulator - the BATCH path never touches it")
 
 	var installedEvents []core.ModEvent
@@ -2135,7 +2153,7 @@ func TestService_ApplyInstall_DependenciesPresent_ExistingPrimaryUsesUninstallNo
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, sink)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+	assert.Equal(t, []string{"Dep One", "Root"}, installedRefNames(result.Installed))
 
 	var sawReinstalling bool
 	for _, e := range *seen {
@@ -2323,7 +2341,7 @@ func TestService_ApplyInstall_ConfirmConflicts_FreshInstall(t *testing.T) {
 		require.Len(t, received, 1)
 		assert.Equal(t, "shared.esp", received[0].RelativePath)
 		assert.Equal(t, "other", received[0].CurrentModID)
-		assert.Equal(t, []string{"New Mod"}, result.Installed)
+		assert.Equal(t, []string{"New Mod"}, installedRefNames(result.Installed))
 	})
 
 	t.Run("decline aborts with the base CLI's exact error, leaving the download cached but nothing deployed or saved", func(t *testing.T) {
@@ -2362,7 +2380,7 @@ func TestService_ApplyInstall_ConfirmConflicts_FreshInstall(t *testing.T) {
 		result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 		require.NoError(t, err)
 		assert.False(t, called, "--force must skip the conflict check entirely, matching the pre-extraction CLI's own \"if !installForce\" gate")
-		assert.Equal(t, []string{"New Mod"}, result.Installed)
+		assert.Equal(t, []string{"New Mod"}, installedRefNames(result.Installed))
 	})
 
 	t.Run("nil ConfirmConflicts proceeds silently, matching a caller that opts out", func(t *testing.T) {
@@ -2373,7 +2391,7 @@ func TestService_ApplyInstall_ConfirmConflicts_FreshInstall(t *testing.T) {
 
 		result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"New Mod"}, result.Installed)
+		assert.Equal(t, []string{"New Mod"}, installedRefNames(result.Installed))
 	})
 }
 
@@ -2528,7 +2546,7 @@ func TestService_ApplyInstall_BatchPath_TargetVersionWithFileIDs_HonorsFileForPr
 	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1"}}
 	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+	assert.Equal(t, []string{"Dep One", "Root"}, installedRefNames(result.Installed))
 
 	got, err := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
 	require.NoError(t, err)
@@ -2561,7 +2579,7 @@ func TestService_ApplyInstall_BatchPath_TargetFileIDs_MultipleFilesAllInstalled(
 	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1", "root-opt-1"}}
 	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+	assert.Equal(t, []string{"Dep One", "Root"}, installedRefNames(result.Installed))
 
 	got, err := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
 	require.NoError(t, err)
@@ -2608,7 +2626,7 @@ func TestService_ApplyInstall_BatchPath_TargetFileIDsWithoutVersion_ResolvedAgai
 	opts := core.InstallOptions{TargetFileIDs: []string{"root-opt-1"}}
 	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+	assert.Equal(t, []string{"Dep One", "Root"}, installedRefNames(result.Installed))
 
 	got, err := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
 	require.NoError(t, err)
@@ -2652,7 +2670,7 @@ func TestService_ApplyInstall_StrictPath_TargetVersion_ResolvedInCore(t *testing
 	opts := core.InstallOptions{TargetVersion: "1.0"}
 	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Root"}, result.Installed)
+	assert.Equal(t, []string{"Root"}, installedRefNames(result.Installed))
 
 	got, err := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
 	require.NoError(t, err)
@@ -2781,7 +2799,7 @@ func TestService_ApplyInstall_BatchPath_TargetFileIDs_DuplicatesDeduped(t *testi
 	opts := core.InstallOptions{TargetVersion: "1.0", TargetFileIDs: []string{"root-main-1", "root-main-1"}}
 	result, err := svc.ApplyInstall(context.Background(), game, plan, opts, nil)
 	require.NoError(t, err, "a duplicated pin must not fail the install")
-	assert.Equal(t, []string{"Dep One", "Root"}, result.Installed)
+	assert.Equal(t, []string{"Dep One", "Root"}, installedRefNames(result.Installed))
 
 	got, err := svc.GetInstalledMod(context.Background(), "src", "root", "g1", "default")
 	require.NoError(t, err)
@@ -3021,6 +3039,6 @@ func TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFail
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 	require.NotNil(t, result)
-	assert.Contains(t, result.Failed, "Root", "the cancelled primary must be recorded as failed, not silently dropped")
-	assert.NotContains(t, result.Installed, "Root")
+	assert.Contains(t, installedRefNames(result.Failed), "Root", "the cancelled primary must be recorded as failed, not silently dropped")
+	assert.NotContains(t, installedRefNames(result.Installed), "Root")
 }

@@ -68,6 +68,14 @@ type UpdateProgressReporter interface {
 	CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report UpdateProgressFunc) ([]domain.Update, error)
 }
 
+// LocalFileServer marks a source that may legitimately return file:// download
+// URLs (a directory source). core refuses file:// URLs from any source that
+// does not implement it or whose ServesLocalFiles returns false: a remote
+// source (NexusMods, CurseForge, a compromised custom API/manifest source,
+// ...) returning file:// must never be trusted to read arbitrary paths off
+// disk into the cache (#300).
+type LocalFileServer interface{ ServesLocalFiles() bool }
+
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade
 // gracefully (hide the action, show a notice) rather than treat it as a failure.

@@ -112,23 +112,19 @@ func TestDoProfileReorder_BareIDs(t *testing.T) {
 }
 
 // TestDoProfileReorder_AmbiguousBareID_ErrorsAndLeavesProfileUnchanged pins
-// profile.go:848's exact error text. The two sources sharing "shared" are
-// stored in a map (byKey), so the reported match order is not guaranteed -
-// both permutations are accepted as exact matches; whichever one comes out
-// is still pinned byte-for-byte, not loosely matched.
+// profile.go:848's exact error text. Re-pinned for Ruling 4 (#298): the
+// matching candidates are now sorted by source ID, so the reported order is
+// fixed (src1, src2) rather than "whichever permutation the map produced".
 func TestDoProfileReorder_AmbiguousBareID_ErrorsAndLeavesProfileUnchanged(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
-	addProfileMod(t, svc, game, "default", "src1", "shared")
 	addProfileMod(t, svc, game, "default", "src2", "shared")
+	addProfileMod(t, svc, game, "default", "src1", "shared")
 	before := reloadProfile(t, svc, game, "default")
 
 	err := doProfileReorder(context.Background(), svc, game, []string{"shared"})
 
 	require.Error(t, err)
-	assert.Contains(t, []string{
-		"ambiguous mod id shared (use source:modid): src1:shared, src2:shared",
-		"ambiguous mod id shared (use source:modid): src2:shared, src1:shared",
-	}, err.Error())
+	assert.EqualError(t, err, "ambiguous mod id shared (use source:modid): src1:shared, src2:shared")
 
 	after := reloadProfile(t, svc, game, "default")
 	assert.Equal(t, before.Mods, after.Mods, "an ambiguous-ID error must leave the profile untouched")

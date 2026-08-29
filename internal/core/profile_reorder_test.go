@@ -129,21 +129,20 @@ func TestService_ResolveReorder_ExplicitKeyNotInProfile_SameErrorText(t *testing
 
 // TestService_ResolveReorder_AmbiguousBareID_ErrorsIsErrAmbiguousModID pins
 // the frozen "ambiguous mod id %s (use source:modid): %s" text
-// (cmd/lmm/profile.go:848 pre-lift). The two sources sharing "shared" are
-// stored in a map, so the reported match order is not guaranteed - both
-// permutations are accepted as exact matches.
+// (cmd/lmm/profile.go:848 pre-lift). Ruling 4 (#298): the candidates are
+// sorted by source ID, so with three sources sharing "shared" the reported
+// order is fixed (src1, src2, src3) - not merely "some permutation", which
+// is what the pre-Ruling-4 map-order build produced.
 func TestService_ResolveReorder_AmbiguousBareID_ErrorsIsErrAmbiguousModID(t *testing.T) {
 	svc, game := setupResolveReorderTest(t)
+	addResolveReorderMod(t, svc, game, "src3", "shared")
 	addResolveReorderMod(t, svc, game, "src1", "shared")
 	addResolveReorderMod(t, svc, game, "src2", "shared")
 
 	got, err := svc.ResolveReorder(context.Background(), game, "default", []string{"shared"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrAmbiguousModID)
-	assert.Contains(t, []string{
-		"ambiguous mod id shared (use source:modid): src1:shared, src2:shared",
-		"ambiguous mod id shared (use source:modid): src2:shared, src1:shared",
-	}, err.Error())
+	assert.EqualError(t, err, "ambiguous mod id shared (use source:modid): src1:shared, src2:shared, src3:shared")
 	assert.Nil(t, got)
 }
 

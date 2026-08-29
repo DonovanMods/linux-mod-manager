@@ -148,6 +148,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to existing invocations: CLI output is byte-identical. (#293)
 - Internal: `SwitchPlan`/`ImportPlan` carry the stale-plan snapshot; `UpdateModVersion`/
   `ApplyModUpdate` unexported (Phase 2 close, #272)
+- Internal: `core` no longer imports any concrete source package. The `file://` download gate
+  (only a directory source may serve a local-file URL) now asserts a new `source.LocalFileServer`
+  capability interface instead of the concrete `*custom.Directory` type; core's import-boundary
+  test covers every `internal/source/*` package. No behavior change: the same sources are allowed,
+  and a refusal reads the same error text. (#300)
+- Internal: `Service.GetDownloadURL`, `DownloadModToCache`, `SetModFileIDs`, and `SetModVersion` —
+  exported methods with zero callers anywhere in the codebase, including tests — deleted. (#301)
+- Internal: core results carry structured data instead of pre-formatted display strings, so a JSON
+  frontend can render them without re-parsing English. `InstallResult.Installed/Skipped/Failed`
+  become `[]InstalledRef` (source ID, mod ID, name, version, reason), `InstallPlan.DependencyWarnings`
+  becomes `[]DependencyWarning`, `UpdateApplyResult.Applied` splits into
+  `Mod`/`Name`/`FromVersion`/`ToVersion`/`Changelog` plus a `Status` enum (`UpdateStatus`:
+  `updated`, `up_to_date`, `skipped`, `recompiled`, `recompile_available`, `available`,
+  `rolled_back`) and a raw `Reason`, and `RollbackResult` adopts the same `Status`/`Reason` pair.
+  CLI output is byte-identical. (#301)
+- Internal: the read-only commands gain core query types — `internal/core/queries.go` adds
+  `ModList`/`ModListing` (`ListMods`), `StatusReport`/`GameSummary` (`Status`),
+  `GameStatus`/`ProfileSummary` (`GameStatus`), `SearchReport`/`SearchHit` (`Search`),
+  `GameListEntry` (`ListGameEntries`) and `VerifyReport` (`VerifyReport`), and
+  `internal/app` adds `SourceInfo`/`SourceInfos` (the source-definition half of `lmm source
+list` is only visible to app). Each carries snake_case json tags and a recorded golden. The
+  joins `lmm list`, `lmm status`, `lmm search`, `lmm game list`, `lmm source list` and `lmm
+verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
+  the query types; CLI output — text and JSON — is unchanged. (#301)
 
 ### Fixed
 
@@ -162,6 +186,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the profile, matching `lmm profile apply`'s no-changes behaviour. (#290)
 - Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
   `hooks:`) (#295)
+- `lmm profile reorder`'s ambiguous-mod-ID error lists the matching `source:modid` candidates
+  sorted by source ID, instead of Go's randomized map iteration order. (#298)
+- `lmm profile sync`'s add/remove/update buckets are listed in a fixed, deterministic order
+  (additions in the order the mods were installed, updates and removals in profile order),
+  instead of Go's randomized map iteration order. (#298)
+- `lmm status` and `lmm game list` order games by game ID, instead of Go's randomized map
+  iteration order. (#299)
+- `lmm status --game X --json` no longer swallows a failure to list the game's profiles into an
+  empty-profiles document; it now fails loud, matching the plain-text path (which already did).
+  Only reachable when the profiles directory exists but can't be read - a missing directory still
+  returns no error. The plain-text path also drops one duplicated `listing profiles:` prefix
+  (`ProfileManager.List` already wraps that error with it). (#301)
 
 ## [1.30.1] - 2026-08-08
 

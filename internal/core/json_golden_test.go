@@ -45,6 +45,16 @@ var jsonGoldenMod = domain.Mod{
 	GameID: "skyrim-se", UpdatedAt: fixedTime,
 }
 
+// jsonGoldenGame is the domain.Game shared across the query goldens that
+// carry a whole game on the wire - domain's own golden pins Game's full
+// shape, so these only need a representative value.
+var jsonGoldenGame = domain.Game{
+	ID: "skyrim-se", Name: "Skyrim Special Edition",
+	InstallPath: "/games/skyrim-se", ModPath: "/games/skyrim-se/Data",
+	LinkMethod: domain.LinkSymlink,
+	SourceIDs:  map[string]string{"nexusmods": "skyrimspecialedition"},
+}
+
 func boolPtr(b bool) *bool { return &b }
 
 func TestJSONGoldens(t *testing.T) {
@@ -236,7 +246,7 @@ func TestJSONGoldens(t *testing.T) {
 				Dependencies:        nil,
 				MissingDependencies: []domain.ModReference{{SourceID: "nexusmods", ModID: "99"}},
 				CycleDetected:       true,
-				DependencyWarnings:  []string{"nexusmods:99: fetch failed"},
+				DependencyWarnings:  []core.DependencyWarning{{SourceID: "nexusmods", ModID: "99", Message: "fetch failed"}},
 				Conflicts: []core.Conflict{
 					{RelativePath: "Data/textures/armor/mesh.dds", CurrentSourceID: "nexusmods", CurrentModID: "7"},
 				},
@@ -456,14 +466,26 @@ func TestJSONGoldens(t *testing.T) {
 			// marshals as "[]", not "null".
 			"install_result",
 			core.InstallResult{
-				Installed:           nil,
-				Skipped:             []string{"OptionalAddon: already installed"},
-				Failed:              []string{"BrokenMod"},
+				Installed: nil,
+				Skipped: []core.InstalledRef{
+					{SourceID: "nexusmods", ModID: "43", Name: "OptionalAddon", Version: "1.0.0", Reason: "already installed"},
+				},
+				Failed: []core.InstalledRef{
+					{SourceID: "nexusmods", ModID: "44", Name: "BrokenMod", Version: "1.0.0", Reason: "already installed"},
+				},
 				FilesDeployed:       7,
 				MergedPakSyncFailed: true,
 				Warnings:            []string{"merged pak sync failed"},
 				Notes:               []string{"installed dependency Realistic Needs"},
 			},
+		},
+		{
+			"installed_ref",
+			core.InstalledRef{SourceID: "nexusmods", ModID: "43", Name: "OptionalAddon", Version: "1.0.0", Reason: "already installed"},
+		},
+		{
+			"dependency_warning",
+			core.DependencyWarning{SourceID: "nexusmods", ModID: "99", Message: "fetch failed"},
 		},
 		{
 			"verify_options",
@@ -535,6 +557,111 @@ func TestJSONGoldens(t *testing.T) {
 			core.InstalledDetail{
 				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
 				Locked: true, LockedVersion: "1.2.3", ConvertPaks: boolPtr(true),
+			},
+		},
+		{
+			// ConvertPaks is a non-nil pointer to false, the tri-state case a
+			// plain bool cannot express ("applies here, and is off"), and
+			// the one that proves the outer pointer - not the embedded
+			// InstalledMod.ConvertPaks bool - owns the convert_paks key.
+			"mod_listing",
+			core.ModListing{
+				InstalledMod: domain.InstalledMod{
+					Mod:          jsonGoldenMod,
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+					Deployed:     true,
+					ConvertPaks:  true,
+				},
+				Locked:        true,
+				LockedVersion: "1.2.2",
+				ConvertPaks:   boolPtr(false),
+			},
+		},
+		{
+			// Mods is deliberately left nil (no `omitempty` on the tag) to
+			// pin that an empty listing marshals as "[]", not "null".
+			"mod_list",
+			core.ModList{GameID: "skyrim-se", Profile: "default", Mods: nil},
+		},
+		{
+			// Profiles is deliberately left nil (no `omitempty` on the tag) to
+			// pin that a game with no profiles marshals as "[]", not "null".
+			"game_summary",
+			core.GameSummary{
+				Game:       jsonGoldenGame,
+				LinkMethod: domain.LinkSymlink,
+				Profiles:   nil,
+				ModCount:   3,
+				IsDefault:  true,
+			},
+		},
+		{
+			"status_report",
+			core.StatusReport{Games: []core.GameSummary{{
+				Game:       jsonGoldenGame,
+				LinkMethod: domain.LinkSymlink,
+				Profiles:   []string{"default", "hardcore"},
+				ModCount:   3,
+				IsDefault:  true,
+			}}},
+		},
+		{
+			"profile_summary",
+			core.ProfileSummary{Name: "default", ModCount: 3, IsDefault: true},
+		},
+		{
+			// EffectiveLinkMethod deliberately differs from LinkMethod (the
+			// profile override case, #155), and every optional key is
+			// populated, so the golden pins each key's wire shape rather than
+			// being a plausible status (same convention as deploy_plan above).
+			"game_status",
+			core.GameStatus{
+				Game:                jsonGoldenGame,
+				LinkMethod:          domain.LinkSymlink,
+				EffectiveLinkMethod: domain.LinkHardlink,
+				LinkMethodSource:    "profile",
+				CachePath:           "/home/user/.local/share/lmm",
+				Profiles:            []core.ProfileSummary{{Name: "default", ModCount: 3, IsDefault: true}},
+				ActiveProfile:       "default",
+				InstalledModCount:   3,
+				EnabledModCount:     2,
+				LastDeploy:          &fixedTime,
+				ConversionFailures:  1,
+			},
+		},
+		{
+			"search_hit",
+			core.SearchHit{Mod: jsonGoldenMod, Installed: true},
+		},
+		{
+			// Warnings carries the structured SourceWarning (SourceID + the
+			// error's message, never a pre-formatted line), and Mods is left
+			// nil to pin that an empty result marshals as "[]", not "null".
+			"search_report",
+			core.SearchReport{
+				GameID: "skyrim-se", Query: "armor",
+				Mods:           nil,
+				Warnings:       []core.SourceWarning{{SourceID: "curseforge", ErrorMessage: "network down"}},
+				TotalResults:   0,
+				AttemptedCount: 2,
+			},
+		},
+		{
+			"game_list_entry",
+			core.GameListEntry{Game: jsonGoldenGame, Default: true},
+		},
+		{
+			"verify_report",
+			core.VerifyReport{
+				GameID: "skyrim-se", Profile: "default",
+				Result: &core.VerifyResult{
+					Findings: []core.VerifyFinding{{ModID: "42", ModName: "Sample Mod", FileID: "file-1", Status: "ok"}},
+					Issues:   0, Warnings: 1, Checked: 1, HasFiles: true,
+				},
 			},
 		},
 		{
@@ -639,19 +766,27 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
-			// Applied is deliberately left nil to pin that a nil slice
-			// marshals as "[]", not "null".
+			// Every optional key populated at once (Changelog/Reason rarely
+			// co-occur on a real result), same convention as install_plan
+			// above - the golden's job is to pin every key's wire shape.
 			"update_apply_result",
 			core.UpdateApplyResult{
-				Applied:  nil,
-				Warnings: []string{"could not sync merged pak"},
-				Notes:    []string{"applied update for Sample Mod"},
+				Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.4", FileIDs: []string{"file-1"}},
+				Name:        "Sample Mod",
+				FromVersion: "1.2.3",
+				ToVersion:   "1.2.4",
+				Changelog:   "Fixed a crash on load.",
+				Status:      core.UpdateUpdated,
+				Reason:      "locked",
+				Warnings:    []string{"could not sync merged pak"},
+				Notes:       []string{"applied update for Sample Mod"},
 			},
 		},
 		{
 			"rollback_result",
 			core.RollbackResult{
 				ModName: "Sample Mod", FromVersion: "1.2.3", ToVersion: "1.2.2",
+				Status:   core.UpdateRolledBack,
 				Warnings: []string{"could not sync merged pak"},
 				Notes:    []string{"rolled back Sample Mod"},
 			},

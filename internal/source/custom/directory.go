@@ -235,7 +235,7 @@ func (d *Directory) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 }
 
 // GetDownloadURL implements source.ModSource, returning a file:// URL that
-// Service.DownloadModToCache ingests by local copy instead of HTTP download.
+// core's download path ingests by local copy instead of HTTP download.
 func (d *Directory) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	dm, err := d.find(mod.ID)
 	if err != nil {
@@ -243,6 +243,11 @@ func (d *Directory) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID 
 	}
 	return "file://" + dm.path, nil
 }
+
+// ServesLocalFiles implements source.LocalFileServer: a directory source's
+// GetDownloadURL legitimately returns a file:// URL, unlike every other
+// source (#300).
+func (d *Directory) ServesLocalFiles() bool { return true }
 
 // CheckUpdates implements source.ModSource by comparing installed versions to
 // the current scan.

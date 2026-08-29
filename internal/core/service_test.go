@@ -917,14 +917,57 @@ func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) 
 
 	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
 	require.Error(t, err)
+	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`,
+		"the refusal text is frozen regardless of how the gate itself is implemented (#300: source.LocalFileServer, not a *custom.Directory type assertion)")
 
 	gameCache := svc.GetGameCache(game)
 	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version),
 		"a file:// URL from a non-directory source must not be ingested into the cache")
 }
 
+// TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles covers
+// the other half of the #300 gate: a source that DOES implement
+// source.LocalFileServer but reports ServesLocalFiles() == false must be
+// refused exactly like a source that doesn't implement the interface at all.
+func TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles(t *testing.T) {
+	cfg := core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	}
+
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, svc.Close())
+	})
+
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	require.NoError(t, os.WriteFile(secret, []byte("do not leak"), 0644))
+
+	mock := &mockSourceWithFileURLDeniedLocal{
+		mockSourceWithFileURL: &mockSourceWithFileURL{mockSource: newMockSource("test"), fileURL: "file://" + secret},
+	}
+	svc.RegisterSource(mock)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
+	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
+
+	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	require.Error(t, err)
+	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`)
+
+	gameCache := svc.GetGameCache(game)
+	assert.False(t, gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version),
+		"a file:// URL from a source denying local-file service must not be ingested into the cache")
+}
+
 // mockSourceWithFileURL returns a file:// download URL regardless of source
-// type, simulating a compromised or misbehaving remote source.
+// type, simulating a compromised or misbehaving remote source. It does not
+// implement source.LocalFileServer at all.
 type mockSourceWithFileURL struct {
 	*mockSource
 	fileURL string
@@ -933,6 +976,16 @@ type mockSourceWithFileURL struct {
 func (m *mockSourceWithFileURL) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
 	return m.fileURL, nil
 }
+
+// mockSourceWithFileURLDeniedLocal implements source.LocalFileServer but
+// reports false - the other half of the #300 gate's condition
+// (!servesLocal || !lfs.ServesLocalFiles()), distinct from a source that
+// doesn't implement the interface at all.
+type mockSourceWithFileURLDeniedLocal struct {
+	*mockSourceWithFileURL
+}
+
+func (m *mockSourceWithFileURLDeniedLocal) ServesLocalFiles() bool { return false }
 
 // mockSourceWithDownloads extends mockSource with download URL support
 type mockSourceWithDownloads struct {

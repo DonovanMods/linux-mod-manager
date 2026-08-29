@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
@@ -177,4 +179,236 @@ func ProbeSource(ctx context.Context, svc *core.Service, def source.SourceDefini
 		return fmt.Sprintf("ok — get_mod %s returned %q", probeID, mod.Name), nil
 	}
 	return "", fmt.Errorf("unsupported source type %q", def.Type)
+}
+
+// AuthState is a source's authentication status: whether it has no auth
+// capability at all, has one but hasn't authenticated, or has. Wire-typed
+// (final review, Important #1 / #301) rather than the pre-#301 display
+// string ("yes"/"no"/"n/a") that source list --json carried directly onto
+// the wire - a JSON consumer classifies a source's auth state without
+// parsing English, and a text/JSON-view renderer that still wants those
+// exact words derives them from this enum instead (cmd/lmm/source.go).
+type AuthState int
+
+const (
+	// AuthNone means the source has no auth capability at all - the old
+	// display string's "n/a".
+	AuthNone AuthState = iota
+	// AuthRequired means the source can authenticate but hasn't - "no".
+	AuthRequired
+	// AuthAuthenticated means the source has authenticated - "yes".
+	AuthAuthenticated
+)
+
+// authStateNames maps each AuthState to its wire name. Keep in declaration order.
+var authStateNames = [...]string{
+	AuthNone:          "none",
+	AuthRequired:      "required",
+	AuthAuthenticated: "authenticated",
+}
+
+// String returns the state's wire name.
+func (a AuthState) String() string {
+	if a >= 0 && int(a) < len(authStateNames) && authStateNames[a] != "" {
+		return authStateNames[a]
+	}
+	return fmt.Sprintf("auth_state(%d)", int(a))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (a AuthState) MarshalText() ([]byte, error) { return []byte(a.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (a *AuthState) UnmarshalText(b []byte) error {
+	for i, n := range authStateNames {
+		if n == string(b) {
+			*a = AuthState(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown auth state %q", b)
+}
+
+// SourceInfo is one row of `lmm source list`: a registered source, or a
+// definition that never became one.
+//
+//   - Type is the source's own TypeLabel ("built-in", "directory",
+//     "manifest", "api") or "error" for a definition that failed to load,
+//     collided with a registered ID, or failed to construct.
+//   - Capabilities is the source's enabled capability names, in a fixed
+//     order (search, deps, updates, auth, versions) - not the pre-#301
+//     comma-joined display string; a text renderer that wants the old
+//     column joins it back with strings.Join.
+//   - InUse marks one of the active game's configured sources - only ever
+//     set in the full-registry-with-a-game view (SourceInfos' all=true),
+//     which is the one case that marks a subset rather than restricting to
+//     it. omitzero (not omitempty: under encoding/json/v2 only omitzero
+//     drops a false bool), so a scoped or gameless response carries no
+//     "in_use" key at all - the shape today's callers already depend on.
+//   - Err/ErrorMessage are the failure behind an "error" row, paired the way
+//     core.SourceWarning pairs them: the structured error for a caller that
+//     wants to classify it, its message for the wire.
+type SourceInfo struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Type         string    `json:"type"`
+	Auth         AuthState `json:"auth"`
+	Capabilities []string  `json:"capabilities"`
+	InUse        bool      `json:"in_use,omitzero"`
+	Err          error     `json:"-"`
+	ErrorMessage string    `json:"error,omitempty"`
+}
+
+// newSourceInfoError builds an "error" row with Err and ErrorMessage paired
+// from a single error, so a construction site cannot emit one without the
+// other (the same rule core.newSourceWarning follows).
+func newSourceInfoError(id string, err error) SourceInfo {
+	return SourceInfo{ID: id, Type: "error", Err: err, ErrorMessage: err.Error()}
+}
+
+// SourceInfos assembles the `lmm source list` rows.
+//
+// This lives in app, not core, because two of its three inputs do: the
+// custom source DEFINITIONS on disk (LoadSourceDefinitions) and the ability
+// to re-run a failed one's construction to recover its error
+// (ConstructSource). Core's registry only holds sources that registered
+// successfully - it cannot see a definition that collided or failed to
+// build, which is exactly what the error rows report - and constructing one
+// means naming concrete source packages, which core must not import
+// (Ruling 12, #300). Everything else here (ListSources, SourcesForGame,
+// GetSource) is core's.
+//
+// game nil means no game context is resolvable: the full registry is
+// returned either way, and all has no effect. With a game, all=false scopes
+// the list to that game's configured+registered sources, while all=true
+// returns the full registry with those sources marked InUse.
+//
+// Definitions that failed stay visible in EVERY view: they never registered,
+// so they have no game association to scope by, and hiding them would bury
+// exactly the diagnostics a user debugging their YAML needs.
+func SourceInfos(ctx context.Context, svc *core.Service, game *domain.Game, all bool) ([]SourceInfo, error) {
+	// Reads definition files and re-runs failed constructions (which may
+	// touch the filesystem); an already-cancelled ctx aborts before any of
+	// it, matching Open's own contract.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	defs, loadErrs, err := LoadSourceDefinitions(svc.ConfigDir())
+	if err != nil {
+		return nil, fmt.Errorf("loading source definitions: %w", err)
+	}
+
+	// Reclassify each definition against what actually ended up registered
+	// (registration may have skipped it on ID collision or construction
+	// failure) so the list reflects reality rather than just "a definition
+	// with this ID exists".
+	var errRows []SourceInfo
+	for _, d := range defs {
+		registered, err := svc.GetSource(d.ID)
+		switch {
+		case err == nil && isCustomSource(registered):
+			// Registered successfully as this definition's own custom
+			// source; its row (built from ListSources below) carries the
+			// correct TypeLabel() already - nothing to record here.
+		case err == nil:
+			// Something else (a built-in, or another def) already held this ID.
+			errRows = append(errRows, newSourceInfoError(d.ID, errors.New("id already in use")))
+		default:
+			// Nothing registered under this ID: construction must have
+			// failed. Re-run it to recover the actual error for display.
+			if _, cerr := ConstructSource(d); cerr != nil {
+				errRows = append(errRows, newSourceInfoError(d.ID, cerr))
+			}
+		}
+	}
+
+	// ListSources is registry-map order (nondeterministic, a pre-existing
+	// quirk of this command); sort so the full-registry views are stable and
+	// consistent with SourcesForGame's already-sorted scoped view.
+	srcs := svc.ListSources()
+	sort.Slice(srcs, func(i, j int) bool { return srcs[i].ID() < srcs[j].ID() })
+	var inUseIDs map[string]bool
+	switch {
+	case game != nil && !all:
+		srcs, err = svc.SourcesForGame(game.ID)
+		if err != nil {
+			return nil, err
+		}
+	case game != nil:
+		scoped, err := svc.SourcesForGame(game.ID)
+		if err != nil {
+			return nil, err
+		}
+		inUseIDs = make(map[string]bool, len(scoped))
+		for _, s := range scoped {
+			inUseIDs[s.ID()] = true
+		}
+	}
+
+	rows := make([]SourceInfo, 0, len(srcs)+len(errRows)+len(loadErrs))
+	for _, src := range srcs {
+		rows = append(rows, SourceInfo{
+			ID:           src.ID(),
+			Name:         src.Name(),
+			Type:         source.TypeLabelOf(src),
+			Auth:         authState(src),
+			Capabilities: capabilitySummary(source.CapabilitiesOf(src)),
+			InUse:        inUseIDs[src.ID()],
+		})
+	}
+	rows = append(rows, errRows...)
+	for _, le := range loadErrs {
+		rows = append(rows, newSourceInfoError(le.File, le.Err))
+	}
+	return rows, nil
+}
+
+// isCustomSource reports whether src is a user-defined source (as opposed to
+// a built-in like NexusMods/CurseForge): a self-reported type of exactly
+// "directory", "manifest", or "api". "built-in" and the "unknown" fallback
+// both answer false - conservative on the unknown side so the definitions
+// reclassify loop (the only call site) reports a collision/error row rather
+// than assuming an unlabeled source is the definition's own. Unreachable in
+// practice: LoadSourceDefinitions guarantees ID uniqueness within a load, so
+// a registered source matching a definition's ID is either a built-in or
+// that definition's own constructed source - never an unrelated third party.
+func isCustomSource(src source.ModSource) bool {
+	switch source.TypeLabelOf(src) {
+	case "directory", "manifest", "api":
+		return true
+	}
+	return false
+}
+
+// authState reports a source's authentication status.
+func authState(src source.ModSource) AuthState {
+	if !source.CapabilitiesOf(src).Auth {
+		return AuthNone
+	}
+	if a, ok := src.(interface{ IsAuthenticated() bool }); ok {
+		if a.IsAuthenticated() {
+			return AuthAuthenticated
+		}
+		return AuthRequired
+	}
+	return AuthAuthenticated
+}
+
+// capabilitySummary returns c's enabled capability names, in a fixed order
+// (search, deps, updates, auth, versions) - the same order the pre-#301
+// comma-joined display string used.
+func capabilitySummary(c source.Capabilities) []string {
+	var out []string
+	add := func(enabled bool, name string) {
+		if enabled {
+			out = append(out, name)
+		}
+	}
+	add(c.Search, "search")
+	add(c.Dependencies, "deps")
+	add(c.Updates, "updates")
+	add(c.Auth, "auth")
+	add(c.Versions, "versions")
+	return out
 }
