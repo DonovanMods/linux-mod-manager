@@ -853,6 +853,13 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `1`  | Error                                                       |
 | `2`  | Cancelled by the user (e.g. declined a confirmation prompt) |
 
+`--dry-run` always exits `0` once it renders a plan, even when the plan's own data records a
+selection that is certain to fail once applied (e.g. an unknown or disabled mod ID) — a plan is
+data, not an attempt. `lmm deploy <id> --dry-run` therefore exits `0` for a mod ID the live
+`lmm deploy <id>` would reject with exit `1`. A scripted pre-flight check cannot rely on
+`--dry-run`'s exit code alone to detect a doomed deploy/uninstall/purge ahead of time; `--dry-run`
+does not currently support `--json`.
+
 ### Import
 
 `lmm import` has two distinct modes, chosen by whether an archive path is given:
