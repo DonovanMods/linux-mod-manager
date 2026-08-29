@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -106,4 +107,74 @@ func EnvKeyFor(src source.ModSource) string {
 // replaced by underscores.
 func EnvKeyForSourceID(sourceID string) string {
 	return "LMM_" + strings.ReplaceAll(strings.ToUpper(sourceID), "-", "_") + "_API_KEY"
+}
+
+// LoadSourceDefinitions loads every custom source definition under
+// <configDir>/sources - the same definitions registerCustomSources
+// registers at startup - for a frontend that needs to inspect them directly
+// (e.g. 'lmm source list' cross-referencing what actually got registered).
+func LoadSourceDefinitions(configDir string) ([]source.SourceDefinition, []config.SourceLoadError, error) {
+	return config.LoadSourceDefinitions(configDir)
+}
+
+// LoadSourceDefinitionFile parses and validates a single source definition
+// file, for 'lmm source validate'.
+func LoadSourceDefinitionFile(path string) (source.SourceDefinition, error) {
+	return config.LoadSourceDefinitionFile(path)
+}
+
+// ConstructSource builds def's ModSource without performing any live I/O
+// (a directory scan, a manifest fetch, an API call) - the same construction
+// step registerCustomSources performs at startup, exposed for a frontend
+// that needs to recover a definition's construction error without
+// registering it (e.g. 'lmm source list' reclassifying a definition that
+// never made it into the registry).
+func ConstructSource(def source.SourceDefinition) (source.ModSource, error) {
+	return custom.New(def)
+}
+
+// ProbeSource constructs def's source, attaches its API key the same way
+// registration does, and performs one live operation against it - a
+// directory scan, a manifest fetch+parse, or an API call - returning a
+// human-readable summary of what it found. probeID supplies the mod id for
+// an api definition with no search endpoint. This is 'lmm source validate
+// --probe's underlying smoke test.
+func ProbeSource(ctx context.Context, svc *core.Service, def source.SourceDefinition, probeID string) (string, error) {
+	src, err := custom.New(def)
+	if err != nil {
+		return "", fmt.Errorf("constructing source: %w", err)
+	}
+	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
+		// Same resolution as registration (env var named by EnvKeyFor, then
+		// the stored token), so a probe sees exactly the key a real run would.
+		if key := ResolveAPIKey(ctx, svc, src); key != "" {
+			a.SetAPIKey(key)
+		}
+	}
+
+	switch def.Type {
+	case source.TypeDirectory, source.TypeManifest:
+		res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("ok — %d mod(s) visible", res.TotalCount), nil
+	case source.TypeAPI:
+		if def.API.Endpoints.Search != nil {
+			res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("ok — search responded (%d total reported)", res.TotalCount), nil
+		}
+		if probeID == "" {
+			return "", errors.New("this definition has no search endpoint; provide a known mod id with --id to probe get_mod")
+		}
+		mod, err := src.GetMod(ctx, "", probeID)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("ok — get_mod %s returned %q", probeID, mod.Name), nil
+	}
+	return "", nil
 }

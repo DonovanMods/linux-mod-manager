@@ -228,6 +228,60 @@ func TestProfileManager_List(t *testing.T) {
 	assert.Len(t, profiles, 2)
 }
 
+// TestProfileManager_ListNames pins the bare-names query cmd/lmm's
+// 'list --profiles' needs (v2 Phase 2 Task 22): unlike List, which loads
+// every profile and therefore silently drops one whose YAML fails to
+// parse, ListNames only enumerates the profiles directory - the same
+// filenames List's own directory scan sees, before any per-file
+// config.LoadProfile call.
+func TestProfileManager_ListNames(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.Create("skyrim-se", "survival")
+	require.NoError(t, err)
+	_, err = pm.Create("skyrim-se", "combat")
+	require.NoError(t, err)
+
+	names, err := pm.ListNames("skyrim-se")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"survival", "combat"}, names)
+}
+
+// TestProfileManager_ListNames_SurvivesUnparseableProfile is the case List
+// can't handle: a profile file present on disk but not valid profile YAML
+// still has its bare name returned by ListNames, where List silently skips
+// it (List's own loop: `if err != nil { continue }`).
+func TestProfileManager_ListNames_SurvivesUnparseableProfile(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, database.Close())
+	})
+
+	pm := core.NewProfileManager(dir, database)
+	_, err = pm.Create("skyrim-se", "survival")
+	require.NoError(t, err)
+
+	profileDir := filepath.Join(dir, "games", "skyrim-se", "profiles")
+	require.NoError(t, os.WriteFile(filepath.Join(profileDir, "broken.yaml"), []byte("link_method: bogus\n"), 0644))
+
+	names, err := pm.ListNames("skyrim-se")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"survival", "broken"}, names)
+
+	profiles, err := pm.List("skyrim-se")
+	require.NoError(t, err)
+	assert.Len(t, profiles, 1, "List silently drops the unparseable profile - the behavior ListNames exists to avoid")
+}
+
 func TestProfileManager_Get(t *testing.T) {
 	dir := t.TempDir()
 	database, err := db.New(":memory:")

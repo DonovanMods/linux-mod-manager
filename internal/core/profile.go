@@ -95,6 +95,13 @@ func (pm *ProfileManager) List(gameID string) ([]*domain.Profile, error) {
 	return profiles, nil
 }
 
+// ListNames returns every profile's bare name (the profiles directory's
+// filenames, minus ".yaml") without loading or validating each one -
+// tolerant of a profile file List/Get would refuse to parse.
+func (pm *ProfileManager) ListNames(gameID string) ([]string, error) {
+	return config.ListProfiles(pm.configDir, gameID)
+}
+
 // loadProfile is Get's file-read step, indirected through a package
 // variable so a test can wrap it to count calls - CountProfileLoadsForTest
 // (profile_export_test.go) uses this to verify CheckGameUpdates' lock-state
