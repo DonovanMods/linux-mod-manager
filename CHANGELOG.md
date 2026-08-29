@@ -32,16 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the same 1-based indices the prompt accepts, including an already-configured game's index for
   a repair); the two are mutually exclusive and both skip the prompt entirely. (#303)
 - **`--json` on every mutating command.** `install`, `import` (archive and scan), `deploy`,
-  `uninstall`, `purge`, `profile apply/switch/sync/import/create/delete/reorder`, `mod
-enable/disable/lock/unlock/set-update/convert/edit` and `game detect/set-default/clear-default`
-  now emit their core result document; with `--dry-run` they emit the plan document instead of
-  its rendering. Progress and per-mod status lines are suppressed under `--json`, so stdout holds
-  exactly one document and stderr stays empty apart from `--log-level` diagnostics. Two new core
-  documents back this: `core.ProfileResult` (`{profile}`) for the profile-management commands and
-  `core.SettingsResult` (`{default_game}`) for `game set-default`/`clear-default`. `--json` never
-  prompts: a confirmation with no deciding flag fails before mutating anything with the error
-  envelope, and an `install --json` blocked by file conflicts reports them as
-  `details.conflicts` (pass `--force` to accept). (#303)
+  `uninstall`, `purge`, `profile apply/switch/sync/import/create/delete/reorder`,
+  `mod enable/disable/lock/unlock/set-update/convert/edit` and
+  `game detect/set-default/clear-default` now emit their core result document; with `--dry-run`
+  they emit the plan document instead of its rendering. Progress and per-mod status lines are
+  suppressed under `--json`, so stdout holds exactly one document and stderr stays empty apart
+  from `--log-level` diagnostics. Two new core documents back this: `core.ProfileResult`
+  (`{profile}`) for the profile-management commands and `core.SettingsResult` (`{default_game}`)
+  for `game set-default`/`clear-default`. `--json` never prompts: a confirmation with no deciding
+  flag fails before mutating anything with the error envelope, and an `install --json` blocked by
+  file conflicts reports them as `details.conflicts` (pass `--force` to accept). (#303)
 - `lmm profile apply`, `lmm profile switch` and `lmm profile sync` gain `--dry-run`: they print
   the same plan preview the live run shows, under a `<Verb> plan for profile "<name>" (dry run)`
   header, and change nothing — including the profile-creating and default-switching writes a
