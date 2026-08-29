@@ -1,5 +1,5 @@
 // Package core provides business logic orchestration for lmm.
-// converge.go holds ConvergeDeployedFiles (#168/#212): a remove-only
+// converge.go holds convergeDeployedFiles (#168/#212): a remove-only
 // reconciliation of a profile's deployed state against current reality. It
 // never deploys and never modifies file content - the counterpart deploy
 // path (deployableFiles, #210) decides what SHOULD be linked; convergence
@@ -30,7 +30,7 @@ type ConvergedFile struct {
 	ModID    string `json:"mod_id,omitempty"`
 }
 
-// ConvergeResult is ConvergeDeployedFiles' outcome. Removed's meaning
+// ConvergeResult is convergeDeployedFiles' outcome. Removed's meaning
 // depends on dryRun: with dryRun=true it lists every candidate detection
 // would act on (no mutation happened, so nothing can have failed); with
 // dryRun=false it lists ONLY paths that were SUCCESSFULLY removed - a path
@@ -42,7 +42,7 @@ type ConvergeResult struct {
 	Removed []ConvergedFile `json:"removed"`
 }
 
-// ConvergeDeployedFiles reconciles gameDir/profileName's on-disk state
+// convergeDeployedFiles reconciles gameDir/profileName's on-disk state
 // against current reality in two passes, remove-only:
 //
 //  1. Row pass: every deployed_files row whose path is no longer in the
@@ -96,17 +96,11 @@ type ConvergeResult struct {
 // exactly what succeeded (see ConvergeResult's doc comment: a failed item is
 // never added to Removed, only to the joined error). ctx is checked between
 // mods during the row pass and periodically during the directory walk.
-func (s *Service) ConvergeDeployedFiles(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
-	if !dryRun {
-		release, err := s.beginOp(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer release()
-	}
-	return s.convergeDeployedFiles(ctx, game, profileName, dryRun)
-}
-
+// dryRun (Ruling 7) survives here until PlanDeploy subsumes it in Phase 3;
+// verify --fix is the only caller, and it passes !opts.Fix. Callers that
+// mutate (dryRun == false) must already hold the mutation slot - the exported
+// wrapper that used to take it for them had no frontend callers left and was
+// ratcheted away in #293.
 func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
 	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {

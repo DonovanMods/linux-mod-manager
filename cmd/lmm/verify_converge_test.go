@@ -18,7 +18,7 @@ import (
 // --- doVerify wires deploy convergence (#168/#212) ---
 //
 // setupDoVerifyConvergeTest builds a fixture with the two shapes
-// ConvergeDeployedFiles detects (internal/core/converge_test.go exercises the
+// convergeDeployedFiles detects (internal/core/converge_test.go exercises the
 // same shapes at the core seam: TestConverge_RowDrivenStaleRemoved and
 // TestConverge_DanglingCacheLinkSwept), driven here through the real doVerify
 // CLI path instead:

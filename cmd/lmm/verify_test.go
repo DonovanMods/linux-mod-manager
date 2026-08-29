@@ -303,7 +303,7 @@ func TestDoVerify_FileCountPrePass_ListFilesFails_SurfacedAsWarning(t *testing.T
 	})
 	assert.Contains(t, out, "could not check cached file count", "a real ListFiles error must be surfaced, not silently swallowed")
 	// #168/#212: the same permission-denied cache dir also breaks
-	// ConvergeDeployedFiles' own attempt to list mod1's deployable files
+	// convergeDeployedFiles' own attempt to list mod1's deployable files
 	// while building its "provided" set - a second, independent warning via
 	// a different code path for the same underlying permission problem, not
 	// a double-count of the one above.
@@ -636,7 +636,7 @@ func TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag(t 
 	// write permission) but now dangles, since step 1 already renamed its
 	// target cache dir to "1.0", and its deployed_files row was deleted by
 	// Install's own rollback (installer.go) when the Deploy it attempted
-	// failed - exactly the dangling-cache-link shape ConvergeDeployedFiles'
+	// failed - exactly the dangling-cache-link shape convergeDeployedFiles'
 	// sweep pass exists to catch. Restore write access before the second
 	// run, mirroring a real recovery workflow (fix the permission problem,
 	// then re-run verify --fix): convergence can then sweep the orphan away

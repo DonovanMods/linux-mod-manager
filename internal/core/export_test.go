@@ -104,3 +104,18 @@ func (s *Service) MarkImportedFileCompleteForTest(ctx context.Context, game *dom
 func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain.LinkMethod) *Installer {
 	return s.newInstallerWithLinker(game, s.getLinker(method))
 }
+
+// ConvergeDeployedFilesForTest exposes convergeDeployedFiles behind the same
+// beginOp gate the exported wrapper the deploy lift (#293) removed used to
+// take: verify's --fix pass is production's only caller, but convergence's
+// own row/sweep rules are pinned directly by converge_test.go.
+func (s *Service) ConvergeDeployedFilesForTest(ctx context.Context, game *domain.Game, profileName string, dryRun bool) (*ConvergeResult, error) {
+	if !dryRun {
+		release, err := s.beginOp(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	return s.convergeDeployedFiles(ctx, game, profileName, dryRun)
+}

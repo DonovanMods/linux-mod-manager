@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- ConvergeDeployedFiles (#168/#212) ---
+// --- convergeDeployedFiles (#168/#212) ---
 //
 // These tests use newFlowsTestService/seedInstalledMod (flows_test.go) to
 // build a real Service (temp config/data/cache dirs, :memory: DB) and the
@@ -40,7 +40,7 @@ func TestConverge_RowDrivenStaleRemoved(t *testing.T) {
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "gone.esp", result.Removed[0].Path)
@@ -80,7 +80,7 @@ func TestConverge_SharedPathProtectedByUnion(t *testing.T) {
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "shared.esp")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	assert.Empty(t, result.Removed, "shared.esp must be protected by m2's still-current claim")
 
@@ -103,7 +103,7 @@ func TestConverge_DanglingCacheLinkSwept(t *testing.T) {
 	target := filepath.Join(cacheRoot, "g1", "src-stray", "1.0", "stray.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "stray.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "stray.pak", result.Removed[0].Path)
@@ -126,7 +126,7 @@ func TestConverge_ForeignSymlinkUntouched(t *testing.T) {
 	target := filepath.Join(outsideDir, "does-not-exist.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "user.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	assert.Empty(t, result.Removed)
 
@@ -146,7 +146,7 @@ func TestConverge_HealthySymlinkUntouched(t *testing.T) {
 	target := gameCache.GetFilePath("g1", "src", "merged", "1.0", "merged.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "merged.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	assert.Empty(t, result.Removed)
 
@@ -174,7 +174,7 @@ func TestConverge_DryRunTouchesNothing(t *testing.T) {
 	strayTarget := filepath.Join(cacheRoot, "g1", "src-stray", "1.0", "stray.pak")
 	require.NoError(t, os.Symlink(strayTarget, filepath.Join(gameDir, "stray.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", true)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", true)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 2)
 
@@ -216,7 +216,7 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 	// the sweep must never touch it (it only ever considers symlinks).
 	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "untracked.txt"), []byte("leave me alone"), 0644))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "gone.esp", result.Removed[0].Path)
@@ -263,7 +263,7 @@ func TestConverge_RowPass_UndeployFailureExcludedFromRemoved(t *testing.T) {
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0644))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "a failed Undeploy must surface as a joined error")
 	assert.Contains(t, err.Error(), "gone.esp")
 	assert.Empty(t, result.Removed, "a failed Undeploy must not be reported as removed")
@@ -304,7 +304,7 @@ func TestConverge_SweepPass_RemoveFailureExcludedFromRemoved(t *testing.T) {
 	require.NoError(t, os.Chmod(subDir, 0o555))
 	t.Cleanup(func() { _ = os.Chmod(subDir, 0o755) })
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "a failed sweep os.Remove must surface as a joined error")
 	assert.Contains(t, err.Error(), "stray.pak")
 	assert.Empty(t, result.Removed, "a failed sweep removal must not be reported as removed")
@@ -333,7 +333,7 @@ func TestConverge_SweepPass_ChecksBothCacheRoots(t *testing.T) {
 	target := filepath.Join(globalCacheRoot, "g1", "src-stray", "1.0", "stray.pak")
 	require.NoError(t, os.Symlink(target, filepath.Join(gameDir, "stray.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "stray.pak", result.Removed[0].Path)
@@ -379,7 +379,7 @@ func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
 	strayTarget := filepath.Join(cacheRoot, "g1", "src", "m1", "1.0", "untracked.pak")
 	require.NoError(t, os.Symlink(strayTarget, filepath.Join(gameDir, "untracked.pak")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "untracked.pak", result.Removed[0].Path)
@@ -422,7 +422,7 @@ func TestConverge_SweepPass_UnreadableDirSkippedNotAborted(t *testing.T) {
 	linkPath := filepath.Join(siblingDir, "stray.pak")
 	require.NoError(t, os.Symlink(target, linkPath))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "the unreadable directory must surface as an error")
 	assert.Contains(t, err.Error(), "locked")
 	require.Len(t, result.Removed, 1, "the sibling directory's dangling link must still be swept")
@@ -463,7 +463,7 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.RemoveAll(gameCache.ModPath("g1", "src", "m1", "1.0")))
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.NoError(t, err)
 	require.Len(t, result.Removed, 1)
 	assert.Equal(t, "gone.esp", result.Removed[0].Path)
@@ -536,7 +536,7 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 	require.NoError(t, rawDB.SaveDeployedFile(context.Background(), "g1", "default", absPath, "src", "m1"))
 	require.NoError(t, rawDB.Close())
 
-	result, err := svc.ConvergeDeployedFiles(context.Background(), game, "default", false)
+	result, err := svc.ConvergeDeployedFilesForTest(context.Background(), game, "default", false)
 	require.Error(t, err, "an unsafe deployed-file record must surface as an error")
 	assert.Contains(t, err.Error(), "unsafe")
 	assert.Contains(t, err.Error(), "../outside.pak")
