@@ -587,118 +587,43 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 }
 
 func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	pm := getProfileManager(service)
+	profileName := profileSyncTarget(service, game, args)
 
-	// Determine profile name
-	var profileName string
-	if len(args) > 0 {
-		profileName = args[0]
-	} else {
-		defaultProfile, err := pm.GetDefault(game.ID)
-		if err != nil {
-			profileName = "default"
-		} else {
-			profileName = defaultProfile.Name
-		}
-	}
-
-	// Get current profile
-	profile, err := pm.Get(game.ID, profileName)
+	plan, err := service.PlanProfileSync(ctx, game, profileName)
 	if err != nil {
-		if err == domain.ErrProfileNotFound {
-			// Create profile if it doesn't exist
-			profile, err = pm.Create(game.ID, profileName)
-			if err != nil {
-				return fmt.Errorf("creating profile: %w", err)
-			}
-		} else {
-			return fmt.Errorf("loading profile: %w", err)
-		}
+		return err
 	}
 
-	// Get installed mods from database
-	installedMods, err := service.GetInstalledMods(ctx, game.ID, profileName)
-	if err != nil {
-		return fmt.Errorf("getting installed mods: %w", err)
-	}
-
-	// Build set of installed mod references
-	installedRefs := make(map[string]domain.ModReference)
-	for _, im := range installedMods {
-		if im.Enabled {
-			key := im.SourceID + ":" + im.ID
-			installedRefs[key] = domain.ModReference{
-				SourceID: im.SourceID,
-				ModID:    im.ID,
-				Version:  im.Version,
-				FileIDs:  im.FileIDs,
-			}
-		}
-	}
-
-	// Build set of profile mod references
-	profileRefs := make(map[string]domain.ModReference)
-	for _, mr := range profile.Mods {
-		key := mr.SourceID + ":" + mr.ModID
-		profileRefs[key] = mr
-	}
-
-	// Calculate differences
-	var toAdd []domain.ModReference
-	var toRemove []domain.ModReference
-	var toUpdate []domain.ModReference // Mods that need FileIDs updated
-
-	// Mods in DB but not in profile
-	for key, ref := range installedRefs {
-		if profileRef, exists := profileRefs[key]; !exists {
-			toAdd = append(toAdd, ref)
-		} else if len(ref.FileIDs) > 0 && len(profileRef.FileIDs) == 0 {
-			// Mod exists in both but profile is missing FileIDs
-			toUpdate = append(toUpdate, ref)
-		}
-	}
-
-	// Mods in profile but not in DB (or disabled)
-	for key, ref := range profileRefs {
-		if _, exists := installedRefs[key]; !exists {
-			toRemove = append(toRemove, ref)
-		}
-	}
-
-	// Show changes
-	if len(toAdd) == 0 && len(toRemove) == 0 && len(toUpdate) == 0 {
+	if len(plan.ToAdd) == 0 && len(plan.ToRemove) == 0 && len(plan.ToUpdate) == 0 {
 		fmt.Printf("Profile %s is already in sync.\n", profileName)
 		return nil
 	}
 
 	fmt.Printf("Syncing profile: %s\n\n", profileName)
 
-	if len(toAdd) > 0 {
+	if len(plan.ToAdd) > 0 {
 		fmt.Println("Will add to profile:")
-		for _, ref := range toAdd {
-			// Try to get mod name from DB
-			mod, _ := service.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, profileName)
-			if mod != nil {
-				fmt.Printf("  + %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
+		for _, ref := range plan.ToAdd {
+			if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+				fmt.Printf("  + %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
 			} else {
 				fmt.Printf("  + %s:%s\n", ref.SourceID, ref.ModID)
 			}
 		}
 	}
 
-	if len(toRemove) > 0 {
+	if len(plan.ToRemove) > 0 {
 		fmt.Println("Will remove from profile:")
-		for _, ref := range toRemove {
+		for _, ref := range plan.ToRemove {
 			fmt.Printf("  - %s:%s\n", ref.SourceID, ref.ModID)
 		}
 	}
 
-	if len(toUpdate) > 0 {
+	if len(plan.ToUpdate) > 0 {
 		fmt.Println("Will update FileIDs for:")
-		for _, ref := range toUpdate {
-			mod, _ := service.GetInstalledMod(ctx, ref.SourceID, ref.ModID, game.ID, profileName)
-			if mod != nil {
-				fmt.Printf("  ~ %s (%s:%s)\n", mod.Name, ref.SourceID, ref.ModID)
+		for _, ref := range plan.ToUpdate {
+			if name, ok := plan.Names[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+				fmt.Printf("  ~ %s (%s:%s)\n", name, ref.SourceID, ref.ModID)
 			} else {
 				fmt.Printf("  ~ %s:%s\n", ref.SourceID, ref.ModID)
 			}
@@ -716,47 +641,52 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		return nil
 	}
 
-	// Apply changes
-	for _, ref := range toAdd {
-		if err := pm.AddMod(game.ID, profileName, ref); err != nil {
+	// progress prints the three loops' --verbose-only diagnostics at their
+	// exact point of occurrence, driven by core.ApplyProfileSync's events -
+	// the same 2-space "  Warning: ..." rendering for all three buckets
+	// (see core's profile_sync.go). The end-of-apply merged-pak warnings
+	// arrive on result.Warnings instead, unconditional, printed below.
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.SyncAddNote, core.SyncRemoveNote, core.SyncUpdateNote:
 			if verbose {
-				fmt.Printf("  Warning: %v\n", err)
+				fmt.Printf("  %s\n", p.Detail)
 			}
 		}
 	}
 
-	for _, ref := range toRemove {
-		if err := pm.RemoveMod(game.ID, profileName, ref.SourceID, ref.ModID); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: %v\n", err)
-			}
-		}
+	result, err := service.ApplyProfileSync(ctx, game, plan, progress)
+	if err != nil {
+		return err
 	}
 
-	// Update mods with FileIDs
-	for _, ref := range toUpdate {
-		if err := pm.UpsertMod(game.ID, profileName, ref); err != nil {
-			if verbose {
-				fmt.Printf("  Warning: could not update %s:%s: %v\n", ref.SourceID, ref.ModID, err)
-			}
-		}
-	}
-
-	// #197 postsmoke seam-audit fix: toAdd/toRemove change profile.Mods
-	// MEMBERSHIP directly (AddMod/RemoveMod) - membership, not just the DB
-	// Enabled flag, is what GetInstalledModsInProfileOrder (and so
-	// enabledMergeSources) requires, so this is a genuine merge-input
-	// change with no other seam to catch it.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
-	} else {
-		for _, w := range syncWarnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
+	// #197: unconditional stderr, unlike the --verbose-gated warnings above -
+	// today, only the merged-pak sync's own diagnostics.
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
 	fmt.Printf("✓ Synced profile: %s\n", profileName)
 	return nil
+}
+
+// profileSyncTarget resolves which profile `lmm profile sync` acts on: the
+// positional argument when given, else the game's default profile, else the
+// literal "default" (an unreadable default is not an error here - the
+// plan's own profile lookup handles a missing profile via Plan.Missing).
+func profileSyncTarget(service *core.Service, game *domain.Game, args []string) string {
+	if len(args) > 0 {
+		return args[0]
+	}
+	defaultProfile, err := getProfileManager(service).GetDefault(game.ID)
+	if err != nil {
+		return "default"
+	}
+	return defaultProfile.Name
 }
 
 func runProfileReorder(cmd *cobra.Command, args []string) error {
