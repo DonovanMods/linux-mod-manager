@@ -786,3 +786,99 @@ func TestLogLevel_UnderJSON_StillWritesToStderr(t *testing.T) {
 
 	assert.Contains(t, buf.String(), "level=WARN msg=diagnostic k=v")
 }
+
+// --- update / rollback (Task 11 review, Important 3) ---
+//
+// update/update rollback were left out of the Ruling 15 sweep despite being
+// a row of the coverage table: doUpdate's verbose bulk-check print/sink
+// (update.go's `if verbose {...}` before CheckGameUpdates) and applyUpdate's/
+// doUpdateRollback's UpdateBeforeEachForced/UpdateWarning progress cases both
+// wrote straight to stdout/stderr with no jsonOutput gate. These three pin
+// the fix: the verbose bulk print no longer leaks onto stdout ahead of the
+// document, and a warning that would otherwise print via the progress
+// closure instead reaches the Result/RollbackResult document with nothing on
+// stderr - the same framing every other mutating command gets via
+// quietSink.
+
+// TestDoUpdate_JSON_Verbose_BulkCheckStaysOffStdout covers doUpdate's bulk
+// (no mod-id) path: with --verbose, the "Checking %d mod(s)..." print and
+// the per-mod UpdateCheckEvent sink it installs must both stay off under
+// --json, or runJSONCommand's single-document check fails.
+func TestDoUpdate_JSON_Verbose_BulkCheckStaysOffStdout(t *testing.T) {
+	svc, game, _ := setupDoUpdateTest(t)
+	verbose = true
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
+	// No AddMod: the check still runs (and would still fire per-mod
+	// UpdateCheckEvents under plain --verbose) even though it finds nothing.
+
+	out := runJSONCommand(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	var doc core.UpdateCheckReport
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, game.ID, doc.GameID)
+}
+
+// TestApplySingleUpdate_JSON_AfterEachHookWarnings_ReachResultWithNoStderr
+// covers applyUpdate's progress closure (update.go ~:706): a forced-nonfatal
+// after_each hook failure emits core.UpdateWarning, which used to print
+// straight to stderr regardless of --json. quietSink now keeps the closure
+// unregistered under --json, so the warnings must show up in
+// UpdateApplyResult.Warnings instead, with stderr empty.
+func TestApplySingleUpdate_JSON_AfterEachHookWarnings_ReachResultWithNoStderr(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+
+	scriptsDir := t.TempDir()
+	uninstallScript := filepath.Join(scriptsDir, "uninstall_after_each.sh")
+	installScript := filepath.Join(scriptsDir, "install_after_each.sh")
+	require.NoError(t, os.WriteFile(uninstallScript, []byte("#!/bin/bash\nexit 1\n"), 0o755))
+	require.NoError(t, os.WriteFile(installScript, []byte("#!/bin/bash\nexit 1\n"), 0o755))
+	game.Hooks = domain.GameHooks{
+		Uninstall: domain.HookConfig{AfterEach: uninstallScript},
+		Install:   domain.HookConfig{AfterEach: installScript},
+	}
+
+	mod := seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "new-1", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.AddDownload("new-1", []byte("new-content"))
+
+	out := runJSONCommand(t, func() error {
+		return applySingleUpdate(context.Background(), svc, game, mod, "default")
+	})
+
+	var doc core.UpdateApplyResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, "updated", doc.Status.String())
+	assert.Contains(t, doc.Warnings, "uninstall.after_each hook failed: hook failed with exit code 1: "+uninstallScript)
+	assert.Contains(t, doc.Warnings, "install.after_each hook failed: hook failed with exit code 1: "+installScript)
+}
+
+// TestDoUpdateRollback_JSON_AfterEachHookWarnings_ReachResultWithNoStderr is
+// the rollback-side twin: doUpdateRollback's own progress closure
+// (update.go ~:848) has the identical UpdateWarning case, now also routed
+// through quietSink.
+func TestDoUpdateRollback_JSON_AfterEachHookWarnings_ReachResultWithNoStderr(t *testing.T) {
+	svc, game, _ := setupRollbackReadyMod(t)
+
+	scriptsDir := t.TempDir()
+	uninstallScript := filepath.Join(scriptsDir, "uninstall_after_each.sh")
+	installScript := filepath.Join(scriptsDir, "install_after_each.sh")
+	require.NoError(t, os.WriteFile(uninstallScript, []byte("#!/bin/bash\nexit 1\n"), 0o755))
+	require.NoError(t, os.WriteFile(installScript, []byte("#!/bin/bash\nexit 1\n"), 0o755))
+	game.Hooks = domain.GameHooks{
+		Uninstall: domain.HookConfig{AfterEach: uninstallScript},
+		Install:   domain.HookConfig{AfterEach: installScript},
+	}
+
+	out := runJSONCommand(t, func() error {
+		return doUpdateRollback(context.Background(), svc, game, "mod1")
+	})
+
+	var doc core.RollbackResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, "rolled_back", doc.Status.String())
+	assert.Contains(t, doc.Warnings, "uninstall.after_each hook failed: hook failed with exit code 1: "+uninstallScript)
+	assert.Contains(t, doc.Warnings, "install.after_each hook failed: hook failed with exit code 1: "+installScript)
+}

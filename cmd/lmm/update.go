@@ -265,7 +265,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	var sink core.EventSink
-	if verbose {
+	if verbose && !jsonOutput {
 		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
 		sink = func(e core.Event) {
 			if uc, ok := e.(core.UpdateCheckEvent); ok {
@@ -726,7 +726,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
-	return service.ApplyUpdate(ctx, game, plan, opts, progress)
+	return service.ApplyUpdate(ctx, game, plan, opts, quietSink(progress))
 }
 
 // applyRecompile applies a #197 merged-pak staleness row via
@@ -854,7 +854,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		}
 	}
 
-	result, err := service.ApplyRollback(ctx, game, plan, opts, progress)
+	result, err := service.ApplyRollback(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		return err
 	}
