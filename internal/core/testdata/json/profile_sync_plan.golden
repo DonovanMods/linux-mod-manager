@@ -1,0 +1,29 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "hardcore",
+  "to_add": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "42",
+      "version": "1.2.3",
+      "locked": false
+    }
+  ],
+  "to_remove": [],
+  "to_update": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "7",
+      "version": "1.0.0",
+      "file_ids": [
+        "file-1"
+      ],
+      "locked": false
+    }
+  ],
+  "missing": true,
+  "names": {
+    "nexusmods:42": "Sample Mod",
+    "nexusmods:7": "Realistic Needs"
+  }
+}

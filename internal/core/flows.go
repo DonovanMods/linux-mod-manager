@@ -1039,6 +1039,27 @@ const (
 	// a hard failure) still arrive as ordinary InstallWarning events - both
 	// frontends print those identically.
 	InstallMergedPakSyncFailed
+
+	// --- v2 Phase 2 Unit J (#290): ApplyProfileSync progress events.
+	// doProfileSync never printed to stderr for its three per-item loops
+	// (only its end-of-apply merged-pak sync did, via ProfileSyncResult.
+	// Warnings, exactly like ApplyProfileApply's own), so all three notes
+	// below are --verbose-gated stdout, 2-space indent, "Warning: " baked
+	// into Detail - a caller wanting byte-identical output prints
+	// `if verbose { fmt.Printf("  %s\n", p.Detail) }`. ---
+
+	// SyncAddNote fires when pm.AddMod fails for a ToAdd entry, mirroring
+	// doProfileSync's "  Warning: %v" (the bare error, no ref prefix).
+	SyncAddNote
+	// SyncRemoveNote fires when pm.RemoveMod fails for a ToRemove entry,
+	// mirroring doProfileSync's "  Warning: %v" (the bare error, no ref
+	// prefix) - same wording as SyncAddNote, kept as its own phase so a
+	// caller inspecting the event stream can tell which loop produced it.
+	SyncRemoveNote
+	// SyncUpdateNote fires when pm.UpsertMod fails for a ToUpdate entry -
+	// the swallowed lock refusal Ruling 9 preserves byte-for-byte - mirroring
+	// doProfileSync's "  Warning: could not update %s:%s: %v".
+	SyncUpdateNote
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1067,6 +1088,7 @@ var deployPhaseNames = [...]string{
 	ImportModInstalled: "import_mod_installed", ImportNote: "import_note", DeployMergeSynced: "deploy_merge_synced",
 	InstallLockRefusal: "install_lock_refusal", InstallChecksumSaveFailed: "install_checksum_save_failed",
 	InstallMergedPakSyncFailed: "install_merged_pak_sync_failed",
+	SyncAddNote:                "sync_add_note", SyncRemoveNote: "sync_remove_note", SyncUpdateNote: "sync_update_note",
 }
 
 // String returns the phase's wire name.

@@ -1,0 +1,8 @@
+{
+  "added": 1,
+  "removed": 1,
+  "updated": 1,
+  "warnings": [
+    "could not sync merged pak: base pak missing"
+  ]
+}

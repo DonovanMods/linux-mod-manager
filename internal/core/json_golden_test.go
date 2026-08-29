@@ -246,6 +246,27 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// v2 Phase 2 Unit J (#290). ToRemove is deliberately left nil to
+			// pin that a nil slice marshals as "[]", not "null".
+			"profile_sync_plan",
+			core.ProfileSyncPlan{
+				GameID:   "skyrim-se",
+				Profile:  "hardcore",
+				ToAdd:    []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
+				ToRemove: nil,
+				ToUpdate: []domain.ModReference{{SourceID: "nexusmods", ModID: "7", Version: "1.0.0", FileIDs: []string{"file-1"}}},
+				Missing:  true,
+				Names:    map[string]string{"nexusmods:42": "Sample Mod", "nexusmods:7": "Realistic Needs"},
+			},
+		},
+		{
+			"profile_sync_result",
+			core.ProfileSyncResult{
+				Added: 1, Removed: 1, Updated: 1,
+				Warnings: []string{"could not sync merged pak: base pak missing"},
+			},
+		},
+		{
 			// Installed is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null".
 			"install_result",

@@ -19,13 +19,16 @@ const (
 	// per-mod lines are worded identically to OpSwitch's, so it emits the
 	// same Switch* phase family (see profile_apply.go's package comment).
 	OpProfileApply Op = "profile_apply"
-	OpUpdate       Op = "update"
-	OpRollback     Op = "rollback"
-	OpImport       Op = "import"
-	OpMergeRegen   Op = "merge_regen"
-	OpVerify       Op = "verify"
-	OpUpdateCheck  Op = "update_check"
-	OpDownload     Op = "download"
+	// OpProfileSync is `lmm profile sync` - the DB-to-profile reconciliation
+	// flow (v2 Phase 2 Unit J / #290).
+	OpProfileSync Op = "profile_sync"
+	OpUpdate      Op = "update"
+	OpRollback    Op = "rollback"
+	OpImport      Op = "import"
+	OpMergeRegen  Op = "merge_regen"
+	OpVerify      Op = "verify"
+	OpUpdateCheck Op = "update_check"
+	OpDownload    Op = "download"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),
