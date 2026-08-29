@@ -360,6 +360,8 @@ func TestService_ApplyInstall_Batch_FileConflictWarnsAndContinues(t *testing.T) 
 
 	assert.Equal(t, []string{"Mod A", "Mod B"}, installedRefNames(result.Installed), "a file conflict warns, it never blocks the batch")
 	assert.Empty(t, result.Failed)
+	assert.Equal(t, []string{"1 file conflict(s) - will overwrite"}, result.Warnings,
+		"the conflict warning must reach the Result, not only the event stream - it is the only signal a --json caller gets")
 
 	var conflictWarnings []string
 	for _, e := range *seen {

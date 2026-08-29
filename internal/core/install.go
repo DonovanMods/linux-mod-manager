@@ -1750,7 +1750,9 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 
 	if !opts.Force {
 		if conflicts, err := installer.GetConflicts(ctx, game, mod, plan.Profile); err == nil && len(conflicts) > 0 {
-			emit(WarningEvent{Scope: scope, Phase: InstallDepConflictWarning, Message: fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))})
+			msg := fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))
+			result.Warnings = append(result.Warnings, msg)
+			emit(WarningEvent{Scope: scope, Phase: InstallDepConflictWarning, Message: msg})
 		}
 	}
 
