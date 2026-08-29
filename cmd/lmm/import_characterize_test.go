@@ -385,6 +385,16 @@ func setupImportConflictTest(t *testing.T) (svc *core.Service, game *domain.Game
 
 // expectedConflictBlock is the exact "⚠ File conflicts detected" block both
 // the decline and accept tests share, up to and including the prompt.
+// importReadoutRerunLines is the Ruling 7 delta an accepted conflict adds:
+// the import readout ImportArchive emits again on the AcceptConflicts
+// re-run, printed between the prompt and the deploy line.
+const importReadoutRerunLines = "\nFetching metadata from acme-source...\n" +
+	"\nMod: Second Mod\n" +
+	"  Source: acme-source\n" +
+	"  ID: B1\n" +
+	"  Version: 1.0\n" +
+	"  Files: 1\n"
+
 func expectedConflictBlockAndPromptFor(archiveBPath string) string {
 	return "Importing: " + archiveBPath + "\n" +
 		"\nFetching metadata from acme-source...\n" +
@@ -433,6 +443,13 @@ func TestDoImport_ConflictPromptDecline_CancelsWithoutOverwriting(t *testing.T) 
 // TestDoImport_ConflictPromptAccept_OverwritesAndInstalls is the accept
 // twin: "y" proceeds through hooks/deploy/save, mod B ends up installed, and
 // the shared file's content is now B's.
+//
+// Ruling 7 delta: accepting re-runs ImportArchive with AcceptConflicts set
+// (core returns *core.ConflictError instead of calling back into the
+// prompt), so the import's own readout - the metadata fetch and the
+// Mod/Source/ID/Version/Files block - prints a SECOND time between the
+// prompt and "Deploying to game directory...". The re-run's cache work is
+// idempotent; only these lines are new.
 func TestDoImport_ConflictPromptAccept_OverwritesAndInstalls(t *testing.T) {
 	svc, game, archiveBPath := setupImportConflictTest(t)
 	importForce = false
@@ -447,6 +464,7 @@ func TestDoImport_ConflictPromptAccept_OverwritesAndInstalls(t *testing.T) {
 
 	require.NoError(t, err)
 	expected := expectedConflictBlockAndPromptFor(archiveBPath) +
+		importReadoutRerunLines +
 		"\nDeploying to game directory...\n" +
 		"\n✓ Imported: Second Mod\n" +
 		"  Files deployed: 1\n" +

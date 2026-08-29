@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,10 +49,10 @@ func TestEmitJSON_NilSliceEncodesEmptyArray(t *testing.T) {
 	assert.Equal(t, "{\n  \"items\": []\n}\n", out)
 }
 
-// fakeDetailedError is a test-only stand-in for a future typed error (e.g.
-// *core.ConflictError, landing in Unit P) that carries structured data for
-// the --json error envelope's "details" field via the unnamed `Details()
-// any` interface errorDetails looks for.
+// fakeDetailedError is a test-only stand-in for a typed error that carries
+// structured data for the --json error envelope's "details" field via the
+// unnamed `Details() any` interface errorDetails looks for. The real one is
+// *core.ConflictError - see TestReportError_JSON_ConflictError below.
 type fakeDetailedError struct{ details any }
 
 func (e *fakeDetailedError) Error() string { return "fake detailed error" }
@@ -118,6 +119,35 @@ func TestReportError_JSON_WithDetails(t *testing.T) {
 	out := captureStdout(t, func() error { reportError(err); return nil })
 
 	assert.Equal(t, "{\n  \"error\": \"fake detailed error\",\n  \"details\": {\n    \"conflicts\": [\n      \"a.esp\"\n    ]\n  }\n}\n", out)
+}
+
+// TestReportError_JSON_ConflictError pins the real typed error the Details()
+// extension point exists for: *core.ConflictError's Error() text and its
+// details payload, each core.Conflict in its own snake_case wire shape
+// (Ruling 3: details is present only for typed errors that carry data).
+func TestReportError_JSON_ConflictError(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	err := &core.ConflictError{Conflicts: []core.Conflict{
+		{RelativePath: "shared.esp", CurrentSourceID: "test-src", CurrentModID: "other"},
+	}}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"file conflict detected: 1 file(s) would be overwritten\",\n"+
+		"  \"details\": {\n"+
+		"    \"conflicts\": [\n"+
+		"      {\n"+
+		"        \"relative_path\": \"shared.esp\",\n"+
+		"        \"current_source_id\": \"test-src\",\n"+
+		"        \"current_mod_id\": \"other\"\n"+
+		"      }\n"+
+		"    ]\n"+
+		"  }\n"+
+		"}\n", out)
+	assert.ErrorIs(t, err, domain.ErrFileConflict, "the envelope text is the domain sentinel's, plus the count")
 }
 
 // TestReportError_JSON_SuppressesAlreadyReported and ErrCancelled's exit-2,

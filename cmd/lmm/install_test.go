@@ -944,13 +944,13 @@ func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 }
 
 // TestDoInstall_ConflictPrompt_ForceSkipsPrompt guards the conflict prompt
-// path - restored (C1 review finding) to fire at its ORIGINAL, byte-exact
-// position: AFTER the mod is downloaded/extracted to cache and BEFORE it is
-// deployed (see core.InstallOptions.ConfirmConflicts' doc comment), sourced
-// from a FRESH GetConflicts call inside core.ApplyInstall - never
-// plan.Conflicts, which this scenario also happens to populate (mod1's
-// cache already exists pre-download here - see seedConflictingMod), but is
-// no longer what gates the prompt - and --force's skip.
+// path - fired at its ORIGINAL, byte-exact position: AFTER the mod is
+// downloaded/extracted to cache and BEFORE it is deployed (see
+// core.InstallOptions.AcceptConflicts' doc comment), sourced from a FRESH
+// GetConflicts call inside core.ApplyInstall - never plan.Conflicts, which
+// this scenario also happens to populate (mod1's cache already exists
+// pre-download here - see seedConflictingMod), but is not what gates the
+// prompt - and --force's skip.
 func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 	t.Run("prompts (after download, before deploy) and aborts on decline", func(t *testing.T) {
 		svc, game, src := setupDoInstallTest(t)
@@ -982,7 +982,7 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		// Decline-state fidelity: hooks already ran (none configured here),
 		// the download is already cached (a fresh/upgrade install has no
 		// reinstall-cache-transaction to roll back - see
-		// InstallOptions.ConfirmConflicts' doc comment), but nothing
+		// InstallOptions.AcceptConflicts' doc comment), but nothing
 		// deployed or saved.
 		assert.True(t, svc.GetGameCache(game).Exists("g1", "test-src", "mod1", "1.0"), "the download must remain cached on decline, matching base's exact decline state")
 		_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
@@ -1088,6 +1088,32 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, out, "File conflicts detected:")
 		assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
+
+		// Ruling 7 delta: accepting re-runs ApplyInstall with
+		// AcceptConflicts set (core returns *core.ConflictError instead of
+		// calling back into the prompt), so the download step's lines print
+		// a SECOND time - between the prompt and the deploy line. Pinned
+		// exactly, since it is the one plain-text change this task makes to
+		// `lmm install`.
+		promptIdx := strings.Index(out, "1 file(s) will be overwritten. Continue? [y/N]: ")
+		require.GreaterOrEqual(t, promptIdx, 0)
+		afterPrompt := stripDownloadProgress(out[promptIdx:])
+		assert.Equal(t,
+			"1 file(s) will be overwritten. Continue? [y/N]: \n"+
+				"Downloading shared.esp...\n"+
+				"\r  [██████████████████████████████] 100.0% (16 B / 16 B)\n"+
+				"  Checksum: 9ded751c2570...\n"+
+				"\n"+
+				"Extracting to cache...\n"+
+				"Deploying to game directory...\n"+
+				"\n"+
+				"✓ Installed: Mod One v1.0\n"+
+				"  Files deployed: 1\n"+
+				"  Added to profile: default\n",
+			afterPrompt,
+			"the accept re-run repeats the download step - Ruling 7's recorded delta")
+		assert.Equal(t, 2, strings.Count(out, "Downloading shared.esp..."),
+			"the download line prints once per ApplyInstall run")
 
 		content, readErr := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
 		require.NoError(t, readErr)

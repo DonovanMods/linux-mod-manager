@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -115,24 +116,14 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// pre-lift engine had already printed the line by then.
 	fmt.Printf("Importing: %s\n", archivePath)
 
-	// promptErr distinguishes a genuine stdin read failure inside the
-	// conflict prompt from an ordinary decline - see confirmInstallConflicts'
-	// doc comment; core collapses both into "import cancelled", so the real
-	// error is propagated from here instead.
-	var promptErr error
 	opts := core.ImportArchiveOptions{
 		SourceID:  importSource,
 		ModID:     importModID,
 		Force:     importForce,
 		SkipHooks: noHooks,
-		ConfirmConflicts: func(conflicts []core.Conflict) bool {
-			proceed, err := confirmInstallConflicts(ctx, service, game, profileName, conflicts)
-			if err != nil {
-				promptErr = err
-				return false
-			}
-			return proceed
-		},
+		// AcceptConflicts is deliberately left false: the conflict prompt
+		// below answers it. --force implies it in core, so a forced import
+		// never reaches the prompt at all.
 	}
 
 	// progress prints every diagnostic and readout line at its exact point
@@ -165,10 +156,28 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	}
 
 	result, err := service.ImportArchive(ctx, game, profileName, archivePath, opts, progress)
-	if err != nil {
-		if promptErr != nil {
-			return promptErr
+
+	// Ruling 1: an unaccepted file conflict comes back as a typed error, not
+	// a callback into this prompt. ImportArchive stopped before it deployed,
+	// saved or added anything to the profile (the archive is cached), so
+	// accepting is simply a re-run of the same call with AcceptConflicts set
+	// - see confirmInstallConflicts' doc comment for the Ruling 7 output
+	// delta that re-run carries.
+	var conflictErr *core.ConflictError
+	if errors.As(err, &conflictErr) {
+		proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, conflictErr.Conflicts)
+		if readErr != nil {
+			// A genuine stdin read failure, not an ordinary decline - see
+			// confirmInstallConflicts' doc comment.
+			return readErr
 		}
+		if !proceed {
+			return fmt.Errorf("import cancelled")
+		}
+		opts.AcceptConflicts = true
+		result, err = service.ImportArchive(ctx, game, profileName, archivePath, opts, progress)
+	}
+	if err != nil {
 		return err
 	}
 

@@ -431,13 +431,15 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 // confirmation prompt, and event-driven console output; the categorization,
 // save, and download/install loop all live in core.PlanImport/
 // core.ApplyImport (Phase 6b Task 8 - see the task report for the full
-// mapping). The prompt is wired as core.ProfileImportOptions.ConfirmInstall,
-// called by ApplyImport at its own restored position (right after the
-// profile is saved) - the same callback-at-the-CLI's-own-prompt-position
-// precedent core.InstallOptions.ConfirmConflicts established; promptErr
-// mirrors confirmInstallConflicts' own seam in install.go for propagating a
-// genuine stdin read failure verbatim instead of collapsing it into a
-// generic error.
+// mapping).
+//
+// Ruling 7 delta (v2 Phase 3): the prompt now runs BEFORE ApplyImport and
+// its answer travels as core.ProfileImportOptions.Install - the decision is
+// fully derivable from the plan (NeedsRedownload/Missing), so core never
+// calls back into the frontend (Ruling 1). The visible consequence is
+// ordering: the prompt (and, on a decline, its "Skipped." line) now precede
+// "✓ Imported profile: <name>" instead of following it - the profile is no
+// longer saved before the question is asked.
 func doProfileImport(ctx context.Context, service *core.Service, game *domain.Game, data []byte) error {
 	plan, err := service.PlanImport(ctx, game, data)
 	if err != nil {
@@ -470,28 +472,24 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 
 	toDownloadCount := len(plan.NeedsRedownload) + len(plan.Missing)
 
-	// promptErr captures a genuine stdin read failure from the "Download and
-	// install mods?" prompt (distinct from an ordinary decline - see
-	// readPromptLine's own doc comment), so it can be propagated verbatim
-	// below instead of collapsing into ApplyImport's generic error.
-	var promptErr error
 	declined := false
 
 	opts := core.ProfileImportOptions{Force: profileImportForce, NoInstall: profileImportNoInstall}
 	if toDownloadCount > 0 && !profileImportNoInstall {
-		opts.ConfirmInstall = func(toDownload []domain.ModReference) bool {
-			fmt.Print("\nDownload and install mods? [Y/n]: ")
-			input, err := readPromptLine()
-			if err != nil {
-				promptErr = err
-				return false
-			}
-			if input != "" && input != "y" && input != "yes" {
-				declined = true
-				fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
-				return false
-			}
-			return true
+		fmt.Print("\nDownload and install mods? [Y/n]: ")
+		input, err := readPromptLine()
+		if err != nil {
+			// A genuine stdin read failure, not an ordinary decline (see
+			// readPromptLine's own doc comment): propagate it verbatim and
+			// print nothing further - and, now that the prompt precedes
+			// Apply, without saving the profile either.
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			declined = true
+			fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
+		} else {
+			opts.Install = true
 		}
 	}
 
@@ -531,17 +529,6 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	result, err := service.ApplyImport(ctx, game, plan, opts, progress)
-	// A genuine stdin read failure inside the ConfirmInstall closure must be
-	// checked UNCONDITIONALLY, before anything else: the closure signals it
-	// by returning false, which ApplyImport treats as an ordinary decline
-	// and returns (result, nil) - so an `err != nil`-gated check would
-	// swallow the failure and fall through to a spurious "--- Summary ---"
-	// block. The pre-extraction CLI returned the error immediately after the
-	// prompt, printing nothing further (fix wave 1, Important 1 - pinned by
-	// TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary).
-	if promptErr != nil {
-		return promptErr
-	}
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already printed
 		// above, live, via progress. ApplyImport's own error is already
@@ -564,8 +551,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Printf("\nSkipped installing %d mod(s). Use 'lmm profile apply %s' to install them later.\n", result.Skipped, result.ProfileName)
 		}
 	case declined:
-		// The decline message was already printed inside the ConfirmInstall
-		// closure above.
+		// The decline message was already printed at the prompt above.
 	case toDownloadCount == 0:
 		// Nothing to install - the pre-extraction CLI's early-out never
 		// printed anything further in this case either.

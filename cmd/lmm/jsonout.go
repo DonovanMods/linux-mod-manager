@@ -38,10 +38,10 @@ type jsonErrorEnvelope struct {
 // "details" field, or nil for an error that carries none - e.g.
 // core.ErrStalePlan, a plain sentinel with no data of its own.
 //
-// Extension point: a future typed error that DOES carry data (e.g.
-// *core.ConflictError, landing in Unit P with its own []core.Conflict) needs
-// no change here - it just implements the unnamed `Details() any` interface
-// below and errors.As picks it up.
+// Extension point: a typed error that DOES carry data (today
+// *core.ConflictError, with its own []core.Conflict) needs no change here -
+// it just implements the unnamed `Details() any` interface below and
+// errors.As picks it up.
 func errorDetails(err error) any {
 	switch {
 	case errors.Is(err, core.ErrStalePlan):

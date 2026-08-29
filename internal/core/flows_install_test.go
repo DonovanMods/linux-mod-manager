@@ -2392,6 +2392,47 @@ func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 	})
 }
 
+// TestService_ApplyInstall_Conflicts_AcceptRerunRepeatsTheWholeApply records
+// the cost side of Ruling 1/7: a re-run with AcceptConflicts is a WHOLE
+// second ApplyInstall, so everything before the conflict gate happens again
+// - the install.before_all/before_each hooks fire a second time and the
+// download step repeats (its console lines are the CLI-visible half of the
+// same delta, pinned by TestDoInstall_ConflictPrompt_FreshUncachedInstall).
+// Pinned deliberately so a future change to the re-run shape is a visible
+// diff rather than a surprise.
+func TestService_ApplyInstall_Conflicts_AcceptRerunRepeatsTheWholeApply(t *testing.T) {
+	svc, game, _ := applyInstallConflictFixture(t)
+
+	scriptsDir := t.TempDir()
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	beforeAll := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "install.before_all" >> `+callLog+`
+exit 0`)
+	beforeEach := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "install.before_each" >> `+callLog+`
+exit 0`)
+	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: beforeAll, BeforeEach: beforeEach}})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
+	require.NoError(t, err)
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError))
+
+	logContent, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "install.before_all\ninstall.before_each\n", string(logContent),
+		"the refused run still ran the hooks that precede the download")
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{AcceptConflicts: true}, nil)
+	require.NoError(t, err)
+
+	logContent, err = os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "install.before_all\ninstall.before_each\ninstall.before_all\ninstall.before_each\n", string(logContent),
+		"the accept re-run repeats every step before the conflict gate - hooks included")
+}
+
 // TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeployedContentUntouched
 // is the reinstall-cache-transaction twin of the fresh-install leg above:
 // mod1 is already installed+deployed (and its ORIGINAL cache entry already

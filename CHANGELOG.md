@@ -172,6 +172,23 @@ list` is only visible to app). Each carries snake_case json tags and a recorded 
   joins `lmm list`, `lmm status`, `lmm search`, `lmm game list`, `lmm source list` and `lmm
 verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
   the query types; CLI output — text and JSON — is unchanged. (#301)
+- `lmm profile import` now asks "Download and install mods?" **before** it saves the profile,
+  not after: the prompt (and, on a decline, its "Skipped." line) precede the
+  `✓ Imported profile: <name>` line. A save that fails (importing over an existing profile without `--force`) therefore
+  prints the prompt first, and a prompt read failure now leaves the profile unsaved. (#303)
+- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, at
+  the same point as before (after the download, before the deploy), but answering "y" now
+  repeats the step that preceded the question: `install` prints its "Downloading …/Extracting to
+  cache…" block a second time, `import` its "Fetching metadata…" and Mod/Source/ID/Version/Files
+  readout, before "Deploying to game directory…". `--force` still skips the check entirely. (#303)
+- Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
+  frontend from Apply"). `InstallOptions.ConfirmConflicts` and
+  `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
+  `Force`): an unaccepted file conflict is now the typed `*core.ConflictError` (wrapping
+  `domain.ErrFileConflict`, carrying `[]core.Conflict`), returned before any deploy, DB write or
+  profile write, and the frontend prompts and re-runs Apply. `ProfileImportOptions.ConfirmInstall`
+  becomes `Install bool`, decided from `ImportPlan.NeedsRedownload`/`Missing`. New
+  `internal/core/errors.go` also adds `ErrConfirmationRequired` and `ErrInteractiveOnly`. (#303)
 
 ### Changed — JSON output (v2)
 
