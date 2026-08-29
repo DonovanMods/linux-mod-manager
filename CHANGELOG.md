@@ -102,6 +102,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (the overwrite prompt) needs a cache entry that does not exist until the archive is written, so the
   conflict confirmation stays a callback for Phase 2. `cmd/lmm/hooks.go` is deleted — its last
   callers were this tail's. No user-visible change: CLI output is byte-identical. (#291)
+- Internal: `DetectedGame` moves to `internal/domain` (Steam keeps it as a type alias), with Steam
+  library scanning exposed through `internal/app.DetectGames` so `internal/core` never imports a
+  concrete source. `lmm game detect`'s conversion from a detected game (`gameFromDetected`) and its
+  games.yaml + default-profile persistence move out of `cmd/lmm/game.go` into
+  `core.GameFromDetected`/`core.ApplyGameDetect`, sharing a new
+  `ProfileManager.CreateOrResetDefault` with `lmm game add`'s default-profile creation. No
+  user-visible change: CLI output is byte-identical. (#292)
 
 ### Fixed
 
