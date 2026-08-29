@@ -214,6 +214,13 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 			// version; the installed row's describe the wrong one. A live
 			// older deployment whose cache entry survives is recorded so
 			// the apply can Replace it - see ProfileApplyInstall.Replaces.
+			// This Exists check runs at PLAN time, not after the download as
+			// doProfileApply's did; only an external process pruning the old
+			// cache entry between plan and apply could flip the verdict (no
+			// in-tree code path does - downloadModToCache only removes its
+			// own temp/stage dirs), and if it did, Installer.Replace would
+			// hard-fail with "old mod not in cache" where the old code fell
+			// back to a bare Install.
 			var replaces *domain.InstalledMod
 			if im.Deployed && gameCache.Exists(game.ID, im.SourceID, im.ID, im.Version) {
 				prior := *im
@@ -353,6 +360,15 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		return result, err
 	}
 
+	// doProfileApply returned before the merged-pak sync when all three
+	// buckets were empty; the CLI still gets that today because it checks
+	// plan.NoChanges itself and never calls Apply at all (cmd/lmm/profile.go),
+	// but this guard keeps the rule here too so a future frontend calling
+	// Apply unconditionally doesn't get a sync the CLI never performed.
+	if plan.NoChanges {
+		return result, nil
+	}
+
 	emit := func(e Event) {
 		if sink != nil {
 			sink(e)
@@ -459,6 +475,9 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 					}
 					if _, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, progressFn); err != nil {
 						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
+						// Cannot use fail(): SwitchDownloadFailed above already
+						// renders this mod's Error line; fail() would emit a
+						// second SwitchInstallError and print a duplicate one.
 						result.Failed = append(result.Failed,
 							fmt.Sprintf("%s: download failed: %v", domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID), err))
 						downloadFailed = true
