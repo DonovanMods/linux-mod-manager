@@ -19,7 +19,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
@@ -630,11 +629,12 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	}
 
 	if localPath, ok := strings.CutPrefix(url, "file://"); ok {
-		// Only directory sources are allowed to serve local files. A remote
-		// source (NexusMods, CurseForge, a compromised custom API/manifest
-		// source, ...) returning file:// must never be trusted to read
-		// arbitrary paths off disk into the cache.
-		if _, isDirectorySource := src.(*custom.Directory); !isDirectorySource {
+		// Only a source.LocalFileServer is allowed to serve local files. A
+		// remote source (NexusMods, CurseForge, a compromised custom
+		// API/manifest source, ...) returning file:// must never be trusted
+		// to read arbitrary paths off disk into the cache.
+		lfs, servesLocal := src.(source.LocalFileServer)
+		if !servesLocal || !lfs.ServesLocalFiles() {
 			return nil, fmt.Errorf("source %q returned a local file:// URL but is not a directory source", sourceID)
 		}
 		return s.ingestLocalToCache(ctx, gameCache, game, mod, file, localPath)
