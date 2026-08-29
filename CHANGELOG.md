@@ -176,11 +176,17 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   not after: the prompt (and, on a decline, its "Skipped." line) precede the
   `✓ Imported profile: <name>` line. A save that fails (importing over an existing profile without `--force`) therefore
   prints the prompt first, and a prompt read failure now leaves the profile unsaved. (#303)
-- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, at
-  the same point as before (after the download, before the deploy), but answering "y" now
-  repeats the step that preceded the question: `install` prints its "Downloading …/Extracting to
-  cache…" block a second time, `import` its "Fetching metadata…" and Mod/Source/ID/Version/Files
-  readout, before "Deploying to game directory…". `--force` still skips the check entirely. (#303)
+- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, and
+  the question still comes after the download/extract step that makes the conflict detectable —
+  but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
+  after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
+  cache already warm: `install` re-prints only "Extracting to cache…" (never a second
+  "Downloading …"/"Checksum: …" block, and it performs no second download), `import` re-prints its
+  "Fetching metadata…" and Mod/Source/ID/Version/Files readout, before "Deploying to game
+  directory…". One user-level install or import therefore runs each hook exactly once and
+  downloads each file once. A forced hook warning (`--force` with a failing
+  `install.before_all`) now prints after the download lines rather than before them. `--force`
+  still skips the conflict check entirely. (#303)
 - Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
   frontend from Apply"). `InstallOptions.ConfirmConflicts` and
   `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
