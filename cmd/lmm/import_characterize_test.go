@@ -525,8 +525,8 @@ func writeFailingHookScript(t *testing.T) string {
 // TestDoImport_HookWarnings_AfterEachAfterAll_AccumulateAndPrintToStderr
 // pins the non-fatal after_each/after_all hook path: both failures are
 // accumulated (not force-gated - after_each/after_all never abort) and
-// printed to stderr via printHookWarnings, in call order, while the import
-// itself still succeeds and is saved.
+// printed to stderr together, in call order, while the import itself still
+// succeeds and is saved.
 func TestDoImport_HookWarnings_AfterEachAfterAll_AccumulateAndPrintToStderr(t *testing.T) {
 	svc, game, archivePath := setupImportHookTest(t)
 	failScript := writeFailingHookScript(t)

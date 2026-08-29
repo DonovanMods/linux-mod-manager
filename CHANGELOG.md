@@ -94,6 +94,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported its count, before the confirmation prompt and kept it on a decline. `cmd/lmm` keeps
   only the prompt and the printed lines; `Importer.ScanModPath`/`FindDuplicateMod` are now
   package-internal. No user-visible change: CLI output is byte-identical. (#291)
+- Internal: `lmm import`'s archive mode is `core.ImportArchive` — the enrichment/cache-rename tail,
+  the `#139` file resolution and completion marker, the `#197` retained-file fold, conflict gating,
+  the `install.*` hook quartet, the deploy, the DB row, the profile ref and the merged-pak sync move
+  out of `cmd/lmm/import.go` into `internal/core/import_archive.go`, with progress reported through
+  the event stream. It is one mutation rather than a Plan/Apply pair because its only decision point
+  (the overwrite prompt) needs a cache entry that does not exist until the archive is written, so the
+  conflict confirmation stays a callback for Phase 2. `cmd/lmm/hooks.go` is deleted — its last
+  callers were this tail's. No user-visible change: CLI output is byte-identical. (#291)
 
 ### Fixed
 
