@@ -239,6 +239,32 @@ func TestDoProfileSync_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	assert.Empty(t, profile.Mods, "must not mutate the profile")
 }
 
+// TestDoProfileSync_YesFlagSkipsPromptEntirely pins -y: the prompt text
+// never prints and the sync proceeds without reading stdin.
+func TestDoProfileSync_YesFlagSkipsPromptEntirely(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
+	oldYes := profileSyncYes
+	profileSyncYes = true
+	t.Cleanup(func() { profileSyncYes = oldYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "Proceed?")
+	assert.Equal(t, "Syncing profile: default\n\n"+
+		"Will add to profile:\n"+
+		"  + Add One (src:add1)\n"+
+		"✓ Synced profile: default\n", out)
+
+	pm := getProfileManager(svc)
+	profile, perr := pm.Get(game.ID, "default")
+	require.NoError(t, perr)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "add1", profile.Mods[0].ModID)
+}
+
 // TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly pins Ruling 9:
 // a LOCKED profile ref makes the toUpdate loop's UpsertMod refuse (the ref
 // IS the lock's target, and the DB's version differs), and doProfileSync

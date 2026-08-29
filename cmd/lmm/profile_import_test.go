@@ -357,6 +357,45 @@ func TestDoProfileImport_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	assert.Error(t, profErr, "must not even save the profile - the prompt precedes the save (Ruling 7)")
 }
 
+// TestDoProfileImport_YesFlagSkipsPromptEntirely pins -y: the prompt text
+// never prints and the download/install proceeds without reading stdin,
+// matching the accepted-prompt path byte-for-byte minus the prompt line
+// itself.
+func TestDoProfileImport_YesFlagSkipsPromptEntirely(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	profileImportYes = true
+	t.Cleanup(func() { profileImportYes = false })
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	out := captureStdout(t, func() error {
+		return doProfileImport(context.Background(), svc, game, data)
+	})
+
+	assert.NotContains(t, out, "Download and install mods?")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ↓ 1 need to be downloaded:\n"+
+		"    - test-src:mod1 v1.0\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Downloading and installing mods...\n"+
+		"  Installing test-src:mod1...\n"+
+		"\n"+
+		"    ✓ Installed: Mod One\n"+
+		"\n"+
+		"--- Summary ---\n"+
+		"Installed: 1\n", stripDownloadProgress(out))
+
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
+	require.NoError(t, err)
+}
+
 // TestDoProfileImport_ForceOverwritesExistingProfile pins --force: importing
 // over an already-saved profile of the same name succeeds and replaces its
 // mod list.

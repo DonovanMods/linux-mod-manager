@@ -14,13 +14,15 @@ Import a profile from a YAML file.
 
 .PP
 Missing mods are downloaded and installed automatically, after a
-confirmation prompt. Use --no-install to skip that entirely and just
-save the profile, installing nothing. Use --force to overwrite an
-existing profile with the same name instead of failing.
+confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
+--no-install to skip that entirely and just save the profile, installing
+nothing. Use --force to overwrite an existing profile with the same name
+instead of failing.
 
 .PP
 Examples:
   lmm profile import survival.yaml --game skyrim-se
+  lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
   lmm profile import survival.yaml --game skyrim-se --force
 
@@ -36,6 +38,10 @@ Examples:
 .PP
 \fB--no-install\fP[=false]
 	skip installing missing mods
+
+.PP
+\fB-y\fP, \fB--yes\fP[=false]
+	auto-confirm downloading/installing missing mods
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

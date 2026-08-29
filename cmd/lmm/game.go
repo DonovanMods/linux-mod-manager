@@ -81,17 +81,35 @@ mapping, the symlink link method, and an empty default profile; edit
 games.yaml afterwards for anything more specific, including the
 NexusMods slug if none was detected.
 
+Use --all or --select to decide non-interactively (required under
+--json, which never reads stdin): --all selects every not-yet-configured
+game, the same set the interactive "all" answer selects; --select takes
+the same 1-based indices the prompt accepts (e.g. "1,2"), including
+already-configured games' numbers for a repair.
+
 Examples:
-  lmm game detect`,
+  lmm game detect
+  lmm game detect --all
+  lmm game detect --select 1,3`,
 	Args: cobra.NoArgs,
 	RunE: runGameDetect,
 }
+
+var (
+	gameDetectAll    bool
+	gameDetectSelect string
+)
 
 func init() {
 	gameCmd.AddCommand(gameSetDefaultCmd)
 	gameCmd.AddCommand(gameShowDefaultCmd)
 	gameCmd.AddCommand(gameClearDefaultCmd)
 	gameCmd.AddCommand(gameDetectCmd)
+
+	gameDetectCmd.Flags().BoolVar(&gameDetectAll, "all", false, "select every not-yet-configured detected game without prompting")
+	gameDetectCmd.Flags().StringVar(&gameDetectSelect, "select", "", "comma-separated 1-based indices to add/repair without prompting (see the printed listing)")
+	gameDetectCmd.MarkFlagsMutuallyExclusive("all", "select")
+
 	rootCmd.AddCommand(gameCmd)
 }
 
@@ -253,13 +271,24 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	return applyErr
 }
 
-// gameDetectAnswer prints the selection prompt and reads an answer via
-// readPromptLineFrom, the CLI's one choke point for the non-interactive
-// rule (v2 Phase 3 Ruling 2): under --json that call returns
-// core.ErrConfirmationRequired without ever touching reader.
+// gameDetectAnswer resolves the selection line gameDetectSelectionIndices
+// parses: --all/--select decide it non-interactively (in that priority -
+// mutually exclusive by the flag definition, so both set never reaches
+// here) with no prompt printed or read at all; otherwise it prints the
+// prompt and reads an answer via readPromptLineFrom, the CLI's one choke
+// point for the non-interactive rule (v2 Phase 3 Ruling 2) - under --json
+// with neither flag, that call returns core.ErrConfirmationRequired without
+// ever touching reader.
 func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader) (string, error) {
-	cmd.Print("Add games to config? [1,2/all/none]: ")
-	return readPromptLineFrom(reader)
+	switch {
+	case gameDetectAll:
+		return "all", nil
+	case gameDetectSelect != "":
+		return gameDetectSelect, nil
+	default:
+		cmd.Print("Add games to config? [1,2/all/none]: ")
+		return readPromptLineFrom(reader)
+	}
 }
 
 // gameDetectSelectionIndices parses the detect prompt's answer into the

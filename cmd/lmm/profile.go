@@ -62,9 +62,11 @@ var profileSwitchCmd = &cobra.Command{
 	Long: `Switch to a different profile, deploying its mods to the game directory.
 
 This will undeploy mods from the current profile and deploy mods from the new profile.
+Prompts for confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 Examples:
-  lmm profile switch survival --game skyrim-se`,
+  lmm profile switch survival --game skyrim-se
+  lmm profile switch survival --game skyrim-se --yes`,
 	Args: cobra.ExactArgs(1),
 	RunE: runProfileSwitch,
 }
@@ -88,12 +90,14 @@ var profileImportCmd = &cobra.Command{
 	Long: `Import a profile from a YAML file.
 
 Missing mods are downloaded and installed automatically, after a
-confirmation prompt. Use --no-install to skip that entirely and just
-save the profile, installing nothing. Use --force to overwrite an
-existing profile with the same name instead of failing.
+confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
+--no-install to skip that entirely and just save the profile, installing
+nothing. Use --force to overwrite an existing profile with the same name
+instead of failing.
 
 Examples:
   lmm profile import survival.yaml --game skyrim-se
+  lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
   lmm profile import survival.yaml --game skyrim-se --force`,
 	Args: cobra.ExactArgs(1),
@@ -106,11 +110,13 @@ var profileSyncCmd = &cobra.Command{
 	Long: `Update the profile YAML to match currently installed/enabled mods in the database.
 
 Use this if the profile got out of sync, or to migrate from pre-profile installs.
-If no name is given, uses the current/default profile.
+If no name is given, uses the current/default profile. Prompts for
+confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 Examples:
   lmm profile sync --game skyrim-se
-  lmm profile sync survival --game skyrim-se`,
+  lmm profile sync survival --game skyrim-se
+  lmm profile sync survival --game skyrim-se --yes`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runProfileSync,
 }
@@ -157,7 +163,10 @@ Examples:
 var (
 	profileImportForce     bool
 	profileImportNoInstall bool
+	profileImportYes       bool
 	profileApplyYes        bool
+	profileSwitchYes       bool
+	profileSyncYes         bool
 	profileReorderProfile  string
 )
 
@@ -172,9 +181,16 @@ func init() {
 	profileCmd.AddCommand(profileReorderCmd)
 	profileCmd.AddCommand(profileApplyCmd)
 
+	// Switch flags
+	profileSwitchCmd.Flags().BoolVarP(&profileSwitchYes, "yes", "y", false, "auto-confirm the switch")
+
 	// Import flags
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
 	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
+	profileImportCmd.Flags().BoolVarP(&profileImportYes, "yes", "y", false, "auto-confirm downloading/installing missing mods")
+
+	// Sync flags
+	profileSyncCmd.Flags().BoolVarP(&profileSyncYes, "yes", "y", false, "auto-confirm the sync")
 
 	// Apply flags
 	profileApplyCmd.Flags().BoolVarP(&profileApplyYes, "yes", "y", false, "auto-confirm changes")
@@ -322,15 +338,17 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	// Confirm
-	fmt.Print("\nProceed? [Y/n]: ")
-	input, err := readPromptLine()
-	if err != nil {
-		return err
-	}
-	if input != "" && input != "y" && input != "yes" {
-		fmt.Println("Cancelled.")
-		return nil
+	// Confirm unless --yes
+	if !profileSwitchYes {
+		fmt.Print("\nProceed? [Y/n]: ")
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			fmt.Println("Cancelled.")
+			return nil
+		}
 	}
 
 	// progress prints every diagnostic and per-mod status line at its exact
@@ -476,20 +494,24 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 
 	opts := core.ProfileImportOptions{Force: profileImportForce, NoInstall: profileImportNoInstall}
 	if toDownloadCount > 0 && !profileImportNoInstall {
-		fmt.Print("\nDownload and install mods? [Y/n]: ")
-		input, err := readPromptLine()
-		if err != nil {
-			// A genuine stdin read failure, not an ordinary decline (see
-			// readPromptLine's own doc comment): propagate it verbatim and
-			// print nothing further - and, now that the prompt precedes
-			// Apply, without saving the profile either.
-			return err
-		}
-		if input != "" && input != "y" && input != "yes" {
-			declined = true
-			fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
-		} else {
+		if profileImportYes {
 			opts.Install = true
+		} else {
+			fmt.Print("\nDownload and install mods? [Y/n]: ")
+			input, err := readPromptLine()
+			if err != nil {
+				// A genuine stdin read failure, not an ordinary decline (see
+				// readPromptLine's own doc comment): propagate it verbatim and
+				// print nothing further - and, now that the prompt precedes
+				// Apply, without saving the profile either.
+				return err
+			}
+			if input != "" && input != "y" && input != "yes" {
+				declined = true
+				fmt.Printf("Skipped. Use 'lmm profile apply %s' to install them later.\n", plan.Profile.Name)
+			} else {
+				opts.Install = true
+			}
 		}
 	}
 
@@ -626,15 +648,17 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		}
 	}
 
-	// Confirm
-	fmt.Print("\nProceed? [Y/n]: ")
-	input, err := readPromptLine()
-	if err != nil {
-		return err
-	}
-	if input != "" && input != "y" && input != "yes" {
-		fmt.Println("Cancelled.")
-		return nil
+	// Confirm unless --yes
+	if !profileSyncYes {
+		fmt.Print("\nProceed? [Y/n]: ")
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "" && input != "y" && input != "yes" {
+			fmt.Println("Cancelled.")
+			return nil
+		}
 	}
 
 	// progress prints the three loops' --verbose-only diagnostics at their

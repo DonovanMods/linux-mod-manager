@@ -267,6 +267,88 @@ func TestDoGameDetect_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	assert.NotContains(t, saved, "skyrim-se")
 }
 
+// TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll pins --all:
+// non-interactive end state (which games get saved) must match typing "all"
+// at the prompt, with no prompt printed and no stdin read.
+func TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition"}))
+	oldAll := gameDetectAll
+	gameDetectAll = true
+	t.Cleanup(func() { gameDetectAll = oldAll })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+	})
+
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "Add games to config?")
+	assert.Contains(t, buf.String(), "Added: Star Rupture (starrupture)")
+	assert.NotContains(t, buf.String(), "Added: Skyrim Special Edition", "already-configured must stay excluded from --all, matching interactive \"all\"")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Contains(t, saved, "starrupture")
+}
+
+// TestDoGameDetect_SelectFlagSelectsExplicitIndices pins --select: naming an
+// already-configured game's index still repairs it, matching the
+// interactive explicit-selection path (#205 item 2), with no prompt and no
+// stdin read.
+func TestDoGameDetect_SelectFlagSelectsExplicitIndices(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Stale Name"}))
+	oldSelect := gameDetectSelect
+	gameDetectSelect = "1"
+	t.Cleanup(func() { gameDetectSelect = oldSelect })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+	})
+
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "Add games to config?")
+	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "skyrim-se")
+	assert.Equal(t, "Skyrim Special Edition", saved["skyrim-se"].Name)
+}
+
+// TestGameDetectCmd_AllAndSelectAreMutuallyExclusive pins the flag
+// definition: passing both --all and --select is a cobra flag-parse error,
+// not a runtime one.
+func TestGameDetectCmd_AllAndSelectAreMutuallyExclusive(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(gameCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(gameCmd); rootCmd.AddCommand(gameCmd) })
+	cmd.SetArgs([]string{"game", "detect", "--all", "--select", "1"})
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "if any flags in the group [all select] are set none of the others can be")
+}
+
 // TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames pins Task
 // 22 review Important #1's third occurrence (2026-08-28): pre-lift,
 // doGameDetect read games.yaml fresh via config.LoadGames on every call,

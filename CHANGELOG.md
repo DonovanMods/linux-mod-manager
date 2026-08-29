@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompting. On a compile-mode game it also states that the profile's merged artifact would be
   removed too; that line is unconditional on compile games, not gated on whether anything would
   actually be removed. (#293)
+- `lmm profile switch` and `lmm profile sync` gain `-y`/`--yes` to skip their confirmation
+  prompt; `lmm profile import` gains `-y`/`--yes` to answer its "Download and install mods?"
+  prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
+  detected game — the same set the interactive "all" answer selects) and `--select <indices>`
+  (the same 1-based indices the prompt accepts, including an already-configured game's index for
+  a repair); the two are mutually exclusive and both skip the prompt entirely. (#303)
 
 ### Removed
 

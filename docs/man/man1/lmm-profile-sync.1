@@ -14,17 +14,23 @@ Update the profile YAML to match currently installed/enabled mods in the databas
 
 .PP
 Use this if the profile got out of sync, or to migrate from pre-profile installs.
-If no name is given, uses the current/default profile.
+If no name is given, uses the current/default profile. Prompts for
+confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 .PP
 Examples:
   lmm profile sync --game skyrim-se
   lmm profile sync survival --game skyrim-se
+  lmm profile sync survival --game skyrim-se --yes
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
 	help for sync
+
+.PP
+\fB-y\fP, \fB--yes\fP[=false]
+	auto-confirm the sync
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

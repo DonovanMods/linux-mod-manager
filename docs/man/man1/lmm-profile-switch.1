@@ -14,15 +14,21 @@ Switch to a different profile, deploying its mods to the game directory.
 
 .PP
 This will undeploy mods from the current profile and deploy mods from the new profile.
+Prompts for confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 .PP
 Examples:
   lmm profile switch survival --game skyrim-se
+  lmm profile switch survival --game skyrim-se --yes
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
 	help for switch
+
+.PP
+\fB-y\fP, \fB--yes\fP[=false]
+	auto-confirm the switch
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

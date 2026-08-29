@@ -240,6 +240,35 @@ func TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	assert.True(t, mod.Enabled, "must not disable any mod")
 }
 
+// TestDoProfileSwitch_YesFlagSkipsPromptEntirely pins -y: the prompt text
+// never prints at all (not merely auto-answered) and the switch proceeds
+// without reading stdin, matching every other -y-gated prompt in this
+// package.
+func TestDoProfileSwitch_YesFlagSkipsPromptEntirely(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	oldYes := profileSwitchYes
+	profileSwitchYes = true
+	t.Cleanup(func() { profileSwitchYes = oldYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	assert.NotContains(t, out, "Proceed?")
+	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
+
+	def, derr := pm.GetDefault(game.ID)
+	require.NoError(t, derr)
+	assert.Equal(t, "target", def.Name)
+	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, merr)
+	assert.False(t, mod.Enabled)
+}
+
 // TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput guards
 // doProfileSwitch's full apply path end to end (disable, enable, install,
 // SetDefault) byte-identically to the pre-extraction CLI, across all three
