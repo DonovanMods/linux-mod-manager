@@ -1,8 +1,8 @@
 {
-  "id": "broken.yaml",
+  "id": "nexusmods",
   "name": "",
   "type": "error",
-  "auth": "",
-  "capabilities": "",
+  "auth": "none",
+  "capabilities": [],
   "error": "id already in use"
 }

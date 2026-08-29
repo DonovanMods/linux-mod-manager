@@ -415,7 +415,7 @@ func TestSourceInfos_FullRegistrySortedByID(t *testing.T) {
 	assert.Equal(t, "zulu", rows[1].ID)
 	assert.Equal(t, "ALPHA", rows[0].Name)
 	assert.Equal(t, "directory", rows[0].Type)
-	assert.Equal(t, "n/a", rows[0].Auth, "a source with no auth capability reports n/a, not no")
+	assert.Equal(t, AuthNone, rows[0].Auth, "a source with no auth capability reports AuthNone, not AuthRequired")
 	assert.Contains(t, rows[0].Capabilities, "search")
 	assert.False(t, rows[0].InUse)
 }
@@ -514,8 +514,46 @@ directory:
 // the "versions" token after "auth" (#96). Moved here from cmd/lmm with the
 // helper itself, when SourceInfos took over the row assembly.
 func TestCapabilitySummary_IncludesVersions(t *testing.T) {
-	assert.Equal(t, "search,deps,updates,auth,versions", capabilitySummary(source.Capabilities{
+	assert.Equal(t, []string{"search", "deps", "updates", "auth", "versions"}, capabilitySummary(source.Capabilities{
 		Search: true, Dependencies: true, Updates: true, Auth: true, Versions: true,
 	}))
-	assert.Equal(t, "search", capabilitySummary(source.Capabilities{Search: true}))
+	assert.Equal(t, []string{"search"}, capabilitySummary(source.Capabilities{Search: true}))
+}
+
+// TestAuthState_StringMarshalUnmarshal round-trips every AuthState value
+// through String/MarshalText/UnmarshalText (final review, Important #1 /
+// #301: "enum coverage" for the type source list --json now carries
+// directly, replacing the pre-#301 display string).
+func TestAuthState_StringMarshalUnmarshal(t *testing.T) {
+	tests := []struct {
+		state AuthState
+		want  string
+	}{
+		{AuthNone, "none"},
+		{AuthRequired, "required"},
+		{AuthAuthenticated, "authenticated"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.state.String())
+
+			b, err := tt.state.MarshalText()
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, string(b))
+
+			var got AuthState
+			require.NoError(t, got.UnmarshalText(b))
+			assert.Equal(t, tt.state, got)
+		})
+	}
+}
+
+// TestAuthState_UnmarshalTextRejectsUnknown pins the fail-loud contract every
+// other wire enum in this codebase follows (LinkMethod, UpdateStatus): an
+// unrecognized value is a parse error, not a silent zero-value fallback.
+func TestAuthState_UnmarshalTextRejectsUnknown(t *testing.T) {
+	var a AuthState
+	err := a.UnmarshalText([]byte("bogus"))
+	require.Error(t, err)
 }

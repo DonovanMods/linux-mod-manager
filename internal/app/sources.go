@@ -181,15 +181,64 @@ func ProbeSource(ctx context.Context, svc *core.Service, def source.SourceDefini
 	return "", fmt.Errorf("unsupported source type %q", def.Type)
 }
 
+// AuthState is a source's authentication status: whether it has no auth
+// capability at all, has one but hasn't authenticated, or has. Wire-typed
+// (final review, Important #1 / #301) rather than the pre-#301 display
+// string ("yes"/"no"/"n/a") that source list --json carried directly onto
+// the wire - a JSON consumer classifies a source's auth state without
+// parsing English, and a text/JSON-view renderer that still wants those
+// exact words derives them from this enum instead (cmd/lmm/source.go).
+type AuthState int
+
+const (
+	// AuthNone means the source has no auth capability at all - the old
+	// display string's "n/a".
+	AuthNone AuthState = iota
+	// AuthRequired means the source can authenticate but hasn't - "no".
+	AuthRequired
+	// AuthAuthenticated means the source has authenticated - "yes".
+	AuthAuthenticated
+)
+
+// authStateNames maps each AuthState to its wire name. Keep in declaration order.
+var authStateNames = [...]string{
+	AuthNone:          "none",
+	AuthRequired:      "required",
+	AuthAuthenticated: "authenticated",
+}
+
+// String returns the state's wire name.
+func (a AuthState) String() string {
+	if a >= 0 && int(a) < len(authStateNames) && authStateNames[a] != "" {
+		return authStateNames[a]
+	}
+	return fmt.Sprintf("auth_state(%d)", int(a))
+}
+
+// MarshalText implements encoding.TextMarshaler.
+func (a AuthState) MarshalText() ([]byte, error) { return []byte(a.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (a *AuthState) UnmarshalText(b []byte) error {
+	for i, n := range authStateNames {
+		if n == string(b) {
+			*a = AuthState(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown auth state %q", b)
+}
+
 // SourceInfo is one row of `lmm source list`: a registered source, or a
 // definition that never became one.
 //
 //   - Type is the source's own TypeLabel ("built-in", "directory",
 //     "manifest", "api") or "error" for a definition that failed to load,
 //     collided with a registered ID, or failed to construct.
-//   - Auth is "yes" (authenticated), "no" (auth-capable but not
-//     authenticated) or "n/a" (the source needs no auth at all).
-//   - Capabilities is the compact summary a row shows, e.g. "search,updates".
+//   - Capabilities is the source's enabled capability names, in a fixed
+//     order (search, deps, updates, auth, versions) - not the pre-#301
+//     comma-joined display string; a text renderer that wants the old
+//     column joins it back with strings.Join.
 //   - InUse marks one of the active game's configured sources - only ever
 //     set in the full-registry-with-a-game view (SourceInfos' all=true),
 //     which is the one case that marks a subset rather than restricting to
@@ -200,14 +249,14 @@ func ProbeSource(ctx context.Context, svc *core.Service, def source.SourceDefini
 //     core.SourceWarning pairs them: the structured error for a caller that
 //     wants to classify it, its message for the wire.
 type SourceInfo struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Auth         string `json:"auth"`
-	Capabilities string `json:"capabilities"`
-	InUse        bool   `json:"in_use,omitzero"`
-	Err          error  `json:"-"`
-	ErrorMessage string `json:"error,omitempty"`
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Type         string    `json:"type"`
+	Auth         AuthState `json:"auth"`
+	Capabilities []string  `json:"capabilities"`
+	InUse        bool      `json:"in_use,omitzero"`
+	Err          error     `json:"-"`
+	ErrorMessage string    `json:"error,omitempty"`
 }
 
 // newSourceInfoError builds an "error" row with Err and ErrorMessage paired
@@ -332,31 +381,29 @@ func isCustomSource(src source.ModSource) bool {
 	return false
 }
 
-// authState reports a source's authentication status for display.
-func authState(src source.ModSource) string {
+// authState reports a source's authentication status.
+func authState(src source.ModSource) AuthState {
 	if !source.CapabilitiesOf(src).Auth {
-		return "n/a"
+		return AuthNone
 	}
 	if a, ok := src.(interface{ IsAuthenticated() bool }); ok {
 		if a.IsAuthenticated() {
-			return "yes"
+			return AuthAuthenticated
 		}
-		return "no"
+		return AuthRequired
 	}
-	return "yes"
+	return AuthAuthenticated
 }
 
-// capabilitySummary renders capabilities as a compact list, e.g. "search,updates".
-func capabilitySummary(c source.Capabilities) string {
-	out := ""
+// capabilitySummary returns c's enabled capability names, in a fixed order
+// (search, deps, updates, auth, versions) - the same order the pre-#301
+// comma-joined display string used.
+func capabilitySummary(c source.Capabilities) []string {
+	var out []string
 	add := func(enabled bool, name string) {
-		if !enabled {
-			return
+		if enabled {
+			out = append(out, name)
 		}
-		if out != "" {
-			out += ","
-		}
-		out += name
 	}
 	add(c.Search, "search")
 	add(c.Dependencies, "deps")

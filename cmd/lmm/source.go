@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/app"
@@ -41,6 +42,23 @@ type sourceInfo struct {
 	// callers already depend on.
 	InUse bool   `json:"in_use,omitempty"`
 	Error string `json:"error,omitempty"`
+}
+
+// authDisplay rebuilds the pre-#301 "yes"/"no"/"n/a" display string from
+// app.AuthState (final review, Important #1 / #301: source list --json and
+// the text table both stay byte-identical by formatting from the data, not
+// carrying pre-formatted text on the wire anymore).
+func authDisplay(a app.AuthState) string {
+	switch a {
+	case app.AuthNone:
+		return "n/a"
+	case app.AuthRequired:
+		return "no"
+	case app.AuthAuthenticated:
+		return "yes"
+	default:
+		return ""
+	}
 }
 
 var sourceAll bool
@@ -106,12 +124,24 @@ Examples:
 			// array — empty when there is nothing to report (#52 item 13).
 			rows := make([]sourceInfo, 0, len(infos))
 			for _, info := range infos {
+				// An error row carries no auth/capability data (it never
+				// registered) - both columns stay "" here, exactly as they
+				// did when SourceInfo.Auth/Capabilities were themselves
+				// plain strings left at their zero value on that row (final
+				// review, Important #1 / #301: source list --json and the
+				// text table stay byte-identical by formatting from the
+				// data, not carrying pre-formatted text on the wire).
+				var auth, caps string
+				if info.Type != "error" {
+					auth = authDisplay(info.Auth)
+					caps = strings.Join(info.Capabilities, ",")
+				}
 				rows = append(rows, sourceInfo{
 					ID:           info.ID,
 					Name:         info.Name,
 					Type:         info.Type,
-					Auth:         info.Auth,
-					Capabilities: info.Capabilities,
+					Auth:         auth,
+					Capabilities: caps,
 					InUse:        info.InUse,
 					Error:        info.ErrorMessage,
 				})

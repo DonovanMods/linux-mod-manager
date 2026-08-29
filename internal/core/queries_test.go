@@ -142,8 +142,8 @@ func TestStatus_GamesByIDWithCountsAndDefault(t *testing.T) {
 	require.NotNil(t, report)
 	require.Len(t, report.Games, 2)
 
-	assert.Equal(t, "alpha", report.Games[0].Game.ID)
-	assert.Equal(t, "zeta", report.Games[1].Game.ID)
+	assert.Equal(t, "alpha", report.Games[0].ID)
+	assert.Equal(t, "zeta", report.Games[1].ID)
 	assert.True(t, report.Games[0].IsDefault)
 	assert.False(t, report.Games[1].IsDefault)
 	assert.Equal(t, []string{"default"}, report.Games[0].Profiles)
@@ -179,7 +179,7 @@ func TestGameStatus_ActiveProfileDetail(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, st)
 
-	assert.Equal(t, "g1", st.Game.ID)
+	assert.Equal(t, "g1", st.ID)
 	assert.Equal(t, "default", st.ActiveProfile)
 	assert.Equal(t, 2, st.InstalledModCount)
 	assert.Equal(t, 1, st.EnabledModCount)

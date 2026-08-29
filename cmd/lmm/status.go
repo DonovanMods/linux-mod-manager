@@ -173,10 +173,10 @@ func outputStatusJSON(report *core.StatusReport) error {
 	out := statusJSONOutput{Games: make([]statusGameJSON, 0, len(report.Games))}
 	for _, summary := range report.Games {
 		out.Games = append(out.Games, statusGameJSON{
-			ID:          summary.Game.ID,
-			Name:        summary.Game.Name,
-			InstallPath: summary.Game.InstallPath,
-			ModPath:     summary.Game.ModPath,
+			ID:          summary.ID,
+			Name:        summary.Name,
+			InstallPath: summary.InstallPath,
+			ModPath:     summary.ModPath,
 			LinkMethod:  summary.LinkMethod.String(),
 			Profiles:    summary.Profiles,
 			ModCount:    summary.ModCount,
@@ -202,10 +202,10 @@ func showGameStatusJSON(ctx context.Context, service *core.Service, gameID strin
 		profileList[i] = statusProfileJSON{Name: p.Name, ModCount: p.ModCount, IsDefault: p.IsDefault}
 	}
 	out := statusGameDetailJSON{
-		ID:                  st.Game.ID,
-		Name:                st.Game.Name,
-		InstallPath:         st.Game.InstallPath,
-		ModPath:             st.Game.ModPath,
+		ID:                  st.ID,
+		Name:                st.Name,
+		InstallPath:         st.InstallPath,
+		ModPath:             st.ModPath,
 		LinkMethod:          st.LinkMethod.String(),
 		EffectiveLinkMethod: st.EffectiveLinkMethod.String(),
 		LinkMethodSource:    st.LinkMethodSource,
@@ -280,10 +280,10 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 		return err
 	}
 
-	fmt.Printf("Game: %s\n", st.Game.Name)
-	fmt.Printf("  ID: %s\n", st.Game.ID)
-	fmt.Printf("  Install Path: %s\n", st.Game.InstallPath)
-	fmt.Printf("  Mod Path: %s\n", st.Game.ModPath)
+	fmt.Printf("Game: %s\n", st.Name)
+	fmt.Printf("  ID: %s\n", st.ID)
+	fmt.Printf("  Install Path: %s\n", st.InstallPath)
+	fmt.Printf("  Mod Path: %s\n", st.ModPath)
 
 	// Show the effective link method for the active profile (the game's
 	// default profile - the one deploys target): per-profile > per-game >
@@ -305,9 +305,9 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 	}
 
 	// Show source mappings in verbose mode
-	if verbose && len(st.Game.SourceIDs) > 0 {
+	if verbose && len(st.SourceIDs) > 0 {
 		fmt.Println("  Sources:")
-		for source, sourceGameID := range st.Game.SourceIDs {
+		for source, sourceGameID := range st.SourceIDs {
 			fmt.Printf("    %s: %s\n", source, sourceGameID)
 		}
 	}

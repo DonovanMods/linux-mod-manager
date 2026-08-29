@@ -1,24 +1,21 @@
 {
   "games": [
     {
-      "game": {
-        "id": "skyrim-se",
-        "name": "Skyrim Special Edition",
-        "install_path": "/games/skyrim-se",
-        "mod_path": "/games/skyrim-se/Data",
-        "source_ids": {
-          "nexusmods": "skyrimspecialedition"
-        },
-        "link_method": "symlink",
-        "link_method_explicit": false,
-        "hooks": {
-          "install": {},
-          "uninstall": {}
-        },
-        "deploy_mode": "extract",
-        "convert_paks": false,
-        "convert_paks_explicit": false
+      "id": "skyrim-se",
+      "name": "Skyrim Special Edition",
+      "install_path": "/games/skyrim-se",
+      "mod_path": "/games/skyrim-se/Data",
+      "source_ids": {
+        "nexusmods": "skyrimspecialedition"
       },
+      "link_method_explicit": false,
+      "hooks": {
+        "install": {},
+        "uninstall": {}
+      },
+      "deploy_mode": "extract",
+      "convert_paks": false,
+      "convert_paks_explicit": false,
       "link_method": "symlink",
       "profiles": [
         "default",

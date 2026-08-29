@@ -41,15 +41,20 @@ func TestAppJSONGoldens(t *testing.T) {
 			"source_info",
 			SourceInfo{
 				ID: "nexusmods", Name: "NexusMods", Type: "built-in",
-				Auth: "yes", Capabilities: "search,deps,updates,auth,versions",
-				InUse: true,
+				Auth:         AuthAuthenticated,
+				Capabilities: []string{"search", "deps", "updates", "auth", "versions"},
+				InUse:        true,
 			},
 		},
 		{
 			// An error row: Err never reaches the wire (json:"-"), its
-			// message does.
+			// message does. Keyed by the definition's own id, not a
+			// filename - this is the "id already in use" COLLISION kind
+			// (final review, Minor #6 / #301: the old fixture paired a
+			// filename key with a collision message, mixing the two error
+			// kinds SourceInfos actually produces).
 			"source_info_error",
-			newSourceInfoError("broken.yaml", errors.New("id already in use")),
+			newSourceInfoError("nexusmods", errors.New("id already in use")),
 		},
 	}
 

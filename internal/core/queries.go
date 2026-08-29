@@ -107,12 +107,19 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 // GameSummary is one row of a StatusReport: a configured game plus the
 // counts `lmm status` shows next to it.
 //
-// LinkMethod is the GAME-level resolution (game-explicit or global default),
-// not the profile-effective one - GameStatus is where the profile-aware
-// answer lives. Game.LinkMethodExplicit says which of the two levels it came
-// from, so a renderer can mark a per-game override without a second call.
+// domain.Game is embedded (final review, Important #2 / #301): every wire
+// type in this file that carries a whole game embeds it flat, matching
+// GameListEntry, so a consumer never has to know which endpoint nests one
+// under "game" and which doesn't. LinkMethod is the GAME-level resolution
+// (game-explicit or global default), not the profile-effective one -
+// GameStatus is where the profile-aware answer lives - and, as the shallower
+// field, it correctly shadows the embedded Game.LinkMethod for both field
+// access and the "link_method" JSON key (the same mechanism ModListing.
+// ConvertPaks relies on). Game.LinkMethodExplicit says which of the two
+// levels it came from, so a renderer can mark a per-game override without a
+// second call.
 type GameSummary struct {
-	Game       domain.Game       `json:"game"`
+	domain.Game
 	LinkMethod domain.LinkMethod `json:"link_method"`
 	// Profiles are the game's profile names, in ProfileManager.List order.
 	Profiles []string `json:"profiles"`
@@ -141,11 +148,15 @@ type ProfileSummary struct {
 
 // GameStatus is everything `lmm status --game <id>` renders for one game.
 //
+//   - domain.Game is embedded, like GameSummary above (final review,
+//     Important #2 / #301) - not nested under "game".
 //   - LinkMethod is the GAME-level resolution (game-explicit or global
 //     default); EffectiveLinkMethod is what a deploy into the active profile
 //     actually uses (profile > game > global, #155/#81), and
 //     LinkMethodSource says which level won: "profile", "game" or "global".
-//     With no profile override the two methods are equal.
+//     With no profile override the two methods are equal. As the shallower
+//     field, LinkMethod shadows the embedded Game.LinkMethod for both field
+//     access and the "link_method" JSON key.
 //   - CachePath is the game's resolved cache root (its own CachePath when
 //     set, else the global cache dir); Game.CachePath distinguishes the two.
 //   - ActiveProfile is empty when the game has no default profile - an
@@ -156,7 +167,7 @@ type ProfileSummary struct {
 //     the merged pak on the last sync and stay raw-deployed instead. Always
 //     zero for a non-DeployCompile game.
 type GameStatus struct {
-	Game                domain.Game       `json:"game"`
+	domain.Game
 	LinkMethod          domain.LinkMethod `json:"link_method"`
 	EffectiveLinkMethod domain.LinkMethod `json:"effective_link_method"`
 	LinkMethodSource    string            `json:"link_method_source"`
@@ -317,8 +328,11 @@ type SearchOptions struct {
 // failures that did not stop the search, and the two counts a frontend needs
 // to say something honest about an empty result.
 //
-//   - TotalResults is how many hits the sources returned. A frontend that
-//     caps the displayed list compares it against what it shows.
+//   - TotalResults is how many hits the sources returned; core never
+//     truncates, so it always equals len(Mods) on THIS type. A frontend
+//     that caps its own displayed list (e.g. the CLI's --limit) compares
+//     its shown count against this field, which stays the untruncated
+//     total (final review, Minor #2 / #301).
 //   - AttemptedCount is how many of the game's sources actually had a search
 //     attempted (capability-less sources are skipped silently). Zero means
 //     NONE of them can search at all - indistinguishable from a genuine
@@ -417,8 +431,8 @@ type VerifyReport struct {
 	Result  *VerifyResult `json:"result"`
 }
 
-// VerifyReport runs Verify against profileName and wraps its result with the
-// game/profile identity. sink receives the same progress events Verify emits.
+// VerifyReport runs verify against profileName and wraps its result with the
+// game/profile identity. sink receives the same progress events verify emits.
 func (s *Service) VerifyReport(ctx context.Context, game *domain.Game, profileName string, opts VerifyOptions, sink EventSink) (*VerifyReport, error) {
 	result, err := s.Verify(ctx, game, profileName, opts, sink)
 	if err != nil {
