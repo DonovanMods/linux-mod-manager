@@ -22,6 +22,7 @@ type (
 	APIMappings      = source.APIMappings
 )
 
+// Source type identifiers for SourceDefinition.Type.
 const (
 	TypeDirectory = source.TypeDirectory
 	TypeManifest  = source.TypeManifest

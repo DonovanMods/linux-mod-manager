@@ -97,7 +97,7 @@ func TestRunListProfiles_MalformedProfileStillListed(t *testing.T) {
 	profilePath := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "extra.yaml")
 	data, err := os.ReadFile(profilePath)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("\nlink_method: bogus\n")...), 0o644))
+	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("\nlink_method: bogus\n")...), 0644))
 
 	out := captureStdout(t, func() error {
 		return runListProfiles(&cobra.Command{}, svc, game.ID, game.Name)

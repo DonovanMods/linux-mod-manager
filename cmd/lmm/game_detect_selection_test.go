@@ -257,7 +257,7 @@ func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.
 
 	gamesPath := filepath.Join(configDir, "games.yaml")
 	require.NoError(t, os.Chmod(gamesPath, 0000))
-	t.Cleanup(func() { _ = os.Chmod(gamesPath, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(gamesPath, 0644) })
 
 	games := []steam.DetectedGame{
 		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},

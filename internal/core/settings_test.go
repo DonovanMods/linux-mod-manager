@@ -130,7 +130,7 @@ func TestServiceConfig_SetDefaultGame_LoadFailureReportsLoadNotSave(t *testing.T
 
 	configPath := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.Chmod(configPath, 0000))
-	t.Cleanup(func() { _ = os.Chmod(configPath, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(configPath, 0644) })
 
 	cfg := core.ServiceConfig{ConfigDir: dir}
 	err := cfg.SetDefaultGame(context.Background(), "new-game")

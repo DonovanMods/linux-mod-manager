@@ -273,7 +273,7 @@ func TestDoGameSetDefault_LoadFailureReportedAsLoadError(t *testing.T) {
 
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	require.NoError(t, os.Chmod(configPath, 0000))
-	t.Cleanup(func() { _ = os.Chmod(configPath, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(configPath, 0644) })
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
