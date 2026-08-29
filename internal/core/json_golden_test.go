@@ -821,6 +821,43 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Every optional key populated at once (Locked/LockedVersion/
+			// Refusal, TargetInstalled) - on a real plan a locked re-link
+			// and an already-occupied target can co-occur, but the golden's
+			// job is to pin each key's wire shape, not to be a plausible
+			// plan (same convention as update_plan/rollback_plan below).
+			"relink_plan",
+			core.RelinkPlan{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				From:              domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+				To:                domain.ModReference{SourceID: "curseforge", ModID: "99"},
+				Relink:            true,
+				TargetInstalled:   true,
+				Locked:            true,
+				LockedVersion:     "1.2.3",
+				Refusal:           "mod is locked: Sample Mod is locked at v1.2.3 in profile default - re-linking would replace the locked ref; unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
+				MergedPakAffected: true,
+				Profile:           "default",
+			},
+		},
+		{
+			// Notes/Warnings both populated at once (a real edit rarely
+			// produces both), same convention as install_plan above.
+			"relink_result",
+			core.RelinkResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "99", SourceID: "curseforge", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				Changes:  []string{"source -> curseforge (was nexusmods)"},
+				Notes:    []string{"Warning: could not update profile: mod is locked"},
+				Warnings: []string{"could not sync merged pak: base pak missing"},
+			},
+		},
+		{
 			// Every optional key is populated (Locked/LockedVersion/Refusal
 			// and CacheMissing together) - on a real plan a locked rollback and
 			// a missing cache entry can co-occur, but the golden's job is to

@@ -964,6 +964,30 @@ const (
 	// the pre-lift CLI printed indented under the mod. Detail likewise
 	// carries its own "Warning: " prefix; also mirrored on Notes.
 	ImportArchiveProfileNote
+
+	// --- ApplyRelinkMod progress events (v2 Phase 3 Task 10, #303):
+	// `mod edit`'s re-link fetches metadata from the target source and
+	// leaves a couple of non-fatal profile-write diagnostics, mirroring
+	// import_archive.go's step/warn/note closures. ---
+
+	// RelinkFetching fires once, before ApplyRelinkMod fetches metadata from
+	// a re-link's non-local target source - unconditional stdout, mirroring
+	// doModEdit's pre-extraction "Fetching metadata from %s...\n". Detail is
+	// the full line ("Fetching metadata from <source>...").
+	RelinkFetching
+	// RelinkProfileNote is ApplyRelinkMod's --verbose-gated profile-write
+	// diagnostic, reused across its three sites (a failed RemoveMod of the
+	// old ref, a failed UpsertMod after a re-link, a failed UpsertMod after
+	// a version-only edit) - Detail carries its own "Warning: " prefix
+	// baked in already, matching doModEdit's own historical text exactly. A
+	// caller wanting byte-identical output prints
+	// `if verbose { fmt.Printf("%s\n", p.Detail) }`.
+	RelinkProfileNote
+	// RelinkWarning is ApplyRelinkMod's unconditional stderr diagnostic - a
+	// failed metadata fetch, or a merged-pak sync failure/warning - Detail
+	// is the raw text (no prefix); a caller wanting byte-identical output
+	// prints `fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)`.
+	RelinkWarning
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -999,6 +1023,7 @@ var deployPhaseNames = [...]string{
 	ImportArchiveDetail: "import_archive_detail", ImportArchiveDeploying: "import_archive_deploying",
 	ImportArchiveWarning: "import_archive_warning", ImportArchiveNote: "import_archive_note",
 	ImportArchiveProfileNote: "import_archive_profile_note",
+	RelinkFetching:           "relink_fetching", RelinkProfileNote: "relink_profile_note", RelinkWarning: "relink_warning",
 }
 
 // String returns the phase's wire name.
