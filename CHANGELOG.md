@@ -132,7 +132,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind new `app.LoadSourceDefinitions`/`LoadSourceDefinitionFile`/`ConstructSource`/
   `ProbeSource` queries. `cmd/lmm`'s `boundaryAllowList` is now empty. No user-visible change: CLI
   output is byte-identical. (#292)
-
 - Internal: the deploy flow gains a Plan/Apply pair — `core.PlanDeploy` returns a `DeployPlan`
   (per-mod link/remove file sets, the purge set, the hook list and the DeployCompile `MergePlan`)
   and `core.ApplyDeploy` carries it out, refusing a plan whose installed-mod set has moved
@@ -140,6 +139,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `flows.go` into `internal/core/deploy.go`, and `ConvergeDeployedFiles` is unexported (verify's
   `--fix` pass was its only caller). No user-visible change to existing invocations: CLI output is
   byte-identical. (#293)
+- Internal: the uninstall and purge flows gain Plan/Apply pairs — `core.PlanUninstall` resolves
+  the mod (including the bare-ID first-match rule the CLI used to apply inline) and returns an
+  `UninstallPlan`; `core.PlanPurge` returns the installed set the confirmation prompt counts and
+  `ApplyPurge` purges that same object; both refuse a stale plan (`ErrStalePlan`).
+  `UninstallMod`/`PurgeProfile` stay as the Plan+Apply conveniences, and the flows move out of
+  `flows.go` into `internal/core/uninstall.go` and `internal/core/purge.go`. No user-visible change
+  to existing invocations: CLI output is byte-identical. (#293)
 
 ### Fixed
 
