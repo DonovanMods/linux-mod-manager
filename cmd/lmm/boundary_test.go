@@ -30,7 +30,6 @@ var allowedImports = []string{
 // ever shrinks. When it is empty, delete the map and this comment.
 var boundaryAllowList = map[string]string{
 	"internal/source/custom":  "lmm source list/validate --probe re-derive definitions; Phase 2 #8",
-	"internal/source/steam":   "lmm game detect scans Steam libraries in cmd; Phase 2 #7",
 	"internal/storage/config": "profiles/games/config read directly by 7 commands; Phase 2 #7-#8",
 }
 
