@@ -323,3 +323,62 @@ func TestJSONGolden_ModShow(t *testing.T) {
 		assertJSONCLIGolden(t, "mod_show_not_installed", out)
 	})
 }
+
+// --- source list ---
+
+// runGoldenSourceList runs `source list` through cobra WITHOUT redirecting
+// the command's output: the document must be captured off os.Stdout, which
+// is where the one-document invariant puts it.
+func runGoldenSourceList(t *testing.T, all bool) string {
+	t.Helper()
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(sourceCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
+	args := []string{"source", "list"}
+	if all {
+		args = append(args, "--all")
+	}
+	cmd.SetArgs(args)
+
+	oldAll, oldJSON := sourceAll, jsonOutput
+	sourceAll, jsonOutput = all, true
+	t.Cleanup(func() { sourceAll, jsonOutput = oldAll, oldJSON })
+
+	return captureStdout(t, cmd.Execute)
+}
+
+// setupGoldenSourceList pins the two inputs a source-list golden would
+// otherwise inherit from the developer's shell: an empty config/data dir and
+// NO API keys in the environment. The repo's .envrc exports real keys, and a
+// registered source's auth state is read straight off them - without this
+// the goldens would say "authenticated" on one machine and "required" on
+// another (plan Global Constraints: tests touching key resolution t.Setenv).
+func setupGoldenSourceList(t *testing.T) {
+	t.Helper()
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	t.Setenv("NEXUSMODS_API_KEY", "")
+	t.Setenv("CURSEFORGE_API_KEY", "")
+	t.Setenv("LMM_NEXUSMODS_API_KEY", "")
+	t.Setenv("LMM_CURSEFORGE_API_KEY", "")
+	oldGame := gameID
+	gameID = ""
+	t.Cleanup(func() { gameID = oldGame })
+}
+
+func TestJSONGolden_SourceList(t *testing.T) {
+	t.Run("registry", func(t *testing.T) {
+		setupGoldenSourceList(t)
+
+		assertJSONCLIGolden(t, "source_list_registry", runGoldenSourceList(t, false))
+	})
+
+	t.Run("error_row", func(t *testing.T) {
+		setupGoldenSourceList(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(configDir, "sources"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(configDir, "sources", "broken.yaml"), []byte(
+			"id: broken-mods\nname: Broken Mods\ntype: directory\ndirectory:\n  path: /nonexistent/lmm-golden\n"), 0o644))
+
+		assertJSONCLIGolden(t, "source_list_error_row", runGoldenSourceList(t, false))
+	})
+}

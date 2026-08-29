@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -24,24 +23,6 @@ Custom sources (directory scans, static manifests, or REST APIs) are
 defined as YAML files in the sources/ directory under the config dir
 (see the FILES section of 'lmm --help' for the config directory) - see
 the Custom Sources section of the project README for the file format.`,
-}
-
-// sourceInfo is one row of `lmm source list` output.
-type sourceInfo struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"` // "built-in", "directory", "manifest", "api", or "error"
-	Auth         string `json:"auth"` // "yes", "no", "n/a"
-	Capabilities string `json:"capabilities"`
-	// InUse marks a row as one of the active game's configured sources.
-	// Only ever set (and only ever rendered as a column, in both --json and
-	// the text table) in the --all-with-game-resolvable combination (design
-	// §5) - additive per the repo's JSON-contract-additions-are-MINOR
-	// precedent: omitempty means a scoped or no-game-context response never
-	// gains an "in_use" key at all, exactly the pre-Task-4 shape those
-	// callers already depend on.
-	InUse bool   `json:"in_use,omitempty"`
-	Error string `json:"error,omitempty"`
 }
 
 // authDisplay rebuilds the pre-#301 "yes"/"no"/"n/a" display string from
@@ -133,36 +114,13 @@ Examples:
 			}
 			showInUseColumn := gameCtx != nil && sourceAll
 
-			// make(...,0,...), not `var rows []sourceInfo`: a nil slice encodes
-			// to JSON `null`, but `source list --json` should always emit an
-			// array — empty when there is nothing to report (#52 item 13).
-			rows := make([]sourceInfo, 0, len(infos))
-			for _, info := range infos {
-				// An error row carries no auth/capability data (it never
-				// registered) - both columns stay "" here, exactly as they
-				// did when SourceInfo.Auth/Capabilities were themselves
-				// plain strings left at their zero value on that row (final
-				// review, Important #1 / #301: source list --json and the
-				// text table stay byte-identical by formatting from the
-				// data, not carrying pre-formatted text on the wire).
-				var auth, caps string
-				if info.Type != "error" {
-					auth = authDisplay(info.Auth)
-					caps = strings.Join(info.Capabilities, ",")
-				}
-				rows = append(rows, sourceInfo{
-					ID:           info.ID,
-					Name:         info.Name,
-					Type:         info.Type,
-					Auth:         auth,
-					Capabilities: caps,
-					InUse:        info.InUse,
-					Error:        info.ErrorMessage,
-				})
-			}
-
 			if jsonOutput {
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
+				// A top-level array, as it has always been (#52 item 13: an
+				// empty registry emits [], never null - emitJSON encodes a
+				// nil slice as []). Indented like every other document since
+				// v2 (Ruling 3); this was the one command emitting compact
+				// JSON.
+				return emitJSON(infos)
 			}
 
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
@@ -171,21 +129,30 @@ Examples:
 				header += "\tIN USE"
 			}
 			fmt.Fprintln(w, header+"\tERROR")
-			for _, r := range rows {
-				line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", r.ID, r.Name, r.Type, r.Auth, r.Capabilities)
+			for _, info := range infos {
+				// An error row carries no auth/capability data (it never
+				// registered), so both columns stay blank here - the display
+				// strings are derived from the wire-typed data, never carried
+				// on the wire (final review, Important #1 / #301).
+				var auth, caps string
+				if info.Type != "error" {
+					auth = authDisplay(info.Auth)
+					caps = strings.Join(info.Capabilities, ",")
+				}
+				line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", info.ID, info.Name, info.Type, auth, caps)
 				if showInUseColumn {
-					// Error rows have no game association (see the append
-					// above) — leave the column blank rather than claim "no".
+					// Error rows have no game association - leave the column
+					// blank rather than claim "no".
 					inUse := ""
-					if r.Type != "error" {
+					if info.Type != "error" {
 						inUse = "no"
-						if r.InUse {
+						if info.InUse {
 							inUse = "yes"
 						}
 					}
 					line += "\t" + inUse
 				}
-				fmt.Fprintln(w, line+"\t"+r.Error)
+				fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
 			}
 			return w.Flush()
 		})
