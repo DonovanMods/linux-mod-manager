@@ -440,6 +440,18 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service, profileName string) error {
 	ctx := cmd.Context()
 
+	// The caveat and the "Scanning..." notice print BEFORE any core call, as
+	// they always have: a game with a missing or unconfigured mod_path fails
+	// inside PlanAdopt, and the pre-lift engine had already printed both
+	// lines by then. core.LocalScan.ExtractModeWarning carries the same rule
+	// for a frontend that renders a finished plan instead of a live stream.
+	if game.DeployMode != domain.DeployCopy {
+		fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
+		fmt.Println("      Uninstall will only remove the database entry, not the files.")
+		fmt.Println()
+	}
+	fmt.Printf("Scanning %s for untracked mods...\n", game.ModPath)
+
 	plan, err := service.PlanAdopt(ctx, game, profileName, core.AdoptOptions{
 		SkipMatch: importSkipMatch,
 		DryRun:    importDryRun,
@@ -447,6 +459,8 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("Found %d files, %d untracked\n\n", len(plan.Scan.Tracked)+len(plan.Scan.Untracked), len(plan.Scan.Untracked))
 
 	// progress renders both applies' events at their point of occurrence.
 	// AdoptSyncWarning is the only stderr line (and the reason
@@ -472,15 +486,6 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
 	}
-
-	if plan.Scan.ExtractModeWarning {
-		fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
-		fmt.Println("      Uninstall will only remove the database entry, not the files.")
-		fmt.Println()
-	}
-
-	fmt.Printf("Scanning %s for untracked mods...\n", game.ModPath)
-	fmt.Printf("Found %d files, %d untracked\n\n", len(plan.Scan.Tracked)+len(plan.Scan.Untracked), len(plan.Scan.Untracked))
 
 	// Backfill metadata for already-tracked mods missing metadata. The plan
 	// carries no candidates at all under --skip-match, so this whole block

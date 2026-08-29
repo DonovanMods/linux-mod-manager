@@ -145,6 +145,34 @@ func TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash(t *testing
 	assert.NotContains(t, out, "local #", "an unmatched mod must not be tagged with a fake source ID like \"local #<id>\"")
 }
 
+// TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices pins the order
+// v2 Phase 2 Unit K's lift had to preserve: the extract-mode caveat and the
+// "Scanning ..." notice are printed BEFORE the scan runs, so a game with a
+// mod_path that does not exist still shows both before its error. That is
+// why runImportScan reads game.DeployMode itself rather than rendering
+// core.LocalScan.ExtractModeWarning, which only exists once the scan has
+// already succeeded.
+func TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	game.ModPath = filepath.Join(t.TempDir(), "does-not-exist")
+
+	importSkipMatch = true
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	out, err := captureStdoutErr(t, func() error {
+		return runImportScan(cmd, game, svc, "default")
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mod_path does not exist")
+	expected := "Note: Scan import for extract-mode games tracks mods in-place without caching.\n" +
+		"      Uninstall will only remove the database entry, not the files.\n" +
+		"\n" +
+		"Scanning " + game.ModPath + " for untracked mods...\n"
+	assert.Equal(t, expected, out)
+}
+
 // --- import --id default resolution (Task 3 of #76's PR2 plan) ---
 //
 // import --id's "prefer curseforge, else first available" block becomes a
