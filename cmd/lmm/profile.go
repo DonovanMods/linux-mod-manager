@@ -594,7 +594,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		return err
 	}
 
-	if len(plan.ToAdd) == 0 && len(plan.ToRemove) == 0 && len(plan.ToUpdate) == 0 {
+	if plan.NoChanges {
 		// The pre-lift engine called pm.Create unconditionally before ever
 		// computing the diff, so a missing profile always got a profile.yaml
 		// even with nothing to sync into it. ApplyProfileSync still must be

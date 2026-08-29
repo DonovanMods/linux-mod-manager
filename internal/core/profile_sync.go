@@ -39,6 +39,15 @@ type ProfileSyncPlan struct {
 	// update FileIDs for:" bucket.
 	ToUpdate []domain.ModReference `json:"to_update"`
 
+	// NoChanges is true when all three buckets are empty - the profile
+	// already matches the DB. ApplyProfileSync still creates a Missing
+	// profile in that case (the pre-lift engine's pm.Create ran before the
+	// diff was even computed) but stops there, without the merged-pak sync:
+	// nothing changed, so there is nothing to re-merge, and the sync's
+	// zero-sources branch would UNINSTALL an existing merged pak. Mirrors
+	// ProfileApplyPlan.NoChanges.
+	NoChanges bool `json:"no_changes"`
+
 	// Missing is true when profileName has no profile.yaml on disk yet.
 	// PlanProfileSync computes the rest of the diff as if the profile were
 	// empty (every enabled DB mod lands in ToAdd, nothing lands in ToRemove
@@ -159,6 +168,8 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		}
 	}
 
+	plan.NoChanges = len(plan.ToAdd) == 0 && len(plan.ToRemove) == 0 && len(plan.ToUpdate) == 0
+
 	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, err
@@ -213,6 +224,15 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 		if _, err := pm.Create(plan.GameID, plan.Profile); err != nil {
 			return result, fmt.Errorf("creating profile: %w", err)
 		}
+	}
+
+	// The profile file is created above even with nothing to sync (the
+	// pre-lift engine's pm.Create ran before the diff), but an empty diff
+	// stops there: syncing the merged pak would be work no mod-set change
+	// asked for, and its zero-sources branch uninstalls whatever merged pak
+	// the game already has. Same guard ApplyProfileApply has for NoChanges.
+	if plan.NoChanges {
+		return result, nil
 	}
 
 	for _, ref := range plan.ToAdd {

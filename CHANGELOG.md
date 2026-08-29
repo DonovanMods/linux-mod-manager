@@ -102,6 +102,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `initializing service:` prefix (rejecting the flag never actually opened a service). It now
   reads `Error: invalid --log-level "<value>": expected off, error, warn, info, or debug`
   identically on every path (#284, #285)
+- `lmm profile sync` on a profile with nothing to sync no longer touches the merged pak. Creating
+  a missing profile.yaml through an otherwise-empty sync reached the merged-pak sync, whose
+  zero-enabled-mods branch uninstalls the game's existing merged pak; it now stops after creating
+  the profile, matching `lmm profile apply`'s no-changes behaviour. (#291)
 - Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
   `hooks:`) (#295)
 

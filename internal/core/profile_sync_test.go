@@ -271,6 +271,47 @@ func TestApplyProfileSync_MergedPakSyncFailure_IsAWarning(t *testing.T) {
 	assert.Contains(t, result.Warnings[0], "could not sync merged pak: ")
 }
 
+// TestApplyProfileSync_MissingProfileWithEmptyDiff_CreatesProfileWithoutSyncingMergedPak
+// pins Unit J's review finding: the one case where the CLI reaches Apply
+// with all three buckets empty is a MISSING profile (it calls Apply purely
+// for the pm.Create side effect), and that path used to fall through to the
+// merged-pak sync - whose warnings the CLI then discarded, and whose
+// zero-sources branch UNINSTALLS any merged pak the game has. Applying an
+// empty diff must not touch the merged pak at all, exactly as
+// ApplyProfileApply's NoChanges guard already ensures.
+func TestApplyProfileSync_MissingProfileWithEmptyDiff_CreatesProfileWithoutSyncingMergedPak(t *testing.T) {
+	svc, game := newSyncTestService(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	// A merged pak already exists for the game. "merged-pak"/"merged" mirror
+	// core's private mergedPakModID/mergedPakVersion (same convention as
+	// merged_pak_hooks_test.go).
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, domain.SourceMerged, "merged-pak", "merged", "zzz_LMM_Merged_P.pak", []byte("merged-bytes")))
+
+	plan, err := svc.PlanProfileSync(context.Background(), game, "fresh")
+	require.NoError(t, err)
+	require.True(t, plan.Missing)
+	require.Empty(t, plan.ToAdd)
+	require.Empty(t, plan.ToRemove)
+	require.Empty(t, plan.ToUpdate)
+
+	result, err := svc.ApplyProfileSync(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.Added)
+	assert.Equal(t, 0, result.Removed)
+	assert.Equal(t, 0, result.Updated)
+	assert.Empty(t, result.Warnings, "no merged-pak sync ran, so there is nothing to warn about")
+
+	_, gErr := svc.NewProfileManager().Get(game.ID, "fresh")
+	require.NoError(t, gErr, "the missing profile is still created")
+
+	assert.True(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),
+		"an empty-diff sync must leave the merged pak alone")
+}
+
 // TestApplyProfileSync_StalePlan is ruling 5: a plan computed against an
 // installed-mod set that has since changed is refused, so a frontend that
 // held a plan across a mutation re-plans instead of applying a stale diff.

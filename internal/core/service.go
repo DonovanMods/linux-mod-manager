@@ -600,6 +600,13 @@ func (s *Service) GetDownloadURL(ctx context.Context, sourceID string, mod *doma
 // DownloadMod downloads a mod file, extracts it, and stores it in the cache
 // Returns the download result including files extracted and checksum.
 // Multiple files from the same mod can be downloaded to the same cache location.
+//
+// It stays EXPORTED with no production cmd caller (the install/update/deploy
+// flows all reach downloadMod internally): cmd/lmm/verify_test.go seeds its
+// fixtures by driving a real download round-trip through it, so unexporting
+// it would leave that test with no way to produce a genuine cache entry
+// plus checksum. Same reason SaveFileChecksum stays exported. Retire it only
+// together with a fixture that no longer needs a real download.
 func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
