@@ -56,4 +56,26 @@ func TestEnumTextRoundTrip(t *testing.T) {
 		var bad core.DeployModClass
 		assert.Error(t, bad.UnmarshalText([]byte("junk")))
 	})
+	t.Run("UpdateStatus", func(t *testing.T) {
+		for _, s := range []core.UpdateStatus{
+			core.UpdateUpdated, core.UpdateUpToDate, core.UpdateSkipped,
+			core.UpdateRecompiled, core.UpdateRecompileAvailable, core.UpdateAvailable,
+			core.UpdateRolledBack,
+		} {
+			b, err := s.MarshalText()
+			require.NoError(t, err)
+			var back core.UpdateStatus
+			require.NoError(t, back.UnmarshalText(b))
+			assert.Equal(t, s, back)
+		}
+		assert.Equal(t, "updated", core.UpdateUpdated.String())
+		assert.Equal(t, "up_to_date", core.UpdateUpToDate.String())
+		assert.Equal(t, "skipped", core.UpdateSkipped.String())
+		assert.Equal(t, "recompiled", core.UpdateRecompiled.String())
+		assert.Equal(t, "recompile_available", core.UpdateRecompileAvailable.String())
+		assert.Equal(t, "available", core.UpdateAvailable.String())
+		assert.Equal(t, "rolled_back", core.UpdateRolledBack.String())
+		var bad core.UpdateStatus
+		assert.Error(t, bad.UnmarshalText([]byte("junk")))
+	})
 }
