@@ -1,0 +1,35 @@
+{
+  "profile": {
+    "name": "default",
+    "game_id": "g1",
+    "mods": [
+      {
+        "source_id": "src",
+        "mod_id": "a",
+        "version": "1.0",
+        "locked": false
+      }
+    ],
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "is_default": true,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "hooks_explicit": {
+      "install": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      },
+      "uninstall": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      }
+    }
+  }
+}
