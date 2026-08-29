@@ -697,7 +697,7 @@ func TestDoImport_DeployCompile_ConvertiblePak_PrintsFilesDeployedLine(t *testin
 	game.ConvertPaks = true
 
 	archivePath := filepath.Join(t.TempDir(), "Raw_Weapon.pak")
-	require.NoError(t, os.WriteFile(archivePath, []byte("raw-pak-bytes"), 0o644))
+	require.NoError(t, os.WriteFile(archivePath, []byte("raw-pak-bytes"), 0644))
 
 	out, err := captureStdoutErr(t, func() error {
 		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})

@@ -85,6 +85,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core.ApplyProfileSync`, with a missing profile.yaml recorded on the plan (`Missing`) rather than
   created at plan time, and an `ErrStalePlan` freshness guard. `cmd/lmm` keeps only the prompt and
   the printed lines. No user-visible change: CLI output is byte-identical. (#290)
+- Internal: `lmm import`'s scan mode is Plan/Apply — the untracked-mod scan, the
+  source-matching loop (`tryMatchSources`), the metadata backfill and the adoption engine
+  (`importExistingMod`, plus a verbatim duplicate of core's own `copyFileStreaming`) move out of
+  `cmd/lmm/import.go` into `core.ScanLocal`/`core.PlanAdopt`/`core.ApplyAdoptBackfill`/
+  `core.ApplyAdopt`, with an `ErrStalePlan` freshness guard and progress reported through the
+  event stream. The backfill is its own small apply because the pre-lift engine saved it, and
+  reported its count, before the confirmation prompt and kept it on a decline. `cmd/lmm` keeps
+  only the prompt and the printed lines; `Importer.ScanModPath`/`FindDuplicateMod` are now
+  package-internal. No user-visible change: CLI output is byte-identical. (#291)
 
 ### Fixed
 

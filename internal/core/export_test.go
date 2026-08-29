@@ -63,3 +63,17 @@ func (s *Service) SetModEnabledForTest(ctx context.Context, sourceID, modID, gam
 func (s *Service) GetInstallerForProfileForTest(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
 	return s.getInstallerForProfile(ctx, game, profileName)
 }
+
+// ScanModPathForTest exposes scanModPath, which the scan-import lift (#291)
+// unexported: ScanLocal is production's only caller, but the scan's own
+// classification rules (copy vs extract mode, symlink detection, tilde
+// expansion) are pinned directly by importer_test.go.
+func (i *Importer) ScanModPathForTest(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
+	return i.scanModPath(ctx, game, installedMods, opts)
+}
+
+// FindDuplicateModForTest exposes findDuplicateMod, unexported by the same
+// lift; its name-normalization table is pinned by importer_test.go.
+func (i *Importer) FindDuplicateModForTest(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
+	return i.findDuplicateMod(modName, installedMods)
+}

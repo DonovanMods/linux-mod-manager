@@ -177,7 +177,7 @@ func (s *Service) ScanLocal(ctx context.Context, game *domain.Game, profileName 
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
-	results, err := s.NewImporter(game).ScanModPath(ctx, game, installedMods, opts)
+	results, err := s.NewImporter(game).scanModPath(ctx, game, installedMods, opts)
 	if err != nil {
 		return nil, fmt.Errorf("scanning mod_path: %w", err)
 	}
@@ -243,7 +243,7 @@ func (s *Service) PlanAdopt(ctx context.Context, game *domain.Game, profileName 
 		if r.Mod == nil {
 			continue
 		}
-		if dup := importer.FindDuplicateMod(r.Mod.Name, installedMods); dup != nil {
+		if dup := importer.findDuplicateMod(r.Mod.Name, installedMods); dup != nil {
 			plan.Duplicates = append(plan.Duplicates, r.FileName)
 		}
 	}
@@ -487,7 +487,7 @@ func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 			continue
 		}
 
-		if dup := importer.FindDuplicateMod(r.Mod.Name, currentMods); dup != nil {
+		if dup := importer.findDuplicateMod(r.Mod.Name, currentMods); dup != nil {
 			step(r, AdoptDuplicateSkipped, fmt.Sprintf("⊘ %s: skipped (duplicate of \"%s\")", r.FileName, dup.Name))
 			result.Skipped++
 			continue

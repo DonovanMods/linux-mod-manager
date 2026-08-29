@@ -537,8 +537,10 @@ type ScanOptions struct {
 	DryRun      bool // If true, don't actually import, just report what would be done
 }
 
-// ScanModPath scans the game's mod_path for untracked mods
-func (i *Importer) ScanModPath(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
+// scanModPath scans the game's mod_path for untracked mods. Unexported
+// with the scan-import lift (#291): ScanLocal is the only caller, and a
+// frontend reaches it through that.
+func (i *Importer) scanModPath(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
 	if game.ModPath == "" {
 		return nil, fmt.Errorf("game has no mod_path configured")
 	}
@@ -669,8 +671,10 @@ func (i *Importer) isFileTracked(filename string, installedMods []domain.Install
 	return false
 }
 
-// findDuplicateMod checks if a mod with similar name already exists (for duplicate prevention)
-func (i *Importer) FindDuplicateMod(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
+// findDuplicateMod checks if a mod with similar name already exists (for
+// duplicate prevention). Unexported with the scan-import lift (#291):
+// PlanAdopt/ApplyAdopt are the only callers.
+func (i *Importer) findDuplicateMod(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
 	modNameLower := strings.ToLower(modName)
 	// Normalize: remove common suffixes like version numbers, underscores, dashes
 	normalized := normalizeModName(modNameLower)
