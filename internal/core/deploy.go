@@ -8,7 +8,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -167,6 +169,352 @@ type DeployResult struct {
 	RawFallbacks   int    `json:"raw_fallbacks"`
 }
 
+// DeployPlan is PlanDeploy's side-effect-free description of what a deploy
+// would do: which mods it would touch (in load order), which game-dir paths
+// each one would link or leave removed, what a --purge pass would undeploy
+// first, which hooks would run, and - on a DeployCompile game - what the
+// merged artifact would carry. ApplyDeploy re-derives the same selection
+// under the mutation lock and refuses a plan whose installed-mod set has
+// changed since (Ruling 5).
+type DeployPlan struct {
+	Profile string          `json:"profile"`
+	Mods    []DeployPlanMod `json:"mods"`
+
+	// Purge lists the game-dir-relative paths a --purge pass would
+	// undeploy before the deploy loop runs, deduplicated and in purge
+	// order. Empty when opts.Purge is false. A path here may well be
+	// re-linked moments later by the deploy loop - purge undeploys
+	// everything, then the loop redeploys the selection.
+	Purge []string `json:"purge"`
+
+	// Hooks names the hooks that would actually run, in run order: the
+	// uninstall.* family (the purge pass) ahead of the install.* family
+	// (the deploy loop). Only configured hooks are listed, only for a pass
+	// that has at least one mod to work on, and none at all under
+	// SkipHooks.
+	Hooks []string `json:"hooks"`
+
+	// Merged is the DeployCompile merge readout (#255) - nil on any other
+	// game, and on a compile game whose selection contributes neither a
+	// merge source nor a raw fallback.
+	Merged *MergePlan `json:"merged,omitempty"`
+
+	// NoChanges reports that this deploy has nothing to act on at all: no
+	// mod selected and no purge pass. It is NOT a claim that the deploy
+	// would write no bytes - a selected mod always redeploys its files,
+	// whether or not they are already on disk.
+	NoChanges bool `json:"no_changes"`
+
+	// snapshot is Ruling 5's precondition: the installed-mod set this plan
+	// was computed from, re-derived and compared by ApplyDeploy.
+	snapshot installedSnapshot `json:"-"`
+}
+
+// DeployPlanMod is one mod's row in a DeployPlan, in the load order the
+// deploy loop walks.
+type DeployPlanMod struct {
+	Ref  domain.ModReference `json:"ref"`
+	Name string              `json:"name"`
+
+	// Class is the #255 readout: how this mod's content reaches the game
+	// directory on a DeployCompile game. Always DeployModIndividual
+	// elsewhere. Classification is optimistic in exactly the way
+	// classifyCompileDeployMods documents.
+	Class DeployModClass `json:"class"`
+
+	// Link lists the game-dir-relative paths the deploy would link/copy
+	// for this mod, in cache listing order - deployableFiles' result, which
+	// is precisely what Installer.Install deploys.
+	Link []string `json:"link"`
+
+	// Remove lists the game-dir-relative paths the undeploy-before-redeploy
+	// step would remove and NOT put back: the removal direction's full
+	// union (or, for an absent cache entry, the DB's tracked deployed
+	// paths) minus Link. This is normally empty; it is non-empty exactly
+	// where #210's narrowing self-heals a stale, unclaimed deployment.
+	Remove []string `json:"remove"`
+
+	// Skipped, when set, is why this mod would not deploy its files:
+	// "mod not found", a disabled single-mod selection, or a missing cache
+	// entry (which the deploy heals by re-downloading from source, so the
+	// plan cannot enumerate its files). A selection problem the pre-lift
+	// flow reported only AFTER its --purge pass is plan DATA here, never a
+	// PlanDeploy error - see PlanDeploy's doc comment.
+	Skipped string `json:"skipped,omitempty"`
+}
+
+// MergePlan is the DeployCompile merge readout in plan form (#255): the
+// artifact the deploy would produce, the mods whose content it would carry,
+// and the mods that deploy raw instead because conversion is unavailable to
+// them (the game- or mod-level ConvertPaks opt-out, #221). Names, not refs,
+// because this is the same rendering vocabulary DeployMergeSynced uses.
+type MergePlan struct {
+	Artifact     string   `json:"artifact"`
+	Sources      []string `json:"sources"`
+	RawFallbacks []string `json:"raw_fallbacks"`
+}
+
+// PlanDeploy computes what DeployProfile would do for game/profileName under
+// opts, without touching anything. It reads the same installed set, applies
+// the same selection rules, and resolves each selected mod's deploy-direction
+// files (deployableFiles) and removal-direction files (the cache union, or
+// the DB's tracked paths for an absent entry) - so a frontend can show the
+// exact file-level consequences of a deploy before running one.
+//
+// PlanDeploy deliberately does NOT fail on a selection problem. `lmm deploy
+// --purge <unknown-id>` historically ran its whole purge pass - hooks,
+// warnings and all - and only then failed with "mod not found"; a Plan that
+// errored first would silently skip that purge. Such problems are therefore
+// recorded as DeployPlanMod.Skipped entries and left for ApplyDeploy to
+// raise at the historical point.
+//
+// The returned plan is a snapshot: pass it to ApplyDeploy promptly, and be
+// ready for ErrStalePlan if the installed set moved underneath it.
+func (s *Service) PlanDeploy(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions) (*DeployPlan, error) {
+	return s.planDeploy(ctx, game, profileName, opts)
+}
+
+func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions) (*DeployPlan, error) {
+	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	plan := &DeployPlan{Profile: profileName, snapshot: snapshot}
+	gameCache := s.GetGameCache(game)
+
+	// --purge pass, mirroring deployProfile's own ordering (and its nil-safe
+	// profile fallback) so the listed paths come out in purge order.
+	purgeMods := 0
+	if opts.Purge {
+		mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("getting installed mods: %w", err)
+		}
+		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
+		mods = OrderByProfile(profile, mods)
+		purgeMods = len(mods)
+		seen := make(map[string]bool)
+		for i := range mods {
+			for _, f := range s.deployedPathsFor(ctx, game, profileName, &mods[i]) {
+				if seen[f] {
+					continue
+				}
+				seen[f] = true
+				plan.Purge = append(plan.Purge, f)
+			}
+		}
+	}
+
+	// Selection, mirroring deployProfile's three branches. The --purge
+	// variant's enabledBeforePurge map is exactly "Enabled as it stands
+	// now" (a purge marks mods not-deployed, never not-enabled), so all
+	// three collapse to All-or-Enabled here.
+	var modsToDeploy []*domain.InstalledMod
+	switch {
+	case opts.ModID != "":
+		mod, err := s.GetInstalledMod(ctx, opts.SourceID, opts.ModID, game.ID, profileName)
+		switch {
+		case err != nil:
+			plan.Mods = append(plan.Mods, DeployPlanMod{
+				Ref:     domain.ModReference{SourceID: opts.SourceID, ModID: opts.ModID},
+				Name:    opts.ModID,
+				Skipped: "mod not found",
+			})
+		case !mod.Enabled && !opts.All:
+			plan.Mods = append(plan.Mods, DeployPlanMod{
+				Ref:     domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID},
+				Name:    mod.Name,
+				Skipped: fmt.Sprintf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, opts.ModID),
+			})
+		default:
+			modsToDeploy = append(modsToDeploy, mod)
+		}
+	default:
+		mods, err := s.GetInstalledModsInProfileOrder(ctx, game.ID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("getting installed mods: %w", err)
+		}
+		for i := range mods {
+			if opts.All || mods[i].Enabled {
+				modsToDeploy = append(modsToDeploy, &mods[i])
+			}
+		}
+	}
+
+	classes := s.classifyCompileDeployMods(ctx, game, profileName, modsToDeploy)
+	for _, mod := range modsToDeploy {
+		entry := DeployPlanMod{
+			Ref:   domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID},
+			Name:  mod.Name,
+			Class: classes[domain.ModKey(mod.SourceID, mod.ID)],
+		}
+		if !gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
+			// The deploy loop heals this by re-downloading from source, so
+			// what it would then link is not knowable without doing so.
+			entry.Skipped = "cache missing - the deploy re-downloads from source"
+			plan.Mods = append(plan.Mods, entry)
+			continue
+		}
+		link, err := deployableFiles(gameCache, game.ID, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			// A readout, never a reason to fail a plan: the deploy itself
+			// would surface this as that mod's own skip reason.
+			s.logger().Warn("resolving deployable files failed while planning a deploy",
+				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+			plan.Mods = append(plan.Mods, entry)
+			continue
+		}
+		entry.Link = link
+		linked := make(map[string]bool, len(link))
+		for _, f := range link {
+			linked[f] = true
+		}
+		for _, f := range s.deployedPathsFor(ctx, game, profileName, mod) {
+			if !linked[f] {
+				entry.Remove = append(entry.Remove, f)
+			}
+		}
+		plan.Mods = append(plan.Mods, entry)
+	}
+
+	plan.Hooks = planDeployHooks(s.resolvedHooksForPlan(ctx, game, profileName), opts, purgeMods, len(modsToDeploy))
+	plan.Merged = s.planMerge(game, plan.Mods)
+	plan.NoChanges = len(plan.Mods) == 0 && len(plan.Purge) == 0
+	return plan, nil
+}
+
+// deployedPathsFor returns the game-dir-relative paths an Installer.Uninstall
+// of mod would remove, by the same two-step rule Uninstall itself uses: the
+// cache entry's full ListFiles union, falling back to the DB's tracked
+// deployed paths when that entry is wholly absent (#260). Best-effort - a
+// listing failure is logged and reported as "nothing known", never an error
+// that fails the plan.
+func (s *Service) deployedPathsFor(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) []string {
+	files, err := s.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+	if err == nil {
+		return files
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		s.logger().Warn("listing cached files failed while planning a deploy",
+			"game_id", game.ID, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+		return nil
+	}
+	tracked, dbErr := s.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+	if dbErr != nil {
+		s.logger().Warn("listing tracked deployed files failed while planning a deploy",
+			"game_id", game.ID, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", dbErr)
+		return nil
+	}
+	return tracked
+}
+
+// resolvedHooksForPlan is resolvedHooks for a read-only caller: hook
+// resolution never actually fails (see its doc comment), and a plan has no
+// business inventing an error path the flow itself does not have.
+func (s *Service) resolvedHooksForPlan(ctx context.Context, game *domain.Game, profileName string) *ResolvedHooks {
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
+	if err != nil {
+		s.logger().Warn("resolving hooks failed while planning a deploy", "game_id", game.ID, "profile", profileName, "err", err)
+		return ResolveHooks(game, nil)
+	}
+	return hooks
+}
+
+// planDeployHooks lists the hook names a deploy would run, in run order.
+// A pass with nothing to work on runs none of its hooks (purgeMods == 0
+// returns from purgeMods before its before_all; an empty selection returns
+// from deployProfile before install.before_all), and SkipHooks suppresses
+// every one of them.
+func planDeployHooks(hooks *ResolvedHooks, opts DeployOptions, purgeMods, deployMods int) []string {
+	if opts.SkipHooks {
+		return nil
+	}
+	var names []string
+	add := func(name, command string) {
+		if command != "" {
+			names = append(names, name)
+		}
+	}
+	if opts.Purge && purgeMods > 0 {
+		add("uninstall.before_all", hooks.GetUninstallBeforeAll())
+		add("uninstall.before_each", hooks.GetUninstallBeforeEach())
+		add("uninstall.after_each", hooks.GetUninstallAfterEach())
+		add("uninstall.after_all", hooks.GetUninstallAfterAll())
+	}
+	if deployMods > 0 {
+		add("install.before_all", hooks.GetInstallBeforeAll())
+		add("install.before_each", hooks.GetInstallBeforeEach())
+		add("install.after_each", hooks.GetInstallAfterEach())
+		add("install.after_all", hooks.GetInstallAfterAll())
+	}
+	return names
+}
+
+// planMerge builds the DeployCompile merge readout from the already-computed
+// per-mod classes, so the plan and the DeployDeployed events a later apply
+// emits cannot disagree about which mod is which. Returns nil unless this is
+// a compile game whose selection actually contributes to (or is excluded
+// from) a merge.
+func (s *Service) planMerge(game *domain.Game, mods []DeployPlanMod) *MergePlan {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	merged := &MergePlan{}
+	for _, m := range mods {
+		switch m.Class {
+		case DeployModMerged:
+			merged.Sources = append(merged.Sources, m.Name)
+		case DeployModRaw:
+			merged.RawFallbacks = append(merged.RawFallbacks, m.Name)
+		case DeployModIndividual:
+		}
+	}
+	if len(merged.Sources) == 0 && len(merged.RawFallbacks) == 0 {
+		return nil
+	}
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		// Same best-effort stance as classifyCompileDeployMods: name what
+		// we can, never fail a readout.
+		s.logger().Warn("resolving compile source failed while planning a deploy", "game_id", game.ID, "err", err)
+		return merged
+	}
+	merged.Artifact = mc.MergedArtifactName()
+	return merged
+}
+
+// ApplyDeploy carries out plan under the mutation lock. Ruling 5: the plan's
+// recorded installed-mod set is re-derived first and a mismatch is refused
+// with ErrStalePlan rather than applied.
+//
+// The plan supplies the profile and the freshness precondition; the deploy
+// itself re-derives its own selection from opts, exactly as it always has -
+// which is also why a selection PlanDeploy could only record as Skipped (an
+// unknown or disabled mod ID) still fails here, at the historical point,
+// after any --purge pass has run and recorded its diagnostics.
+//
+// sink may be nil. When non-nil, it is called synchronously for every
+// notable event - see DeployPhase's constants for what each one means, and
+// each event type's own doc comment for the payload it carries.
+func (s *Service) ApplyDeploy(ctx context.Context, game *domain.Game, plan *DeployPlan, opts DeployOptions, sink EventSink) (*DeployResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &DeployResult{}, err
+	}
+	defer release()
+	return s.applyDeploy(ctx, game, plan, opts, sink)
+}
+
+func (s *Service) applyDeploy(ctx context.Context, game *domain.Game, plan *DeployPlan, opts DeployOptions, sink EventSink) (*DeployResult, error) {
+	if plan == nil {
+		return &DeployResult{}, errors.New("deploy plan is nil: call PlanDeploy first")
+	}
+	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
+		return &DeployResult{}, err
+	}
+	return s.deployProfile(ctx, game, plan.Profile, opts, sink)
+}
+
 // DeployProfile redeploys the mods of a profile in profile order: an
 // optional --purge pass first (undeploying every installed mod), then for
 // each mod to deploy - re-downloading from source if its cache entry is
@@ -178,6 +526,10 @@ type DeployResult struct {
 // later extracted too, as PurgeProfile, and since #61 both purges share
 // purgeMods); see the task report for the exact mapping.
 //
+// It is PlanDeploy + ApplyDeploy in one call, under a single mutation slot,
+// for callers with no prompt to show between the two (core's own flows and
+// tests). Frontends plan first, render, then apply.
+//
 // sink may be nil. When non-nil, it is called synchronously from this
 // function for every notable event - see DeployPhase's constants for what
 // each one means, and each event type's own doc comment for the payload it
@@ -188,7 +540,11 @@ func (s *Service) DeployProfile(ctx context.Context, game *domain.Game, profileN
 		return &DeployResult{}, err
 	}
 	defer release()
-	return s.deployProfile(ctx, game, profileName, opts, sink)
+	plan, err := s.planDeploy(ctx, game, profileName, opts)
+	if err != nil {
+		return &DeployResult{}, err
+	}
+	return s.applyDeploy(ctx, game, plan, opts, sink)
 }
 
 func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions, sink EventSink) (*DeployResult, error) {

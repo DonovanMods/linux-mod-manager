@@ -88,6 +88,55 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Remove is deliberately left nil (no `omitempty` on the tag) to
+			// pin that a nil slice marshals as "[]", not "null"; Skipped is
+			// left empty to pin that its `omitempty` drops the key.
+			"deploy_plan_mod",
+			core.DeployPlanMod{
+				Ref:    domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+				Name:   "Sample Mod",
+				Class:  core.DeployModMerged,
+				Link:   []string{"Data/Sample.esp"},
+				Remove: nil,
+			},
+		},
+		{
+			"merge_plan",
+			core.MergePlan{
+				Artifact:     "zzz_LMM_Merged_P.pak",
+				Sources:      []string{"Bear Mount"},
+				RawFallbacks: []string{"Opted Out Pak"},
+			},
+		},
+		{
+			// A plan carrying one deployable mod and one skipped one, a
+			// --purge set, a hook readout and a merge plan - the job here is
+			// to pin every key's wire shape, not to be a plausible plan
+			// (same convention as update_plan below). The unexported
+			// snapshot field must not appear at all.
+			"deploy_plan",
+			core.DeployPlan{
+				Profile: "default",
+				Mods: []core.DeployPlanMod{
+					{
+						Ref:    domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+						Name:   "Sample Mod",
+						Class:  core.DeployModIndividual,
+						Link:   []string{"Data/Sample.esp"},
+						Remove: []string{"Data/Stale_P.pak"},
+					},
+					{
+						Ref:     domain.ModReference{SourceID: "curseforge", ModID: "7"},
+						Name:    "Missing Mod",
+						Skipped: "cache missing - the deploy re-downloads from source",
+					},
+				},
+				Purge:  []string{"Data/Sample.esp"},
+				Hooks:  []string{"install.before_all", "install.after_all"},
+				Merged: &core.MergePlan{Artifact: "zzz_LMM_Merged_P.pak", Sources: []string{"Bear Mount"}, RawFallbacks: []string{}},
+			},
+		},
+		{
 			"purge_result",
 			core.PurgeResult{
 				Purged:   2,
