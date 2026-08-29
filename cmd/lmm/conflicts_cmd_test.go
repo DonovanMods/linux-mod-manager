@@ -98,15 +98,15 @@ func TestRunConflicts_ViaCommand_JSON(t *testing.T) {
 	rootCmd.SetArgs([]string{"conflicts", "--game", game.ID, "--json"})
 	out := captureStdout(t, func() error { return rootCmd.ExecuteContext(context.Background()) })
 
-	var decoded conflictsJSONOutput
+	var decoded core.ConflictReport
 	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
 
 	assert.Equal(t, game.ID, decoded.GameID)
 	assert.Equal(t, "default", decoded.Profile)
 	require.Len(t, decoded.Conflicts, 1)
 	assert.Equal(t, "shared.esp", decoded.Conflicts[0].Path)
-	assert.Equal(t, "Mod B", decoded.Conflicts[0].Owner)
-	assert.Equal(t, []string{"Mod A"}, decoded.Conflicts[0].AlsoIn)
-	assert.Equal(t, "Mod B", decoded.Conflicts[0].Winner)
+	assert.Equal(t, core.ConflictModRef{Key: "src:b", Name: "Mod B"}, decoded.Conflicts[0].Owner)
+	assert.Equal(t, []core.ConflictModRef{{Key: "src:a", Name: "Mod A"}}, decoded.Conflicts[0].AlsoIn)
+	assert.Equal(t, core.ConflictModRef{Key: "src:b", Name: "Mod B"}, decoded.Conflicts[0].LoadOrderWinner)
 	assert.False(t, decoded.Conflicts[0].Stale)
 }

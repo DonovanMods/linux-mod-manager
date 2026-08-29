@@ -690,6 +690,14 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Conflicts deliberately left nil (no `omitempty` on the tag):
+			// a profile with nothing to report must marshal as "[]", which
+			// is what `lmm conflicts --json` emits for both an empty profile
+			// and a clean one.
+			"conflict_report",
+			core.ConflictReport{GameID: "skyrim-se", Profile: "default", Conflicts: nil},
+		},
+		{
 			"download_result",
 			core.DownloadResult{Path: "/cache/g/src-1/1.0/file.zip", Size: 1234, Checksum: "md5", SHA256: "abc"},
 		},

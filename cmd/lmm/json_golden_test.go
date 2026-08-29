@@ -11,6 +11,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -272,5 +273,26 @@ func TestJSONGolden_Verify(t *testing.T) {
 
 		out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
 		assertJSONCLIGolden(t, "verify_clean", out, game.ModPath, "<GAME-DIR>")
+	})
+}
+
+// --- conflicts ---
+
+func TestJSONGolden_Conflicts(t *testing.T) {
+	t.Run("twin", func(t *testing.T) {
+		svc, game := setupConflictsTest(t)
+		seedTwinConflictFixture(t, svc, game)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doConflicts(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "conflicts_twin", out)
+	})
+
+	t.Run("none", func(t *testing.T) {
+		svc, game := setupConflictsTest(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doConflicts(context.Background(), svc, game) })
+		assertJSONCLIGolden(t, "conflicts_none", out)
 	})
 }
