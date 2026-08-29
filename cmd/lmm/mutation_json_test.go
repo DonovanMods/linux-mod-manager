@@ -595,6 +595,61 @@ func TestDoProfileSync_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
 	assert.Empty(t, profile.Mods, "a dry run must not write the profile")
 }
 
+// TestDoProfileSwitch_DryRun_NoChanges_DoesNotSwitchDefault covers
+// doProfileSwitch's plan.NoChanges branch under --dry-run (Task 11 review,
+// Minor 4): the two dry-run tests above both exercise a plan WITH changes,
+// so neither ever reaches the `if profileSwitchDryRun { return nil }` guard
+// that skips the bare SetDefault a no-op switch would otherwise still
+// perform. Mirrors TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting's
+// setup (a target profile whose mod set already matches "default"'s), minus
+// the mutation.
+func TestDoProfileSwitch_DryRun_NoChanges_DoesNotSwitchDefault(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "other")
+	require.NoError(t, err)
+
+	seedDeployableMod(t, svc, game, "shared", "Shared Mod", "shared.esp")
+	require.NoError(t, pm.AddMod(game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+	withProfileDryRun(t, &profileSwitchDryRun)
+
+	out := captureStdout(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "other")
+	})
+
+	assert.Equal(t, "Switch plan for profile \"other\" (dry run)\n\n", out)
+
+	active, err := pm.GetDefault(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "default", active.Name, "a dry run must not switch the active profile, even when the plan has no mod changes")
+}
+
+// TestDoProfileSync_DryRun_MissingProfile_DoesNotCreateProfile covers
+// doProfileSync's plan.NoChanges/plan.Missing branch under --dry-run (Task
+// 11 review, Minor 4): TestDoProfileSync_MissingProfile_EmptyDiff_StillCreatesProfile
+// pins that a plain sync onto a nonexistent profile still writes its
+// profile.yaml (ApplyProfileSync's create-on-missing side effect, reached
+// even with an empty diff); this is that same setup under --dry-run, where
+// the `plan.Missing && !profileSyncDryRun` guard must skip that write
+// entirely.
+func TestDoProfileSync_DryRun_MissingProfile_DoesNotCreateProfile(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	withProfileDryRun(t, &profileSyncDryRun)
+
+	pm := getProfileManager(svc)
+	_, err := pm.Get(game.ID, "newprof")
+	require.Error(t, err, "precondition: newprof must not exist yet")
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, []string{"newprof"})
+	})
+
+	assert.Equal(t, "Profile newprof is already in sync.\n", out)
+
+	_, err = pm.Get(game.ID, "newprof")
+	assert.Error(t, err, "a dry run must not create profile.yaml, even for a missing profile with nothing to sync into it")
+}
+
 // --- import (archive / scan) ---
 
 func TestJSONGolden_ImportArchive(t *testing.T) {
