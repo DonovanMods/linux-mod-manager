@@ -207,9 +207,9 @@ func newGameDetectTestService(t *testing.T) *core.Service {
 func TestApplyGameDetect_SavesGamesAndCreatesDefaultProfiles(t *testing.T) {
 	svc := newGameDetectTestService(t)
 
-	games := []*domain.Game{
-		{ID: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}},
-		{ID: "icarus", Name: "Icarus", InstallPath: "/games/Icarus", ModPath: "/games/Icarus/mods", SourceIDs: map[string]string{"icarus": "icarus"}},
+	games := []domain.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", NexusID: "skyrimspecialedition"},
+		{Slug: "icarus", Name: "Icarus", InstallPath: "/games/Icarus", ModPath: "/games/Icarus/mods", Sources: map[string]string{"icarus": "icarus"}},
 	}
 
 	result, err := svc.ApplyGameDetect(context.Background(), games)
@@ -219,11 +219,11 @@ func TestApplyGameDetect_SavesGamesAndCreatesDefaultProfiles(t *testing.T) {
 	assert.Empty(t, result.Warnings)
 
 	for _, g := range games {
-		saved, err := svc.GetGame(g.ID)
+		saved, err := svc.GetGame(g.Slug)
 		require.NoError(t, err)
 		assert.Equal(t, g.Name, saved.Name)
 
-		profile, err := svc.NewProfileManager().Get(g.ID, "default")
+		profile, err := svc.NewProfileManager().Get(g.Slug, "default")
 		require.NoError(t, err)
 		assert.True(t, profile.IsDefault)
 		assert.Empty(t, profile.Mods)
@@ -239,22 +239,22 @@ func TestApplyGameDetect_SavesGamesAndCreatesDefaultProfiles(t *testing.T) {
 // config.SaveProfile overwrite exactly.
 func TestApplyGameDetect_OverwritesExistingDefaultProfileMods(t *testing.T) {
 	svc := newGameDetectTestService(t)
-	game := &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}}
+	game := domain.DetectedGame{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", NexusID: "skyrimspecialedition"}
 
-	_, err := svc.ApplyGameDetect(context.Background(), []*domain.Game{game})
+	_, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{game})
 	require.NoError(t, err)
-	require.NoError(t, svc.NewProfileManager().UpsertMod(game.ID, "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
+	require.NoError(t, svc.NewProfileManager().UpsertMod(game.Slug, "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
 
-	before, err := svc.NewProfileManager().Get(game.ID, "default")
+	before, err := svc.NewProfileManager().Get(game.Slug, "default")
 	require.NoError(t, err)
 	require.NotEmpty(t, before.Mods, "test setup: profile must have a mod before the repair")
 
-	result, err := svc.ApplyGameDetect(context.Background(), []*domain.Game{game})
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{game})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"skyrim-se"}, result.Saved)
 	assert.Equal(t, []string{"skyrim-se/default"}, result.Profiles)
 
-	after, err := svc.NewProfileManager().Get(game.ID, "default")
+	after, err := svc.NewProfileManager().Get(game.Slug, "default")
 	require.NoError(t, err)
 	assert.Empty(t, after.Mods, "repairing a configured game must wipe its default profile's mod list")
 }
@@ -268,12 +268,12 @@ func TestApplyGameDetect_OverwritesExistingDefaultProfileMods(t *testing.T) {
 func TestApplyGameDetect_StopsAtFirstProfileFailure(t *testing.T) {
 	svc := newGameDetectTestService(t)
 
-	games := []*domain.Game{
-		{ID: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", SourceIDs: map[string]string{"nexusmods": "skyrimspecialedition"}},
+	games := []domain.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", NexusID: "skyrimspecialedition"},
 		// A gameID containing a path separator saves fine to games.yaml
 		// (config.SaveGame has no ID-format validation) but fails
 		// ProfileManager.CreateOrResetDefault's path-segment guard.
-		{ID: "bad/game", Name: "Bad Game", InstallPath: "/games/bad", ModPath: "/games/bad/mods", SourceIDs: map[string]string{"nexusmods": "bad"}},
+		{Slug: "bad/game", Name: "Bad Game", InstallPath: "/games/bad", ModPath: "/games/bad/mods", NexusID: "bad"},
 	}
 
 	result, err := svc.ApplyGameDetect(context.Background(), games)
@@ -282,4 +282,35 @@ func TestApplyGameDetect_StopsAtFirstProfileFailure(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrInvalidGameID)
 	assert.Equal(t, []string{"skyrim-se", "bad/game"}, result.Saved)
 	assert.Equal(t, []string{"skyrim-se/default"}, result.Profiles)
+}
+
+// TestApplyGameDetect_StopsAtFirstConversionFailure pins the same partial-
+// persistence contract as the cmd-level regression test
+// (TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted in
+// cmd/lmm): converting each detected game happens per game, right before
+// that game's own save, not for the whole batch up front - so a later
+// game's conversion failure (e.g. an unrecognized deploy_mode) must not
+// undo or block persistence of every earlier game that already converted
+// and saved cleanly (Task 21 review Important #1, 2026-08-28).
+func TestApplyGameDetect_StopsAtFirstConversionFailure(t *testing.T) {
+	svc := newGameDetectTestService(t)
+
+	games := []domain.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", NexusID: "skyrimspecialedition"},
+		{Slug: "bad-game", Name: "Bad Game", DeployMode: "bogus"},
+	}
+
+	result, err := svc.ApplyGameDetect(context.Background(), games)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "converting detected game bad-game")
+	assert.ErrorIs(t, err, domain.ErrInvalidDeployMode)
+	assert.Equal(t, []string{"skyrim-se"}, result.Saved)
+	assert.Equal(t, []string{"skyrim-se/default"}, result.Profiles)
+
+	saved, err := svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, "Skyrim Special Edition", saved.Name)
+
+	_, err = svc.GetGame("bad-game")
+	assert.Error(t, err, "a game that failed conversion must not be persisted")
 }

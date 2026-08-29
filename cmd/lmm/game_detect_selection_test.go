@@ -196,3 +196,44 @@ func TestDoGameDetect_NoGamesFound(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "No moddable Steam games found.")
 }
+
+// TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted pins
+// the pre-lift doGameDetect loop's partial-persistence contract (Task 21
+// review Important #1, 2026-08-28): the old loop converted, saved, and
+// printed one selected game at a time, so a conversion failure on a later
+// game (e.g. an unrecognized deploy_mode) left every earlier selected game
+// already saved to games.yaml, its default profile created, and its
+// "Added:" line printed - only the failing game and anything after it were
+// skipped. Converting every selection up front before saving any of them
+// would abort the whole batch instead, undoing that guarantee.
+func TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted(t *testing.T) {
+	configDir = t.TempDir()
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "bad-game", Name: "Bad Game", InstallPath: "/games/bad", DeployMode: "bogus"},
+	}
+
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	reader := bufio.NewReader(strings.NewReader("1,2\n"))
+
+	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "converting detected game bad-game")
+
+	out := buf.String()
+	assert.Contains(t, out, "Added: Skyrim Special Edition (skyrim-se)\n")
+	assert.NotContains(t, out, "Added: Bad Game")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Contains(t, saved, "skyrim-se")
+	assert.NotContains(t, saved, "bad-game")
+
+	profile, err := config.LoadProfile(configDir, "skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, profile.IsDefault)
+}

@@ -57,18 +57,27 @@ type GameDetectResult struct {
 	Warnings []string `json:"warnings"`
 }
 
-// ApplyGameDetect persists every game in games (already converted from a
-// detected Steam install via GameFromDetected) to games.yaml and
-// (re)creates its "default" profile, stopping at the first failure so a
-// caller can report exactly how far it got. Re-running against an
-// already-configured game - the CLI's repair path
+// ApplyGameDetect converts each of games (a caller's detect-prompt
+// selection, in order) via GameFromDetected and persists it to games.yaml
+// and its (re)created "default" profile, stopping at the first failure -
+// conversion or persistence - so a caller can report exactly how far it
+// got. Converting one game right before it is saved, rather than
+// converting the whole batch up front, matters: it's what makes a later
+// game's conversion failure (e.g. an unrecognized deploy_mode) leave every
+// earlier game's save and profile creation untouched, reproducing the
+// pre-lift cmd loop's per-game interleaving byte-for-byte even though the
+// actual "Added:" printing now happens in the caller after this single call
+// returns - since nothing else wrote to stdout/stderr during the pre-lift
+// loop, deferring those prints to after this call doesn't change their
+// order (v2 Phase 2 Task 21 review Important #1, 2026-08-28). Re-running
+// against an already-configured game - the CLI's repair path
 // (gameDetectSelectionIndices lets an explicit numeric selection name an
 // already-configured game) - unconditionally overwrites both the
 // games.yaml entry and the default profile's mod list; this mirrors 'lmm
 // game add's own overwrite semantics exactly
 // (ProfileManager.CreateOrResetDefault), preserved byte-for-byte from the
 // pre-lift cmd code (v2 Phase 2 Task 21).
-func (s *Service) ApplyGameDetect(ctx context.Context, games []*domain.Game) (*GameDetectResult, error) {
+func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGame) (*GameDetectResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return &GameDetectResult{}, err
@@ -77,7 +86,12 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []*domain.Game) (*G
 
 	result := &GameDetectResult{}
 	pm := s.NewProfileManager()
-	for _, game := range games {
+	for _, g := range games {
+		game, err := GameFromDetected(g)
+		if err != nil {
+			return result, fmt.Errorf("converting detected game %s: %w", g.Slug, err)
+		}
+
 		if err := s.saveGame(ctx, game); err != nil {
 			return result, fmt.Errorf("saving game %s: %w", game.ID, err)
 		}

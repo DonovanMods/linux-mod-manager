@@ -251,24 +251,21 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return nil
 	}
 
-	toSave := make([]*domain.Game, 0, len(indices))
-	for _, n := range indices {
-		g := games[n-1]
-		game, err := core.GameFromDetected(g)
-		if err != nil {
-			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
-		}
-		toSave = append(toSave, game)
+	selected := make([]domain.DetectedGame, len(indices))
+	for i, n := range indices {
+		selected[i] = games[n-1]
 	}
 
-	result, applyErr := service.ApplyGameDetect(ctx, toSave)
-	// ApplyGameDetect stops at the first failing game; result.Profiles holds
-	// exactly the games that fully completed (games.yaml write + default
-	// profile), one-for-one with toSave's leading entries in the same order
-	// - so this prints "Added:" for precisely the games doGameDetect's old
-	// interleaved loop would have printed before hitting the same error.
+	result, applyErr := service.ApplyGameDetect(ctx, selected)
+	// ApplyGameDetect converts and persists one game at a time, stopping at
+	// the first failing game (conversion or persistence); result.Profiles
+	// holds exactly the games that fully completed (games.yaml write +
+	// default profile), one-for-one with selected's leading entries in the
+	// same order - so this prints "Added:" for precisely the games
+	// doGameDetect's old interleaved loop would have printed before hitting
+	// the same error.
 	for i := range result.Profiles {
-		cmd.Printf("Added: %s (%s)\n", toSave[i].Name, toSave[i].ID)
+		cmd.Printf("Added: %s (%s)\n", selected[i].Name, selected[i].Slug)
 	}
 	return applyErr
 }
