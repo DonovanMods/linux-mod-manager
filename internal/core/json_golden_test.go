@@ -864,11 +864,14 @@ func TestJSONGoldens(t *testing.T) {
 				TargetInstalled: true,
 				Locked:          true,
 				LockedVersion:   "1.2.3",
-				Refusal: core.LockedRefRefusalError(
-					domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3"},
-					"default",
-					&domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3", Locked: true},
-				).Error(),
+				// Literal, not core.LockedRefRefusalError(...).Error(): that
+				// constructor's wording is the *target* convention
+				// (Ruling 5) that Unit Q (#294) will unify
+				// relinkLockRefusalMessage onto. Until then this must equal
+				// exactly what PlanRelinkMod (mod_edit.go) produces today via
+				// relinkLockRefusalMessage - Unit Q re-records this golden
+				// when it changes that function.
+				Refusal:           "Sample Mod is locked at v1.2.3 in profile default - re-linking would replace the locked ref; unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
 				MergedPakAffected: true,
 				Profile:           "default",
 			},
