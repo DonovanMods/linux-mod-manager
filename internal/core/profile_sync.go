@@ -101,13 +101,15 @@ type ProfileSyncResult struct {
 // anything (no DB writes, no filesystem changes) - callers may call it
 // speculatively, render it, and discard it.
 //
-// Ruling 4 (#298): ToAdd/ToUpdate are ordered by GetInstalledMods' own
-// deterministic order (installed_at), and ToRemove by the profile's own mod
-// order - both are built by ranging the installedMods/profile.Mods slices
-// directly rather than the byKey/byRef lookup maps below (which exist only
-// for O(1) membership checks). Pre-Ruling-4, doProfileSync built all three
-// buckets by ranging those maps directly, so the order was whatever that
-// run's Go map iteration produced.
+// Ruling 4 (#298): ToAdd is ordered by GetInstalledMods' own deterministic
+// order (installed_at) - it has no profile position, being absent from the
+// profile entirely. ToUpdate and ToRemove are both subsets of the profile's
+// own mod list, so both are ordered by the profile's own mod order. All
+// three are built by ranging the installedMods/profile.Mods slices directly
+// rather than the byKey/byRef lookup maps below (which exist only for O(1)
+// membership checks). Pre-Ruling-4, doProfileSync built all three buckets by
+// ranging those maps directly, so the order was whatever that run's Go map
+// iteration produced.
 func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profileName string) (*ProfileSyncPlan, error) {
 	pm := s.NewProfileManager()
 
@@ -150,18 +152,18 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 			continue
 		}
 		key := domain.ModKey(im.SourceID, im.ID)
-		ref := installedRefs[key]
-		if profileRef, exists := profileRefs[key]; !exists {
-			plan.ToAdd = append(plan.ToAdd, ref)
-		} else if len(ref.FileIDs) > 0 && len(profileRef.FileIDs) == 0 {
-			plan.ToUpdate = append(plan.ToUpdate, ref)
+		if _, exists := profileRefs[key]; !exists {
+			plan.ToAdd = append(plan.ToAdd, installedRefs[key])
 		}
 	}
 
 	for _, mr := range profile.Mods {
 		key := domain.ModKey(mr.SourceID, mr.ModID)
-		if _, exists := installedRefs[key]; !exists {
+		ref, exists := installedRefs[key]
+		if !exists {
 			plan.ToRemove = append(plan.ToRemove, mr)
+		} else if len(ref.FileIDs) > 0 && len(mr.FileIDs) == 0 {
+			plan.ToUpdate = append(plan.ToUpdate, ref)
 		}
 	}
 

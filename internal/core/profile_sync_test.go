@@ -85,12 +85,17 @@ func TestPlanProfileSync_ClassifiesAddRemoveUpdate(t *testing.T) {
 }
 
 // TestPlanProfileSync_BucketsAreDeterministicallyOrdered pins Ruling 4
-// (#298): ToAdd/ToUpdate follow the order GetInstalledMods returned them in
+// (#298): ToAdd follows the order GetInstalledMods returned it in
 // (installed_at, i.e. seed order here - deliberately NOT alphabetical, to
-// prove this isn't accidentally sorted by ModID), and ToRemove follows
-// profile.Mods' own order (AddMod append order). Before Ruling 4, all three
-// buckets were built by ranging Go maps keyed by domain.ModKey, so the order
-// was whatever that run's map iteration produced.
+// prove this isn't accidentally sorted by ModID, and deliberately NOT
+// matching profile order since ToAdd entries have none). ToUpdate and
+// ToRemove are both subsets of the profile's own mod list, so both follow
+// profile.Mods' own order (AddMod append order) - each is seeded with its
+// installed_at order deliberately reversed relative to its profile order,
+// so the assertion can only pass under profile-order semantics, not
+// installed-order ones. Before Ruling 4, all three buckets were built by
+// ranging Go maps keyed by domain.ModKey, so the order was whatever that
+// run's map iteration produced.
 func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
 	svc, game := newSyncTestService(t)
 	pm := svc.NewProfileManager()
@@ -102,14 +107,19 @@ func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
 	seedSyncInstalledMod(t, svc, game, "src", "mike", "Mike", "1.0", "default", true, nil)
 
 	// ToUpdate: enabled, installed with FileIDs, present in the profile
-	// without FileIDs - also non-alphabetical seed order.
-	seedSyncInstalledMod(t, svc, game, "src", "yankee", "Yankee", "1.0", "default", true, []string{"main"})
+	// without FileIDs - installed before yankee, but listed after yankee
+	// in the profile, so installed order and profile order disagree.
 	seedSyncInstalledMod(t, svc, game, "src", "bravo", "Bravo", "1.0", "default", true, []string{"main"})
+	seedSyncInstalledMod(t, svc, game, "src", "yankee", "Yankee", "1.0", "default", true, []string{"main"})
 	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "yankee", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bravo", Version: "1.0"}))
 
-	// ToRemove: in the profile, not enabled/installed - profile order is the
-	// AddMod call order below (romeo before delta).
+	// ToRemove: listed in the profile, not enabled in the DB - each was
+	// installed-then-disabled (so it carries an installed_at) with
+	// installed order and profile order likewise disagreeing: delta was
+	// installed before romeo, but romeo is listed first in the profile.
+	seedSyncInstalledMod(t, svc, game, "src", "delta", "Delta", "1.0", "default", false, nil)
+	seedSyncInstalledMod(t, svc, game, "src", "romeo", "Romeo", "1.0", "default", false, nil)
 	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "romeo", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "delta", Version: "1.0"}))
 

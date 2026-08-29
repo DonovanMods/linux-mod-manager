@@ -172,7 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lmm profile reorder`'s ambiguous-mod-ID error lists the matching `source:modid` candidates
   sorted by source ID, instead of Go's randomized map iteration order. (#298)
 - `lmm profile sync`'s add/remove/update buckets are listed in a fixed, deterministic order
-  (additions and updates in the order the mods were installed, removals in profile order),
+  (additions in the order the mods were installed, updates and removals in profile order),
   instead of Go's randomized map iteration order. (#298)
 - `lmm status` and `lmm game list` order games by game ID, instead of Go's randomized map
   iteration order. (#299)
