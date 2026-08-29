@@ -208,11 +208,15 @@ func TestDoPurge_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	withJSONOutput(t)
 	seedPurgeableMod(t, svc, game, "a", "Mod A", "a.esp")
 
-	err := assertStdinNeverRead(t, func() error {
-		return doPurge(context.Background(), svc, game)
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doPurge(context.Background(), svc, game)
+		})
 	})
 
 	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Empty(t, stdout, "a refused prompt emits no result document")
+	assert.Empty(t, stderr)
 	_, err = os.Lstat(filepath.Join(game.ModPath, "a.esp"))
 	assert.NoError(t, err, "must not undeploy anything")
 	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "default")

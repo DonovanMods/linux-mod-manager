@@ -157,21 +157,6 @@ func TestDoDeploy_JSON_PlainTextPathUnaffected(t *testing.T) {
 // of Ruling 15: the undecidable prompt fails BEFORE mutating and prints no
 // document of its own - the envelope is reportError's job, off the error
 // return, so the command's own stdout stays empty.
-func TestDoPurge_JSON_ConfirmationRequiredEmitsNoDocument(t *testing.T) {
-	svc, game := setupDoPurgeTest(t)
-	purgeYes = false
-	withJSONOutput(t)
-	seedPurgeableMod(t, svc, game, "a", "Mod A", "a.esp")
-
-	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
-		return doPurge(context.Background(), svc, game)
-	})
-
-	require.ErrorIs(t, err, core.ErrConfirmationRequired)
-	assert.Empty(t, stdout, "a refused prompt emits no result document")
-	assert.Empty(t, stderr)
-}
-
 // --- mod enable / disable ---
 
 // withModSourceFlags points `lmm mod`'s -s/-p globals at the fixture's
