@@ -214,6 +214,32 @@ func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *tes
 	assert.True(t, mod.Enabled, "declining must not disable any mod")
 }
 
+// TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileSwitch's "Proceed?"
+// prompt: under --json with no -y, the switch must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and neither the
+// default profile nor any mod's enabled state changes.
+func TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	withJSONOutput(t)
+
+	err = assertStdinNeverRead(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	def, derr := pm.GetDefault(game.ID)
+	require.NoError(t, derr)
+	assert.Equal(t, "default", def.Name, "must not switch the default profile")
+	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, merr)
+	assert.True(t, mod.Enabled, "must not disable any mod")
+}
+
 // TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput guards
 // doProfileSwitch's full apply path end to end (disable, enable, install,
 // SetDefault) byte-identically to the pre-extraction CLI, across all three

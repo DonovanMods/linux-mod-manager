@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -453,6 +454,89 @@ func TestSelectInstallFiles_ValidateRunsOnFastPaths(t *testing.T) {
 	})
 }
 
+// TestReadMultiSelectionLine_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule at readMultiSelectionLine, the choke point behind
+// both selectInstallFilesFrom's file-selection prompt and
+// promptMultiSelectionFrom: under --json it must return
+// core.ErrConfirmationRequired without ever calling reader.ReadString.
+func TestReadMultiSelectionLine_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	withJSONOutput(t)
+
+	selections, retry, err := readMultiSelectionLine(bufio.NewReader(poisonReader{t}), "Select file(s)", 1, 3)
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Nil(t, selections)
+	assert.False(t, retry)
+}
+
+// TestSelectInstallFilesFrom_JSONOutputRequiresYesOrFile pins the
+// non-interactive rule at the file-selection prompt: with multiple files and
+// no --file/-y, --json must fail with core.ErrConfirmationRequired without
+// ever reading the (poisoned) reader - the fast paths (--file, single file,
+// -y) are unaffected, exercised by TestSelectInstallFiles_ValidateRunsOnFastPaths
+// above with jsonOutput left at its default false.
+func TestSelectInstallFilesFrom_JSONOutputRequiresYesOrFile(t *testing.T) {
+	oldFileID, oldYes := installFileID, installYes
+	installFileID = ""
+	installYes = false
+	t.Cleanup(func() { installFileID, installYes = oldFileID, oldYes })
+	withJSONOutput(t)
+
+	files := []domain.DownloadableFile{
+		{ID: "pak", FileName: "Mod_P.pak", Category: "PAK", IsPrimary: true},
+		{ID: "exmodz", FileName: "Mod.exmodz", Category: "EXMODZ"},
+	}
+	selected, err := selectInstallFilesFrom(poisonReader{t}, files, nil)
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Nil(t, selected)
+}
+
+// TestSearchAndSelectMods_JSONOutputRequiresYesOrID pins the non-interactive
+// rule at searchAndSelectMods' multi-match prompt: with more than one search
+// result and no -y/--yes, --json must fail with core.ErrConfirmationRequired
+// without ever blocking on stdin (searchAndSelectMods hard-codes os.Stdin,
+// with no injectable reader seam, hence assertStdinNeverRead rather than a
+// poison reader).
+func TestSearchAndSelectMods_JSONOutputRequiresYesOrID(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	withJSONOutput(t)
+	src.searchResults = []domain.Mod{
+		{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		{ID: "mod2", SourceID: "test-src", Name: "Mod Two", Version: "1.0", GameID: "g1"},
+	}
+
+	var mods []*domain.Mod
+	err := assertStdinNeverRead(t, func() error {
+		var err error
+		mods, err = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default")
+		return err
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Nil(t, mods)
+}
+
+// TestSearchAndSelectMods_JSONOutputSingleMatchNeedsNoFlag pins that a
+// SINGLE unambiguous match is never gated by --json - nothing to confirm
+// non-interactively when there is only one possible answer, matching the
+// interactive path's own trivial-selection shortcut.
+func TestSearchAndSelectMods_JSONOutputSingleMatchNeedsNoFlag(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	withJSONOutput(t)
+	src.searchResults = []domain.Mod{
+		{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+	}
+
+	mods, err := searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "query", "default")
+
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+	assert.Equal(t, "mod1", mods[0].ID)
+}
+
 // --- doInstall (Phase 5b Task 2 CLI refit) ---
 //
 // fakeInstallSource is a minimal source.ModSource for doInstall's refit
@@ -494,6 +578,12 @@ type fakeInstallSource struct {
 	// handler runs on the server's own goroutine. Mirrors
 	// internal/core/service_test.go's mockSourceWithDownloads.served.
 	served atomic.Int64
+
+	// searchResults, when non-nil, is what Search returns verbatim - for
+	// tests exercising searchAndSelectMods' multi-match path. nil (the
+	// default) reproduces the original always-empty behavior every other
+	// test in this file relies on.
+	searchResults []domain.Mod
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
@@ -525,6 +615,9 @@ func (s *fakeInstallSource) ExchangeToken(ctx context.Context, code string) (*so
 	return nil, nil
 }
 func (s *fakeInstallSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
+	if s.searchResults != nil {
+		return source.SearchResult{Mods: s.searchResults, TotalCount: len(s.searchResults)}, nil
+	}
 	return source.SearchResult{}, nil
 }
 func (s *fakeInstallSource) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
@@ -715,6 +808,33 @@ func TestDoInstall_DependencyConfirmPrompt_DeclinedYieldsZeroMutations(t *testin
 	assert.Error(t, dbErr, "declining must result in zero mutations")
 	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
 	assert.Error(t, dbErr, "declining must result in zero mutations")
+}
+
+// TestDoInstall_DependencyConfirmPrompt_JSONOutputReturnsConfirmationRequired
+// pins the non-interactive rule (v2 Phase 3 Ruling 2) at the dependency
+// confirm site: under --json with no -y, doInstall must fail with
+// core.ErrConfirmationRequired before ever reading stdin or installing
+// anything - never the blocking "Install N mod(s)?" prompt.
+func TestDoInstall_DependencyConfirmPrompt_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	withJSONOutput(t)
+
+	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
+	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}}
+	src.AddMod(dep, []domain.DownloadableFile{{ID: "dep-file", FileName: "dep1.esp", IsPrimary: true}})
+	src.AddMod(root, []domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+
+	err := assertStdinNeverRead(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "must result in zero mutations")
+	_, dbErr = svc.GetInstalledMod(context.Background(), "test-src", "dep1", "g1", "default")
+	assert.Error(t, dbErr, "must result in zero mutations")
 }
 
 // TestDoInstall_DependencyPath_AcceptedInstallsDependencyThenPrimary guards
@@ -1007,6 +1127,31 @@ func TestDoInstall_ConflictPrompt_ForceSkipsPrompt(t *testing.T) {
 		_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 		assert.NoError(t, err)
 	})
+}
+
+// TestDoInstall_ConflictPrompt_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule at the conflict-confirm site (confirmInstallConflicts):
+// under --json with no --force, doInstall must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and the primary
+// must not be recorded in the DB - only the cache fill (not a mutation of
+// managed state, per Ruling 1) survives the refused Apply.
+func TestDoInstall_ConflictPrompt_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false
+	installForce = false
+	withJSONOutput(t)
+	seedConflictingMod(t, svc, game)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+
+	err := assertStdinNeverRead(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	assert.Error(t, dbErr, "must result in zero DB mutations")
 }
 
 // TestDoInstall_ConflictPrompt_FreshUncachedInstall is the MANDATORY C1

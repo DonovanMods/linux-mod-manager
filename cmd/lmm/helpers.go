@@ -77,12 +77,34 @@ func readPromptLine() (string, error) {
 // readPromptLineFrom is the testable seam for readPromptLine. The split
 // exists so unit tests can drive the helper with a strings.Reader instead
 // of os.Stdin.
+//
+// It is also the CLI's one choke point for the non-interactive rule (v2
+// Phase 3 Ruling 2): under --json, r is never touched - every caller either
+// checks its own deciding flag before reaching here (so this path is never
+// hit at all) or has none, in which case core.ErrConfirmationRequired is the
+// answer. Returning before the read means a poison reader fed to this
+// function under --json is provably never read, not merely returned an
+// error quickly.
 func readPromptLineFrom(r io.Reader) (string, error) {
+	if jsonOutput {
+		return "", core.ErrConfirmationRequired
+	}
 	line, err := bufio.NewReader(r).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", fmt.Errorf("reading input: %w", err)
 	}
 	return strings.TrimSpace(strings.ToLower(line)), nil
+}
+
+// confirmationRequiredVia returns core.ErrConfirmationRequired augmented
+// with how, the specific flag or argument that would have answered this
+// particular prompt without one. Most prompts share the sentinel's own
+// generic --yes/--force text (their deciding flag already gates the call to
+// readPromptLine, so the plain sentinel is accurate); the few prompts with
+// no such flag - a source or game selection - use this instead so the
+// --json envelope names the actual way out.
+func confirmationRequiredVia(how string) error {
+	return fmt.Errorf("%w: %s", core.ErrConfirmationRequired, how)
 }
 
 // resolveSource determines which source to use for a game.
@@ -146,7 +168,14 @@ func resolverFromService(svc *core.Service) func(string) string {
 // promptForGameSource prompts the user to select from multiple configured
 // sources, rendering each as "Name (id)" via resolve. A nil resolve (or one
 // that returns "" for a given ID) falls back to the bare ID.
+//
+// Non-interactive rule (Ruling 2): under --json this never prints or reads
+// anything - every resolveSource caller already exposes -s/--source, so the
+// envelope names that flag as the way to decide the prompt non-interactively.
 func promptForGameSource(gameName string, sources []string, resolve func(string) string) (string, error) {
+	if jsonOutput {
+		return "", confirmationRequiredVia("pass -s/--source to select a mod source")
+	}
 	if resolve == nil {
 		resolve = func(id string) string { return "" }
 	}

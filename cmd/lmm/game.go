@@ -216,12 +216,10 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		cmd.Printf("  %d. %s (%s)%s\n", i+1, g.Name, g.Slug, marker)
 		cmd.Printf("      Path: %s\n", g.InstallPath)
 	}
-	cmd.Print("Add games to config? [1,2/all/none]: ")
-	line, err := reader.ReadString('\n')
+	line, err := gameDetectAnswer(cmd, reader)
 	if err != nil {
-		return fmt.Errorf("reading input: %w", err)
+		return err
 	}
-	line = strings.TrimSpace(strings.ToLower(line))
 
 	indices, err := gameDetectSelectionIndices(line, games, existingGames)
 	if err != nil {
@@ -253,6 +251,15 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		cmd.Printf("Added: %s (%s)\n", selected[i].Name, selected[i].Slug)
 	}
 	return applyErr
+}
+
+// gameDetectAnswer prints the selection prompt and reads an answer via
+// readPromptLineFrom, the CLI's one choke point for the non-interactive
+// rule (v2 Phase 3 Ruling 2): under --json that call returns
+// core.ErrConfirmationRequired without ever touching reader.
+func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader) (string, error) {
+	cmd.Print("Add games to config? [1,2/all/none]: ")
+	return readPromptLineFrom(reader)
 }
 
 // gameDetectSelectionIndices parses the detect prompt's answer into the

@@ -330,6 +330,33 @@ func TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestDoProfileImport_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileImport's "Download
+// and install mods?" prompt: under --json with no -y, the import must fail
+// with core.ErrConfirmationRequired before ever reading stdin. Since Ruling
+// 7 moved the prompt before the save, this leaves the profile itself
+// unsaved too - a genuine zero-mutation failure, not merely a skipped
+// install.
+func TestDoProfileImport_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	withJSONOutput(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	err := assertStdinNeverRead(t, func() error {
+		return doProfileImport(context.Background(), svc, game, data)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	_, instErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
+	assert.Error(t, instErr, "must leave zero install mutations")
+	pm := getProfileManager(svc)
+	_, profErr := pm.Get("g1", "target")
+	assert.Error(t, profErr, "must not even save the profile - the prompt precedes the save (Ruling 7)")
+}
+
 // TestDoProfileImport_ForceOverwritesExistingProfile pins --force: importing
 // over an already-saved profile of the same name succeeds and replaces its
 // mod list.

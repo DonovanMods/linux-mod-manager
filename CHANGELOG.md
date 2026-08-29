@@ -195,6 +195,14 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   profile write, and the frontend prompts and re-runs Apply. `ProfileImportOptions.ConfirmInstall`
   becomes `Install bool`, decided from `ImportPlan.NeedsRedownload`/`Missing`. New
   `internal/core/errors.go` also adds `ErrConfirmationRequired` and `ErrInteractiveOnly`. (#303)
+- Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
+  prompt for confirmation now fails first with `confirmation required: ...` in the
+  `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
+  positional argument that decides it non-interactively instead — never a blocking read. `lmm
+game add` and `lmm auth login` have no non-interactive form yet (a flag-driven one is a
+  follow-up issue) and reject `--json` outright with `this command is interactive-only and does
+not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all`/`--select`)
+  both already have one. (#303)
 
 ### Changed — JSON output (v2)
 

@@ -271,6 +271,34 @@ func TestRunImportScan_ConfirmDecline_ReturnsPlainCancelledError_NotErrCancelled
 	assert.Empty(t, mods, "a declined confirm must leave nothing installed")
 }
 
+// TestRunImportScan_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at runImportScan's "Import
+// these mods?" prompt: under --json with no --force, it must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and nothing gets
+// installed.
+func TestRunImportScan_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	game.DeployMode = domain.DeployCopy
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "LooseMod-1.0.zip"), []byte("loose-payload"), 0644))
+
+	importSkipMatch = true
+	importForce = false
+	importDryRun = false
+	withJSONOutput(t)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	err := assertStdinNeverRead(t, func() error {
+		return runImportScan(cmd, game, svc, "default")
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	mods, mErr := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, mErr)
+	assert.Empty(t, mods, "must leave nothing installed")
+}
+
 // TestRunImportScan_Force_SkipsConfirmPrompt_ImportsAndWritesCache pins
 // --force's behavior for the twin case: the confirm prompt line never
 // prints, the mod is actually imported, and (copy-mode) its cache entry is

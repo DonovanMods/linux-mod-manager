@@ -218,6 +218,27 @@ func TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 	assert.Empty(t, profile.Mods, "declining must not mutate the profile")
 }
 
+// TestDoProfileSync_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileSync's "Proceed?"
+// prompt: under --json with no -y, the sync must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and the profile
+// must not be mutated.
+func TestDoProfileSync_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	pm := getProfileManager(svc)
+	profile, perr := pm.Get(game.ID, "default")
+	require.NoError(t, perr)
+	assert.Empty(t, profile.Mods, "must not mutate the profile")
+}
+
 // TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly pins Ruling 9:
 // a LOCKED profile ref makes the toUpdate loop's UpsertMod refuse (the ref
 // IS the lock's target, and the DB's version differs), and doProfileSync

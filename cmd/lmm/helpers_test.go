@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -174,6 +176,67 @@ func TestResolveSource_MultiSource_NilServiceFallsBackToBareID(t *testing.T) {
 	assert.Contains(t, out, "[1] acme\n", "bare ID, no (id) suffix")
 	assert.NotContains(t, out, "(acme)")
 	assert.Contains(t, out, "[2] beta\n", "Name==ID renders bare, not beta (beta)")
+}
+
+// poisonReader is an io.Reader whose Read fails the test if it is ever
+// called - the non-interactive rule's tests use it to prove a --json run
+// returns core.ErrConfirmationRequired without touching the reader at all,
+// not merely "returns an error quickly".
+type poisonReader struct{ t *testing.T }
+
+func (p poisonReader) Read([]byte) (int, error) {
+	p.t.Helper()
+	p.t.Fatal("Read must not be called under --json")
+	return 0, nil
+}
+
+// assertStdinNeverRead runs fn with os.Stdin swapped to a pipe whose write
+// end is left open and unwritten - a genuine Read() call would block
+// forever - and fails the test if fn does not return within a short
+// deadline, proving fn never attempted to read stdin. For prompt sites with
+// no injectable reader seam (os.Stdin hard-coded), this is the equivalent of
+// poisonReader.
+func assertStdinNeverRead(t *testing.T, fn func() error) error {
+	t.Helper()
+	old := os.Stdin
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = old
+		_ = w.Close()
+		_ = r.Close()
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked reading stdin under --json")
+		return nil
+	}
+}
+
+func TestReadPromptLineFrom_JSONOutputReturnsConfirmationRequiredWithoutReading(t *testing.T) {
+	withJSONOutput(t)
+
+	_, err := readPromptLineFrom(poisonReader{t})
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+}
+
+func TestPromptForGameSource_JSONOutputReturnsConfirmationRequiredNamingSource(t *testing.T) {
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		_, err := promptForGameSource("My Game", []string{"acme", "beta"}, nil)
+		return err
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Contains(t, err.Error(), "--source")
 }
 
 func TestReadPromptLineFrom_TrimsAndLowercases(t *testing.T) {

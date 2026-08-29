@@ -240,6 +240,13 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 		return []*domain.Mod{&searchResult.Mods[0]}, nil
 	}
 
+	// Non-interactive rule (Ruling 2): more than one match with no -y/--yes
+	// to auto-pick the first has no other deciding flag - --id names a mod
+	// directly and skips search entirely, so it's the other way out.
+	if jsonOutput {
+		return nil, confirmationRequiredVia("pass -y/--yes to auto-select the first result, or --id to install a specific mod directly")
+	}
+
 	// Interactive paginated selection
 	currentPage := 0
 	currentResult := searchResult
@@ -929,6 +936,9 @@ func promptMultiSelectionFrom(r io.Reader, prompt string, defaultChoice, max int
 // caller should prompt again; err is either a genuine read failure or
 // ErrCancelled, both of which the caller returns immediately.
 func readMultiSelectionLine(reader *bufio.Reader, prompt string, defaultChoice, max int) (selections []int, retry bool, err error) {
+	if jsonOutput {
+		return nil, false, core.ErrConfirmationRequired
+	}
 	fmt.Printf("\n%s (q to cancel) [%d]: ", prompt, defaultChoice)
 	input, err := reader.ReadString('\n')
 	if err != nil {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -131,12 +130,10 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 			fmt.Println("Mod records will be preserved. Use 'lmm deploy' to restore.")
 		}
 		fmt.Print("\nContinue? [y/N] ")
-		reader := bufio.NewReader(os.Stdin)
-		line, err := reader.ReadString('\n')
+		response, err := readPromptLine()
 		if err != nil {
-			return fmt.Errorf("reading input: %w", err)
+			return err
 		}
-		response := strings.TrimSpace(strings.ToLower(line))
 		if response != "y" && response != "yes" {
 			return ErrCancelled
 		}

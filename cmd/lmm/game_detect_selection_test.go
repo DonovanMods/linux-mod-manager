@@ -240,6 +240,33 @@ func TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted(t *testi
 	assert.True(t, profile.IsDefault)
 }
 
+// TestDoGameDetect_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doGameDetect's "Add games to
+// config?" prompt: under --json with neither --all nor --select, the
+// command must fail with core.ErrConfirmationRequired before ever reading
+// stdin, and games.yaml is left untouched.
+func TestDoGameDetect_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	configDir = t.TempDir()
+	withJSONOutput(t)
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.NotContains(t, saved, "skyrim-se")
+}
+
 // TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames pins Task
 // 22 review Important #1's third occurrence (2026-08-28): pre-lift,
 // doGameDetect read games.yaml fresh via config.LoadGames on every call,
