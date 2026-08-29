@@ -1,0 +1,259 @@
+package main
+
+import (
+	"context"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Characterization captures for doProfileSync, recorded on the PRE-LIFT code
+// (v2 Phase 2 Unit J Task 15, #290) so the engine's move into
+// core.PlanProfileSync/ApplyProfileSync is provably byte-identical. Only one
+// test existed before this file (profile_compile_test.go's
+// TestDoProfileSync_DeployCompile_AddingDriftedModDeploysMergedPak, which
+// stays as-is); these add:
+//
+//   - each diff bucket (add/remove/update), byte-exact
+//   - the missing-profile auto-create path
+//   - the already-in-sync fast path (no prompt read at all)
+//   - the "Proceed? [Y/n]: " prompt and its "Cancelled." branch
+//   - Ruling 9: a LOCKED profile ref makes the toUpdate loop's UpsertMod
+//     refuse, swallowed into a --verbose-only warning
+//   - the end-of-sync merged-pak failure, printed unconditionally to stderr
+//     regardless of --verbose (unlike the three loops' own diagnostics)
+//
+// Frozen from here on: a diff in any of these is a defect, never a
+// re-record.
+
+// syncVerbose sets the global --verbose flag for the duration of a test.
+func syncVerbose(t *testing.T, v bool) {
+	t.Helper()
+	orig := verbose
+	verbose = v
+	t.Cleanup(func() { verbose = orig })
+}
+
+// seedSyncInstalledMod saves an installed-mod DB row directly (no cache
+// entry, no deploy) - doProfileSync's diff never looks past
+// GetInstalledMods/GetInstalledMod, so a bare DB row is all any of these
+// tests need.
+func seedSyncInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, name, version, profileName string, enabled bool, fileIDs []string) {
+	t.Helper()
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: version, GameID: game.ID},
+		ProfileName:  profileName,
+		Enabled:      enabled,
+		FileIDs:      fileIDs,
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+}
+
+// TestDoProfileSync_ToAdd_PrintsAndAddsMod pins the toAdd bucket: a mod
+// installed+enabled in the DB but absent from profile.Mods is added, with
+// its display name resolved via GetInstalledMod ("+ Name (source:id)").
+func TestDoProfileSync_ToAdd_PrintsAndAddsMod(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	assert.Equal(t, "Syncing profile: default\n\n"+
+		"Will add to profile:\n"+
+		"  + Add One (src:add1)\n"+
+		"\nProceed? [Y/n]: "+
+		"✓ Synced profile: default\n", out)
+
+	pm := getProfileManager(svc)
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "add1", profile.Mods[0].ModID)
+}
+
+// TestDoProfileSync_ToRemove_PrintsAndRemovesRef pins the toRemove bucket: a
+// profile ref with no matching enabled DB row is removed. Unlike toAdd/
+// toUpdate, doProfileSync never resolved a display name for this bucket -
+// it always printed the bare "source:id".
+func TestDoProfileSync_ToRemove_PrintsAndRemovesRef(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	assert.Equal(t, "Syncing profile: default\n\n"+
+		"Will remove from profile:\n"+
+		"  - src:rem1\n"+
+		"\nProceed? [Y/n]: "+
+		"✓ Synced profile: default\n", out)
+
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	assert.Empty(t, profile.Mods)
+}
+
+// TestDoProfileSync_ToUpdate_PrintsAndBackfillsFileIDs pins the toUpdate
+// bucket: a mod present in both, where the DB row carries FileIDs the
+// profile's own ref is missing, is backfilled via UpsertMod.
+func TestDoProfileSync_ToUpdate_PrintsAndBackfillsFileIDs(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "upd1", "Upd One", "1.0", "default", true, []string{"main"})
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "upd1", Version: "1.0"}))
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	assert.Equal(t, "Syncing profile: default\n\n"+
+		"Will update FileIDs for:\n"+
+		"  ~ Upd One (src:upd1)\n"+
+		"\nProceed? [Y/n]: "+
+		"✓ Synced profile: default\n", out)
+
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, []string{"main"}, profile.Mods[0].FileIDs)
+}
+
+// TestDoProfileSync_MissingProfile_AutoCreatesThenAdds pins the
+// auto-create path: a profile with no profile.yaml on disk is created
+// on the fly, then diffed as if it started empty.
+func TestDoProfileSync_MissingProfile_AutoCreatesThenAdds(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "auto1", "New Auto", "1.0", "newprof", true, nil)
+
+	pm := getProfileManager(svc)
+	_, err := pm.Get(game.ID, "newprof")
+	require.Error(t, err, "precondition: newprof must not exist yet")
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, []string{"newprof"})
+	})
+
+	assert.Equal(t, "Syncing profile: newprof\n\n"+
+		"Will add to profile:\n"+
+		"  + New Auto (src:auto1)\n"+
+		"\nProceed? [Y/n]: "+
+		"✓ Synced profile: newprof\n", out)
+
+	profile, err := pm.Get(game.ID, "newprof")
+	require.NoError(t, err, "the profile must have been auto-created")
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "auto1", profile.Mods[0].ModID)
+}
+
+// TestDoProfileSync_AlreadyInSync_PrintsMessageWithoutPrompting pins the
+// no-changes fast path: when all three buckets are empty, doProfileSync
+// prints its message and returns without ever reading the confirmation
+// prompt.
+func TestDoProfileSync_AlreadyInSync_PrintsMessageWithoutPrompting(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	assert.Equal(t, "Profile default is already in sync.\n", out)
+}
+
+// TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels pins the prompt
+// itself (printed with no trailing newline, so "Cancelled." lands on the
+// same line) and the fact that declining mutates nothing.
+func TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "dec1", "Decline Me", "1.0", "default", true, nil)
+
+	var out string
+	withStdin(t, "n\n", func() {
+		out = captureStdout(t, func() error {
+			return doProfileSync(context.Background(), svc, game, nil)
+		})
+	})
+
+	assert.Equal(t, "Syncing profile: default\n\n"+
+		"Will add to profile:\n"+
+		"  + Decline Me (src:dec1)\n"+
+		"\nProceed? [Y/n]: "+
+		"Cancelled.\n", out)
+
+	pm := getProfileManager(svc)
+	profile, err := pm.Get(game.ID, "default")
+	require.NoError(t, err)
+	assert.Empty(t, profile.Mods, "declining must not mutate the profile")
+}
+
+// TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly pins Ruling 9:
+// a LOCKED profile ref makes the toUpdate loop's UpsertMod refuse (the ref
+// IS the lock's target, and the DB's version differs), and doProfileSync
+// swallows that refusal into a --verbose-only warning - never printed
+// without --verbose, always printed with it, and never fatal to the sync.
+func TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "lock1", "Locked One", "2.0", "default", true, []string{"main"})
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "lock1", Version: "1.0", Locked: true}))
+
+	t.Run("without verbose, the warning is silent", func(t *testing.T) {
+		syncVerbose(t, false)
+		out := captureStdout(t, func() error {
+			return doProfileSync(context.Background(), svc, game, nil)
+		})
+		assert.NotContains(t, out, "Warning:")
+		assert.Contains(t, out, "✓ Synced profile: default\n", "the refusal must not be fatal to the sync")
+	})
+
+	pm2 := getProfileManager(svc)
+	profile, err := pm2.Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Empty(t, profile.Mods[0].FileIDs, "the locked ref's FileIDs must NOT have been backfilled")
+
+	t.Run("with verbose, the warning prints", func(t *testing.T) {
+		syncVerbose(t, true)
+		out := captureStdout(t, func() error {
+			return doProfileSync(context.Background(), svc, game, nil)
+		})
+		assert.Contains(t, out, "  Warning: could not update src:lock1: mod is locked")
+	})
+}
+
+// TestDoProfileSync_DeployCompile_MergedPakSyncFailureWarnsUnconditionally
+// complements profile_compile_test.go's success-path capture: the
+// end-of-sync merged-pak diagnostics print to stderr UNCONDITIONALLY
+// (#197), unlike the three loops' own --verbose-gated warnings above. A
+// missing base pak makes the sync fail outright.
+func TestDoProfileSync_DeployCompile_MergedPakSyncFailureWarnsUnconditionally(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	game.DeployMode = domain.DeployCompile
+	game.InstallPath = t.TempDir()
+	game.SourceIDs = map[string]string{"fake-compiler": "external-icarus-id"}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	compiler := &compilerInstallSource{fakeInstallSource: newFakeInstallSource("fake-compiler")}
+	svc.RegisterSource(compiler)
+
+	const modID, version, fileID = "bear-mount", "1.0", "exmodz-file"
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", modID, version, cache.RetainedSourceName(fileID), []byte("bear-bytes")))
+	seedSyncInstalledMod(t, svc, game, "fake-compiler", modID, "Bear Mount", version, "default", true, []string{fileID})
+
+	syncVerbose(t, false)
+	_, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, stderr, "Warning: could not sync merged pak: ")
+}
