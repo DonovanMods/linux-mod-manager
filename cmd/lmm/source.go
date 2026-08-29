@@ -152,7 +152,10 @@ Examples:
 					}
 					line += "\t" + inUse
 				}
-				fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
+				// Deliberately unchecked, like the header write above: a
+				// tabwriter buffers, so any write failure surfaces at Flush
+				// below, which IS checked.
+				_, _ = fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
 			}
 			return w.Flush()
 		})
