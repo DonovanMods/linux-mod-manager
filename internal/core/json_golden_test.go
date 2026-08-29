@@ -189,6 +189,84 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// v2 Phase 2 Unit J (#290). ToDisable is deliberately left nil
+			// to pin that a nil slice marshals as "[]", not "null".
+			"profile_apply_plan",
+			core.ProfileApplyPlan{
+				GameID:    "skyrim-se",
+				Profile:   "hardcore",
+				ToDisable: nil,
+				ToEnable: []domain.InstalledMod{
+					{
+						Mod:          domain.Mod{ID: "7", SourceID: "nexusmods", Name: "Realistic Needs", GameID: "skyrim-se", UpdatedAt: fixedTime},
+						ProfileName:  "hardcore",
+						UpdatePolicy: domain.UpdateNotify,
+						InstalledAt:  fixedTime,
+						LinkMethod:   domain.LinkSymlink,
+					},
+				},
+				ToInstall: []core.ProfileApplyInstall{
+					{
+						Ref:     domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+						Mod:     &jsonGoldenMod,
+						Files:   []*domain.DownloadableFile{{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", Size: 104857600, IsPrimary: true}},
+						Version: "1.2.3",
+						Cached:  true,
+					},
+				},
+				NoChanges: false,
+			},
+		},
+		{
+			// The failure shape of a ToInstall entry: no Mod, no Files, the
+			// resolution error as text (#290).
+			"profile_apply_install",
+			core.ProfileApplyInstall{
+				Ref:   domain.ModReference{SourceID: "nexusmods", ModID: "8", Version: "0.9.0"},
+				Files: nil,
+				Replaces: &domain.InstalledMod{
+					Mod:          domain.Mod{ID: "8", SourceID: "nexusmods", Name: "Old Mod", GameID: "skyrim-se", Version: "0.9.0", UpdatedAt: fixedTime},
+					ProfileName:  "hardcore",
+					InstalledAt:  fixedTime,
+					UpdatePolicy: domain.UpdateNotify,
+				},
+				Error: "failed to fetch mod: rate limited",
+			},
+		},
+		{
+			"profile_apply_result",
+			core.ProfileApplyResult{
+				Disabled:  1,
+				Enabled:   2,
+				Installed: 1,
+				Replaced:  1,
+				Failed:    []string{"nexusmods:8: failed to fetch mod: rate limited"},
+				Notes:     []string{"Warning: could not update profile: mod is locked"},
+				Warnings:  []string{"could not sync merged pak: base pak missing"},
+			},
+		},
+		{
+			// v2 Phase 2 Unit J (#290). ToRemove is deliberately left nil to
+			// pin that a nil slice marshals as "[]", not "null".
+			"profile_sync_plan",
+			core.ProfileSyncPlan{
+				GameID:   "skyrim-se",
+				Profile:  "hardcore",
+				ToAdd:    []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
+				ToRemove: nil,
+				ToUpdate: []domain.ModReference{{SourceID: "nexusmods", ModID: "7", Version: "1.0.0", FileIDs: []string{"file-1"}}},
+				Missing:  true,
+				Names:    map[string]string{"nexusmods:42": "Sample Mod", "nexusmods:7": "Realistic Needs"},
+			},
+		},
+		{
+			"profile_sync_result",
+			core.ProfileSyncResult{
+				Added: 1, Removed: 1, Updated: 1,
+				Warnings: []string{"could not sync merged pak: base pak missing"},
+			},
+		},
+		{
 			// Installed is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null".
 			"install_result",

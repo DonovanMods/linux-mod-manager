@@ -11,47 +11,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
-// ReorderProfileMods persists mods as gameID/profileName's new load order
-// (via ProfileManager.ReorderMods) and syncs the merged pak (#197: a
-// load-order change is a documented regeneration trigger, since profile
-// load order IS merge-application order - see enabledMergeSources). The
-// single seam cmd/lmm calls, replacing its previous direct
-// pm.ReorderMods(...) call.
-//
-// A sync failure is non-fatal and returned as part of the SAME error only
-// if the reorder itself also failed; a reorder that succeeded but whose
-// merged-pak sync failed still returns nil - the reorder took effect, and
-// `lmm update`/`lmm verify` are the safety net for a merged pak that
-// didn't catch up. Callers wanting to surface a sync warning distinctly
-// can call Service.syncMergedPak's own exported test seam directly in a
-// follow-up if this proves too quiet in practice; kept simple here to
-// match ReorderMods' own existing bare-error signature rather than
-// inventing a new result type for one warning slice.
-func (s *Service) ReorderProfileMods(ctx context.Context, gameID, profileName string, mods []domain.ModReference) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.reorderProfileMods(ctx, gameID, profileName, mods)
-}
-
-func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName string, mods []domain.ModReference) error {
-	pm := NewProfileManager(s.configDir, s.db)
-	if err := pm.ReorderMods(gameID, profileName, mods); err != nil {
-		return err
-	}
-	game, ok := s.game(gameID)
-	if !ok {
-		return nil // an unknown game has no merged pak to sync either
-	}
-	// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
-	if _, err := s.syncMergedPak(context.WithoutCancel(ctx), game, profileName); err != nil {
-		s.logger().Warn("merged pak sync after reorder failed", "game_id", gameID, "profile", profileName, "err", err)
-	}
-	return nil
-}
-
 // EnableResult reports the outcome of EnableMod. Changed is true iff the
 // mod was actually deployed and flipped to enabled — false (not an error)
 // when it was already enabled, mirroring EnableMod's pre-Task-6 (bool,
@@ -127,7 +86,7 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 		return nil, fmt.Errorf("mod not found in cache - try reinstalling with 'lmm install --id %s'", modID)
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +176,7 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 	}
 
 	result := &DisableResult{}
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +311,7 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return result, err
 	}
@@ -565,6 +524,14 @@ const (
 	// DeployPhase enum (per the task brief: "reuse the progress carrier and
 	// its phase-constant pattern - extend, don't fork") rather than
 	// introducing a parallel SwitchProgress/SwitchPhase pair.
+	//
+	// v2 Phase 2 Unit J (#290): ApplyProfileApply emits this same family.
+	// Every line doProfileApply printed is worded identically to its
+	// doProfileSwitch counterpart, so a duplicate ProfileApply* family
+	// would be twelve constants of copied text; Scope.Op (OpProfileApply
+	// vs OpSwitch) is what tells the two flows apart on the wire. Changing
+	// any wording below therefore changes BOTH flows - which is correct:
+	// they are the same lines.
 	// ApplyProfileSwitch is a behavior-preserving extraction of
 	// cmd/lmm/profile.go's doProfileSwitch;
 	// every phase below corresponds to exactly one of doProfileSwitch's
@@ -1072,6 +1039,27 @@ const (
 	// a hard failure) still arrive as ordinary InstallWarning events - both
 	// frontends print those identically.
 	InstallMergedPakSyncFailed
+
+	// --- v2 Phase 2 Unit J (#290): ApplyProfileSync progress events.
+	// doProfileSync never printed to stderr for its three per-item loops
+	// (only its end-of-apply merged-pak sync did, via ProfileSyncResult.
+	// Warnings, exactly like ApplyProfileApply's own), so all three notes
+	// below are --verbose-gated stdout, 2-space indent, "Warning: " baked
+	// into Detail - a caller wanting byte-identical output prints
+	// `if verbose { fmt.Printf("  %s\n", p.Detail) }`. ---
+
+	// SyncAddNote fires when pm.AddMod fails for a ToAdd entry, mirroring
+	// doProfileSync's "  Warning: %v" (the bare error, no ref prefix).
+	SyncAddNote
+	// SyncRemoveNote fires when pm.RemoveMod fails for a ToRemove entry,
+	// mirroring doProfileSync's "  Warning: %v" (the bare error, no ref
+	// prefix) - same wording as SyncAddNote, kept as its own phase so a
+	// caller inspecting the event stream can tell which loop produced it.
+	SyncRemoveNote
+	// SyncUpdateNote fires when pm.UpsertMod fails for a ToUpdate entry -
+	// the swallowed lock refusal Ruling 9 preserves byte-for-byte - mirroring
+	// doProfileSync's "  Warning: could not update %s:%s: %v".
+	SyncUpdateNote
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1100,6 +1088,7 @@ var deployPhaseNames = [...]string{
 	ImportModInstalled: "import_mod_installed", ImportNote: "import_note", DeployMergeSynced: "deploy_merge_synced",
 	InstallLockRefusal: "install_lock_refusal", InstallChecksumSaveFailed: "install_checksum_save_failed",
 	InstallMergedPakSyncFailed: "install_merged_pak_sync_failed",
+	SyncAddNote:                "sync_add_note", SyncRemoveNote: "sync_remove_note", SyncUpdateNote: "sync_update_note",
 }
 
 // String returns the phase's wire name.
@@ -1594,7 +1583,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip("no files available")
 	}
 
-	filesToDownload, err := SelectFilesForVersion(files, mod.FileIDs, mod.Version)
+	filesToDownload, err := selectFilesForVersion(files, mod.FileIDs, mod.Version)
 	if err != nil {
 		return skip(err.Error())
 	}
@@ -1738,7 +1727,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 		spec.emit(HookEvent{Scope: Scope{Op: spec.op}, Phase: DeployBeforeAllForced, Stage: "uninstall.before_all", Detail: msg})
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return err
 	}
@@ -2205,11 +2194,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// link methods - the disable loop undeploys the FROM profile's
 	// deployments (which were made with plan.From's method), while the
 	// enable and install loops deploy into plan.To.
-	fromInstaller, err := s.GetInstallerForProfile(ctx, game, plan.From)
+	fromInstaller, err := s.getInstallerForProfile(ctx, game, plan.From)
 	if err != nil {
 		return result, err
 	}
-	toInstaller, err := s.GetInstallerForProfile(ctx, game, plan.To)
+	toInstaller, err := s.getInstallerForProfile(ctx, game, plan.To)
 	if err != nil {
 		return result, err
 	}
@@ -2311,7 +2300,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 
-			filesToDownload, err := SelectFilesForVersion(files, ref.FileIDs, ref.Version)
+			filesToDownload, err := selectFilesForVersion(files, ref.FileIDs, ref.Version)
 			if err != nil {
 				fail(err.Error())
 				continue
@@ -2695,7 +2684,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		return result, nil
 	}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profile.Name)
+	installer, err := s.getInstallerForProfile(ctx, game, profile.Name)
 	if err != nil {
 		return result, err
 	}
@@ -2747,7 +2736,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		} else if len(ref.FileIDs) > 0 {
 			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, err := SelectFilesForVersion(files, fileIDsToUse, ref.Version)
+		filesToDownload, err := selectFilesForVersion(files, fileIDsToUse, ref.Version)
 		if err != nil {
 			fail(err.Error())
 			continue

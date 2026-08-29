@@ -256,7 +256,7 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 	gameCache := s.GetGameCache(game)
 	syntheticMod := &domain.Mod{ID: mergedPakModID, SourceID: domain.SourceMerged, Version: mergedPakVersion, GameID: game.ID}
 
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return nil, err
 	}
@@ -1084,7 +1084,7 @@ func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profile
 	if game.DeployMode != domain.DeployCompile {
 		return nil
 	}
-	installer, err := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, err := s.getInstallerForProfile(ctx, game, profileName)
 	if err != nil {
 		return err
 	}

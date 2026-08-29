@@ -308,7 +308,7 @@ func TestSyncMergedPak_ZeroEnabledMods_UninstallsExistingPak(t *testing.T) {
 	_, err = os.Stat(deployedPath)
 	require.NoError(t, err, "precondition: the merged pak must exist before disabling")
 
-	require.NoError(t, svc.SetModEnabled(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabledForTest(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
 
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -331,7 +331,7 @@ func TestSyncMergedPak_ZeroEnabledMods_SecondZeroSyncSucceeds(t *testing.T) {
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
-	require.NoError(t, svc.SetModEnabled(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabledForTest(context.Background(), "fake-compiler", "bear-mount", game.ID, "default", false))
 
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err, "first zero-pass: undeploys the pak and deletes the merged entry")

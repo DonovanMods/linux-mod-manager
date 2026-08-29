@@ -68,6 +68,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock, pin, recompile, and cache-existence gating in core; CheckGameUpdates entries carry lock
   state (loaded once per call, not once per mod); cmd no longer reads profiles for lock checks
   (#289)
+- Internal: `lmm profile reorder`'s "source:modid"/bare mod-ID resolution moves into
+  `core.Service.ResolveReorder`, exporting `ErrModNotInProfile`/`ErrAmbiguousModID`; `cmd/lmm`'s
+  `doProfileReorder` no longer builds the mod lookup itself, and its no-args listing path reads the
+  profile through `core.ProfileManager.Get` instead of `storage/config` directly. No user-visible
+  change: CLI output and error text are byte-identical. (#290)
+- Internal: `lmm profile apply` is Plan/Apply — the ~360-line converge engine in `cmd/lmm`
+  (three-way diff, source resolution, download, deploy/replace, persistence and the merged-pak
+  sync) moves into `core.PlanProfileApply`/`core.ApplyProfileApply` with a typed plan whose
+  install entries are resolved against their source at plan time, an `ErrStalePlan` freshness
+  guard, and progress reported through the event stream. `cmd/lmm` keeps only the prompt and the
+  printed lines. No user-visible change: CLI output is byte-identical. (#290)
+- Internal: `lmm profile sync` is Plan/Apply — the DB-to-profile diff engine in `cmd/lmm` (the
+  add/remove/update bucket classification, the display-name lookups, and the `pm.AddMod`/
+  `RemoveMod`/`UpsertMod`/merged-pak-sync application) moves into `core.PlanProfileSync`/
+  `core.ApplyProfileSync`, with a missing profile.yaml recorded on the plan (`Missing`) rather than
+  created at plan time, and an `ErrStalePlan` freshness guard. `cmd/lmm` keeps only the prompt and
+  the printed lines. No user-visible change: CLI output is byte-identical. (#290)
 
 ### Fixed
 

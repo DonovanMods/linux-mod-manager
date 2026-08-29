@@ -61,7 +61,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	// Deploy pakmod's raw pak BEFORE the first sync, mirroring the real
 	// ingest-then-first-sync window (TestPakInstallThenSyncNeverDoubleApplies)
 	// - so "raw link gone" below is a genuine transition, not "never existed".
-	installer, err := svc.GetInstallerForProfile(context.Background(), game, "default")
+	installer, err := svc.GetInstallerForProfileForTest(context.Background(), game, "default")
 	require.NoError(t, err)
 	pakMod := &domain.Mod{ID: "pakmod", SourceID: "fake-compiler", GameID: game.ID, Version: "1.0"}
 	require.NoError(t, installer.Install(context.Background(), game, pakMod, "default"))
@@ -150,7 +150,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.True(t, pakOutcome.Converted)
 
 	// --- Step 4: disable pakmod entirely ---
-	require.NoError(t, svc.SetModEnabled(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false))
+	require.NoError(t, svc.SetModEnabledForTest(context.Background(), "fake-compiler", "pakmod", game.ID, "default", false))
 	rec.lastSources = nil
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

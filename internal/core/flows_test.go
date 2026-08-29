@@ -4752,7 +4752,7 @@ func TestService_DeployProfile_CancelledDuringLastModRedownload_RecordsSkipAndEr
 // -race (v2 Phase 1 Task 6, #279; rewritten in fix round 1 per review
 // finding I2): a DeployProfile holds the mutation slot open on a gate, 16
 // query goroutines (GetInstalledMods + ListGames) must all complete while
-// the gate is still closed, and a second mutation (SetModEnabled) started
+// the gate is still closed, and a second mutation (SetModDeployed) started
 // during that same window must NOT return until the gate opens. A
 // regression that lets a query - or a second mutation - through
 // unserialized deadlocks this test into one of its timeouts instead of
@@ -4805,7 +4805,7 @@ func TestService_QueriesRunDuringMutation(t *testing.T) {
 	secondDone := make(chan struct{})
 	go func() {
 		defer close(secondDone)
-		if err := svc.SetModEnabled(ctx, "src", "1", game.ID, "default", false); err != nil {
+		if err := svc.SetModDeployed(ctx, "src", "1", game.ID, "default", false); err != nil {
 			errs <- err
 		}
 	}()

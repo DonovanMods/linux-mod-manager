@@ -1075,7 +1075,7 @@ func TestService_ModLifecycleFacade(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.Deployed)
 
-	require.NoError(t, svc.SetModEnabled(context.Background(), "test", "42", "g1", "default", false))
+	require.NoError(t, svc.SetModEnabledForTest(context.Background(), "test", "42", "g1", "default", false))
 	got, err = svc.GetInstalledMod(context.Background(), "test", "42", "g1", "default")
 	require.NoError(t, err)
 	assert.False(t, got.Enabled)

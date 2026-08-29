@@ -11,10 +11,17 @@ import (
 type Op string
 
 const (
-	OpInstall     Op = "install"
-	OpDeploy      Op = "deploy"
-	OpPurge       Op = "purge"
-	OpSwitch      Op = "switch"
+	OpInstall Op = "install"
+	OpDeploy  Op = "deploy"
+	OpPurge   Op = "purge"
+	OpSwitch  Op = "switch"
+	// OpProfileApply is `lmm profile apply` - the converge flow whose
+	// per-mod lines are worded identically to OpSwitch's, so it emits the
+	// same Switch* phase family (see profile_apply.go's package comment).
+	OpProfileApply Op = "profile_apply"
+	// OpProfileSync is `lmm profile sync` - the DB-to-profile reconciliation
+	// flow (v2 Phase 2 Unit J / #290).
+	OpProfileSync Op = "profile_sync"
 	OpUpdate      Op = "update"
 	OpRollback    Op = "rollback"
 	OpImport      Op = "import"

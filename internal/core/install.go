@@ -350,7 +350,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	// the existing "never fails the plan" policy still applies - the
 	// installer's resolution simply doesn't get to say whether this
 	// specific plan conflicts with anything already on disk.
-	if installer, err := s.GetInstallerForProfile(ctx, game, profileName); err == nil {
+	if installer, err := s.getInstallerForProfile(ctx, game, profileName); err == nil {
 		if conflicts, err := installer.GetConflicts(ctx, game, mod, profileName); err == nil {
 			plan.Conflicts = conflicts
 		}
@@ -418,7 +418,7 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 	// Conflict detection is best-effort on exactly PlanInstall.Conflicts'
 	// terms (see InstallPlanEntry.Conflicts): a resolution failure here just
 	// means no entry reports conflicts, never a failed plan.
-	installer, installerErr := s.GetInstallerForProfile(ctx, game, profileName)
+	installer, installerErr := s.getInstallerForProfile(ctx, game, profileName)
 
 	for _, mod := range mods {
 		entry := &InstallPlanEntry{Mod: mod}

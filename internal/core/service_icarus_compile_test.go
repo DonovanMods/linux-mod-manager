@@ -459,7 +459,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 	}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: []string{file.ID}}))
 
-	installer, err := svc.GetInstallerForProfile(context.Background(), game, "default")
+	installer, err := svc.GetInstallerForProfileForTest(context.Background(), game, "default")
 	require.NoError(t, err)
 	require.NoError(t, installer.Install(context.Background(), game, mod, "default"))
 
