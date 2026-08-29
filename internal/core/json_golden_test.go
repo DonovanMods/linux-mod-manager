@@ -76,6 +76,26 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Files is deliberately non-empty and Hooks nil, pinning both
+			// that a nil slice marshals as "[]" (neither tag carries
+			// `omitempty`) and that the plan's whole InstalledMod - not a
+			// bare reference - is on the wire.
+			"uninstall_plan",
+			core.UninstallPlan{
+				Mod: domain.InstalledMod{
+					Mod:          jsonGoldenMod,
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+				},
+				Files:     []string{"Data/Sample.esp"},
+				KeepCache: true,
+				Hooks:     nil,
+			},
+		},
+		{
 			"deploy_result",
 			core.DeployResult{
 				Deployed:       5,
@@ -143,6 +163,24 @@ func TestJSONGoldens(t *testing.T) {
 				Skipped:  []string{"LockedMod: locked"},
 				Warnings: []string{"could not remove cache directory"},
 				Notes:    []string{"purged orphaned cache entry"},
+			},
+		},
+		{
+			"purge_plan",
+			core.PurgePlan{
+				Profile: "default",
+				Mods: []domain.InstalledMod{
+					{
+						Mod:          jsonGoldenMod,
+						ProfileName:  "default",
+						UpdatePolicy: domain.UpdateNotify,
+						InstalledAt:  fixedTime,
+						LinkMethod:   domain.LinkSymlink,
+						Enabled:      true,
+					},
+				},
+				Uninstall: true,
+				Hooks:     []string{"uninstall.before_all", "uninstall.after_all"},
 			},
 		},
 		{

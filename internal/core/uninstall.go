@@ -7,10 +7,129 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
+
+// UninstallPlan is PlanUninstall's side-effect-free description of what
+// `lmm uninstall <mod-id>` would do: which installed mod the arguments
+// actually resolve to (the cross-source disambiguation the CLI used to do
+// inline), which game-directory paths would disappear, whether the cache
+// entry survives, and which hooks would run. ApplyUninstall refuses a plan
+// whose installed-mod set has changed since (Ruling 5).
+type UninstallPlan struct {
+	// Mod is the resolved target - the whole installed record, not just a
+	// reference, because it is also what ApplyUninstall reads the profile,
+	// source and ID back off. With an explicit source it is that source's
+	// copy; with a bare ID it is the FIRST installed mod carrying that ID,
+	// preserving the pre-lift CLI's disambiguation exactly (see
+	// PlanUninstall's doc comment).
+	Mod domain.InstalledMod `json:"mod"`
+
+	// Files lists the game-dir-relative paths the undeploy step would
+	// remove: Installer.Uninstall's own removal set (the cache entry's
+	// ListFiles union, falling back to the DB's tracked deployed paths for
+	// an absent entry - #260), narrowed to the paths actually present under
+	// game.ModPath right now. Empty for a mod that is installed but not
+	// currently deployed.
+	Files []string `json:"files"`
+
+	// KeepCache echoes UninstallOptions.KeepCache: false means the mod's
+	// cache entry is deleted too, so a later reinstall re-downloads.
+	KeepCache bool `json:"keep_cache"`
+
+	// Hooks names the uninstall.* hooks that would actually run, in run
+	// order. Only configured hooks are listed, and none at all under
+	// SkipHooks.
+	Hooks []string `json:"hooks"`
+
+	// snapshot is Ruling 5's precondition: the installed-mod set this plan
+	// was computed from, re-derived and compared by ApplyUninstall.
+	snapshot installedSnapshot `json:"-"`
+}
+
+// PlanUninstall resolves sourceID/modID against profileName's installed mods
+// and computes what UninstallMod would then do, without touching anything.
+//
+// Resolution mirrors the pre-lift cmd/lmm/uninstall.go exactly, including
+// both of its error texts: with sourceID set, that source's copy is looked
+// up directly ("mod X not found in profile P (source: S)"); with sourceID
+// empty, every installed mod is scanned by ID and the FIRST hit wins ("mod X
+// not found in profile P"), which is how `lmm uninstall <id>` has always
+// disambiguated an ID installed from more than one source. The scan's own
+// read failure keeps its pre-lift wording too ("listing installed mods: …").
+//
+// The returned plan is a snapshot: pass it to ApplyUninstall promptly, and
+// be ready for ErrStalePlan if the installed set moved underneath it.
+func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallPlan, error) {
+	// Resolution runs FIRST, in the pre-lift order, so a failing DB still
+	// produces the historical message rather than the snapshot read's.
+	var mod *domain.InstalledMod
+	var installed []domain.InstalledMod
+	if sourceID != "" {
+		found, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("mod %s not found in profile %s (source: %s)", modID, profileName, sourceID)
+		}
+		mod = found
+		if installed, err = s.GetInstalledMods(ctx, game.ID, profileName); err != nil {
+			return nil, fmt.Errorf("listing installed mods: %w", err)
+		}
+	} else {
+		all, err := s.GetInstalledMods(ctx, game.ID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("listing installed mods: %w", err)
+		}
+		installed = all
+		for i := range all {
+			if all[i].ID == modID {
+				mod = &all[i]
+				break
+			}
+		}
+		if mod == nil {
+			return nil, fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+		}
+	}
+
+	plan := &UninstallPlan{
+		Mod:       *mod,
+		KeepCache: opts.KeepCache,
+		Hooks:     uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks),
+		snapshot:  snapshotOf(installed),
+	}
+	for _, f := range s.deployedPathsFor(ctx, game, profileName, mod) {
+		if isDeployedNow(game, f) {
+			plan.Files = append(plan.Files, f)
+		}
+	}
+	return plan, nil
+}
+
+// ApplyUninstall carries out plan under the mutation lock. Ruling 5: the
+// plan's recorded installed-mod set is re-derived first and a mismatch is
+// refused with ErrStalePlan rather than applied.
+//
+// The plan supplies the target (profile, source and ID) and the freshness
+// precondition; everything else comes from opts, so a frontend that showed
+// the plan and then let the user toggle --keep-cache still applies what the
+// user finally chose.
+func (s *Service) ApplyUninstall(ctx context.Context, game *domain.Game, plan *UninstallPlan, opts UninstallOptions) (*UninstallResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if plan == nil {
+		return nil, errors.New("uninstall plan is nil: call PlanUninstall first")
+	}
+	if err := s.checkPlanFresh(ctx, game.ID, plan.Mod.ProfileName, plan.snapshot); err != nil {
+		return nil, err
+	}
+	return s.uninstallMod(ctx, game, plan.Mod.ProfileName, plan.Mod.SourceID, plan.Mod.ID, opts)
+}
 
 // UninstallOptions configures UninstallMod.
 type UninstallOptions struct {
@@ -74,6 +193,11 @@ type UninstallResult struct {
 // all non-fatal and always recorded in Notes; the operation still
 // completes. See UninstallResult's doc comment for the Warnings/Notes
 // display contract.
+//
+// It is PlanUninstall + ApplyUninstall in one call, under a single mutation
+// slot, for callers with nothing to show between the two (core's own tests);
+// it takes the resolved sourceID directly rather than re-running the plan's
+// bare-ID disambiguation. Frontends plan first, render, then apply.
 func (s *Service) UninstallMod(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, opts UninstallOptions) (*UninstallResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

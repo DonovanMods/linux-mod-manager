@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -183,6 +184,85 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 	return nil
 }
 
+// PurgePlan is PlanPurge's side-effect-free description of what `lmm purge`
+// would do: exactly which installed mods would be undeployed, whether their
+// records go with them, and which hooks would run. Mods IS the set ApplyPurge
+// purges - a frontend counts it in its confirmation prompt and hands the same
+// object back, so the number shown and the number purged cannot disagree.
+// ApplyPurge refuses a plan whose installed-mod set has changed since
+// (Ruling 5).
+type PurgePlan struct {
+	Profile string `json:"profile"`
+
+	// Mods is the profile's installed set, in GetInstalledMods' order -
+	// the read the CLI used to do itself before prompting. Empty for a
+	// profile with nothing installed, which is the frontend's "No mods
+	// installed" early-out (PurgeProfile itself returns immediately for an
+	// empty set: no hooks, no events).
+	Mods []domain.InstalledMod `json:"mods"`
+
+	// Uninstall echoes PurgeOptions.Uninstall: true also deletes each
+	// purged mod's DB record and profile-YAML entry.
+	Uninstall bool `json:"uninstall"`
+
+	// Hooks names the uninstall.* hooks that would actually run, in run
+	// order. Only configured hooks are listed, none at all under SkipHooks,
+	// and none for an empty Mods set.
+	Hooks []string `json:"hooks"`
+
+	// snapshot is Ruling 5's precondition: the installed-mod set this plan
+	// was computed from, re-derived and compared by ApplyPurge.
+	snapshot installedSnapshot `json:"-"`
+}
+
+// PlanPurge computes what PurgeProfile would do for game/profileName under
+// opts, without touching anything - including the installed-mods read the
+// pre-lift cmd/lmm/purge.go did itself before prompting (its "getting
+// installed mods: …" wording is preserved on that read's failure).
+//
+// The returned plan is a snapshot: pass it to ApplyPurge promptly, and be
+// ready for ErrStalePlan if the installed set moved underneath it.
+func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName string, opts PurgeOptions) (*PurgePlan, error) {
+	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
+	plan := &PurgePlan{
+		Profile:   profileName,
+		Mods:      mods,
+		Uninstall: opts.Uninstall,
+		snapshot:  snapshotOf(mods),
+	}
+	if len(mods) > 0 {
+		plan.Hooks = uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
+	}
+	return plan, nil
+}
+
+// ApplyPurge carries out plan under the mutation lock. Ruling 5: the plan's
+// recorded installed-mod set is re-derived first and a mismatch is refused
+// with ErrStalePlan rather than applied.
+//
+// The mods purged are the plan's own - the same objects a frontend counted
+// in its confirmation prompt - never a fresh read that could have grown or
+// shrunk between the prompt and the answer.
+//
+// sink may be nil; see PurgeProfile for what it receives.
+func (s *Service) ApplyPurge(ctx context.Context, game *domain.Game, plan *PurgePlan, opts PurgeOptions, sink EventSink) (*PurgeResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return &PurgeResult{}, err
+	}
+	defer release()
+	if plan == nil {
+		return &PurgeResult{}, errors.New("purge plan is nil: call PlanPurge first")
+	}
+	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
+		return &PurgeResult{}, err
+	}
+	return s.purgeProfile(ctx, game, plan.Profile, plan.Mods, opts, sink)
+}
+
 // PurgeOptions configures PurgeProfile.
 type PurgeOptions struct {
 	// Uninstall additionally deletes each purged mod's DB record and
@@ -229,6 +309,11 @@ type PurgeResult struct {
 // partial-result convention: the accumulated result comes back alongside
 // ctx.Err()); one cancellation-behavior delta from the pre-extraction
 // doPurge, which never checked ctx mid-loop.
+//
+// It is PlanPurge + ApplyPurge in one call, under a single mutation slot,
+// for callers with no prompt to show between the two (core's own tests) -
+// which is why it takes the mod set directly. Frontends plan first, prompt
+// against the plan, then apply it.
 func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, sink EventSink) (*PurgeResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

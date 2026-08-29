@@ -11,8 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -321,12 +319,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 					continue
 				}
 				seen[f] = true
-				// A mod's removal-direction union names everything that
-				// COULD be undeployed; only paths actually present under
-				// game.ModPath right now are what a purge would actually
-				// touch (Task 24 review, Minor #1). Lstat, not Stat - a
-				// dangling symlink is still a deployed path to remove.
-				if _, err := os.Lstat(filepath.Join(game.ModPath, f)); err != nil {
+				if !isDeployedNow(game, f) {
 					continue
 				}
 				plan.Purge = append(plan.Purge, f)
@@ -479,10 +472,7 @@ func planDeployHooks(hooks *ResolvedHooks, opts DeployOptions, purgeMods, deploy
 		}
 	}
 	if opts.Purge && purgeMods > 0 {
-		add("uninstall.before_all", hooks.GetUninstallBeforeAll())
-		add("uninstall.before_each", hooks.GetUninstallBeforeEach())
-		add("uninstall.after_each", hooks.GetUninstallAfterEach())
-		add("uninstall.after_all", hooks.GetUninstallAfterAll())
+		names = append(names, uninstallHookNames(hooks, false)...)
 	}
 	if deployMods > 0 {
 		add("install.before_all", hooks.GetInstallBeforeAll())
