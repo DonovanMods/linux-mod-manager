@@ -2765,6 +2765,37 @@ func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "planning must not deploy any files")
 }
 
+// TestApplyProfileSwitch_StalePlan_ReturnsErrStalePlan pins the phase-2-close
+// review's Important #1 / Ruling 5 for Switch: an installed-mod set that
+// moved (under plan.From) since the plan was computed is refused, not
+// silently applied against a world it no longer describes.
+func TestApplyProfileSwitch_StalePlan_ReturnsErrStalePlan(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
+	require.NoError(t, err)
+	require.NotNil(t, plan)
+	require.False(t, plan.NoChanges, "sanity: this scenario must exercise the disable bucket")
+
+	// State moves after planning: modC is disabled directly, changing the
+	// "default" (plan.From) installed-mod set the plan was computed against.
+	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", false, map[string][]byte{"c.esp": []byte("c")})
+
+	_, err = svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
+}
+
 // --- ApplyProfileSwitch ---
 
 // TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefaultLastAndUnchangedOnFailure
@@ -2808,12 +2839,12 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	mock.AddDownload("1", zipContent)
 	mock.AddMod("g1", &domain.Mod{ID: "install-me", SourceID: "src", Name: "Install Me", Version: "1.0", GameID: "g1"})
 
-	plan := &core.SwitchPlan{
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToDisable: []domain.InstalledMod{*disableMod},
 		ToEnable:  []domain.InstalledMod{*enableMod},
 		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "install-me", Version: "1.0"}},
-	}
+	})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
@@ -2919,10 +2950,10 @@ func TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod(t *te
 	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToDisable: []domain.InstalledMod{*disableMod},
-	}
+	})
 
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
 	require.NoError(t, err)
@@ -2973,10 +3004,10 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToDisable: []domain.InstalledMod{*disableMod},
-	}
+	})
 
 	sink, seen := core.RecordEvents()
 	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
@@ -4082,10 +4113,10 @@ func TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe(t *testing.T) {
 	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToDisable: []domain.InstalledMod{*disableMod},
-	}
+	})
 
 	assert.NotPanics(t, func() {
 		result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
@@ -4123,10 +4154,10 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_Retur
 	modB, err := svc.GetInstalledMod(context.Background(), "src", "b", "g1", "default")
 	require.NoError(t, err)
 
-	plan := &core.SwitchPlan{
+	plan := svc.FreshSwitchPlanForTest(context.Background(), &core.SwitchPlan{
 		GameID: "g1", From: "default", To: "target",
 		ToDisable: []domain.InstalledMod{*modA, *modB},
-	}
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result, err := svc.ApplyProfileSwitch(ctx, game, plan, func(e core.Event) {

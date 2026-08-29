@@ -105,6 +105,41 @@ func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain
 	return s.newInstallerWithLinker(game, s.getLinker(method))
 }
 
+// FreshSwitchPlanForTest stamps plan.From's current installed-mod snapshot
+// (Ruling 5, phase-2-close review Important #1) onto a hand-built SwitchPlan
+// and returns it, for tests that construct one directly - bypassing
+// PlanProfileSwitch to isolate ApplyProfileSwitch's own execution logic -
+// so ApplyProfileSwitch's checkPlanFresh call doesn't refuse it as stale.
+// Call AFTER seeding whatever installed-mod state the test wants
+// ApplyProfileSwitch to see.
+func (s *Service) FreshSwitchPlanForTest(ctx context.Context, plan *SwitchPlan) *SwitchPlan {
+	plan.snapshot, _ = s.currentInstalledSnapshot(ctx, plan.GameID, plan.From)
+	return plan
+}
+
+// UpdateModVersionForTest exposes updateModVersion behind the same beginOp
+// gate the exported wrapper (phase-2-close review Important #3) removed:
+// zero production callers, and core's own rollback-fixture tests are its
+// only remaining callers.
+func (s *Service) UpdateModVersionForTest(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.updateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
+}
+
+// ApplyModUpdateForTest is UpdateModVersionForTest's ApplyModUpdate twin.
+func (s *Service) ApplyModUpdateForTest(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
+}
+
 // ConvergeDeployedFilesForTest exposes convergeDeployedFiles behind the same
 // beginOp gate the exported wrapper the deploy lift (#293) removed used to
 // take: verify's --fix pass is production's only caller, but convergence's

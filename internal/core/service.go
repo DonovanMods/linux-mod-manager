@@ -1493,30 +1493,17 @@ func (s *Service) IsSourceAuthenticated(ctx context.Context, sourceID string) bo
 	return has
 }
 
-// UpdateModVersion updates the version of an installed mod, preserving the previous version for rollback
-func (s *Service) UpdateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.updateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
-}
-
+// updateModVersion updates the version of an installed mod, preserving the
+// previous version for rollback. Unexported (phase-2-close review Important
+// #3): zero production callers - the only exported form's beginOp gate ever
+// added is now provided by UpdateModVersionForTest for core's own tests.
 func (s *Service) updateModVersion(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
 	return s.db.UpdateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
 }
 
-// ApplyModUpdate updates version and file IDs atomically, preserving rollback state.
-func (s *Service) ApplyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
-}
-
+// applyModUpdate updates version and file IDs atomically, preserving
+// rollback state. Unexported (phase-2-close review Important #3): zero
+// production callers - see updateModVersion's doc comment.
 func (s *Service) applyModUpdate(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
 	return s.db.ApplyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
 }

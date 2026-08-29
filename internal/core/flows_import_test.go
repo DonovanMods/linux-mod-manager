@@ -85,6 +85,34 @@ func TestPlanImportCategorizes(t *testing.T) {
 	assert.Equal(t, "target", plan.Profile.Name)
 }
 
+// TestApplyImport_StalePlan_ReturnsErrStalePlan pins the phase-2-close
+// review's Important #1 / Ruling 5 for Import: an installed-mod set that
+// moved (under the profile being imported into) since the plan was computed
+// is refused, not silently applied against a world it no longer describes.
+func TestApplyImport_StalePlan_ReturnsErrStalePlan(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "mod1", "Mod One", "1.0", true,
+		map[string][]byte{"mod1.esp": []byte("m")})
+
+	profile := &domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}}}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.Installed, 1, "sanity: mod1 must be planned as already-installed")
+
+	// State moves after planning: mod1 is disabled directly under "target",
+	// changing the installed-mod set the plan was computed against.
+	seedInstalledModUnderProfile(t, svc, game, "target", "src", "mod1", "Mod One", "1.0", false,
+		map[string][]byte{"mod1.esp": []byte("m")})
+
+	_, err = svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
+}
+
 // TestApplyImportSavesAndInstalls covers ApplyImport's base case end to end:
 // the profile is saved, a Missing mod is fetched/downloaded/deployed/saved
 // with a nil ConfirmInstall ("nil = proceed"), and the profile is upserted

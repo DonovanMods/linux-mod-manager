@@ -146,6 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `UninstallMod`/`PurgeProfile` stay as the Plan+Apply conveniences, and the flows move out of
   `flows.go` into `internal/core/uninstall.go` and `internal/core/purge.go`. No user-visible change
   to existing invocations: CLI output is byte-identical. (#293)
+- Internal: `SwitchPlan`/`ImportPlan` carry the stale-plan snapshot; `UpdateModVersion`/
+  `ApplyModUpdate` unexported (Phase 2 close, #272)
 
 ### Fixed
 
