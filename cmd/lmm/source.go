@@ -98,6 +98,20 @@ Examples:
 			// "fix" this into an error for the config-load case; an explicit,
 			// invalid -g still surfaces via GetGame below, same as every
 			// other command's game resolution.
+			//
+			// Error precedence, restored (task-3 review, undisclosed
+			// deviation): pre-#301 this command loaded the source
+			// definitions before resolving the game, so an unreadable
+			// sources/ directory was reported ahead of an invalid explicit
+			// -g. app.SourceInfos now does both internally, in that same
+			// order, but only once gameCtx is already resolved - so with
+			// BOTH broken, the game error would win instead. This
+			// precedence-only pre-check restores the old winner; the real
+			// row assembly below still comes from app.SourceInfos.
+			if _, _, err := app.LoadSourceDefinitions(svc.ConfigDir()); err != nil {
+				return fmt.Errorf("loading source definitions: %w", err)
+			}
+
 			var gameCtx *domain.Game
 			if requireErr := requireGame(cmd); requireErr == nil {
 				g, err := svc.GetGame(gameID)

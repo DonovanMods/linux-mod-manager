@@ -193,6 +193,11 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   instead of Go's randomized map iteration order. (#298)
 - `lmm status` and `lmm game list` order games by game ID, instead of Go's randomized map
   iteration order. (#299)
+- `lmm status --game X --json` no longer swallows a failure to list the game's profiles into an
+  empty-profiles document; it now fails loud, matching the plain-text path (which already did).
+  Only reachable when the profiles directory exists but can't be read - a missing directory still
+  returns no error. The plain-text path also drops one duplicated `listing profiles:` prefix
+  (`ProfileManager.List` already wraps that error with it). (#301)
 
 ## [1.30.1] - 2026-08-08
 
