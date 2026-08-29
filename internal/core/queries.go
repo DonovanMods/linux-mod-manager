@@ -55,7 +55,7 @@ type ModList struct {
 // order - the order that decides merge precedence (later = merged later =
 // wins), not the DB's installed_at order (#201). A mod installed but absent
 // from the load order is still listed (never silently dropped), placed
-// first: OrderByProfile, not the deploy-only
+// first: orderByProfile, not the deploy-only
 // GetInstalledModsInProfileOrder, which deliberately omits it.
 //
 // A genuinely missing profile.yaml (domain.ErrProfileNotFound) is tolerated:
@@ -86,7 +86,7 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 		}
 	}
 
-	ordered := OrderByProfile(profile, mods)
+	ordered := orderByProfile(profile, mods)
 	list := &ModList{GameID: game.ID, Profile: profileName, Mods: make([]ModListing, len(ordered))}
 	for i := range ordered {
 		mod := ordered[i]
@@ -209,7 +209,7 @@ func (s *Service) Status(ctx context.Context) *StatusReport {
 
 		report.Games = append(report.Games, GameSummary{
 			Game:       *game,
-			LinkMethod: s.GetGameLinkMethod(game),
+			LinkMethod: s.getGameLinkMethod(game),
 			Profiles:   names,
 			ModCount:   modCount,
 			IsDefault:  game.ID == defaultGame,
@@ -234,7 +234,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		return nil, err
 	}
 
-	linkMethod := s.GetGameLinkMethod(game)
+	linkMethod := s.getGameLinkMethod(game)
 	status := &GameStatus{
 		Game:                *game,
 		LinkMethod:          linkMethod,
@@ -275,7 +275,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		}
 	}
 
-	lastDeploy, err := s.GetLastDeployTime(ctx, game.ID, active.Name)
+	lastDeploy, err := s.getLastDeployTime(ctx, game.ID, active.Name)
 	if err != nil {
 		// Wording preserved verbatim from the pre-extraction CLI, whose text
 		// and --json paths both surfaced this exact prefix.
@@ -287,7 +287,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 	// fingerprint - the same source verify's own "conversion_failed" rows
 	// use.
 	if game.DeployMode == domain.DeployCompile {
-		if outcomes, ok := s.MergedPakOutcomes(ctx, game, active.Name); ok {
+		if outcomes, ok := s.mergedPakOutcomes(ctx, game, active.Name); ok {
 			for _, entry := range outcomes {
 				if !entry.Converted {
 					status.ConversionFailures++
@@ -316,7 +316,7 @@ type SearchHit struct {
 // source, and a source that ignores them simply returns unfiltered results.
 // PageSize is what each source is asked for; 0 lets every source apply its
 // own default. Search always requests page 0 - callers that page use
-// SearchAllSources/SearchMods directly.
+// searchAllSources/SearchMods directly.
 type SearchOptions struct {
 	SourceID string
 	Category string
@@ -364,7 +364,7 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 
 	var found []domain.Mod
 	if opts.SourceID == "" {
-		agg, err := s.SearchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, 0, opts.PageSize)
+		agg, err := s.searchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, 0, opts.PageSize)
 		if err != nil {
 			return nil, err
 		}
@@ -434,7 +434,7 @@ type VerifyReport struct {
 // VerifyReport runs verify against profileName and wraps its result with the
 // game/profile identity. sink receives the same progress events verify emits.
 func (s *Service) VerifyReport(ctx context.Context, game *domain.Game, profileName string, opts VerifyOptions, sink EventSink) (*VerifyReport, error) {
-	result, err := s.Verify(ctx, game, profileName, opts, sink)
+	result, err := s.verifyGated(ctx, game, profileName, opts, sink)
 	if err != nil {
 		return nil, err
 	}

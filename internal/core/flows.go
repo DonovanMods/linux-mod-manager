@@ -1044,7 +1044,7 @@ func sameFileIDSet(selected []*domain.DownloadableFile, currentFileIDs []string)
 	return len(seen) == len(current)
 }
 
-// OrderByProfile returns mods in a stable, deterministic order for
+// orderByProfile returns mods in a stable, deterministic order for
 // multi-mod operations (deploy, plan/apply): mods absent from profile.Mods
 // first - sorted by "SourceID:ID" key (domain.ModKey) for a reproducible
 // tie-break - followed by mods present in profile.Mods, in profile.Mods
@@ -1061,7 +1061,7 @@ func sameFileIDSet(selected []*domain.DownloadableFile, currentFileIDs []string)
 // normally happen - ReorderMods already dedupes on save) or in mods
 // contributes only its single occurrence to the result, at its first
 // resolved position.
-func OrderByProfile(profile *domain.Profile, mods []domain.InstalledMod) []domain.InstalledMod {
+func orderByProfile(profile *domain.Profile, mods []domain.InstalledMod) []domain.InstalledMod {
 	byKey := make(map[string]domain.InstalledMod, len(mods))
 	for _, m := range mods {
 		byKey[domain.ModKey(m.SourceID, m.ID)] = m
@@ -1219,9 +1219,9 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 
 	// Deterministic order: iterate currentMods in fromProfile's load order
 	// (mods enabled but absent from fromProfile.Mods sort first by key - see
-	// OrderByProfile), filtered down to currentEnabled's members - not `for
+	// orderByProfile), filtered down to currentEnabled's members - not `for
 	// key, im := range currentEnabled`, which iterates map order.
-	for _, im := range OrderByProfile(currentProfile, currentMods) {
+	for _, im := range orderByProfile(currentProfile, currentMods) {
 		key := domain.ModKey(im.SourceID, im.ID)
 		if _, enabled := currentEnabled[key]; !enabled {
 			continue

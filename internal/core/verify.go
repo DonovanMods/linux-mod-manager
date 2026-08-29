@@ -50,7 +50,7 @@ func (t *VerifyTier) UnmarshalText(b []byte) error {
 	return fmt.Errorf("unknown verify tier %q", b)
 }
 
-// VerifyOptions configures a Verify run.
+// VerifyOptions configures a verify run.
 type VerifyOptions struct {
 	Tier      VerifyTier `json:"tier"`
 	Fix       bool       `json:"fix"`
@@ -82,7 +82,7 @@ type VerifyFinding struct {
 	Version   string `json:"version,omitempty"`
 }
 
-// VerifyResult is the accumulated outcome of a Verify run.
+// VerifyResult is the accumulated outcome of a verify run.
 type VerifyResult struct {
 	Findings []VerifyFinding `json:"findings"`
 	Issues   int             `json:"issues"`
@@ -132,7 +132,7 @@ func (k *VerifyEventKind) UnmarshalText(b []byte) error {
 	return fmt.Errorf("unknown verify event kind %q", b)
 }
 
-// VerifyEvent is emitted via a Verify run's EventSink as the engine works,
+// VerifyEvent is emitted via a verify run's EventSink as the engine works,
 // so a caller can render incrementally instead of waiting for the final
 // VerifyResult. Scope.Op is always OpVerify; Scope.Index/Total/ModName carry
 // a VerifyEvProgress tick's position (verifyRun.emitEv fills Op, callers
@@ -158,7 +158,7 @@ type VerifyEvent struct {
 // EventType implements Event.
 func (VerifyEvent) EventType() string { return "verify" }
 
-// verifyRun carries the state threaded through Verify's phase methods: the
+// verifyRun carries the state threaded through verify's phase methods: the
 // service/game/profile/options being verified, the (nil-safe) event sink,
 // and the result being built up. Every phase method appends to result via
 // finding/resolveLast so there's a single place that keeps Findings and the
@@ -209,16 +209,16 @@ func (r *verifyRun) resolveLast(status, note string) {
 	}
 }
 
-// Verify runs the verify engine for game/profile per opts, reporting
-// incremental progress via sink (nil-safe: pass nil to skip events
-// entirely).
+// verifyGated is the beginOp-gated entry point for a verify run: a --fix run
+// mutates (repairs, redownloads, removes stale deployments) so it takes the
+// same one-slot mutation semaphore every other mutating flow does; a plain
+// (non-Fix) run is read-only and skips the gate entirely, matching every
+// other query's freedom to run concurrently with a mutation.
 //
-// #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
-// deploy-convergence sweep (convergeDeployedFiles) that close out every run,
-// including the #217 empty-profile path, which now runs nothing BUT that
-// sweep. The CLI does not call this yet - it still runs its own doVerify; a
-// later task (#224 Task 7) swaps it onto Verify.
-func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+// Unexported (final review, Important #3 / #301): VerifyReport is the only
+// production entry point (cmd/lmm/verify.go calls it, not this), and core's
+// own tests drive verify through it too.
+func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
 	if opts.Fix {
 		release, err := s.beginOp(ctx)
 		if err != nil {
@@ -229,6 +229,15 @@ func (s *Service) Verify(ctx context.Context, game *domain.Game, profile string,
 	return s.verify(ctx, game, profile, opts, sink)
 }
 
+// verify runs the verify engine for game/profile per opts, reporting
+// incremental progress via sink (nil-safe: pass nil to skip events
+// entirely). Called only through verifyGated, which applies the --fix
+// mutation gate above.
+//
+// #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
+// deploy-convergence sweep (convergeDeployedFiles) that close out every run,
+// including the #217 empty-profile path, which now runs nothing BUT that
+// sweep.
 func (s *Service) verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
 	result := &VerifyResult{}
 	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, sink: sink, result: result}
@@ -338,7 +347,7 @@ func (r *verifyRun) syncMergedPakPass() {
 // every other successful --fix repair in this engine follows (it does NOT
 // add to Warnings). Runs both in the main flow (after perFileWalk/the
 // fix-mode sync above) and, for the #217 empty-profile path (HasFiles
-// false), as the entirety of that run beyond the Begin event - see Verify's
+// false), as the entirety of that run beyond the Begin event - see verify's
 // own doc comment.
 //
 // A fixed_stale_deployment row needs no event field of its own for this: the
@@ -351,7 +360,7 @@ func (r *verifyRun) syncMergedPakPass() {
 // failed) are joined into one error by convergeDeployedFiles rather than
 // aborting the whole pass (ConvergeResult's own doc comment) - surfaced
 // here the same way every other per-item problem in this engine is: a
-// skipped row plus a warning, not a fatal Verify failure.
+// skipped row plus a warning, not a fatal verify failure.
 func (r *verifyRun) convergencePass() {
 	convResult, convErr := r.svc.convergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
 	if convResult != nil {
@@ -623,7 +632,7 @@ func (r *verifyRun) mergedPakStalenessPass() {
 // conversionOutcomesPass ports cmd/lmm/verify.go's per-mod pak-conversion
 // outcome report verbatim (originally doVerify lines 484-514): reports
 // every non-Converted entry recorded on the merged pak's own fingerprint
-// (MergedPakOutcomes) - a mod whose pak failed to convert stays
+// (mergedPakOutcomes) - a mod whose pak failed to convert stays
 // raw-deployed, and the user needs to know why. Independent of the
 // staleness check above: a merge can be perfectly up to date while still
 // recording a PRIOR conversion failure for one of its contributing mods. A
@@ -639,7 +648,7 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 		modNames[domain.ModKey(m.SourceID, m.ID)] = m.Name
 	}
 
-	outcomes, ok := r.svc.MergedPakOutcomes(r.ctx, r.game, r.profile)
+	outcomes, ok := r.svc.mergedPakOutcomes(r.ctx, r.game, r.profile)
 	if !ok {
 		return nil
 	}
@@ -681,7 +690,7 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 // Emits VerifyEvProgress at the top of every mod's iteration (a new event
 // not currently rendered by the CLI) and honors ctx cancellation between
 // mods: on cancellation the loop stops and returns
-// ctx.Err(), leaving the caller (Verify) to return the partial result
+// ctx.Err(), leaving the caller (verify) to return the partial result
 // already accumulated rather than a phantom "everything checked out"
 // result.
 func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domain.Profile) error {

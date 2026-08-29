@@ -242,7 +242,7 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 // sources (game.SourceIDs keys) that are currently registered, sorted by
 // ID(). A SourceIDs key with no matching registration is silently skipped -
 // this function has no per-item error channel, only resolved ModSource
-// values come back - matching SearchAllSources's existing tolerance for the
+// values come back - matching searchAllSources's existing tolerance for the
 // same situation. An unknown game is the only error case.
 func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 	game, ok := s.game(gameID)
@@ -362,7 +362,7 @@ type AggregateSearchResult struct {
 	Exhausted bool `json:"exhausted"`
 	// AttemptedCount is how many of the game's configured sources actually
 	// had a search attempted against them - capability-less sources are
-	// skipped silently (see SearchAllSources's doc comment) and never
+	// skipped silently (see searchAllSources's doc comment) and never
 	// counted here. Zero means NONE of the game's sources support searching
 	// at all, which is indistinguishable from a genuine zero-result search
 	// unless a caller checks this field - the honesty-notice fix (#58 item
@@ -375,7 +375,7 @@ type AggregateSearchResult struct {
 // page/pageSize request) might have a page N+1, using the per-single-source
 // heuristic (TotalCount bounds it precisely when the source reports one;
 // otherwise a full page might mean more, a short one means none) - applied
-// here per CONTRIBUTING SOURCE so SearchAllSources can tell a
+// here per CONTRIBUTING SOURCE so searchAllSources can tell a
 // truly-exhausted merge from one that might still have more (see
 // AggregateSearchResult.Exhausted's doc comment).
 // pageSize <= 0 (e.g. the CLI's "let the source apply its own default" case,
@@ -390,12 +390,12 @@ func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
 	return len(res.Mods) == pageSize
 }
 
-// SearchAllSources searches every source configured for a game concurrently
+// searchAllSources searches every source configured for a game concurrently
 // and merges the results (design §5). Per-source failures become Warnings —
 // one flaky API must not hide local modlets; only all-sources-failed is an
 // error. Sources without search capability are skipped silently. Pagination
 // is per-source: page N requests page N from each source and merges.
-func (s *Service) SearchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
+func (s *Service) searchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
 	game, ok := s.game(gameID)
 	if !ok {
 		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
@@ -576,7 +576,7 @@ func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod
 }
 
 // SourceCapabilities reports sourceID's declared capabilities (#97: static
-// lock gating). Mirrors SearchAllSources' registry access (service.go's
+// lock gating). Mirrors searchAllSources' registry access (service.go's
 // source.CapabilitiesOf(src) call).
 func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, error) {
 	src, err := s.registry.Get(sourceID)
@@ -1307,9 +1307,9 @@ func (s *Service) getLinker(method domain.LinkMethod) linker.Linker {
 	return linker.New(method)
 }
 
-// GetGameLinkMethod returns the effective link method for a game.
+// getGameLinkMethod returns the effective link method for a game.
 // Uses the game's explicit setting if configured, otherwise falls back to global default.
-func (s *Service) GetGameLinkMethod(game *domain.Game) domain.LinkMethod {
+func (s *Service) getGameLinkMethod(game *domain.Game) domain.LinkMethod {
 	if game.LinkMethodExplicit {
 		return game.LinkMethod
 	}
@@ -1335,12 +1335,12 @@ func (s *Service) GetEffectiveLinkMethod(ctx context.Context, game *domain.Game,
 		if errors.Is(err, domain.ErrInvalidLinkMethod) {
 			return 0, fmt.Errorf("resolving effective link method: %w", err)
 		}
-		return s.GetGameLinkMethod(game), nil
+		return s.getGameLinkMethod(game), nil
 	}
 	if profile.LinkMethodExplicit {
 		return profile.LinkMethod, nil
 	}
-	return s.GetGameLinkMethod(game), nil
+	return s.getGameLinkMethod(game), nil
 }
 
 // GetInstaller returns an Installer configured for the given game.
@@ -1350,7 +1350,7 @@ func (s *Service) GetEffectiveLinkMethod(ctx context.Context, game *domain.Game,
 // installing through it, and core's export_test.go shims are invisible to
 // package main. Same reason DownloadMod and SaveFileChecksum stay exported.
 func (s *Service) GetInstaller(game *domain.Game) *Installer {
-	return s.newInstallerWithLinker(game, s.getLinker(s.GetGameLinkMethod(game)))
+	return s.newInstallerWithLinker(game, s.getLinker(s.getGameLinkMethod(game)))
 }
 
 // getInstallerForProfile returns an Installer whose linker honors
@@ -1615,11 +1615,14 @@ func (s *Service) GetDeployedFilesForMod(ctx context.Context, gameID, profileNam
 	return s.db.GetDeployedFilesForMod(ctx, gameID, profileName, sourceID, modID)
 }
 
-// GetLastDeployTime returns the timestamp of the most recent deploy for the
+// getLastDeployTime returns the timestamp of the most recent deploy for the
 // given game/profile (#106a's dashboard "Last deploy" row), or nil if it has
 // never been deployed - see db.DB.GetLastDeployTime's own doc comment for
-// why nil is not an error.
-func (s *Service) GetLastDeployTime(ctx context.Context, gameID, profileName string) (*time.Time, error) {
+// why nil is not an error. Unexported (final review, Important #3 / #301):
+// GameStatus is the only caller left, cmd's --json switched from its own
+// hand-built read to service.GameStatus, and core.VerifyReport/Status don't
+// need a last-deploy timestamp at all.
+func (s *Service) getLastDeployTime(ctx context.Context, gameID, profileName string) (*time.Time, error) {
 	return s.db.GetLastDeployTime(ctx, gameID, profileName)
 }
 

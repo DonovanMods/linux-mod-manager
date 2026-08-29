@@ -94,7 +94,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak deployed")
 
-	outcomes, ok := svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok := svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	exmodOutcome, found := findOutcome(outcomes, "exmod")
 	require.True(t, found)
@@ -121,7 +121,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak still exists (exmodz-only merge must still produce one)")
 
-	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	_, found = findOutcome(outcomes, "pakmod")
 	require.False(t, found, "opted-out: pakmod must not appear in the merge fingerprint (membership changed)")
@@ -143,7 +143,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	_, err = os.Stat(mergedPath)
 	require.NoError(t, err, "merged pak still deployed")
 
-	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	pakOutcome, found = findOutcome(outcomes, "pakmod")
 	require.True(t, found, "re-opted-in: pakmod must appear in the merge fingerprint again")
@@ -158,7 +158,7 @@ func TestPakConvertEndToEnd(t *testing.T) {
 	require.Len(t, rec.lastSources, 1, "a disabled mod must contribute nothing to the merge")
 	require.Equal(t, "fake-compiler:exmod", rec.lastSources[0].ModRef)
 
-	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	_, found = findOutcome(outcomes, "pakmod")
 	require.False(t, found, "a disabled mod must not appear in the merge fingerprint")
@@ -204,7 +204,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	require.Len(t, rec.lastSources, 1)
 	require.Equal(t, "exmodz", rec.lastSources[0].Kind, "MergeCompile must receive Kind set even for a pure-exmodz profile (#221 regression net)")
 
-	outcomes, ok := svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok := svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	require.Len(t, outcomes, 1)
 	require.Equal(t, "exmodz", outcomes[0].Kind)
@@ -252,7 +252,7 @@ func TestNoPakModsByteIdentical(t *testing.T) {
 	// (verify's conversion_failed rows, status's conversion-failure counts)
 	// must NOT treat that legacy shape as a conversion failure - it predates
 	// pak conversion entirely (this profile has zero pak mods).
-	outcomes, ok = svc.MergedPakOutcomes(context.Background(), game, "default")
+	outcomes, ok = svc.MergedPakOutcomesForTest(context.Background(), game, "default")
 	require.True(t, ok)
 	require.Len(t, outcomes, 1)
 	require.True(t, outcomes[0].Converted, "a pre-#221 legacy marker (Kind:\"\", Converted:false) must never report as a conversion failure")

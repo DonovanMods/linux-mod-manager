@@ -760,7 +760,7 @@ func (s *Service) classifyCompileDeployMods(ctx context.Context, game *domain.Ga
 
 // recordMergeOutcome reports #255's post-sync merge readout: after a
 // successful syncMergedPak on a DeployCompile game, the just-written merge
-// fingerprint (MergedPakOutcomes) is the authoritative record of which
+// fingerprint (mergedPakOutcomes) is the authoritative record of which
 // mods' content the merged artifact carries and which participants fell
 // back to a raw individual deploy. The artifact name and counts land on
 // result (for progress-less callers) and as one DeployMergeSynced
@@ -775,7 +775,7 @@ func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, pro
 	if game.DeployMode != domain.DeployCompile {
 		return
 	}
-	outcomes, ok := s.MergedPakOutcomes(ctx, game, profileName)
+	outcomes, ok := s.mergedPakOutcomes(ctx, game, profileName)
 	if !ok {
 		return
 	}
@@ -799,12 +799,12 @@ func (s *Service) recordMergeOutcome(ctx context.Context, game *domain.Game, pro
 	emit(MergeEvent{Scope: Scope{Op: op}, Phase: DeployMergeSynced, MergedMods: result.MergedMods, Artifact: result.MergedArtifact, RawFallbacks: result.RawFallbacks})
 }
 
-// MergedPakOutcomes returns the stored merge fingerprint's per-mod entries
+// mergedPakOutcomes returns the stored merge fingerprint's per-mod entries
 // (with #221 conversion outcomes), if a merged pak exists for game+profile.
 // The game's compile source interprets the stored Kind strings (#256); a
 // stored fingerprint implies a source produced it, so failing to resolve
 // one now (unconfigured since) reads as "no outcomes available".
-func (s *Service) MergedPakOutcomes(ctx context.Context, game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
+func (s *Service) mergedPakOutcomes(ctx context.Context, game *domain.Game, profileName string) ([]MergedFingerprintEntry, bool) {
 	gameCache := s.GetGameCache(game)
 	cachePath := gameCache.ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
 	fp, ok := readMergedFingerprint(cachePath)
@@ -825,7 +825,7 @@ func (s *Service) MergedPakOutcomes(ctx context.Context, game *domain.Game, prof
 // those fields didn't exist yet, and fingerprintInputs/
 // mergedFingerprintsEqual deliberately never regenerate them for an
 // unchanged profile (input equality ignores outcomes). Without this
-// normalization, every consumer of MergedPakOutcomes (verify's
+// normalization, every consumer of mergedPakOutcomes (verify's
 // conversion_failed rows, status's conversion-failure counts) would report
 // a spurious, permanent "CONVERSION FAILED" for every exmodz mod on any
 // profile that predates #221 - forever, since nothing ever rewrites the
