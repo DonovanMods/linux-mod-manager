@@ -153,10 +153,6 @@ func TestDoDeploy_JSON_PlainTextPathUnaffected(t *testing.T) {
 	assert.False(t, jsonOutput, "the plain path must not have flipped the global")
 }
 
-// TestDoPurge_JSON_ConfirmationRequiredEmitsNoDocument pins Ruling 2's half
-// of Ruling 15: the undecidable prompt fails BEFORE mutating and prints no
-// document of its own - the envelope is reportError's job, off the error
-// return, so the command's own stdout stays empty.
 // --- mod enable / disable ---
 
 // withModSourceFlags points `lmm mod`'s -s/-p globals at the fixture's
