@@ -1089,21 +1089,22 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 		assert.Contains(t, out, "File conflicts detected:")
 		assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
 
-		// Ruling 7 delta: accepting re-runs ApplyInstall with
-		// AcceptConflicts set (core returns *core.ConflictError instead of
-		// calling back into the prompt), so the download step's lines print
-		// a SECOND time - between the prompt and the deploy line. Pinned
-		// exactly, since it is the one plain-text change this task makes to
-		// `lmm install`.
+		// Ruled Apply order (2026-08-29): accepting re-runs ApplyInstall
+		// with AcceptConflicts set (core returns *core.ConflictError
+		// instead of calling back into the prompt), and that re-run finds
+		// the cache WARM - the refused run's own fill is what made the
+		// conflict computable - so it downloads nothing and prints no
+		// download lines. Pinned exactly, since this and the hook/download
+		// ordering are the plain-text changes this task makes to
+		// `lmm install`. (The pre-fix capture repeated the whole download
+		// block here: "Downloading shared.esp...", its progress bar and
+		// "  Checksum: 9ded751c2570..." between the prompt and
+		// "Extracting to cache...".)
 		promptIdx := strings.Index(out, "1 file(s) will be overwritten. Continue? [y/N]: ")
 		require.GreaterOrEqual(t, promptIdx, 0)
 		afterPrompt := stripDownloadProgress(out[promptIdx:])
 		assert.Equal(t,
 			"1 file(s) will be overwritten. Continue? [y/N]: \n"+
-				"Downloading shared.esp...\n"+
-				"\r  [██████████████████████████████] 100.0% (16 B / 16 B)\n"+
-				"  Checksum: 9ded751c2570...\n"+
-				"\n"+
 				"Extracting to cache...\n"+
 				"Deploying to game directory...\n"+
 				"\n"+
@@ -1111,9 +1112,9 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 				"  Files deployed: 1\n"+
 				"  Added to profile: default\n",
 			afterPrompt,
-			"the accept re-run repeats the download step - Ruling 7's recorded delta")
-		assert.Equal(t, 2, strings.Count(out, "Downloading shared.esp..."),
-			"the download line prints once per ApplyInstall run")
+			"the accept re-run reuses the warm cache: no second download, and the file count still prints")
+		assert.Equal(t, 1, strings.Count(out, "Downloading shared.esp..."),
+			"one user-level install, one download - the accept re-run adds none")
 
 		content, readErr := os.ReadFile(filepath.Join(game.ModPath, "shared.esp"))
 		require.NoError(t, readErr)
@@ -1425,27 +1426,40 @@ func TestDoInstall_VersionFlag_WithDependency_UnknownVersionAbortsWholeInstall(t
 
 // TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError guards
 // the failure-path convention: diagnostics accumulated before a later fatal
-// error (here, a forced install.before_all warning, followed by a download
+// error (here, a forced install.before_all warning, followed by a deploy
 // failure) must still reach stderr - ApplyInstall's progress events fire
 // live, so doInstall's progress handler has already printed them by the
 // time the fatal error is returned.
+//
+// The fatal step used to be the DOWNLOAD (no AddDownload, so it 404s). The
+// 2026-08-29 Apply-order ruling moved the cache fill AHEAD of
+// install.before_all, so a failing download now aborts before the hook runs
+// at all and there is no accumulated diagnostic left to guard. The deploy is
+// the nearest later step: a read-only game directory makes linker.Deploy's
+// os.Symlink fail, which keeps the pairing this test exists for.
 func TestDoInstall_FailurePath_PrintsAccumulatedDiagnosticsBeforeError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission-based test is meaningless as root")
+	}
 	svc, game, src := setupDoInstallTest(t)
 	installForce = true
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
-	// Deliberately no AddDownload - the download 404s deterministically.
+	src.AddDownload("main", []byte("mod content"))
 
 	scriptsDir := t.TempDir()
 	failScript := filepath.Join(scriptsDir, "before_all.sh")
 	require.NoError(t, os.WriteFile(failScript, []byte("#!/bin/bash\necho boom >&2\nexit 1\n"), 0755))
 	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: failScript}}
 
+	require.NoError(t, os.Chmod(game.ModPath, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(game.ModPath, 0o755) }) // restore before TempDir's own cleanup removes it
+
 	stderr, err := captureStderrErr(t, func() error {
 		return doInstall(context.Background(), svc, game, nil)
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "download failed")
+	assert.Contains(t, err.Error(), "deployment failed")
 	assert.Contains(t, stderr, "Warning: install.before_all hook failed (forced): ")
 
 	_, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")

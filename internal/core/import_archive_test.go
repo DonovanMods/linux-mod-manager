@@ -364,6 +364,42 @@ func TestImportArchive_AcceptConflicts_OverwritesAndInstalls(t *testing.T) {
 	assert.Equal(t, "from-B", string(data))
 }
 
+// TestImportArchive_Conflicts_DeclineThenAccept_RunsHooksExactlyOnce is the
+// import twin of the ApplyInstall hook-count pin: the archive is cached and
+// the conflicts computed BEFORE install.before_all/before_each, so a refused
+// import runs no hook and the accept re-run runs each exactly once. One
+// user-level import, one run of every hook.
+func TestImportArchive_Conflicts_DeclineThenAccept_RunsHooksExactlyOnce(t *testing.T) {
+	svc, game, archiveB := setupImportArchiveConflict(t)
+
+	scriptsDir := t.TempDir()
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	beforeAll := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "install.before_all:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	beforeEach := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "install.before_each:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{BeforeAll: beforeAll, BeforeEach: beforeEach}}
+
+	_, err := svc.ImportArchive(context.Background(), game, "default", archiveB,
+		core.ImportArchiveOptions{SourceID: "acme-source", ModID: "B1"}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError))
+
+	_, statErr := os.Stat(callLog)
+	assert.True(t, os.IsNotExist(statErr),
+		"a refused conflict must run NO hook at all - the conflict gate precedes install.before_all")
+
+	_, err = svc.ImportArchive(context.Background(), game, "default", archiveB,
+		core.ImportArchiveOptions{SourceID: "acme-source", ModID: "B1", AcceptConflicts: true}, nil)
+	require.NoError(t, err)
+
+	logContent, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t, "install.before_all:\ninstall.before_each:B1\n", string(logContent),
+		"the accept re-run runs each hook exactly once (before_all with no mod identity, before_each with the imported mod's)")
+}
+
 // TestImportArchive_Force_SkipsTheConflictCheckEntirely pins that Force skips
 // the CHECK, not just the refusal: a real conflict exists and the import
 // still lands without a *ConflictError.

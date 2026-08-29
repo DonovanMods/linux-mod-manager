@@ -1137,7 +1137,7 @@ func setupThreeFileInstall(t *testing.T) (*core.Service, *domain.Game, *multiFil
 }
 
 // TestService_ApplyInstall_ContextCancelledBetweenPrimaryFiles pins that the
-// per-file download loop in applyInstallPrimary checks ctx at each iteration:
+// per-file download loop in fillPrimaryCache checks ctx at each iteration:
 // with three selected files and a ctx cancelled once file 1 is fully
 // downloaded, file 2's iteration never starts.
 //
@@ -1154,7 +1154,7 @@ func setupThreeFileInstall(t *testing.T) (*core.Service, *domain.Game, *multiFil
 //     server-side hook cancelled while file 1's own response was still in
 //     flight, which could abort file 1 instead.)
 //   - The assertions observe what a RUN iteration does before it touches the
-//     network at all: the InstallDownloadStarted event applyInstallPrimary
+//     network at all: the InstallDownloadStarted event fillPrimaryCache
 //     emits at the top of the body, and the source's GetDownloadURL call
 //     DownloadModToCache makes first. Delete the guard and both fire for
 //     file 2 no matter what the transport then does.
@@ -1454,7 +1454,7 @@ func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T
 }
 
 // TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion pins
-// the other observable consequence of the #94 stamp: applyInstallPrimary
+// the other observable consequence of the #94 stamp: fillPrimaryCache
 // sets hookCtx.ModVersion (flows.go, right after the stamp) from the SAME
 // now-effective mod.Version, so install.before_each - and therefore the
 // LMM_MOD_VERSION env var a hook script sees (hooks.go's Run) - reports the
@@ -1506,7 +1506,7 @@ exit 0`)
 
 // TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion is the #94
 // regression test for the BATCH path (applyInstallBatchMod), which installs
-// dependencies AND the primary identically and - unlike applyInstallPrimary
+// dependencies AND the primary identically and - unlike fillPrimaryCache
 // - always re-resolves its own file from the source rather than consulting
 // plan.Files. A dependency mod's source reports a mod-level Version ("2.0")
 // that differs from its actually-served primary file's Version ("2.0.1");
@@ -2275,14 +2275,16 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 
 // --- ApplyInstall: conflicts (Ruling 1 - *ConflictError / AcceptConflicts) ---
 //
-// These tests guard the post-download/pre-deploy conflict gate in
-// applyInstallPrimary - the check that sits at the pre-extraction CLI's own
-// prompt position (see InstallOptions.AcceptConflicts' doc comment). v2
-// Phase 3 Task 8 replaced the old confirmation callback with a typed error:
+// These tests guard the post-cache-fill/pre-hook conflict gate in
+// fillPrimaryCache - which, since the 2026-08-29 Apply-order ruling, sits
+// AHEAD of install.before_all/before_each rather than at the pre-extraction
+// CLI's own prompt position (see InstallOptions.AcceptConflicts' doc
+// comment). v2 Phase 3 Task 8 replaced the confirmation callback with a
+// typed error:
 // core computes the conflicts and returns *core.ConflictError before it
 // deploys or writes anything, and the frontend answers by re-running
 // ApplyInstall with AcceptConflicts set. Two twin arrangements exercise the
-// two ways applyInstallPrimary can reach the check:
+// two ways fillPrimaryCache can reach the check:
 //
 //   - "fresh install": the primary has NEVER been cached before -
 //     installer.GetConflicts can only see the conflict once the download
@@ -2290,7 +2292,7 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 //     Conflicts (computed pre-download) can never do for a mod like this -
 //     the live-proven silent-overwrite half of C1.
 //   - "same-version reinstall": plan.Replaces.Version == mod.Version, so
-//     applyInstallPrimary routes the fresh download into a
+//     fillPrimaryCache routes the fresh download into a
 //     reinstallCacheTransaction's STAGED cache, not the live one -
 //     installer.GetConflicts (bound to the LIVE cache) therefore still
 //     inspects the mod's PRE-existing cached file list, not the
@@ -2305,7 +2307,7 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 // install" leg of the conflict check (a pre-cached "newmod" would instead
 // exercise PlanInstall's own Conflicts detection - already covered by
 // TestService_PlanInstall_ConflictingFilesListsPathAndOwningMod).
-func applyInstallConflictFixture(t *testing.T) (svc *core.Service, game *domain.Game, gameDir string) {
+func applyInstallConflictFixture(t *testing.T) (svc *core.Service, game *domain.Game, gameDir string, mock *perModFileSource) {
 	t.Helper()
 	svc = newFlowsTestService(t)
 	gameDir = t.TempDir()
@@ -2315,17 +2317,17 @@ func applyInstallConflictFixture(t *testing.T) (svc *core.Service, game *domain.
 	installer := svc.GetInstaller(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
-	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	mock = &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
 	t.Cleanup(mock.Close)
 	svc.RegisterSource(mock)
 	registerDownloadableMod(t, mock, &domain.Mod{ID: "newmod", SourceID: "src", Name: "New Mod", Version: "1.0", GameID: "g1"}, "shared.esp", "new-content")
 
-	return svc, game, gameDir
+	return svc, game, gameDir, mock
 }
 
 func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 	t.Run("unaccepted conflicts return *ConflictError with the post-download list; plan-time Conflicts stayed empty", func(t *testing.T) {
-		svc, game, gameDir := applyInstallConflictFixture(t)
+		svc, game, gameDir, _ := applyInstallConflictFixture(t)
 
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
 		require.NoError(t, err)
@@ -2363,7 +2365,7 @@ func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 	})
 
 	t.Run("AcceptConflicts deploys - the frontend's re-run after its own prompt", func(t *testing.T) {
-		svc, game, gameDir := applyInstallConflictFixture(t)
+		svc, game, gameDir, _ := applyInstallConflictFixture(t)
 
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
 		require.NoError(t, err)
@@ -2381,7 +2383,7 @@ func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 	})
 
 	t.Run("Force implies AcceptConflicts - the check never runs", func(t *testing.T) {
-		svc, game, _ := applyInstallConflictFixture(t)
+		svc, game, _, _ := applyInstallConflictFixture(t)
 
 		plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
 		require.NoError(t, err)
@@ -2392,24 +2394,22 @@ func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 	})
 }
 
-// TestService_ApplyInstall_Conflicts_AcceptRerunRepeatsTheWholeApply records
-// the cost side of Ruling 1/7: a re-run with AcceptConflicts is a WHOLE
-// second ApplyInstall, so everything before the conflict gate happens again
-// - the install.before_all/before_each hooks fire a second time and the
-// download step repeats (its console lines are the CLI-visible half of the
-// same delta, pinned by TestDoInstall_ConflictPrompt_FreshUncachedInstall).
-// Pinned deliberately so a future change to the re-run shape is a visible
-// diff rather than a surprise.
-func TestService_ApplyInstall_Conflicts_AcceptRerunRepeatsTheWholeApply(t *testing.T) {
-	svc, game, _ := applyInstallConflictFixture(t)
+// TestService_ApplyInstall_Conflicts_DeclineThenAccept_RunsHooksExactlyOnce
+// pins the Apply ordering ruled on 2026-08-29: the cache fill and the
+// conflict computation both precede install.before_all/before_each, so a
+// REFUSED Apply costs ZERO hook runs and the frontend's accept re-run is the
+// only one that runs them. Decline->accept is ONE user-level install, so a
+// non-idempotent user hook fires exactly once across the pair.
+func TestService_ApplyInstall_Conflicts_DeclineThenAccept_RunsHooksExactlyOnce(t *testing.T) {
+	svc, game, _, _ := applyInstallConflictFixture(t)
 
 	scriptsDir := t.TempDir()
 	callLog := filepath.Join(scriptsDir, "calls.log")
 	beforeAll := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
-echo "install.before_all" >> `+callLog+`
+echo "install.before_all:$LMM_MOD_ID" >> `+callLog+`
 exit 0`)
 	beforeEach := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
-echo "install.before_each" >> `+callLog+`
+echo "install.before_each:$LMM_MOD_ID" >> `+callLog+`
 exit 0`)
 	seedHooks(t, svc, game, "default", domain.GameHooks{Install: domain.HookConfig{BeforeAll: beforeAll, BeforeEach: beforeEach}})
 
@@ -2419,18 +2419,44 @@ exit 0`)
 	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
 	require.ErrorAs(t, err, new(*core.ConflictError))
 
-	logContent, err := os.ReadFile(callLog)
-	require.NoError(t, err)
-	assert.Equal(t, "install.before_all\ninstall.before_each\n", string(logContent),
-		"the refused run still ran the hooks that precede the download")
+	_, statErr := os.Stat(callLog)
+	assert.True(t, os.IsNotExist(statErr),
+		"a refused conflict must run NO hook at all - the conflict gate precedes install.before_all")
 
 	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{AcceptConflicts: true}, nil)
 	require.NoError(t, err)
 
-	logContent, err = os.ReadFile(callLog)
+	logContent, err := os.ReadFile(callLog)
 	require.NoError(t, err)
-	assert.Equal(t, "install.before_all\ninstall.before_each\ninstall.before_all\ninstall.before_each\n", string(logContent),
-		"the accept re-run repeats every step before the conflict gate - hooks included")
+	assert.Equal(t, "install.before_all:\ninstall.before_each:newmod\n", string(logContent),
+		"the accept re-run runs each hook exactly once (before_all with no mod identity, before_each with the primary's)")
+}
+
+// TestService_ApplyInstall_Conflicts_DeclineThenAccept_DownloadsExactlyOnce is
+// the network half of the same ruling: the refused run's cache fill is what
+// makes the conflict computable at all, so the accept re-run finds the cache
+// WARM and skips the download entirely - the same HasFileIDs cache-first
+// guard ApplyProfileSwitch/ApplyProfileImport already use (#96/#138), not an
+// AcceptConflicts special case. The deployed-file count the frontend prints
+// must survive the skip.
+func TestService_ApplyInstall_Conflicts_DeclineThenAccept_DownloadsExactlyOnce(t *testing.T) {
+	svc, game, gameDir, mock := applyInstallConflictFixture(t)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "newmod", false)
+	require.NoError(t, err)
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError))
+	require.Equal(t, 1, mock.DownloadCount(), "sanity: the refused run DID fill the cache - that is what makes the conflict computable")
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{AcceptConflicts: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, mock.DownloadCount(), "the accept re-run must reuse the warm cache entry, not re-download it")
+	assert.Equal(t, 1, result.FilesDeployed, "the file count the frontend prints must survive the cache-first skip")
+
+	content, err := os.ReadFile(filepath.Join(gameDir, "shared.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "new-content", string(content), "the warm cache entry is what gets deployed")
 }
 
 // TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeployedContentUntouched
