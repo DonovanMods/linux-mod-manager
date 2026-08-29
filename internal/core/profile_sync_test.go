@@ -143,6 +143,31 @@ func TestApplyProfileSync_CreatesMissingProfileThenAdds(t *testing.T) {
 	assert.Equal(t, "auto1", profile.Mods[0].ModID)
 }
 
+// TestApplyProfileSync_CreatesMissingProfile_EvenWithEmptyDiff pins that
+// creation is NOT gated by the diff being non-empty (review Important #1 on
+// Task 15, #290): the pre-lift engine created a missing profile
+// unconditionally, before it ever computed a diff, so cmd's early-return on
+// an empty plan must still be able to reach this creation.
+func TestApplyProfileSync_CreatesMissingProfile_EvenWithEmptyDiff(t *testing.T) {
+	svc, game := newSyncTestService(t)
+
+	plan, err := svc.PlanProfileSync(context.Background(), game, "newprof")
+	require.NoError(t, err)
+	require.True(t, plan.Missing)
+	assert.Empty(t, plan.ToAdd)
+	assert.Empty(t, plan.ToRemove)
+	assert.Empty(t, plan.ToUpdate)
+
+	result, err := svc.ApplyProfileSync(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	assert.Zero(t, result.Added)
+
+	pm := svc.NewProfileManager()
+	profile, err := pm.Get(game.ID, "newprof")
+	require.NoError(t, err, "ApplyProfileSync must create the profile even when nothing needs syncing")
+	assert.Empty(t, profile.Mods)
+}
+
 // TestApplyProfileSync_AppliesAllThreeBuckets drives a plan with one entry
 // in each bucket through Apply and checks the resulting profile.yaml and
 // result counts.

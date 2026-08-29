@@ -168,6 +168,30 @@ func TestDoProfileSync_AlreadyInSync_PrintsMessageWithoutPrompting(t *testing.T)
 	assert.Equal(t, "Profile default is already in sync.\n", out)
 }
 
+// TestDoProfileSync_MissingProfile_EmptyDiff_StillCreatesProfile pins the
+// pre-lift engine's other missing-profile behavior (review Important #1 on
+// Task 15, #290): pm.Create fired unconditionally on ErrProfileNotFound
+// BEFORE the diff was even computed, so a profile name with nothing to sync
+// into it still got a profile.yaml written - silently, with the same
+// "already in sync" message and no prompt.
+func TestDoProfileSync_MissingProfile_EmptyDiff_StillCreatesProfile(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+
+	pm := getProfileManager(svc)
+	_, err := pm.Get(game.ID, "newprof")
+	require.Error(t, err, "precondition: newprof must not exist yet")
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, []string{"newprof"})
+	})
+
+	assert.Equal(t, "Profile newprof is already in sync.\n", out)
+
+	profile, err := pm.Get(game.ID, "newprof")
+	require.NoError(t, err, "a missing profile must still be created even with nothing to sync into it")
+	assert.Empty(t, profile.Mods)
+}
+
 // TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels pins the prompt
 // itself (printed with no trailing newline, so "Cancelled." lands on the
 // same line) and the fact that declining mutates nothing.

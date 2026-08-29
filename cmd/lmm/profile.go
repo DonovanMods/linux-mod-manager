@@ -595,6 +595,16 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 	}
 
 	if len(plan.ToAdd) == 0 && len(plan.ToRemove) == 0 && len(plan.ToUpdate) == 0 {
+		// The pre-lift engine called pm.Create unconditionally before ever
+		// computing the diff, so a missing profile always got a profile.yaml
+		// even with nothing to sync into it. ApplyProfileSync still must be
+		// reached for that side effect - it creates on plan.Missing
+		// regardless of the buckets.
+		if plan.Missing {
+			if _, err := service.ApplyProfileSync(ctx, game, plan, nil); err != nil {
+				return err
+			}
+		}
 		fmt.Printf("Profile %s is already in sync.\n", profileName)
 		return nil
 	}
