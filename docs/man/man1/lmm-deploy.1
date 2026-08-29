@@ -31,11 +31,16 @@ a clean slate, useful when mods have gotten out of sync.
 Use --all to deploy all mods including disabled ones (e.g., after a purge).
 
 .PP
+Use --dry-run to print what the deploy would do - which mods, which files,
+what a --purge pass would remove first - without changing anything.
+
+.PP
 Examples:
   lmm deploy --game skyrim-se
   lmm deploy --game skyrim-se --all
   lmm deploy --game skyrim-se --method hardlink
   lmm deploy --game skyrim-se --purge
+  lmm deploy --game skyrim-se --dry-run
   lmm deploy 12345 --game skyrim-se
   lmm deploy 12345 --game skyrim-se --source curseforge
   lmm deploy 12345 --game skyrim-se --method copy
@@ -44,6 +49,10 @@ Examples:
 .SH OPTIONS
 \fB-a\fP, \fB--all\fP[=false]
 	deploy all mods including disabled ones
+
+.PP
+\fB--dry-run\fP[=false]
+	print what the deploy would do without changing anything
 
 .PP
 \fB-f\fP, \fB--force\fP[=false]

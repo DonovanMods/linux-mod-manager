@@ -1,0 +1,20 @@
+## stdout
+Deploy plan for profile "default" (dry run)
+
+Would purge 2 file(s) before deploy...
+    - a.esp
+    - b.esp
+
+Deploying 2 mod(s) using symlink...
+
+  ✓ Mod A
+    + a.esp
+  ✓ Mod B
+    + b.esp
+
+Would deploy: 2
+## stderr
+## error
+<nil>
+## tree
+<empty>

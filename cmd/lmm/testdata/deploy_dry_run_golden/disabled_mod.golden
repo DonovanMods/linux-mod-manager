@@ -1,0 +1,13 @@
+## stdout
+Deploy plan for profile "default" (dry run)
+
+Deploying 1 mod(s) using symlink...
+
+  ✗ Disabled Mod - mod Disabled Mod is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable off'
+
+Would deploy: 0, Skipped: 1
+## stderr
+## error
+<nil>
+## tree
+<empty>

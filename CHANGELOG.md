@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off. (#281)
+- `lmm deploy --dry-run` prints what a deploy would do — the mods it would touch in load order,
+  the files each would link (and any stale ones it would remove), what a `--purge` pass would
+  remove first, the merged-artifact readout on a compile game, and the hooks that would run —
+  without changing anything. `--verbose` adds the per-file detail. (#293)
 
 ### Removed
 
@@ -117,6 +121,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behind new `app.LoadSourceDefinitions`/`LoadSourceDefinitionFile`/`ConstructSource`/
   `ProbeSource` queries. `cmd/lmm`'s `boundaryAllowList` is now empty. No user-visible change: CLI
   output is byte-identical. (#292)
+
+- Internal: the deploy flow gains a Plan/Apply pair — `core.PlanDeploy` returns a `DeployPlan`
+  (per-mod link/remove file sets, the purge set, the hook list and the DeployCompile `MergePlan`)
+  and `core.ApplyDeploy` carries it out, refusing a plan whose installed-mod set has moved
+  (`ErrStalePlan`). `DeployProfile` stays as the Plan+Apply convenience, the flow moves out of
+  `flows.go` into `internal/core/deploy.go`, and `ConvergeDeployedFiles` is unexported (verify's
+  `--fix` pass was its only caller). No user-visible change to existing invocations: CLI output is
+  byte-identical. (#293)
 
 ### Fixed
 
