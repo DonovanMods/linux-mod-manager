@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/spf13/cobra"
 )
@@ -62,12 +61,15 @@ func doStatus(ctx context.Context, service *core.Service) error {
 		return showGameStatus(ctx, service, gameID)
 	}
 
-	if jsonOutput {
-		return outputStatusJSON(ctx, service, games)
-	}
+	// core.Status owns the per-game join (default game, profile names,
+	// active-profile mod count); this command only renders it. Built here
+	// rather than above the zero-games check so the `--game <id>` detail
+	// path above never pays for a summary it doesn't print.
+	report := service.Status(ctx)
 
-	// Load config to check for default game
-	defaultGame, _ := service.DefaultGame(ctx)
+	if jsonOutput {
+		return outputStatusJSON(report)
+	}
 
 	// Show summary of all games
 	fmt.Println("Configured Games:")
@@ -92,23 +94,14 @@ func doStatus(ctx context.Context, service *core.Service) error {
 		}
 	}
 
-	pm := service.NewProfileManager()
-
 	var totalMods int
-	for _, game := range games {
-		profiles, _ := pm.List(game.ID)
-
-		// Get mod count from active profile
-		var modCount int
-		if defaultProfile, err := pm.GetDefault(game.ID); err == nil {
-			mods, _ := service.GetInstalledMods(ctx, game.ID, defaultProfile.Name)
-			modCount = len(mods)
-			totalMods += modCount
-		}
+	for _, summary := range report.Games {
+		game := summary.Game
+		totalMods += summary.ModCount
 
 		// Mark default game
 		gameName := game.Name
-		if game.ID == defaultGame {
+		if summary.IsDefault {
 			gameName += " (default)"
 		}
 
@@ -118,8 +111,7 @@ func doStatus(ctx context.Context, service *core.Service) error {
 		// can't misalign any column after it (see printTable's doc
 		// comment; do not do this for an interior column).
 		if verbose {
-			linkMethod := service.GetGameLinkMethod(game)
-			linkStr := linkMethod.String()
+			linkStr := summary.LinkMethod.String()
 			if game.LinkMethodExplicit {
 				linkStr += "*" // Indicate per-game override
 			}
@@ -128,8 +120,8 @@ func doStatus(ctx context.Context, service *core.Service) error {
 				game.ID,
 				truncate(game.InstallPath, 30),
 				linkStr,
-				len(profiles),
-				colorCyan(strconv.Itoa(modCount)),
+				len(summary.Profiles),
+				colorCyan(strconv.Itoa(summary.ModCount)),
 			); err != nil {
 				return fmt.Errorf("writing row: %w", err)
 			}
@@ -137,8 +129,8 @@ func doStatus(ctx context.Context, service *core.Service) error {
 			if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
 				gameName,
 				truncate(game.InstallPath, 40),
-				modCount,
-				colorCyan(strconv.Itoa(len(profiles))),
+				summary.ModCount,
+				colorCyan(strconv.Itoa(len(summary.Profiles))),
 			); err != nil {
 				return fmt.Errorf("writing row: %w", err)
 			}
@@ -157,7 +149,7 @@ func doStatus(ctx context.Context, service *core.Service) error {
 	}
 	fmt.Println("† = mods in active profile")
 
-	fmt.Printf("\nTotal: %d game(s), %d mod(s) installed\n", len(games), totalMods)
+	fmt.Printf("\nTotal: %d game(s), %d mod(s) installed\n", len(report.Games), totalMods)
 
 	return nil
 }
@@ -177,33 +169,18 @@ type statusGameJSON struct {
 	IsDefault   bool     `json:"is_default,omitempty"`
 }
 
-func outputStatusJSON(ctx context.Context, service *core.Service, games []*domain.Game) error {
-	defaultGame, _ := service.DefaultGame(ctx)
-	pm := service.NewProfileManager()
-
-	out := statusJSONOutput{Games: make([]statusGameJSON, 0, len(games))}
-	for _, game := range games {
-		profiles, _ := pm.List(game.ID)
-		profileNames := make([]string, len(profiles))
-		for i, p := range profiles {
-			profileNames[i] = p.Name
-		}
-		var modCount int
-		if defaultProfile, err := pm.GetDefault(game.ID); err == nil {
-			mods, _ := service.GetInstalledMods(ctx, game.ID, defaultProfile.Name)
-			modCount = len(mods)
-		}
-		linkMethod := service.GetGameLinkMethod(game)
-		isDefault := game.ID == defaultGame
+func outputStatusJSON(report *core.StatusReport) error {
+	out := statusJSONOutput{Games: make([]statusGameJSON, 0, len(report.Games))}
+	for _, summary := range report.Games {
 		out.Games = append(out.Games, statusGameJSON{
-			ID:          game.ID,
-			Name:        game.Name,
-			InstallPath: game.InstallPath,
-			ModPath:     game.ModPath,
-			LinkMethod:  linkMethod.String(),
-			Profiles:    profileNames,
-			ModCount:    modCount,
-			IsDefault:   isDefault,
+			ID:          summary.Game.ID,
+			Name:        summary.Game.Name,
+			InstallPath: summary.Game.InstallPath,
+			ModPath:     summary.Game.ModPath,
+			LinkMethod:  summary.LinkMethod.String(),
+			Profiles:    summary.Profiles,
+			ModCount:    summary.ModCount,
+			IsDefault:   summary.IsDefault,
 		})
 	}
 	enc := json.NewEncoder(os.Stdout)
@@ -216,69 +193,29 @@ func showGameStatusJSON(ctx context.Context, service *core.Service, gameID strin
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
 	}
-	pm := service.NewProfileManager()
-	profiles, _ := pm.List(gameID)
-	profileList := make([]statusProfileJSON, len(profiles))
-	for i, p := range profiles {
-		profileList[i] = statusProfileJSON{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
+	st, err := service.GameStatus(ctx, game)
+	if err != nil {
+		return err
 	}
-	linkMethod := service.GetGameLinkMethod(game)
-	cachePath := service.GetGameCachePath(game)
+	profileList := make([]statusProfileJSON, len(st.Profiles))
+	for i, p := range st.Profiles {
+		profileList[i] = statusProfileJSON{Name: p.Name, ModCount: p.ModCount, IsDefault: p.IsDefault}
+	}
 	out := statusGameDetailJSON{
-		ID:                  game.ID,
-		Name:                game.Name,
-		InstallPath:         game.InstallPath,
-		ModPath:             game.ModPath,
-		LinkMethod:          linkMethod.String(),
-		EffectiveLinkMethod: linkMethod.String(),
-		LinkMethodSource:    "global",
+		ID:                  st.Game.ID,
+		Name:                st.Game.Name,
+		InstallPath:         st.Game.InstallPath,
+		ModPath:             st.Game.ModPath,
+		LinkMethod:          st.LinkMethod.String(),
+		EffectiveLinkMethod: st.EffectiveLinkMethod.String(),
+		LinkMethodSource:    st.LinkMethodSource,
 		Profiles:            profileList,
-		CachePath:           cachePath,
-	}
-	if game.LinkMethodExplicit {
-		out.LinkMethodSource = "game"
-	}
-	if defaultProfile, err := pm.GetDefault(gameID); err == nil {
-		// Mirror the text twin (showGameStatus): the effective method is the
-		// active profile's resolution (profile > game > global, #155).
-		method, err := service.GetEffectiveLinkMethod(ctx, game, defaultProfile.Name)
-		if err != nil {
-			return err
-		}
-		out.EffectiveLinkMethod = method.String()
-		if defaultProfile.LinkMethodExplicit {
-			out.LinkMethodSource = "profile"
-		}
-		mods, _ := service.GetInstalledMods(ctx, gameID, defaultProfile.Name)
-		out.ActiveProfile = defaultProfile.Name
-		out.InstalledModCount = len(mods)
-		var enabled int
-		for _, m := range mods {
-			if m.Enabled {
-				enabled++
-			}
-		}
-		out.EnabledModCount = enabled
-
-		lastDeploy, err := service.GetLastDeployTime(ctx, gameID, defaultProfile.Name)
-		if err != nil {
-			return fmt.Errorf("status: last deploy time: %w", err)
-		}
-		out.LastDeploy = lastDeploy
-
-		// #221: surface pak-conversion failures in status too (design §5),
-		// not just verify - a count read straight from the merged pak's
-		// stored fingerprint (MergedPakOutcomes), same source verify's own
-		// "conversion_failed" rows use.
-		if game.DeployMode == domain.DeployCompile {
-			if outcomes, ok := service.MergedPakOutcomes(ctx, game, defaultProfile.Name); ok {
-				for _, entry := range outcomes {
-					if !entry.Converted {
-						out.ConversionFailures++
-					}
-				}
-			}
-		}
+		CachePath:           st.CachePath,
+		ActiveProfile:       st.ActiveProfile,
+		InstalledModCount:   st.InstalledModCount,
+		EnabledModCount:     st.EnabledModCount,
+		LastDeploy:          st.LastDeploy,
+		ConversionFailures:  st.ConversionFailures,
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -334,92 +271,77 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 		return fmt.Errorf("game not found: %s", gameID)
 	}
 
-	pm := service.NewProfileManager()
+	// core.GameStatus owns the whole assembly - profile list, the three-level
+	// link-method resolution (#155/#81), the active profile's counts, its
+	// last deploy and its pak-conversion failures (#221) - so this command
+	// only renders it.
+	st, err := service.GameStatus(ctx, game)
+	if err != nil {
+		return err
+	}
 
-	fmt.Printf("Game: %s\n", game.Name)
-	fmt.Printf("  ID: %s\n", game.ID)
-	fmt.Printf("  Install Path: %s\n", game.InstallPath)
-	fmt.Printf("  Mod Path: %s\n", game.ModPath)
+	fmt.Printf("Game: %s\n", st.Game.Name)
+	fmt.Printf("  ID: %s\n", st.Game.ID)
+	fmt.Printf("  Install Path: %s\n", st.Game.InstallPath)
+	fmt.Printf("  Mod Path: %s\n", st.Game.ModPath)
 
 	// Show the effective link method for the active profile (the game's
 	// default profile - the one deploys target): per-profile > per-game >
-	// global default (#81).
-	activeProfile, activeErr := pm.GetDefault(gameID)
+	// global default (#81). The global-default line stays --verbose-only.
 	switch {
-	case activeErr == nil && activeProfile.LinkMethodExplicit:
-		fmt.Printf("  Link Method: %s (per-profile)\n", colorCyan(activeProfile.LinkMethod.String()))
-	case game.LinkMethodExplicit:
-		fmt.Printf("  Link Method: %s (per-game)\n", colorCyan(service.GetGameLinkMethod(game).String()))
+	case st.LinkMethodSource == "profile":
+		fmt.Printf("  Link Method: %s (per-profile)\n", colorCyan(st.EffectiveLinkMethod.String()))
+	case st.LinkMethodSource == "game":
+		fmt.Printf("  Link Method: %s (per-game)\n", colorCyan(st.LinkMethod.String()))
 	case verbose:
-		fmt.Printf("  Link Method: %s (global default)\n", colorCyan(service.GetGameLinkMethod(game).String()))
+		fmt.Printf("  Link Method: %s (global default)\n", colorCyan(st.LinkMethod.String()))
 	}
 
 	// Show cache path
-	cachePath := service.GetGameCachePath(game)
-	if game.CachePath != "" {
-		fmt.Printf("  Cache Path: %s (per-game)\n", game.CachePath)
+	if st.Game.CachePath != "" {
+		fmt.Printf("  Cache Path: %s (per-game)\n", st.Game.CachePath)
 	} else if verbose {
-		fmt.Printf("  Cache Path: %s (global default)\n", cachePath)
+		fmt.Printf("  Cache Path: %s (global default)\n", st.CachePath)
 	}
 
 	// Show source mappings in verbose mode
-	if verbose && len(game.SourceIDs) > 0 {
+	if verbose && len(st.Game.SourceIDs) > 0 {
 		fmt.Println("  Sources:")
-		for source, sourceGameID := range game.SourceIDs {
+		for source, sourceGameID := range st.Game.SourceIDs {
 			fmt.Printf("    %s: %s\n", source, sourceGameID)
 		}
 	}
 
 	fmt.Println()
 
-	// Get profiles
-	profiles, err := pm.List(gameID)
-	if err != nil {
-		return fmt.Errorf("listing profiles: %w", err)
-	}
-
-	if len(profiles) == 0 {
+	if len(st.Profiles) == 0 {
 		fmt.Println("No profiles configured.")
 		return nil
 	}
 
 	fmt.Println("Profiles:")
-	for _, p := range profiles {
+	for _, p := range st.Profiles {
 		defaultMark := ""
 		if p.IsDefault {
 			defaultMark = colorGreen(" (active)")
 		}
-		fmt.Printf("  - %s%s: %s mod(s)\n", p.Name, defaultMark, colorCyan(strconv.Itoa(len(p.Mods))))
+		fmt.Printf("  - %s%s: %s mod(s)\n", p.Name, defaultMark, colorCyan(strconv.Itoa(p.ModCount)))
 	}
 
 	// Show installed mods count for active profile
-	defaultProfile, err := pm.GetDefault(gameID)
-	if err == nil {
-		mods, _ := service.GetInstalledMods(ctx, gameID, defaultProfile.Name)
-		fmt.Printf("\nActive Profile: %s\n", colorGreen(defaultProfile.Name))
-		fmt.Printf("  Installed Mods: %s\n", colorCyan(strconv.Itoa(len(mods))))
+	if st.ActiveProfile != "" {
+		fmt.Printf("\nActive Profile: %s\n", colorGreen(st.ActiveProfile))
+		fmt.Printf("  Installed Mods: %s\n", colorCyan(strconv.Itoa(st.InstalledModCount)))
 
-		// Count enabled vs disabled
-		var enabled, disabled int
-		for _, m := range mods {
-			if m.Enabled {
-				enabled++
-			} else {
-				disabled++
-			}
-		}
-		if len(mods) > 0 {
+		if st.InstalledModCount > 0 {
 			// Disabled is a routine, expected state (not an error), so it's
 			// dimmed rather than red - accent, not alarm.
-			fmt.Printf("  Enabled: %s, Disabled: %s\n", colorGreen(strconv.Itoa(enabled)), colorDim(strconv.Itoa(disabled)))
+			disabled := st.InstalledModCount - st.EnabledModCount
+			fmt.Printf("  Enabled: %s, Disabled: %s\n", colorGreen(strconv.Itoa(st.EnabledModCount)), colorDim(strconv.Itoa(disabled)))
 		}
 
-		lastDeploy, err := service.GetLastDeployTime(ctx, gameID, defaultProfile.Name)
-		if err != nil {
-			return fmt.Errorf("status: last deploy time: %w", err)
-		}
-		deployDisplay := formatLastDeploy(lastDeploy)
-		if lastDeploy == nil {
+		deployDisplay := formatLastDeploy(st.LastDeploy)
+		if st.LastDeploy == nil {
 			// "Never deployed" is a routine, expected state for a freshly
 			// added game - dimmed rather than red, same convention as a
 			// disabled mod (accent, not alarm).
@@ -431,18 +353,8 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 
 		// #221 design §5: surface pak-conversion failures here too, not just
 		// 'lmm verify' - only when there's actually something to report.
-		if game.DeployMode == domain.DeployCompile {
-			if outcomes, ok := service.MergedPakOutcomes(ctx, game, defaultProfile.Name); ok {
-				var failures int
-				for _, entry := range outcomes {
-					if !entry.Converted {
-						failures++
-					}
-				}
-				if failures > 0 {
-					fmt.Printf("  pak conversion failures: %d (see 'lmm verify')\n", failures)
-				}
-			}
+		if st.ConversionFailures > 0 {
+			fmt.Printf("  pak conversion failures: %d (see 'lmm verify')\n", st.ConversionFailures)
 		}
 	}
 
