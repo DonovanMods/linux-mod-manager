@@ -70,7 +70,7 @@ func seedRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, so
 
 	newMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: newVersion, GameID: game.ID}
 	require.NoError(t, installer.Replace(context.Background(), game, &oldMod, &newMod, "default"))
-	require.NoError(t, svc.ApplyModUpdate(context.Background(), sourceID, modID, game.ID, "default", newVersion, newFileIDs))
+	require.NoError(t, svc.ApplyModUpdateForTest(context.Background(), sourceID, modID, game.ID, "default", newVersion, newFileIDs))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: newVersion, FileIDs: newFileIDs}))
 
 	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
@@ -478,7 +478,7 @@ func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *doma
 	}
 	newMod := oldMod
 	require.NoError(t, installer.ReplaceForUpdate(context.Background(), game, &oldMod, &newMod, "default", []string{"fileA"}, []string{"fileB"}))
-	require.NoError(t, svc.ApplyModUpdate(context.Background(), "src", "mod1", game.ID, "default", version, []string{"fileB"}))
+	require.NoError(t, svc.ApplyModUpdateForTest(context.Background(), "src", "mod1", game.ID, "default", version, []string{"fileB"}))
 	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileB"}}))
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")

@@ -117,6 +117,29 @@ func (s *Service) FreshSwitchPlanForTest(ctx context.Context, plan *SwitchPlan) 
 	return plan
 }
 
+// UpdateModVersionForTest exposes updateModVersion behind the same beginOp
+// gate the exported wrapper (phase-2-close review Important #3) removed:
+// zero production callers, and core's own rollback-fixture tests are its
+// only remaining callers.
+func (s *Service) UpdateModVersionForTest(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.updateModVersion(ctx, sourceID, modID, gameID, profileName, newVersion)
+}
+
+// ApplyModUpdateForTest is UpdateModVersionForTest's ApplyModUpdate twin.
+func (s *Service) ApplyModUpdateForTest(ctx context.Context, sourceID, modID, gameID, profileName, newVersion string, fileIDs []string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.applyModUpdate(ctx, sourceID, modID, gameID, profileName, newVersion, fileIDs)
+}
+
 // ConvergeDeployedFilesForTest exposes convergeDeployedFiles behind the same
 // beginOp gate the exported wrapper the deploy lift (#293) removed used to
 // take: verify's --fix pass is production's only caller, but convergence's

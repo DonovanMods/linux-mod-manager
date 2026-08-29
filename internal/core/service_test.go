@@ -358,7 +358,7 @@ func TestService_UpdateModVersion(t *testing.T) {
 	require.NoError(t, err)
 
 	// Update the version
-	err = svc.UpdateModVersion(context.Background(), "test", "123", "skyrim-se", "default", "2.0.0")
+	err = svc.UpdateModVersionForTest(context.Background(), "test", "123", "skyrim-se", "default", "2.0.0")
 	require.NoError(t, err)
 
 	// Verify the update
