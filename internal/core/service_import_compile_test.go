@@ -57,7 +57,7 @@ func TestImportMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "Bear_Mount.exmodz")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
+	importer := svc.NewImporterForTest(game)
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, src.validateCalls)
@@ -92,7 +92,7 @@ func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "CoolMod.pak")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
+	importer := svc.NewImporterForTest(game)
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, src.validateCalls, "import must validate the pak via ValidateSource")
@@ -112,7 +112,7 @@ func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "fake-pak-bytes", string(deployableData), "a deployable copy of the raw pak must also be staged")
 
-	require.NoError(t, svc.MarkImportedFileComplete(context.Background(), game, result.Mod, result.RetainedFileID))
+	require.NoError(t, svc.MarkImportedFileCompleteForTest(context.Background(), game, result.Mod, result.RetainedFileID))
 
 	manifests, err := gameCache.FileManifests(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestImportMod_DeployCompile_MalformedExmodz_FailsLoud(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "Bad_Mount.exmodz")
 	require.NoError(t, os.WriteFile(archivePath, []byte("not-a-valid-exmodz"), 0o644))
 
-	importer := svc.NewImporter(game)
+	importer := svc.NewImporterForTest(game)
 	_, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 }
@@ -157,14 +157,14 @@ func TestImportMod_DeployCompile_ZipPassthroughUnaffected(t *testing.T) {
 	}
 
 	compileSvc, compileSrc, compileGame := newImportCompileTestGame(t)
-	compileImporter := compileSvc.NewImporter(compileGame)
+	compileImporter := compileSvc.NewImporterForTest(compileGame)
 	compileResult, err := compileImporter.Import(context.Background(), makeArchive(t), compileGame, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 0, compileSrc.compileCalls)
 
 	extractSvc, extractSrc, extractGame := newImportCompileTestGame(t)
 	extractGame.DeployMode = domain.DeployExtract
-	extractImporter := extractSvc.NewImporter(extractGame)
+	extractImporter := extractSvc.NewImporterForTest(extractGame)
 	extractResult, err := extractImporter.Import(context.Background(), makeArchive(t), extractGame, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 0, extractSrc.compileCalls)
@@ -201,7 +201,7 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "Bear_Mount.exmodz")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
+	importer := svc.NewImporterForTest(game)
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
@@ -251,7 +251,7 @@ func TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud(t *testing.T) {
 	archivePath := filepath.Join(tempDir, "CoolMod.pak")
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
 
-	importer := svc.NewImporter(game)
+	importer := svc.NewImporterForTest(game)
 	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)

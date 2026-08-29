@@ -107,169 +107,10 @@ func (s *fakeMatchSource) CheckUpdates(ctx context.Context, installed []domain.I
 	return nil, nil
 }
 
-// --- tryMatchSources (Task 2 of #76's PR2 plan: import scan-matching generalizes) ---
-//
-// tryMatchCurseForge used to consult CurseForge only. tryMatchSources
-// generalizes it to iterate SourcesForGame(game.ID) (already ID-sorted),
-// filtered to search-capable sources, and returns the first source whose
-// search turns up a result - the same "first non-empty result wins"
-// acceptance rule as before, unchanged.
-
-// setupTryMatchSourcesTest builds a *core.Service and registers game with it
-// via SaveGame - required because tryMatchSources calls
-// service.SourcesForGame, which (unlike resolveSource) resolves gameID
-// against the service's own internal game registry, not a bare struct.
-func setupTryMatchSourcesTest(t *testing.T) (*core.Service, *domain.Game) {
-	t.Helper()
-
-	svc, err := core.NewService(core.ServiceConfig{
-		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir()}
-	require.NoError(t, svc.SaveGame(context.Background(), game))
-
-	return svc, game
-}
-
-// TestTryMatchSources_NonCurseForgeSourceMatches proves the generalization:
-// a source with an arbitrary (non-CurseForge) ID supplies a match.
-func TestTryMatchSources_NonCurseForgeSourceMatches(t *testing.T) {
-	svc, game := setupTryMatchSourcesTest(t)
-	src := newFakeMatchSource("acme-source")
-	src.searchMods = []domain.Mod{{ID: "42", SourceID: "acme-source", Name: "Acme Mod"}}
-	svc.RegisterSource(src)
-	game.SourceIDs = map[string]string{"acme-source": "g1"}
-
-	matched, err := tryMatchSources(context.Background(), svc, game, "Acme")
-
-	require.NoError(t, err)
-	require.NotNil(t, matched)
-	assert.Equal(t, "acme-source", matched.SourceID)
-	assert.Equal(t, "42", matched.ID)
-}
-
-// TestTryMatchSources_MultiSourceOrder_CurseforgeBeforeNexusmods pins the
-// ID-sorted iteration order design §4.2 calls out explicitly: "curseforge"
-// sorts before "nexusmods" alphabetically, so typical two-built-in setups
-// keep today's outcome. Registration order is deliberately the opposite of
-// alphabetical, to prove the winner is decided by sort order, not
-// registration order.
-func TestTryMatchSources_MultiSourceOrder_CurseforgeBeforeNexusmods(t *testing.T) {
-	svc, game := setupTryMatchSourcesTest(t)
-	cf := newFakeMatchSource("curseforge")
-	cf.searchMods = []domain.Mod{{ID: "1", SourceID: "curseforge", Name: "CF Match"}}
-	nx := newFakeMatchSource("nexusmods")
-	nx.searchMods = []domain.Mod{{ID: "2", SourceID: "nexusmods", Name: "NX Match"}}
-	svc.RegisterSource(nx)
-	svc.RegisterSource(cf)
-	game.SourceIDs = map[string]string{"curseforge": "g1", "nexusmods": "g1"}
-
-	matched, err := tryMatchSources(context.Background(), svc, game, "Match")
-
-	require.NoError(t, err)
-	require.NotNil(t, matched)
-	assert.Equal(t, "curseforge", matched.SourceID, "curseforge sorts before nexusmods alphabetically and must win")
-}
-
-// TestTryMatchSources_NoSearchableSources_CleanNoMatch guards the "no
-// error" half of the contract: when the game's only configured source
-// declares no search capability, tryMatchSources returns a clean no-match,
-// not an error - the loop has nothing to try, which is not a failure.
-func TestTryMatchSources_NoSearchableSources_CleanNoMatch(t *testing.T) {
-	svc, game := setupTryMatchSourcesTest(t)
-	src := newFakeMatchSource("no-search")
-	src.caps.Search = false
-	svc.RegisterSource(src)
-	game.SourceIDs = map[string]string{"no-search": "g1"}
-
-	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
-
-	require.NoError(t, err)
-	assert.Nil(t, matched)
-}
-
-// TestTryMatchSources_NoConfiguredSources_CleanNoMatch covers the simplest
-// no-searchable-sources case: a game with no sources configured at all.
-func TestTryMatchSources_NoConfiguredSources_CleanNoMatch(t *testing.T) {
-	svc, game := setupTryMatchSourcesTest(t)
-
-	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
-
-	require.NoError(t, err)
-	assert.Nil(t, matched)
-}
-
-// --- tryMatchSources error semantics (PR #124 Copilot round 1, finding 2) ---
-//
-// A per-source search error used to survive the whole loop unconditionally:
-// if source A errored and source B then responded cleanly with zero
-// results, the stale error from A still came back to the caller, which
-// contradicts tryMatchSources' own doc comment ("a clean no-match, not an
-// error") - a real "no match" is not a failure just because an earlier
-// source happened to fail first. The fix: an error is only reported when
-// EVERY searchable source failed; any source that responds at all (even
-// with zero results) proves the round was not a wash.
-
-// TestTryMatchSources_FirstErrorsSecondEmpty_CleanNoMatchNotError is the
-// exact scenario Copilot flagged: source A errors, source B searches
-// successfully but finds nothing. The overall result must be a clean
-// no-match (nil, nil), not A's stale error.
-func TestTryMatchSources_FirstErrorsSecondEmpty_CleanNoMatchNotError(t *testing.T) {
-	svc, game := setupTryMatchSourcesTest(t)
-	failing := newFakeMatchSource("acme-fail")
-	failing.searchErr = errors.New("boom")
-	empty := newFakeMatchSource("beta-empty") // no searchMods set: succeeds with zero results
-	svc.RegisterSource(failing)
-	svc.RegisterSource(empty)
-	game.SourceIDs = map[string]string{"acme-fail": "g1", "beta-empty": "g1"}
-
-	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
-
-	require.NoError(t, err, "a later source's clean empty result must clear an earlier source's error")
-	assert.Nil(t, matched)
-}
-
-// TestTryMatchSources_AllSourcesError_ReturnsError guards the other half:
-// when every searchable source fails, the round genuinely produced nothing
-// usable and an error must still surface (not silently swallowed into a
-// no-match).
-func TestTryMatchSources_AllSourcesError_ReturnsError(t *testing.T) {
-	svc, game := setupTryMatchSourcesTest(t)
-	a := newFakeMatchSource("source-a")
-	a.searchErr = errors.New("boom a")
-	b := newFakeMatchSource("source-b")
-	b.searchErr = errors.New("boom b")
-	svc.RegisterSource(a)
-	svc.RegisterSource(b)
-	game.SourceIDs = map[string]string{"source-a": "g1", "source-b": "g1"}
-
-	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
-
-	require.Error(t, err)
-	assert.Nil(t, matched)
-}
-
-// TestTryMatchSources_FirstEmptySecondMatches_ReturnsMatch guards that a
-// clean empty result from an earlier source doesn't prevent a later
-// source's real match from being found and returned.
-func TestTryMatchSources_FirstEmptySecondMatches_ReturnsMatch(t *testing.T) {
-	svc, game := setupTryMatchSourcesTest(t)
-	empty := newFakeMatchSource("acme-empty")
-	matchSrc := newFakeMatchSource("beta-match")
-	matchSrc.searchMods = []domain.Mod{{ID: "5", SourceID: "beta-match", Name: "Found It"}}
-	svc.RegisterSource(empty)
-	svc.RegisterSource(matchSrc)
-	game.SourceIDs = map[string]string{"acme-empty": "g1", "beta-match": "g1"}
-
-	matched, err := tryMatchSources(context.Background(), svc, game, "Anything")
-
-	require.NoError(t, err)
-	require.NotNil(t, matched)
-	assert.Equal(t, "beta-match", matched.SourceID)
-}
+// The seven TestTryMatchSources_* tests that stood here moved to
+// internal/core/adopt_match_internal_test.go with the engine they pin, when
+// v2 Phase 2 Unit K Task 18 (#291) lifted scan-mode import into
+// core.PlanAdopt; they are TestMatchScannedMod_* there.
 
 // --- scan summary sourceTag (PR #124 Copilot round 1, finding 1) ---
 //
@@ -302,6 +143,34 @@ func TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash(t *testing
 	require.NoError(t, err)
 	assert.Contains(t, out, "(local, v", "an unmatched mod must show a plain \"local\" tag")
 	assert.NotContains(t, out, "local #", "an unmatched mod must not be tagged with a fake source ID like \"local #<id>\"")
+}
+
+// TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices pins the order
+// v2 Phase 2 Unit K's lift had to preserve: the extract-mode caveat and the
+// "Scanning ..." notice are printed BEFORE the scan runs, so a game with a
+// mod_path that does not exist still shows both before its error. That is
+// why runImportScan reads game.DeployMode itself rather than rendering
+// core.LocalScan.ExtractModeWarning, which only exists once the scan has
+// already succeeded.
+func TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	game.ModPath = filepath.Join(t.TempDir(), "does-not-exist")
+
+	importSkipMatch = true
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	out, err := captureStdoutErr(t, func() error {
+		return runImportScan(cmd, game, svc, "default")
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mod_path does not exist")
+	expected := "Note: Scan import for extract-mode games tracks mods in-place without caching.\n" +
+		"      Uninstall will only remove the database entry, not the files.\n" +
+		"\n" +
+		"Scanning " + game.ModPath + " for untracked mods...\n"
+	assert.Equal(t, expected, out)
 }
 
 // --- import --id default resolution (Task 3 of #76's PR2 plan) ---

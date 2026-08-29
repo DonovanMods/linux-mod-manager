@@ -85,6 +85,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core.ApplyProfileSync`, with a missing profile.yaml recorded on the plan (`Missing`) rather than
   created at plan time, and an `ErrStalePlan` freshness guard. `cmd/lmm` keeps only the prompt and
   the printed lines. No user-visible change: CLI output is byte-identical. (#290)
+- Internal: `lmm import`'s scan mode is Plan/Apply — the untracked-mod scan, the
+  source-matching loop (`tryMatchSources`), the metadata backfill and the adoption engine
+  (`importExistingMod`, plus a verbatim duplicate of core's own `copyFileStreaming`) move out of
+  `cmd/lmm/import.go` into `core.ScanLocal`/`core.PlanAdopt`/`core.ApplyAdoptBackfill`/
+  `core.ApplyAdopt`, with an `ErrStalePlan` freshness guard and progress reported through the
+  event stream. The backfill is its own small apply because the pre-lift engine saved it, and
+  reported its count, before the confirmation prompt and kept it on a decline. `cmd/lmm` keeps
+  only the prompt and the printed lines; `Importer.ScanModPath`/`FindDuplicateMod` are now
+  package-internal. No user-visible change: CLI output is byte-identical. (#291)
+- Internal: `lmm import`'s archive mode is `core.ImportArchive` — the enrichment/cache-rename tail,
+  the `#139` file resolution and completion marker, the `#197` retained-file fold, conflict gating,
+  the `install.*` hook quartet, the deploy, the DB row, the profile ref and the merged-pak sync move
+  out of `cmd/lmm/import.go` into `internal/core/import_archive.go`, with progress reported through
+  the event stream. It is one mutation rather than a Plan/Apply pair because its only decision point
+  (the overwrite prompt) needs a cache entry that does not exist until the archive is written, so the
+  conflict confirmation stays a callback for Phase 2. `cmd/lmm/hooks.go` is deleted — its last
+  callers were this tail's. No user-visible change: CLI output is byte-identical. (#291)
 
 ### Fixed
 
@@ -93,6 +110,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `initializing service:` prefix (rejecting the flag never actually opened a service). It now
   reads `Error: invalid --log-level "<value>": expected off, error, warn, info, or debug`
   identically on every path (#284, #285)
+- `lmm profile sync` on a profile with nothing to sync no longer touches the merged pak. Creating
+  a missing profile.yaml through an otherwise-empty sync reached the merged-pak sync, whose
+  zero-enabled-mods branch uninstalls the game's existing merged pak; it now stops after creating
+  the profile, matching `lmm profile apply`'s no-changes behaviour. (#291)
 - Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
   `hooks:`) (#295)
 

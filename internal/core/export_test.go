@@ -63,3 +63,44 @@ func (s *Service) SetModEnabledForTest(ctx context.Context, sourceID, modID, gam
 func (s *Service) GetInstallerForProfileForTest(ctx context.Context, game *domain.Game, profileName string) (*Installer, error) {
 	return s.getInstallerForProfile(ctx, game, profileName)
 }
+
+// ScanModPathForTest exposes scanModPath, which the scan-import lift (#291)
+// unexported: ScanLocal is production's only caller, but the scan's own
+// classification rules (copy vs extract mode, symlink detection, tilde
+// expansion) are pinned directly by importer_test.go.
+func (i *Importer) ScanModPathForTest(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
+	return i.scanModPath(ctx, game, installedMods, opts)
+}
+
+// FindDuplicateModForTest exposes findDuplicateMod, unexported by the same
+// lift; its name-normalization table is pinned by importer_test.go.
+func (i *Importer) FindDuplicateModForTest(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
+	return i.findDuplicateMod(modName, installedMods)
+}
+
+// NewImporterForTest exposes newImporter, which the archive-import lift
+// (#291) unexported: the scan/adopt/import flows are production's only
+// callers, but core's own tests drive a real Import round-trip through the
+// service-backed importer (the standalone core.NewImporter cannot resolve a
+// DeployCompile game's merge compiler).
+func (s *Service) NewImporterForTest(game *domain.Game) *Importer {
+	return s.newImporter(game)
+}
+
+// MarkImportedFileCompleteForTest exposes markImportedFileComplete behind the
+// same beginOp gate the exported wrapper the lift removed used to take.
+func (s *Service) MarkImportedFileCompleteForTest(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.markImportedFileComplete(ctx, game, mod, fileID)
+}
+
+// NewInstallerWithLinkerForTest exposes newInstallerWithLinker + getLinker,
+// both unexported by the same lift, as the one call core's tests actually
+// make: an Installer that deploys with an explicitly chosen link method.
+func (s *Service) NewInstallerWithLinkerForTest(game *domain.Game, method domain.LinkMethod) *Installer {
+	return s.newInstallerWithLinker(game, s.getLinker(method))
+}

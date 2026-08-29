@@ -60,8 +60,9 @@ type Importer struct {
 	resolveMergeCompiler func(gameID string) (source.MergeCompiler, error)
 }
 
-// NewImporter creates a new Importer that stages extraction in the OS temp dir.
-// Prefer Service.NewImporter, which stages under the data dir instead.
+// NewImporter creates a new Importer that stages extraction in the OS temp
+// dir. Prefer the service-backed importer (Service.newImporter, reached
+// through the import flows), which stages under the data dir instead.
 func NewImporter(cache *cache.Cache) *Importer {
 	return &Importer{
 		cache:     cache,
@@ -69,9 +70,12 @@ func NewImporter(cache *cache.Cache) *Importer {
 	}
 }
 
-// NewImporter creates an Importer for game, staging archive extraction under the
-// service's data dir rather than $TMPDIR.
-func (s *Service) NewImporter(game *domain.Game) *Importer {
+// newImporter creates an Importer for game, staging archive extraction under
+// the service's data dir rather than $TMPDIR. Unexported with the archive-
+// import lift (#291): ScanLocal/PlanAdopt/ApplyAdopt/ImportArchive are
+// production's only callers, and a frontend reaches an import through one of
+// those.
+func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp := NewImporter(s.GetGameCache(game))
 	imp.stagingRoot = s.stagingRoot()
 	imp.resolveMergeCompiler = s.mergeCompilerSourceForGame
@@ -143,13 +147,12 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 	// A NIL RESOLVER fails the same way for the same reason, with its own
 	// message: core.NewImporter (no Service context) cannot answer the
 	// format question for ANY file, and there is a correct importer to use
-	// instead. Production only ever constructs the service-backed importer
-	// (Service.NewImporter); this path is reachable only by direct
-	// core.NewImporter use.
+	// instead. Production only ever constructs the service-backed importer;
+	// this path is reachable only by direct core.NewImporter use.
 	var mc source.MergeCompiler
 	if game.DeployMode == domain.DeployCompile {
 		if i.resolveMergeCompiler == nil {
-			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not Service.NewImporter) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
+			return nil, fmt.Errorf("game %q requires DeployCompile to import %q, but this Importer was constructed without service context (via core.NewImporter, not the service-backed importer) and has no compiler resolver to consult - import via the service-backed importer instead", game.ID, filename)
 		}
 		var mcErr error
 		if mc, mcErr = i.resolveMergeCompiler(game.ID); mcErr != nil {
@@ -341,14 +344,15 @@ func matchImportedFile(files []domain.DownloadableFile, archiveFilename, version
 	return byVersion
 }
 
-// ResolveImportedFile resolves the source file an imported archive
+// resolveImportedFile resolves the source file an imported archive
 // corresponds to (#139): sourceMod is the already-fetched source mod (the
 // import flow fetched it for metadata enrichment or scan matching), version
 // the version the import recorded locally. Matching follows
 // matchImportedFile's rules; a clean no-match or ambiguity is (nil, nil), an
 // error only reports a failed source listing - callers treat it as
-// non-fatal and keep the import marker-less.
-func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sourceMod *domain.Mod, archiveFilename, version string, allowVersionFallback bool) (*domain.DownloadableFile, error) {
+// non-fatal and keep the import marker-less. Unexported with the archive-
+// import lift (#291): PlanAdopt and ImportArchive are its only callers.
+func (s *Service) resolveImportedFile(ctx context.Context, sourceID string, sourceMod *domain.Mod, archiveFilename, version string, allowVersionFallback bool) (*domain.DownloadableFile, error) {
 	files, err := s.GetModFiles(ctx, sourceID, sourceMod)
 	if err != nil {
 		return nil, fmt.Errorf("listing source files: %w", err)
@@ -356,22 +360,17 @@ func (s *Service) ResolveImportedFile(ctx context.Context, sourceID string, sour
 	return matchImportedFile(files, archiveFilename, version, allowVersionFallback), nil
 }
 
-// MarkImportedFileComplete stamps fileID's completion marker - with the
+// markImportedFileComplete stamps fileID's completion marker - with the
 // entry's member manifest - onto mod's import-written cache entry (#139), so
 // the file-granular cache-first guards (Cache.HasFileIDs) recognize the
 // entry instead of forcing one redundant redownload, and provenance-based
 // undeploy narrowing can attribute its members. Import writes the cache
 // directly (no staging commit), so the marker is stamped after the fact;
 // the members are whatever the entry actually holds.
-func (s *Service) MarkImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.markImportedFileComplete(ctx, game, mod, fileID)
-}
-
+//
+// The exported wrapper this replaced was removed with the archive-import
+// lift (#291): ApplyAdopt and ImportArchive call it from inside their own
+// beginOp, and core's tests reach it through MarkImportedFileCompleteForTest.
 func (s *Service) markImportedFileComplete(ctx context.Context, game *domain.Game, mod *domain.Mod, fileID string) error {
 	gameCache := s.GetGameCache(game)
 	members, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -526,7 +525,7 @@ type ScanResult struct {
 
 	// ResolvedFile is the matched source's own file this scanned archive
 	// corresponds to (#139), when the import flow could resolve one (exact
-	// FileName match via ResolveImportedFile); nil otherwise. Set by the
+	// FileName match via resolveImportedFile); nil otherwise. Set by the
 	// import flow after source matching, not by ScanModPath itself.
 	ResolvedFile *domain.DownloadableFile `json:"resolved_file,omitempty"`
 }
@@ -537,8 +536,10 @@ type ScanOptions struct {
 	DryRun      bool // If true, don't actually import, just report what would be done
 }
 
-// ScanModPath scans the game's mod_path for untracked mods
-func (i *Importer) ScanModPath(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
+// scanModPath scans the game's mod_path for untracked mods. Unexported
+// with the scan-import lift (#291): ScanLocal is the only caller, and a
+// frontend reaches it through that.
+func (i *Importer) scanModPath(ctx context.Context, game *domain.Game, installedMods []domain.InstalledMod, opts ScanOptions) ([]ScanResult, error) {
 	if game.ModPath == "" {
 		return nil, fmt.Errorf("game has no mod_path configured")
 	}
@@ -669,8 +670,10 @@ func (i *Importer) isFileTracked(filename string, installedMods []domain.Install
 	return false
 }
 
-// findDuplicateMod checks if a mod with similar name already exists (for duplicate prevention)
-func (i *Importer) FindDuplicateMod(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
+// findDuplicateMod checks if a mod with similar name already exists (for
+// duplicate prevention). Unexported with the scan-import lift (#291):
+// PlanAdopt/ApplyAdopt are the only callers.
+func (i *Importer) findDuplicateMod(modName string, installedMods []domain.InstalledMod) *domain.InstalledMod {
 	modNameLower := strings.ToLower(modName)
 	// Normalize: remove common suffixes like version numbers, underscores, dashes
 	normalized := normalizeModName(modNameLower)

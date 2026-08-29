@@ -146,7 +146,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	if err != nil {
 		return nil, fmt.Errorf("resolving effective link method: %w", err)
 	}
-	lnk := s.GetLinker(method)
+	lnk := s.getLinker(method)
 
 	result := &ConvergeResult{}
 	handled := make(map[string]bool) // every row path the row pass actually judged (kept or removed)

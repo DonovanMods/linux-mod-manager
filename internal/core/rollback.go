@@ -317,7 +317,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	if err != nil {
 		return result, err
 	}
-	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
+	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	prevMod := mod.Mod
 	prevMod.Version = mod.PreviousVersion

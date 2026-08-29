@@ -535,6 +535,15 @@ type Conflict struct {
 
 // GetConflicts checks if installing a mod would overwrite files from other mods.
 // Returns conflicts for files owned by OTHER mods (not the mod being installed).
+//
+// It stays EXPORTED with no in-tree caller outside this package: Task 19
+// (#291) folded ImportArchive's own conflict check inline, which removed
+// its last cmd/lmm caller, production and test alike. Unlike the
+// Service-primitive ratchet elsewhere in this phase, this is one method on
+// an exported type - package main still legitimately holds an *Installer
+// via Service.GetInstaller (see that method's own doc comment for the
+// precedent: cmd/lmm's tests build fixtures through it), so unexporting
+// just this method would buy nothing but a fourth shim.
 func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]Conflict, error) {
 	if i.db == nil {
 		return nil, nil

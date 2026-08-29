@@ -2908,7 +2908,7 @@ func TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod(t *te
 	setProfileLinkMethod(t, svc, "g1", "default", domain.LinkCopy)
 
 	seedNamedInstalledMod(t, svc, game, "src", "disable-me", "Disable Me", "1.0", true, map[string][]byte{"disable.esp": []byte("d")})
-	copyInstaller := svc.NewInstallerWithLinker(game, svc.GetLinker(domain.LinkCopy))
+	copyInstaller := svc.NewInstallerWithLinkerForTest(game, domain.LinkCopy)
 	require.NoError(t, copyInstaller.Install(context.Background(), game, &domain.Mod{ID: "disable-me", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	deployedPath := filepath.Join(gameDir, "disable.esp")

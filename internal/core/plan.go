@@ -27,11 +27,19 @@ func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileN
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
+	return snapshotOf(mods), nil
+}
+
+// snapshotOf builds the precondition from an ALREADY-READ installed-mod set,
+// for a Plan that had to load one anyway (PlanAdopt) - so the plan's own
+// views and its staleness precondition come from a single read rather than
+// several that could disagree.
+func snapshotOf(mods []domain.InstalledMod) installedSnapshot {
 	snap := make(installedSnapshot, len(mods))
 	for _, m := range mods {
 		snap[domain.ModKey(m.SourceID, m.ID)] = fmt.Sprintf("%s|%t", m.Version, m.Enabled)
 	}
-	return snap, nil
+	return snap
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod

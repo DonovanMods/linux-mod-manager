@@ -260,6 +260,94 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// v2 Phase 2 Unit K (#291). Tracked is deliberately left nil to
+			// pin that a nil slice marshals as "[]", not "null".
+			"local_scan",
+			core.LocalScan{
+				Tracked: nil,
+				Untracked: []core.ScanResult{{
+					FilePath: "/games/skyrim/Data/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
+					Mod: &jsonGoldenMod, MatchedSource: "local",
+				}},
+				Backfill: []domain.InstalledMod{{
+					Mod:          domain.Mod{ID: "7", SourceID: "nexusmods", Name: "Realistic Needs", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+				}},
+				ExtractModeWarning: true,
+			},
+		},
+		{
+			// The matched shape: source hit, resolved file, no errors.
+			"adopt_match",
+			core.AdoptMatch{
+				Untracked: core.ScanResult{
+					FilePath: "/games/skyrim/Data/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
+					Mod: &jsonGoldenMod, MatchedSource: "nexusmods",
+					ResolvedFile: &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
+				},
+				Mod:  &jsonGoldenMod,
+				File: &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
+			},
+		},
+		{
+			// Every optional key populated at once (Error and FileError are
+			// mutually exclusive on a real match) - the point is to pin each
+			// key's wire shape, not to be a plausible plan.
+			"adopt_plan",
+			core.AdoptPlan{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Scan: &core.LocalScan{
+					Untracked: []core.ScanResult{{
+						FilePath: "/games/skyrim/Data/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
+						Mod: &jsonGoldenMod, MatchedSource: "local",
+					}},
+					ExtractModeWarning: false,
+				},
+				Matches: []core.AdoptMatch{{
+					Untracked: core.ScanResult{
+						FilePath: "/games/skyrim/Data/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
+						Mod: &jsonGoldenMod, MatchedSource: "local",
+					},
+					Error:     "search failed: rate limited",
+					FileError: "listing source files: rate limited",
+				}},
+				Duplicates: []string{"already-installed-1.0.zip"},
+				SkipMatch:  false,
+			},
+		},
+		{
+			"adopt_backfill_result",
+			core.AdoptBackfillResult{Backfilled: 2},
+		},
+		{
+			// Every optional key populated at once, to pin each one's wire
+			// shape - a real import rarely produces all four diagnostics.
+			"import_archive_result",
+			core.ImportArchiveResult{
+				Mod:             &jsonGoldenMod,
+				LinkedSource:    "nexusmods",
+				AutoDetected:    true,
+				Renamed:         true,
+				FileID:          "file-1",
+				FileIDs:         []string{"file-1"},
+				Deployed:        7,
+				MergedPakSynced: true,
+				HookWarnings:    []string{"install.after_each hook failed: exit status 1"},
+				Warnings:        []string{"could not mark cache entry complete: permission denied"},
+				Notes:           []string{"Warning: could not update profile: mod is locked"},
+			},
+		},
+		{
+			"adopt_result",
+			core.AdoptResult{
+				Adopted: 2, Skipped: 1, Failed: 1,
+				Warnings: []string{"merge sync produced 1 raw fallback"},
+			},
+		},
+		{
 			"profile_sync_result",
 			core.ProfileSyncResult{
 				Added: 1, Removed: 1, Updated: 1,

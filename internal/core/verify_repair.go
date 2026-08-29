@@ -576,7 +576,7 @@ func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, m
 	if err != nil {
 		return err, nil, nil
 	}
-	installer := r.svc.NewInstallerWithLinker(r.game, r.svc.GetLinker(method))
+	installer := r.svc.newInstallerWithLinker(r.game, r.svc.getLinker(method))
 	// Undeploy-then-install, the same shape DeployProfile uses
 	// (internal/core/flows.go) and for the same reason: dst still holds
 	// whatever the previous deployment left behind (here, the dangling

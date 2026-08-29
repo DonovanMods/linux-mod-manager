@@ -1547,7 +1547,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		return nil
 	}
 
-	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
+	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	// mod.SourceID (NOT plan.SourceID) is used for every source call below,
 	// matching batchInstallMods' own `sourceID := mod.SourceID` exactly -
@@ -1791,7 +1791,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		emit(HookEvent{Scope: scope, Phase: InstallBeforeEachForced, Stage: "install.before_each", Detail: msg})
 	}
 
-	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
+	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 	downloadCache := s.GetGameCache(game)
 
 	var reinstallTxn *reinstallCacheTransaction

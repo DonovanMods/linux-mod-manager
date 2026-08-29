@@ -1060,6 +1060,101 @@ const (
 	// the swallowed lock refusal Ruling 9 preserves byte-for-byte - mirroring
 	// doProfileSync's "  Warning: could not update %s:%s: %v".
 	SyncUpdateNote
+
+	// --- v2 Phase 2 Unit K (#291): ApplyAdoptBackfill/ApplyAdopt progress
+	// events. Every Detail below is the printed line MINUS its leading
+	// indent, following SyncAddNote's convention, so a byte-identical
+	// frontend prints `fmt.Printf("<indent>%s\n", detail)` and nothing else.
+	// The indent and the --verbose gating differ per phase; see each
+	// constant. ---
+
+	// AdoptBackfillNote fires when one backfill candidate's metadata could
+	// not be refreshed - the source fetch failed, or the save did. Detail is
+	// "<mod name>: metadata fetch failed: <err>" or "<mod name>: metadata
+	// save failed: <err>"; both render the same way (--verbose-gated stdout,
+	// 2-space indent), and both leave the row untouched.
+	AdoptBackfillNote
+	// AdoptBackfilled fires for each row whose metadata was refreshed and
+	// saved. Detail is "✓ <mod name>: metadata updated (author: <author>)",
+	// --verbose-gated stdout at a 2-space indent.
+	AdoptBackfilled
+	// AdoptDuplicateSkipped fires when an untracked entry duplicates an
+	// already-adopted or already-installed mod. Detail is
+	// `⊘ <file>: skipped (duplicate of "<name>")` - unconditional stdout,
+	// 2-space indent.
+	AdoptDuplicateSkipped
+	// AdoptAdopted fires for each successfully adopted entry. Detail is
+	// "✓ <mod name>" - unconditional stdout, 2-space indent.
+	AdoptAdopted
+	// AdoptFailed fires when an entry could not be adopted (its cache write
+	// or DB save failed). Detail is "✗ <file>: <err>" - unconditional
+	// stdout, 2-space indent.
+	AdoptFailed
+	// AdoptNote is a per-entry diagnostic that did NOT stop the adoption:
+	// the completion marker could not be stamped, the profile ref could not
+	// be upserted, or the merged-pak sync itself failed. Detail is
+	// "Warning: could not ..." - --verbose-gated stdout at a 4-space indent
+	// (one level deeper than the per-entry line it follows).
+	AdoptNote
+	// AdoptSyncWarning carries one warning produced BY a successful
+	// merged-pak sync. Detail is the bare warning text - unconditional
+	// STDERR, rendered as "Warning: <detail>". AdoptResult.Warnings holds the
+	// same strings for non-streaming callers; a frontend renders one or the
+	// other, never both.
+	AdoptSyncWarning
+
+	// --- v2 Phase 2 Unit K (#291) Task 19: ImportArchive progress events -
+	// `lmm import <archive>`. As above, every Detail is the printed line
+	// MINUS its leading indent (and minus any "Warning: " the frontend adds
+	// itself), so a byte-identical frontend prints
+	// `fmt.Printf("<indent>%s\n", detail)` and nothing else. The archive
+	// readout is emitted as text rather than as one structured payload
+	// because its eight optional lines sit at two indent levels; the same
+	// facts are ALSO on ImportArchiveResult (Mod/LinkedSource/AutoDetected/
+	// Deployed) for a frontend that renders a finished result instead of a
+	// live stream. The two forced-hook lines reuse InstallBeforeAllForced/
+	// InstallBeforeEachForced, whose wording and rendering are already
+	// identical here. ---
+
+	// ImportArchiveFetching fires before the --id metadata fetch. Detail is
+	// "Fetching metadata from <source>..." - stdout, PRECEDED BY A BLANK
+	// LINE, no indent (`fmt.Printf("\n%s\n", detail)`).
+	ImportArchiveFetching
+	// ImportArchiveDetected opens the mod-detection readout, once the
+	// archive is cached and any enrichment has been folded in. Detail is
+	// "Mod: <name>" - stdout, preceded by a blank line, no indent.
+	ImportArchiveDetected
+	// ImportArchiveDetail is one readout field line following
+	// ImportArchiveDetected, in emission order: "Source: <id>", "ID: <id>",
+	// "Version: <v>" (omitted for the "unknown" sentinel), "Author: <a>"
+	// and "URL: <u>" (each omitted when empty), "(auto-detected from
+	// filename)" (only when the identity came from the filename pattern),
+	// and always "Files: <n>". Stdout at a 2-space indent.
+	ImportArchiveDetail
+	// ImportArchiveDeploying fires immediately before the deploy step.
+	// Detail is "Deploying to game directory..." - stdout, preceded by a
+	// blank line, no indent.
+	ImportArchiveDeploying
+	// ImportArchiveWarning is an unconditional diagnostic: an unmapped
+	// source, a failed metadata fetch, a failed source-file resolution, a
+	// failed completion-marker stamp, a failed merged-pak sync, or one
+	// warning produced BY a successful sync. Detail carries no prefix -
+	// STDERR, rendered as "Warning: <detail>". Every entry is ALSO on
+	// ImportArchiveResult.Warnings verbatim, so a streaming frontend must
+	// render one or the other, never both.
+	ImportArchiveWarning
+	// ImportArchiveNote is a --verbose-gated diagnostic printed at NO
+	// indent: the cache-rename failure and the conflict-check failure.
+	// Detail carries its own "Warning: " prefix (matching InstallResult.
+	// Notes' convention), so a byte-identical frontend prints
+	// `if verbose { fmt.Printf("%s\n", detail) }`. Mirrored on
+	// ImportArchiveResult.Notes.
+	ImportArchiveNote
+	// ImportArchiveProfileNote is the same kind of --verbose-gated note at a
+	// 2-space indent - the profile-create and profile-upsert failures, which
+	// the pre-lift CLI printed indented under the mod. Detail likewise
+	// carries its own "Warning: " prefix; also mirrored on Notes.
+	ImportArchiveProfileNote
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1089,6 +1184,12 @@ var deployPhaseNames = [...]string{
 	InstallLockRefusal: "install_lock_refusal", InstallChecksumSaveFailed: "install_checksum_save_failed",
 	InstallMergedPakSyncFailed: "install_merged_pak_sync_failed",
 	SyncAddNote:                "sync_add_note", SyncRemoveNote: "sync_remove_note", SyncUpdateNote: "sync_update_note",
+	AdoptBackfillNote: "adopt_backfill_note", AdoptBackfilled: "adopt_backfilled", AdoptDuplicateSkipped: "adopt_duplicate_skipped",
+	AdoptAdopted: "adopt_adopted", AdoptFailed: "adopt_failed", AdoptNote: "adopt_note", AdoptSyncWarning: "adopt_sync_warning",
+	ImportArchiveFetching: "import_archive_fetching", ImportArchiveDetected: "import_archive_detected",
+	ImportArchiveDetail: "import_archive_detail", ImportArchiveDeploying: "import_archive_deploying",
+	ImportArchiveWarning: "import_archive_warning", ImportArchiveNote: "import_archive_note",
+	ImportArchiveProfileNote: "import_archive_profile_note",
 }
 
 // String returns the phase's wire name.
@@ -1389,7 +1490,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		}
 		linkMethod = method
 	}
-	installer := s.NewInstallerWithLinker(game, s.GetLinker(linkMethod))
+	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 
 	var modsToDeploy []*domain.InstalledMod
 	if opts.ModID != "" {

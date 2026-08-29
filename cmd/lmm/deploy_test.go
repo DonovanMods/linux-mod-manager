@@ -425,8 +425,8 @@ func TestDoDeploy_Verbose_LinkMethodAndMarkDeployedWarnings_PrintAdjacentToTheir
 // warnings, even though (both pre- and post-extraction) after_each/
 // after_all are computed earlier in the function than the overrides check -
 // the overrides warning was printed immediately when computed, while the
-// hook warnings were accumulated and only printed afterward via
-// printHookWarnings. All three land on stderr, unconditionally.
+// hook warnings were accumulated and only printed afterward, in one batch.
+// All three land on stderr, unconditionally.
 func TestDoDeploy_OverridesWarning_PrintsBeforeAfterEachAfterAllHookWarnings(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
