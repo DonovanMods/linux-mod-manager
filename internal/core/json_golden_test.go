@@ -550,6 +550,34 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// ConvertPaks is a non-nil pointer to false, the tri-state case a
+			// plain bool cannot express ("applies here, and is off"), and
+			// the one that proves the outer pointer - not the embedded
+			// InstalledMod.ConvertPaks bool - owns the convert_paks key.
+			"mod_listing",
+			core.ModListing{
+				InstalledMod: domain.InstalledMod{
+					Mod:          jsonGoldenMod,
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+					Deployed:     true,
+					ConvertPaks:  true,
+				},
+				Locked:        true,
+				LockedVersion: "1.2.2",
+				ConvertPaks:   boolPtr(false),
+			},
+		},
+		{
+			// Mods is deliberately left nil (no `omitempty` on the tag) to
+			// pin that an empty listing marshals as "[]", not "null".
+			"mod_list",
+			core.ModList{GameID: "skyrim-se", Profile: "default", Mods: nil},
+		},
+		{
 			"conflict",
 			core.Conflict{RelativePath: "Data/textures/armor/mesh.dds", CurrentSourceID: "nexusmods", CurrentModID: "7"},
 		},
