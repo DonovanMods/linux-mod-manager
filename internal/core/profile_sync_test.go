@@ -84,6 +84,53 @@ func TestPlanProfileSync_ClassifiesAddRemoveUpdate(t *testing.T) {
 	assert.Equal(t, []string{"main"}, plan.ToUpdate[0].FileIDs)
 }
 
+// TestPlanProfileSync_BucketsAreDeterministicallyOrdered pins Ruling 4
+// (#298): ToAdd/ToUpdate follow the order GetInstalledMods returned them in
+// (installed_at, i.e. seed order here - deliberately NOT alphabetical, to
+// prove this isn't accidentally sorted by ModID), and ToRemove follows
+// profile.Mods' own order (AddMod append order). Before Ruling 4, all three
+// buckets were built by ranging Go maps keyed by domain.ModKey, so the order
+// was whatever that run's map iteration produced.
+func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
+	svc, game := newSyncTestService(t)
+	pm := svc.NewProfileManager()
+
+	// ToAdd: enabled, installed, not in the profile - seeded in a
+	// deliberately non-alphabetical order.
+	seedSyncInstalledMod(t, svc, game, "src", "zulu", "Zulu", "1.0", "default", true, nil)
+	seedSyncInstalledMod(t, svc, game, "src", "alpha", "Alpha", "1.0", "default", true, nil)
+	seedSyncInstalledMod(t, svc, game, "src", "mike", "Mike", "1.0", "default", true, nil)
+
+	// ToUpdate: enabled, installed with FileIDs, present in the profile
+	// without FileIDs - also non-alphabetical seed order.
+	seedSyncInstalledMod(t, svc, game, "src", "yankee", "Yankee", "1.0", "default", true, []string{"main"})
+	seedSyncInstalledMod(t, svc, game, "src", "bravo", "Bravo", "1.0", "default", true, []string{"main"})
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "yankee", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bravo", Version: "1.0"}))
+
+	// ToRemove: in the profile, not enabled/installed - profile order is the
+	// AddMod call order below (romeo before delta).
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "romeo", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "delta", Version: "1.0"}))
+
+	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	requireModIDOrder := func(t *testing.T, refs []domain.ModReference, want []string) {
+		t.Helper()
+		require.Len(t, refs, len(want))
+		got := make([]string, len(refs))
+		for i, r := range refs {
+			got[i] = r.ModID
+		}
+		assert.Equal(t, want, got)
+	}
+
+	requireModIDOrder(t, plan.ToAdd, []string{"zulu", "alpha", "mike"})
+	requireModIDOrder(t, plan.ToUpdate, []string{"yankee", "bravo"})
+	requireModIDOrder(t, plan.ToRemove, []string{"romeo", "delta"})
+}
+
 // TestPlanProfileSync_Names_OnlyForAddAndUpdate pins that Names resolves a
 // display name for ToAdd/ToUpdate entries only - doProfileSync never looked
 // up a name for a ToRemove entry (it only ever had the profile ref).

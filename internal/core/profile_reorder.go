@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -115,6 +116,9 @@ func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profile
 				key = matches[0]
 				ref = byKey[key]
 			default:
+				// Ruling 4 (#298): matches are "sourceID:modID" keys sharing
+				// the same modID, so sorting the keys sorts by source ID.
+				sort.Strings(matches)
 				return nil, fmt.Errorf("%w %s (use source:modid): %s", ErrAmbiguousModID, id, strings.Join(matches, ", "))
 			}
 		}

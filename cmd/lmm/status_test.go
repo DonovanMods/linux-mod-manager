@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,40 @@ func TestStatusCmd_ShowsDefaultGame(t *testing.T) {
 	// Command succeeds (note: default game is only shown when games are configured)
 	err = cmd.Execute()
 	assert.NoError(t, err)
+}
+
+// TestDoStatus_OrdersGamesByID pins Ruling 4 (#299): `lmm status` (both
+// plain-text and --json) lists multiple games ordered by game ID, not
+// whatever order Go's games map iteration happened to produce that run. IDs
+// are seeded deliberately out of order.
+func TestDoStatus_OrdersGamesByID(t *testing.T) {
+	svc := setupGameAddTest(t)
+	for _, id := range []string{"zulu", "mike", "alpha"} {
+		require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{ID: id, Name: id, ModPath: t.TempDir()}))
+	}
+	gameID = ""
+	verbose = false
+
+	jsonOutput = false
+	t.Cleanup(func() { jsonOutput = false })
+	out := captureStdout(t, func() error {
+		return doStatus(context.Background(), svc)
+	})
+	iAlpha := strings.Index(out, "alpha")
+	iMike := strings.Index(out, "mike")
+	iZulu := strings.Index(out, "zulu")
+	require.True(t, iAlpha >= 0 && iMike >= 0 && iZulu >= 0, "all three games must appear in the output: %q", out)
+	assert.True(t, iAlpha < iMike && iMike < iZulu, "games must be listed in ID order (alpha, mike, zulu), got: %q", out)
+
+	jsonOutput = true
+	out = captureStdout(t, func() error {
+		return doStatus(context.Background(), svc)
+	})
+	var decoded statusJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	require.Len(t, decoded.Games, 3)
+	gotIDs := []string{decoded.Games[0].ID, decoded.Games[1].ID, decoded.Games[2].ID}
+	assert.Equal(t, []string{"alpha", "mike", "zulu"}, gotIDs)
 }
 
 // TestStatusCmd_JSONOutput verifies status --json output structure (JSON contract / E2E shape).

@@ -1257,7 +1257,9 @@ func (s *Service) game(id string) (*domain.Game, bool) {
 	return g, ok
 }
 
-// gamesSnapshot returns the games in a fresh slice under the read lock.
+// gamesSnapshot returns the games in a fresh slice under the read lock,
+// ordered by game ID (Ruling 4, #299) rather than Go's own map iteration
+// order - ListGames' callers (lmm status, lmm game list) need a stable order.
 func (s *Service) gamesSnapshot() []*domain.Game {
 	s.gamesMu.RLock()
 	defer s.gamesMu.RUnlock()
@@ -1265,6 +1267,7 @@ func (s *Service) gamesSnapshot() []*domain.Game {
 	for _, g := range s.games {
 		out = append(out, g)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 

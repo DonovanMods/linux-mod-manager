@@ -101,11 +101,13 @@ type ProfileSyncResult struct {
 // anything (no DB writes, no filesystem changes) - callers may call it
 // speculatively, render it, and discard it.
 //
-// The three buckets are built exactly as doProfileSync built them: two maps
-// keyed by domain.ModKey, iterated for membership, with no deterministic
-// ordering imposed beyond Go's own (doProfileSync ranged the same maps
-// directly) - unlike PlanProfileApply's OrderByProfile passes, there is
-// nothing here to order by, since doProfileSync never did either.
+// Ruling 4 (#298): ToAdd/ToUpdate are ordered by GetInstalledMods' own
+// deterministic order (installed_at), and ToRemove by the profile's own mod
+// order - both are built by ranging the installedMods/profile.Mods slices
+// directly rather than the byKey/byRef lookup maps below (which exist only
+// for O(1) membership checks). Pre-Ruling-4, doProfileSync built all three
+// buckets by ranging those maps directly, so the order was whatever that
+// run's Go map iteration produced.
 func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profileName string) (*ProfileSyncPlan, error) {
 	pm := s.NewProfileManager()
 
@@ -143,7 +145,12 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 
 	plan := &ProfileSyncPlan{GameID: game.ID, Profile: profileName, Missing: missing, Names: map[string]string{}}
 
-	for key, ref := range installedRefs {
+	for _, im := range installedMods {
+		if !im.Enabled {
+			continue
+		}
+		key := domain.ModKey(im.SourceID, im.ID)
+		ref := installedRefs[key]
 		if profileRef, exists := profileRefs[key]; !exists {
 			plan.ToAdd = append(plan.ToAdd, ref)
 		} else if len(ref.FileIDs) > 0 && len(profileRef.FileIDs) == 0 {
@@ -151,9 +158,10 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		}
 	}
 
-	for key, ref := range profileRefs {
+	for _, mr := range profile.Mods {
+		key := domain.ModKey(mr.SourceID, mr.ModID)
 		if _, exists := installedRefs[key]; !exists {
-			plan.ToRemove = append(plan.ToRemove, ref)
+			plan.ToRemove = append(plan.ToRemove, mr)
 		}
 	}
 
