@@ -14,6 +14,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -577,4 +579,54 @@ func TestDoProfileSync_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
 	profile, err := getProfileManager(svc).Get(game.ID, "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "a dry run must not write the profile")
+}
+
+// --- import (archive / scan) ---
+
+func TestJSONGolden_ImportArchive(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	// --id/--source pin the imported mod's identity: an unlinked import
+	// mints a random local UUID, which no golden can pin.
+	src := newFakeMatchSource("acme-source")
+	src.mods["999"] = &domain.Mod{ID: "999", SourceID: "acme-source", Name: "Acme Mod", Version: "2.0", GameID: game.ID}
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"acme-source": game.ID}
+	importModID, importSource = "999", "acme-source"
+
+	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
+	createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
+
+	out := runJSONCommand(t, func() error {
+		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+	})
+	assertJSONCLIGolden(t, "import_archive_result", out)
+}
+
+func TestJSONGolden_ImportScan(t *testing.T) {
+	t.Run("result", func(t *testing.T) {
+		svc, game := setupDoImportTest(t)
+		game.DeployMode = domain.DeployCopy
+		require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "LooseMod-1.0.zip"), []byte("payload"), 0o644))
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		out := runJSONCommand(t, func() error {
+			return runImportScan(cmd, game, svc, "default")
+		})
+		assertJSONCLIGolden(t, "import_scan_result", out)
+	})
+
+	t.Run("dry_run_plan", func(t *testing.T) {
+		svc, game := setupDoImportTest(t)
+		game.DeployMode = domain.DeployCopy
+		importDryRun = true
+		require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "LooseMod-1.0.zip"), []byte("payload"), 0o644))
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		out := runJSONCommand(t, func() error {
+			return runImportScan(cmd, game, svc, "default")
+		})
+		assertJSONCLIGolden(t, "import_scan_dry_run", out, game.ModPath, "<GAME-DIR>")
+	})
 }
