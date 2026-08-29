@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -102,6 +103,11 @@ func TestModShowGolden_SparseMod(t *testing.T) {
 	assertModShowGolden(t, "sparse", out)
 }
 
+// TestModShowGolden_JSON's json_installed golden was re-recorded once, in
+// v2 Phase 3 Task 6 (#302), when --json switched to core.ModDetail - the
+// single deliberate JSON shape change Ruling 3 reserves. The same document
+// is also pinned by TestJSONGolden_ModShow ("mod_show_installed",
+// -update-json-cli); a future shape change has to move BOTH.
 func TestModShowGolden_JSON(t *testing.T) {
 	svc, game, src := setupDoModLockTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
@@ -150,8 +156,9 @@ func TestDoModShow_JSONDescriptionStaysRaw(t *testing.T) {
 		return doModShow(context.Background(), svc, game, "a")
 	})
 
-	var got map[string]any
+	var got core.ModDetail
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
-	assert.Equal(t, "<p>Line one.</p><br/><p>Line &amp; two.</p>", got["description"],
+	require.NotNil(t, got.Mod)
+	assert.Equal(t, "<p>Line one.</p><br/><p>Line &amp; two.</p>", got.Mod.Description,
 		"--json is a machine contract; the raw description must survive")
 }

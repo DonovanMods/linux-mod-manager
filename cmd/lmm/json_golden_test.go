@@ -296,3 +296,30 @@ func TestJSONGolden_Conflicts(t *testing.T) {
 		assertJSONCLIGolden(t, "conflicts_none", out)
 	})
 }
+
+// --- mod show ---
+
+func TestJSONGolden_ModShow(t *testing.T) {
+	t.Run("installed", func(t *testing.T) {
+		svc, game, src := setupDoModLockTest(t)
+		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
+		src.AddMod(richMod(game.ID), nil)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_show_installed", out)
+	})
+
+	t.Run("not_installed", func(t *testing.T) {
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assertJSONCLIGolden(t, "mod_show_not_installed", out)
+	})
+}

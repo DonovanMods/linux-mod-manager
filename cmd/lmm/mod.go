@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -588,20 +587,6 @@ func runModShow(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// modShowInstalled carries #97/#92's Installed section - closing #92's last
-// unshipped row (mod show was policy-blind) - for both the JSON and
-// human-readable code paths below, computed exactly once. Update policy
-// (SQLite, per-install) and Lock (profile YAML ref, per-profile) are
-// orthogonal (#97 design decision) and surfaced side by side.
-type modShowInstalled struct {
-	Version       string `json:"version"`
-	Profile       string `json:"profile"`
-	UpdatePolicy  string `json:"update_policy"`
-	Locked        bool   `json:"locked"`
-	LockedVersion string `json:"locked_version,omitempty"`
-	ConvertPaks   *bool  `json:"convert_paks,omitempty"` // #221: pak-to-exmod conversion; present only for merge-compile games
-}
-
 func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
 	var err error
 	modSource, err = resolveSource(svc, game, modSource, false)
@@ -627,49 +612,13 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	}
 	mod := detail.Mod
 
-	var installedInfo *modShowInstalled
-	if detail.Installed != nil {
-		installedInfo = &modShowInstalled{
-			Version:       detail.Installed.Version,
-			Profile:       detail.Installed.Profile,
-			UpdatePolicy:  policyToString(detail.Installed.UpdatePolicy),
-			Locked:        detail.Installed.Locked,
-			LockedVersion: detail.Installed.LockedVersion,
-			ConvertPaks:   detail.Installed.ConvertPaks,
-		}
+	// #86: the raw source description survives onto the wire (--json is a
+	// machine contract); only the human rendering below cleans it.
+	if jsonOutput {
+		return emitJSON(detail)
 	}
 
-	if jsonOutput {
-		type modShowJSON struct {
-			ID           string            `json:"id"`
-			Name         string            `json:"name"`
-			Version      string            `json:"version"`
-			Author       string            `json:"author"`
-			Summary      string            `json:"summary"`
-			Description  string            `json:"description"`
-			SourceURL    string            `json:"source_url,omitempty"`
-			PictureURL   string            `json:"picture_url,omitempty"`
-			Category     string            `json:"category"`
-			Endorsements *int64            `json:"endorsements,omitempty"`
-			Installed    *modShowInstalled `json:"installed,omitempty"`
-		}
-		out := modShowJSON{
-			ID:           mod.ID,
-			Name:         mod.Name,
-			Version:      mod.Version,
-			Author:       mod.Author,
-			Summary:      mod.Summary,
-			Description:  mod.Description,
-			SourceURL:    mod.SourceURL,
-			PictureURL:   mod.PictureURL,
-			Category:     mod.Category,
-			Endorsements: mod.Endorsements,
-			Installed:    installedInfo,
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
-	}
+	installedInfo := detail.Installed
 
 	// Human-readable output
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
@@ -713,7 +662,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	if installedInfo != nil {
 		fmt.Println()
 		fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
-		policyDisplay := installedInfo.UpdatePolicy
+		policyDisplay := policyToString(installedInfo.UpdatePolicy)
 		switch policyDisplay {
 		case "pinned":
 			policyDisplay = colorYellow(policyDisplay)

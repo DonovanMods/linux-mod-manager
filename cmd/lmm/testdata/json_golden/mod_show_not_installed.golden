@@ -16,11 +16,5 @@
     "files": [],
     "dependencies": [],
     "updated_at": "0001-01-01T00:00:00Z"
-  },
-  "installed": {
-    "version": "1.5",
-    "profile": "default",
-    "update_policy": "notify",
-    "locked": false
   }
 }
