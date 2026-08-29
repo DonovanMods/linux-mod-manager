@@ -122,7 +122,7 @@ func TestDoGameDetect_MarksConfiguredGamesAndExcludesFromAll(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.NoError(t, err)
 
 	out := buf.String()
@@ -153,7 +153,7 @@ func TestDoGameDetect_ExplicitSelectionRepairsConfiguredGame(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("1\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
 
@@ -180,7 +180,7 @@ func TestDoGameDetect_AllExcludedPrintsFriendlyMessage(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "already configured")
 }
@@ -194,7 +194,7 @@ func TestDoGameDetect_NoGamesFound(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader(""))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, nil)
+	err := doGameDetect(context.Background(), cmd, reader, svc, nil, nil)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "No moddable Steam games found.")
 }
@@ -222,7 +222,7 @@ func TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted(t *testi
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("1,2\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "converting detected game bad-game")
 
@@ -258,7 +258,7 @@ func TestDoGameDetect_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	cmd.SetOut(&buf)
 
 	err := assertStdinNeverRead(t, func() error {
-		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
 	})
 
 	require.ErrorIs(t, err, core.ErrConfirmationRequired)
@@ -287,7 +287,7 @@ func TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll(t *testing.T) {
 	cmd.SetOut(&buf)
 
 	err := assertStdinNeverRead(t, func() error {
-		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
 	})
 
 	require.NoError(t, err)
@@ -320,13 +320,20 @@ func TestDoGameDetect_AllFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T)
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 
-	err := assertStdinNeverRead(t, func() error {
-		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+	// v2 Phase 3 Ruling 15: under --json the run's whole output is the
+	// GameDetectResult document on stdout - the "Added:" console lines the
+	// plain path prints are suppressed, so the saved game is asserted from
+	// the document (and from games.yaml) instead.
+	var doc core.GameDetectResult
+	stdout := captureStdout(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+		})
 	})
+	decodeSingleDoc(t, stdout, &doc)
 
-	require.NoError(t, err)
-	assert.NotContains(t, buf.String(), "Add games to config?")
-	assert.Contains(t, buf.String(), "Added: Star Rupture (starrupture)")
+	assert.Empty(t, buf.String(), "no console text may sit beside the document")
+	assert.Equal(t, []string{"starrupture"}, doc.Saved)
 
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
@@ -353,7 +360,7 @@ func TestDoGameDetect_SelectFlagSelectsExplicitIndices(t *testing.T) {
 	cmd.SetOut(&buf)
 
 	err := assertStdinNeverRead(t, func() error {
-		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
 	})
 
 	require.NoError(t, err)
@@ -386,13 +393,18 @@ func TestDoGameDetect_SelectFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing
 	cmd := &cobra.Command{}
 	cmd.SetOut(&buf)
 
-	err := assertStdinNeverRead(t, func() error {
-		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+	// v2 Phase 3 Ruling 15: see the --all twin above - the document
+	// replaces the "Added:" console line under --json.
+	var doc core.GameDetectResult
+	stdout := captureStdout(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+		})
 	})
+	decodeSingleDoc(t, stdout, &doc)
 
-	require.NoError(t, err)
-	assert.NotContains(t, buf.String(), "Add games to config?")
-	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
+	assert.Empty(t, buf.String(), "no console text may sit beside the document")
+	assert.Equal(t, []string{"skyrim-se"}, doc.Saved)
 
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
@@ -443,7 +455,7 @@ func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loading games:")
 }

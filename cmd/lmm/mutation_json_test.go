@@ -12,11 +12,17 @@ package main
 // cmd/lmm/testdata/json_golden/ and the -update-json-cli flag.
 
 import (
+	"bufio"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source/steam"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+
+	"github.com/spf13/cobra"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -271,4 +277,83 @@ func TestJSONGolden_ModEdit(t *testing.T) {
 		return doModEdit(context.Background(), svc, game, "a")
 	})
 	assertJSONCLIGolden(t, "mod_edit_result", out)
+}
+
+// --- game set-default / clear-default / detect ---
+
+func TestJSONGolden_GameSettings(t *testing.T) {
+	t.Run("set_default", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		out := runJSONCommand(t, func() error {
+			return doGameSetDefault(cmd, svc, "skyrim-se")
+		})
+		assertJSONCLIGolden(t, "game_set_default_result", out)
+	})
+
+	t.Run("clear_default", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		require.NoError(t, svc.SetDefaultGame(context.Background(), "skyrim-se"))
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		out := runJSONCommand(t, func() error { return runGameClearDefault(cmd, nil) })
+		assertJSONCLIGolden(t, "game_clear_default_result", out)
+	})
+}
+
+func TestJSONGolden_GameDetect(t *testing.T) {
+	t.Run("all", func(t *testing.T) {
+		configDir = t.TempDir()
+		svc := newGameDetectTestService(t)
+		oldAll := gameDetectAll
+		gameDetectAll = true
+		t.Cleanup(func() { gameDetectAll = oldAll })
+		cmd := &cobra.Command{}
+		cmd.SetOut(&strings.Builder{})
+
+		out := runJSONCommand(t, func() error {
+			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc,
+				[]steam.DetectedGame{{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"}},
+				[]string{"steam library at /nowhere is unreadable"})
+		})
+		assertJSONCLIGolden(t, "game_detect_all", out)
+	})
+
+	// Ruling 2 + Ruling 15: with neither --all nor --select the selection
+	// prompt is unanswerable under --json, so the command must fail before
+	// saving anything AND print no listing of its own - the listing is
+	// console text that would sit beside the error envelope.
+	t.Run("no_flag_is_confirmation_required", func(t *testing.T) {
+		configDir = t.TempDir()
+		svc := newGameDetectTestService(t)
+		withJSONOutput(t)
+		// Both deciding flags explicitly off: this scenario is precisely
+		// "neither --all nor --select", and the package's other detect
+		// tests set them.
+		oldAll, oldSelect := gameDetectAll, gameDetectSelect
+		gameDetectAll, gameDetectSelect = false, ""
+		t.Cleanup(func() { gameDetectAll, gameDetectSelect = oldAll, oldSelect })
+		var buf strings.Builder
+		cmd := &cobra.Command{}
+		cmd.SetOut(&buf)
+
+		stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc,
+				[]steam.DetectedGame{{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture"}}, nil)
+		})
+
+		require.ErrorIs(t, err, core.ErrConfirmationRequired)
+		assert.Empty(t, stdout)
+		assert.Empty(t, stderr)
+		assert.Empty(t, buf.String(), "no listing may be printed under --json")
+
+		games, loadErr := config.LoadGames(configDir)
+		require.NoError(t, loadErr)
+		assert.Empty(t, games, "nothing may be saved when the prompt is refused")
+	})
 }

@@ -129,6 +129,11 @@ func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault stri
 		return err
 	}
 
+	// Ruling 15: the SettingsResult document, in place of the console line.
+	if jsonOutput {
+		return emitJSON(&core.SettingsResult{DefaultGame: newDefault})
+	}
+
 	cmd.Printf("Default game set to: %s (%s)\n", game.Name, newDefault)
 	return nil
 }
@@ -173,6 +178,12 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 	}
 
 	if defaultGame == "" {
+		// Already clear is not an error, and a --json caller is still owed
+		// the resulting state - which is the same empty default a real
+		// clear produces.
+		if jsonOutput {
+			return emitJSON(&core.SettingsResult{})
+		}
 		cmd.Println("No default game was set")
 		return nil
 	}
@@ -181,12 +192,20 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Ruling 15: the resulting state, not the "was: X" verb - see
+	// core.SettingsResult's doc comment.
+	if jsonOutput {
+		return emitJSON(&core.SettingsResult{})
+	}
+
 	cmd.Printf("Cleared default game (was: %s)\n", defaultGame)
 	return nil
 }
 
 func runGameDetect(cmd *cobra.Command, args []string) error {
-	cmd.Println("Scanning Steam libraries...")
+	if !jsonOutput {
+		cmd.Println("Scanning Steam libraries...")
+	}
 	svcCfg, err := getServiceConfig()
 	if err != nil {
 		return err
@@ -195,8 +214,13 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}
-	for _, w := range warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	// Ruling 15: nothing but the document under --json, so the scan's
+	// warnings are carried INTO it (GameDetectResult.Warnings) rather than
+	// printed to stderr and lost.
+	if !jsonOutput {
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
 	}
 
 	svc, err := initService(cmd.Context())
@@ -206,7 +230,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	defer closeService(svc)
 
 	reader := bufio.NewReader(os.Stdin)
-	return doGameDetect(cmd.Context(), cmd, reader, svc, games)
+	return doGameDetect(cmd.Context(), cmd, reader, svc, games, warnings)
 }
 
 // doGameDetect drives the interactive detect-and-select flow against an
@@ -214,8 +238,11 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 // library scan. service's ConfigDir is used both for the existing-games
 // lookup (to mark/exclude already-configured games, #205 item 2) and for
 // saving newly selected ones.
-func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, games []domain.DetectedGame) error {
+func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, games []domain.DetectedGame, detectWarnings []string) error {
 	if len(games) == 0 {
+		if jsonOutput {
+			return emitJSON(&core.GameDetectResult{Warnings: detectWarnings})
+		}
 		cmd.Println("No moddable Steam games found.")
 		return nil
 	}
@@ -225,14 +252,19 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return fmt.Errorf("loading games: %w", err)
 	}
 
-	cmd.Printf("Found %d moddable game(s):\n", len(games))
-	for i, g := range games {
-		marker := ""
-		if _, ok := existingGames[g.Slug]; ok {
-			marker = " " + colorGreen("[configured]")
+	// The listing is the prompt's own context; under --json there is no
+	// prompt (Ruling 2 decides the selection from --all/--select or fails)
+	// and no console text may sit beside the document.
+	if !jsonOutput {
+		cmd.Printf("Found %d moddable game(s):\n", len(games))
+		for i, g := range games {
+			marker := ""
+			if _, ok := existingGames[g.Slug]; ok {
+				marker = " " + colorGreen("[configured]")
+			}
+			cmd.Printf("  %d. %s (%s)%s\n", i+1, g.Name, g.Slug, marker)
+			cmd.Printf("      Path: %s\n", g.InstallPath)
 		}
-		cmd.Printf("  %d. %s (%s)%s\n", i+1, g.Name, g.Slug, marker)
-		cmd.Printf("      Path: %s\n", g.InstallPath)
 	}
 	line, err := gameDetectAnswer(cmd, reader)
 	if err != nil {
@@ -244,6 +276,9 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return err
 	}
 	if len(indices) == 0 {
+		if jsonOutput {
+			return emitJSON(&core.GameDetectResult{Warnings: detectWarnings})
+		}
 		if line == "all" || line == "a" {
 			cmd.Println("All detected games are already configured. No new games added.")
 		} else {
@@ -265,6 +300,15 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	// same order - so this prints "Added:" for precisely the games
 	// doGameDetect's old interleaved loop would have printed before hitting
 	// the same error.
+	if jsonOutput {
+		if applyErr != nil {
+			return applyErr
+		}
+		// The scan's warnings lead: they happened before anything this
+		// result reports.
+		result.Warnings = append(append([]string(nil), detectWarnings...), result.Warnings...)
+		return emitJSON(result)
+	}
 	for i := range result.Profiles {
 		cmd.Printf("Added: %s (%s)\n", selected[i].Name, selected[i].Slug)
 	}
@@ -286,7 +330,9 @@ func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader) (string, error) 
 	case gameDetectSelect != "":
 		return gameDetectSelect, nil
 	default:
-		cmd.Print("Add games to config? [1,2/all/none]: ")
+		if !jsonOutput {
+			cmd.Print("Add games to config? [1,2/all/none]: ")
+		}
 		return readPromptLineFrom(reader)
 	}
 }
