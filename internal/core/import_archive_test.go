@@ -77,6 +77,8 @@ func TestImportArchive_LocalArchive_EmitsTheReadoutAndInstalls(t *testing.T) {
 	assert.False(t, result.Renamed)
 	assert.Empty(t, result.FileID)
 	assert.Empty(t, result.HookWarnings)
+	assert.False(t, result.MergedPakSynced,
+		"a non-DeployCompile game has no merged pak to sync (task-19 review Minor 1); syncMergedPak's no-op must not be reported as a sync")
 
 	assert.Equal(t, []string{
 		"import_archive_detected|Mod: MyMod-1.2",
@@ -419,6 +421,47 @@ func TestImportArchive_AfterHooksFail_AccumulateInHookWarnings(t *testing.T) {
 	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, mErr)
 	require.Len(t, mods, 1)
+}
+
+// TestImportArchive_HookScope_BeforeAllAndAfterAllRunWithEmptyModScope pins
+// a subtlety the pre-lift CLI's tail had only in the ORDER of its
+// hookCtx.ModID assignments, with no test or comment marking it (task-19
+// review Minor 2): install.before_all/after_all run with an EMPTY mod
+// scope, while before_each/after_each see the imported mod's own ID - a
+// later cleanup that hoisted the mod-scope assignment above before_all
+// would silently widen what before_all/after_all's scripts can see, with
+// no assertion here to fail.
+func TestImportArchive_HookScope_BeforeAllAndAfterAllRunWithEmptyModScope(t *testing.T) {
+	svc, game, archivePath := importArchiveHookGame(t)
+	scriptsDir := t.TempDir()
+	callLog := filepath.Join(scriptsDir, "calls.log")
+	beforeAllScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
+echo "before_all:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	beforeEachScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
+echo "before_each:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	afterEachScript := createTestScript(t, scriptsDir, "after_each.sh", `#!/bin/bash
+echo "after_each:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	afterAllScript := createTestScript(t, scriptsDir, "after_all.sh", `#!/bin/bash
+echo "after_all:$LMM_MOD_ID" >> `+callLog+`
+exit 0`)
+	game.Hooks = domain.GameHooks{Install: domain.HookConfig{
+		BeforeAll: beforeAllScript, BeforeEach: beforeEachScript,
+		AfterEach: afterEachScript, AfterAll: afterAllScript,
+	}}
+
+	result, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result.Mod)
+
+	logContent, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	assert.Equal(t,
+		"before_all:\nbefore_each:"+result.Mod.ID+"\nafter_each:"+result.Mod.ID+"\nafter_all:\n",
+		string(logContent))
 }
 
 // TestImportArchive_BeforeAllFails_Forced_WarnsAndContinues pins the forced

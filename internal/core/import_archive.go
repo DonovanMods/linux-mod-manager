@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
@@ -120,9 +121,12 @@ type ImportArchiveResult struct {
 	// DeployCompile ".exmodz" import, which is validate+retain only and
 	// reaches the game through the merged pak instead.
 	Deployed int `json:"deployed"`
-	// MergedPakSynced reports that the end-of-import merged-pak sync ran
-	// without a hard error (#197 I3/C1). Its non-fatal warnings, if any, are
-	// in Warnings.
+	// MergedPakSynced reports that the end-of-import merged-pak sync
+	// actually ran and produced no hard error (#197 I3/C1). syncMergedPak
+	// no-ops with a nil error on a non-DeployCompile game (task-19 review
+	// Minor 1), so this stays false there - a constant true would carry no
+	// information for the only field that tells a frontend the sync
+	// happened at all. Its non-fatal warnings, if any, are in Warnings.
 	MergedPakSynced bool `json:"merged_pak_synced"`
 
 	HookWarnings []string `json:"hook_warnings,omitempty"`
@@ -235,7 +239,7 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	// silently never participates in any merge, forever, and is invisible to
 	// update/verify since it's excluded from both sides of the staleness
 	// fingerprint as well.
-	if imported.RetainedFileID != "" && !containsString(result.FileIDs, imported.RetainedFileID) {
+	if imported.RetainedFileID != "" && !slices.Contains(result.FileIDs, imported.RetainedFileID) {
 		result.FileIDs = append(result.FileIDs, imported.RetainedFileID)
 	}
 
@@ -350,7 +354,7 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
 		warn("could not sync merged pak: %v", syncErr)
 	} else {
-		result.MergedPakSynced = true
+		result.MergedPakSynced = game.DeployMode == domain.DeployCompile
 		for _, w := range syncWarnings {
 			warn("%s", w)
 		}
@@ -422,14 +426,4 @@ func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, arch
 		result.Mod.Version = file.Version
 	}
 	return file
-}
-
-// containsString reports whether v is already in list.
-func containsString(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
 }

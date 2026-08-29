@@ -179,6 +179,13 @@ type AdoptResult struct {
 //
 // It is side-effect-free: no DB writes, no filesystem changes, no source
 // calls.
+//
+// It stays EXPORTED with no production caller: PlanAdopt reads through its
+// own unexported scanLocal twin below (Task 18 review Minor 3, #291) so the
+// precondition snapshot and the reported scan can share one read, which
+// leaves ScanLocal itself called by tests only today. It is the scan-only
+// query a non-mutating frontend needs - `lmm serve` is its intended
+// consumer, same reasoning as LocalScan.ExtractModeWarning above.
 func (s *Service) ScanLocal(ctx context.Context, game *domain.Game, opts ScanOptions) (*LocalScan, error) {
 	scan, _, err := s.scanLocal(ctx, game, opts)
 	return scan, err
