@@ -3,7 +3,7 @@
 // DeployModClass readout enum, and DeployProfile with its private helpers
 // (redeployFromSource, purgeForDeploy). Moved verbatim out of flows.go by
 // v2 Phase 2 Unit M (#293); the purge loop it shares with PurgeProfile
-// (purgeSpec/purgeMods) stays behind until Unit M's purge task moves it.
+// (purgeSpec/purgeMods) now lives in purge.go.
 package core
 
 import (
