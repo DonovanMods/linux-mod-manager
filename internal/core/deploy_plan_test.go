@@ -371,6 +371,59 @@ func TestPlanDeploy_Purge_ListsEveryDeployedPathAndBothHookFamilies(t *testing.T
 	}, plan.Hooks, "configured hooks only, uninstall family first (purge runs first)")
 }
 
+// TestPlanDeploy_EmptySelectionWithPurge_ListsUninstallHooksMatchingApply
+// pins the final review's Important #1: a --purge pass still runs its
+// uninstall.* hooks - arbitrary user shell - even when every installed mod
+// is disabled and the deploy selection ends up empty, so the plan's Hooks
+// readout must list them too; under-stating a side effect is the one
+// failure mode a dry run cannot afford. Cross-checked against a live
+// ApplyDeploy: a successful hook run emits no Event (see runHook), so which
+// hooks actually fired is traced via a shared call log instead, and must
+// equal plan.Hooks exactly, in the same order - the readout cannot drift
+// from what Apply does.
+func TestPlanDeploy_EmptySelectionWithPurge_ListsUninstallHooksMatchingApply(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	seedNamedInstalledMod(t, svc, game, "src", "off", "Disabled Mod", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "off", "1.0")
+
+	scripts := t.TempDir()
+	callLog := filepath.Join(scripts, "calls.log")
+	loggingHook := func(wireName string) string {
+		return createTestScript(t, scripts, wireName+".sh", "#!/bin/bash\necho "+wireName+" >> "+callLog+"\nexit 0")
+	}
+	seedHooks(t, svc, game, "default", domain.GameHooks{
+		Install: domain.HookConfig{
+			BeforeAll: loggingHook("install.before_all"), AfterEach: loggingHook("install.after_each"),
+		},
+		Uninstall: domain.HookConfig{
+			BeforeAll: loggingHook("uninstall.before_all"), BeforeEach: loggingHook("uninstall.before_each"),
+			AfterEach: loggingHook("uninstall.after_each"), AfterAll: loggingHook("uninstall.after_all"),
+		},
+	})
+
+	ctx := context.Background()
+	plan, err := svc.PlanDeploy(ctx, game, "default", core.DeployOptions{Purge: true})
+	require.NoError(t, err)
+	require.Empty(t, plan.Mods, "fixture: the only installed mod is disabled and --all was not passed")
+	assert.Equal(t, []string{
+		"uninstall.before_all", "uninstall.before_each", "uninstall.after_each", "uninstall.after_all",
+	}, plan.Hooks, "the purge pass still runs its hooks even though nothing is left to deploy")
+
+	_, err = svc.ApplyDeploy(ctx, game, plan, core.DeployOptions{Purge: true}, nil)
+	require.NoError(t, err)
+
+	logged, err := os.ReadFile(callLog)
+	require.NoError(t, err)
+	var ran []string
+	for _, line := range strings.Split(strings.TrimSpace(string(logged)), "\n") {
+		if line != "" {
+			ran = append(ran, line)
+		}
+	}
+	assert.Equal(t, plan.Hooks, ran, "the plan's hook readout must match exactly what ApplyDeploy actually ran (install.* must NOT have fired: the empty selection returns before install.before_all)")
+}
+
 // TestPlanDeploy_SkipHooks_ListsNoHooks pins the other half of the hook
 // readout: --no-hooks means none of them run, so none are listed.
 func TestPlanDeploy_SkipHooks_ListsNoHooks(t *testing.T) {

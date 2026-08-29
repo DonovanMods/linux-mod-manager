@@ -339,6 +339,15 @@ func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHea
 		} else {
 			fmt.Println("No enabled mods to deploy. Use --all to deploy disabled mods.")
 		}
+		// A --purge pass still runs its uninstall.* hooks even though the
+		// deploy selection itself is empty (planDeployHooks counts every
+		// installed mod, enabled or not) - a dry run must never under-state
+		// that side effect, so this early return prints the same hook
+		// readout the non-empty path prints below (Final review Important
+		// #1).
+		if len(plan.Hooks) > 0 {
+			fmt.Printf("\nHooks that would run: %s\n", strings.Join(plan.Hooks, ", "))
+		}
 		return
 	}
 

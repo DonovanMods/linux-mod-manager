@@ -224,6 +224,11 @@ func TestDeployDryRunGoldens(t *testing.T) {
 			deployAll = true
 			return fx
 		}},
+		{"purge_all_disabled_with_hooks", func(t *testing.T) deployDryRunFixture {
+			fx := purgeAllDisabledWithHooksDryRunFixture(t)
+			deployPurge = true
+			return fx
+		}},
 		{"compile", compileDryRunFixture},
 	}
 
@@ -344,6 +349,28 @@ func seedNarrowedStaleCLIMod(t *testing.T, svc *core.Service, game *domain.Game,
 	require.NoError(t, cache.MarkFileCompleteWithMembers(versionDir, "exmodz", nil))
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, cache.RetainedSourceName("exmodz")), []byte("zip"), 0o644))
 	require.NoError(t, os.Symlink(filepath.Join(versionDir, stalePath), filepath.Join(game.ModPath, stalePath)))
+}
+
+// purgeAllDisabledWithHooksDryRunFixture is the exact repro from the final
+// review's Important #1: one disabled mod (excluded from the whole-profile
+// selection, so plan.Mods ends up empty and the plan's early-return branch
+// fires), both hook families configured. The uninstall.* hooks still list
+// in the plan (planDeployHooks counts every installed mod for the purge
+// pass, not just enabled ones) even though nothing would deploy; the
+// install.* hooks must NOT list, since the deploy loop returns before
+// running them when the selection is empty.
+func purgeAllDisabledWithHooksDryRunFixture(t *testing.T) deployDryRunFixture {
+	t.Helper()
+	svc, game := setupDoDeployTest(t)
+	seedDisabledMod(t, svc, game, "off", "Disabled Mod", "off.esp")
+	script := filepath.Join(t.TempDir(), "hook.sh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/bash\nexit 0\n"), 0o755))
+	game.Hooks = domain.GameHooks{
+		Install:   domain.HookConfig{BeforeAll: script, AfterEach: script},
+		Uninstall: domain.HookConfig{BeforeAll: script, BeforeEach: script, AfterEach: script, AfterAll: script},
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	return deployDryRunFixture{svc: svc, game: game}
 }
 
 func disabledModDryRunFixture(t *testing.T) deployDryRunFixture {
