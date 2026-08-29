@@ -227,13 +227,16 @@ func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsSwallowed(t *testing.T) {
 	assert.Equal(t, 1, result.Updated, "the refusal must not fail the loop's count")
 
 	var noteDetail string
+	var noteScope core.Scope
 	for _, e := range *events {
 		if se, ok := e.(core.StepEvent); ok && se.Phase == core.SyncUpdateNote {
 			noteDetail = se.Detail
+			noteScope = se.Scope
 		}
 	}
 	assert.Contains(t, noteDetail, "Warning: could not update src:lock1: ")
 	assert.Contains(t, noteDetail, "is locked at v")
+	assert.Equal(t, "Locked One", noteScope.ModName, "Sync*Note events must carry ModName, like the sibling Switch*Note events")
 
 	profile, err := pm.Get(game.ID, "default")
 	require.NoError(t, err)

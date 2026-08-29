@@ -197,7 +197,11 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 	}
 	note := func(ref domain.ModReference, phase DeployPhase, msg string) {
 		emit(StepEvent{
-			Scope:  Scope{Op: OpProfileSync, Mod: &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID}},
+			Scope: Scope{
+				Op:      OpProfileSync,
+				Mod:     &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID},
+				ModName: plan.Names[domain.ModKey(ref.SourceID, ref.ModID)],
+			},
 			Phase:  phase,
 			Detail: msg,
 		})
