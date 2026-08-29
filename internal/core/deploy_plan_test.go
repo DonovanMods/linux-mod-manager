@@ -101,13 +101,66 @@ func TestPlanDeploy_ListsModsInLoadOrderWithTheirDeployableFiles(t *testing.T) {
 	assert.Nil(t, plan.Merged, "a non-compile game has no merge plan")
 }
 
+// assertLinkRemoveFidelity is the task's central contract, factored out so
+// every shape Minor #2 (Task 24 review) asks for - loose and DeployCompile
+// games, --purge, single-mod, --all, and (separately, since Redownload mods
+// carry no Link to check) a cache-miss redownload - can reuse the same
+// proof instead of re-deriving it per scenario: the file sets a plan lists
+// are exactly the ones ApplyDeploy goes on to produce and remove, proven by
+// diffing the deployed tree across the Apply rather than by recomputing them
+// the same way twice.
+//
+// extraCreated names paths the deploy may create that no mod's own Link
+// lists individually - on a DeployCompile game this is exactly
+// plan.Merged.Artifact: the merged pak is written by syncMergedPak AFTER the
+// per-mod loop, so no merge participant's Link entry names it (Minor #2's
+// compile gap). nil/empty on every other game.
+func assertLinkRemoveFidelity(t *testing.T, svc *core.Service, game *domain.Game, opts core.DeployOptions, plan *core.DeployPlan, before map[string]bool) *core.DeployResult {
+	t.Helper()
+
+	result, err := svc.ApplyDeploy(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+
+	after := deployedTree(t, game.ModPath)
+
+	link, remove := map[string]bool{}, map[string]bool{}
+	for _, m := range plan.Mods {
+		for _, f := range m.Link {
+			link[f] = true
+		}
+		for _, f := range m.Remove {
+			remove[f] = true
+		}
+	}
+	extraCreated := map[string]bool{}
+	if plan.Merged != nil && plan.Merged.Artifact != "" {
+		extraCreated[plan.Merged.Artifact] = true
+	}
+
+	for f := range link {
+		assert.True(t, after[f], "plan listed %q as linked but the deploy did not produce it", f)
+	}
+	for f := range remove {
+		assert.False(t, after[f], "plan listed %q as removed but the deploy left it in place", f)
+	}
+	for f := range after {
+		if !before[f] {
+			assert.True(t, link[f] || extraCreated[f], "deploy created %q, which the plan did not list under Link (or Merged.Artifact)", f)
+		}
+	}
+	for f := range before {
+		if !after[f] {
+			assert.True(t, remove[f], "deploy removed %q, which the plan did not list under Remove", f)
+		}
+	}
+	return result
+}
+
 // TestPlanDeploy_LinkAndRemove_MatchWhatApplyDeployThenDid is the task's
-// central contract: the file sets PlanDeploy lists are exactly the ones
-// ApplyDeploy goes on to produce and remove, proven by diffing the deployed
-// tree across the Apply rather than by re-deriving them the same way twice.
-// The fixture deliberately mixes an ordinary mod (Link non-empty, Remove
-// empty) with #210's narrowed self-heal shape (Link empty, Remove naming the
-// stale link that must not come back).
+// central contract on a loose game, whole-profile selection, no --purge. The
+// fixture deliberately mixes an ordinary mod (Link non-empty, Remove empty)
+// with #210's narrowed self-heal shape (Link empty, Remove naming the stale
+// link that must not come back).
 func TestPlanDeploy_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
 	svc, game := newDeployableService(t)
 	seedNarrowedStaleMod(t, svc, game, "stale", "Stale Mod", "Stale_P.pak")
@@ -126,38 +179,165 @@ func TestPlanDeploy_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
 	assert.Empty(t, stale.Link, "a fully-narrowed entry links nothing")
 	assert.Equal(t, []string{"Stale_P.pak"}, stale.Remove, "the stale unclaimed pak is removed and not re-linked")
 
-	result, err := svc.ApplyDeploy(ctx, game, plan, core.DeployOptions{}, nil)
+	result := assertLinkRemoveFidelity(t, svc, game, core.DeployOptions{}, plan, before)
+	assert.Equal(t, 2, result.Deployed)
+}
+
+// TestPlanDeploy_SingleMod_LinkAndRemove_MatchWhatApplyDeployThenDid covers
+// Minor #2's single-mod gap: opts.ModID restricts both the plan and the
+// deploy to one mod, and the two must still agree.
+func TestPlanDeploy_SingleMod_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
+	svc, game := newDeployableService(t)
+	seedNamedInstalledMod(t, svc, game, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("2")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "2", "1.0")
+
+	before := deployedTree(t, game.ModPath)
+	require.Empty(t, before, "fixture: nothing deployed yet")
+
+	ctx := context.Background()
+	opts := core.DeployOptions{ModID: "1", SourceID: "src"}
+	plan, err := svc.PlanDeploy(ctx, game, "default", opts)
 	require.NoError(t, err)
+	require.Len(t, plan.Mods, 1, "opts.ModID restricts the plan to one mod")
+	assert.Equal(t, []string{"one.esp"}, plan.Mods[0].Link)
+
+	result := assertLinkRemoveFidelity(t, svc, game, opts, plan, before)
+	assert.Equal(t, 1, result.Deployed)
+	assert.False(t, deployedTree(t, game.ModPath)["two.esp"], "the unselected mod must not deploy")
+}
+
+// TestPlanDeploy_All_LinkAndRemove_MatchWhatApplyDeployThenDid covers Minor
+// #2's --all gap: a disabled mod is excluded from the default selection but
+// included (and therefore linked) once opts.All is set, in both the plan
+// and the deploy it predicts.
+func TestPlanDeploy_All_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
+	svc, game := newDeployableService(t)
+	seedNamedInstalledMod(t, svc, game, "src", "off", "Disabled Mod", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "off", "1.0")
+
+	before := deployedTree(t, game.ModPath)
+
+	ctx := context.Background()
+	opts := core.DeployOptions{All: true}
+	plan, err := svc.PlanDeploy(ctx, game, "default", opts)
+	require.NoError(t, err)
+	require.Len(t, plan.Mods, 2, "opts.All includes the disabled mod")
+	off := planModByName(t, plan, "Disabled Mod")
+	assert.Equal(t, []string{"off.esp"}, off.Link, "opts.All means the disabled mod deploys too")
+
+	result := assertLinkRemoveFidelity(t, svc, game, opts, plan, before)
+	assert.Equal(t, 2, result.Deployed)
+}
+
+// TestPlanDeploy_Purge_LinkAndRemove_MatchWhatApplyDeployThenDid covers
+// Minor #2's --purge gap: ApplyDeploy's purge-then-redeploy pass must still
+// end up exactly where the plan's Link/Remove sets say it will, proven
+// against a profile that is ALREADY deployed (so the purge pass has
+// something real to undeploy first).
+func TestPlanDeploy_Purge_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
+	svc, game := newDeployableService(t)
+	seedNamedInstalledMod(t, svc, game, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("2")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "2", "1.0")
+
+	ctx := context.Background()
+	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err, "fixture: the profile must already be deployed for --purge to undeploy something")
+
+	before := deployedTree(t, game.ModPath)
+	require.True(t, before["one.esp"] && before["two.esp"], "fixture: both mods are deployed before the purge+redeploy plan")
+
+	opts := core.DeployOptions{Purge: true}
+	plan, err := svc.PlanDeploy(ctx, game, "default", opts)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"one.esp", "two.esp"}, plan.Purge)
+
+	result := assertLinkRemoveFidelity(t, svc, game, opts, plan, before)
+	assert.Equal(t, 2, result.Deployed, "the purge pass undeploys, then the loop redeploys the same selection")
+}
+
+// TestPlanDeploy_Compile_LinkAndRemove_MatchWhatApplyDeployThenDid covers
+// Minor #2's DeployCompile gap: on a compile game the fidelity invariant
+// does not hold literally, because syncMergedPak writes the merged artifact
+// into the game dir AFTER the per-mod loop, and that path appears in NO
+// mod's Link - only in plan.Merged.Artifact. This pins that explicitly:
+// created paths are covered by Link UNION {Merged.Artifact}, never by Link
+// alone.
+func TestPlanDeploy_Compile_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
+	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(&fakeCompilerSource{})
+	game := setupCompileReadoutGame(t, svc)
+
+	seedExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
+	seedLooseMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
+
+	before := deployedTree(t, game.ModPath)
+	require.Empty(t, before, "fixture: nothing deployed yet")
+
+	ctx := context.Background()
+	plan, err := svc.PlanDeploy(ctx, game, "default", core.DeployOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Merged)
+	bear := planModByName(t, plan, "Bear Mount")
+	assert.Empty(t, bear.Link, "a native merge source deploys zero files of its own (#197)")
+
+	result := assertLinkRemoveFidelity(t, svc, game, core.DeployOptions{}, plan, before)
 	assert.Equal(t, 2, result.Deployed)
 
 	after := deployedTree(t, game.ModPath)
-
-	link, remove := map[string]bool{}, map[string]bool{}
+	assert.True(t, after[plan.Merged.Artifact], "the merged artifact must actually be on disk after the deploy")
 	for _, m := range plan.Mods {
-		for _, f := range m.Link {
-			link[f] = true
-		}
-		for _, f := range m.Remove {
-			remove[f] = true
-		}
+		assert.NotContains(t, m.Link, plan.Merged.Artifact, "no individual mod's Link names the merged artifact - only MergePlan.Artifact does")
 	}
+}
 
-	for f := range link {
-		assert.True(t, after[f], "plan listed %q as linked but the deploy did not produce it", f)
-	}
-	for f := range remove {
-		assert.False(t, after[f], "plan listed %q as removed but the deploy left it in place", f)
-	}
-	for f := range after {
-		if !before[f] {
-			assert.True(t, link[f], "deploy created %q, which the plan did not list under Link", f)
-		}
-	}
-	for f := range before {
-		if !after[f] {
-			assert.True(t, remove[f], "deploy removed %q, which the plan did not list under Remove", f)
-		}
-	}
+// TestPlanDeploy_Redownload_MatchesWhatApplyDeployThenDid pins Important
+// #2's fidelity requirement: a cache-missing mod's plan entry
+// (Redownload=true, Link empty because the files are not knowable without
+// fetching them) matches what ApplyDeploy actually does - the mod is NOT
+// skipped, it deploys, exactly as the plan predicted.
+func TestPlanDeploy_Redownload_MatchesWhatApplyDeployThenDid(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	mock := newMockSourceWithDownloads("src")
+	defer mock.Close()
+	svc.RegisterSource(mock)
+
+	tmpDir := t.TempDir()
+	zipPath := createTestZip(t, tmpDir, map[string]string{"plugin.esp": "payload"})
+	zipContent, err := os.ReadFile(zipPath)
+	require.NoError(t, err)
+	mock.AddDownload("1", zipContent) // mockSource.GetModFiles always returns file ID "1"
+
+	mockMod := &domain.Mod{ID: "1", SourceID: "src", Name: "Redownload Mod", Version: "1.0", GameID: "g1"}
+	mock.AddMod("g1", mockMod)
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          *mockMod,
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
+
+	ctx := context.Background()
+	plan, err := svc.PlanDeploy(ctx, game, "default", core.DeployOptions{})
+	require.NoError(t, err)
+	require.Len(t, plan.Mods, 1)
+	assert.True(t, plan.Mods[0].Redownload, "the plan must predict a redownload, not a skip")
+	assert.Empty(t, plan.Mods[0].Skipped)
+	assert.Empty(t, plan.Mods[0].Link, "the files are not knowable without fetching them")
+
+	result, err := svc.ApplyDeploy(ctx, game, plan, core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Deployed, "the plan's predicted redownload must be what Apply actually did")
+	assert.Empty(t, result.Skipped)
+
+	_, statErr := os.Lstat(filepath.Join(game.ModPath, "plugin.esp"))
+	assert.NoError(t, statErr, "the redownloaded mod's file must actually be deployed")
 }
 
 // TestPlanDeploy_Purge_ListsEveryDeployedPathAndBothHookFamilies covers the

@@ -1,9 +1,7 @@
 ## stdout
 Deploy plan for profile "default" (dry run)
 
-Would purge 2 file(s) before deploy...
-    - a.esp
-    - b.esp
+Would purge 0 file(s) before deploy...
 
 Deploying 2 mod(s) using symlink...
 
@@ -17,5 +15,4 @@ Would deploy: 2
 ## error
 <nil>
 ## tree
-a.esp
-b.esp
+<empty>
