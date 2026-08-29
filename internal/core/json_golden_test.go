@@ -323,6 +323,24 @@ func TestJSONGoldens(t *testing.T) {
 			core.AdoptBackfillResult{Backfilled: 2},
 		},
 		{
+			// Every optional key populated at once, to pin each one's wire
+			// shape - a real import rarely produces all four diagnostics.
+			"import_archive_result",
+			core.ImportArchiveResult{
+				Mod:             &jsonGoldenMod,
+				LinkedSource:    "nexusmods",
+				AutoDetected:    true,
+				Renamed:         true,
+				FileID:          "file-1",
+				FileIDs:         []string{"file-1"},
+				Deployed:        7,
+				MergedPakSynced: true,
+				HookWarnings:    []string{"install.after_each hook failed: exit status 1"},
+				Warnings:        []string{"could not mark cache entry complete: permission denied"},
+				Notes:           []string{"Warning: could not update profile: mod is locked"},
+			},
+		},
+		{
 			"adopt_result",
 			core.AdoptResult{
 				Adopted: 2, Skipped: 1, Failed: 1,
