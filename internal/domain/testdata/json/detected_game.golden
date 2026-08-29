@@ -1,0 +1,12 @@
+{
+  "steam_app_id": "489830",
+  "slug": "skyrim-se",
+  "name": "Skyrim Special Edition",
+  "install_path": "/home/user/.steam/steam/steamapps/common/Skyrim Special Edition",
+  "mod_path": "/home/user/.steam/steam/steamapps/common/Skyrim Special Edition/Data",
+  "nexus_id": "skyrimspecialedition",
+  "deploy_mode": "extract",
+  "sources": {
+    "nexusmods": "skyrimspecialedition"
+  }
+}

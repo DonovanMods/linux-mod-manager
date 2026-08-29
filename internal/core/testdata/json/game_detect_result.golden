@@ -1,0 +1,11 @@
+{
+  "saved": [
+    "skyrim-se",
+    "icarus"
+  ],
+  "profiles": [
+    "skyrim-se/default",
+    "icarus/default"
+  ],
+  "warnings": []
+}

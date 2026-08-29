@@ -175,6 +175,19 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			"detected_game",
+			domain.DetectedGame{
+				SteamAppID:  "489830",
+				Slug:        "skyrim-se",
+				Name:        "Skyrim Special Edition",
+				InstallPath: "/home/user/.steam/steam/steamapps/common/Skyrim Special Edition",
+				ModPath:     "/home/user/.steam/steam/steamapps/common/Skyrim Special Edition/Data",
+				NexusID:     "skyrimspecialedition",
+				DeployMode:  "extract",
+				Sources:     map[string]string{"nexusmods": "skyrimspecialedition"},
+			},
+		},
+		{
 			// Mods is deliberately left nil to pin "[]" for a load-order
 			// list that is genuinely empty for a brand-new profile.
 			"profile",

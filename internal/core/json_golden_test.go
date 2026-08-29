@@ -355,6 +355,16 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Warnings is deliberately left nil to pin that a nil slice
+			// marshals as "[]" - ApplyGameDetect never populates it today.
+			"game_detect_result",
+			core.GameDetectResult{
+				Saved:    []string{"skyrim-se", "icarus"},
+				Profiles: []string{"skyrim-se/default", "icarus/default"},
+				Warnings: nil,
+			},
+		},
+		{
 			// Installed is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null".
 			"install_result",

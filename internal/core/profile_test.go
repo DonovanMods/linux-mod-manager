@@ -48,6 +48,62 @@ func TestProfileManager_Create_DuplicateName(t *testing.T) {
 	assert.Error(t, err) // Should fail - duplicate name
 }
 
+// TestProfileManager_CreateOrResetDefault_CreatesWhenAbsent pins the "no
+// existing profile" leg: a fresh IsDefault profile named "default" with no
+// mods, same as pm.Create would produce for a brand-new game.
+func TestProfileManager_CreateOrResetDefault_CreatesWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	pm := core.NewProfileManager(dir, database)
+
+	profile, err := pm.CreateOrResetDefault("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, "default", profile.Name)
+	assert.Equal(t, "skyrim-se", profile.GameID)
+	assert.True(t, profile.IsDefault)
+	assert.Empty(t, profile.Mods)
+
+	saved, err := pm.Get("skyrim-se", "default")
+	require.NoError(t, err)
+	assert.True(t, saved.IsDefault)
+}
+
+// TestProfileManager_CreateOrResetDefault_ResetsExisting pins v2 Phase 2
+// Task 21's documented overwrite semantics: 'lmm game add' and 'lmm game
+// detect' repair have always unconditionally replaced an existing default
+// profile's mod list (config.SaveProfile has no existence check). Unlike
+// pm.Create, which errors on an already-existing profile name, this
+// silently resets it - a game with mods already recorded in "default"
+// loses them.
+func TestProfileManager_CreateOrResetDefault_ResetsExisting(t *testing.T) {
+	dir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+	pm := core.NewProfileManager(dir, database)
+
+	_, err = pm.CreateOrResetDefault("skyrim-se")
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod("skyrim-se", "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
+
+	before, err := pm.Get("skyrim-se", "default")
+	require.NoError(t, err)
+	require.NotEmpty(t, before.Mods, "test setup: profile must have a mod before the reset")
+
+	profile, err := pm.CreateOrResetDefault("skyrim-se")
+	require.NoError(t, err)
+	assert.Empty(t, profile.Mods)
+	assert.True(t, profile.IsDefault)
+
+	after, err := pm.Get("skyrim-se", "default")
+	require.NoError(t, err)
+	assert.Empty(t, after.Mods, "resetting an existing default profile must wipe its mod list")
+}
+
 func TestProfileManager_Create_RejectsPathTraversalName(t *testing.T) {
 	// Each payload is a func of the test's temp root so path-shaped payloads
 	// stay inside it — even a guard regression can only touch the sandbox.
