@@ -1,0 +1,18 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "updates": [
+    {
+      "mod_id": "modA",
+      "name": "Mod A",
+      "current_version": "1.0",
+      "available_version": "2.0",
+      "update_policy": "notify",
+      "locked": true
+    }
+  ],
+  "skipped": {
+    "pinned": 0,
+    "local": 1
+  }
+}

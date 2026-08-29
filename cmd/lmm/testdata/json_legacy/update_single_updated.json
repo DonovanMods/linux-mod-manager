@@ -1,0 +1,8 @@
+{
+  "mod_id": "mod1",
+  "name": "Mod One",
+  "from_version": "1.0",
+  "to_version": "2.0",
+  "changelog": "Fixed bugs.\nMore \u0026 more.",
+  "status": "updated"
+}

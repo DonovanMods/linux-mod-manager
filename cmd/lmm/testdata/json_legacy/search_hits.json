@@ -1,0 +1,22 @@
+{
+  "game_id": "g1",
+  "query": "mod",
+  "mods": [
+    {
+      "id": "a",
+      "name": "Mod A",
+      "author": "Ann",
+      "version": "1.0",
+      "source": "src",
+      "installed": true
+    },
+    {
+      "id": "z",
+      "name": "Mod Z",
+      "author": "Zed",
+      "version": "3.1",
+      "source": "src",
+      "installed": false
+    }
+  ]
+}

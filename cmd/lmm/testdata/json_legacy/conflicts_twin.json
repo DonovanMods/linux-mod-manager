@@ -1,0 +1,15 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "conflicts": [
+    {
+      "path": "shared.esp",
+      "owner": "Mod B",
+      "also_in": [
+        "Mod A"
+      ],
+      "winner": "Mod B",
+      "stale": false
+    }
+  ]
+}
