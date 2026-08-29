@@ -19,6 +19,13 @@ import (
 // output across the scenarios that matter for the verify renderer work:
 // they are the safety net the later renderer-refactor tasks diff against, so
 // they must never be regenerated once recorded on this pre-refactor tree.
+//
+// One exception, taken once: the *_json goldens were re-recorded in v2
+// Phase 3 Task 6 (#302), when --json switched from the cmd-local
+// verifyJSONOutput view struct to core.VerifyReport - the single deliberate
+// JSON shape change Ruling 3 reserves for the v2.0.0 window. The *_plain and
+// *_fix (text) goldens were NOT touched by that re-record and are still the
+// pre-refactor bytes.
 
 var updateGolden = flag.Bool("update", false, "rewrite verify golden files from current output")
 

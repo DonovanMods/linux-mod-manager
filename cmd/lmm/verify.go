@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -17,22 +16,6 @@ var (
 	verifyFix     bool
 	verifyProfile string
 )
-
-type verifyJSONOutput struct {
-	GameID   string           `json:"game_id"`
-	Profile  string           `json:"profile"`
-	Files    []verifyFileJSON `json:"files"`
-	Issues   int              `json:"issues"`
-	Warnings int              `json:"warnings"`
-}
-
-type verifyFileJSON struct {
-	ModID   string `json:"mod_id"`
-	ModName string `json:"mod_name"`
-	FileID  string `json:"file_id"`
-	Status  string `json:"status"`         // ok, missing, no_checksum, file_count_mismatch, skipped, version_mismatch, version_unverifiable, stale_compile, stale_deployment, fixed_stale_deployment, conversion_failed, needs_reingest, fixed_needs_reingest
-	Note    string `json:"note,omitempty"` // optional detail: a blocked cache rename, sibling-repair results, a --fix repair/redownload failure reason, a file-count-check lookup failure, a stale-deployment reason ("no longer provided by <source>/<mod>" | "dangling link into lmm cache"), a convergence per-item error (e.g. an unsafe deployed-file record skipped), a pak-conversion failure reason (conversion_failed), or why/whether a pak needed re-ingesting (needs_reingest / fixed_needs_reingest) - omitted when there's nothing extra to add
-}
 
 var verifyCmd = &cobra.Command{
 	Use:   "verify [mod-id]",
@@ -255,19 +238,10 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 	result := report.Result
 
 	if jsonOutput {
-		// Always a non-nil slice (even with zero findings, e.g. an
-		// empty-profile run with nothing stale to report) so --json's
-		// "files" key encodes as [] rather than null.
-		jsonFiles := make([]verifyFileJSON, 0, len(result.Findings))
-		for _, f := range result.Findings {
-			jsonFiles = append(jsonFiles, verifyFileJSON{ModID: f.ModID, ModName: f.ModName, FileID: f.FileID, Status: f.Status, Note: f.Note})
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(verifyJSONOutput{GameID: report.GameID, Profile: report.Profile, Files: jsonFiles, Issues: result.Issues, Warnings: result.Warnings}); err != nil {
-			return fmt.Errorf("encoding json: %w", err)
-		}
-		return nil
+		// emitJSON encodes a nil Findings slice as [], so a zero-finding run
+		// (e.g. #217's empty profile with nothing stale) still emits an
+		// array rather than null.
+		return emitJSON(report)
 	}
 
 	if !result.HasFiles {

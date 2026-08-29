@@ -1,39 +1,40 @@
 {
   "game_id": "icarus",
   "profile": "default",
-  "files": [
-    {
-      "mod_id": "raw-pak-mod",
-      "mod_name": "raw-pak-mod",
-      "file_id": "",
-      "status": "conversion_failed",
-      "note": "table X not present in current base"
-    },
-    {
-      "mod_id": "bear-mount",
-      "mod_name": "Bear Mount",
-      "file_id": "",
-      "status": "version_unverifiable"
-    },
-    {
-      "mod_id": "raw-pak-mod",
-      "mod_name": "raw-pak-mod",
-      "file_id": "",
-      "status": "version_unverifiable"
-    },
-    {
-      "mod_id": "bear-mount",
-      "mod_name": "Bear Mount",
-      "file_id": "exmodz-file-id",
-      "status": "no_checksum"
-    },
-    {
-      "mod_id": "raw-pak-mod",
-      "mod_name": "raw-pak-mod",
-      "file_id": "modfile.pak",
-      "status": "no_checksum"
-    }
-  ],
-  "issues": 0,
-  "warnings": 5
+  "result": {
+    "findings": [
+      {
+        "mod_id": "raw-pak-mod",
+        "mod_name": "raw-pak-mod",
+        "status": "conversion_failed",
+        "note": "table X not present in current base"
+      },
+      {
+        "mod_id": "bear-mount",
+        "mod_name": "Bear Mount",
+        "status": "version_unverifiable"
+      },
+      {
+        "mod_id": "raw-pak-mod",
+        "mod_name": "raw-pak-mod",
+        "status": "version_unverifiable"
+      },
+      {
+        "mod_id": "bear-mount",
+        "mod_name": "Bear Mount",
+        "file_id": "exmodz-file-id",
+        "status": "no_checksum"
+      },
+      {
+        "mod_id": "raw-pak-mod",
+        "mod_name": "raw-pak-mod",
+        "file_id": "modfile.pak",
+        "status": "no_checksum"
+      }
+    ],
+    "issues": 0,
+    "warnings": 5,
+    "checked": 3,
+    "has_files": true
+  }
 }

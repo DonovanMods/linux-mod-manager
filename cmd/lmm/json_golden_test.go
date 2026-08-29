@@ -11,7 +11,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -249,5 +248,29 @@ func TestJSONGolden_Search(t *testing.T) {
 			return doSearch(context.Background(), svc, game, []string{"nothing"})
 		})
 		assertJSONCLIGolden(t, "search_empty", out)
+	})
+}
+
+// --- verify ---
+
+func TestJSONGolden_Verify(t *testing.T) {
+	t.Run("version_mismatch", func(t *testing.T) {
+		cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.5", []string{"2"}, []domain.DownloadableFile{
+			{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+		})
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+		assertJSONCLIGolden(t, "verify_version_mismatch", out, game.ModPath, "<GAME-DIR>")
+	})
+
+	t.Run("clean", func(t *testing.T) {
+		cmd, svc, game, _ := setupDoVerifyVersionTest(t, "1.0", []string{"2"}, []domain.DownloadableFile{
+			{ID: "2", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+		})
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+		assertJSONCLIGolden(t, "verify_clean", out, game.ModPath, "<GAME-DIR>")
 	})
 }

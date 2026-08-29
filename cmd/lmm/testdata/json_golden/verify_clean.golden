@@ -6,21 +6,13 @@
       {
         "mod_id": "mod1",
         "mod_name": "Mod One",
-        "status": "version_mismatch",
-        "note": "locked",
-        "recorded": "1.5",
-        "effective": "1.0"
-      },
-      {
-        "mod_id": "mod1",
-        "mod_name": "Mod One",
         "file_id": "2",
         "status": "ok"
       }
     ],
-    "issues": 1,
+    "issues": 0,
     "warnings": 0,
-    "checked": 1,
+    "checked": 2,
     "has_files": true
   }
 }
