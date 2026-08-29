@@ -443,7 +443,7 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 //
 // The profile ref's Version is deliberately "" (a legacy/unpinned ref), not
 // "1.0": #96 made a non-empty ref.Version an authoritative exact-match pin
-// for core.SelectFilesForVersion, and "1.0" here was only ever the mod-level
+// for core.selectFilesForVersion, and "1.0" here was only ever the mod-level
 // label coincidentally reused for the ref before #96 existed - the
 // mod-vs-file version discrepancy this test actually guards is entirely
 // between src.AddMod's Version and the served file's Version, independent
@@ -479,7 +479,7 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 // TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution guards
 // #95 for doProfileApply's "install missing mods" loop: when a profile mod's
 // stored FileIDs no longer match anything the source currently lists,
-// core.SelectFilesForVersion must fail the mod with the upstream-gone error
+// core.selectFilesForVersion must fail the mod with the upstream-gone error
 // instead of silently substituting the primary file (mirrors
 // internal/core's TestService_DeployProfile_StoredFileIDsGone_
 // SkipsModWithClearError from task B1). A second mod with valid FileIDs
@@ -488,7 +488,7 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 //
 // The served files carry no Version (unlike
 // TestSelectFilesForVersion_VersionAuthoritative's fixture, internal/core's
-// selection_test.go) so this exercises SelectFilesForVersion's legacy,
+// selection_test.go) so this exercises selectFilesForVersion's legacy,
 // version-blind fallthrough - #96 deliberately changes this exact scenario
 // for a VERSIONED source (gone FileIDs now heal to a version-matched file
 // rather than hard-failing); the un-extended #95 no-substitution contract

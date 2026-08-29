@@ -1561,7 +1561,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip("no files available")
 	}
 
-	filesToDownload, err := SelectFilesForVersion(files, mod.FileIDs, mod.Version)
+	filesToDownload, err := selectFilesForVersion(files, mod.FileIDs, mod.Version)
 	if err != nil {
 		return skip(err.Error())
 	}
@@ -2278,7 +2278,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				continue
 			}
 
-			filesToDownload, err := SelectFilesForVersion(files, ref.FileIDs, ref.Version)
+			filesToDownload, err := selectFilesForVersion(files, ref.FileIDs, ref.Version)
 			if err != nil {
 				fail(err.Error())
 				continue
@@ -2714,7 +2714,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		} else if len(ref.FileIDs) > 0 {
 			fileIDsToUse = ref.FileIDs
 		}
-		filesToDownload, err := SelectFilesForVersion(files, fileIDsToUse, ref.Version)
+		filesToDownload, err := selectFilesForVersion(files, fileIDsToUse, ref.Version)
 		if err != nil {
 			fail(err.Error())
 			continue

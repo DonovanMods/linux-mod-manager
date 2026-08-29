@@ -1,7 +1,7 @@
 package core
 
 // Unit tests for selection.go's file-selection policy: FilterAndSortFiles,
-// primaryFile, and SelectFilesForVersion. Some cases (pickVersionMatch's
+// primaryFile, and selectFilesForVersion. Some cases (pickVersionMatch's
 // tie-break tail) are pure functions of their inputs that the end-to-end
 // ApplyUpdate harness in flows_update_test.go cannot isolate without
 // dragging in install/deploy fixtures that add nothing here.
@@ -115,7 +115,7 @@ func TestPrimaryFile_EmptySlice(t *testing.T) {
 }
 
 // TestSelectFilesForVersion_VersionAuthoritative is the #96 direct unit test
-// for SelectFilesForVersion's version parameter: drift heals to the
+// for selectFilesForVersion's version parameter: drift heals to the
 // recorded version, gone IDs heal to the recorded version, an unresolvable
 // target hard-fails naming the version, and an empty version preserves the
 // exact pre-#96 behavior. Moved from cmd/lmm/profile_test.go's
@@ -135,24 +135,24 @@ func TestSelectFilesForVersion_VersionAuthoritative(t *testing.T) {
 	}
 
 	// Drift: stored ID exists upstream but is the wrong version - version wins.
-	got, err := SelectFilesForVersion(files, []string{"10"}, "1.0")
+	got, err := selectFilesForVersion(files, []string{"10"}, "1.0")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "9", got[0].ID)
 
 	// Gone IDs heal to the recorded version.
-	got, err = SelectFilesForVersion(files, []string{"999"}, "1.0")
+	got, err = selectFilesForVersion(files, []string{"999"}, "1.0")
 	require.NoError(t, err)
 	assert.Equal(t, "9", got[0].ID)
 
 	// Unresolvable, no stored ID present upstream at all: extended #95
 	// wording (rule 4a).
-	_, err = SelectFilesForVersion(files, []string{"999"}, "0.5")
+	_, err = selectFilesForVersion(files, []string{"999"}, "0.5")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `version "0.5" not available`)
 
 	// Legacy: empty version behaves exactly as before.
-	got, err = SelectFilesForVersion(files, nil, "")
+	got, err = selectFilesForVersion(files, nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, "10", got[0].ID)
 
@@ -163,7 +163,7 @@ func TestSelectFilesForVersion_VersionAuthoritative(t *testing.T) {
 	// an unrelated companion file's own version) rides along BOTH. This is
 	// what distinguishes the fast path from rule 3's stored-intersect-
 	// matches, which would keep only file9 (file12 isn't a 1.0 match).
-	got, err = SelectFilesForVersion(files, []string{"9", "12"}, "1.0")
+	got, err = selectFilesForVersion(files, []string{"9", "12"}, "1.0")
 	require.NoError(t, err)
 	require.Len(t, got, 2, "fast path must return the whole stored set, not just the version-matching subset")
 	gotIDs := []string{got[0].ID, got[1].ID}
@@ -175,14 +175,14 @@ func TestSelectFilesForVersion_VersionAuthoritative(t *testing.T) {
 	// only the one that was ALSO a stored ID (9) is kept - file11 is
 	// excluded even though it's a 1.0 match, because it was never a stored
 	// ID for this mod.
-	got, err = SelectFilesForVersion(files, []string{"10", "9"}, "1.0")
+	got, err = selectFilesForVersion(files, []string{"10", "9"}, "1.0")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "9", got[0].ID)
 
 	// Rule 5 (ErrVersionNotFound wrap): no stored IDs at all, and the
 	// requested version matches nothing upstream.
-	_, err = SelectFilesForVersion(files, nil, "3.0")
+	_, err = selectFilesForVersion(files, nil, "3.0")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrVersionNotFound))
 	assert.Contains(t, err.Error(), "edit the profile's version or reinstall")
@@ -193,7 +193,7 @@ func TestSelectFilesForVersion_VersionAuthoritative(t *testing.T) {
 	// gone file, so it must NOT get the #95 "no longer available upstream"
 	// wording; it gets a distinct ErrVersionNotFound wrap pointing at
 	// verify/update instead of reinstall.
-	_, err = SelectFilesForVersion(files, []string{"12"}, "3.0")
+	_, err = selectFilesForVersion(files, []string{"12"}, "3.0")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrVersionNotFound))
 	assert.NotContains(t, err.Error(), "no longer available upstream", "a present-upstream stored ID must not get the gone-file wording")
@@ -212,7 +212,7 @@ func TestSelectFilesForVersion_VersionAuthoritative(t *testing.T) {
 // This fixture and case table used to be hand-duplicated in
 // cmd/lmm/profile_test.go as TestSelectFilesToDownload_CategoryPriorityTieBreak
 // (a drift guard for what was then a hand-mirrored twin of pickVersionMatch's
-// tail); #287 unified the twins into SelectFilesForVersion, so that copy is
+// tail); #287 unified the twins into selectFilesForVersion, so that copy is
 // gone and this is the only version of the test.
 func TestSelectFilesForVersion_CategoryPriorityTieBreak(t *testing.T) {
 	files := []domain.DownloadableFile{
@@ -243,7 +243,7 @@ func TestSelectFilesForVersion_CategoryPriorityTieBreak(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := SelectFilesForVersion(files, nil, tc.version)
+			got, err := selectFilesForVersion(files, nil, tc.version)
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			assert.Equal(t, tc.wantID, got[0].ID)
@@ -280,6 +280,6 @@ func TestGuardNoOpUpdateSelection_UninstalledMatchDowngradesLabellingClaim(t *te
 }
 
 func TestSelectFilesForVersion_EmptyFileList(t *testing.T) {
-	_, err := SelectFilesForVersion(nil, nil, "")
+	_, err := selectFilesForVersion(nil, nil, "")
 	require.ErrorIs(t, err, ErrNoDownloadableFiles)
 }

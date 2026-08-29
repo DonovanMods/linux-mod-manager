@@ -9,7 +9,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
-// ErrNoDownloadableFiles is SelectFilesForVersion's (and, beneath it,
+// ErrNoDownloadableFiles is selectFilesForVersion's (and, beneath it,
 // selectDeployFiles') sentinel for an empty file list - the mod's source
 // offers nothing to install/deploy. FilterAndSortFiles and primaryFile
 // cannot return it: neither returns an error at all (an empty input yields
@@ -20,12 +20,12 @@ import (
 // the two copies were unified into this one sentinel.
 var ErrNoDownloadableFiles = errors.New("no downloadable files")
 
-// ErrStoredFilesUnavailable is SelectFilesForVersion's sentinel for a
+// ErrStoredFilesUnavailable is selectFilesForVersion's sentinel for a
 // would-be primary-file fallback that isn't allowed (#95): the mod's stored
 // file IDs no longer match anything the source currently offers, and
 // silently substituting the primary file would deploy/install/switch-in a
 // file the caller never asked for. Always wrapped with the missing IDs and
-// a remediation hint; see selectDeployFiles and SelectFilesForVersion.
+// a remediation hint; see selectDeployFiles and selectFilesForVersion.
 var ErrStoredFilesUnavailable = errors.New("stored file(s) no longer available upstream")
 
 // FilterAndSortFiles is the file-selection policy's filter/sort step,
@@ -93,7 +93,7 @@ func primaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
 	return &files[0]
 }
 
-// SelectFilesForVersion picks the file(s) to (re)download for a mod pinned
+// selectFilesForVersion picks the file(s) to (re)download for a mod pinned
 // to version (#96), with the recorded version made authoritative. version
 // == "" (legacy refs) and version-less file lists (the #130 vacuous rule)
 // fall through to the pre-#96, version-blind behavior unchanged: stored IDs
@@ -112,7 +112,7 @@ func primaryFile(files []domain.DownloadableFile) *domain.DownloadableFile {
 // present upstream but the recorded version isn't (the classic pre-#94
 // mis-stamped row, which isn't a "gone" file - it's a wrong version record
 // on a file that's still there).
-func SelectFilesForVersion(files []domain.DownloadableFile, storedFileIDs []string, version string) ([]*domain.DownloadableFile, error) {
+func selectFilesForVersion(files []domain.DownloadableFile, storedFileIDs []string, version string) ([]*domain.DownloadableFile, error) {
 	if version == "" || !anyFileHasVersion(files) {
 		selected, _, err := selectDeployFiles(files, storedFileIDs, false)
 		return selected, err
@@ -169,7 +169,7 @@ func SelectFilesForVersion(files []domain.DownloadableFile, storedFileIDs []stri
 // non-empty. idSet may be nil (reads as all-false), which simply skips the
 // stored-ID preference.
 //
-// Shared by SelectFilesForVersion (#96) and selectUpdateDeployFiles (#143)
+// Shared by selectFilesForVersion (#96) and selectUpdateDeployFiles (#143)
 // specifically so the two cannot drift: both answer the same question -
 // "given the files for THIS version, which ones does this mod use" - and
 // only differ in how they decide the version and what to do when it isn't
@@ -208,7 +208,7 @@ func pickVersionMatch(matches []*domain.DownloadableFile, idSet map[string]bool)
 // correct semantics there - a source that prunes old file IDs after a
 // version bump (CurseForge routinely does) should resolve to the current
 // primary file, not an error. Every other caller (deploy, switch, import,
-// SelectFilesForVersion, and the nil-storedFileIDs install paths, where the
+// selectFilesForVersion, and the nil-storedFileIDs install paths, where the
 // branch is unreachable) passes false: silently deploying/installing a file
 // the caller never asked for is exactly the silent-fallback bug #95 tracks.
 // With allowFallback false, a would-be fallback instead returns

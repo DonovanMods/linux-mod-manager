@@ -82,7 +82,7 @@ type ProfileApplyInstall struct {
 	// the version the DB row and the cache entry will carry. Nil exactly
 	// when Error is set.
 	Mod *domain.Mod `json:"mod,omitempty"`
-	// Files is SelectFilesForVersion's pick for Ref (its FileIDs when it
+	// Files is selectFilesForVersion's pick for Ref (its FileIDs when it
 	// has any, else the version/primary heuristics) - what the apply
 	// downloads, in order.
 	Files []*domain.DownloadableFile `json:"files"`
@@ -104,7 +104,7 @@ type ProfileApplyInstall struct {
 	Replaces *domain.InstalledMod `json:"replaces,omitempty"`
 	// Error is a plan-time resolution failure, already worded exactly as
 	// the CLI prints it ("failed to fetch mod: ...", "failed to get files:
-	// ...", "no downloadable files", or SelectFilesForVersion's own text).
+	// ...", "no downloadable files", or selectFilesForVersion's own text).
 	// The entry keeps its place in ToInstall: ApplyProfileApply reports it
 	// at that position and continues with the rest, matching
 	// doProfileApply's per-mod continue.
@@ -293,9 +293,9 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 
 	// Ref.FileIDs is the single selection input on both paths: a cache-miss
 	// re-download carries the DB row's IDs, every other entry the profile's
-	// own (empty for an unpinned ref, which SelectFilesForVersion then
+	// own (empty for an unpinned ref, which selectFilesForVersion then
 	// resolves by version/primary).
-	selected, err := SelectFilesForVersion(files, entry.Ref.FileIDs, entry.Ref.Version)
+	selected, err := selectFilesForVersion(files, entry.Ref.FileIDs, entry.Ref.Version)
 	if err != nil {
 		entry.Error = err.Error()
 		return
