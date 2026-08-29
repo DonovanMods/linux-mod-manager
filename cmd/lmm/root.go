@@ -14,7 +14,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
@@ -381,9 +380,9 @@ func requireGame(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
-	if err == nil && cfg.DefaultGame != "" {
-		gameID = cfg.DefaultGame
+	defaultGame, err := svcCfg.DefaultGame(context.Background())
+	if err == nil && defaultGame != "" {
+		gameID = defaultGame
 		if verbose {
 			fmt.Printf("Using default game: %s\n", gameID)
 		}

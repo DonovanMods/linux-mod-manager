@@ -12,8 +12,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/spf13/cobra"
 )
 
@@ -75,7 +73,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			defs, loadErrs, err := config.LoadSourceDefinitions(cfg.ConfigDir)
+			defs, loadErrs, err := app.LoadSourceDefinitions(cfg.ConfigDir)
 			if err != nil {
 				return fmt.Errorf("loading source definitions: %w", err)
 			}
@@ -99,7 +97,7 @@ Examples:
 				default:
 					// Nothing registered under this ID: construction must have failed.
 					// Re-run it to recover the actual error for display.
-					if _, cerr := custom.New(d); cerr != nil {
+					if _, cerr := app.ConstructSource(d); cerr != nil {
 						errRows = append(errRows, sourceInfo{ID: d.ID, Type: "error", Error: cerr.Error()})
 					}
 				}
@@ -234,7 +232,7 @@ Examples:
   lmm source validate ~/.config/lmm/sources/my-source.yaml --probe --id 12345`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		def, err := config.LoadSourceDefinitionFile(args[0])
+		def, err := app.LoadSourceDefinitionFile(args[0])
 		if err != nil {
 			return err
 		}
@@ -251,44 +249,12 @@ Examples:
 // probeSource constructs the definition's source and performs one live
 // operation against it, so users can smoke-test a definition before relying
 // on it (design §8).
-func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def custom.SourceDefinition) error {
-	src, err := custom.New(def)
+func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def source.SourceDefinition) error {
+	summary, err := app.ProbeSource(ctx, svc, def, sourceProbeID)
 	if err != nil {
-		return fmt.Errorf("probe: constructing source: %w", err)
+		return fmt.Errorf("probe: %w", err)
 	}
-	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
-		// Same resolution as registration (env var named by EnvKeyFor, then
-		// the stored token), so a probe sees exactly the key a real run would.
-		if key := app.ResolveAPIKey(ctx, svc, src); key != "" {
-			a.SetAPIKey(key)
-		}
-	}
-
-	switch def.Type {
-	case custom.TypeDirectory, custom.TypeManifest:
-		res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
-		if err != nil {
-			return fmt.Errorf("probe: %w", err)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — %d mod(s) visible\n", res.TotalCount)
-	case custom.TypeAPI:
-		if def.API.Endpoints.Search != nil {
-			res, err := src.Search(ctx, source.SearchQuery{PageSize: 1})
-			if err != nil {
-				return fmt.Errorf("probe: %w", err)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — search responded (%d total reported)\n", res.TotalCount)
-			return nil
-		}
-		if sourceProbeID == "" {
-			return fmt.Errorf("probe: this definition has no search endpoint; provide a known mod id with --id to probe get_mod")
-		}
-		mod, err := src.GetMod(ctx, "", sourceProbeID)
-		if err != nil {
-			return fmt.Errorf("probe: %w", err)
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "probe: ok — get_mod %s returned %q\n", sourceProbeID, mod.Name)
-	}
+	fmt.Fprintf(cmd.OutOrStdout(), "probe: %s\n", summary)
 	return nil
 }
 

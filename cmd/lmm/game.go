@@ -11,7 +11,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -108,19 +107,7 @@ func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault stri
 		return fmt.Errorf("game not found: %s", newDefault)
 	}
 
-	// Load config
-	svcCfg, err := getServiceConfig()
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	// Update and save
-	cfg.DefaultGame = newDefault
-	if err := cfg.Save(svcCfg.ConfigDir); err != nil {
+	if err := service.SetDefaultGame(cmd.Context(), newDefault); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
@@ -133,12 +120,12 @@ func runGameShowDefault(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
+	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if cfg.DefaultGame == "" {
+	if defaultGame == "" {
 		cmd.Println("No default game set")
 		cmd.Println("Use 'lmm game set-default <game-id>' to set one")
 		return nil
@@ -147,13 +134,13 @@ func runGameShowDefault(cmd *cobra.Command, args []string) error {
 	// Try to get game name for display
 	if service, err := initService(cmd.Context()); err == nil {
 		defer closeService(service)
-		if game, err := service.GetGame(cfg.DefaultGame); err == nil {
-			cmd.Printf("Default game: %s (%s)\n", game.Name, cfg.DefaultGame)
+		if game, err := service.GetGame(defaultGame); err == nil {
+			cmd.Printf("Default game: %s (%s)\n", game.Name, defaultGame)
 			return nil
 		}
 	}
 
-	cmd.Printf("Default game: %s\n", cfg.DefaultGame)
+	cmd.Printf("Default game: %s\n", defaultGame)
 	return nil
 }
 
@@ -162,23 +149,21 @@ func runGameClearDefault(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(svcCfg.ConfigDir)
+	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if cfg.DefaultGame == "" {
+	if defaultGame == "" {
 		cmd.Println("No default game was set")
 		return nil
 	}
 
-	oldDefault := cfg.DefaultGame
-	cfg.DefaultGame = ""
-	if err := cfg.Save(svcCfg.ConfigDir); err != nil {
+	if err := svcCfg.ClearDefaultGame(cmd.Context()); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	cmd.Printf("Cleared default game (was: %s)\n", oldDefault)
+	cmd.Printf("Cleared default game (was: %s)\n", defaultGame)
 	return nil
 }
 
@@ -217,9 +202,9 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return nil
 	}
 
-	existingGames, err := config.LoadGames(service.ConfigDir())
-	if err != nil {
-		return fmt.Errorf("loading games: %w", err)
+	existingGames := make(map[string]*domain.Game)
+	for _, g := range service.ListGames() {
+		existingGames[g.ID] = g
 	}
 
 	cmd.Printf("Found %d moddable game(s):\n", len(games))

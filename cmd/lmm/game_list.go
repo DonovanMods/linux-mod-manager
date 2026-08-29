@@ -12,7 +12,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 
 	"github.com/spf13/cobra"
 )
@@ -59,11 +58,10 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	games := service.ListGames()
 	sort.Slice(games, func(i, j int) bool { return games[i].ID < games[j].ID })
 
-	cfg, err := config.Load(service.ConfigDir())
+	defaultGame, err := service.DefaultGame(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	defaultGame := cfg.DefaultGame
 
 	if jsonOutput {
 		rows := make([]gameListJSON, len(games))
