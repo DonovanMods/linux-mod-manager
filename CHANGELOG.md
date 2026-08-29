@@ -79,6 +79,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install entries are resolved against their source at plan time, an `ErrStalePlan` freshness
   guard, and progress reported through the event stream. `cmd/lmm` keeps only the prompt and the
   printed lines. No user-visible change: CLI output is byte-identical. (#290)
+- Internal: `lmm profile sync` is Plan/Apply — the DB-to-profile diff engine in `cmd/lmm` (the
+  add/remove/update bucket classification, the display-name lookups, and the `pm.AddMod`/
+  `RemoveMod`/`UpsertMod`/merged-pak-sync application) moves into `core.PlanProfileSync`/
+  `core.ApplyProfileSync`, with a missing profile.yaml recorded on the plan (`Missing`) rather than
+  created at plan time, and an `ErrStalePlan` freshness guard. `cmd/lmm` keeps only the prompt and
+  the printed lines. No user-visible change: CLI output is byte-identical. (#290)
 
 ### Fixed
 
