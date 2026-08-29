@@ -295,20 +295,35 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 // the same vocabulary a real deploy would use: the per-mod and merge lines
 // are synthesized as core flow events and pushed through doDeploy's OWN
 // progress closure, so a dry run's "✓ Mod (merged)" / "✗ Mod - reason" /
-// "Merged N mod(s) → artifact" lines cannot drift from the live ones. The
-// lines the plan alone owns - the header, the purge readout, the per-file
-// detail under --verbose, and the "Would deploy:" summary - are printed
-// here; all of them are new output behind the new --dry-run flag, so no
-// existing invocation is affected.
+// "⚠ Mod - cache missing, re-downloading..." / "Merged N mod(s) → artifact"
+// lines cannot drift from the live ones. A DeployPlanMod.Redownload entry
+// renders as the latter followed by its own "✓ Mod" line and counts as
+// deployable, never as a red "✗" (Task 24 review, Important #2) - a
+// cache-missing mod is exactly what the live deploy heals by re-downloading
+// and then deploying it, not a mod that fails. The lines the plan alone owns
+// - the header, the purge readout, the per-file detail under --verbose, and
+// the "Would deploy:" summary - are printed here; all of them are new output
+// behind the new --dry-run flag, so no existing invocation is affected.
 //
 // The summary deliberately says "Would deploy", not "Deployed", and the
 // --method reminder the live path prints ("Note: Used X method for this
 // deployment.") is omitted: nothing was deployed, and the header above
 // already names the method that would be used.
+//
+// Exit code: like every other flag, --dry-run's own errors (a bad --method,
+// a failing PlanDeploy read) fail normally. But a plan whose OWN data
+// records a selection that is certain to fail once applied (an unknown mod
+// ID, a disabled single-mod selection - DeployPlanMod.Skipped) still renders
+// and returns nil: a plan is data, and doDeploy's real error path is not
+// reached because ApplyDeploy is never called under --dry-run. Reported as
+// Task 24 review Minor #4; scripted pre-flight checks that need a nonzero
+// exit for a doomed deploy cannot rely on --dry-run's exit code alone and
+// should inspect a JSON-rendered plan's Mods[].Skipped instead once such a
+// frontend exists.
 func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHeaderOnce func(int), mergeFooterPrinted *bool) {
 	fmt.Printf("Deploy plan for profile %q (dry run)\n\n", plan.Profile)
 
-	if len(plan.Purge) > 0 {
+	if deployPurge {
 		fmt.Printf("Would purge %d file(s) before deploy...\n", len(plan.Purge))
 		if verbose {
 			for _, f := range plan.Purge {
@@ -337,6 +352,16 @@ func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHea
 		}
 		if m.Skipped != "" {
 			progress(core.ModEvent{Scope: scope, Phase: core.DeploySkipped, Detail: m.Skipped})
+			continue
+		}
+		if m.Redownload {
+			// This mod's cache entry is missing, but the live deploy heals
+			// that by re-downloading from source and then deploying it -
+			// render both live-vocabulary lines (not a red ✗) and count it
+			// as deployable (Task 24 review, Important #2).
+			progress(core.StepEvent{Scope: scope, Phase: core.DeployRedownloading})
+			deployable++
+			progress(core.ModEvent{Scope: scope, Phase: core.DeployDeployed, Class: m.Class})
 			continue
 		}
 		deployable++

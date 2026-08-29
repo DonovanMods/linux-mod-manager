@@ -126,9 +126,9 @@ func TestJSONGoldens(t *testing.T) {
 						Remove: []string{"Data/Stale_P.pak"},
 					},
 					{
-						Ref:     domain.ModReference{SourceID: "curseforge", ModID: "7"},
-						Name:    "Missing Mod",
-						Skipped: "cache missing - the deploy re-downloads from source",
+						Ref:        domain.ModReference{SourceID: "curseforge", ModID: "7"},
+						Name:       "Missing Mod",
+						Redownload: true,
 					},
 				},
 				Purge:  []string{"Data/Sample.esp"},

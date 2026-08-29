@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -160,13 +161,18 @@ func TestPlanDeploy_LinkAndRemove_MatchWhatApplyDeployThenDid(t *testing.T) {
 }
 
 // TestPlanDeploy_Purge_ListsEveryDeployedPathAndBothHookFamilies covers the
-// --purge pass: Purge names every path the purge would undeploy (the removal
-// direction's full cache union, in purge order), and Hooks lists the
-// uninstall.* family ahead of the install.* one, matching run order.
+// --purge pass: Purge names every path the purge would undeploy - the
+// removal direction's full cache union, narrowed to paths actually deployed
+// right now (Minor #1), in purge order - and Hooks lists the uninstall.*
+// family ahead of the install.* one, matching run order.
 func TestPlanDeploy_Purge_ListsEveryDeployedPathAndBothHookFamilies(t *testing.T) {
 	svc, game := newDeployableService(t)
 	seedNamedInstalledMod(t, svc, game, "src", "2", "Mod Two", "1.0", true, map[string][]byte{"two.esp": []byte("2")})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "2", "1.0")
+
+	ctx := context.Background()
+	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err, "fixture: Purge only lists paths that are actually on disk")
 
 	scripts := t.TempDir()
 	ok := createTestScript(t, scripts, "ok.sh", "#!/bin/bash\nexit 0")
@@ -175,7 +181,7 @@ func TestPlanDeploy_Purge_ListsEveryDeployedPathAndBothHookFamilies(t *testing.T
 		Uninstall: domain.HookConfig{BeforeEach: ok, AfterAll: ok},
 	})
 
-	plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{Purge: true})
+	plan, err := svc.PlanDeploy(ctx, game, "default", core.DeployOptions{Purge: true})
 	require.NoError(t, err)
 
 	assert.ElementsMatch(t, []string{"one.esp", "two.esp"}, plan.Purge)
@@ -313,10 +319,13 @@ func TestPlanDeploy_Compile_MergePlanNamesArtifactSourcesAndRawFallbacks(t *test
 	assert.Equal(t, core.DeployModIndividual, classes["Loose Mod"])
 }
 
-// TestPlanDeploy_CacheMissingMod_RecordsSkippedReason pins the one shape a
+// TestPlanDeploy_CacheMissingMod_RecordsRedownload pins the one shape a
 // side-effect-free plan cannot enumerate files for: an absent cache entry,
-// which the deploy heals by re-downloading from source.
-func TestPlanDeploy_CacheMissingMod_RecordsSkippedReason(t *testing.T) {
+// which the deploy heals by re-downloading from source. Task 24 review,
+// Important #2: this is NOT a skip - the live deploy re-downloads and then
+// deploys this mod, so the plan must say so (Redownload=true), not render it
+// as a mod that would fail (Skipped).
+func TestPlanDeploy_CacheMissingMod_RecordsRedownload(t *testing.T) {
 	svc, game := newDeployableService(t)
 	seedNamedInstalledMod(t, svc, game, "src", "gone", "Gone Mod", "1.0", true, nil)
 	seedProfileWithMod(t, svc, "g1", "default", "src", "gone", "1.0")
@@ -326,7 +335,39 @@ func TestPlanDeploy_CacheMissingMod_RecordsSkippedReason(t *testing.T) {
 
 	gone := planModByName(t, plan, "Gone Mod")
 	assert.Empty(t, gone.Link)
-	assert.Contains(t, gone.Skipped, "cache missing")
+	assert.Empty(t, gone.Remove)
+	assert.True(t, gone.Redownload, "a cache-missing mod is a redownload-then-deploy, not a skip")
+	assert.Empty(t, gone.Skipped, "Redownload replaces Skipped for this case - see DeployPlanMod's doc comment")
+}
+
+// TestPlanDeploy_InstalledModsReadFailure_PreservesHistoricalErrorText pins
+// Important #1 from the Task 24 review: pre-lift, a failing installed-mods
+// read reached the user from deployProfile as "getting installed mods: …";
+// planDeploy must surface the SAME text, not currentInstalledSnapshot's
+// "loading installed mods: …" (used by every other Plan, where there is no
+// historical wording to preserve).
+func TestPlanDeploy_InstalledModsReadFailure_PreservesHistoricalErrorText(t *testing.T) {
+	svc, game := newDeployableService(t)
+	require.NoError(t, svc.Close(), "closing the DB early forces the read planDeploy opens with to fail")
+
+	_, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{})
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), "getting installed mods:"),
+		"want error prefixed %q (the pre-lift text), got %q", "getting installed mods:", err.Error())
+}
+
+// TestPlanDeploy_Purge_NothingDeployed_ListsNoPaths pins Minor #1 from the
+// Task 24 review: a --purge pass lists only paths that are ACTUALLY deployed
+// right now, not every installed mod's whole cache/DB removal-direction
+// union. Mod One here is cached and installed (newDeployableService's
+// fixture) but never linked into game.ModPath, so a purge of it undeploys
+// nothing.
+func TestPlanDeploy_Purge_NothingDeployed_ListsNoPaths(t *testing.T) {
+	svc, game := newDeployableService(t)
+
+	plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{Purge: true})
+	require.NoError(t, err)
+	assert.Empty(t, plan.Purge, "Mod One is cached and installed but never deployed to game.ModPath")
 }
 
 // TestDeployProfile_MatchesPlanPlusApply pins the convenience wrapper's

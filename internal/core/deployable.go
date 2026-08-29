@@ -51,6 +51,15 @@ func deployableFiles(gameCache *cache.Cache, gameID, sourceID, modID, version st
 	if err != nil {
 		return nil, err
 	}
+	return deployableFilesFromListing(gameCache, gameID, sourceID, modID, version, files)
+}
+
+// deployableFilesFromListing is deployableFiles' narrowing logic for a
+// caller that has already listed the cache entry (Task 24 review, Minor
+// #5): planDeploy needs both the deploy-direction (this) and the
+// removal-direction (the raw listing itself) result for the same mod, and
+// ListFiles-ing one cache entry twice to build one plan row is wasteful.
+func deployableFilesFromListing(gameCache *cache.Cache, gameID, sourceID, modID, version string, files []string) ([]string, error) {
 	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
 	if err != nil {
 		return nil, err

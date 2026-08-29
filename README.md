@@ -831,6 +831,7 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 | `lmm deploy <mod-id>`                              | Deploy specific mod from cache                                                                                                                       |
 | `lmm deploy --method hardlink`                     | Deploy using different link method                                                                                                                   |
 | `lmm deploy --purge`                               | Purge then deploy all mods                                                                                                                           |
+| `lmm deploy --dry-run`                             | Preview what a deploy would do                                                                                                                       |
 | `lmm purge`                                        | Remove all mods from game directory                                                                                                                  |
 | `lmm conflicts`                                    | Show file conflicts in current profile                                                                                                               |
 | `lmm source list`                                  | List built-in and user-defined mod sources                                                                                                           |

@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -181,10 +183,14 @@ type DeployPlan struct {
 	Mods    []DeployPlanMod `json:"mods"`
 
 	// Purge lists the game-dir-relative paths a --purge pass would
-	// undeploy before the deploy loop runs, deduplicated and in purge
-	// order. Empty when opts.Purge is false. A path here may well be
-	// re-linked moments later by the deploy loop - purge undeploys
-	// everything, then the loop redeploys the selection.
+	// undeploy before the deploy loop runs: each installed mod's
+	// removal-direction union (deployedPathsFor), narrowed to the paths
+	// actually present under game.ModPath right now (an os.Lstat check -
+	// still a pure read), deduplicated and in purge order. Empty when
+	// opts.Purge is false, or when opts.Purge is true but nothing
+	// installed is currently deployed. A path here may well be re-linked
+	// moments later by the deploy loop - purge undeploys everything
+	// currently there, then the loop redeploys the selection.
 	Purge []string `json:"purge"`
 
 	// Hooks names the hooks that would actually run, in run order: the
@@ -224,7 +230,13 @@ type DeployPlanMod struct {
 
 	// Link lists the game-dir-relative paths the deploy would link/copy
 	// for this mod, in cache listing order - deployableFiles' result, which
-	// is precisely what Installer.Install deploys.
+	// is precisely what Installer.Install deploys. On a DeployCompile game
+	// a DeployModMerged entry's own Link is empty (#197 - it deploys zero
+	// files of its own): its content reaches the game dir only via the
+	// profile-level MergePlan.Artifact, written AFTER every mod's Link is
+	// applied. A merge participant's contribution is therefore represented
+	// EXCLUSIVELY by MergePlan, never inside any mod's Link (Task 24
+	// review, Minor #2).
 	Link []string `json:"link"`
 
 	// Remove lists the game-dir-relative paths the undeploy-before-redeploy
@@ -232,14 +244,22 @@ type DeployPlanMod struct {
 	// union (or, for an absent cache entry, the DB's tracked deployed
 	// paths) minus Link. This is normally empty; it is non-empty exactly
 	// where #210's narrowing self-heals a stale, unclaimed deployment.
+	// Always empty when Redownload is set - a plan cannot enumerate files
+	// it has not fetched yet.
 	Remove []string `json:"remove"`
 
-	// Skipped, when set, is why this mod would not deploy its files:
-	// "mod not found", a disabled single-mod selection, or a missing cache
-	// entry (which the deploy heals by re-downloading from source, so the
-	// plan cannot enumerate its files). A selection problem the pre-lift
-	// flow reported only AFTER its --purge pass is plan DATA here, never a
-	// PlanDeploy error - see PlanDeploy's doc comment.
+	// Redownload reports that this mod's cache entry is missing: the live
+	// deploy heals this by re-downloading from source before installing,
+	// so it WOULD deploy this mod (optimistically - Link just cannot be
+	// enumerated without doing the fetch), not skip it. Task 24 review,
+	// Important #2: this is what tells a renderer apart from a genuine
+	// Skipped mod, which never deploys.
+	Redownload bool `json:"redownload,omitzero"`
+
+	// Skipped, when set, is why this mod would not deploy its files: "mod
+	// not found", or a disabled single-mod selection. A selection problem
+	// the pre-lift flow reported only AFTER its --purge pass is plan DATA
+	// here, never a PlanDeploy error - see PlanDeploy's doc comment.
 	Skipped string `json:"skipped,omitempty"`
 }
 
@@ -275,23 +295,24 @@ func (s *Service) PlanDeploy(ctx context.Context, game *domain.Game, profileName
 }
 
 func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName string, opts DeployOptions) (*DeployPlan, error) {
-	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)
+	// Read directly (not via currentInstalledSnapshot) to keep the
+	// pre-lift error text ("getting installed mods: …") on this
+	// reachable failure path - see planDeploy's doc comment and
+	// TestPlanDeploy_InstalledModsReadFailure_PreservesHistoricalErrorText.
+	installedMods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
-	plan := &DeployPlan{Profile: profileName, snapshot: snapshot}
+	plan := &DeployPlan{Profile: profileName, snapshot: snapshotOf(installedMods)}
 	gameCache := s.GetGameCache(game)
 
 	// --purge pass, mirroring deployProfile's own ordering (and its nil-safe
-	// profile fallback) so the listed paths come out in purge order.
+	// profile fallback) so the listed paths come out in purge order. Reuses
+	// the read above instead of re-querying the same rows.
 	purgeMods := 0
 	if opts.Purge {
-		mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
-		if err != nil {
-			return nil, fmt.Errorf("getting installed mods: %w", err)
-		}
 		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
-		mods = OrderByProfile(profile, mods)
+		mods := OrderByProfile(profile, installedMods)
 		purgeMods = len(mods)
 		seen := make(map[string]bool)
 		for i := range mods {
@@ -300,6 +321,14 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 					continue
 				}
 				seen[f] = true
+				// A mod's removal-direction union names everything that
+				// COULD be undeployed; only paths actually present under
+				// game.ModPath right now are what a purge would actually
+				// touch (Task 24 review, Minor #1). Lstat, not Stat - a
+				// dangling symlink is still a deployed path to remove.
+				if _, err := os.Lstat(filepath.Join(game.ModPath, f)); err != nil {
+					continue
+				}
 				plan.Purge = append(plan.Purge, f)
 			}
 		}
@@ -349,16 +378,30 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			Class: classes[domain.ModKey(mod.SourceID, mod.ID)],
 		}
 		if !gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
-			// The deploy loop heals this by re-downloading from source, so
-			// what it would then link is not knowable without doing so.
-			entry.Skipped = "cache missing - the deploy re-downloads from source"
+			// The deploy loop heals this by re-downloading from source and
+			// then deploying it - this mod WOULD deploy, so it is not a
+			// Skipped entry (Important #2). What it would then link is not
+			// knowable without doing the fetch, so Link stays empty.
+			entry.Redownload = true
 			plan.Mods = append(plan.Mods, entry)
 			continue
 		}
-		link, err := deployableFiles(gameCache, game.ID, mod.SourceID, mod.ID, mod.Version)
+		// One ListFiles call serves both directions: the cache's existence
+		// was just confirmed above, so this mirrors deployedPathsFor's own
+		// success path (its full removal-direction union IS this raw
+		// listing) without listing the same entry a second time (Task 24
+		// review, Minor #5).
+		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 		if err != nil {
 			// A readout, never a reason to fail a plan: the deploy itself
 			// would surface this as that mod's own skip reason.
+			s.logger().Warn("resolving deployable files failed while planning a deploy",
+				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
+			plan.Mods = append(plan.Mods, entry)
+			continue
+		}
+		link, err := deployableFilesFromListing(gameCache, game.ID, mod.SourceID, mod.ID, mod.Version, files)
+		if err != nil {
 			s.logger().Warn("resolving deployable files failed while planning a deploy",
 				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
 			plan.Mods = append(plan.Mods, entry)
@@ -369,7 +412,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 		for _, f := range link {
 			linked[f] = true
 		}
-		for _, f := range s.deployedPathsFor(ctx, game, profileName, mod) {
+		for _, f := range files {
 			if !linked[f] {
 				entry.Remove = append(entry.Remove, f)
 			}
