@@ -300,6 +300,39 @@ func TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll(t *testing.T) {
 	assert.Contains(t, saved, "starrupture")
 }
 
+// TestDoGameDetect_AllFlagUnderJSON_ProceedsWithoutReadingStdin guards the
+// combination the Task 9 review flagged as untested: --all under --json
+// together completes the detect rather than hitting the --json/stdin guard.
+func TestDoGameDetect_AllFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition"}))
+	withJSONOutput(t)
+	oldAll := gameDetectAll
+	gameDetectAll = true
+	t.Cleanup(func() { gameDetectAll = oldAll })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+	})
+
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "Add games to config?")
+	assert.Contains(t, buf.String(), "Added: Star Rupture (starrupture)")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Contains(t, saved, "starrupture")
+}
+
 // TestDoGameDetect_SelectFlagSelectsExplicitIndices pins --select: naming an
 // already-configured game's index still repairs it, matching the
 // interactive explicit-selection path (#205 item 2), with no prompt and no
@@ -307,6 +340,40 @@ func TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll(t *testing.T) {
 func TestDoGameDetect_SelectFlagSelectsExplicitIndices(t *testing.T) {
 	configDir = t.TempDir()
 	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Stale Name"}))
+	oldSelect := gameDetectSelect
+	gameDetectSelect = "1"
+	t.Cleanup(func() { gameDetectSelect = oldSelect })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games)
+	})
+
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "Add games to config?")
+	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "skyrim-se")
+	assert.Equal(t, "Skyrim Special Edition", saved["skyrim-se"].Name)
+}
+
+// TestDoGameDetect_SelectFlagUnderJSON_ProceedsWithoutReadingStdin guards
+// the combination the Task 9 review flagged as untested: --select under
+// --json together completes the detect rather than hitting the
+// --json/stdin guard.
+func TestDoGameDetect_SelectFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Stale Name"}))
+	withJSONOutput(t)
 	oldSelect := gameDetectSelect
 	gameDetectSelect = "1"
 	t.Cleanup(func() { gameDetectSelect = oldSelect })

@@ -396,6 +396,35 @@ func TestDoProfileImport_YesFlagSkipsPromptEntirely(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestDoProfileImport_YesFlagUnderJSON_ProceedsWithoutReadingStdin guards
+// the combination the Task 9 review flagged as untested: -y under --json
+// together completes the import rather than hitting the --json/stdin guard.
+func TestDoProfileImport_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	withJSONOutput(t)
+	profileImportYes = true
+	t.Cleanup(func() { profileImportYes = false })
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	var importErr error
+	out := captureStdout(t, func() error {
+		importErr = assertStdinNeverRead(t, func() error {
+			return doProfileImport(context.Background(), svc, game, data)
+		})
+		return nil
+	})
+
+	require.NoError(t, importErr)
+	assert.NotContains(t, out, "Download and install mods?")
+
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
+	require.NoError(t, err)
+}
+
 // TestDoProfileImport_ForceOverwritesExistingProfile pins --force: importing
 // over an already-saved profile of the same name succeeds and replaces its
 // mod list.

@@ -103,20 +103,6 @@ func newGameAddCmd() (*cobra.Command, *bytes.Buffer) {
 // svc.ListSources() carries no ordering guarantee (registry.List() ranges a
 // map), so an unsorted menu would flake; a mock custom source proves the
 // menu isn't special-cased to the two built-ins.
-// TestRunGameAdd_JSONOutputReturnsInteractiveOnly pins the non-interactive
-// rule (v2 Phase 3 Ruling 2): `game add` stays interactive-only in Phase 3,
-// so --json must reject with core.ErrInteractiveOnly before opening a
-// service or printing/reading any of doGameAdd's seven prompts.
-func TestRunGameAdd_JSONOutputReturnsInteractiveOnly(t *testing.T) {
-	withJSONOutput(t)
-
-	err := assertStdinNeverRead(t, func() error {
-		return runGameAdd(&cobra.Command{}, nil)
-	})
-
-	require.ErrorIs(t, err, core.ErrInteractiveOnly)
-}
-
 func TestDoGameAdd_MenuListsRegisteredSourcesSortedByID(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(nexusmods.New(nil, ""))
@@ -136,6 +122,20 @@ func TestDoGameAdd_MenuListsRegisteredSourcesSortedByID(t *testing.T) {
 	assert.Contains(t, out, "[1] Acme Mods (acme-mods)")
 	assert.Contains(t, out, "[2] CurseForge (curseforge)")
 	assert.Contains(t, out, "[3] Nexus Mods (nexusmods)")
+}
+
+// TestRunGameAdd_JSONOutputReturnsInteractiveOnly pins the non-interactive
+// rule (v2 Phase 3 Ruling 2): `game add` stays interactive-only in Phase 3,
+// so --json must reject with core.ErrInteractiveOnly before opening a
+// service or printing/reading any of doGameAdd's seven prompts.
+func TestRunGameAdd_JSONOutputReturnsInteractiveOnly(t *testing.T) {
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		return runGameAdd(&cobra.Command{}, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrInteractiveOnly)
 }
 
 // TestDoGameAdd_NoRegisteredSources guards the degenerate case a bare

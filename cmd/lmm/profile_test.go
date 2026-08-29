@@ -269,6 +269,36 @@ func TestDoProfileSwitch_YesFlagSkipsPromptEntirely(t *testing.T) {
 	assert.False(t, mod.Enabled)
 }
 
+// TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin guards
+// the combination the Task 9 review flagged as untested: -y under --json
+// together. The --json guard only fires inside the prompt's own read path,
+// which -y's `if !profileSwitchYes { ... }` branch never reaches at all -
+// this test proves that structural safety holds by actually driving both
+// flags at once, rather than relying on code-shape inspection.
+func TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	withJSONOutput(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	oldYes := profileSwitchYes
+	profileSwitchYes = true
+	t.Cleanup(func() { profileSwitchYes = oldYes })
+
+	var switchErr error
+	out := captureStdout(t, func() error {
+		switchErr = assertStdinNeverRead(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "target")
+		})
+		return nil
+	})
+
+	require.NoError(t, switchErr)
+	assert.NotContains(t, out, "Proceed?")
+	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
+}
+
 // TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput guards
 // doProfileSwitch's full apply path end to end (disable, enable, install,
 // SetDefault) byte-identically to the pre-extraction CLI, across all three

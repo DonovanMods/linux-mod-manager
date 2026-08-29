@@ -202,14 +202,35 @@ func assertStdinNeverRead(t *testing.T, fn func() error) error {
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	os.Stdin = r
+
+	done := make(chan error, 1)
+	// finished is closed independently of done (which the happy path below
+	// already drains) so Cleanup can always wait for the goroutine to
+	// actually exit without racing to consume done's one buffered slot
+	// itself.
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		done <- fn()
+	}()
+
 	t.Cleanup(func() {
 		os.Stdin = old
 		_ = w.Close()
 		_ = r.Close()
+		// Wait for the goroutine to actually finish before this test's
+		// teardown completes - on the happy path it already has by now;
+		// on a future regression (a real blocking Read()), closing the
+		// pipe above unblocks it, and this bounds how long we wait rather
+		// than letting it leak into the next test still running and
+		// touching shared package-level state (jsonOutput and friends)
+		// concurrently - a race only under -race and only once a
+		// regression makes the timeout below fire.
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+		}
 	})
-
-	done := make(chan error, 1)
-	go func() { done <- fn() }()
 
 	select {
 	case err := <-done:
