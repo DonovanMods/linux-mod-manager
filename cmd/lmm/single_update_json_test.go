@@ -265,7 +265,7 @@ func TestDoUpdateRollback_JSON_VerboseDoesNotContaminateStdout(t *testing.T) {
 		return doUpdateRollback(context.Background(), svc, game, "mod1")
 	})
 
-	var doc core.UpdateApplyResult
+	var doc core.RollbackResult
 	decodeSingleDoc(t, out, &doc)
 	assert.Equal(t, "rolled_back", doc.Status.String())
 	assert.NotContains(t, out, "Rolling back")

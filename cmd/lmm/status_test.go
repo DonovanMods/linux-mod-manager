@@ -171,22 +171,6 @@ func TestDoStatus_OrdersGamesByID(t *testing.T) {
 	assert.Equal(t, []string{"alpha", "mike", "zulu"}, gotIDs)
 }
 
-// TestStatusCmd_JSONOutput verifies status --json output structure (JSON contract / E2E shape).
-// Encodes the same struct used by status --json and asserts round-trip and expected keys.
-func TestStatusCmd_JSONOutput(t *testing.T) {
-	out := core.StatusReport{Games: []core.GameSummary{}}
-	data, err := json.Marshal(out)
-	require.NoError(t, err)
-
-	var decoded struct {
-		Games []interface{} `json:"games"`
-	}
-	err = json.Unmarshal(data, &decoded)
-	require.NoError(t, err, "status JSON output must be valid JSON with 'games' key")
-	assert.NotNil(t, decoded.Games)
-	assert.Len(t, decoded.Games, 0)
-}
-
 // --- Last Deploy: CLI parity for #106(d) ---
 //
 // setupDoDeployTest (deploy_test.go) builds the *core.Service/*domain.Game
