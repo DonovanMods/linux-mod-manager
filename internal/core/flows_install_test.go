@@ -2578,6 +2578,52 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeplo
 	assert.Equal(t, "1.0", installed.Version, "DB row must be unchanged")
 }
 
+// TestService_ApplyInstall_Conflicts_SameVersionReinstall_AcceptRerun_Redownloads
+// pins the first recorded warm-cache carve-out (task-8 review, Important 1):
+// unlike the fresh/upgrade-install leg (DeclineThenAccept_DownloadsExactlyOnce,
+// which stays at 1), a same-version reinstall's accept re-run downloads AGAIN
+// - the reinstall-cache transaction always stages into a fresh EMPTY cache
+// (prepareReinstallCacheTransaction clones only the DB snapshot, never the
+// live cache directory), so cacheWarm's own HasFileIDs check can never see it
+// as complete. This is by design (a reinstall is a repair, not a skip), and
+// this test is what turns that into a characterized property instead of a
+// latent one.
+func TestService_ApplyInstall_Conflicts_SameVersionReinstall_AcceptRerun_Redownloads(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.0", "shared.esp", []byte("mod1-shared-content")))
+
+	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.esp": []byte("other-content")})
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.esp", "new-content")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.NotNil(t, plan.Replaces, "sanity: the reinstall-cache-transaction path")
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError))
+	require.Equal(t, 1, mock.DownloadCount(), "sanity: the refused run downloaded into the staged transaction cache")
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{AcceptConflicts: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, mock.DownloadCount(), "a same-version reinstall's accept re-run re-downloads by design - it never routes through the cache-first guard")
+	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
+
+	content, err := os.ReadFile(filepath.Join(gameDir, "mod1.esp"))
+	require.NoError(t, err)
+	assert.Equal(t, "new-content", string(content))
+}
+
 // --- #140: --version/--file interplay (TargetFileIDs; strict-path TargetVersion) ---
 
 // perModMultiFileSource serves a caller-supplied file list PER MOD ID - the

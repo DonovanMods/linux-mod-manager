@@ -181,12 +181,12 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
   after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
   cache already warm: `install` re-prints only "Extracting to cache…" (never a second
-  "Downloading …"/"Checksum: …" block, and it performs no second download), `import` re-prints its
-  "Fetching metadata…" and Mod/Source/ID/Version/Files readout, before "Deploying to game
-  directory…". One user-level install or import therefore runs each hook exactly once and
-  downloads each file once. A forced hook warning (`--force` with a failing
-  `install.before_all`) now prints after the download lines rather than before them. `--force`
-  still skips the conflict check entirely. (#303)
+  "Downloading …"/"Checksum: …" block), `import` re-prints its "Fetching metadata…" and
+  Mod/Source/ID/Version/Files readout, before "Deploying to game directory…". An accepted
+  conflict re-run does not re-download cached files (a same-version reinstall or a local
+  directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
+  with a failing `install.before_all`) now prints after the download lines rather than before
+  them. `--force` still skips the conflict check entirely. (#303)
 - Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
   frontend from Apply"). `InstallOptions.ConfirmConflicts` and
   `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
