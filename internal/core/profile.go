@@ -22,7 +22,18 @@ type ProfileResult struct {
 }
 
 // ProfileManager handles profile CRUD operations. Profile switching lives in
-// Service.PlanProfileSwitch/ApplyProfileSwitch (internal/core/flows.go).
+// Service.PlanProfileSwitch/ApplyProfileSwitch (internal/core/switch.go).
+//
+// Every I/O method takes ctx as its first parameter and returns ctx.Err()
+// before touching disk, so a cancelled ctx never reads or mutates a profile
+// file (v2 Phase 3 Ruling 11). ParseProfile is the exception: a pure
+// in-memory parse with no I/O, the same rule that keeps internal/storage/
+// config ctx-less.
+//
+// Callers must not absorb that error into a business-rule warning: a
+// mutator that COMPLETES a DB mutation the caller already applied runs
+// through core.completeProfileWrite instead, so the profile file and the
+// database cannot end a cancelled run disagreeing (Ruling 16).
 type ProfileManager struct {
 	configDir string
 	db        *db.DB
