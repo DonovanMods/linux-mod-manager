@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -187,6 +188,67 @@ func TestGameShowDefault_UnresolvableID(t *testing.T) {
 	assert.Equal(t, "Default game: ghost-game\n", outBuf.String())
 }
 
+// TestGameShowDefault_MalformedGamesYAML pins the pre-#309 tolerance (task
+// A review round 1, Important 1): a malformed games.yaml must not turn a
+// successful "default game" readout into a hard error - only the
+// best-effort name enrichment may fail, falling back to the bare-ID
+// line/document, exactly like the pre-#309 code's best-effort initService.
+func TestGameShowDefault_MalformedGamesYAML(t *testing.T) {
+	setup := func(t *testing.T) {
+		t.Helper()
+		tmpDir := t.TempDir()
+		configDir = tmpDir
+		dataDir = filepath.Join(tmpDir, "data")
+		cfg := &config.Config{DefaultGame: "test-game"}
+		require.NoError(t, cfg.Save(tmpDir))
+		require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "games.yaml"), []byte("games: [\n"), 0o644))
+	}
+
+	t.Run("plain", func(t *testing.T) {
+		setup(t)
+		outBuf := new(bytes.Buffer)
+		cmd := &cobra.Command{}
+		cmd.SetOut(outBuf)
+		cmd.SetContext(context.Background())
+
+		err := runGameShowDefault(cmd, nil)
+		require.NoError(t, err, "a malformed games.yaml must not fail the command (Important 1)")
+		assert.Equal(t, "Default game: test-game\n", outBuf.String())
+	})
+
+	t.Run("json", func(t *testing.T) {
+		setup(t)
+		withJSONOutput(t)
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		out := captureStdout(t, func() error { return runGameShowDefault(cmd, nil) })
+		var got core.DefaultGame
+		decodeStrict(t, out, &got)
+		assert.Equal(t, core.DefaultGame{Set: true, ID: "test-game"}, got, "Name stays empty when the service cannot open")
+	})
+}
+
+// TestGameShowDefault_MalformedConfigYAML pins the exact pre-#309 error
+// bytes (task A review round 1, Important 1): a config.yaml load failure
+// must keep "loading config: %w", never gaining withService's "initializing
+// service: " prefix - the default ID is resolved config-only, before any
+// service is opened.
+func TestGameShowDefault_MalformedConfigYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir = tmpDir
+	dataDir = filepath.Join(tmpDir, "data")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.yaml"), []byte("default_game: [\n"), 0o644))
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	err := runGameShowDefault(cmd, nil)
+	require.Error(t, err)
+	assert.True(t, strings.HasPrefix(err.Error(), "loading config: parsing config: "), "got %q", err.Error())
+	assert.NotContains(t, err.Error(), "initializing service:")
+}
+
 // TestDoGameShowDefault_JSON pins the DefaultGame document's framing (one
 // document, empty stderr) and its recorded golden (#309), for both the
 // "set, resolves" and "none set" shapes.
@@ -195,11 +257,13 @@ func TestDoGameShowDefault_JSON(t *testing.T) {
 		svc := setupGameAddTest(t)
 		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
 		require.NoError(t, svc.SetDefaultGame(context.Background(), "skyrim-se"))
+		info, err := svc.DefaultGameInfo(context.Background())
+		require.NoError(t, err)
 		cmd := &cobra.Command{}
 		cmd.SetContext(context.Background())
 
 		out := runJSONCommand(t, func() error {
-			return doGameShowDefault(context.Background(), cmd, svc)
+			return doGameShowDefault(cmd, info)
 		})
 		var got core.DefaultGame
 		decodeStrict(t, out, &got)
@@ -208,11 +272,13 @@ func TestDoGameShowDefault_JSON(t *testing.T) {
 
 	t.Run("none", func(t *testing.T) {
 		svc := setupGameAddTest(t)
+		info, err := svc.DefaultGameInfo(context.Background())
+		require.NoError(t, err)
 		cmd := &cobra.Command{}
 		cmd.SetContext(context.Background())
 
 		out := runJSONCommand(t, func() error {
-			return doGameShowDefault(context.Background(), cmd, svc)
+			return doGameShowDefault(cmd, info)
 		})
 		var got core.DefaultGame
 		decodeStrict(t, out, &got)

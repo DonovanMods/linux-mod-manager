@@ -138,22 +138,46 @@ func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault stri
 	return nil
 }
 
+// runGameShowDefault resolves the configured default game ID config-only
+// (getServiceConfig + ServiceConfig.DefaultGame, no DB open), matching the
+// pre-#309 behaviour: a malformed games.yaml or any other service-open
+// failure must not turn a successful "no default"/"bare ID" readout into a
+// hard error, and querying the default game must not create lmm.db/cache/
+// as a read-only side effect (task A review round 1, Important 1/2). A
+// service is opened only when a default IS set, and only best-effort, to
+// enrich the id with its game's Name - a lookup or open failure keeps the
+// bare-ID fallback doGameShowDefault already renders for an unresolvable
+// Name.
 func runGameShowDefault(cmd *cobra.Command, args []string) error {
-	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		return doGameShowDefault(ctx, cmd, service)
-	})
-}
-
-// doGameShowDefault renders the DefaultGame query (#309). Ruling 17
-// (recorded plain-text delta): the plain lines move from stderr - an
-// accident of cmd.Println/Printf, which write to Command.OutOrStderr() -
-// to stdout via cmd.OutOrStdout(); the bytes themselves are unchanged.
-func doGameShowDefault(ctx context.Context, cmd *cobra.Command, service *core.Service) error {
-	info, err := service.DefaultGameInfo(ctx)
+	svcCfg, err := getServiceConfig()
+	if err != nil {
+		return err
+	}
+	id, err := svcCfg.DefaultGame(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	info := &core.DefaultGame{}
+	if id != "" {
+		info.Set = true
+		info.ID = id
+		if service, err := initService(cmd.Context()); err == nil {
+			defer closeService(service)
+			if game, err := service.GetGame(id); err == nil {
+				info.Name = game.Name
+			}
+		}
+	}
+
+	return doGameShowDefault(cmd, info)
+}
+
+// doGameShowDefault renders an already-resolved DefaultGame query (#309).
+// Ruling 17 (recorded plain-text delta): the plain lines move from stderr -
+// an accident of cmd.Println/Printf, which write to Command.OutOrStderr() -
+// to stdout via cmd.OutOrStdout(); the bytes themselves are unchanged.
+func doGameShowDefault(cmd *cobra.Command, info *core.DefaultGame) error {
 	if jsonOutput {
 		return emitJSON(info)
 	}
