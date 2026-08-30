@@ -1136,7 +1136,13 @@ func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profile
 // Side-effect-free (reads only), like every other Plan input. It describes
 // the GAME DIRECTORY: a cache-entry deletion with no deployed artifact to
 // go with it is not a merged-artifact effect. A game whose compile source
-// cannot be resolved has no artifact to name, so the answer is nil.
+// cannot be resolved has no artifact to name, so the answer is nil - that
+// is the ONLY error path that answers nil. Every other read that fails
+// (listing the merge sources, computing the current fingerprint) leaves the
+// outcome UNDECIDABLE with the artifact name already in hand, and an
+// undecidable outcome answers resync: nil renders as silence, which
+// under-states, and this modelling errs toward over-stating (unit Q review
+// M6, restoring the direction the superseded decisions row named).
 func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) *MergedArtifactEffect {
 	if game.DeployMode != domain.DeployCompile {
 		return nil
@@ -1151,9 +1157,11 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 
 	sources, err := s.enabledMergeSources(ctx, game, profileName)
 	if err != nil {
+		// Undecidable, not "nothing happens": the artifact NAME is already
+		// in hand, so answer in the safe direction (unit Q review, M6).
 		s.logger().Warn("listing enabled merge sources failed while planning an uninstall",
 			"game_id", game.ID, "profile", profileName, "err", err)
-		return nil
+		return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
 	}
 	ref := mod.SourceID + ":" + mod.ID
 	contributes, remaining := false, 0
@@ -1187,9 +1195,12 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 		}
 		current, _, cerr := s.currentMergedFingerprint(ctx, game, profileName)
 		if cerr != nil {
+			// Same class as the unreadable STORED fingerprint immediately
+			// above - we cannot tell - so the same answer (unit Q review,
+			// M6): resync, never silence.
 			s.logger().Warn("computing current merge fingerprint failed while planning an uninstall",
 				"game_id", game.ID, "profile", profileName, "err", cerr)
-			return nil
+			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
 		}
 		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr != nil || !eq {
 			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}

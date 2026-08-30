@@ -107,6 +107,38 @@ func TestPlanUninstall_MergedArtifact_NilWhenModContributesNothing(t *testing.T)
 	require.Nil(t, plan.MergedArtifact, "a non-merge-source uninstall changes no merge input")
 }
 
+// TestPlanUninstall_MergedArtifact_ResyncWhenFingerprintUndecidable pins the
+// unit Q review's M6: when the "mod contributes nothing" branch cannot
+// DECIDE - here currentMergedFingerprint fails because the base pak is gone
+// - the answer must be a resync, not nil. nil renders as "the merged
+// artifact is untouched", i.e. silence, which under-states; the sibling
+// branch immediately above (stored fingerprint unreadable) already answers
+// resync for the same class of "we can't tell", and the superseded decisions
+// row was explicit that this modelling errs toward over-stating. Only
+// mergeCompilerForGame failing still yields nil, since without it there is
+// no artifact name to print.
+func TestPlanUninstall_MergedArtifact_ResyncWhenFingerprintUndecidable(t *testing.T) {
+	svc, game, basePak := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear"))
+	seedPlainMod(t, svc, game, "plain", "plain.esp")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	requireArtifactDeployed(t, game)
+
+	// Removing the base pak makes ResolveBaseArtifact - and so
+	// currentMergedFingerprint - fail, without touching the merge INPUTS
+	// (retained cache files) or the deployed artifact, so the plan reaches
+	// the "mod contributes nothing" branch exactly as
+	// TestPlanUninstall_MergedArtifact_NilWhenModContributesNothing does.
+	require.NoError(t, os.Remove(basePak))
+
+	plan, err := svc.PlanUninstall(context.Background(), game, "default", "", "plain", core.UninstallOptions{})
+	require.NoError(t, err, "an undecidable fingerprint is a modelling gap, not a planning failure")
+	require.NotNil(t, plan.MergedArtifact, "M6: an undecidable comparison must not read as \"nothing happens\"")
+	require.Equal(t, core.MergedArtifactResync, plan.MergedArtifact.Action)
+	require.Equal(t, mergedArtifactName, plan.MergedArtifact.Path)
+}
+
 // TestPlanUninstall_MergedArtifact_NilWhenNoArtifactExists: nothing was ever
 // merged, and removing the last source would not create one either.
 func TestPlanUninstall_MergedArtifact_NilWhenNoArtifactExists(t *testing.T) {
