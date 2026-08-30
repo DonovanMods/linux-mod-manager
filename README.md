@@ -35,7 +35,7 @@ sudo mv lmm /usr/local/bin/
 Requires Go 1.27 or later.
 
 ```bash
-go install github.com/DonovanMods/linux-mod-manager/cmd/lmm@latest
+go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest
 ```
 
 ### From Source
