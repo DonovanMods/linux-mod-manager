@@ -261,6 +261,17 @@ func fingerprintArchive(path string) (archiveFingerprint, error) {
 // HERE, because it is a read and because it is what finalises the mod's
 // identity and version: a plan whose printed ID were provisional would defeat
 // the point (Ruling 18). Its diagnostics land in plan.Warnings.
+//
+// ERROR PREFIXES (Ruling 18, recorded plain-text delta). Every reason an
+// archive CANNOT be imported at all - an unsupported format, an unresolvable
+// compile source, a failed ValidateSource, a member claiming lmm's reserved
+// namespace or escaping via zip-slip, a missing `7z` - is this layer's, and
+// is returned unprefixed. Before #314 those same checks ran inside
+// Importer.Import, so they reached the user wrapped in ApplyImportArchive's
+// "import failed: " (and, for a member rejection, "extracting archive: " on
+// top of that). ApplyImportArchive keeps "import failed: " for what it owns:
+// failures of the ingest it actually performs. A plan that never extracts
+// must not claim to be extracting.
 func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, profileName, archivePath string, opts ImportArchiveOptions) (*ImportArchivePlan, error) {
 	fingerprint, err := fingerprintArchive(archivePath)
 	if err != nil {
@@ -455,6 +466,11 @@ func ImportEnrichmentRuns(game *domain.Game, opts ImportArchiveOptions) bool {
 // (fingerprint) - either mismatch is ErrStalePlan and the frontend re-plans.
 // The conflict set is recomputed from what was actually ingested and must
 // still match plan.Conflicts; see opts.AcceptConflicts for the gate itself.
+//
+// ERROR PREFIXES: this layer owns "import failed: ", and only for failures of
+// the ingest it performs. Everything that makes an archive unimportable in
+// the first place is PlanImportArchive's and is reported unprefixed - see
+// that method's own note.
 func (s *Service) ApplyImportArchive(ctx context.Context, game *domain.Game, profileName string, plan *ImportArchivePlan, opts ImportArchiveOptions, sink EventSink) (*ImportArchiveResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {

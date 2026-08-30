@@ -386,6 +386,44 @@ func TestDoImport_ConflictDecline_LeavesAPreExistingCacheEntryIntact(t *testing.
 		"the pre-existing entry must not have been overwritten on the way to the question")
 }
 
+// TestDoImport_ArchiveUnsupportedFormat_FailsAndRendersTheEnvelope pins the
+// frontend half of Ruling 18's error-surface move: an archive that cannot be
+// imported still fails (a non-nil error, so a non-zero exit) and, under
+// --json, reportError renders it as the standard {"error": ...} envelope on
+// stdout with nothing on stderr. The wording itself is pinned byte-exactly
+// in internal/core (TestPlanImportArchive_ErrorWording).
+func TestDoImport_ArchiveUnsupportedFormat_FailsAndRendersTheEnvelope(t *testing.T) {
+	run := func(t *testing.T) (string, string, error) {
+		t.Helper()
+		svc, game := setupDoImportTest(t)
+		archivePath := filepath.Join(t.TempDir(), "notes.txt")
+		require.NoError(t, os.WriteFile(archivePath, []byte("not an archive"), 0o644))
+		return captureStdoutStderrErr(t, func() error {
+			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+		})
+	}
+
+	t.Run("plain", func(t *testing.T) {
+		_, _, err := run(t)
+		require.EqualError(t, err, "unsupported archive format: .txt")
+	})
+
+	t.Run("json", func(t *testing.T) {
+		withJSONOutput(t)
+		stdout, stderr, err := run(t)
+		require.Error(t, err)
+		assert.Empty(t, stdout, "doImport itself prints nothing; reportError owns the document")
+		assert.Empty(t, stderr)
+
+		envelope := captureStdout(t, func() error { reportError(err); return nil })
+		var doc struct {
+			Error string `json:"error"`
+		}
+		decodeSingleDoc(t, envelope, &doc)
+		assert.Equal(t, "unsupported archive format: .txt", doc.Error)
+	})
+}
+
 // TestDoImport_IDDefault_SoleConfiguredSource_AutoResolves guards
 // resolveSource's auto-select path reached through --id with no --source:
 // exactly one configured source resolves without prompting.

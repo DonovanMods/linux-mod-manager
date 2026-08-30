@@ -513,6 +513,17 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   minted a _second_ local mod ID, so the ID on screen was not the one written to the database.
   The command now plans once, prompts from the plan, and applies once. No other line changes; a
   forced or conflict-free import is byte-identical. (#314)
+- The reasons an archive cannot be imported at all now report themselves without the
+  `import failed:` prefix, because they are settled while planning rather than mid-ingest
+  (**Ruling 18**). Exactly five lines change: `import failed: unsupported archive format: .txt` →
+  `unsupported archive format: .txt`; `import failed: <compile-source resolver error>` →
+  `<compile-source resolver error>`; `import failed: validating Bear_Mount.exmodz: …` →
+  `validating Bear_Mount.exmodz: …`; `import failed: extracting archive: reserved name detected:
+…` → `reserved name detected: …` (same for `path traversal detected: …`); and
+  `import failed: extracting archive: 7z command not found: install p7zip-full to extract .7z and
+.rar files` → the same sentence with neither prefix. Listing a `.7z`/`.rar` adds one new error
+  class, `7z listing failed: …`. All of them still exit non-zero and render the `{"error", …}`
+  envelope under `--json`. A failure of the ingest itself still reads `import failed: …`. (#314)
 
 ### Removed
 

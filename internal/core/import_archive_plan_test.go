@@ -393,6 +393,42 @@ func TestPlanImportArchive_ReportsHooks(t *testing.T) {
 	assert.Empty(t, plan.Hooks, "--no-hooks runs none of them")
 }
 
+// TestPlanImportArchive_ErrorWording pins the NEW wording of the failures
+// Ruling 18 moved out of the ingest and into the plan, byte-exactly, so it
+// cannot drift silently. Each used to carry ApplyImportArchive's
+// "import failed: " prefix (and, for a member rejection, "extracting
+// archive: " on top of it) purely because the check lived inside the
+// ingest; a plan that never extracts must not claim to be extracting.
+func TestPlanImportArchive_ErrorWording(t *testing.T) {
+	t.Run("unsupported format", func(t *testing.T) {
+		svc, game := newImportArchiveTestService(t)
+		archivePath := filepath.Join(t.TempDir(), "notes.txt")
+		require.NoError(t, os.WriteFile(archivePath, []byte("not an archive"), 0o644))
+
+		_, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+		require.EqualError(t, err, "unsupported archive format: .txt")
+	})
+
+	t.Run("reserved member name", func(t *testing.T) {
+		svc, game := newImportArchiveTestService(t)
+		archivePath := filepath.Join(t.TempDir(), "hostile.zip")
+		createImportTestZip(t, archivePath, map[string]string{".lmm-file-7": "forged marker"})
+
+		_, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+		require.EqualError(t, err,
+			`reserved name detected: .lmm-file-7 (archive members may not use lmm's reserved ".lmm-" prefix)`)
+	})
+
+	t.Run("zip slip", func(t *testing.T) {
+		svc, game := newImportArchiveTestService(t)
+		archivePath := filepath.Join(t.TempDir(), "slip.zip")
+		createImportTestZip(t, archivePath, map[string]string{"../../etc/passwd": "escape"})
+
+		_, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+		require.EqualError(t, err, "path traversal detected: ../../etc/passwd")
+	})
+}
+
 // TestPlanImportArchive_MissingArchive fails the same way the ingest does.
 func TestPlanImportArchive_MissingArchive(t *testing.T) {
 	svc, game := newImportArchiveTestService(t)
