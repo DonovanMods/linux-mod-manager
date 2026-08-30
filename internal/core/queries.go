@@ -311,6 +311,9 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 
 	active, err := pm.GetDefault(ctx, game.ID)
 	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		// No default profile: an ordinary state (a freshly added game), and
 		// the only thing it costs is the per-profile detail below.
 		return status, nil

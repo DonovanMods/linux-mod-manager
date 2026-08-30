@@ -10,6 +10,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -300,6 +303,77 @@ func TestGameStatus_ConvertPaksOnlyForCompileGames(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, st.ConvertPaks)
 	assert.True(t, *st.ConvertPaks)
+}
+
+// errCallerIsProfileManagerGetDefault reports whether the caller of the
+// current Err() method (one frame further up, i.e. two frames from HERE) is
+// ProfileManager.GetDefault's own top-of-method guard - GetDefault's inner
+// pm.List(ctx, gameID) call also invokes ctx.Err(), but that Err() call's
+// immediate caller is ProfileManager.List, not GetDefault, so this
+// distinguishes GameStatus's own pm.GetDefault gate (queries.go:312) from
+// the pm.List read just before it, which must be allowed to pass
+// uncancelled for the cancellation to land specifically on the site NEW-5
+// fixed.
+func errCallerIsProfileManagerGetDefault() bool {
+	pc, _, _, ok := runtime.Caller(2)
+	if !ok {
+		return false
+	}
+	name := runtime.FuncForPC(pc).Name()
+	return strings.HasSuffix(name, "core.(*ProfileManager).GetDefault")
+}
+
+// cancelAtGetDefaultGuard is live until GameStatus reaches its own
+// pm.GetDefault call, then cancels itself - landing the cancellation
+// exactly on the tolerant gate NEW-5 fixed, after the earlier pm.List read
+// has already succeeded.
+type cancelAtGetDefaultGuard struct {
+	context.Context
+	cancel context.CancelFunc
+	fired  atomic.Bool
+}
+
+func (c *cancelAtGetDefaultGuard) Err() error {
+	if errCallerIsProfileManagerGetDefault() && c.fired.CompareAndSwap(false, true) {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestGameStatus_CancelledDefaultProfileRead_DoesNotDegradeToNoDefault is
+// the class-(C) shape test for the task 18 re-review round-2 NEW-5 finding:
+// GameStatus's pm.GetDefault gate treated every error - including a
+// cancellation - as "no default profile, that's fine", the same tolerant
+// answer Status's identical gate gave before Ruling 16 (C) fixed it at
+// queries.go:256. A cancellation says nothing about whether a default
+// profile exists, so it must not render an empty ActiveProfile as if it
+// were a truthful one.
+//
+// The fixture has a genuinely-set default profile (asserted via the
+// uncancelled fixture check), so the test cannot pass vacuously against a
+// gate that would have answered "no default" anyway.
+func TestGameStatus_CancelledDefaultProfileRead_DoesNotDegradeToNoDefault(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), "g1", "default"))
+
+	fixture, err := svc.GameStatus(context.Background(), game)
+	require.NoError(t, err)
+	require.Equal(t, "default", fixture.ActiveProfile, "fixture check: an uncancelled read must resolve the default profile")
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtGetDefaultGuard{Context: inner, cancel: cancel}
+
+	st, err := svc.GameStatus(ctx, game)
+	require.Error(t, err, "a cancelled read must not answer 'no default profile'")
+	assert.ErrorIs(t, err, context.Canceled)
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on the pm.GetDefault gate")
+	assert.Nil(t, st)
 }
 
 // --- Search ---
