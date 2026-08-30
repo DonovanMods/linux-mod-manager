@@ -179,11 +179,14 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, mcErr
 		}
 	}
-	mergeEligible := mc != nil && mc.IsNativeMergeSource(filename)
-	convertEligiblePak := mc != nil && isConvertEligibleArtifact(game, mc, filename)
+	// #314: which branch this archive takes is answered ONCE, by the
+	// function PlanImportArchive consults too, so a plan and this ingest
+	// cannot disagree about what an archive contributes.
+	kind := classifyImportArchive(game, mc, filename)
+	convertEligiblePak := kind == importKindConvertPak
 
 	// Handle based on game's deploy mode
-	if game.DeployMode == domain.DeployCompile && (mergeEligible || convertEligiblePak) {
+	if kind == importKindMergeSource || kind == importKindConvertPak {
 		// Validate mode (#197): Import has no real source file ID the way a
 		// download does (DownloadableFile.ID is resolved later, outside
 		// Import, only when --id was given), so the retained source is
@@ -194,12 +197,7 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, fmt.Errorf("validating %s: %w", filename, err)
 		}
 
-		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
-		if version != "" && version != "unknown" {
-			if idx := strings.LastIndex(modName, version); idx > 0 {
-				modName = strings.TrimRight(modName[:idx], "-_ ")
-			}
-		}
+		modName = importedModName(kind, filename, version, nil)
 
 		cacheMod := &domain.Mod{ID: modID, SourceID: sourceID, Version: version, GameID: game.ID}
 		cachePath, stagePath, err := prepareUnseededStaging(i.cache, game, cacheMod)
@@ -231,14 +229,9 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 			return nil, err
 		}
 		retainedFileID = filename
-	} else if game.DeployMode == domain.DeployCopy {
+	} else if kind == importKindCopy {
 		// Copy mode: just copy the file as-is to cache (don't extract)
-		modName = strings.TrimSuffix(filename, filepath.Ext(filename))
-		if version != "" && version != "unknown" {
-			if idx := strings.LastIndex(modName, version); idx > 0 {
-				modName = strings.TrimRight(modName[:idx], "-_ ")
-			}
-		}
+		modName = importedModName(kind, filename, version, nil)
 
 		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)
 

@@ -468,19 +468,11 @@ func planDeployHooks(hooks *ResolvedHooks, opts DeployOptions, purgeMods, deploy
 		return nil
 	}
 	var names []string
-	add := func(name, command string) {
-		if command != "" {
-			names = append(names, name)
-		}
-	}
 	if opts.Purge && purgeMods > 0 {
 		names = append(names, uninstallHookNames(hooks, false)...)
 	}
 	if deployMods > 0 {
-		add("install.before_all", hooks.GetInstallBeforeAll())
-		add("install.before_each", hooks.GetInstallBeforeEach())
-		add("install.after_each", hooks.GetInstallAfterEach())
-		add("install.after_all", hooks.GetInstallAfterAll())
+		names = append(names, installHookNames(hooks, false)...)
 	}
 	return names
 }
