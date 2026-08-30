@@ -844,5 +844,13 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		r.result.Checked++
 	}
 
+	// The LAST mod's own iteration (its repair included) can cancel without
+	// ever reaching the head-of-loop check above - without this, that
+	// cancellation would render as an ordinary "repair failed: context
+	// canceled" finding and versionPass would still return nil (task 18
+	// re-review round 2, NEW-3).
+	if err := r.ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }

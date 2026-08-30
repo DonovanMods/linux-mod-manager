@@ -490,9 +490,9 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			FileIDs:  sibling.FileIDs,
 		}); err != nil {
 			// Ruling 16 (B): this write PRECEDES its DB half
-			// (setModVersion below), so nothing is left half-committed by
-			// stopping here - unlike the completing writes, which finish
-			// under context.WithoutCancel.
+			// (setModVersion below), so UpsertMod itself failing or being
+			// cancelled HERE leaves nothing half-committed - unlike the
+			// completing writes, which finish under context.WithoutCancel.
 			if cerr := ctx.Err(); cerr != nil {
 				cancelErr = cerr
 				break
@@ -502,6 +502,14 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			continue
 		}
 
+		// If UpsertMod above SUCCEEDED and the cancellation instead lands
+		// HERE, the sibling's profile ref is already on the new version
+		// while its DB row still holds the old one - the same drift
+		// completeDBWrite exists to prevent, on the (B) side of the pair.
+		// Pre-existing (UpsertMod was ctx-less and always ran at 1d68cd0,
+		// so this window is not new) and self-healing: `verify --fix` is
+		// convergent, so the next run repairs it (task 18 re-review round
+		// 2, NEW-3).
 		if err := r.svc.setModVersion(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, effective); err != nil {
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
 			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})

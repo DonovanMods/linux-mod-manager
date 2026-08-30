@@ -2,11 +2,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
@@ -108,4 +110,95 @@ func TestLockedInstallRefusal_CancelledRead_DoesNotDegradeTheGateOpen(t *testing
 	after, err := os.ReadFile(profilePath)
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "a lock gate reads only; the mod's profile ref must be untouched")
+}
+
+// versionPassCancelSource is a minimal source.ModSource whose GetModFiles
+// cancels ctx as a side effect (mirroring a real request that gets
+// cancelled mid-flight) before returning a normal result. Used to drive
+// versionPass directly rather than through the full Verify pipeline: a
+// later phase (perFileWalk) independently re-checks ctx.Err() over the
+// checksummed-files list and - since any mod with FileIDs (required to
+// reach versionPass's mismatch check at all) always has a row in that list
+// - would otherwise always observe the same cancellation first and mask a
+// missing post-loop check in versionPass itself.
+type versionPassCancelSource struct {
+	id     string
+	cancel context.CancelFunc
+}
+
+func (s *versionPassCancelSource) ID() string      { return s.id }
+func (s *versionPassCancelSource) Name() string    { return s.id }
+func (s *versionPassCancelSource) AuthURL() string { return "" }
+
+func (s *versionPassCancelSource) ExchangeToken(ctx context.Context, code string) (*source.Token, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *versionPassCancelSource) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, errors.New("not implemented")
+}
+
+func (s *versionPassCancelSource) GetMod(ctx context.Context, gameID, modID string) (*domain.Mod, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *versionPassCancelSource) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+
+func (s *versionPassCancelSource) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	s.cancel()
+	return []domain.DownloadableFile{{ID: "f1", Version: "1.0", IsPrimary: true}}, nil
+}
+
+func (s *versionPassCancelSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func (s *versionPassCancelSource) CheckUpdates(ctx context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+// TestVersionPass_CancellationDuringLastModsOwnIteration_ReturnsCtxErr is
+// the shape test for the task 18 re-review round 2 NEW-3 finding:
+// versionPass checks ctx.Err() at the TOP of each iteration, so a
+// cancellation landing inside the LAST (here, only) mod's own iteration
+// never reaches a next iteration to catch it. Driven directly against
+// versionPass (see versionPassCancelSource's doc for why the full Verify
+// pipeline can't isolate this).
+//
+// Against a versionPass with the post-loop check removed, this fails: the
+// call returns nil even though the cancellation landed inside the only
+// mod's own iteration.
+func TestVersionPass_CancellationDuringLastModsOwnIteration_ReturnsCtxErr(t *testing.T) {
+	svc := newRuling16Service(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), "g1", "default")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	svc.RegisterSource(&versionPassCancelSource{id: "csrc", cancel: cancel})
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod-a", SourceID: "csrc", Name: "Mod A", Version: "1.0", GameID: "g1"},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, mods, 1, "test setup: exactly one mod, so this is both the first and the LAST iteration")
+
+	prof, err := pm.Get(context.Background(), "g1", "default")
+	require.NoError(t, err)
+
+	r := &verifyRun{ctx: ctx, svc: svc, game: game, profile: "default", opts: VerifyOptions{Tier: VerifyFull}, result: &VerifyResult{}}
+	err = r.versionPass(mods, prof)
+	require.Error(t, err, "the cancellation inside the only mod's own iteration must not be swallowed as a nil return")
+	assert.ErrorIs(t, err, context.Canceled)
 }
