@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"gopkg.in/yaml.v3"
 )

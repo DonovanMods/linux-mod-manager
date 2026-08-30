@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/testutil"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/testutil"
 )
 
 // TestJSONContractCoverage asserts that every exported internal/app struct

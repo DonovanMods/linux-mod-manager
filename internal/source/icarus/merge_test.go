@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/go-unrealpak"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // TestMergeCompile_FieldLevelMergeAcrossMods is the crux of #197: two mods

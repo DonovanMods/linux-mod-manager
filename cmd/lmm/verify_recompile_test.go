@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"

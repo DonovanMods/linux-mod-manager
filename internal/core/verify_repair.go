@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // redownloadModFile re-downloads a single mod file and extracts it to the

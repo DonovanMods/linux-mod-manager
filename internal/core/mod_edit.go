@@ -15,7 +15,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // RelinkPlan is the pure, displayable result of PlanRelinkMod - what

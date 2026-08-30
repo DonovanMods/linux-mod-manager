@@ -3,7 +3,7 @@ package core_test
 import (
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/testutil"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/testutil"
 )
 
 // contractCoverageExclusions lists exported internal/core struct types that

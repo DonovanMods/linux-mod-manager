@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ErrNoDownloadableFiles is selectFilesForVersion's (and, beneath it,

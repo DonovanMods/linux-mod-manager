@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 func encodeFileIDs(fileIDs []string) (string, error) {

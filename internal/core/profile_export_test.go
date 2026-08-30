@@ -1,6 +1,6 @@
 package core
 
-import "github.com/DonovanMods/linux-mod-manager/internal/domain"
+import "github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 // CountProfileLoadsForTest runs fn with the package's profile-load seam
 // (loadProfile, profile.go) wrapped in a counter, returning how many times

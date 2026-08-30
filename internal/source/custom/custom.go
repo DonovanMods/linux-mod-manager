@@ -3,7 +3,7 @@ package custom
 import (
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // New constructs a ModSource from a validated definition. The default case

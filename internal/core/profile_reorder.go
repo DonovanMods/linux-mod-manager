@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ErrModNotInProfile and ErrAmbiguousModID are ResolveReorder's two error
