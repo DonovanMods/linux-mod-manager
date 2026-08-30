@@ -778,18 +778,20 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		}
 	}
 
-	// progress prints the three loops' --verbose-only diagnostics at their
-	// exact point of occurrence, driven by core.ApplyProfileSync's events -
-	// the same 2-space "  Warning: ..." rendering for all three buckets
-	// (see core's profile_sync.go). The end-of-apply merged-pak warnings
-	// arrive on result.Warnings instead, unconditional, printed below.
+	// progress prints the add/remove loops' --verbose-only diagnostics at
+	// their exact point of occurrence, driven by core.ApplyProfileSync's
+	// events - the same 2-space "  Warning: ..." rendering for both buckets
+	// (see core's profile_sync.go). The toUpdate loop's refusal is a
+	// SyncUpdateWarning since #294 (Ruling 5) and arrives on
+	// result.Warnings instead, alongside the end-of-apply merged-pak
+	// warnings - unconditional, printed below.
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
 			return
 		}
 		switch p.Phase {
-		case core.SyncAddNote, core.SyncRemoveNote, core.SyncUpdateNote:
+		case core.SyncAddNote, core.SyncRemoveNote:
 			if verbose {
 				fmt.Printf("  %s\n", p.Detail)
 			}
@@ -1036,11 +1038,12 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			fmt.Println()
 		case core.SwitchInstalled:
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
-		case core.SwitchInstallNote:
-			if verbose {
-				fmt.Printf("    %s\n", p.Detail)
-			}
 		}
+		// #294 (Ruling 5): ApplyProfileApply's UpsertMod refusal is a
+		// SwitchInstallWarning now, not the --verbose-only SwitchInstallNote
+		// ApplyProfileSwitch still emits - it reaches the user through
+		// result.Warnings below (printing it here as well would duplicate
+		// it).
 	}
 
 	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))

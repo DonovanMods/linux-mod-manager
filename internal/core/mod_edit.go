@@ -49,16 +49,18 @@ type RelinkPlan struct {
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
 	// Refusal is populated whenever Relink && Locked: re-linking a locked
-	// ref is always refused (#146), regardless of the target version. The
-	// text is the hand-worded message doModEdit has always used
-	// (relinkLockRefusalMessage) - kept character-for-character so v2 Phase
-	// 3 Unit Q (#294, Ruling 5) can unify it onto LockedRefRefusalError's
-	// wording by changing only that helper, without touching
-	// PlanRelinkMod/ApplyRelinkMod's call sites. A version-only edit while
-	// locked is NOT decidable here (PlanRelinkMod has no version argument);
-	// ApplyRelinkMod re-derives that guard independently from
-	// RelinkOptions.Version, mirroring ApplyRollback/ApplyUpdate's own
-	// independent lock re-checks.
+	// ref is always refused (#146), regardless of the target version. Since
+	// #294 (Ruling 5) the text is LockedRefRefusalError's - one wording for
+	// every lock refusal in the product - but the SENTENCE half only
+	// (lockedRefRefusalMessage), without the ErrModLocked sentinel prefix
+	// UpdatePlan.Refusal/RollbackPlan.Refusal carry, because doModEdit
+	// re-wraps it (`fmt.Errorf("%w: %s", core.ErrModLocked, plan.Refusal)`)
+	// and would otherwise print the prefix twice. The wrapped result is
+	// byte-identical to LockedRefRefusalError(...).Error(), which is what
+	// ApplyRelinkMod itself returns. A version-only edit while locked is NOT
+	// decidable here (PlanRelinkMod has no version argument); ApplyRelinkMod
+	// re-derives that guard independently from RelinkOptions.Version,
+	// mirroring ApplyRollback/ApplyUpdate's own independent lock re-checks.
 	Refusal string `json:"refusal,omitempty"`
 	// MergedPakAffected reports whether ApplyRelinkMod's merged-pak sync is
 	// a real resync (the game is DeployCompile) rather than syncMergedPak's
@@ -70,19 +72,6 @@ type RelinkPlan struct {
 	// (Ruling 5): ApplyRelinkMod re-derives it under beginOp and returns
 	// ErrStalePlan when it no longer matches.
 	snapshot installedSnapshot `json:"-"`
-}
-
-// relinkLockRefusalMessage is the hand-worded refusal doModEdit has always
-// printed when a re-link would replace a locked ref (#146) - split out so
-// PlanRelinkMod (which precomputes RelinkPlan.Refusal for display) and
-// ApplyRelinkMod (which independently re-derives and returns the actual
-// error) can never drift apart in wording, and so v2 Phase 3 Unit Q can
-// unify it onto LockedRefRefusalError by changing only this function. mod
-// is the mod BEFORE any identity change (its current source_id/mod_id name
-// the unlock remedy).
-func relinkLockRefusalMessage(mod domain.Mod, profileName, lockedVersion string) string {
-	return fmt.Sprintf("%s is locked at v%s in profile %s - re-linking would replace the locked ref; unlock with 'lmm mod unlock -s %s -p %s %s' first",
-		mod.Name, lockedVersion, profileName, mod.SourceID, profileName, mod.ID)
 }
 
 // PlanRelinkMod computes what "lmm mod edit" would do to sourceID/modID in
@@ -139,7 +128,9 @@ func (s *Service) PlanRelinkMod(ctx context.Context, game *domain.Game, profileN
 		plan.Locked = true
 		plan.LockedVersion = lockedVersion
 		if relink {
-			plan.Refusal = relinkLockRefusalMessage(mod.Mod, profileName, lockedVersion)
+			// #294 (Ruling 5): LockedRefRefusalError's sentence half - see
+			// RelinkPlan.Refusal for why the sentinel prefix is left off.
+			plan.Refusal = lockedRefRefusalMessage(mod.Mod, profileName, &domain.ModReference{Version: lockedVersion})
 		}
 	}
 
@@ -250,7 +241,9 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	}
 	if locked {
 		if plan.Relink {
-			return nil, fmt.Errorf("%w: %s", ErrModLocked, relinkLockRefusalMessage(mod.Mod, profileName, lockedVersion))
+			// #294 (Ruling 5): the same canonical refusal every other lock
+			// gate returns, replacing the hand-worded re-link wording.
+			return nil, LockedRefRefusalError(mod.Mod, profileName, &domain.ModReference{Version: lockedVersion})
 		}
 		if opts.Version != "" && opts.Version != lockedVersion {
 			ref := &domain.ModReference{Version: lockedVersion}

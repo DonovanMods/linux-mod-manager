@@ -177,8 +177,9 @@ func TestApplySingleUpdate_RecompileLocked_Text(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	assert.Contains(t, out, "Recompile needed for Bear Mount (base pak updated) — but it is locked at v3.3.")
-	assert.Contains(t, out, "Move the lock: lmm mod lock -s fake-compiler -p default bear-mount 3.3   |   Unlock: lmm mod unlock -s fake-compiler -p default bear-mount")
+	// #294 (Ruling 5): the whole refused-recompile readout, byte-exact -
+	// see lock_visibility_test.go's sibling capture.
+	assert.Equal(t, "Recompile needed for Bear Mount (base pak updated).\nmod is locked: Bear Mount is locked at v3.3 in profile default - move the lock with 'lmm mod lock -s fake-compiler -p default bear-mount <version>' or unlock with 'lmm mod unlock -s fake-compiler -p default bear-mount'\n", out)
 	assert.NotContains(t, out, "Recompiling", "must never print the applying header - it never applies")
 	assert.Equal(t, 0, compiler.compileCalls, "a locked mod must never actually recompile")
 }

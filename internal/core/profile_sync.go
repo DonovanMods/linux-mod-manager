@@ -76,19 +76,24 @@ type ProfileSyncPlan struct {
 // Updated count every ToAdd/ToRemove/ToUpdate entry PROCESSED, regardless of
 // whether the underlying pm call succeeded - mirroring ApplyProfileApply's
 // Disabled/Enabled counts, which increment the same way. A per-item failure
-// is never fatal to the loop (Ruling 9): it is swallowed into a
-// --verbose-only StepEvent (SyncAddNote/SyncRemoveNote/SyncUpdateNote) at
-// its point of occurrence, exactly as doProfileSync printed
+// is never fatal to the loop (Ruling 9): the ToAdd/ToRemove ones are
+// swallowed into a --verbose-only StepEvent (SyncAddNote/SyncRemoveNote) at
+// their point of occurrence, exactly as doProfileSync printed
 // `if verbose { fmt.Printf("  Warning: ...") }` - there is no Result field
-// for these, matching the task's ProfileSyncResult contract; a caller
-// wanting them must observe the event stream, same as a live renderer never
-// needing ProfileApplyResult.Notes.
+// for those; a caller wanting them must observe the event stream, same as a
+// live renderer never needing ProfileApplyResult.Notes.
 //
-// Warnings holds only the end-of-apply merged-pak sync's diagnostics
-// (#197), printed unconditionally: "could not sync merged pak: <err>" when
-// the sync itself failed, or the sync's own warnings otherwise - mirroring
-// ProfileApplyResult.Warnings exactly. A caller prints each to stderr as
-// `Warning: %s`.
+// Warnings holds the diagnostics printed unconditionally: the ToUpdate
+// loop's refused UpsertMod ("could not update <source>:<mod>: <err>",
+// #294/Ruling 5 - it used to be a --verbose-only SyncUpdateNote, which hid
+// a profile ref the sync silently failed to write), then the end-of-apply
+// merged-pak sync's own diagnostics (#197) - "could not sync merged pak:
+// <err>" when the sync itself failed, or the sync's own warnings otherwise.
+// No entry carries a prefix; a caller prints each to stderr as
+// `Warning: %s`. The ToUpdate entry is ALSO emitted as a SyncUpdateWarning
+// event (the merged-pak ones are not), so a frontend rendering the stream
+// live must not print this slice as well. Mirrors
+// ProfileApplyResult.Warnings exactly.
 type ProfileSyncResult struct {
 	Added    int      `json:"added"`
 	Removed  int      `json:"removed"`
@@ -216,16 +221,22 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 			sink(e)
 		}
 	}
+	scopeOf := func(ref domain.ModReference) Scope {
+		return Scope{
+			Op:      OpProfileSync,
+			Mod:     &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID},
+			ModName: plan.Names[domain.ModKey(ref.SourceID, ref.ModID)],
+		}
+	}
 	note := func(ref domain.ModReference, phase DeployPhase, msg string) {
-		emit(StepEvent{
-			Scope: Scope{
-				Op:      OpProfileSync,
-				Mod:     &domain.ModReference{SourceID: ref.SourceID, ModID: ref.ModID},
-				ModName: plan.Names[domain.ModKey(ref.SourceID, ref.ModID)],
-			},
-			Phase:  phase,
-			Detail: msg,
-		})
+		emit(StepEvent{Scope: scopeOf(ref), Phase: phase, Detail: msg})
+	}
+	// warn is note's unconditional sibling (#294): the diagnostic also lands
+	// on Warnings, which the CLI prints to stderr regardless of --verbose.
+	// msg carries no "Warning: " prefix - the caller renders one.
+	warn := func(ref domain.ModReference, phase DeployPhase, msg string) {
+		result.Warnings = append(result.Warnings, msg)
+		emit(StepEvent{Scope: scopeOf(ref), Phase: phase, Detail: msg})
 	}
 
 	pm := s.NewProfileManager()
@@ -270,10 +281,12 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 			return result, err
 		}
 		if err := pm.UpsertMod(plan.GameID, plan.Profile, ref); err != nil {
-			// Ruling 9: a refusal here (today, only a LOCKED ref, #143) is
-			// swallowed into a --verbose-only note, exactly as doProfileSync
-			// swallowed it. Filed as a Phase 3 behaviour fix.
-			note(ref, SyncUpdateNote, fmt.Sprintf("Warning: could not update %s:%s: %v", ref.SourceID, ref.ModID, err))
+			// #294 (Ruling 5), the Phase 3 behaviour fix ruling 9 deferred:
+			// a refusal here (today, only a LOCKED ref, #143) leaves the
+			// profile ref unwritten, so it is a Warning - unconditional -
+			// not the --verbose-only note doProfileSync used to swallow it
+			// into.
+			warn(ref, SyncUpdateWarning, fmt.Sprintf("could not update %s:%s: %v", ref.SourceID, ref.ModID, err))
 		}
 		result.Updated++
 	}

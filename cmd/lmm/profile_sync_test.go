@@ -300,39 +300,84 @@ func TestDoProfileSync_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T
 	assert.Equal(t, "add1", profile.Mods[0].ModID)
 }
 
-// TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly pins Ruling 9:
-// a LOCKED profile ref makes the toUpdate loop's UpsertMod refuse (the ref
-// IS the lock's target, and the DB's version differs), and doProfileSync
-// swallows that refusal into a --verbose-only warning - never printed
-// without --verbose, always printed with it, and never fatal to the sync.
-func TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly(t *testing.T) {
+// syncLockRefusalDetail is the exact ProfileSyncResult.Warnings entry #294
+// (Ruling 5) records when the toUpdate loop's UpsertMod is refused by a
+// LOCKED ref: core wraps ProfileManager.UpsertMod's own refusal sentence as
+// "could not update <source>:<mod>: <err>", with no "Warning: " prefix
+// baked in. syncLockRefusalWarning is the stderr line the CLI renders.
+const syncLockRefusalDetail = "could not update src:lock1: mod is locked: src:lock1 is locked at v1.0 in profile \"default\" - refusing to record v2.0; move the lock with 'lmm mod lock -s src -p default lock1 <version>' or unlock with 'lmm mod unlock -s src -p default lock1'"
+
+const syncLockRefusalWarning = "Warning: " + syncLockRefusalDetail + "\n"
+
+// syncLockRefusalFixture seeds the one scenario every #294 sync capture
+// needs: an installed "src:lock1" at v2.0 whose profile ref is LOCKED at
+// v1.0, so the toUpdate loop's UpsertMod (the ref IS the lock's target, and
+// the DB's version differs) is refused.
+func syncLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
 	svc, game := setupDoProfileSwitchTest(t)
 	seedSyncInstalledMod(t, svc, game, "src", "lock1", "Locked One", "2.0", "default", true, []string{"main"})
-	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "lock1", Version: "1.0", Locked: true}))
+	require.NoError(t, getProfileManager(svc).AddMod(game.ID, "default",
+		domain.ModReference{SourceID: "src", ModID: "lock1", Version: "1.0", Locked: true}))
+	return svc, game
+}
 
-	t.Run("without verbose, the warning is silent", func(t *testing.T) {
-		syncVerbose(t, false)
-		out := captureStdout(t, func() error {
-			return doProfileSync(context.Background(), svc, game, nil)
+// TestDoProfileSync_ToUpdate_LockedRefRefusalWarnsUnconditionally pins #294
+// (Ruling 5), the behaviour fix Ruling 9 deferred to Phase 3: a LOCKED
+// profile ref makes the toUpdate loop's UpsertMod refuse, and doProfileSync
+// now surfaces that refusal as an unconditional stderr "Warning: ..." line -
+// identical with and without --verbose, and never on stdout - instead of the
+// --verbose-only stdout warning it used to be. Still never fatal to the sync.
+func TestDoProfileSync_ToUpdate_LockedRefRefusalWarnsUnconditionally(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verbose bool
+	}{
+		{"quiet", false},
+		{"verbose", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, game := syncLockRefusalFixture(t)
+			syncVerbose(t, tc.verbose)
+
+			out, stderr, err := captureStdoutStderrErr(t, func() error {
+				return doProfileSync(context.Background(), svc, game, nil)
+			})
+			require.NoError(t, err)
+
+			assert.Contains(t, out, "✓ Synced profile: default\n", "the refusal must not be fatal to the sync")
+			assert.NotContains(t, out, "Warning:", "#294: the refusal left stdout entirely")
+			assert.Equal(t, syncLockRefusalWarning, stderr,
+				"#294: the refusal is an unconditional stderr warning, identical at both verbosities")
+
+			profile, err := getProfileManager(svc).Get(game.ID, "default")
+			require.NoError(t, err)
+			require.Len(t, profile.Mods, 1)
+			assert.Empty(t, profile.Mods[0].FileIDs, "the locked ref's FileIDs must NOT have been backfilled")
 		})
-		assert.NotContains(t, out, "Warning:")
-		assert.Contains(t, out, "✓ Synced profile: default\n", "the refusal must not be fatal to the sync")
-	})
+	}
+}
 
-	pm2 := getProfileManager(svc)
-	profile, err := pm2.Get(game.ID, "default")
-	require.NoError(t, err)
-	require.Len(t, profile.Mods, 1)
-	assert.Empty(t, profile.Mods[0].FileIDs, "the locked ref's FileIDs must NOT have been backfilled")
+// TestDoProfileSync_ToUpdate_LockedRefRefusal_JSON is #294's --json framing
+// sibling (Ruling 15 / Unit P): the new warning reaches the document via
+// ProfileSyncResult.Warnings and NOT stderr - exactly one document on
+// stdout, nothing on stderr.
+func TestDoProfileSync_ToUpdate_LockedRefRefusal_JSON(t *testing.T) {
+	svc, game := syncLockRefusalFixture(t)
+	syncVerbose(t, false)
+	oldYes := profileSyncYes
+	profileSyncYes = true
+	t.Cleanup(func() { profileSyncYes = oldYes })
 
-	t.Run("with verbose, the warning prints", func(t *testing.T) {
-		syncVerbose(t, true)
-		out := captureStdout(t, func() error {
-			return doProfileSync(context.Background(), svc, game, nil)
-		})
-		assert.Contains(t, out, "  Warning: could not update src:lock1: mod is locked")
+	var doc core.ProfileSyncResult
+	raw := runJSONCommand(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
 	})
+	decodeSingleDoc(t, raw, &doc)
+
+	assert.Equal(t, 1, doc.Updated)
+	require.Len(t, doc.Warnings, 1)
+	assert.Equal(t, syncLockRefusalDetail, doc.Warnings[0])
 }
 
 // TestDoProfileSync_DeployCompile_MergedPakSyncFailureWarnsUnconditionally

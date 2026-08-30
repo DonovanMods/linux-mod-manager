@@ -357,6 +357,12 @@ func TestJSONGoldens(t *testing.T) {
 			core.SettingsResult{DefaultGame: "skyrim-se"},
 		},
 		{
+			// #294 (Ruling 5): the install loop's UpsertMod refusal is a
+			// Warning now (no "Warning: " prefix baked in - the caller
+			// renders one), ahead of the end-of-apply merged-pak
+			// diagnostics; Notes keeps only the disable/enable loops'
+			// --verbose-only entries, which still carry their historical
+			// prefix.
 			"profile_apply_result",
 			core.ProfileApplyResult{
 				Disabled:  1,
@@ -364,8 +370,11 @@ func TestJSONGoldens(t *testing.T) {
 				Installed: 1,
 				Replaced:  1,
 				Failed:    []core.InstalledRef{{SourceID: "nexusmods", ModID: "8", Reason: "failed to fetch mod: rate limited"}},
-				Notes:     []string{"Warning: could not update profile: mod is locked"},
-				Warnings:  []string{"could not sync merged pak: base pak missing"},
+				Notes:     []string{"Warning: failed to undeploy Sample Mod: permission denied"},
+				Warnings: []string{
+					"could not update profile: mod is locked",
+					"could not sync merged pak: base pak missing",
+				},
 			},
 		},
 		{
@@ -471,10 +480,17 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #294 (Ruling 5): the toUpdate loop's UpsertMod refusal is a
+			// Warning now (no "Warning: " prefix baked in), ahead of the
+			// end-of-sync merged-pak diagnostics - the add/remove loops'
+			// failures remain event-only.
 			"profile_sync_result",
 			core.ProfileSyncResult{
 				Added: 1, Removed: 1, Updated: 1,
-				Warnings: []string{"could not sync merged pak: base pak missing"},
+				Warnings: []string{
+					"could not update nexusmods:42: mod is locked",
+					"could not sync merged pak: base pak missing",
+				},
 			},
 		},
 		{
@@ -864,14 +880,12 @@ func TestJSONGoldens(t *testing.T) {
 				TargetInstalled: true,
 				Locked:          true,
 				LockedVersion:   "1.2.3",
-				// Literal, not core.LockedRefRefusalError(...).Error(): that
-				// constructor's wording is the *target* convention
-				// (Ruling 5) that Unit Q (#294) will unify
-				// relinkLockRefusalMessage onto. Until then this must equal
-				// exactly what PlanRelinkMod (mod_edit.go) produces today via
-				// relinkLockRefusalMessage - Unit Q re-records this golden
-				// when it changes that function.
-				Refusal:           "Sample Mod is locked at v1.2.3 in profile default - re-linking would replace the locked ref; unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
+				// #294 (Ruling 5): LockedRefRefusalError's canonical
+				// wording, SENTENCE ONLY - RelinkPlan.Refusal omits the
+				// "mod is locked: " sentinel prefix that update_plan's and
+				// rollback_plan's Refusal carry, because doModEdit re-wraps
+				// it. This is exactly what PlanRelinkMod produces.
+				Refusal:           "Sample Mod is locked at v1.2.3 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
 				MergedPakAffected: true,
 				Profile:           "default",
 			},

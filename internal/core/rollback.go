@@ -40,13 +40,12 @@ type RollbackPlan struct {
 	// v%s") cannot substitute FromVersion for it.
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
-	// Refusal is LockedRefRefusalError's text, precomputed whenever Locked -
-	// mirrors UpdatePlan.Refusal (there populated only when Locked &&
-	// Update != nil; here a rollback is always "available" once PlanRollback
-	// returns successfully, so Locked alone gates it). cmd/lmm's own
-	// renderer keeps its pre-existing hand-worded text instead (byte-
-	// identity; Phase 3 unifies wording), so this is not read by any
-	// --json/plain output today.
+	// Refusal is LockedRefRefusalError's full text, precomputed whenever
+	// Locked - mirrors UpdatePlan.Refusal (there populated only when Locked
+	// && Update != nil; here a rollback is always "available" once
+	// PlanRollback returns successfully, so Locked alone gates it),
+	// including that cmd/lmm's renderer prints it verbatim since #294
+	// (Ruling 5).
 	Refusal string `json:"refusal,omitempty"`
 	// CacheMissing reports that ToVersion's cache entry is gone (pruned, or
 	// manually deleted since the update that set PreviousVersion) - the

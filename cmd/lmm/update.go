@@ -550,8 +550,13 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 			if jsonOutput {
 				return emitJSON(planUpdateResult(plan, plan.Mod.Version, core.UpdateSkipped, "locked"))
 			}
-			fmt.Printf("Recompile needed for %s (base pak updated) — but it is locked at v%s.\n", plan.Mod.Name, plan.LockedVersion)
-			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, plan.Mod.Version, plan.Mod.SourceID, profileName, plan.Mod.ID)
+			// #294 (Ruling 5): the context line says what is available,
+			// then UpdatePlan.Refusal - core.LockedRefRefusalError's
+			// canonical text, which already names both -s/-p remedies
+			// inline - says why nothing happened. Replaces the hand-worded
+			// refusal and its own "Move the lock:" duplicate.
+			fmt.Printf("Recompile needed for %s (base pak updated).\n", plan.Mod.Name)
+			fmt.Println(plan.Refusal)
 			return nil
 		}
 
@@ -593,22 +598,20 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// the "Updating..." header/changelog for a call that will never
 		// actually apply, and gives an actionable message naming both
 		// remedy commands instead of surfacing the core gate's raw error.
-		// The wording here is hand-composed and deliberately differs from
-		// LockedRefRefusalError/plan.Refusal - byte-identity wins for now
-		// (Phase 3 unifies wording).
+		// #294 (Ruling 5): that message is now UpdatePlan.Refusal -
+		// core.LockedRefRefusalError's canonical text, one wording for
+		// every lock refusal - printed after a context line stating what
+		// is available. The refusal already names both remedies with -s/-p
+		// (#142 round 5: update honors -p, and a mod ID may exist under
+		// more than one configured source, so a bare copy-paste could
+		// otherwise resolve against the wrong profile/an ambiguous source),
+		// which is why the hand-worded "Move the lock:" line is gone.
 		if plan.Locked {
 			if jsonOutput {
 				return emitJSON(planUpdateResult(plan, newVersion, core.UpdateSkipped, "locked"))
 			}
-			fmt.Printf("Update available: %s → %s — but %s is locked at v%s.\n", oldVersion, newVersion, plan.Mod.Name, plan.LockedVersion)
-			// #142 round 5: name -s/-p in both remedies - update honors -p
-			// (this call already resolved profileName, possibly non-active),
-			// and the mod ID may exist under more than one configured
-			// source, so a bare 'lmm mod lock <id> <version>' copy-pasted
-			// from here could resolve against the wrong profile/an
-			// ambiguous source (same fix as the core gates -
-			// internal/core/update.go's LockedRefRefusalError).
-			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, newVersion, plan.Mod.SourceID, profileName, plan.Mod.ID)
+			fmt.Printf("Update available: %s → %s\n", oldVersion, newVersion)
+			fmt.Println(plan.Refusal)
 			return nil
 		}
 
@@ -831,11 +834,13 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 				Reason:      "locked",
 			})
 		}
-		fmt.Printf("Rollback available: %s → %s — but %s is locked at v%s.\n", plan.FromVersion, plan.ToVersion, plan.Mod.Name, plan.LockedVersion)
-		// -s/-p on both remedies for the same reason as applySingleUpdate's
-		// locked branch (#142 round 5): a bare copy-paste could resolve
-		// against the wrong profile or an ambiguous source.
-		fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, plan.ToVersion, plan.Mod.SourceID, profileName, plan.Mod.ID)
+		// #294 (Ruling 5): RollbackPlan.Refusal, the same canonical text
+		// applySingleUpdate's locked branch prints - it carries -s/-p on
+		// both remedies for the same reason (#142 round 5: a bare
+		// copy-paste could resolve against the wrong profile or an
+		// ambiguous source).
+		fmt.Printf("Rollback available: %s → %s\n", plan.FromVersion, plan.ToVersion)
+		fmt.Println(plan.Refusal)
 		return nil
 	}
 

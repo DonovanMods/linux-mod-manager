@@ -417,8 +417,21 @@ const (
 	// FileIDs) fails after a successful install - the sole --verbose-gated
 	// diagnostic in the install loop, mirroring "    Warning: could not
 	// update profile: %v" (4-space indent, one level deeper than
-	// SwitchDisableNote/SwitchEnableNote's 2-space Notes).
+	// SwitchDisableNote/SwitchEnableNote's 2-space Notes). Emitted by
+	// ApplyProfileSwitch only: ApplyProfileApply's own UpsertMod refusal
+	// became SwitchInstallWarning in #294.
 	SwitchInstallNote
+	// SwitchInstallWarning is ApplyProfileApply's UpsertMod refusal since
+	// #294 (Ruling 5) - the same failure SwitchInstallNote carries for the
+	// switch flow, promoted out of the --verbose-only bucket because a
+	// silently unrecorded profile ref is exactly the DB-vs-profile
+	// divergence #143 exists to make visible. Detail is the raw text, no
+	// "Warning: " prefix (unlike SwitchInstallNote's); it is ALSO appended
+	// to ProfileApplyResult.Warnings, which is where the CLI prints it from
+	// (`fmt.Fprintf(os.Stderr, "Warning: %s\n", w)`) - a frontend that
+	// renders this event live must therefore not print Warnings too, or
+	// every refusal appears twice.
+	SwitchInstallWarning
 
 	// --- Phase 5b Task 2: ApplyInstall progress events, restored to
 	// byte-for-byte per-path fidelity in Fix wave 1 (see
@@ -865,10 +878,17 @@ const (
 	// prefix) - same wording as SyncAddNote, kept as its own phase so a
 	// caller inspecting the event stream can tell which loop produced it.
 	SyncRemoveNote
-	// SyncUpdateNote fires when pm.UpsertMod fails for a ToUpdate entry -
-	// the swallowed lock refusal Ruling 9 preserves byte-for-byte - mirroring
-	// doProfileSync's "  Warning: could not update %s:%s: %v".
+	// SyncUpdateNote is retired: #294 (Ruling 5) promoted the ToUpdate
+	// loop's UpsertMod refusal to SyncUpdateWarning. The constant and its
+	// wire name are kept so an UnmarshalText of a previously recorded
+	// "sync_update_note" still round-trips.
 	SyncUpdateNote
+	// SyncUpdateWarning fires when pm.UpsertMod fails for a ToUpdate entry
+	// (today only a LOCKED ref, #143) - Detail is the raw
+	// "could not update %s:%s: %v" text, no "Warning: " prefix, and it is
+	// ALSO appended to ProfileSyncResult.Warnings, which is where the CLI
+	// prints it from. Same double-print caveat as SwitchInstallWarning.
+	SyncUpdateWarning
 
 	// --- v2 Phase 2 Unit K (#291): ApplyAdoptBackfill/ApplyAdopt progress
 	// events. Every Detail below is the printed line MINUS its leading
@@ -1002,7 +1022,8 @@ var deployPhaseNames = [...]string{
 	SwitchEnableNote: "switch_enable_note", SwitchEnabled: "switch_enabled", SwitchInstalling: "switch_installing",
 	SwitchInstallingMod: "switch_installing_mod", SwitchInstallError: "switch_install_error", SwitchDownloading: "switch_downloading",
 	SwitchDownloadFailed: "switch_download_failed", SwitchDownloadDone: "switch_download_done", SwitchInstalled: "switch_installed",
-	SwitchInstallNote: "switch_install_note", InstallBeforeAllForced: "install_before_all_forced", InstallBeforeEachForced: "install_before_each_forced",
+	SwitchInstallNote: "switch_install_note", SwitchInstallWarning: "switch_install_warning",
+	InstallBeforeAllForced: "install_before_all_forced", InstallBeforeEachForced: "install_before_each_forced",
 	InstallDepInstalling: "install_dep_installing", InstallDepReinstalling: "install_dep_reinstalling", InstallDepFileSelected: "install_dep_file_selected",
 	InstallDepDownloading: "install_dep_downloading", InstallDepSkipped: "install_dep_skipped", InstallDepDownloadDone: "install_dep_download_done",
 	InstallDepConflictWarning: "install_dep_conflict_warning", InstallDepInstalled: "install_dep_installed", InstallDownloadStarted: "install_download_started",
@@ -1017,6 +1038,7 @@ var deployPhaseNames = [...]string{
 	InstallLockRefusal: "install_lock_refusal", InstallChecksumSaveFailed: "install_checksum_save_failed",
 	InstallMergedPakSyncFailed: "install_merged_pak_sync_failed",
 	SyncAddNote:                "sync_add_note", SyncRemoveNote: "sync_remove_note", SyncUpdateNote: "sync_update_note",
+	SyncUpdateWarning: "sync_update_warning",
 	AdoptBackfillNote: "adopt_backfill_note", AdoptBackfilled: "adopt_backfilled", AdoptDuplicateSkipped: "adopt_duplicate_skipped",
 	AdoptAdopted: "adopt_adopted", AdoptFailed: "adopt_failed", AdoptNote: "adopt_note", AdoptSyncWarning: "adopt_sync_warning",
 	ImportArchiveFetching: "import_archive_fetching", ImportArchiveDetected: "import_archive_detected",

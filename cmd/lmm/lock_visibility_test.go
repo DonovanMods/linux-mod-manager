@@ -37,8 +37,12 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_Text(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	assert.Contains(t, out, "Update available: 1.0 → 2.0 — but Mod One is locked at v1.0.")
-	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 2.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
+	// #294 (Ruling 5): the whole refused-update readout, byte-exact - the
+	// context line states what is available, then UpdatePlan.Refusal
+	// (core.LockedRefRefusalError's canonical text, which already names
+	// both -s/-p remedies inline) states the refusal. The hand-worded
+	// refusal and its own separate remedy line are both gone.
+	assert.Equal(t, "Update available: 1.0 → 2.0\nmod is locked: Mod One is locked at v1.0 in profile default - move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1'\n", out)
 	assert.NotContains(t, out, "Updating Mod One", "must never print the applying header - it never applies")
 
 	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")

@@ -262,12 +262,14 @@ func TestApplyProfileSync_AppliesAllThreeBuckets(t *testing.T) {
 	assert.Equal(t, []string{"main"}, byID["upd1"].FileIDs)
 }
 
-// TestApplyProfileSync_UpsertMod_LockedRefRefusalIsSwallowed is Ruling 9: a
-// LOCKED profile ref makes the toUpdate loop's UpsertMod refuse; the
-// refusal is swallowed into a --verbose-only SyncUpdateNote event, the
-// FileIDs backfill never happens, and the apply still counts the mod as
-// processed and completes without error.
-func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsSwallowed(t *testing.T) {
+// TestApplyProfileSync_UpsertMod_LockedRefRefusalIsWarning is #294
+// (Ruling 5), the Phase 3 behaviour fix ruling 9 deferred: a LOCKED profile
+// ref makes the toUpdate loop's UpsertMod refuse; the refusal now surfaces
+// as a SyncUpdateWarning event AND on Result.Warnings (so the CLI prints it
+// unconditionally) instead of the --verbose-only SyncUpdateNote it used to
+// be. The FileIDs backfill still never happens, and the apply still counts
+// the mod as processed and completes without error.
+func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsWarning(t *testing.T) {
 	svc, game := newSyncTestService(t)
 	pm := svc.NewProfileManager()
 
@@ -283,17 +285,24 @@ func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsSwallowed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Updated, "the refusal must not fail the loop's count")
 
-	var noteDetail string
-	var noteScope core.Scope
+	var warnDetail string
+	var warnScope core.Scope
 	for _, e := range *events {
-		if se, ok := e.(core.StepEvent); ok && se.Phase == core.SyncUpdateNote {
-			noteDetail = se.Detail
-			noteScope = se.Scope
+		if se, ok := e.(core.StepEvent); ok && se.Phase == core.SyncUpdateWarning {
+			warnDetail = se.Detail
+			warnScope = se.Scope
+		}
+		if se, ok := e.(core.StepEvent); ok {
+			assert.NotEqual(t, core.SyncUpdateNote, se.Phase, "#294: the refusal is no longer a --verbose-only note")
 		}
 	}
-	assert.Contains(t, noteDetail, "Warning: could not update src:lock1: ")
-	assert.Contains(t, noteDetail, "is locked at v")
-	assert.Equal(t, "Locked One", noteScope.ModName, "Sync*Note events must carry ModName, like the sibling Switch*Note events")
+	assert.Contains(t, warnDetail, "could not update src:lock1: ")
+	assert.Contains(t, warnDetail, "is locked at v")
+	assert.NotContains(t, warnDetail, "Warning: ",
+		"#294: the detail carries no baked-in prefix - the caller renders `Warning: %s`")
+	assert.Equal(t, "Locked One", warnScope.ModName, "Sync* events must carry ModName, like the sibling Switch* events")
+	require.Len(t, result.Warnings, 1, "#294: the refusal must also reach ProfileSyncResult.Warnings")
+	assert.Equal(t, warnDetail, result.Warnings[0])
 
 	profile, err := pm.Get(game.ID, "default")
 	require.NoError(t, err)

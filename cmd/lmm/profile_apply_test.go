@@ -269,56 +269,73 @@ func TestDoProfileApply_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *tes
 	assert.Contains(t, out, "  ✓ Disabled: Test Mod\n")
 }
 
-// TestDoProfileApply_LockedRef_UpsertRefusalIsVerboseOnly pins ruling 9: the
+// applyLockRefusalFixture seeds the one scenario every #294 apply capture
+// needs: an installable "test-src:mod1" v1.1 whose profile ref is LOCKED
+// with no recorded version, so the post-install UpsertMod (which records
+// the version actually installed) hits the lock gate (#143).
+func applyLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := setupDoProfileSwitchTest(t)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.1", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
+		})
+	src.AddDownload("main", []byte("plugin content"))
+
+	require.NoError(t, getProfileManager(svc).AddMod(game.ID, "default", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Locked: true,
+	}))
+
+	applyYes(t)
+	return svc, game
+}
+
+// applyLockRefusalDetail is the exact ProfileApplyResult.Warnings entry
+// #294 (Ruling 5) records for applyLockRefusalFixture's refusal: core wraps
+// ProfileManager.UpsertMod's own refusal sentence as "could not update
+// profile: <err>", with no "Warning: " prefix baked in.
+// applyLockRefusalWarning is the stderr line the CLI renders from it.
+const applyLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile \"default\" - refusing to record v1.1; move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1'"
+
+const applyLockRefusalWarning = "Warning: " + applyLockRefusalDetail + "\n"
+
+// TestDoProfileApply_LockedRef_UpsertRefusalWarnsUnconditionally pins #294
+// (Ruling 5), the behaviour fix ruling 9 deferred to Phase 3: the
 // post-install ProfileManager.UpsertMod call records the version actually
 // installed, a LOCKED profile ref refuses that write (#143), and
-// doProfileApply swallows the refusal into a --verbose-only warning - the
-// mod still counts as installed. Phase 2 preserves this byte-for-byte; the
-// behaviour fix is filed for Phase 3.
-func TestDoProfileApply_LockedRef_UpsertRefusalIsVerboseOnly(t *testing.T) {
+// doProfileApply now surfaces the refusal as an unconditional stderr
+// "Warning: ..." line - identical with and without --verbose, and never on
+// stdout - instead of the --verbose-only stdout note it used to be. The mod
+// still counts as installed.
+func TestDoProfileApply_LockedRef_UpsertRefusalWarnsUnconditionally(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		verbose bool
 	}{
-		{"verbose prints the warning", true},
-		{"quiet swallows it", false},
+		{"verbose", true},
+		{"quiet", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc, game := setupDoProfileSwitchTest(t)
+			svc, game := applyLockRefusalFixture(t)
 			pm := getProfileManager(svc)
-
-			src := newFakeInstallSource("test-src")
-			t.Cleanup(src.Close)
-			svc.RegisterSource(src)
-			game.SourceIDs = map[string]string{"test-src": game.ID}
-
-			src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.1", GameID: game.ID},
-				[]domain.DownloadableFile{
-					{ID: "main", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
-				})
-			src.AddDownload("main", []byte("plugin content"))
-
-			// A locked ref with no recorded version: the install stamps
-			// "1.1", so UpsertMod's lock gate refuses the version move.
-			require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
-				SourceID: "test-src", ModID: "mod1", Locked: true,
-			}))
-
-			applyYes(t)
 			applyVerbose(t, tc.verbose)
 
-			out := captureStdout(t, func() error {
+			out, stderr, err := captureStdoutStderrErr(t, func() error {
 				return doProfileApply(context.Background(), svc, game, nil)
 			})
+			require.NoError(t, err)
 
 			assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the lock refusal must not fail the install")
-			if tc.verbose {
-				assert.Contains(t, out, "    Warning: could not update profile: ")
-				assert.Contains(t, out, "is locked at v")
-			} else {
-				assert.NotContains(t, out, "could not update profile",
-					"the refusal is --verbose-only today (ruling 9)")
-			}
+			assert.Equal(t, applyLockRefusalWarning, stderr,
+				"#294: the refusal is an unconditional stderr warning, identical at both verbosities")
+			assert.NotContains(t, out, "could not update profile",
+				"#294: the refusal left stdout entirely - it is no longer a --verbose-only note")
 
 			installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 			require.NoError(t, err)
@@ -330,4 +347,24 @@ func TestDoProfileApply_LockedRef_UpsertRefusalIsVerboseOnly(t *testing.T) {
 			assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
 		})
 	}
+}
+
+// TestDoProfileApply_LockedRef_UpsertRefusal_JSON is #294's --json framing
+// sibling (Ruling 15 / Unit P): the new warning reaches the document via
+// ProfileApplyResult.Warnings and NOT stderr - exactly one document on
+// stdout, nothing on stderr.
+func TestDoProfileApply_LockedRef_UpsertRefusal_JSON(t *testing.T) {
+	svc, game := applyLockRefusalFixture(t)
+	applyVerbose(t, false)
+
+	var doc core.ProfileApplyResult
+	raw := runJSONCommand(t, func() error {
+		return doProfileApply(context.Background(), svc, game, nil)
+	})
+	decodeSingleDoc(t, raw, &doc)
+
+	assert.Equal(t, 1, doc.Installed)
+	assert.Empty(t, doc.Notes, "#294: the refusal is no longer a note")
+	require.Len(t, doc.Warnings, 1)
+	assert.Equal(t, applyLockRefusalDetail, doc.Warnings[0])
 }

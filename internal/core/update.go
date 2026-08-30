@@ -366,11 +366,13 @@ type UpdatePlan struct {
 	// Changelog is CleanChangelog(Update.Changelog) - empty when Update is
 	// nil or carries no changelog.
 	Changelog string `json:"changelog,omitempty"`
-	// Refusal is LockedRefRefusalError's text, precomputed whenever Locked
-	// && Update != nil - the canonical wording, for a consumer that wants
-	// it. cmd/lmm's own renderer keeps its pre-existing hand-worded text
-	// instead (byte-identity; Phase 3 unifies wording - see the task
-	// report), so this is not read by any --json/plain output today.
+	// Refusal is LockedRefRefusalError's full text (sentinel prefix
+	// included, unlike RelinkPlan.Refusal's sentence-only half),
+	// precomputed whenever Locked && Update != nil. Since #294 (Ruling 5)
+	// cmd/lmm's renderer PRINTS this verbatim for both locked branches
+	// (an available update and a needed recompile), in place of the two
+	// hand-worded lines it used to compose - one wording for every lock
+	// refusal in the product.
 	Refusal string `json:"refusal,omitempty"`
 	// snapshot is the installed-mod set this plan was computed against
 	// (Ruling 5): ApplyUpdate re-derives it under beginOp and returns
