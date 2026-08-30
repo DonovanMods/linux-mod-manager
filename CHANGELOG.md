@@ -20,7 +20,11 @@ document is now a type from `internal/core`, `internal/domain`, or
 [JSON output](README.md#json-output) section for the full command →
 document table. **`--json` never prompts**: every confirmation now has a
 deciding flag (`-y`/`--yes`, `--force`), and a run that would otherwise
-prompt fails first with the error envelope instead of reading stdin.
+prompt fails first with the error envelope instead of reading stdin. A mod
+with no source-supplied timestamp now omits `updated_at` entirely instead of
+carrying the zero-value `0001-01-01T00:00:00Z`, matching the
+not-applicable-is-absent convention `convert_paks`/`auth`/`cache_path`
+already use.
 
 A handful of plain-text and event behaviours changed alongside the JSON
 contract, each pinned by a re-recorded capture and detailed below: lock
