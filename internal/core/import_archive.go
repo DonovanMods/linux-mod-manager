@@ -444,6 +444,16 @@ func EmitImportArchiveReadout(plan *ImportArchivePlan, sink EventSink) {
 	step(ImportArchiveDetail, fmt.Sprintf("Files: %d", len(plan.Files)))
 }
 
+// importPinsRealSource reports whether opts names a real, non-local source
+// alongside a mod ID - the first of the two tests ImportEnrichmentRuns and
+// enrichImportedMod must not disagree about (#314 review M2). It says
+// nothing about whether that source is actually MAPPED for the game; each
+// caller asks that itself afterward, since only enrichImportedMod needs to
+// warn about the answer.
+func importPinsRealSource(opts ImportArchiveOptions) bool {
+	return opts.ModID != "" && opts.SourceID != "" && opts.SourceID != domain.SourceLocal
+}
+
 // ImportEnrichmentRuns reports whether PlanImportArchive would fetch source
 // metadata for this import - a real, non-local source that is mapped for the
 // game, plus a mod ID. It is what gates the "Fetching metadata from <source>..."
@@ -451,7 +461,7 @@ func EmitImportArchiveReadout(plan *ImportArchivePlan, sink EventSink) {
 // PlanImportArchive (that is the work it announces); exported so cmd and the
 // ImportArchive convenience cannot disagree about when it applies.
 func ImportEnrichmentRuns(game *domain.Game, opts ImportArchiveOptions) bool {
-	if opts.ModID == "" || opts.SourceID == "" || opts.SourceID == domain.SourceLocal {
+	if !importPinsRealSource(opts) {
 		return false
 	}
 	_, mapped := game.SourceIDs[opts.SourceID]
@@ -808,7 +818,7 @@ func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArc
 // from here - a plan emits nothing - but rendered from the plan alongside
 // the readout (EmitImportArchiveReadout / importEnrichmentRuns).
 func (s *Service) enrichImportedMod(ctx context.Context, game *domain.Game, archivePath string, imported *domain.Mod, opts ImportArchiveOptions, warn func(string, ...any)) *domain.DownloadableFile {
-	if opts.ModID == "" || opts.SourceID == "" || opts.SourceID == domain.SourceLocal {
+	if !importPinsRealSource(opts) {
 		return nil
 	}
 
