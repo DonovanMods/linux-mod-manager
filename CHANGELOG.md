@@ -418,7 +418,10 @@ profiles}`).
   install, dependency install, archive import, adopt, profile import, profile switch, uninstall,
   `purge --uninstall`, and `mod edit`'s relink/version paths — now finishes even when the run is
   cancelled, and the run then stops with the cancellation instead of absorbing it into a per-mod
-  warning and reporting success. The lock and profile-list gates that treat an unreadable profile
+  warning and reporting success, with no exception among the flows above: `adopt`'s own last-match
+  case initially missed this (the completing write finished, but the caller still counted the
+  cancellation as a per-mod failure and reported success), closed in the same fix wave. The lock
+  and profile-list gates that treat an unreadable profile
   as "no lock" / "no profiles" report a cancelled read rather than degrading open, and the lazy
   profile-existence check no longer reports "the profile is fine" for a read it could not answer.
   No output changes on any non-cancelled path. (#305)
