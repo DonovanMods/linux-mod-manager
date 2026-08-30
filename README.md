@@ -46,6 +46,9 @@ cd linux-mod-manager
 go build -o lmm ./cmd/lmm
 ```
 
+This checks out `main`, the v1.x line; to build v2 instead, run
+`git checkout v2.0.0` before `go build`.
+
 ## Quick Start
 
 ### Authentication

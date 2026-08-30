@@ -47,13 +47,18 @@ Building lmm now requires Go 1.27. Config and data directories now honor
 `XDG_CONFIG_HOME`/`XDG_DATA_HOME` by default, falling back to the legacy
 paths when they still exist (#274).
 
-The Go module path is not decided here — whether v2.0.0 adopts a `.../v2`
-suffix (semantic import versioning) or keeps the existing path is an owner
-decision recorded in `docs/plans/v2.0.0-release-checklist.md`.
+The Go module path is now `github.com/DonovanMods/linux-mod-manager/v2`
+(Ruling 14, Option A — semantic import versioning). Install with
+`go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest`; the
+unsuffixed `go install github.com/DonovanMods/linux-mod-manager/cmd/lmm@latest`
+still resolves to v1.30.1, since Go's module rules do not treat a `v2.0.0+`
+tag as a valid version for a module path without the `/v2` suffix. The
+decision and its consequences are recorded in
+`docs/plans/archive/v2.0.0-release-checklist.md`.
 
 This preamble, the README's v2 architecture and JSON-contract sections, and
-`docs/plans/v2.0.0-release-checklist.md` were themselves written as the
-phase's docs unit (#306).
+`docs/plans/archive/v2.0.0-release-checklist.md` were themselves written as
+the phase's docs unit (#306).
 
 ### Added
 
@@ -113,6 +118,12 @@ phase's docs unit (#306).
 
 ### Changed
 
+- **The Go module path is now `github.com/DonovanMods/linux-mod-manager/v2`**
+  (semantic import versioning, Ruling 14 Option A). Install with
+  `go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest`;
+  every intra-module import path gains the `/v2` segment. The unsuffixed
+  path stays pinned to the v1.x line, so existing `@latest` installs keep
+  resolving to v1.30.1.
 - Building lmm now requires Go 1.27.
 - Default config and data directories honor `XDG_CONFIG_HOME` / `XDG_DATA_HOME` (defaults `~/.config/lmm` and `~/.local/share/lmm`). When an XDG variable is set but its lmm directory does not exist and the legacy one does, the legacy directory is used so existing installs keep working. `--config`/`--data` and `cache_path` still override. Bootstrap (paths, directory hardening, source registration) now lives in `internal/app` so every frontend resolves identically. (#270)
 - `lmm --config X --data Y` no longer requires `$HOME` to be set. (#277)
