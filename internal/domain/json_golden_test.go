@@ -211,6 +211,10 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			// Mods is deliberately left nil, mirroring Profile's own golden.
+			// The hook pair (#296) mirrors Profile's too, including an
+			// explicitly-DISABLED uninstall.after_all - set in
+			// HooksExplicit with an empty value in Hooks - which is the
+			// distinction the export exists to carry.
 			"exported_profile",
 			domain.ExportedProfile{
 				Name:       "default",
@@ -218,6 +222,14 @@ func TestJSONGoldens(t *testing.T) {
 				Mods:       nil,
 				LinkMethod: "hardlink",
 				Overrides:  map[string]string{"config/game.ini": "[General]\nsLanguage=ENGLISH\n"},
+				Hooks: domain.GameHooks{
+					Install:   domain.HookConfig{AfterAll: "scripts/after_all.sh"},
+					Uninstall: domain.HookConfig{AfterAll: ""},
+				},
+				HooksExplicit: domain.GameHooksExplicit{
+					Install:   domain.HookExplicitFlags{AfterAll: true},
+					Uninstall: domain.HookExplicitFlags{AfterAll: true},
+				},
 			},
 		},
 		{

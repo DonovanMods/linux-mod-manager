@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadProfile_WithHooks(t *testing.T) {
@@ -143,4 +144,107 @@ func TestSaveProfile_NoHooksProfile_ByteIdenticalOutput(t *testing.T) {
 
 	const wantPreFixOutput = "name: modded\ngame_id: skyrim-se\nmods:\n    - source_id: nexus\n      mod_id: \"123\"\n      version: \"1.0\"\n      file_ids:\n        - f1\n"
 	assert.Equal(t, wantPreFixOutput, string(data))
+}
+
+// --- #296: profile export/import round-trips hook overrides ---
+
+// exportedNoHooksYAML is what ExportProfile produced for a hookless profile
+// BEFORE #296, captured verbatim off the pre-change implementation. It is
+// the backward-compatibility pin: adding the hooks block must not change one
+// byte of an export that has no hooks to write.
+const exportedNoHooksYAML = `name: default
+game_id: skyrim-se
+mods:
+    - source_id: nexusmods
+      mod_id: "42"
+      version: 1.0.0
+      file_ids:
+        - f1
+`
+
+func hooklessExportProfile() *domain.Profile {
+	return &domain.Profile{
+		Name: "default", GameID: "skyrim-se",
+		Mods: []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.0.0", FileIDs: []string{"f1"}}},
+	}
+}
+
+// TestExportProfile_NoHooks_BytesUnchanged pins the pre-#296 bytes: a
+// profile with no explicit hook overrides exports EXACTLY what it always
+// exported, with no hooks: key at all.
+func TestExportProfile_NoHooks_BytesUnchanged(t *testing.T) {
+	data, err := ExportProfile(hooklessExportProfile())
+	require.NoError(t, err)
+	assert.Equal(t, exportedNoHooksYAML, string(data))
+}
+
+// TestImportProfile_NoHooks_ReadsLegacyExport is the other half: an export
+// recorded before #296 (no hooks: key) still imports, with nothing marked
+// explicit, so a shared profile file from an older lmm keeps working.
+func TestImportProfile_NoHooks_ReadsLegacyExport(t *testing.T) {
+	profile, err := ImportProfile([]byte(exportedNoHooksYAML))
+	require.NoError(t, err)
+	assert.Equal(t, "default", profile.Name)
+	assert.Equal(t, domain.GameHooks{}, profile.Hooks)
+	assert.Equal(t, domain.GameHooksExplicit{}, profile.HooksExplicit)
+}
+
+// hookedExportProfile carries both halves of the *string-pointer encoding:
+// an explicitly-DISABLED hook (explicit, empty value) and an explicitly-SET
+// one. A round trip that loses the distinction turns "don't run the game's
+// install.after_all for this profile" back into "inherit it".
+func hookedExportProfile() *domain.Profile {
+	return &domain.Profile{
+		Name: "modded", GameID: "skyrim-se",
+		Mods: []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.0.0"}},
+		Hooks: domain.GameHooks{
+			Install:   domain.HookConfig{AfterAll: ""},
+			Uninstall: domain.HookConfig{AfterAll: "/opt/lmm/cleanup.sh", BeforeEach: "/opt/lmm/pre.sh"},
+		},
+		HooksExplicit: domain.GameHooksExplicit{
+			Install:   domain.HookExplicitFlags{AfterAll: true},
+			Uninstall: domain.HookExplicitFlags{AfterAll: true, BeforeEach: true},
+		},
+	}
+}
+
+// TestExportProfile_RoundTripsHooks is #296: export -> import must preserve
+// the hook overrides AND their explicit flags, and re-exporting the imported
+// profile must produce byte-identical YAML.
+func TestExportProfile_RoundTripsHooks(t *testing.T) {
+	original := hookedExportProfile()
+
+	data, err := ExportProfile(original)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "hooks:", "an explicit hook override must reach the exported YAML")
+
+	imported, err := ImportProfile(data)
+	require.NoError(t, err)
+	assert.Equal(t, original.Hooks, imported.Hooks)
+	assert.Equal(t, original.HooksExplicit, imported.HooksExplicit)
+
+	again, err := ExportProfile(imported)
+	require.NoError(t, err)
+	assert.Equal(t, string(data), string(again), "export -> import -> export must be byte-for-byte stable")
+}
+
+// TestExportProfile_HooksUseTheProfileFileEncoding pins the wire shape: the
+// same *string-pointer "unset vs set-to-empty" encoding a profile file uses
+// (parseProfileHooks/serializeProfileHooks), not a flat domain.GameHooks
+// dump - an unset hook is absent, an explicitly-disabled one is present and
+// empty.
+func TestExportProfile_HooksUseTheProfileFileEncoding(t *testing.T) {
+	data, err := ExportProfile(hookedExportProfile())
+	require.NoError(t, err)
+
+	var cfg struct {
+		Hooks ProfileHooksYAML `yaml:"hooks"`
+	}
+	require.NoError(t, yaml.Unmarshal(data, &cfg))
+
+	require.NotNil(t, cfg.Hooks.Install.AfterAll)
+	assert.Equal(t, "", *cfg.Hooks.Install.AfterAll, "an explicitly-disabled hook is present-but-empty")
+	assert.Nil(t, cfg.Hooks.Install.BeforeAll, "an unset hook is absent, so it still inherits from the game")
+	require.NotNil(t, cfg.Hooks.Uninstall.AfterAll)
+	assert.Equal(t, "/opt/lmm/cleanup.sh", *cfg.Hooks.Uninstall.AfterAll)
 }

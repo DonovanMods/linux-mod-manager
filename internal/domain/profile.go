@@ -55,11 +55,28 @@ func (p *Profile) FindRef(sourceID, modID string) *ModReference {
 	return nil
 }
 
-// ExportedProfile is the YAML-serializable format for sharing
+// ExportedProfile is the portable format for sharing a profile: what
+// `lmm profile export` writes and `lmm profile import` reads back.
+//
+// The yaml tags describe the pre-#296 fields only. The hook pair below is
+// yaml:"-" because the exported file encodes hooks the same way a profile
+// file does - with *string pointers, so "unset (inherit from the game)" and
+// "explicitly disabled" stay distinguishable - which no tag on a
+// GameHooks/GameHooksExplicit pair can express. internal/storage/config owns
+// that encoding (parseProfileHooks/serializeProfileHooks) and marshals its
+// own YAML DTO around this type.
 type ExportedProfile struct {
 	Name       string            `yaml:"name" json:"name"`
 	GameID     string            `yaml:"game_id" json:"game_id"`
 	Mods       []ModReference    `yaml:"mods" json:"mods"`
 	LinkMethod string            `yaml:"link_method,omitempty" json:"link_method,omitempty"`
 	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"` // path (relative to game install) -> file content
+
+	// Hooks/HooksExplicit carry the profile's own hook overrides through an
+	// export/import round trip (#296): before this they were silently
+	// dropped, so a shared profile lost every `hooks:` override it had.
+	// HooksExplicit is what distinguishes an explicitly-disabled hook (set,
+	// empty) from an unset one (inherit) - see Profile's own pair.
+	Hooks         GameHooks         `yaml:"-" json:"hooks"`
+	HooksExplicit GameHooksExplicit `yaml:"-" json:"hooks_explicit"`
 }

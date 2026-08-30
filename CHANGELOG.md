@@ -368,6 +368,11 @@ profiles}`).
   the profile, matching `lmm profile apply`'s no-changes behaviour. (#290)
 - Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
   `hooks:`) (#295)
+- Profile-level hook overrides survive `lmm profile export` → `lmm profile import`. The exported
+  document carries a `hooks:` block in the same encoding a profile file uses, so an explicitly
+  disabled hook (present but empty) stays disabled instead of coming back as "inherit from the
+  game". An export of a profile with no overrides is byte-identical to before, and an export
+  recorded by an earlier lmm (no `hooks:` key) still imports. (#296)
 - `lmm profile reorder`'s ambiguous-mod-ID error lists the matching `source:modid` candidates
   sorted by source ID, instead of Go's randomized map iteration order. (#298)
 - `lmm profile sync`'s add/remove/update buckets are listed in a fixed, deterministic order
