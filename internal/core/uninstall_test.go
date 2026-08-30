@@ -354,11 +354,11 @@ exit 1`)
 	dbPath := filepath.Join(dataDir, "lmm.db")
 	locker, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
-	defer locker.Close()
+	defer locker.Close() //nolint:errcheck // best-effort cleanup
 	locker.SetMaxOpenConns(1)
 	conn, err := locker.Conn(context.Background())
 	require.NoError(t, err)
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // best-effort cleanup
 	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 	defer conn.ExecContext(context.Background(), "ROLLBACK") //nolint:errcheck // best-effort cleanup
