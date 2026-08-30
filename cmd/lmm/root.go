@@ -333,7 +333,7 @@ func printCancelledNotice(out io.Writer, jsonOutput bool) {
 	if jsonOutput {
 		return
 	}
-	fmt.Fprintln(out, "Cancelled.")
+	_, _ = fmt.Fprintln(out, "Cancelled.") //nolint:errcheck // best-effort notice write
 }
 
 // reportError prints err in the active output format, unless the command
