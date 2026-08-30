@@ -61,7 +61,7 @@ func classifyImportArchive(game *domain.Game, mc source.MergeCompiler, filename 
 		switch {
 		case mc != nil && mc.IsNativeMergeSource(filename):
 			return importKindMergeSource
-		case isConvertEligibleArtifact(game, mc, filename):
+		case mc != nil && isConvertEligibleArtifact(game, mc, filename):
 			return importKindConvertPak
 		}
 	}
