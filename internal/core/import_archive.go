@@ -346,13 +346,14 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		return result, fmt.Errorf("failed to save mod: %w", err)
 	}
 
+	// v2 Phase 3 Ruling 16 (B): the same lazy profile creation the install
+	// flows do, through the same helper - which compares with errors.Is
+	// (this site used ==, so a wrapped ErrProfileNotFound would have fallen
+	// through silently) and reports a read it could not answer instead of
+	// treating it as "the profile is fine".
 	pm := s.NewProfileManager()
-	if _, err := pm.Get(ctx, game.ID, profileName); err != nil {
-		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(ctx, game.ID, profileName); err != nil {
-				note(ImportArchiveProfileNote, "Warning: could not create profile: %v", err)
-			}
-		}
+	if err := ensureProfileExists(ctx, pm, game.ID, profileName); err != nil {
+		note(ImportArchiveProfileNote, "Warning: could not create profile: %v", err)
 	}
 	modRef := domain.ModReference{
 		SourceID: result.Mod.SourceID,

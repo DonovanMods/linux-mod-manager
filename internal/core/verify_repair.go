@@ -246,8 +246,9 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	// Sibling repair runs regardless of the primary re-link's own outcome
 	// (above) - a sibling row's orphaning is caused by the cache rename,
 	// not by anything that happens to the primary row's deployment.
+	var siblingCancelErr error
 	if renamed || (!oldExists && newExists && note == "") {
-		note, siblingFailures = r.repairSiblingProfiles(ctx, mod, recorded, effective)
+		note, siblingFailures, siblingCancelErr = r.repairSiblingProfiles(ctx, mod, recorded, effective)
 	}
 
 	if len(relinkNotes) > 0 {
@@ -257,6 +258,12 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 		} else {
 			note = joined
 		}
+	}
+
+	// A cancellation outranks the re-link failure: the run is over either
+	// way, and only the cancellation tells the caller why.
+	if siblingCancelErr != nil {
+		return note, siblingFailures, siblingCancelErr
 	}
 
 	if relinkErr != nil {
@@ -394,13 +401,22 @@ func fileIDsEqual(a, b []string) bool {
 // every inline fmt.Printf/fmt.Println (previously gated on !jsonOutput) is
 // now an unconditional VerifyEvRepairDetail emission, matching
 // repairModVersion's own port.
-func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int) {
+// cancelErr is non-nil only when the run was cancelled part-way through the
+// sibling sweep (v2 Phase 3 Ruling 16): a cancelled profile read or write
+// would otherwise repeat identically for every remaining sibling, turning one
+// Ctrl-C into N "could not repair profile X" warnings and a non-zero
+// failedCount. The note and count accumulated up to that point are still
+// returned, so the caller reports the work that really happened.
+func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int, cancelErr error) {
 	pm := r.svc.NewProfileManager()
-	profiles, err := pm.List(ctx, r.game.ID)
-	if err != nil {
-		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", err)
+	profiles, listErr := pm.List(ctx, r.game.ID)
+	if listErr != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", 0, cerr
+		}
+		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", listErr)
 		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
-		return "sibling repair check FAILED: " + msg, 1
+		return "sibling repair check FAILED: " + msg, 1, nil
 	}
 
 	var repaired, failed, differs, locked, methodNotes, undeployWarns []string
@@ -454,6 +470,13 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
 				continue
 			}
+		} else if cerr := ctx.Err(); cerr != nil {
+			// Ruling 16 (C): a lock gate that cannot read the profile
+			// reports "no lock" - correct for a missing or corrupt file,
+			// wrong for a cancellation, which would degrade this gate open
+			// for every remaining sibling.
+			cancelErr = cerr
+			break
 		}
 		// (A missing/unreadable sibling profile falls through - matches
 		// ApplyUpdate/ApplyRollback's own precedent: a lock cannot exist in
@@ -465,6 +488,14 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 			Version:  effective,
 			FileIDs:  sibling.FileIDs,
 		}); err != nil {
+			// Ruling 16 (B): this write PRECEDES its DB half
+			// (setModVersion below), so nothing is left half-committed by
+			// stopping here - unlike the completing writes, which finish
+			// under context.WithoutCancel.
+			if cerr := ctx.Err(); cerr != nil {
+				cancelErr = cerr
+				break
+			}
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
 			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			continue
@@ -535,7 +566,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 	if len(undeployWarns) > 0 {
 		parts = append(parts, fmt.Sprintf("undeploy warning in profile(s): %s", strings.Join(undeployWarns, ", ")))
 	}
-	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked)
+	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked), cancelErr
 }
 
 // relinkDeployedRow re-runs the installer for a row recorded as a symlink

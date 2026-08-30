@@ -773,14 +773,19 @@ type InstallResult struct {
 // doInstall/batchInstallMods' lazy profile-creation convention ("Ensure
 // profile exists, create if needed") - failures are non-fatal (mirroring
 // doInstall's own "Log but don't fail - mod is installed" comment) and
-// reported by the caller via the returned error (nil on success or
-// already-exists).
+// reported by the caller via the returned error. It returns nil only when
+// the profile is known to exist, either because it already did or because
+// this call created it (v2 Phase 3 Ruling 16 (B)): a read that could not
+// answer the question - a cancelled ctx, a YAML parse error, an EACCES -
+// is returned rather than mapped onto "the profile is fine", which is what
+// let a cancellation reach the caller's profile write as an ordinary note.
 func ensureProfileExists(ctx context.Context, pm *ProfileManager, gameID, profileName string) error {
 	if _, err := pm.Get(ctx, gameID, profileName); err != nil {
-		if errors.Is(err, domain.ErrProfileNotFound) {
-			if _, err := pm.Create(ctx, gameID, profileName); err != nil {
-				return err
-			}
+		if !errors.Is(err, domain.ErrProfileNotFound) {
+			return err
+		}
+		if _, err := pm.Create(ctx, gameID, profileName); err != nil {
+			return err
 		}
 	}
 	return nil
