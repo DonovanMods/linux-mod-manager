@@ -40,8 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from `--log-level` diagnostics. Two new core documents back this: `core.ProfileResult`
   (`{profile}`) for the profile-management commands and `core.SettingsResult` (`{default_game}`)
   for `game set-default`/`clear-default`. `--json` never prompts: a confirmation with no deciding
-  flag fails before mutating anything with the error envelope, and an `install --json` blocked by
-  file conflicts reports them as `details.conflicts` (pass `--force` to accept). (#303)
+  flag fails before mutating anything with the error envelope, and an `install --json` or
+  `import <archive> --json` blocked by file conflicts reports them as `details.conflicts` (pass
+  `--force` to accept). `lmm mod files` honours `--json` too, emitting `core.ModFilesReport`. (#303)
 - `lmm profile apply`, `lmm profile switch` and `lmm profile sync` gain `--dry-run`: they print
   the same plan preview the live run shows, under a `<Verb> plan for profile "<name>" (dry run)`
   header, and change nothing — including the profile-creating and default-switching writes a
@@ -207,7 +208,10 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   conflict re-run does not re-download cached files (a same-version reinstall or a local
   directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
   with a failing `install.before_all`) now prints after the download lines rather than before
-  them. `--force` still skips the conflict check entirely. (#303)
+  them. Declining an `import` now also discards the cache entry that import filled on its way to
+  the question, so a refusal leaves the cache exactly as it found it and accepting leaves exactly
+  one entry rather than orphaning the refused pass's copy of the archive. `--force` still skips
+  the conflict check entirely. (#303)
 - Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
   frontend from Apply"). `InstallOptions.ConfirmConflicts` and
   `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by

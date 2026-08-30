@@ -803,6 +803,7 @@ shows up as a diff in review.
 | `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`          |
 | `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                    |
 | `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                 |
+| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                 |
 | `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                       |
 | `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                   |
 | `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                |
@@ -815,7 +816,7 @@ that run would have applied:
 | Command                                  | Document                                                       |
 | ---------------------------------------- | -------------------------------------------------------------- |
 | `lmm install`                            | `core.InstallResult` — `{installed[], skipped[], failed[], …}` |
-| `lmm import <archive>`                   | `core.ImportArchiveResult`                                     |
+| `lmm import <archive>`                   | `core.ImportArchiveResult` (conflicts need `--force`, above)   |
 | `lmm import` (scan)                      | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`  |
 | `lmm import --dry-run`                   | `core.AdoptPlan`                                               |
 | `lmm deploy`                             | `core.DeployResult` / `core.DeployPlan` under `--dry-run`      |
@@ -836,13 +837,13 @@ that run would have applied:
 (`-y`/`--yes`, or `--force` where that is the existing meaning); without it
 the run fails **before mutating anything** with the error envelope
 (`"confirmation required: …"`, exit `1`). `lmm game detect --json` therefore
-needs `--all` or `--select`; an `lmm install --json` that hits file conflicts
-needs `--force`, and without it the envelope's `details.conflicts` names
-every conflicting file. `lmm game add` and `lmm auth login` are
-interactive-only and reject `--json` outright. Progress and per-mod status
-lines are suppressed under `--json`, so stdout holds the document and
-nothing else and stderr stays empty (except for `--log-level` diagnostics,
-which are always stderr).
+needs `--all` or `--select`; an `lmm install --json` or
+`lmm import <archive> --json` that hits file conflicts needs `--force`, and
+without it the envelope's `details.conflicts` names every conflicting file.
+`lmm game add` and `lmm auth login` are interactive-only and reject `--json`
+outright. Progress and per-mod status lines are suppressed under `--json`, so
+stdout holds the document and nothing else and stderr stays empty (except for
+`--log-level` diagnostics, which are always stderr).
 
 List fields are always arrays, never `null`: an empty listing is `[]` and a
 game with no configured sources is `{}`. Enum-valued fields (link method,
