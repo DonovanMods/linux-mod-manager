@@ -252,12 +252,13 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   available ("Update available: 1.0 → 2.0", "Rollback available: 2.0 → 1.0", "Recompile needed
   for `<mod>` (base pak updated).") followed by the refusal, whose own inline remedies (both
   carrying `-s`/`-p`) supersede the separate "Move the lock: … | Unlock: …" line. (#294)
-- `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a lock refusal
-  behind `--verbose`. When a LOCKED profile ref makes the post-install/`toUpdate` profile write
-  refuse — the record in the database moves while the profile ref does not — the refusal now
-  prints unconditionally to stderr as `Warning: could not update …`, and is carried on the
-  command's `--json` document in `warnings` (stderr stays empty under `--json`). It was previously
-  a `--verbose`-only stdout note, so a default-verbosity run reported success with a silent
+- `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
+  failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
+  (the record in the database moves while the profile ref does not) but also any profile
+  load/save failure (e.g. the profile going missing mid-run). The warning now prints
+  unconditionally to stderr as `Warning: could not update …`, and is carried on the command's
+  `--json` document in `warnings` (stderr stays empty under `--json`). It was previously a
+  `--verbose`-only stdout note, so a default-verbosity run reported success with a silent
   database-vs-profile divergence. (#294)
 
 ### Changed — JSON output (v2)
