@@ -515,7 +515,11 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   the merged-artifact effect on a compile game and the hooks that would run, while leaving no DB
   row, no deployed file, no cache entry and nothing in the staging root. `--dry-run --json` emits
   the plan document. Between the close wave and this change the flag was rejected outright with
-  an error; scan-mode `--dry-run` is unaffected throughout. (#314)
+  an error; scan-mode `--dry-run` is unaffected throughout. Sharing that listing step with the
+  ingest also closes a small gap: `.7z`/`.rar` members are now screened for lmm's reserved
+  namespace and zip-slip path traversal at plan time, the same as zip members always were —
+  previously this check ran only after extraction, and only against reserved names, never path
+  traversal. (#314)
 - `lmm import <archive>`'s readout prints once per import, and the ID it prints is the ID saved
   (**Ruling 18**). Accepting a file-conflict prompt used to re-run the whole import, reprinting
   the `Fetching metadata…` / `Mod:` / `Source:` / `ID:` / `Version:` / `Files:` block between the
