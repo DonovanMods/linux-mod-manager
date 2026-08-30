@@ -56,6 +56,20 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 	// each source's batch up front, before that source's own success/failure
 	// is known, so the running total stays the sum of every batch size
 	// regardless of which sources actually report progress or error out.
+	//
+	// The reservation is unconditional, so a source that emits NO event
+	// leaves its slice of 1..N unpopulated - the printed sequence has a
+	// hole. Two causes, and the second is the common one offline: a source
+	// whose registry lookup or check fails, and a source that simply does
+	// not implement source.UpdateProgressReporter (only nexusmods and
+	// curseforge do, so an all-directory-source run prints no counter line
+	// at all). What IS guaranteed: each source's ticks occupy a fixed,
+	// non-overlapping, ascending slice of 1..N; N is the total checkable
+	// count regardless of failures; and each source's GlobalIndex-Index
+	// offset is constant across its batch. Anything stronger would have to
+	// defer the reservation until a source's first event, which would make
+	// the numbers depend on map-iteration order (unit Q review, parked
+	// item 2).
 	globalTotal := len(checkable)
 	globalOffset := 0
 
