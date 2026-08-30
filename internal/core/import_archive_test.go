@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -592,4 +594,114 @@ func TestImportArchive_DeployCompile_FoldsRetainedFileIDIntoFileIDs(t *testing.T
 	require.NoError(t, iErr)
 	require.Len(t, installed, 1)
 	assert.Contains(t, installed[0].FileIDs, "Bear_Mount.exmodz")
+}
+
+// --- the refused conflict leaves no cache entry behind (unit P review, Important 3) ---
+
+// importCacheEntries lists every cache VERSION directory under the game's
+// cache root as "<source>-<modID>/<version>", sorted - the granularity a
+// "one import, one entry" claim is made at. An unlinked import mints a fresh
+// uuid per Import call, so counting entries is the only stable way to see
+// the orphan a refused-then-accepted import used to leave behind.
+func importCacheEntries(t *testing.T, svc *core.Service, game *domain.Game) []string {
+	t.Helper()
+	root := filepath.Join(svc.GetGameCachePath(game), game.ID)
+	modKeys, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err)
+
+	var entries []string
+	for _, mk := range modKeys {
+		if !mk.IsDir() {
+			continue
+		}
+		versions, vErr := os.ReadDir(filepath.Join(root, mk.Name()))
+		require.NoError(t, vErr)
+		for _, v := range versions {
+			if v.IsDir() {
+				entries = append(entries, mk.Name()+"/"+v.Name())
+			}
+		}
+	}
+	sort.Strings(entries)
+	return entries
+}
+
+// setupUnlinkedImportConflict is setupImportArchiveConflict's unlinked twin:
+// mod A is imported with --id (so it owns "shared.txt" deterministically),
+// but the archive returned is imported with NO source or mod ID, so Import
+// mints a fresh uuid for it on every call. That is the shape Important 3
+// measures - a refused-then-accepted import used to leave the first call's
+// whole cache entry orphaned under an identity nothing references.
+func setupUnlinkedImportConflict(t *testing.T) (*core.Service, *domain.Game, string) {
+	t.Helper()
+	svc, game, _ := setupImportArchiveConflict(t)
+	unlinked := filepath.Join(t.TempDir(), "Zeta-1.0.zip")
+	createImportTestZip(t, unlinked, map[string]string{"shared.txt": "from-Z"})
+	return svc, game, unlinked
+}
+
+// TestImportArchive_UnacceptedConflict_RemovesTheCacheEntryItCreated pins
+// Important 3's refusal half: a *ConflictError leaves the cache and the DB
+// exactly as it found them, so nothing this call created survives an answer
+// the caller may never come back to give.
+func TestImportArchive_UnacceptedConflict_RemovesTheCacheEntryItCreated(t *testing.T) {
+	svc, game, unlinked := setupUnlinkedImportConflict(t)
+
+	before := importCacheEntries(t, svc, game)
+	modsBefore, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	_, err = svc.ImportArchive(context.Background(), game, "default", unlinked,
+		core.ImportArchiveOptions{}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError))
+
+	assert.Equal(t, before, importCacheEntries(t, svc, game),
+		"a refused conflict must leave no cache entry behind")
+
+	modsAfter, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Len(t, modsAfter, len(modsBefore), "a refused conflict must write no DB row")
+}
+
+// TestImportArchive_ConflictRefusedThenAccepted_LeavesExactlyOneCacheEntry
+// is the accept half: after the frontend's re-run there is exactly ONE new
+// cache entry for the import, and the identity persisted to the DB and the
+// profile is that entry's - never the refused pass's discarded uuid.
+func TestImportArchive_ConflictRefusedThenAccepted_LeavesExactlyOneCacheEntry(t *testing.T) {
+	svc, game, unlinked := setupUnlinkedImportConflict(t)
+
+	before := importCacheEntries(t, svc, game)
+
+	_, err := svc.ImportArchive(context.Background(), game, "default", unlinked,
+		core.ImportArchiveOptions{}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError), "sanity: the first run must refuse")
+
+	result, err := svc.ImportArchive(context.Background(), game, "default", unlinked,
+		core.ImportArchiveOptions{AcceptConflicts: true}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result.Mod)
+
+	after := importCacheEntries(t, svc, game)
+	require.Len(t, after, len(before)+1, "one import must leave exactly one cache entry: %v", after)
+
+	added := after[len(after)-1]
+	for _, e := range after {
+		if !slices.Contains(before, e) {
+			added = e
+		}
+	}
+	assert.Equal(t, result.Mod.SourceID+"-"+result.Mod.ID+"/"+result.Mod.Version, added,
+		"the surviving entry must be the identity that was persisted")
+
+	mods, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	var ids []string
+	for _, m := range mods {
+		ids = append(ids, m.ID)
+	}
+	assert.Contains(t, ids, result.Mod.ID)
+	assert.Len(t, mods, 2, "the accepted import adds exactly one row alongside mod A")
 }
