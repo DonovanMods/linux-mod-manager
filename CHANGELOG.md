@@ -438,6 +438,13 @@ profiles}`).
   `Logger`, `SetModLinkMethod`, `SetModDeployed`, and `DeleteInstalledMod` stay exported as
   documented test-seed APIs or frontend-facing queries, each with a doc comment stating why. No
   behavior change. (#305)
+- Every exported identifier in `internal/core`, `internal/domain`, and `internal/app` now carries
+  a doc comment, enforced by a `go/ast` test in each package
+  (`TestExportedIdentifiersHaveDocComments`) rather than tracked as a one-time count.
+  `cmd/lmm`'s import-boundary test drops its allow-list mechanism (empty since Task 1) in favor of
+  asserting the hard rule directly; a new `TestDetailsTypesAreCovered` (Unit P review finding M7)
+  requires every type implementing the `--json` error envelope's `Details() any` extension point
+  to have a named test pinning its wire shape. No behavior change. (#305)
 
 ## [1.30.1] - 2026-08-08
 
