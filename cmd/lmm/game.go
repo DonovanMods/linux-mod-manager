@@ -160,15 +160,19 @@ func doGameShowDefault(ctx context.Context, cmd *cobra.Command, service *core.Se
 
 	out := cmd.OutOrStdout()
 	if !info.Set {
-		fmt.Fprintln(out, "No default game set")
-		fmt.Fprintln(out, "Use 'lmm game set-default <game-id>' to set one")
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(out, "No default game set")
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(out, "Use 'lmm game set-default <game-id>' to set one")
 		return nil
 	}
 	if info.Name != "" {
-		fmt.Fprintf(out, "Default game: %s (%s)\n", info.Name, info.ID)
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintf(out, "Default game: %s (%s)\n", info.Name, info.ID)
 		return nil
 	}
-	fmt.Fprintf(out, "Default game: %s\n", info.ID)
+	//nolint:errcheck // best-effort console write
+	_, _ = fmt.Fprintf(out, "Default game: %s\n", info.ID)
 	return nil
 }
 

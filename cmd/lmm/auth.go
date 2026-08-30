@@ -358,10 +358,10 @@ func doAuthStatus(ctx context.Context, service *core.Service) error {
 	}
 
 	for _, s := range report.Sources {
-		switch {
-		case s.Via == "stored":
+		switch s.Via {
+		case "stored":
 			fmt.Printf("%s (%s): authenticated (key: %s)\n", s.Name, s.ID, s.KeyMasked)
-		case s.Via == "env":
+		case "env":
 			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", s.Name, s.ID, s.EnvVar, s.KeyMasked)
 		default:
 			fmt.Printf("%s (%s): not authenticated (run: lmm auth login %s)\n", s.Name, s.ID, s.ID)
