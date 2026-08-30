@@ -1,6 +1,6 @@
 // Package core: this file holds the archive LISTING and the pure
 // member -> deployable-path normalisation that `lmm import <archive>`'s plan
-// (PlanImportArchive) and its ingest (Importer.Import) SHARE (#314).
+// (PlanImportArchive) and its ingest (importWithIdentity) SHARE (#314).
 //
 // The sharing is the point. A plan that answered "what would this archive
 // contribute" with its own reimplementation of the ingest's rules would drift
@@ -25,7 +25,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
 )
 
-// importArchiveKind is which of Importer.Import's four branches an archive
+// importArchiveKind is which of importWithIdentity's four branches an archive
 // takes, and therefore what it contributes to the game directory. It is
 // derived ONCE (classifyImportArchive) and consulted by both the plan and the
 // ingest, so the two cannot disagree about a given archive.
@@ -55,7 +55,8 @@ const (
 // needs none (every non-DeployCompile game): the format questions
 // - is this the game's native merge source, is it a convertible artifact -
 // are the compile source's to answer (#256), and a DeployCompile game with no
-// resolvable compiler never reaches here (Import fails loud first).
+// resolvable compiler never reaches here (importWithIdentity fails loud
+// first).
 func classifyImportArchive(game *domain.Game, mc source.MergeCompiler, filename string) importArchiveKind {
 	if game.DeployMode == domain.DeployCompile {
 		switch {
@@ -141,7 +142,7 @@ func importDeployablePaths(kind importArchiveKind, filename string, members []ar
 }
 
 // importedModName is the mod name an import records for archivePath's
-// filename - the value both Importer.Import and PlanImportArchive use, so a
+// filename - the value both importWithIdentity and PlanImportArchive use, so a
 // plan's readout names the mod the ingest will actually record.
 //
 // An extract-mode import takes the name from the archive's CONTENT (a sole
@@ -179,7 +180,7 @@ func modNameFromMembers(members []archiveMember, archiveFilename string) string 
 
 // trimVersionSuffix drops filename's extension and, when version is a real
 // version the base name ends with, that trailing "-<version>" too. Extracted
-// from Importer.Import, which applied it identically in its compile and copy
+// from importWithIdentity, which applied it identically in its compile and copy
 // branches.
 func trimVersionSuffix(filename, version string) string {
 	modName := strings.TrimSuffix(filename, filepath.Ext(filename))

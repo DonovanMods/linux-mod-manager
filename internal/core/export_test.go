@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
@@ -224,4 +225,15 @@ func (s *Service) VerifyForTest(ctx context.Context, game *domain.Game, profile 
 // tree a flow is forbidden to touch.
 func (s *Service) DataDirForTest() string {
 	return s.dataDir
+}
+
+// ImportForTest reproduces exactly what the exported Importer.Import did
+// before #314 review M6 removed it as having no production caller left
+// (importWithIdentity's own doc comment explains why): resolve archivePath's
+// identity from its filename and opts, then import under it. Core's own
+// import tests drive a plain round-trip through this rather than through
+// importWithIdentity directly, since resolving the identity themselves would
+// just re-duplicate resolveImportIdentity's logic in every test.
+func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (*ImportResult, error) {
+	return i.importWithIdentity(ctx, archivePath, game, opts, resolveImportIdentity(filepath.Base(archivePath), opts))
 }

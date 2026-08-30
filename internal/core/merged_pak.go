@@ -636,7 +636,7 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 
 // rawPakRestoreName picks the on-disk name restoreRawPakCopy publishes a
 // healed deployable pak copy under (#250). An import-path fileID IS the
-// original archive filename (Importer.Import stages the deployable copy
+// original archive filename (importWithIdentity stages the deployable copy
 // under exactly that name), so the restore is name-exact - detected by
 // asking the compile source whether the fileID names one of its
 // convertible artifacts (#256: the format test lives behind the seam). A

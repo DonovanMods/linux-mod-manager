@@ -11,7 +11,7 @@ import (
 )
 
 // TestCopyDir_FollowsSymlinkedSubdir is a regression test for the
-// cross-device-rename fallback path in Importer.Import: copyDir used
+// cross-device-rename fallback path in importWithIdentity: copyDir used
 // filepath.Walk, which lstats every entry and never follows symlinks. A
 // symlinked subdirectory therefore reported IsDir()==false, fell through to
 // copyFileStreaming, and os.Open on it (which *does* follow the link, landing

@@ -282,7 +282,7 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 // mergeCompilerSourceForGame resolves the sole MergeCompiler-capable source
 // registered for gameID (#173). The download path pins its MergeCompiler
 // check to the specific source a file was downloaded from
-// (DownloadModToCache's src.(source.MergeCompiler) check); Importer.Import
+// (DownloadModToCache's src.(source.MergeCompiler) check); importWithIdentity
 // has no such per-archive source to key off of, so it resolves against
 // every source the game maps in its registry instead — at most one of a
 // game's configured sources implements MergeCompiler today. Zero is the expected
@@ -1185,7 +1185,7 @@ func commitStagedCache(cachePath, stagePath string) error {
 // compiler at all - icarus is always registered, so only a hand-edited map
 // gets here - AND a foreign source serving native archives) is ingested as
 // a plain archive without ValidateSource. The import path has no such
-// residual: Importer.Import hard-errors on an unresolvable compiler, since
+// residual: importWithIdentity hard-errors on an unresolvable compiler, since
 // it has no per-archive source contract forcing a fall-through.
 func (s *Service) isNativeMergeFile(game *domain.Game, mc source.MergeCompiler, fileName string) bool {
 	if mc == nil {

@@ -28,16 +28,17 @@ type ImportResult struct {
 	FilesExtracted int         `json:"files_extracted"`
 	LinkedSource   string      `json:"linked_source"` // "nexusmods", "local", etc.
 	AutoDetected   bool        `json:"auto_detected"` // true if source/ID was parsed from filename
-	// RetainedFileID is the identity Import used to key a retained compile
-	// source (cache.RetainedSourceName) - only set for the DeployCompile
-	// ".exmodz" branch, where it is the archive's own filename (Import has
-	// no other stable identity to retain under; see that branch's own doc
-	// comment). Callers MUST fold this into the InstalledMod/ModReference's
-	// FileIDs (#197 C1 fix): enabledMergeSources walks FileIDs to find each
-	// mod's retained source, and a row whose FileIDs never includes this
-	// value is invisible to every future merge - silently, forever, since
-	// it is also excluded from the staleness fingerprint on both sides of
-	// the comparison. Empty for every other deploy mode.
+	// RetainedFileID is the identity importWithIdentity used to key a
+	// retained compile source (cache.RetainedSourceName) - only set for the
+	// DeployCompile ".exmodz" branch, where it is the archive's own
+	// filename (importWithIdentity has no other stable identity to retain
+	// under; see that branch's own doc comment). Callers MUST fold this into
+	// the InstalledMod/ModReference's FileIDs (#197 C1 fix):
+	// enabledMergeSources walks FileIDs to find each mod's retained source,
+	// and a row whose FileIDs never includes this value is invisible to
+	// every future merge - silently, forever, since it is also excluded
+	// from the staleness fingerprint on both sides of the comparison. Empty
+	// for every other deploy mode.
 	RetainedFileID string `json:"retained_file_id,omitempty"`
 }
 
@@ -51,12 +52,12 @@ type Importer struct {
 	// resolveMergeCompiler resolves the MergeCompiler-capable source mapped
 	// to a DeployCompile game's registry entry (#197), consulted for every
 	// import into such a game (#256: the compile source now answers the
-	// native/convertible format questions too) — Import has no per-archive
-	// source pinned the way DownloadModToCache does, so it must look up the
-	// game's configured sources instead. nil when the Importer was built
-	// via the standalone NewImporter (no Service context): a DeployCompile
-	// import through such an Importer fails loud rather than silently
-	// caching an unvalidated archive.
+	// native/convertible format questions too) — importWithIdentity has no
+	// per-archive source pinned the way DownloadModToCache does, so it must
+	// look up the game's configured sources instead. nil when the Importer
+	// was built via the standalone NewImporter (no Service context): a
+	// DeployCompile import through such an Importer fails loud rather than
+	// silently caching an unvalidated archive.
 	resolveMergeCompiler func(gameID string) (source.MergeCompiler, error)
 }
 
@@ -127,19 +128,21 @@ func resolveImportIdentity(filename string, opts ImportOptions) importIdentity {
 	return importIdentity{sourceID: domain.SourceLocal, modID: uuid.New().String(), version: versionOrUnknown(), minted: true}
 }
 
-// Import imports a mod from a local archive file, under the identity
-// resolveImportIdentity derives for it.
-func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (*ImportResult, error) {
-	return i.importWithIdentity(ctx, archivePath, game, opts, resolveImportIdentity(filepath.Base(archivePath), opts))
-}
-
-// importWithIdentity is Import under a CALLER-SUPPLIED identity - the one
-// PlanImportArchive already resolved (#314). It matters for an unlinked
-// archive, whose identity is a freshly minted uuid: letting the ingest mint
-// its own would give the apply a different ID from the one the plan printed
-// and the frontend prompted about (Ruling 18). For every other identity the
-// resolution is a pure function of filename and opts, so passing it in
-// changes nothing.
+// importWithIdentity imports a mod from a local archive file, under a
+// CALLER-SUPPLIED identity - the one PlanImportArchive already resolved
+// (#314). It matters for an unlinked archive, whose identity is a freshly
+// minted uuid: letting the ingest mint its own would give the apply a
+// different ID from the one the plan printed and the frontend prompted
+// about (Ruling 18). For every other identity the resolution is a pure
+// function of filename and opts, so passing it in changes nothing.
+//
+// The exported Import this used to sit behind (a one-line delegate calling
+// resolveImportIdentity itself) lost its last production caller in the same
+// change: every production import site resolves its own identity up front
+// and calls this directly. It was removed rather than kept as a redundant
+// wrapper (Global Constraint: an export whose last external caller a task
+// removes is unexported or deleted in that task); ImportForTest
+// (export_test.go) reproduces its exact behavior for core's own tests.
 func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions, ident importIdentity) (result *ImportResult, err error) {
 	// Validate archive exists
 	if _, err := os.Stat(archivePath); err != nil {
@@ -199,12 +202,12 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	// Handle based on game's deploy mode
 	switch kind {
 	case importKindMergeSource, importKindConvertPak:
-		// Validate mode (#197): Import has no real source file ID the way a
-		// download does (DownloadableFile.ID is resolved later, outside
-		// Import, only when --id was given), so the retained source is
-		// keyed by the archive's own filename instead - stable across
-		// re-imports of the same name, and the ONLY identity Import ever
-		// has for this content.
+		// Validate mode (#197): importWithIdentity has no real source file
+		// ID the way a download does (DownloadableFile.ID is resolved
+		// later, outside importWithIdentity, only when --id was given), so
+		// the retained source is keyed by the archive's own filename
+		// instead - stable across re-imports of the same name, and the
+		// ONLY identity importWithIdentity ever has for this content.
 		if err := mc.ValidateSource(archivePath); err != nil {
 			return nil, fmt.Errorf("validating %s: %w", filename, err)
 		}

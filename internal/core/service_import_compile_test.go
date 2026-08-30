@@ -58,7 +58,7 @@ func TestImportMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) {
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0o644))
 
 	importer := svc.NewImporterForTest(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, src.validateCalls)
 	require.Equal(t, 0, src.compileCalls, "import must NOT compile a per-mod pak (#197: merged-only)")
@@ -93,7 +93,7 @@ func TestImportPakRetainsAndDeploysRaw(t *testing.T) {
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
 
 	importer := svc.NewImporterForTest(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 1, src.validateCalls, "import must validate the pak via ValidateSource")
 	require.Equal(t, 0, src.compileCalls, "import must NOT compile at import time")
@@ -138,7 +138,7 @@ func TestImportMod_DeployCompile_MalformedExmodz_FailsLoud(t *testing.T) {
 	require.NoError(t, os.WriteFile(archivePath, []byte("not-a-valid-exmodz"), 0o644))
 
 	importer := svc.NewImporterForTest(game)
-	_, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	_, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 }
 
@@ -158,14 +158,14 @@ func TestImportMod_DeployCompile_ZipPassthroughUnaffected(t *testing.T) {
 
 	compileSvc, compileSrc, compileGame := newImportCompileTestGame(t)
 	compileImporter := compileSvc.NewImporterForTest(compileGame)
-	compileResult, err := compileImporter.Import(context.Background(), makeArchive(t), compileGame, core.ImportOptions{})
+	compileResult, err := compileImporter.ImportForTest(context.Background(), makeArchive(t), compileGame, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 0, compileSrc.compileCalls)
 
 	extractSvc, extractSrc, extractGame := newImportCompileTestGame(t)
 	extractGame.DeployMode = domain.DeployExtract
 	extractImporter := extractSvc.NewImporterForTest(extractGame)
-	extractResult, err := extractImporter.Import(context.Background(), makeArchive(t), extractGame, core.ImportOptions{})
+	extractResult, err := extractImporter.ImportForTest(context.Background(), makeArchive(t), extractGame, core.ImportOptions{})
 	require.NoError(t, err)
 	require.Equal(t, 0, extractSrc.compileCalls)
 
@@ -202,7 +202,7 @@ func TestImportMod_DeployCompile_NoCompilerSourceFailsLoud(t *testing.T) {
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0o644))
 
 	importer := svc.NewImporterForTest(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Contains(t, err.Error(), "compiler")
@@ -252,7 +252,7 @@ func TestImportMod_DeployCompile_PakNoCompilerSourceFailsLoud(t *testing.T) {
 	require.NoError(t, os.WriteFile(archivePath, []byte("fake-pak-bytes"), 0o644))
 
 	importer := svc.NewImporterForTest(game)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.Contains(t, err.Error(), "merge-compiler-capable source", "must fail loud on the actionable compiler-resolution error, never reach the sniffing legacy path")
@@ -275,7 +275,7 @@ func TestImportMod_DeployCompile_StandaloneImporterFailsLoud(t *testing.T) {
 	game := &domain.Game{ID: "icarus", DeployMode: domain.DeployCompile}
 
 	importer := core.NewImporter(modCache)
-	result, err := importer.Import(context.Background(), archivePath, game, core.ImportOptions{})
+	result, err := importer.ImportForTest(context.Background(), archivePath, game, core.ImportOptions{})
 	require.Error(t, err)
 	require.Nil(t, result)
 	// The message must name the actual cause - a standalone Importer with

@@ -241,7 +241,7 @@ type archiveFingerprint struct {
 }
 
 // fingerprintArchive stats path. A missing or unreadable archive fails with
-// the same "archive not found" wording Importer.Import uses, so planning and
+// the same "archive not found" wording importWithIdentity uses, so planning and
 // ingesting an absent file report it identically.
 func fingerprintArchive(path string) (archiveFingerprint, error) {
 	info, err := os.Stat(path)
@@ -267,7 +267,7 @@ func fingerprintArchive(path string) (archiveFingerprint, error) {
 // compile source, a failed ValidateSource, a member claiming lmm's reserved
 // namespace or escaping via zip-slip, a missing `7z` - is this layer's, and
 // is returned unprefixed. Before #314 those same checks ran inside
-// Importer.Import, so they reached the user wrapped in ApplyImportArchive's
+// importWithIdentity, so they reached the user wrapped in ApplyImportArchive's
 // "import failed: " (and, for a member rejection, "extracting archive: " on
 // top of that). ApplyImportArchive keeps "import failed: " for what it owns:
 // failures of the ingest it actually performs. A plan that never extracts
@@ -291,8 +291,8 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 
 	// The compile source answers the format questions for a DeployCompile
 	// game (#256), and a game whose compiler cannot be resolved fails HERE
-	// for the same reason Import fails: without it core cannot tell a native
-	// merge archive from anything else.
+	// for the same reason importWithIdentity fails: without it core cannot
+	// tell a native merge archive from anything else.
 	var mc source.MergeCompiler
 	if game.DeployMode == domain.DeployCompile {
 		if mc, err = s.mergeCompilerSourceForGame(game.ID); err != nil {
@@ -605,13 +605,13 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		}
 	}
 	// #197 C1 fix: a DeployCompile ".exmodz" import retains its source under
-	// RetainedFileID (the archive's own filename - Import's only stable
-	// identity), which is NEVER resolvedFile.ID (a real source file ID, or
-	// nothing at all without --id). Without folding it into FileIDs too,
-	// enabledMergeSources can never find this mod's retained source - it
-	// silently never participates in any merge, forever, and is invisible to
-	// update/verify since it's excluded from both sides of the staleness
-	// fingerprint as well.
+	// RetainedFileID (the archive's own filename - importWithIdentity's
+	// only stable identity), which is NEVER resolvedFile.ID (a real source
+	// file ID, or nothing at all without --id). Without folding it into
+	// FileIDs too, enabledMergeSources can never find this mod's retained
+	// source - it silently never participates in any merge, forever, and is
+	// invisible to update/verify since it's excluded from both sides of the
+	// staleness fingerprint as well.
 	if imported.RetainedFileID != "" && !slices.Contains(result.FileIDs, imported.RetainedFileID) {
 		result.FileIDs = append(result.FileIDs, imported.RetainedFileID)
 	}

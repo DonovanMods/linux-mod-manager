@@ -1,7 +1,7 @@
 package core
 
 // Unit tests for the archive LISTING and the pure member -> deployable-path
-// normalisation PlanImportArchive and Importer.Import share (#314, R-B2).
+// normalisation PlanImportArchive and importWithIdentity share (#314, R-B2).
 // Internal because every identifier here is unexported: the point of the
 // refactor is that ONE implementation answers "what would this archive
 // contribute", so the plan and the ingest cannot drift apart.
