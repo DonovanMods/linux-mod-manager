@@ -177,6 +177,85 @@ manifest:
 	})
 }
 
+// runGoldenSourceValidate runs `source validate [--probe]` through cobra
+// WITHOUT redirecting the command's output: under --json the document must
+// be captured off the real os.Stdout, matching runGoldenSourceList's own
+// rationale.
+func runGoldenSourceValidate(t *testing.T, path string, probe bool) (stdout, stderr string, fnErr error) {
+	t.Helper()
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(sourceCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(sourceCmd); rootCmd.AddCommand(sourceCmd) })
+	args := []string{"source", "validate", path}
+	if probe {
+		args = append(args, "--probe")
+	}
+	cmd.SetArgs(args)
+
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	return captureStdoutStderrErr(t, cmd.Execute)
+}
+
+// TestSourceValidate_JSON pins the SourceValidationReport document's framing
+// (one document decoding into the declared type with no unknown members,
+// empty stderr) and its recorded golden, both without and with --probe
+// (#309); the plain path's unaffected byte-for-byte behaviour is pinned
+// above by TestSourceValidateCmd/TestSourceValidateProbe.
+func TestSourceValidate_JSON(t *testing.T) {
+	t.Run("valid, no probe", func(t *testing.T) {
+		resetSourceProbeFlags(t)
+		t.Cleanup(func() { resetSourceProbeFlags(t) })
+		path := filepath.Join(t.TempDir(), "good.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+id: my-mods
+name: My Mods
+type: directory
+directory:
+  path: `+t.TempDir()+`
+`), 0644))
+
+		out, stderr, err := runGoldenSourceValidate(t, path, false)
+		require.NoError(t, err)
+		assert.Empty(t, stderr, "--json must leave stderr empty: events are suppressed (Ruling 15)")
+		var got app.SourceValidationReport
+		decodeStrict(t, out, &got)
+		assertJSONCLIGolden(t, "source_validate", out, path, "<PATH>")
+	})
+
+	t.Run("valid, with probe", func(t *testing.T) {
+		resetSourceProbeFlags(t)
+		t.Cleanup(func() { resetSourceProbeFlags(t) })
+		configDir = t.TempDir()
+		dataDir = t.TempDir()
+
+		root := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "SomeMod"), 0755))
+		path := filepath.Join(t.TempDir(), "dir.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(`
+id: probe-dir
+name: Probe Dir
+type: directory
+directory:
+  path: `+root+`
+`), 0644))
+
+		out, stderr, err := runGoldenSourceValidate(t, path, true)
+		require.NoError(t, err)
+		assert.Empty(t, stderr)
+		var got app.SourceValidationReport
+		decodeStrict(t, out, &got)
+		assertJSONCLIGolden(t, "source_validate_probe", out, path, "<PATH>")
+	})
+
+	// The invalid-file and probe-failure envelopes are pinned directly
+	// against sourceValidationError in jsonout_test.go
+	// (TestReportError_JSON_SourceValidationError) - no need to re-drive the
+	// whole command tree for the same shape.
+}
+
 // TestSourceListCmd_ErrorRows is a regression test for final-review finding 2:
 // `lmm source list` must not silently drop a definition whose source failed to
 // construct, and must not relabel a built-in source's type just because a

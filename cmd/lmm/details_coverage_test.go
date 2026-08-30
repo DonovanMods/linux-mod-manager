@@ -24,6 +24,7 @@ var detailsCoverage = map[string]string{
 	"core.ConflictError":     "TestReportError_JSON_ConflictError",
 	"gameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
 	"profileWarningsError":   "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
+	"sourceValidationError":  "TestReportError_JSON_SourceValidationError",
 }
 
 // TestDetailsTypesAreCovered enforces detailsCoverage: every type found to

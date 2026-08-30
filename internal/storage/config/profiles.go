@@ -321,8 +321,17 @@ type exportedProfileYAML struct {
 	Overrides  map[string]string     `yaml:"overrides,omitempty"`
 }
 
-// ExportProfile exports a profile to a portable format
-func ExportProfile(profile *domain.Profile) ([]byte, error) {
+// ExportProfileValue builds profile's portable domain.ExportedProfile
+// value: exactly the fields ExportProfile marshals to YAML (LinkMethod only
+// when explicit, Overrides as strings), but with Hooks/HooksExplicit left
+// as domain.GameHooks/GameHooksExplicit rather than run through the YAML
+// DTO's *string-pointer encoding - domain.ExportedProfile's own pair
+// already carries the "unset vs explicitly disabled" tri-state, so no
+// round trip through the pointer form is needed here. Shared by
+// ExportProfile (YAML) and core.Service.ExportProfile (`lmm profile export
+// --json`, #309) so the two document formats cannot drift apart on what
+// counts as "the exported profile".
+func ExportProfileValue(profile *domain.Profile) *domain.ExportedProfile {
 	var linkMethod string
 	if profile.LinkMethodExplicit {
 		linkMethod = profile.LinkMethod.String()
@@ -334,17 +343,31 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 			overrides[path] = string(content)
 		}
 	}
+	return &domain.ExportedProfile{
+		Name:          profile.Name,
+		GameID:        profile.GameID,
+		Mods:          profile.Mods,
+		LinkMethod:    linkMethod,
+		Overrides:     overrides,
+		Hooks:         profile.Hooks,
+		HooksExplicit: profile.HooksExplicit,
+	}
+}
+
+// ExportProfile exports a profile to a portable format
+func ExportProfile(profile *domain.Profile) ([]byte, error) {
+	exported := ExportProfileValue(profile)
 
 	// yaml.v3 omits a zero struct under omitempty, so a profile with no
 	// explicit override writes no hooks: key at all and its export stays
 	// byte-identical to every export made before #296.
 	data, err := yaml.Marshal(&exportedProfileYAML{
-		Name:       profile.Name,
-		GameID:     profile.GameID,
-		Mods:       profile.Mods,
-		LinkMethod: linkMethod,
-		Hooks:      serializeProfileHooks(profile.Hooks, profile.HooksExplicit),
-		Overrides:  overrides,
+		Name:       exported.Name,
+		GameID:     exported.GameID,
+		Mods:       exported.Mods,
+		LinkMethod: exported.LinkMethod,
+		Hooks:      serializeProfileHooks(exported.Hooks, exported.HooksExplicit),
+		Overrides:  exported.Overrides,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling exported profile: %w", err)

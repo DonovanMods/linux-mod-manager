@@ -755,16 +755,16 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 ### Global Flags
 
-| Flag          | Short | Description                                                                                                                                                                                |
-| ------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                                                                   |
-| `--verbose`   | `-v`  | Enable verbose output                                                                                                                                                                      |
-| `--config`    |       | Custom config directory                                                                                                                                                                    |
-| `--data`      |       | Custom data directory                                                                                                                                                                      |
-| `--json`      |       | Output JSON instead of text for most commands (five exceptions, below); mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
-| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                                                               |
-| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                                                             |
-| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                                                            |
+| Flag          | Short | Description                                                                                                                                     |
+| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                        |
+| `--verbose`   | `-v`  | Enable verbose output                                                                                                                           |
+| `--config`    |       | Custom config directory                                                                                                                         |
+| `--data`      |       | Custom data directory                                                                                                                           |
+| `--json`      |       | Output JSON instead of text; mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
+| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                    |
+| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                  |
+| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                 |
 
 Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
 
@@ -777,13 +777,6 @@ stderr; stderr stays empty except for `--log-level` diagnostics, so
 `lmm ... --json | jq` is always safe. Map keys and list order are
 deterministic, so two runs over the same state produce byte-identical
 output.
-
-**Five commands don't honor `--json` yet** and always print plain text
-regardless of the flag: `lmm profile list`, `lmm auth status`,
-`lmm profile export`, `lmm source validate` and `lmm game show-default`
-(#309). `lmm game show-default` is also the one place the "stderr stays
-empty" rule above doesn't hold: it writes its line to stderr rather than
-stdout, so `--json` on it yields an empty document.
 
 On failure the document is an envelope instead:
 
@@ -812,22 +805,27 @@ has a recorded golden under `internal/core/testdata/json/`,
 its exact wire shape. A field can only change by changing that golden, which
 shows up as a diff in review.
 
-| Command                        | Document                                                                                     |
-| ------------------------------ | -------------------------------------------------------------------------------------------- |
-| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                |
-| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                |
-| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                            |
-| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                           |
-| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count}` |
-| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`          |
-| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                    |
-| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                 |
-| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                 |
-| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                       |
-| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                   |
-| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                |
-| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`              |
-| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`             |
+| Command                        | Document                                                                                                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                                                                                                  |
+| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                                                                                                  |
+| `lmm profile list`             | `core.ProfileListing` — `{game_id, profiles[]}`                                                                                                                                |
+| `lmm profile export <name>`    | `domain.ExportedProfile` — `{name, game_id, mods[], link_method?, overrides?, hooks, hooks_explicit}`                                                                          |
+| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                              |
+| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                             |
+| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count}`                                                                                   |
+| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`                                                                                            |
+| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                      |
+| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                   |
+| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                   |
+| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                                                                                                         |
+| `lmm source validate <file>`   | `app.SourceValidationReport` — `{path, id?, type?, valid, errors[], warnings[], probe?}` (an invalid file/failed probe is the error envelope instead, `details` = this report) |
+| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                                                                                                     |
+| `lmm game show-default`        | `core.DefaultGame` — `{set, id?, name?}`                                                                                                                                       |
+| `lmm auth status`              | `app.AuthStatusReport` — `{sources[], orphaned[]}`                                                                                                                             |
+| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                                                                                                  |
+| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`                                                                                                |
+| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`                                                                                               |
 
 Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
 that run would have applied:
@@ -914,6 +912,12 @@ under its issue number:
   multi-mod `install` now fails before installing anything, instead of
   running to completion and reporting per-mod warnings as if it had
   succeeded.
+- **Ruling 17 — `game show-default`'s plain text moves to stdout.** Its two
+  lines used to land on stderr, an accident of `cmd.Println`/`cmd.Printf`
+  (which write to the command's error stream when no output writer is set);
+  they now go to stdout like every other command's plain text, and `--json`
+  on it now yields the `core.DefaultGame` document instead of an empty one.
+  The bytes themselves are unchanged (#309).
 
 > **v2 changed these shapes.** Before v2 each command projected its own
 > ad-hoc view struct, so the JSON was a parallel, undocumented contract that

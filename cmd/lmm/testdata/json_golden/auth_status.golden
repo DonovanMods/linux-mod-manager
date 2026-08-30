@@ -1,0 +1,18 @@
+{
+  "sources": [
+    {
+      "id": "nexusmods",
+      "name": "Nexus Mods",
+      "authenticated": true,
+      "via": "stored",
+      "key_masked": "sto...345"
+    }
+  ],
+  "orphaned": [
+    {
+      "id": "ghost-repo",
+      "reason": "not_registered",
+      "key_masked": "lef...y12"
+    }
+  ]
+}

@@ -91,6 +91,59 @@ func TestProfileCreateCmd_NoName(t *testing.T) {
 	assert.Contains(t, err.Error(), "accepts 1 arg")
 }
 
+// --- doProfileList (#309: honours --json) ---
+
+// TestDoProfileList_Empty pins the pre-#309 "No profiles found." text,
+// rebuilt from core.ProfileListing's empty Profiles slice rather than a raw
+// pm.List call.
+func TestDoProfileList_Empty(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	out := captureStdout(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	assert.Equal(t, "No profiles found.\n", out)
+}
+
+// TestDoProfileList_PlainTable pins the pre-#309 NAME/MODS/DEFAULT table
+// byte-for-byte, now rendered from core.ProfileListing instead of pm.List.
+func TestDoProfileList_PlainTable(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a"}))
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+
+	out := captureStdout(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	assert.Equal(t, "NAME      MODS  DEFAULT\n----      ----  -------\ndefault   1     *\nsurvival  0     \n", out)
+}
+
+// TestDoProfileList_JSON pins the ProfileListing document's framing (one
+// document, empty stderr) and its recorded golden.
+func TestDoProfileList_JSON(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a"}))
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+
+	out := runJSONCommand(t, func() error {
+		return doProfileList(context.Background(), svc, game)
+	})
+	var got core.ProfileListing
+	decodeStrict(t, out, &got)
+	assertJSONCLIGolden(t, "profile_list", out)
+}
+
 // --- doProfileSwitch (Task 4 CLI refit) ---
 
 // withStdin temporarily replaces os.Stdin with a pipe pre-loaded with input,

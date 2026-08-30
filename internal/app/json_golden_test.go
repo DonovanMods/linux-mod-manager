@@ -56,6 +56,52 @@ func TestAppJSONGoldens(t *testing.T) {
 			"source_info_error",
 			newSourceInfoError("nexusmods", errors.New("id already in use")),
 		},
+		{
+			"source_probe_result",
+			SourceProbeResult{OK: true, Summary: "ok — 3 mod(s) visible"},
+		},
+		{
+			// `lmm source validate --probe <file> --json`'s document (#309):
+			// a valid, probed definition - the fullest populated shape (an
+			// invalid file's report is a subset with no id/type/probe).
+			"source_validation_report",
+			SourceValidationReport{
+				Path: "/config/sources/my-mods.yaml", ID: "my-mods", Type: "directory", Valid: true,
+				Probe: &SourceProbeResult{OK: true, Summary: "ok — 3 mod(s) visible"},
+			},
+		},
+		{
+			"auth_source_status",
+			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyMasked: "abc...xyz"},
+		},
+		{
+			"orphaned_token",
+			OrphanedToken{ID: "ghost-repo", Reason: "not_registered", KeyMasked: "old...key"},
+		},
+		{
+			// `lmm auth status --json`'s document (#309): one authenticated
+			// row via a stored token, one via env, one never authenticated,
+			// plus both OrphanedToken reasons.
+			"auth_status_report",
+			AuthStatusReport{
+				Sources: []AuthSourceStatus{
+					{ID: "keyless-repo", Name: "Keyless"},
+					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789"},
+					{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyMasked: "abc...xyz"},
+				},
+				Orphaned: []OrphanedToken{
+					{ID: "ghost-repo", Reason: "not_registered", KeyMasked: "old...key"},
+					{ID: "local-mods", Reason: "auth_not_declared", KeyMasked: "sta...456"},
+				},
+			},
+		},
+		{
+			// Sources/Orphaned deliberately left nil (no `omitempty` on
+			// either tag, task A review round 1, Minor 6) to pin that a
+			// report with nothing to say marshals both as "[]", not "null".
+			"auth_status_report_empty",
+			AuthStatusReport{},
+		},
 	}
 
 	for _, tt := range tests {

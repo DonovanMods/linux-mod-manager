@@ -416,8 +416,12 @@ func (pm *ProfileManager) ReorderMods(ctx context.Context, gameID, profileName s
 	return config.SaveProfile(pm.configDir, profile)
 }
 
-// Export exports a profile to a portable format
-func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string) ([]byte, error) {
+// loadForExport loads gameID/profileName's profile and backfills each mod
+// ref's FileIDs from its installed-mods DB row - the enrichment step Export
+// (YAML) and Service.ExportProfile (`lmm profile export --json`, #309)
+// share, so the portable document always carries the same FileIDs
+// regardless of format.
+func (pm *ProfileManager) loadForExport(ctx context.Context, gameID, profileName string) (*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -445,6 +449,15 @@ func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string
 		}
 	}
 
+	return profile, nil
+}
+
+// Export exports a profile to a portable format
+func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string) ([]byte, error) {
+	profile, err := pm.loadForExport(ctx, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
 	return config.ExportProfile(profile)
 }
 

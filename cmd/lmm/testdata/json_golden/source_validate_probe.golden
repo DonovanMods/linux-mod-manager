@@ -1,0 +1,12 @@
+{
+  "path": "<PATH>",
+  "id": "probe-dir",
+  "type": "directory",
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "probe": {
+    "ok": true,
+    "summary": "ok — 1 mod(s) visible"
+  }
+}
