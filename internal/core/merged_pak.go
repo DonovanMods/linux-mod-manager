@@ -1143,6 +1143,8 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 	}
 	mc, err := s.mergeCompilerForGame(game)
 	if err != nil {
+		s.logger().Warn("resolving merge compiler failed while planning an uninstall",
+			"game_id", game.ID, "err", err)
 		return nil
 	}
 	name := mc.MergedArtifactName()
@@ -1210,6 +1212,8 @@ func (s *Service) mergedArtifactEffectForPurge(game *domain.Game) *MergedArtifac
 	}
 	mc, err := s.mergeCompilerForGame(game)
 	if err != nil {
+		s.logger().Warn("resolving merge compiler failed while planning a purge",
+			"game_id", game.ID, "err", err)
 		return nil
 	}
 	name := mc.MergedArtifactName()
