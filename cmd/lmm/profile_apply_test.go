@@ -512,3 +512,44 @@ func TestDoProfileApply_LockedRefWarningSurvivesFatalContextCancellation(t *test
 	_, err = svc.GetInstalledMod(context.Background(), "second-src", "mod2", game.ID, "default")
 	assert.Error(t, err, "the second mod must never have been installed")
 }
+
+// TestDoProfileApply_CancellationInsideUpsertMod_IsFatalNotWarned pins the
+// guard at internal/core/profile_apply.go's ToInstall loop, which the sibling
+// test above does NOT reach: that one targets mod2's loop-top check (one call
+// earlier), so removing the guard leaves it green.
+//
+// Here the cancellation lands on the LAST core-originated ctx.Err() call of a
+// full run - UpsertMod's own guard, which fires only after mod2 has already
+// been downloaded, deployed and written to the DB. The property is that the
+// run still ends fatally: without the guard, ApplyProfileApply absorbs the
+// cancellation into the #294 warning path (a business refusal), counts mod2
+// as installed and returns success. mod2 IS in the DB either way - the
+// cancellation arrives after that write, which is exactly why the warning
+// path is the wrong home for it.
+//
+// v2 Phase 3 Ruling 16 deliberately leaves this site as a re-check rather
+// than a completing write: the profile ref goes unwritten here, which is what
+// keeps the accumulated #294 warning on stderr.
+func TestDoProfileApply_CancellationInsideUpsertMod_IsFatalNotWarned(t *testing.T) {
+	countSvc, countGame := applyTwoModCancelFixture(t)
+	counter := &countingCoreContext{Context: context.Background()}
+	require.NoError(t, doProfileApply(counter, countSvc, countGame, nil),
+		"the measurement pass must install both mods uncancelled")
+	require.Positive(t, counter.calls, "the measurement pass must observe at least one core ctx.Err() check")
+
+	svc, game := applyTwoModCancelFixture(t)
+	inner, cancel := context.WithCancel(context.Background())
+	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 1}
+
+	_, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileApply(ctx, svc, game, nil)
+	})
+
+	require.Error(t, err, "a cancellation inside UpsertMod must not be absorbed as a business refusal")
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, applyLockRefusalWarning, stderr,
+		"the accumulated #294 warning must still reach stderr on this fatal path")
+
+	_, err = svc.GetInstalledMod(context.Background(), "second-src", "mod2", game.ID, "default")
+	assert.NoError(t, err, "the cancellation lands AFTER mod2's DB write - that is the window this guard covers")
+}
