@@ -45,6 +45,10 @@ The Go module path is not decided here — whether v2.0.0 adopts a `.../v2`
 suffix (semantic import versioning) or keeps the existing path is an owner
 decision recorded in `docs/plans/v2.0.0-release-checklist.md`.
 
+This preamble, the README's v2 architecture and JSON-contract sections, and
+`docs/plans/v2.0.0-release-checklist.md` were themselves written as the
+phase's docs unit (#306).
+
 ### Added
 
 - `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off. (#281)
@@ -68,7 +72,11 @@ decision recorded in `docs/plans/v2.0.0-release-checklist.md`.
   prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
   detected game — the same set the interactive "all" answer selects) and `--select <indices>`
   (the same 1-based indices the prompt accepts, including an already-configured game's index for
-  a repair); the two are mutually exclusive and both skip the prompt entirely. (#303)
+  a repair); the two are mutually exclusive and both skip the prompt entirely. As a side effect of
+  the same prompt-reading change, `lmm game detect` on a closed/EOF stdin (no `--all`/`--select`)
+  now reads that as an empty answer and prints `No games added.` exiting `0`, instead of
+  `Error: reading input: EOF` exiting `1`; every other prompting command's EOF behaviour is
+  unchanged. (#303)
 - **`--json` on every mutating command.** `install`, `import` (archive and scan), `deploy`,
   `uninstall`, `purge`, `profile apply/switch/sync/import/create/delete/reorder`,
   `mod enable/disable/lock/unlock/set-update/convert/edit` and
