@@ -1,5 +1,7 @@
 # Design Note: Lock vs. Pinned Policy (EPIC #98, pre-#97)
 
+> **Archived (v2 Phase 3, #306).** The decisions below shipped in v1.25.0/v1.26.0 and still hold; this note is kept for historical reference. It predates v2's removal of the TUI (`lmm tui`) — the two references to a "TUI picker"/"TUI lock action" below describe a v1 surface that no longer exists. The CLI (`lmm mod lock`/`lmm mod unlock`) is the only surface today.
+
 **Status**: Implemented — #96 (v1.25.0) + #97 (v1.26.0).
 **Issues**: #98 (epic), #96 (version→file resolution), #97 (lock/unlock surface), #93 (stays open until #96's resolver replaces the interim guard).
 **Decisions made with the user (2026-07-29)**: locks and update policy remain orthogonal concepts with the lock winning at every conflict point; locking is policy-neutral (never touches `UpdatePolicy`); "locked but informed" is the default experience; "locked and silent" is expressed by composing a lock with the existing `pinned` policy, not by a new directive; `pinned` is reframed in docs as a check-mute, not a version freeze.
