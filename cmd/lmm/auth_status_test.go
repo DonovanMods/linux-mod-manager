@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
@@ -185,4 +186,25 @@ func TestDoAuthStatusDistinguishesAuthRemovedFromUnregistered(t *testing.T) {
 
 	assert.Contains(t, out, "ghost-repo: stored token with no matching source (key:")
 	assert.NotContains(t, out, "ghost-repo: stored token for source without auth declared")
+}
+
+// TestDoAuthStatus_JSON pins the app.AuthStatusReport document's framing
+// (one document decoding into the declared type with no unknown members,
+// empty stderr) and its recorded golden (#309).
+func TestDoAuthStatus_JSON(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "storedbuiltinkey12345"))
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-secret-key12"))
+
+	out := runJSONCommand(t, func() error {
+		return doAuthStatus(context.Background(), svc)
+	})
+	var got app.AuthStatusReport
+	decodeStrict(t, out, &got)
+	assertJSONCLIGolden(t, "auth_status", out)
 }

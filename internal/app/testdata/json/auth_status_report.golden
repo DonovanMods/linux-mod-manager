@@ -1,0 +1,36 @@
+{
+  "sources": [
+    {
+      "id": "keyless-repo",
+      "name": "Keyless",
+      "authenticated": false
+    },
+    {
+      "id": "my-repo",
+      "name": "My Repo",
+      "authenticated": true,
+      "via": "env",
+      "env_var": "LMM_MY_REPO_API_KEY",
+      "key_masked": "sup...789"
+    },
+    {
+      "id": "nexusmods",
+      "name": "NexusMods",
+      "authenticated": true,
+      "via": "stored",
+      "key_masked": "abc...xyz"
+    }
+  ],
+  "orphaned": [
+    {
+      "id": "ghost-repo",
+      "reason": "not_registered",
+      "key_masked": "old...key"
+    },
+    {
+      "id": "local-mods",
+      "reason": "auth_not_declared",
+      "key_masked": "sta...456"
+    }
+  ]
+}

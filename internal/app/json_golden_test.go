@@ -56,6 +56,31 @@ func TestAppJSONGoldens(t *testing.T) {
 			"source_info_error",
 			newSourceInfoError("nexusmods", errors.New("id already in use")),
 		},
+		{
+			"auth_source_status",
+			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyMasked: "abc...xyz"},
+		},
+		{
+			"orphaned_token",
+			OrphanedToken{ID: "ghost-repo", Reason: "not_registered", KeyMasked: "old...key"},
+		},
+		{
+			// `lmm auth status --json`'s document (#309): one authenticated
+			// row via a stored token, one via env, one never authenticated,
+			// plus both OrphanedToken reasons.
+			"auth_status_report",
+			AuthStatusReport{
+				Sources: []AuthSourceStatus{
+					{ID: "keyless-repo", Name: "Keyless"},
+					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789"},
+					{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyMasked: "abc...xyz"},
+				},
+				Orphaned: []OrphanedToken{
+					{ID: "ghost-repo", Reason: "not_registered", KeyMasked: "old...key"},
+					{ID: "local-mods", Reason: "auth_not_declared", KeyMasked: "sta...456"},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

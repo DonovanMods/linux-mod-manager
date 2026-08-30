@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -113,19 +112,12 @@ func init() {
 // CapabilitiesOf(src).Auth is true, sorted by ID. Built-ins are always
 // registered (app.Open registers them unconditionally), so they
 // always appear here alongside any auth-capable custom source - the
-// interactive picker, `auth status`, and the "unsupported source" error
-// hint all derive their source list from this single registry query,
+// interactive picker and the "unsupported source" error hint derive their
+// source list from this single registry query (app.AuthCapableSources,
+// shared with `auth status`'s app.AuthStatus so the two can't disagree),
 // eliminating the old built-in-vs-custom special casing.
 func authCapableSources(service *core.Service) []source.ModSource {
-	all := service.ListSources()
-	capable := make([]source.ModSource, 0, len(all))
-	for _, src := range all {
-		if source.CapabilitiesOf(src).Auth {
-			capable = append(capable, src)
-		}
-	}
-	sort.Slice(capable, func(i, j int) bool { return capable[i].ID() < capable[j].ID() })
-	return capable
+	return app.AuthCapableSources(service)
 }
 
 // authCapableSourceIDs returns the comma-joined, sorted IDs of every
@@ -351,63 +343,41 @@ func runAuthStatus(cmd *cobra.Command, args []string) error {
 	})
 }
 
-// doAuthStatus reports authentication status for every registered
-// auth-capable source (built-in and custom, uniformly - sorted by ID via
-// authCapableSources), then a final pass surfacing stored tokens that don't
-// belong to any auth-capable source. That pass distinguishes two causes:
-// the source is still registered but no longer declares auth (e.g. a custom
-// source's manifest dropped its `auth:` block) versus the source isn't
-// registered at all (e.g. its definition file was deleted after `lmm auth
-// login`) - the former is fixable by re-declaring auth, the latter only by
-// removing the stale token, so each gets its own wording.
+// doAuthStatus renders the app.AuthStatusReport query (#309): the plain
+// per-source and orphaned-token lines are rebuilt from the same document
+// --json emits, byte-identically to the pre-#309 text that formatted
+// straight from the registry/token scan.
 func doAuthStatus(ctx context.Context, service *core.Service) error {
-	sources := authCapableSources(service)
-	registered := make(map[string]bool, len(sources))
-
-	for _, src := range sources {
-		id := src.ID()
-		registered[id] = true
-
-		token, err := service.GetSourceToken(ctx, id)
-		if err != nil {
-			return fmt.Errorf("checking %s: %w", id, err)
-		}
-		if token != nil {
-			fmt.Printf("%s (%s): authenticated (key: %s)\n", src.Name(), id, maskAPIKey(token.APIKey))
-			continue
-		}
-
-		envKey := app.EnvKeyFor(src)
-		if apiKey := os.Getenv(envKey); apiKey != "" {
-			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", src.Name(), id, envKey, maskAPIKey(apiKey))
-			continue
-		}
-
-		fmt.Printf("%s (%s): not authenticated (run: lmm auth login %s)\n", src.Name(), id, id)
-	}
-
-	// Stored tokens not covered by the auth-capable loop above are otherwise
-	// invisible. Two distinct causes land here: the source is still
-	// registered but its declaration dropped auth (service.GetSource
-	// succeeds), or nothing registered matches the ID at all (GetSource
-	// fails, e.g. the custom source's definition file was deleted after
-	// `lmm auth login`). Surface each with wording that points at the right
-	// fix rather than lumping both under one "no matching source" message.
-	tokens, err := service.ListSourceTokens(ctx)
+	report, err := app.AuthStatus(ctx, service)
 	if err != nil {
-		return fmt.Errorf("listing stored tokens: %w", err)
+		return err
 	}
-	for _, tok := range tokens {
-		if registered[tok.SourceID] {
-			continue
+
+	if jsonOutput {
+		return emitJSON(report)
+	}
+
+	for _, s := range report.Sources {
+		switch {
+		case s.Via == "stored":
+			fmt.Printf("%s (%s): authenticated (key: %s)\n", s.Name, s.ID, s.KeyMasked)
+		case s.Via == "env":
+			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", s.Name, s.ID, s.EnvVar, s.KeyMasked)
+		default:
+			fmt.Printf("%s (%s): not authenticated (run: lmm auth login %s)\n", s.Name, s.ID, s.ID)
 		}
-		if _, err := service.GetSource(tok.SourceID); err == nil {
+	}
+
+	// Wording keyed by Reason, matching the two remedies: re-declare auth vs.
+	// the token is simply stale.
+	for _, o := range report.Orphaned {
+		if o.Reason == "auth_not_declared" {
 			fmt.Printf("%s: stored token for source without auth declared (key: %s) — stale token? remove with: lmm auth logout %s\n",
-				tok.SourceID, maskAPIKey(tok.APIKey), tok.SourceID)
+				o.ID, o.KeyMasked, o.ID)
 			continue
 		}
 		fmt.Printf("%s: stored token with no matching source (key: %s) — remove with: lmm auth logout %s\n",
-			tok.SourceID, maskAPIKey(tok.APIKey), tok.SourceID)
+			o.ID, o.KeyMasked, o.ID)
 	}
 
 	return nil
@@ -448,15 +418,4 @@ func readAPIKey() (string, error) {
 		return "", fmt.Errorf("reading input: %w", err)
 	}
 	return strings.TrimSpace(key), nil
-}
-
-// maskAPIKey returns a masked version of the API key (shows first 3 and last
-// 3 chars). Keys of 8 characters or fewer are fully masked instead: showing
-// 6 of 7-8 characters exposes most of the key, defeating the point of
-// masking.
-func maskAPIKey(key string) string {
-	if len(key) <= 8 {
-		return "***"
-	}
-	return key[:3] + "..." + key[len(key)-3:]
 }

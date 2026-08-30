@@ -64,58 +64,6 @@ func (m *mockValidatingAuthSource) ValidateKey(ctx context.Context, key string) 
 	return m.validateErr
 }
 
-// TestMaskAPIKey tests the API key masking function
-func TestMaskAPIKey(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "normal key",
-			input:    "abcdefghijklmnop",
-			expected: "abc...nop",
-		},
-		{
-			name:     "exactly 9 chars reveals both ends",
-			input:    "123456789",
-			expected: "123...789",
-		},
-		{
-			name:     "exactly 8 chars fully masked",
-			input:    "12345678",
-			expected: "***",
-		},
-		{
-			name:     "exactly 7 chars fully masked",
-			input:    "1234567",
-			expected: "***",
-		},
-		{
-			name:     "6 chars or less returns ***",
-			input:    "123456",
-			expected: "***",
-		},
-		{
-			name:     "short key",
-			input:    "abc",
-			expected: "***",
-		},
-		{
-			name:     "empty key",
-			input:    "",
-			expected: "***",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := maskAPIKey(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 // TestAuthCmd_Structure tests the auth command structure
 func TestAuthCmd_Structure(t *testing.T) {
 	assert.Equal(t, "auth", authCmd.Use)
