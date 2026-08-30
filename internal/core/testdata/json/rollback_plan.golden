@@ -28,6 +28,6 @@
   "to_version": "1.2.2",
   "locked": true,
   "locked_version": "1.2.3",
-  "refusal": "mod is locked: Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
+  "refusal": "Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
   "cache_missing": true
 }

@@ -99,6 +99,7 @@ func TestService_PlanRollback_Locked(t *testing.T) {
 	assert.Contains(t, plan.Refusal, "locked at v2.0")
 	assert.Contains(t, plan.Refusal, "lmm mod unlock -s src -p default mod1")
 	assert.NotContains(t, plan.Refusal, "lmm mod lock", "unit Q review I1: ApplyRollback refuses on the lock alone")
+	assertPlanRefusalIsSentenceHalf(t, plan.Refusal)
 }
 
 // TestService_PlanRollback_CacheMissing covers the fourth pre-extraction

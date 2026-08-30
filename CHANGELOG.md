@@ -247,15 +247,18 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
 <mod>` (an available update, and a compile game's needed recompile), `lmm update --rollback
 <mod>` and `lmm mod edit`'s re-link refusal each used to word the refusal themselves; all four
   now print the canonical text the core lock gates return. Those four gates refuse whatever
-  version you name, so their remedy is "mod is locked: `<mod>` is locked at v`<version>` in
-  profile `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have
-  helped. The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
+  version you name, so their remedy is "`<mod>` is locked at v`<version>` in profile
+  `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
+  The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
 --version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
   unlock …'" wording. For the three `lmm update` branches this replaces two lines with two: a
   context line stating what is available ("Update available: 1.0 → 2.0", "Rollback available:
-  2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal, whose
-  own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … | Unlock: …"
-  line. (#294)
+  2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
+  whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
+  Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
+edit` prints it as an error, so there it is prefixed with `Error: mod is locked: ` the way
+  every failing command's message is. The same sentence is the `refusal` key on `lmm update
+--dry-run --json`'s plan document. (#294)
 - `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
   failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
   (the record in the database moves while the profile ref does not) but also any profile

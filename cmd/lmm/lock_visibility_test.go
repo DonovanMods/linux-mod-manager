@@ -42,7 +42,7 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_Text(t *testing.T) {
 	// (core.LockedRefRefusalError's canonical text, which already names
 	// both -s/-p remedies inline) states the refusal. The hand-worded
 	// refusal and its own separate remedy line are both gone.
-	assert.Equal(t, "Update available: 1.0 → 2.0\nmod is locked: Mod One is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s test-src -p default mod1' first\n", out)
+	assert.Equal(t, "Update available: 1.0 → 2.0\nMod One is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s test-src -p default mod1' first\n", out)
 	assert.NotContains(t, out, "Updating Mod One", "must never print the applying header - it never applies")
 
 	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")

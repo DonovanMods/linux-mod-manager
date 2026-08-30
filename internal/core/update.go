@@ -366,13 +366,17 @@ type UpdatePlan struct {
 	// Changelog is CleanChangelog(Update.Changelog) - empty when Update is
 	// nil or carries no changelog.
 	Changelog string `json:"changelog,omitempty"`
-	// Refusal is LockedRefUnlockOnlyRefusalError's full text (sentinel
-	// prefix included, unlike RelinkPlan.Refusal's sentence-only half),
-	// precomputed whenever Locked && Update != nil. Since #294 (Ruling 5)
-	// cmd/lmm's renderer PRINTS this verbatim for both locked branches
-	// (an available update and a needed recompile), in place of the two
-	// hand-worded lines it used to compose - one wording for every lock
-	// refusal of this KIND in the product. The unlock-only variant,
+	// Refusal is LockedRefUnlockOnlyRefusalError's SENTENCE half - the
+	// refusal without the ErrModLocked sentinel prefix, exactly as
+	// RelinkPlan.Refusal carries it - precomputed whenever Locked &&
+	// Update != nil. Since #294 (Ruling 5) cmd/lmm's renderer PRINTS this
+	// verbatim for both locked branches (an available update and a needed
+	// recompile), in place of the two hand-worded lines it used to
+	// compose - one wording for every lock refusal of this KIND in the
+	// product. The sentence half, because a verbatim print of the wrapped
+	// error stuttered: "mod is locked: Mod One is locked at v1.0 ..."
+	// (unit Q review, M1). ApplyUpdate's own error keeps the sentinel, so
+	// errors.Is(err, ErrModLocked) is unaffected. The unlock-only variant,
 	// because ApplyUpdate refuses on the lock alone regardless of version:
 	// moving the lock to the target version leaves it refusing, so naming
 	// that remedy would be false guidance (unit Q review, I1).
@@ -484,7 +488,7 @@ func (s *Service) planUpdateFrom(ctx context.Context, game *domain.Game, profile
 	plan.Changelog = CleanChangelog(upd.Changelog)
 	if plan.Locked {
 		ref := &domain.ModReference{Version: plan.LockedVersion}
-		plan.Refusal = LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref).Error()
+		plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, ref)
 	}
 
 	return plan, nil
