@@ -17,14 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lmm uninstall --dry-run` prints what an uninstall would do — which mod the ID resolves to
   (with its source, so a bare ID's first-match rule is visible), how many files would leave the
   game directory, what happens to the cache, and the hooks that would run — without changing
-  anything. `--verbose` lists the files. On a compile-mode game it also states that the profile's
-  merged artifact would be resynced afterwards; that line is unconditional on compile games, not
-  gated on whether a resync would actually change anything. (#293)
+  anything. `--verbose` lists the files. On a compile-mode game it also states what would happen
+  to the profile's merged artifact — resynced, or removed once the last merge source goes — and
+  says nothing at all when the uninstall would leave the artifact exactly as it is. (#293, #304)
 - `lmm purge --dry-run` prints what a purge would do — the mods it would undeploy, what happens
   to their records, and the hooks that would run — without changing anything and without
-  prompting. On a compile-mode game it also states that the profile's merged artifact would be
-  removed too; that line is unconditional on compile games, not gated on whether anything would
-  actually be removed. (#293)
+  prompting. On a compile-mode game with a merged artifact deployed it also states that the
+  artifact would be removed too; with nothing merged yet there is nothing to remove and the line
+  is absent. (#293, #304)
 - `lmm profile switch` and `lmm profile sync` gain `-y`/`--yes` to skip their confirmation
   prompt; `lmm profile import` gains `-y`/`--yes` to answer its "Download and install mods?"
   prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
@@ -243,6 +243,47 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   `ClearModLock`/`SetModUpdatePolicy`/`SetModConvertPaks` all return a `*core.ModSettingResult`
   (the mod's full post-write lock/policy/pak-conversion snapshot). No user-visible change: CLI
   output is byte-identical. (#303)
+- Every lock refusal now reads the same way, with one wording per refusal _kind_. `lmm update
+<mod>` (an available update, and a compile game's needed recompile), `lmm update --rollback
+<mod>` and `lmm mod edit`'s re-link refusal each used to word the refusal themselves; all four
+  now print the canonical text the core lock gates return. Those four gates refuse whatever
+  version you name, so their remedy is "`<mod>` is locked at v`<version>` in profile
+  `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
+  `lmm update --all`'s combined locked-skip summary reports the same `ApplyUpdate` gate for
+  multiple mods at once, so it names no single mod's version and isn't this canonical sentence —
+  but it dropped the same no-op "move the lock" clause, down to "`N` locked mod(s) not applied:
+  `<mod>`[, `<mod>`...] - unlock to update."
+  The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
+--version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
+  unlock …'" wording. Where that "move the lock" remedy survives, its version argument is the
+  literal placeholder `<version>`, not the concrete target version the retired "Move the lock:
+  lmm mod lock -s … -p … `<mod>` 2.0" line filled in — so it is edit-then-run rather than
+  paste-and-run. For the three `lmm update` branches this replaces two lines with two: a
+  context line stating what is available ("Update available: 1.0 → 2.0", "Rollback available:
+  2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
+  whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
+  Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
+edit` prints it as an error, so there it is prefixed with `Error: mod is locked:` the way
+  every failing command's message is. The same sentence is also the `refusal` field
+  (`json:"refusal,omitempty"`) on `core.UpdatePlan`/`RollbackPlan`/`RelinkPlan`, though no command
+  emits those documents directly today — `lmm update --dry-run --json` on a locked mod emits its
+  own hand-built result document instead, which carries no `refusal` key. (#294)
+- `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
+  failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
+  (the record in the database moves while the profile ref does not) but also any profile
+  load/save failure (e.g. the profile going missing mid-run). The warning now prints
+  unconditionally to stderr as `Warning: could not update …`, and is carried on the command's
+  `--json` document in `warnings` (stderr stays empty under `--json`). If the run then fails
+  fatally, so that there is no result document to carry them, the `--json` error envelope
+  carries them instead as `details.warnings`. It was previously a `--verbose`-only stdout note,
+  so a default-verbosity run reported success with a silent database-vs-profile divergence.
+  (#294)
+- `lmm update --verbose`'s per-mod progress line (`n/total: <mod>`) now counts across every
+  source's batch instead of restarting at 1 for each source. Checking mods from two sources used
+  to print `1/3 … 3/3` then `1/2 … 2/2`; it now prints one unbroken `1/5 … 5/5`. Each source's own
+  batch position (`Index`/`Total`) is unchanged internally — `UpdateCheckEvent` gains
+  `GlobalIndex`/`GlobalTotal` alongside them — so only the printed numbers move; `--json` is
+  unaffected (progress events are suppressed under `--json` regardless). (#283)
 
 ### Changed — JSON output (v2)
 
@@ -345,6 +386,11 @@ profiles}`).
   the profile, matching `lmm profile apply`'s no-changes behaviour. (#290)
 - Profile-level hook overrides survive profile mutations (`config.SaveProfile` now serializes
   `hooks:`) (#295)
+- Profile-level hook overrides survive `lmm profile export` → `lmm profile import`. The exported
+  document carries a `hooks:` block in the same encoding a profile file uses, so an explicitly
+  disabled hook (present but empty) stays disabled instead of coming back as "inherit from the
+  game". An export of a profile with no overrides is byte-identical to before, and an export
+  recorded by an earlier lmm (no `hooks:` key) still imports. (#296)
 - `lmm profile reorder`'s ambiguous-mod-ID error lists the matching `source:modid` candidates
   sorted by source ID, instead of Go's randomized map iteration order. (#298)
 - `lmm profile sync`'s add/remove/update buckets are listed in a fixed, deterministic order
@@ -352,6 +398,13 @@ profiles}`).
   instead of Go's randomized map iteration order. (#298)
 - `lmm status` and `lmm game list` order games by game ID, instead of Go's randomized map
   iteration order. (#299)
+- `lmm uninstall --dry-run` and `lmm purge --dry-run` no longer announce a merged-artifact effect
+  that would not happen. Both plans now model it (`merged_artifact: {action, path}` under `--json`,
+  `null` when there is nothing to do), computed from the merge sources the operation would leave
+  behind and whether the artifact is actually deployed, so a compile-game uninstall of a mod that
+  contributes nothing to the merge — or a purge with nothing merged yet — prints no artifact line.
+  `lmm import <archive> --json`'s `merged_pak_synced` is likewise set from the sync having run and
+  succeeded rather than from the game's deploy mode. (#304)
 - `lmm status --game X --json` no longer swallows a failure to list the game's profiles into an
   empty-profiles document; it now fails loud, matching the plain-text path (which already did).
   Only reachable when the profiles directory exists but can't be read - a missing directory still

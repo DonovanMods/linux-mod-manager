@@ -125,8 +125,9 @@ func TestDoUpdateRollback_Locked_RefusesBeforeHeader_Text(t *testing.T) {
 	})
 	require.NoError(t, callErr, "a locked rollback is a skip, like a locked single-mod update, not a failure")
 	assert.NotContains(t, out, "Rolling back", "the optimistic header must never print for a refused rollback")
-	assert.Contains(t, out, "Rollback available: 2.0 → 1.0 — but Mod One is locked at v2.0.")
-	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 1.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile")
+	// #294 (Ruling 5): the whole refused-rollback readout, byte-exact - see
+	// lock_visibility_test.go's sibling capture.
+	assert.Equal(t, "Rollback available: 2.0 → 1.0\nMod One is locked at v2.0 in profile default - unlock with 'lmm mod unlock -s test-src -p default mod1' first\n", out)
 
 	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)

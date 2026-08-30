@@ -13,6 +13,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -139,7 +140,9 @@ func TestService_PlanUpdate_VersionBumpAvailable_Locked(t *testing.T) {
 	assert.Equal(t, "1.0", plan.LockedVersion)
 	require.NotEmpty(t, plan.Refusal, "Refusal must be populated when Locked && Update != nil")
 	assert.Contains(t, plan.Refusal, "locked at v1.0")
-	assert.Contains(t, plan.Refusal, "lmm mod lock")
+	assert.Contains(t, plan.Refusal, "lmm mod unlock -s src -p default mod1")
+	assert.NotContains(t, plan.Refusal, "lmm mod lock", "unit Q review I1: ApplyUpdate refuses on the lock alone")
+	assertPlanRefusalIsSentenceHalf(t, plan.Refusal)
 }
 
 func TestService_PlanUpdate_RecompileNeeded(t *testing.T) {
@@ -243,7 +246,9 @@ func TestService_PlanUpdateFrom_RefusesLocked(t *testing.T) {
 	assert.Equal(t, "1.0", plan.LockedVersion)
 	require.NotEmpty(t, plan.Refusal, "Refusal must be populated when Locked && Update != nil")
 	assert.Contains(t, plan.Refusal, "locked at v1.0")
-	assert.Contains(t, plan.Refusal, "lmm mod lock")
+	assert.Contains(t, plan.Refusal, "lmm mod unlock -s src -p default mod1")
+	assert.NotContains(t, plan.Refusal, "lmm mod lock", "unit Q review I1: ApplyUpdate refuses on the lock alone")
+	assertPlanRefusalIsSentenceHalf(t, plan.Refusal)
 }
 
 // TestService_ApplyUpdate_ErrStalePlan_FromPlanUpdateFrom is
@@ -309,4 +314,18 @@ func TestService_CheckGameUpdates_UnlockedEntry_LockedFieldsStayZero(t *testing.
 	require.Len(t, updates, 1)
 	assert.False(t, updates[0].Locked)
 	assert.Empty(t, updates[0].LockedVersion)
+}
+
+// assertPlanRefusalIsSentenceHalf pins the unit Q review's M1 contract for
+// every Plan.Refusal: the field carries the refusal SENTENCE only, never the
+// ErrModLocked sentinel prefix, because cmd/lmm prints it verbatim after its
+// own context line and would otherwise read "mod is locked: <mod> is locked
+// at ...". Prefixing the sentinel is what reproduces the error the matching
+// Apply returns, which keeps the sentinel so errors.Is still works.
+func assertPlanRefusalIsSentenceHalf(t *testing.T, refusal string) {
+	t.Helper()
+	assert.NotContains(t, refusal, core.ErrModLocked.Error()+": ",
+		"M1: Plan.Refusal is the sentence half - cmd/lmm prints it verbatim")
+	assert.True(t, strings.HasPrefix(refusal, "Mod One is locked at v"),
+		"M1: Plan.Refusal starts at the sentence, got %q", refusal)
 }

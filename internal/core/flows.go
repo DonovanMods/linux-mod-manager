@@ -413,12 +413,25 @@ const (
 	// downloaded, deployed, and saved to the DB, mirroring "    ✓ Installed:
 	// %s". ModName is set (mod.Name, now known).
 	SwitchInstalled
-	// SwitchInstallNote fires when UpsertMod (recording the profile's
-	// FileIDs) fails after a successful install - the sole --verbose-gated
-	// diagnostic in the install loop, mirroring "    Warning: could not
-	// update profile: %v" (4-space indent, one level deeper than
-	// SwitchDisableNote/SwitchEnableNote's 2-space Notes).
+	// SwitchInstallNote is retired: #294 (Ruling 5) promoted
+	// ApplyProfileApply's UpsertMod refusal to SwitchInstallWarning, and
+	// its class extension (Task 13b) did the same for ApplyProfileSwitch's
+	// identical refusal. The constant and its wire name are kept so an
+	// UnmarshalText of a previously recorded "switch_install_note" still
+	// round-trips.
 	SwitchInstallNote
+	// SwitchInstallWarning is ApplyProfileApply's AND ApplyProfileSwitch's
+	// UpsertMod refusal since #294 (Ruling 5; the switch flow followed in
+	// Task 13b, closing the apply/sync-only gap Task 13's Scope Call #1
+	// flagged) - promoted out of the --verbose-only bucket because a
+	// silently unrecorded profile ref is exactly the DB-vs-profile
+	// divergence #143 exists to make visible. Detail is the raw text, no
+	// "Warning: " prefix; it is ALSO appended to
+	// ProfileApplyResult.Warnings / SwitchResult.Warnings, which is where
+	// the CLI prints it from (`fmt.Fprintf(os.Stderr, "Warning: %s\n", w)`)
+	// - a frontend that renders this event live must therefore not print
+	// Warnings too, or every refusal appears twice.
+	SwitchInstallWarning
 
 	// --- Phase 5b Task 2: ApplyInstall progress events, restored to
 	// byte-for-byte per-path fidelity in Fix wave 1 (see
@@ -865,10 +878,17 @@ const (
 	// prefix) - same wording as SyncAddNote, kept as its own phase so a
 	// caller inspecting the event stream can tell which loop produced it.
 	SyncRemoveNote
-	// SyncUpdateNote fires when pm.UpsertMod fails for a ToUpdate entry -
-	// the swallowed lock refusal Ruling 9 preserves byte-for-byte - mirroring
-	// doProfileSync's "  Warning: could not update %s:%s: %v".
+	// SyncUpdateNote is retired: #294 (Ruling 5) promoted the ToUpdate
+	// loop's UpsertMod refusal to SyncUpdateWarning. The constant and its
+	// wire name are kept so an UnmarshalText of a previously recorded
+	// "sync_update_note" still round-trips.
 	SyncUpdateNote
+	// SyncUpdateWarning fires when pm.UpsertMod fails for a ToUpdate entry
+	// (today only a LOCKED ref, #143) - Detail is the raw
+	// "could not update %s:%s: %v" text, no "Warning: " prefix, and it is
+	// ALSO appended to ProfileSyncResult.Warnings, which is where the CLI
+	// prints it from. Same double-print caveat as SwitchInstallWarning.
+	SyncUpdateWarning
 
 	// --- v2 Phase 2 Unit K (#291): ApplyAdoptBackfill/ApplyAdopt progress
 	// events. Every Detail below is the printed line MINUS its leading
@@ -1002,7 +1022,8 @@ var deployPhaseNames = [...]string{
 	SwitchEnableNote: "switch_enable_note", SwitchEnabled: "switch_enabled", SwitchInstalling: "switch_installing",
 	SwitchInstallingMod: "switch_installing_mod", SwitchInstallError: "switch_install_error", SwitchDownloading: "switch_downloading",
 	SwitchDownloadFailed: "switch_download_failed", SwitchDownloadDone: "switch_download_done", SwitchInstalled: "switch_installed",
-	SwitchInstallNote: "switch_install_note", InstallBeforeAllForced: "install_before_all_forced", InstallBeforeEachForced: "install_before_each_forced",
+	SwitchInstallNote: "switch_install_note", SwitchInstallWarning: "switch_install_warning",
+	InstallBeforeAllForced: "install_before_all_forced", InstallBeforeEachForced: "install_before_each_forced",
 	InstallDepInstalling: "install_dep_installing", InstallDepReinstalling: "install_dep_reinstalling", InstallDepFileSelected: "install_dep_file_selected",
 	InstallDepDownloading: "install_dep_downloading", InstallDepSkipped: "install_dep_skipped", InstallDepDownloadDone: "install_dep_download_done",
 	InstallDepConflictWarning: "install_dep_conflict_warning", InstallDepInstalled: "install_dep_installed", InstallDownloadStarted: "install_download_started",
@@ -1017,6 +1038,7 @@ var deployPhaseNames = [...]string{
 	InstallLockRefusal: "install_lock_refusal", InstallChecksumSaveFailed: "install_checksum_save_failed",
 	InstallMergedPakSyncFailed: "install_merged_pak_sync_failed",
 	SyncAddNote:                "sync_add_note", SyncRemoveNote: "sync_remove_note", SyncUpdateNote: "sync_update_note",
+	SyncUpdateWarning: "sync_update_warning",
 	AdoptBackfillNote: "adopt_backfill_note", AdoptBackfilled: "adopt_backfilled", AdoptDuplicateSkipped: "adopt_duplicate_skipped",
 	AdoptAdopted: "adopt_adopted", AdoptFailed: "adopt_failed", AdoptNote: "adopt_note", AdoptSyncWarning: "adopt_sync_warning",
 	ImportArchiveFetching: "import_archive_fetching", ImportArchiveDetected: "import_archive_detected",
@@ -1318,23 +1340,29 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 }
 
 // SwitchResult reports the outcome of ApplyProfileSwitch. As with
-// DeployResult/UninstallResult, every Notes entry is always recorded - there
+// DeployResult/UninstallResult, every entry below is always recorded - there
 // is no verbosity concept in core.
 //
 //   - Notes holds every diagnostic doProfileSwitch only printed under
-//     --verbose: failed Uninstall/SetModEnabled during the disable loop,
-//     failed Install/SetModEnabled during the enable loop, and a failed
-//     UpsertMod during the install loop. Each entry already carries its
-//     historical "Warning: " prefix, matching doProfileSwitch's exact
-//     wording; a caller wanting byte-identical output should print each
-//     entry to stdout ONLY under --verbose, e.g. `fmt.Printf("  %s\n", n)`
-//     (disable/enable loop notes) or `fmt.Printf("    %s\n", n)` (the
-//     install loop's profile-update note, one indent level deeper).
-//
-// Every Notes entry is ALSO reported via the event stream at the exact
-// point it is appended (SwitchDisableNote/SwitchEnableNote/SwitchInstallNote
-// - see each DeployPhase constant's doc comment), with Detail equal to the
-// slice entry verbatim.
+//     --verbose: failed Uninstall/SetModEnabled during the disable loop and
+//     failed Install/SetModEnabled during the enable loop. Each entry
+//     already carries its historical "Warning: " prefix, matching
+//     doProfileSwitch's exact wording; a caller wanting byte-identical
+//     output should print each entry to stdout ONLY under --verbose, e.g.
+//     `fmt.Printf("  %s\n", n)`. Every entry is also emitted as an event
+//     where it happens (SwitchDisableNote/SwitchEnableNote), so a live
+//     renderer never needs this slice.
+//   - Warnings holds the diagnostics that must reach the user
+//     unconditionally: the install loop's refused UpsertMod
+//     ("could not update profile: <err>", #294/Ruling 5's class extension,
+//     Task 13b - it used to be a --verbose-only Note, mirroring
+//     ProfileApplyResult.Warnings' identical #294 entry exactly), then the
+//     end-of-switch merged-pak sync's warnings, or "could not sync merged
+//     pak: <err>" when the sync itself failed (#197). No entry carries a
+//     prefix; a caller prints each to stderr as `Warning: %s`. The install
+//     loop's entry is ALSO emitted as a SwitchInstallWarning event at its
+//     point of occurrence (the merged-pak ones are not), so a frontend
+//     rendering the stream live must not print this slice as well.
 //
 // On error, the returned result carries any diagnostics/counts accumulated
 // before the failure; callers should surface them alongside the error.
@@ -1343,10 +1371,7 @@ type SwitchResult struct {
 	Enabled   int      `json:"enabled"`
 	Installed int      `json:"installed"`
 	Notes     []string `json:"notes,omitempty"`
-	// Warnings holds diagnostics that must reach the user unconditionally
-	// (#197 postsmoke fix), unlike Notes' --verbose-only display contract -
-	// today, only a merged-pak sync failure for plan.To.
-	Warnings []string `json:"warnings,omitempty"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // ApplyProfileSwitch executes a plan produced by PlanProfileSwitch: disables
@@ -1593,9 +1618,15 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
 			if err := pm.UpsertMod(game.ID, plan.To, modRef); err != nil {
-				msg := fmt.Sprintf("Warning: could not update profile: %v", err)
-				result.Notes = append(result.Notes, msg)
-				emit(StepEvent{Scope: scope, Phase: SwitchInstallNote, Detail: msg})
+				// #294 (Ruling 5's class extension, Task 13b): a refusal
+				// here (today, only a LOCKED ref, #143) leaves the profile
+				// ref unwritten while the DB row moved, so it is a Warning
+				// - unconditional - not the --verbose-only note this used
+				// to be, mirroring ApplyProfileApply/ApplyProfileSync's
+				// identical #294 fix.
+				msg := fmt.Sprintf("could not update profile: %v", err)
+				result.Warnings = append(result.Warnings, msg)
+				emit(StepEvent{Scope: scope, Phase: SwitchInstallWarning, Detail: msg})
 			}
 
 			result.Installed++

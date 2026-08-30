@@ -40,13 +40,15 @@ type RollbackPlan struct {
 	// v%s") cannot substitute FromVersion for it.
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
-	// Refusal is LockedRefRefusalError's text, precomputed whenever Locked -
-	// mirrors UpdatePlan.Refusal (there populated only when Locked &&
-	// Update != nil; here a rollback is always "available" once PlanRollback
-	// returns successfully, so Locked alone gates it). cmd/lmm's own
-	// renderer keeps its pre-existing hand-worded text instead (byte-
-	// identity; Phase 3 unifies wording), so this is not read by any
-	// --json/plain output today.
+	// Refusal is LockedRefUnlockOnlyRefusalError's SENTENCE half (no
+	// ErrModLocked sentinel prefix - unit Q review M1), precomputed
+	// whenever Locked - mirrors UpdatePlan.Refusal (there populated only
+	// when Locked && Update != nil; here a rollback is always "available"
+	// once PlanRollback returns successfully, so Locked alone gates it),
+	// including that cmd/lmm's renderer prints it verbatim since #294
+	// (Ruling 5) and that ApplyRollback's own gate ignores the version, so
+	// the refusal offers unlocking only (unit Q review, I1). ApplyRollback
+	// itself still returns the sentinel-wrapped error.
 	Refusal string `json:"refusal,omitempty"`
 	// CacheMissing reports that ToVersion's cache entry is gone (pruned, or
 	// manually deleted since the update that set PreviousVersion) - the
@@ -113,7 +115,7 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 		plan.Locked = true
 		plan.LockedVersion = lockedVersion
 		ref := &domain.ModReference{Version: lockedVersion}
-		plan.Refusal = LockedRefRefusalError(mod.Mod, profileName, ref).Error()
+		plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, ref)
 	}
 
 	plan.CacheMissing = !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion)
@@ -298,7 +300,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
 			result.Reason = "locked"
-			return result, LockedRefRefusalError(mod.Mod, profileName, ref)
+			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches ApplyUpdate's

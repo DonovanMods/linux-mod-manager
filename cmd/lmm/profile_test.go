@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -435,6 +436,235 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 
 	assert.Contains(t, out, "  Warning: failed to undeploy Test Mod: ")
 	assert.Contains(t, out, "  ✓ Disabled: Test Mod\n")
+}
+
+// switchLockRefusalFixture seeds the one scenario every #294 switch capture
+// needs (mirroring applyLockRefusalFixture, cmd/lmm/profile_apply_test.go):
+// a "target" profile referencing an installable "test-src:mod1" v1.1 whose
+// ref is LOCKED with no recorded version, so the post-install UpsertMod
+// (which records the version actually installed) hits the lock gate (#143).
+func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.1", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
+		})
+	src.AddDownload("main", []byte("plugin content"))
+
+	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Locked: true,
+	}))
+
+	withProfileSwitchYes(t)
+	return svc, game
+}
+
+// switchLockRefusalDetail is the exact SwitchResult.Warnings entry #294
+// (Ruling 5's class extension, Task 13b) records for switchLockRefusalFixture's
+// refusal: core wraps ProfileManager.UpsertMod's own refusal sentence as
+// "could not update profile: <err>", with no "Warning: " prefix baked in.
+// switchLockRefusalWarning is the stderr line the CLI renders from it.
+const switchLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile \"target\" - refusing to record v1.1; move the lock with 'lmm mod lock -s test-src -p target mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p target mod1'"
+
+const switchLockRefusalWarning = "Warning: " + switchLockRefusalDetail + "\n"
+
+// TestDoProfileSwitch_LockedRef_UpsertRefusalWarnsUnconditionally pins #294's
+// class extension (Ruling 5, Task 13b): the install loop's swallowed
+// UpsertMod refusal is now the same unconditional stderr "Warning: ..."
+// line doProfileApply/doProfileSync already print for the identical
+// refusal - identical with and without --verbose, and never on stdout -
+// instead of the --verbose-only stdout note doProfileSwitch used to print
+// it as. Mirrors TestDoProfileApply_LockedRef_UpsertRefusalWarnsUnconditionally
+// exactly. The mod still counts as installed.
+func TestDoProfileSwitch_LockedRef_UpsertRefusalWarnsUnconditionally(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verbose bool
+	}{
+		{"verbose", true},
+		{"quiet", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, game := switchLockRefusalFixture(t)
+			pm := getProfileManager(svc)
+			oldVerbose := verbose
+			verbose = tc.verbose
+			t.Cleanup(func() { verbose = oldVerbose })
+
+			var out, stderr string
+			var err error
+			withStdin(t, "y\n", func() {
+				out, stderr, err = captureStdoutStderrErr(t, func() error {
+					return doProfileSwitch(context.Background(), svc, game, "target")
+				})
+			})
+			require.NoError(t, err)
+
+			assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the lock refusal must not fail the install")
+			assert.Equal(t, switchLockRefusalWarning, stderr,
+				"#294: the refusal is an unconditional stderr warning, identical at both verbosities")
+			assert.NotContains(t, out, "could not update profile",
+				"#294: the refusal left stdout entirely - it is no longer a --verbose-only note")
+
+			installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "target")
+			require.NoError(t, err)
+			assert.Equal(t, "1.1", installed.Version)
+
+			profile, err := pm.Get(game.ID, "target")
+			require.NoError(t, err)
+			require.Len(t, profile.Mods, 1)
+			assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
+		})
+	}
+}
+
+// TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON is #294's --json framing
+// sibling (Ruling 15 / Unit P): the new warning reaches the document via
+// SwitchResult.Warnings and NOT stderr - exactly one document on stdout,
+// nothing on stderr.
+func TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON(t *testing.T) {
+	svc, game := switchLockRefusalFixture(t)
+
+	var doc core.SwitchResult
+	raw := runJSONCommand(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+	decodeSingleDoc(t, raw, &doc)
+
+	assert.Equal(t, 1, doc.Installed)
+	assert.Empty(t, doc.Notes, "#294: the refusal is no longer a note")
+	require.Len(t, doc.Warnings, 1)
+	assert.Equal(t, switchLockRefusalDetail, doc.Warnings[0])
+}
+
+// TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError pins Task
+// 13 review round 1's Important 1 fix: the install loop's #294 warning must
+// reach stderr even when ApplyProfileSwitch fails fatally afterward - the
+// core scenario
+// TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnostics_ReturnsPartialResult
+// documents, driven here through doProfileSwitch itself. Before the fix,
+// result.Warnings was only ever printed on the success path, so a refusal
+// followed by a fatal SetDefault error was silently dropped on stderr - the
+// exact failure mode #294 exists to close, just narrowed to the error path.
+func TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError(t *testing.T) {
+	svc, game := switchLockRefusalFixture(t)
+
+	// Force SetDefault's "clearing default on default" step to fail: it
+	// loads "target" (untouched, so the install loop's lock refusal above is
+	// unaffected) then tries to save the OLD default profile ("default") to
+	// clear its flag - making default.yaml unwritable fails SetDefault
+	// deterministically without touching the install loop at all.
+	defaultPath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(defaultPath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(defaultPath, 0o644) })
+
+	var out, stderr string
+	var err error
+	withStdin(t, "y\n", func() {
+		out, stderr, err = captureStdoutStderrErr(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "target")
+		})
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting default profile")
+	assert.Equal(t, switchLockRefusalWarning, stderr,
+		"Important 1: the accumulated #294 warning must survive the fatal path, not be silently dropped")
+	assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the install itself succeeded before the later fatal SetDefault error")
+}
+
+// chmodDefaultProfileReadOnly makes doProfileSwitch's final SetDefault step
+// fail deterministically: SetDefault loads "target" (untouched, so an
+// install-loop lock refusal is unaffected) then saves the OLD default
+// profile to clear its flag, which an unwritable default.yaml refuses.
+func chmodDefaultProfileReadOnly(t *testing.T, game *domain.Game) {
+	t.Helper()
+	defaultPath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(defaultPath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(defaultPath, 0o644) })
+}
+
+// TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings pins the
+// unit Q review's M3 fix. The plain-text sibling above prints the
+// accumulated #294 warnings to stderr before returning the fatal error;
+// under --json that is forbidden (Ruling 15: one document on stdout, nothing
+// on stderr), so before this fix the warnings reached neither stream and the
+// silent DB-vs-profile divergence #294 exists to expose was silent again on
+// exactly this path. They now ride the error into the envelope's "details"
+// as {"warnings": [...]}, the core.ConflictError/gameDetectPartialError
+// convention.
+func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testing.T) {
+	svc, game := switchLockRefusalFixture(t)
+	chmodDefaultProfileReadOnly(t, game)
+	withJSONOutput(t)
+
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting default profile")
+	assert.Empty(t, stdout, "Ruling 15: the failing --json run emits no Result document of its own")
+	assert.Empty(t, stderr, "Ruling 15: nothing but the one document may reach the streams")
+
+	var warnErr *profileWarningsError
+	require.ErrorAs(t, err, &warnErr, "the fatal error must carry the accumulated warnings")
+	assert.Equal(t, []string{switchLockRefusalDetail}, warnErr.warnings)
+
+	envelope, envStderr, _ := captureStdoutStderrErr(t, func() error { reportError(err); return nil })
+	assert.Empty(t, envStderr)
+	assert.Contains(t, envelope, "\"details\": {\n    \"warnings\": [\n",
+		"M3: the envelope's details bucket is keyed \"warnings\"")
+	want := captureStdout(t, func() error {
+		return emitJSON(jsonErrorEnvelope{
+			Error:   err.Error(),
+			Details: profileWarningsDetails{Warnings: []string{switchLockRefusalDetail}},
+		})
+	})
+	assert.Equal(t, want, envelope, "M3: stdout is exactly the one error envelope")
+}
+
+// TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged is M3's
+// counterpart: with nothing accumulated, the same fatal path must still
+// produce the bare {"error": ...} envelope - no empty "details" bucket, no
+// new key - so the M3 wrapper is invisible to every run that has nothing to
+// report.
+func TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	_, err := getProfileManager(svc).Create(game.ID, "target")
+	require.NoError(t, err)
+	withProfileSwitchYes(t)
+	chmodDefaultProfileReadOnly(t, game)
+	withJSONOutput(t)
+
+	stdout, stderr, callErr := captureStdoutStderrErr(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.Error(t, callErr)
+	assert.Contains(t, callErr.Error(), "setting default profile")
+	assert.Empty(t, stdout)
+	assert.Empty(t, stderr)
+
+	var warnErr *profileWarningsError
+	assert.False(t, errors.As(callErr, &warnErr), "no warnings means no wrapper")
+
+	envelope := captureStdout(t, func() error { reportError(callErr); return nil })
+	assert.NotContains(t, envelope, "\"details\"", "an unwrapped fatal error carries no details bucket")
+	want := captureStdout(t, func() error {
+		return emitJSON(jsonErrorEnvelope{Error: callErr.Error()})
+	})
+	assert.Equal(t, want, envelope)
 }
 
 // seedApplyCandidateMod stores files (if any) in the game's cache and saves

@@ -5,5 +5,25 @@
   "link_method": "hardlink",
   "overrides": {
     "config/game.ini": "[General]\nsLanguage=ENGLISH\n"
+  },
+  "hooks": {
+    "install": {
+      "after_all": "scripts/after_all.sh"
+    },
+    "uninstall": {}
+  },
+  "hooks_explicit": {
+    "install": {
+      "before_all": false,
+      "before_each": false,
+      "after_each": false,
+      "after_all": true
+    },
+    "uninstall": {
+      "before_all": false,
+      "before_each": false,
+      "after_each": false,
+      "after_all": true
+    }
   }
 }

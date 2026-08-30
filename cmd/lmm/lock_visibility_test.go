@@ -37,8 +37,12 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_Text(t *testing.T) {
 		return applySingleUpdate(context.Background(), svc, game, mod, "default")
 	})
 
-	assert.Contains(t, out, "Update available: 1.0 → 2.0 — but Mod One is locked at v1.0.")
-	assert.Contains(t, out, "Move the lock: lmm mod lock -s test-src -p default mod1 2.0   |   Unlock: lmm mod unlock -s test-src -p default mod1", "both remedies must carry -s/-p so a copy-paste can never resolve against a different source/profile (#142 round 5)")
+	// #294 (Ruling 5): the whole refused-update readout, byte-exact - the
+	// context line states what is available, then UpdatePlan.Refusal
+	// (lockedRefUnlockOnlyMessage's canonical text, which names its one
+	// -s/-p unlock remedy inline) states the refusal. The hand-worded
+	// refusal and its own separate remedy line are both gone.
+	assert.Equal(t, "Update available: 1.0 → 2.0\nMod One is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s test-src -p default mod1' first\n", out)
 	assert.NotContains(t, out, "Updating Mod One", "must never print the applying header - it never applies")
 
 	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
@@ -237,7 +241,7 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 	assert.Contains(t, out, "\nApplying 1 auto-update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
-	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — move the lock or unlock to update.")
+	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
 
 	updatedA, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
 	require.NoError(t, err)
@@ -313,7 +317,7 @@ func TestDoUpdate_NoAutoUpdates_StillReportsLockedSkip(t *testing.T) {
 	})
 
 	assert.NotContains(t, out, "Applying", "no unlocked auto candidate means no apply section at all")
-	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — move the lock or unlock to update.")
+	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
 }
 
 // TestDoUpdate_AllSkipsLockedNotifyMods: --all must also refuse a locked
@@ -341,7 +345,7 @@ func TestDoUpdate_AllSkipsLockedNotifyMods(t *testing.T) {
 	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
-	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — move the lock or unlock to update.")
+	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
 
 	updatedA, err := svc.GetInstalledMod(context.Background(), "test-src", "modA", "g1", "default")
 	require.NoError(t, err)

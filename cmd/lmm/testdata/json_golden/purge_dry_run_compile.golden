@@ -2,36 +2,36 @@
   "profile": "default",
   "mods": [
     {
-      "id": "42",
-      "source_id": "nexusmods",
-      "name": "Sample Mod",
-      "version": "1.2.3",
+      "id": "bear-mount",
+      "source_id": "fake-compiler",
+      "name": "Bear Mount",
+      "version": "1.0",
       "author": "",
       "summary": "",
       "description": "",
-      "game_id": "skyrim-se",
+      "game_id": "g1",
       "category": "",
       "downloads": 0,
       "picture_url": "",
       "source_url": "",
       "files": [],
       "dependencies": [],
-      "updated_at": "2026-08-27T12:00:00Z",
+      "updated_at": "0001-01-01T00:00:00Z",
       "profile_name": "default",
       "update_policy": "notify",
-      "installed_at": "2026-08-27T12:00:00Z",
+      "installed_at": "<TIME>",
       "enabled": true,
       "deployed": false,
       "link_method": "symlink",
+      "file_ids": [
+        "exmodz-file"
+      ],
       "manual_download": false,
-      "convert_paks": false
+      "convert_paks": true
     }
   ],
-  "uninstall": true,
-  "hooks": [
-    "uninstall.before_all",
-    "uninstall.after_all"
-  ],
+  "uninstall": false,
+  "hooks": [],
   "merged_artifact": {
     "action": "remove",
     "path": "zzz_LMM_Merged_P.pak"

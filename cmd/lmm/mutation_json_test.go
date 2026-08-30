@@ -99,6 +99,20 @@ func TestJSONGolden_Uninstall(t *testing.T) {
 		})
 		assertJSONCLIGolden(t, "uninstall_dry_run", out, game.ModPath, "<GAME-DIR>")
 	})
+
+	// Ruling 8's modelling has to reach the JSON too: a dry-run line that
+	// exists only in plain text is a defect. This is the compile game whose
+	// last merge source is going away, so merged_artifact is a removal.
+	t.Run("dry_run_plan_compile", func(t *testing.T) {
+		fx := compileDryRunUninstallFixture(t, "bear-mount", func(t *testing.T, svc *core.Service, game *domain.Game) {
+			syncCompileMergedArtifact(t, svc, game)
+		})
+
+		out := runJSONCommand(t, func() error {
+			return fx.run(context.Background(), fx.svc, fx.game)
+		})
+		assertJSONCLIGolden(t, "uninstall_dry_run_compile", out, fx.game.ModPath, "<GAME-DIR>")
+	})
 }
 
 // --- purge ---
@@ -123,6 +137,19 @@ func TestJSONGolden_Purge(t *testing.T) {
 			return doPurge(context.Background(), svc, game)
 		})
 		assertJSONCLIGolden(t, "purge_dry_run", out, game.ModPath, "<GAME-DIR>")
+	})
+
+	// The purge half of Ruling 8's JSON coverage: a compile game with the
+	// merged artifact deployed carries the removal on the plan document.
+	t.Run("dry_run_plan_compile", func(t *testing.T) {
+		fx := compileDryRunPurgeFixture(t, func(t *testing.T, svc *core.Service, game *domain.Game) {
+			syncCompileMergedArtifact(t, svc, game)
+		})
+
+		out := runJSONCommand(t, func() error {
+			return fx.run(context.Background(), fx.svc, fx.game)
+		})
+		assertJSONCLIGolden(t, "purge_dry_run_compile", out, fx.game.ModPath, "<GAME-DIR>")
 	})
 
 	// Nothing installed is not an error and still owes the caller a

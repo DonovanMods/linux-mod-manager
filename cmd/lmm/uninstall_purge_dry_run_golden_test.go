@@ -202,12 +202,41 @@ func TestUninstallDryRunGoldens(t *testing.T) {
 			return setupUninstallDryRun(t, "nope")
 		}},
 		{
-			// DeployCompile: the plan's file count covers the mod's own
-			// undeploy, and the extra line covers the merged-artifact
-			// resync that follows it - an effect UninstallPlan does not
-			// model.
+			// DeployCompile with nothing merged yet: the post-uninstall
+			// sync would leave the game directory exactly as it is, so
+			// Ruling 8's merged-artifact line is absent entirely.
 			"compile", func(t *testing.T) dryRunGoldenFixture {
-				return compileDryRunUninstallFixture(t)
+				return compileDryRunUninstallFixture(t, "bear-mount", nil)
+			},
+		},
+		{
+			// DeployCompile, and the target is the LAST merge source: the
+			// sync's uninstall-to-zero branch takes the artifact out.
+			"compile_remove", func(t *testing.T) dryRunGoldenFixture {
+				return compileDryRunUninstallFixture(t, "bear-mount", func(t *testing.T, svc *core.Service, game *domain.Game) {
+					syncCompileMergedArtifact(t, svc, game)
+				})
+			},
+		},
+		{
+			// DeployCompile with another merge source left behind: the
+			// artifact is rebuilt rather than removed.
+			"compile_resync", func(t *testing.T) dryRunGoldenFixture {
+				return compileDryRunUninstallFixture(t, "bear-mount", func(t *testing.T, svc *core.Service, game *domain.Game) {
+					seedCompileExmodzMod(t, svc, game, "wolf-mount", "Wolf Mount", "exmodz-file")
+					syncCompileMergedArtifact(t, svc, game)
+				})
+			},
+		},
+		{
+			// DeployCompile, but the uninstall target contributes nothing
+			// to the merge: the artifact is untouched, so no line - the
+			// case the pre-Ruling-8 unconditional line got wrong.
+			"compile_untouched", func(t *testing.T) dryRunGoldenFixture {
+				return compileDryRunUninstallFixture(t, "plain", func(t *testing.T, svc *core.Service, game *domain.Game) {
+					seedDeployableMod(t, svc, game, "plain", "Plain Mod", "plain.esp")
+					syncCompileMergedArtifact(t, svc, game)
+				})
 			},
 		},
 	}
@@ -275,9 +304,21 @@ func TestPurgeDryRunGoldens(t *testing.T) {
 			return dryRunGoldenFixture{svc: svc, game: game, run: doPurge}
 		}},
 		{
-			// DeployCompile: a purge also removes the profile's merged
-			// artifact, which PurgePlan (mods, not files) cannot say.
-			"compile", compileDryRunPurgeFixture,
+			// DeployCompile with nothing merged yet: there is no artifact
+			// to remove, so Ruling 8's line is absent entirely - the case
+			// the pre-Ruling-8 unconditional line got wrong.
+			"compile", func(t *testing.T) dryRunGoldenFixture {
+				return compileDryRunPurgeFixture(t, nil)
+			},
+		},
+		{
+			// DeployCompile with the artifact deployed: a purge also
+			// removes it, which PurgePlan's mod list cannot say.
+			"compile_deployed", func(t *testing.T) dryRunGoldenFixture {
+				return compileDryRunPurgeFixture(t, func(t *testing.T, svc *core.Service, game *domain.Game) {
+					syncCompileMergedArtifact(t, svc, game)
+				})
+			},
 		},
 	}
 
@@ -295,10 +336,30 @@ func TestPurgeDryRunGoldens(t *testing.T) {
 // rather than routing through setupDoUninstallTest/setupDoPurgeTest, which
 // would rebuild the service.
 
-func compileDryRunUninstallFixture(t *testing.T) dryRunGoldenFixture {
+// compileMergedArtifactName is the fake compile source's artifact filename.
+const compileMergedArtifactName = "zzz_LMM_Merged_P.pak"
+
+// syncCompileMergedArtifact generates and deploys the profile's merged
+// artifact, so a fixture can distinguish "a compile game" from "a compile
+// game with something merged" - the two halves of Ruling 8.
+func syncCompileMergedArtifact(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(game.ModPath, compileMergedArtifactName))
+	require.NoError(t, err, "fixture: the merged artifact must be deployed")
+}
+
+// compileDryRunUninstallFixture builds the compile uninstall fixture: one
+// seeded exmodz mod plus whatever extra does (a second mod, a merged-artifact
+// sync), then a --dry-run uninstall of target.
+func compileDryRunUninstallFixture(t *testing.T, target string, extra func(t *testing.T, svc *core.Service, game *domain.Game)) dryRunGoldenFixture {
 	t.Helper()
 	svc, game, _ := setupDoDeployCompileTest(t)
 	seedCompileExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
+	if extra != nil {
+		extra(t, svc, game)
+	}
 
 	oldSource, oldProfile, oldKeep, oldForce, oldDryRun, oldNoColor :=
 		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, uninstallDryRun, noColor
@@ -311,14 +372,17 @@ func compileDryRunUninstallFixture(t *testing.T) dryRunGoldenFixture {
 	})
 
 	return dryRunGoldenFixture{svc: svc, game: game, run: func(ctx context.Context, s *core.Service, g *domain.Game) error {
-		return doUninstall(ctx, s, g, "bear-mount")
+		return doUninstall(ctx, s, g, target)
 	}}
 }
 
-func compileDryRunPurgeFixture(t *testing.T) dryRunGoldenFixture {
+func compileDryRunPurgeFixture(t *testing.T, extra func(t *testing.T, svc *core.Service, game *domain.Game)) dryRunGoldenFixture {
 	t.Helper()
 	svc, game, _ := setupDoDeployCompileTest(t)
 	seedCompileExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
+	if extra != nil {
+		extra(t, svc, game)
+	}
 
 	oldProfile, oldUninstall, oldYes, oldForce, oldDryRun, oldNoColor :=
 		purgeProfile, purgeUninstall, purgeYes, purgeForce, purgeDryRun, noColor

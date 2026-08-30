@@ -12,9 +12,10 @@
     }
   ],
   "notes": [
-    "Warning: could not update profile: mod is locked"
+    "Warning: failed to undeploy Sample Mod: permission denied"
   ],
   "warnings": [
+    "could not update profile: mod is locked",
     "could not sync merged pak: base pak missing"
   ]
 }

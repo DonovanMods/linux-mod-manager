@@ -574,11 +574,13 @@ func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailur
 	assert.True(t, good.Enabled)
 }
 
-// TestApplyProfileApply_LockedRef_UpsertRefusalIsNote pins ruling 9: the
-// post-install UpsertMod is refused by a LOCKED profile ref (#143), and the
-// flow records that as a Note (the CLI's --verbose-only warning) without
-// failing the mod. The behaviour fix is deferred to Phase 3.
-func TestApplyProfileApply_LockedRef_UpsertRefusalIsNote(t *testing.T) {
+// TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning pins #294
+// (Ruling 5), the Phase 3 behaviour fix ruling 9 deferred: the post-install
+// UpsertMod is refused by a LOCKED profile ref (#143), and the flow records
+// that as a WARNING - Result.Warnings plus a SwitchInstallWarning event, so
+// the CLI prints it unconditionally - instead of the --verbose-only Note it
+// used to be. The mod still installs.
+func TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
 	svc, game := newApplyTestService(t)
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
@@ -592,10 +594,14 @@ func TestApplyProfileApply_LockedRef_UpsertRefusalIsNote(t *testing.T) {
 	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, sink)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed, "the refusal must not fail the install")
-	require.Len(t, result.Notes, 1)
-	assert.Contains(t, result.Notes[0], "Warning: could not update profile: ")
-	assert.Contains(t, result.Notes[0], "is locked at v")
-	assert.Contains(t, applyModPhases(*events), core.SwitchInstallNote)
+	assert.Empty(t, result.Notes, "#294: the refusal is no longer a --verbose-only note")
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "could not update profile: ")
+	assert.Contains(t, result.Warnings[0], "is locked at v")
+	assert.NotContains(t, result.Warnings[0], "Warning: ",
+		"#294: Warnings carry no baked-in prefix - the caller renders `Warning: %s`")
+	assert.Contains(t, applyModPhases(*events), core.SwitchInstallWarning)
+	assert.NotContains(t, applyModPhases(*events), core.SwitchInstallNote)
 
 	profile, err := pm.Get(game.ID, "default")
 	require.NoError(t, err)

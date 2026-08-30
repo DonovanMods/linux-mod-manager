@@ -198,9 +198,11 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 // --uninstall and not.
 //
 // PurgePlan lists mods, not files. On a DeployCompile game a purge also
-// removes the profile's merged artifact (purgeMergedPak) - an effect outside
-// the plan type, so the render states it in a line of its own rather than
-// letting the mod count read as the whole story.
+// removes the profile's merged artifact (purgeMergedPak) - an effect Mods
+// cannot express, so it gets a line of its own rather than letting the mod
+// count read as the whole story. That line comes from plan.MergedArtifact
+// and is printed only when there is a deployed artifact to remove (Ruling
+// 8): a compile game with nothing merged yet gets no line at all.
 //
 // Exit code: like `deploy --dry-run` and `uninstall --dry-run`, a dry run
 // that renders successfully returns nil. A game/profile that cannot be
@@ -229,7 +231,7 @@ func renderPurgePlan(plan *core.PurgePlan, game *domain.Game, progress func(core
 	}
 
 	fmt.Printf("\nWould purge: %d mod(s)\n", total)
-	if game.DeployMode == domain.DeployCompile {
+	if plan.MergedArtifact != nil {
 		fmt.Println("The profile's merged artifact would be removed too")
 	}
 

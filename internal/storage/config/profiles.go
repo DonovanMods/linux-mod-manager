@@ -301,24 +301,51 @@ func DeleteProfile(configDir, gameID, profileName string) error {
 	return nil
 }
 
+// exportedProfileYAML is the exported profile's wire shape - the YAML DTO
+// ExportProfile/ImportProfile marshal, so the hooks block uses the SAME
+// *string-pointer encoding a profile file does (#296). domain.
+// ExportedProfile carries the hooks as domain types; only their "unset vs
+// explicitly disabled" distinction needs the pointer form, which no yaml tag
+// on domain.GameHooks could express - hence a DTO here rather than tags
+// there. Field order is the file's key order, matching ProfileConfig's:
+// hooks sits between link_method and overrides.
+//
+// Mods stays []domain.ModReference (ModReference's own yaml tags), exactly
+// as the pre-#296 export marshaled it - the bytes must not move.
+type exportedProfileYAML struct {
+	Name       string                `yaml:"name"`
+	GameID     string                `yaml:"game_id"`
+	Mods       []domain.ModReference `yaml:"mods"`
+	LinkMethod string                `yaml:"link_method,omitempty"`
+	Hooks      ProfileHooksYAML      `yaml:"hooks,omitempty"`
+	Overrides  map[string]string     `yaml:"overrides,omitempty"`
+}
+
 // ExportProfile exports a profile to a portable format
 func ExportProfile(profile *domain.Profile) ([]byte, error) {
-	exported := domain.ExportedProfile{
-		Name:   profile.Name,
-		GameID: profile.GameID,
-		Mods:   profile.Mods,
-	}
+	var linkMethod string
 	if profile.LinkMethodExplicit {
-		exported.LinkMethod = profile.LinkMethod.String()
+		linkMethod = profile.LinkMethod.String()
 	}
+	var overrides map[string]string
 	if len(profile.Overrides) > 0 {
-		exported.Overrides = make(map[string]string)
+		overrides = make(map[string]string, len(profile.Overrides))
 		for path, content := range profile.Overrides {
-			exported.Overrides[path] = string(content)
+			overrides[path] = string(content)
 		}
 	}
 
-	data, err := yaml.Marshal(&exported)
+	// yaml.v3 omits a zero struct under omitempty, so a profile with no
+	// explicit override writes no hooks: key at all and its export stays
+	// byte-identical to every export made before #296.
+	data, err := yaml.Marshal(&exportedProfileYAML{
+		Name:       profile.Name,
+		GameID:     profile.GameID,
+		Mods:       profile.Mods,
+		LinkMethod: linkMethod,
+		Hooks:      serializeProfileHooks(profile.Hooks, profile.HooksExplicit),
+		Overrides:  overrides,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling exported profile: %w", err)
 	}
@@ -328,10 +355,22 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 
 // ImportProfile imports a profile from portable format
 func ImportProfile(data []byte) (*domain.Profile, error) {
-	var exported domain.ExportedProfile
-	if err := yaml.Unmarshal(data, &exported); err != nil {
+	var wire exportedProfileYAML
+	if err := yaml.Unmarshal(data, &wire); err != nil {
 		return nil, fmt.Errorf("parsing exported profile: %w", err)
 	}
+
+	exported := domain.ExportedProfile{
+		Name:       wire.Name,
+		GameID:     wire.GameID,
+		Mods:       wire.Mods,
+		LinkMethod: wire.LinkMethod,
+		Overrides:  wire.Overrides,
+	}
+	// An export with no hooks: key (every export made before #296 included)
+	// decodes to all-nil pointers, so nothing is marked explicit and the
+	// profile keeps inheriting the game's hooks - the pre-#296 behaviour.
+	exported.Hooks, exported.HooksExplicit = parseProfileHooks(wire.Hooks)
 
 	linkMethod, ok := domain.ParseLinkMethod(exported.LinkMethod)
 	if !ok {
@@ -345,6 +384,8 @@ func ImportProfile(data []byte) (*domain.Profile, error) {
 		Mods:               exported.Mods,
 		LinkMethod:         linkMethod,
 		LinkMethodExplicit: exported.LinkMethod != "",
+		Hooks:              exported.Hooks,
+		HooksExplicit:      exported.HooksExplicit,
 	}
 	if len(exported.Overrides) > 0 {
 		p.Overrides = make(map[string][]byte)

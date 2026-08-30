@@ -55,11 +55,31 @@ func (p *Profile) FindRef(sourceID, modID string) *ModReference {
 	return nil
 }
 
-// ExportedProfile is the YAML-serializable format for sharing
+// ExportedProfile is the JSON shape a frontend would emit for a portable
+// profile export. NO COMMAND EMITS IT TODAY - `lmm profile export --json`
+// still writes the YAML document, unchanged - and its only production role
+// is as the decode intermediate inside config.ImportProfile, so a reader
+// should not go looking for the emitter (unit Q review, M5). The YAML file
+// `lmm profile export` actually writes is a SEPARATE DTO, internal/storage/config's own
+// exportedProfileYAML, assembled directly from *Profile: the hook pair needs
+// the profile file's *string-pointer encoding to keep "unset (inherit from
+// the game)" and "explicitly disabled" distinguishable (#296), which no yaml
+// tag on a GameHooks/GameHooksExplicit pair can express, so this type carries
+// no yaml tags at all - internal/storage/config owns that encoding
+// (parseProfileHooks/serializeProfileHooks) instead of yaml-marshalling this
+// type.
 type ExportedProfile struct {
-	Name       string            `yaml:"name" json:"name"`
-	GameID     string            `yaml:"game_id" json:"game_id"`
-	Mods       []ModReference    `yaml:"mods" json:"mods"`
-	LinkMethod string            `yaml:"link_method,omitempty" json:"link_method,omitempty"`
-	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"` // path (relative to game install) -> file content
+	Name       string            `json:"name"`
+	GameID     string            `json:"game_id"`
+	Mods       []ModReference    `json:"mods"`
+	LinkMethod string            `json:"link_method,omitempty"`
+	Overrides  map[string]string `json:"overrides,omitempty"` // path (relative to game install) -> file content
+
+	// Hooks/HooksExplicit carry the profile's own hook overrides through an
+	// export/import round trip (#296): before this they were silently
+	// dropped, so a shared profile lost every `hooks:` override it had.
+	// HooksExplicit is what distinguishes an explicitly-disabled hook (set,
+	// empty) from an unset one (inherit) - see Profile's own pair.
+	Hooks         GameHooks         `json:"hooks"`
+	HooksExplicit GameHooksExplicit `json:"hooks_explicit"`
 }

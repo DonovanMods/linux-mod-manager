@@ -128,7 +128,8 @@ mod ID is installed from more than one source in the profile, use
 
 --json prints the rollback document (see 'lmm update --help') with status
 "rolled_back", or status "skipped" with reason "locked" when the mod is
-locked (unlock or move the lock to roll back).
+locked (unlock to roll back; moving the lock does not help, since this
+gate refuses whatever version is locked).
 
 Examples:
   lmm update rollback 12345 --game skyrim-se
@@ -269,7 +270,10 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
 		sink = func(e core.Event) {
 			if uc, ok := e.(core.UpdateCheckEvent); ok {
-				fmt.Fprintf(os.Stderr, "  %d/%d: %s\n", uc.Index, uc.Total, truncate(uc.ModName, 60))
+				// Global, not per-source: a two-source check prints 1/5..5/5
+				// rather than restarting at 1/3..3/3 for the second source
+				// (Ruling 6, #283).
+				fmt.Fprintf(os.Stderr, "  %d/%d: %s\n", uc.GlobalIndex, uc.GlobalTotal, truncate(uc.ModName, 60))
 			}
 		}
 	}
@@ -491,8 +495,12 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// after both application sections (so it "covers" whichever ran), but
 	// fires on its own whenever lockedAuto > 0 even if neither section had
 	// anything else to apply.
+	//
+	// Unit Q re-review N2: ApplyUpdate refuses on ref.Locked alone (see
+	// applySingleUpdate's identical remedy below), so "move the lock" is a
+	// no-op here too - unlock is the only remedy, matching the per-mod path.
 	if lockedAuto > 0 {
-		fmt.Printf("\n%d locked mod(s) not applied: %s — move the lock or unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
+		fmt.Printf("\n%d locked mod(s) not applied: %s — unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
 	}
 
 	return finish()
@@ -550,8 +558,15 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 			if jsonOutput {
 				return emitJSON(planUpdateResult(plan, plan.Mod.Version, core.UpdateSkipped, "locked"))
 			}
-			fmt.Printf("Recompile needed for %s (base pak updated) — but it is locked at v%s.\n", plan.Mod.Name, plan.LockedVersion)
-			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, plan.Mod.Version, plan.Mod.SourceID, profileName, plan.Mod.ID)
+			// #294 (Ruling 5): the context line says what is available,
+			// then UpdatePlan.Refusal - the canonical refusal text, which
+			// already names its -s/-p remedy inline - says why nothing
+			// happened. Replaces the hand-worded refusal and its own
+			// "Move the lock:" duplicate; that duplicate is not restored by
+			// the unit Q review's I1 either, since ApplyUpdate refuses on
+			// the lock alone and moving it changes nothing.
+			fmt.Printf("Recompile needed for %s (base pak updated).\n", plan.Mod.Name)
+			fmt.Println(plan.Refusal)
 			return nil
 		}
 
@@ -593,22 +608,22 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// the "Updating..." header/changelog for a call that will never
 		// actually apply, and gives an actionable message naming both
 		// remedy commands instead of surfacing the core gate's raw error.
-		// The wording here is hand-composed and deliberately differs from
-		// LockedRefRefusalError/plan.Refusal - byte-identity wins for now
-		// (Phase 3 unifies wording).
+		// #294 (Ruling 5): that message is now UpdatePlan.Refusal - the
+		// canonical text, one wording for every lock refusal of this kind
+		// - printed after a context line stating what is available. The
+		// refusal names its remedy with -s/-p (#142 round 5: update honors
+		// -p, and a mod ID may exist under more than one configured source,
+		// so a bare copy-paste could otherwise resolve against the wrong
+		// profile/an ambiguous source), which is why the hand-worded
+		// "Move the lock:" line is gone. Since the unit Q review's I1 that
+		// remedy is unlocking only: this gate refuses regardless of the
+		// locked version, so "move the lock" was a no-op instruction.
 		if plan.Locked {
 			if jsonOutput {
 				return emitJSON(planUpdateResult(plan, newVersion, core.UpdateSkipped, "locked"))
 			}
-			fmt.Printf("Update available: %s → %s — but %s is locked at v%s.\n", oldVersion, newVersion, plan.Mod.Name, plan.LockedVersion)
-			// #142 round 5: name -s/-p in both remedies - update honors -p
-			// (this call already resolved profileName, possibly non-active),
-			// and the mod ID may exist under more than one configured
-			// source, so a bare 'lmm mod lock <id> <version>' copy-pasted
-			// from here could resolve against the wrong profile/an
-			// ambiguous source (same fix as the core gates -
-			// internal/core/update.go's LockedRefRefusalError).
-			fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, newVersion, plan.Mod.SourceID, profileName, plan.Mod.ID)
+			fmt.Printf("Update available: %s → %s\n", oldVersion, newVersion)
+			fmt.Println(plan.Refusal)
 			return nil
 		}
 
@@ -831,11 +846,14 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 				Reason:      "locked",
 			})
 		}
-		fmt.Printf("Rollback available: %s → %s — but %s is locked at v%s.\n", plan.FromVersion, plan.ToVersion, plan.Mod.Name, plan.LockedVersion)
-		// -s/-p on both remedies for the same reason as applySingleUpdate's
-		// locked branch (#142 round 5): a bare copy-paste could resolve
-		// against the wrong profile or an ambiguous source.
-		fmt.Printf("Move the lock: lmm mod lock -s %s -p %s %s %s   |   Unlock: lmm mod unlock -s %s -p %s %s\n", plan.Mod.SourceID, profileName, plan.Mod.ID, plan.ToVersion, plan.Mod.SourceID, profileName, plan.Mod.ID)
+		// #294 (Ruling 5): RollbackPlan.Refusal, the same canonical text
+		// applySingleUpdate's locked branch prints - it carries -s/-p on
+		// its remedy for the same reason (#142 round 5: a bare copy-paste
+		// could resolve against the wrong profile or an ambiguous source),
+		// and names unlocking only (unit Q review, I1: ApplyRollback
+		// refuses on the lock alone).
+		fmt.Printf("Rollback available: %s → %s\n", plan.FromVersion, plan.ToVersion)
+		fmt.Println(plan.Refusal)
 		return nil
 	}
 

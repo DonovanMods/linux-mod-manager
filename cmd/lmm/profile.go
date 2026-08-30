@@ -422,11 +422,12 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 	// progress prints every diagnostic and per-mod status line at its exact
 	// point of occurrence, driven entirely by core.ApplyProfileSwitch's
-	// progress events - doProfileSwitch never wrote to stderr, so every
-	// printed diagnostic here is --verbose-gated stdout (a Note), matching
-	// the SwitchResult.Notes display contract. result.Notes is never
-	// separately batch-printed below: every entry has a corresponding event
-	// here already.
+	// events. result.Notes is never separately batch-printed below: every
+	// Notes entry (the disable/enable loops' --verbose-gated warnings) has
+	// a corresponding event here already. The install loop's UpsertMod
+	// refusal is a SwitchInstallWarning now, not a Note (#294, Ruling 5's
+	// class extension - Task 13b) - it reaches the user unconditionally
+	// through result.Warnings below instead of a case here.
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -460,18 +461,27 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Println()
 		case core.SwitchInstalled:
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
-		case core.SwitchInstallNote:
-			if verbose {
-				fmt.Printf("    %s\n", p.Detail)
-			}
 		}
 	}
 
 	result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
 	if err != nil {
-		// Diagnostics accumulated before a fatal error (ApplyProfileSwitch's
-		// error-path convention returns them alongside it) were already
-		// printed above, live, via progress - nothing left to print here.
+		// Task 13 review round 1, Important 1: ApplyProfileSwitch's
+		// error-path convention returns diagnostics accumulated before the
+		// failure alongside it, but the #294 install-loop warning below
+		// lives on result.Warnings, not on a live progress event - it was
+		// never printed above, so it must be surfaced here or it is
+		// silently dropped on the fatal path. Unit Q review M3: under
+		// --json stderr is off limits (Ruling 15), so the warnings ride the
+		// error into the envelope's "details" instead of vanishing.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &profileWarningsError{err: err, warnings: result.Warnings}
+			}
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return err
 	}
 
@@ -480,9 +490,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		return emitJSON(result)
 	}
 
-	// #197 postsmoke fix: SwitchResult.Warnings (unconditional stderr,
-	// unlike .Notes above) - today, only a merged-pak sync failure for the
-	// target profile. Previously this whole result was discarded.
+	// #197 postsmoke fix / #294 Ruling 5's class extension (Task 13b):
+	// SwitchResult.Warnings (unconditional stderr, unlike .Notes above) -
+	// the install loop's refused UpsertMod (a LOCKED profile ref, #143),
+	// then a merged-pak sync failure for the target profile. Previously
+	// this whole result was discarded.
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -778,18 +790,20 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		}
 	}
 
-	// progress prints the three loops' --verbose-only diagnostics at their
-	// exact point of occurrence, driven by core.ApplyProfileSync's events -
-	// the same 2-space "  Warning: ..." rendering for all three buckets
-	// (see core's profile_sync.go). The end-of-apply merged-pak warnings
-	// arrive on result.Warnings instead, unconditional, printed below.
+	// progress prints the add/remove loops' --verbose-only diagnostics at
+	// their exact point of occurrence, driven by core.ApplyProfileSync's
+	// events - the same 2-space "  Warning: ..." rendering for both buckets
+	// (see core's profile_sync.go). The toUpdate loop's refusal is a
+	// SyncUpdateWarning since #294 (Ruling 5) and arrives on
+	// result.Warnings instead, alongside the end-of-apply merged-pak
+	// warnings - unconditional, printed below.
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
 			return
 		}
 		switch p.Phase {
-		case core.SyncAddNote, core.SyncRemoveNote, core.SyncUpdateNote:
+		case core.SyncAddNote, core.SyncRemoveNote:
 			if verbose {
 				fmt.Printf("  %s\n", p.Detail)
 			}
@@ -798,6 +812,21 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 
 	result, err := service.ApplyProfileSync(ctx, game, plan, quietSink(progress))
 	if err != nil {
+		// Task 13 review round 1, Important 1: the #294 warning below lives
+		// on result.Warnings, not a live progress event, so it was never
+		// printed live - it must be surfaced here or it is silently dropped
+		// on the fatal path (ctx cancellation is the only reachable fatal
+		// error once a toUpdate entry has already warned). Unit Q review
+		// M3: under --json the envelope's "details" carries them, since
+		// Ruling 15 forbids the stderr line.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &profileWarningsError{err: err, warnings: result.Warnings}
+			}
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return err
 	}
 
@@ -807,8 +836,10 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		return emitJSON(result)
 	}
 
-	// #197: unconditional stderr, unlike the --verbose-gated warnings above -
-	// today, only the merged-pak sync's own diagnostics.
+	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
+	// stderr, unlike the --verbose-gated warnings above) - the toUpdate
+	// loop's refused UpsertMod (a LOCKED profile ref, #143), then a
+	// merged-pak sync failure for the profile.
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -1006,7 +1037,12 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	// events - the same Switch* phase vocabulary doProfileSwitch renders,
 	// because the two flows print the same lines (see core's profile_apply.go).
 	// Everything here is stdout; result.Notes is never batch-printed below
-	// since every entry already has an event here.
+	// since every entry already has an event here. The install loop's
+	// UpsertMod refusal is a SwitchInstallWarning, not the --verbose-only
+	// SwitchInstallNote it used to be (ApplyProfileSwitch's identical
+	// refusal followed suit in Task 13b) - it reaches the user
+	// unconditionally through result.Warnings below instead of a case here
+	// (printing it here as well would duplicate it).
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -1036,17 +1072,26 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			fmt.Println()
 		case core.SwitchInstalled:
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
-		case core.SwitchInstallNote:
-			if verbose {
-				fmt.Printf("    %s\n", p.Detail)
-			}
 		}
 	}
 
 	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
 	if err != nil {
-		// Diagnostics accumulated before a fatal error were already printed
-		// live via progress - nothing left to print here.
+		// Task 13 review round 1, Important 1: the #294 warning above lives
+		// on result.Warnings, not a live progress event, so it was never
+		// printed live - it must be surfaced here or it is silently dropped
+		// on the fatal path (ctx cancellation is the only reachable fatal
+		// error once a ToInstall entry has already warned). Unit Q review
+		// M3: under --json the envelope's "details" carries them, since
+		// Ruling 15 forbids the stderr line.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &profileWarningsError{err: err, warnings: result.Warnings}
+			}
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return err
 	}
 
@@ -1056,8 +1101,10 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		return emitJSON(result)
 	}
 
-	// #197: unconditional stderr, unlike the --verbose-gated Notes above -
-	// today, only the merged-pak sync's own diagnostics.
+	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
+	// stderr, unlike the --verbose-gated Notes above) - the install loop's
+	// refused UpsertMod (a LOCKED profile ref, #143), then a merged-pak sync
+	// failure for the profile.
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -1079,4 +1126,41 @@ func profileApplyTarget(service *core.Service, game *domain.Game, args []string)
 		return "default"
 	}
 	return defaultProfile.Name
+}
+
+// profileWarningsError carries the diagnostics `lmm profile apply`/`sync`/
+// `switch` accumulated before a fatal error into the --json error envelope's
+// "details" field (unit Q review, M3). Plain text prints them to stderr, but
+// Ruling 15 keeps stderr empty under --json and reportError's envelope only
+// carries data for a typed error - so without this wrapper the #294 warnings
+// reached neither stream, leaving the DB-vs-profile divergence #294 exists
+// to expose silent on exactly this path.
+//
+// Only constructed when there is at least one warning, so a fatal run with
+// nothing to report still produces the bare {"error": ...} envelope.
+// Follows the core.ConflictError / gameDetectPartialError convention
+// (jsonout.go): Unwrap exposes err for errors.Is/As, Details() any is the
+// unnamed interface errorDetails picks up automatically.
+type profileWarningsError struct {
+	err      error
+	warnings []string
+}
+
+// Error returns the wrapped fatal failure's own message, so plain text and
+// the envelope's "error" field are unchanged by the wrapping.
+func (e *profileWarningsError) Error() string { return e.err.Error() }
+
+// Unwrap exposes the wrapped fatal error for errors.Is/As.
+func (e *profileWarningsError) Unwrap() error { return e.err }
+
+// Details returns the accumulated warnings for the --json error envelope's
+// "details" field.
+func (e *profileWarningsError) Details() any { return profileWarningsDetails{Warnings: e.warnings} }
+
+// profileWarningsDetails is profileWarningsError's wire shape: a named type
+// rather than a map so the "warnings" key is part of the JSON contract and
+// matches the same key on the ProfileApplyResult/ProfileSyncResult/
+// SwitchResult documents a SUCCESSFUL --json run emits.
+type profileWarningsDetails struct {
+	Warnings []string `json:"warnings"`
 }

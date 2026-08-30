@@ -28,5 +28,6 @@
     }
   ],
   "uninstall": false,
-  "hooks": []
+  "hooks": [],
+  "merged_artifact": null
 }

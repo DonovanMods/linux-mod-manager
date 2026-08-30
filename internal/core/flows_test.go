@@ -2856,8 +2856,9 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	assert.Equal(t, 1, result.Disabled)
 	assert.Equal(t, 1, result.Enabled)
 	assert.Equal(t, 1, result.Installed)
-	require.Len(t, result.Notes, 1, "the install loop's UpsertMod failure (target profile doesn't exist) must be recorded")
-	assert.Contains(t, result.Notes[0], "could not update profile")
+	assert.Empty(t, result.Notes, "#294 (Ruling 5's class extension, Task 13b): the install loop's UpsertMod failure is no longer a --verbose-only note")
+	require.Len(t, result.Warnings, 1, "the install loop's UpsertMod failure (target profile doesn't exist) must be recorded")
+	assert.Contains(t, result.Warnings[0], "could not update profile")
 
 	var disabledIdx, enabledIdx, installingIdx = -1, -1, -1
 	phases, _ := phasesOf(*seen)
@@ -2882,6 +2883,54 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	def, err := pm.GetDefault(game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "default", def.Name, "a failed SetDefault must leave the previous default profile in place")
+}
+
+// TestApplyProfileSwitch_LockedRef_UpsertRefusalIsWarning pins #294's class
+// extension (Ruling 5, Task 13b): ApplyProfileSwitch's install loop hits the
+// identical swallowed UpsertMod refusal ApplyProfileApply/ApplyProfileSync
+// already surface (a LOCKED profile ref, #143) and now records it the same
+// way - a SwitchInstallWarning event plus a Result.Warnings entry, not the
+// --verbose-only SwitchInstallNote it used to be. Mirrors
+// TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning exactly. The mod
+// still installs.
+func TestApplyProfileSwitch_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "mod1", Locked: true}))
+
+	svc.RegisterSource(newTwoVersionSource(t))
+
+	plan := &core.SwitchPlan{
+		GameID: "g1", From: "default", To: "target",
+		ToInstall: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.5"}},
+	}
+
+	sink, events := core.RecordEvents()
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, sink)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed, "the refusal must not fail the install")
+	assert.Empty(t, result.Notes, "#294: the refusal is no longer a --verbose-only note")
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "could not update profile: ")
+	assert.Contains(t, result.Warnings[0], "is locked at v")
+	assert.NotContains(t, result.Warnings[0], "Warning: ",
+		"#294: Warnings carry no baked-in prefix - the caller renders `Warning: %s`")
+
+	phases, _ := phasesOf(*events)
+	assert.Contains(t, phases, core.SwitchInstallWarning)
+	assert.NotContains(t, phases, core.SwitchInstallNote)
+
+	profile, err := pm.Get(game.ID, "target")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
 }
 
 // TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod guards #81's
@@ -4089,8 +4138,9 @@ func TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnost
 	assert.Contains(t, err.Error(), "setting default profile")
 	require.NotNil(t, result, "the result accumulated before the fatal error must not be discarded")
 	assert.Equal(t, 1, result.Installed, "the install itself succeeded before the later fatal SetDefault error")
-	require.Len(t, result.Notes, 1)
-	assert.Contains(t, result.Notes[0], "could not update profile")
+	assert.Empty(t, result.Notes, "#294 (Ruling 5's class extension, Task 13b): the install loop's UpsertMod failure is no longer a --verbose-only note")
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "could not update profile")
 }
 
 // TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe guards that

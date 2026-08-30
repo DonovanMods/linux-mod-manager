@@ -138,19 +138,22 @@ type ProfileApplyOptions struct{}
 // verbosity concept in core:
 //
 //   - Notes holds the diagnostics doProfileApply only printed under
-//     --verbose: a failed Uninstall/SetModEnabled in the disable loop, a
-//     failed Install/SetModEnabled in the enable loop, and a refused
-//     UpsertMod after an install (ruling 9). Each entry carries its
-//     historical "Warning: " prefix already; a caller wanting
+//     --verbose: a failed Uninstall/SetModEnabled in the disable loop and a
+//     failed Install/SetModEnabled in the enable loop. Each entry carries
+//     its historical "Warning: " prefix already; a caller wanting
 //     byte-identical output prints it to stdout ONLY under --verbose, as
-//     `fmt.Printf("  %s\n", n)` (disable/enable) or `fmt.Printf("    %s\n",
-//     n)` (the install loop's, one indent deeper). Every entry is also
-//     emitted as an event where it happens, so a live renderer never needs
-//     this slice.
+//     `fmt.Printf("  %s\n", n)`. Every entry is also emitted as an event
+//     where it happens, so a live renderer never needs this slice.
 //   - Warnings holds the diagnostics that must reach the user
-//     unconditionally (#197): the end-of-apply merged-pak sync's warnings,
-//     or "could not sync merged pak: <err>" when the sync itself failed. A
-//     caller prints each to stderr as `Warning: %s`.
+//     unconditionally: the install loop's refused UpsertMod
+//     ("could not update profile: <err>", #294/Ruling 5 - it used to be a
+//     --verbose-only Note, which hid a real DB-vs-profile divergence), then
+//     the end-of-apply merged-pak sync's warnings, or "could not sync
+//     merged pak: <err>" when the sync itself failed (#197). No entry
+//     carries a prefix; a caller prints each to stderr as `Warning: %s`.
+//     The install loop's entry is ALSO emitted as a SwitchInstallWarning
+//     event at its point of occurrence (the merged-pak ones are not), so a
+//     frontend rendering the stream live must not print this slice as well.
 //   - Failed holds one InstalledRef per mod the apply could not install,
 //     mirroring the events the loop emitted: the ref's identity plus the
 //     reason as data, rather than the pre-formatted
@@ -395,6 +398,13 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: phase, Detail: msg})
 	}
+	// warn is note's unconditional sibling (#294): the diagnostic lands on
+	// Warnings, which the CLI prints to stderr regardless of --verbose. msg
+	// carries no "Warning: " prefix - the caller renders one.
+	warn := func(scope Scope, phase DeployPhase, msg string) {
+		result.Warnings = append(result.Warnings, msg)
+		emit(StepEvent{Scope: scope, Phase: phase, Detail: msg})
+	}
 
 	installer, err := s.getInstallerForProfile(ctx, game, plan.Profile)
 	if err != nil {
@@ -542,11 +552,13 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
 			if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
-				// Ruling 9: a refusal here (today, only a LOCKED ref, #143)
-				// is swallowed into a --verbose-only note, exactly as
-				// doProfileApply swallowed it. Filed as a Phase 3
-				// behaviour fix.
-				note(scope, SwitchInstallNote, fmt.Sprintf("Warning: could not update profile: %v", err))
+				// #294 (Ruling 5), the Phase 3 behaviour fix ruling 9
+				// deferred: a refusal here (today, only a LOCKED ref, #143)
+				// leaves the profile ref unwritten while the DB row moved,
+				// so it is a Warning - unconditional - not the
+				// --verbose-only note doProfileApply used to swallow it
+				// into.
+				warn(scope, SwitchInstallWarning, fmt.Sprintf("could not update profile: %v", err))
 			}
 
 			if replaced {

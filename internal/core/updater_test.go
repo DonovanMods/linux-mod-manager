@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -278,6 +279,55 @@ func TestUpdater_CheckUpdates_EmitsUpdateCheckEventsPerReportingSource(t *testin
 	// are preserved behaviour.
 	assert.Equal(t, []tick{{"A", 1, 2}, {"B", 2, 2}}, bySource["rep"])
 	assert.Equal(t, []tick{{"C", 1, 2}, {"D", 2, 2}}, bySource["rep2"])
+}
+
+// TestUpdater_CheckUpdates_GlobalCounterSpansSources is Ruling 6 (#283): the
+// per-source ticks above restart at 1 by design, but GlobalIndex/GlobalTotal
+// must not - a two-source listing reports 1/5..5/5 across the whole run,
+// never 1/2..2/2 then 1/3..3/3. bySource is still a map, so which source the
+// Updater visits first is not fixed; the assertions below hold regardless of
+// that order rather than pinning one.
+func TestUpdater_CheckUpdates_GlobalCounterSpansSources(t *testing.T) {
+	registry := source.NewRegistry()
+	rs1 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep"}}
+	rs2 := &reportingMockSource{updateMockSource: updateMockSource{id: "rep2"}}
+	registry.Register(rs1)
+	registry.Register(rs2)
+
+	updater := core.NewUpdater(registry)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "a", SourceID: "rep", Name: "A"}},
+		{Mod: domain.Mod{ID: "b", SourceID: "rep", Name: "B"}},
+		{Mod: domain.Mod{ID: "c", SourceID: "rep2", Name: "C"}},
+		{Mod: domain.Mod{ID: "d", SourceID: "rep2", Name: "D"}},
+		{Mod: domain.Mod{ID: "e", SourceID: "rep2", Name: "E"}},
+	}
+
+	sink, got := core.RecordEvents()
+	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink)
+	require.NoError(t, err)
+	require.Len(t, *got, 5)
+
+	bySource := map[string][]core.UpdateCheckEvent{}
+	globalIndices := make([]int, 0, 5)
+	for _, ev := range *got {
+		e := ev.(core.UpdateCheckEvent)
+		assert.Equal(t, 5, e.GlobalTotal, "global total is the sum of every source's batch, not just this source's")
+		bySource[e.SourceID] = append(bySource[e.SourceID], e)
+		globalIndices = append(globalIndices, e.GlobalIndex)
+	}
+
+	sort.Ints(globalIndices)
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, globalIndices, "global indices form one unbroken run across both sources")
+
+	for sourceID, evs := range bySource {
+		offset := evs[0].GlobalIndex - evs[0].Index
+		for i, e := range evs {
+			assert.Equalf(t, i+1, e.Index, "source %s: per-source Index still restarts at 1", sourceID)
+			assert.Equalf(t, offset+e.Index, e.GlobalIndex, "source %s: GlobalIndex is Index plus a constant per-source offset", sourceID)
+		}
+	}
 }
 
 func TestCompareVersions(t *testing.T) {

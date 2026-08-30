@@ -60,5 +60,5 @@
   },
   "recompile_needed": true,
   "changelog": "Fixed a crash on load.",
-  "refusal": "mod is locked: Sample Mod is locked at v1.2.2 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'"
+  "refusal": "Sample Mod is locked at v1.2.2 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first"
 }

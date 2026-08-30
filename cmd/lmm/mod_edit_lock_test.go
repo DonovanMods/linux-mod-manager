@@ -52,8 +52,12 @@ func TestDoModEdit_ReLink_LockedRef_Refuses(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked)
-	assert.Contains(t, err.Error(), "lmm mod unlock -s src -p default a",
-		"the refusal must carry the -s/-p unlock remedy so a copy-paste resolves against the locked ref")
+	// #294 (Ruling 5): the hand-worded re-link refusal is gone - a re-link
+	// refusal is lockedRefUnlockOnlyMessage's canonical wording,
+	// byte-for-byte, like every other unlock-only lock refusal (re-linking
+	// ignores the locked version, unlike an install or `mod edit --version`).
+	// internal/core/mod_edit_test.go pins that the old sentence is absent.
+	assert.Equal(t, "mod is locked: Mod A is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s src -p default a' first", err.Error())
 
 	profile, loadErr := config.LoadProfile(configDir, game.ID, "default")
 	require.NoError(t, loadErr)

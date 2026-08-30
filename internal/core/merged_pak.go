@@ -1109,3 +1109,127 @@ func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profile
 	}
 	return nil
 }
+
+// mergedArtifactEffectForUninstall reports what removing mod from
+// game+profileName would do to the profile's merged artifact - the
+// syncMergedPak call uninstallMod makes once the mod is gone (Ruling 8).
+//
+// It is judged against the merge INPUTS the uninstall would leave behind
+// (enabledMergeSources minus the mod's own contributions) plus the
+// artifact's presence in the game directory, because those are exactly what
+// syncMergedPak itself acts on:
+//
+//   - no sources left: the uninstall-to-zero branch takes the artifact out,
+//     so a DEPLOYED artifact is a remove and an absent one is no change.
+//   - sources left, and the mod contributed one: the fingerprint moves, so
+//     the artifact is rebuilt (resync).
+//   - sources left, and the mod contributed none: this uninstall leaves the
+//     merge INPUTS unaffected, but syncMergedPak's fast path also requires
+//     the STORED fingerprint to still match those inputs - so this compares
+//     the stored fingerprint against the current one (mergedFingerprintsEqual,
+//     the same comparison syncMergedPak makes). A stale stored fingerprint
+//     (e.g. a base-game patch since the last sync, #196) is a resync even
+//     though the mod itself changed nothing; only a genuine match, with the
+//     artifact present, is no change. An artifact missing from the game
+//     directory is always a resync (#197 I5), regardless of the fingerprint.
+//
+// Side-effect-free (reads only), like every other Plan input. It describes
+// the GAME DIRECTORY: a cache-entry deletion with no deployed artifact to
+// go with it is not a merged-artifact effect. A game whose compile source
+// cannot be resolved has no artifact to name, so the answer is nil - that
+// is the ONLY error path that answers nil. Every other read that fails
+// (listing the merge sources, computing the current fingerprint) leaves the
+// outcome UNDECIDABLE with the artifact name already in hand, and an
+// undecidable outcome answers resync: nil renders as silence, which
+// under-states, and this modelling errs toward over-stating (unit Q review
+// M6, restoring the direction the superseded decisions row named).
+func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) *MergedArtifactEffect {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		s.logger().Warn("resolving merge compiler failed while planning an uninstall",
+			"game_id", game.ID, "err", err)
+		return nil
+	}
+	name := mc.MergedArtifactName()
+
+	sources, err := s.enabledMergeSources(ctx, game, profileName)
+	if err != nil {
+		// Undecidable, not "nothing happens": the artifact NAME is already
+		// in hand, so answer in the safe direction (unit Q review, M6).
+		s.logger().Warn("listing enabled merge sources failed while planning an uninstall",
+			"game_id", game.ID, "profile", profileName, "err", err)
+		return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+	}
+	ref := mod.SourceID + ":" + mod.ID
+	contributes, remaining := false, 0
+	for _, src := range sources {
+		if src.ModRef == ref {
+			contributes = true
+			continue
+		}
+		remaining++
+	}
+
+	deployed := isDeployedNow(game, name)
+	switch {
+	case remaining == 0:
+		if deployed {
+			return &MergedArtifactEffect{Action: MergedArtifactRemove, Path: name}
+		}
+		return nil
+	case contributes, !deployed:
+		return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+	default:
+		// The mod isn't itself a merge source, so removing it leaves the
+		// merge INPUTS unchanged - but syncMergedPak's fast path also needs
+		// the STORED fingerprint to still match those inputs. Consult the
+		// same comparison it makes (merged_pak.go:297-298) before claiming
+		// "nothing changes".
+		cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+		stored, ok := readMergedFingerprint(cachePath)
+		if !ok {
+			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+		}
+		current, _, cerr := s.currentMergedFingerprint(ctx, game, profileName)
+		if cerr != nil {
+			// Same class as the unreadable STORED fingerprint immediately
+			// above - we cannot tell - so the same answer (unit Q review,
+			// M6): resync, never silence.
+			s.logger().Warn("computing current merge fingerprint failed while planning an uninstall",
+				"game_id", game.ID, "profile", profileName, "err", cerr)
+			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+		}
+		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr != nil || !eq {
+			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+		}
+		return nil
+	}
+}
+
+// mergedArtifactEffectForPurge reports what `lmm purge` would do to
+// game+profileName's merged artifact (Ruling 8). purgeMergedPak only ever
+// undeploys - a purge never rebuilds - so the answer is a remove when the
+// artifact is on disk and nil otherwise, including for a --uninstall purge
+// whose only remaining work is clearing an undeployed cache entry.
+//
+// Side-effect-free (one Lstat), and nil for a non-DeployCompile game or one
+// whose compile source cannot be resolved to name the artifact.
+func (s *Service) mergedArtifactEffectForPurge(game *domain.Game) *MergedArtifactEffect {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		s.logger().Warn("resolving merge compiler failed while planning a purge",
+			"game_id", game.ID, "err", err)
+		return nil
+	}
+	name := mc.MergedArtifactName()
+	if !isDeployedNow(game, name) {
+		return nil
+	}
+	return &MergedArtifactEffect{Action: MergedArtifactRemove, Path: name}
+}

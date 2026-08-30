@@ -3,9 +3,10 @@
   "enabled": 2,
   "installed": 1,
   "notes": [
-    "enabled Realistic Needs"
+    "Warning: failed to update Realistic Needs: some error"
   ],
   "warnings": [
-    "failed to set enabled for OldMod"
+    "could not update profile: mod is locked",
+    "could not sync merged pak: base pak missing"
   ]
 }
