@@ -18,6 +18,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -192,6 +193,36 @@ func TestExportProfile_MatchesYAMLExportFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(yamlBytes), "111")
 	assert.Contains(t, string(yamlBytes), "222")
+}
+
+// TestExportProfile_JSONMatchesYAMLRoundTrip is the round-trip guard the
+// R-A3 brief requires (task A review round 1, Important 3): decode the
+// plain YAML export back into a domain.ExportedProfile via the SAME
+// config.ExportProfileValue building block Service.ExportProfile itself
+// uses, and assert field equality against the --json document. Exercises
+// explicit hook overrides (writeProfileWithHooks, shared with
+// profile_export_hooks_test.go) since the hooks tri-state is the one place
+// the two encodings genuinely diverge in representation - YAML's
+// *string-pointer form (serializeProfileHooks/parseProfileHooks) vs the
+// JSON Hooks/HooksExplicit pair.
+func TestExportProfile_JSONMatchesYAMLRoundTrip(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	configDir := svc.ConfigDir()
+	writeProfileWithHooks(t, configDir, "g1", "modded", "/opt/lmm/cleanup.sh")
+
+	jsonExported, err := svc.ExportProfile(ctx, "g1", "modded")
+	require.NoError(t, err)
+
+	yamlBytes, err := svc.NewProfileManager().Export(ctx, "g1", "modded")
+	require.NoError(t, err)
+
+	roundTripped, err := config.ImportProfile(yamlBytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, jsonExported, config.ExportProfileValue(roundTripped), "the YAML export must decode back to the same fields the --json document carries")
+	assert.True(t, jsonExported.HooksExplicit.Install.AfterAll, "sanity: the hooks tri-state must actually be exercised")
+	assert.False(t, jsonExported.HooksExplicit.Install.BeforeAll)
 }
 
 // TestExportProfile_MissingProfile propagates the load error, matching the
