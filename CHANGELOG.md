@@ -210,10 +210,10 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   with a failing `install.before_all`) now prints after the download lines rather than before
   them. Declining an `import` now also discards the cache entry that import filled on its way to
   the question, so a refusal leaves the cache exactly as it found it and accepting leaves exactly
-  one entry rather than orphaning the refused pass's copy of the archive; an accepted `import --id`
-  re-run therefore also renames its cache entry onto the resolved version successfully, where it
-  previously reported `renamed: false` and (under `-v`) a "could not rename cache entry" warning. `--force` still skips
-  the conflict check entirely. (#303)
+  one entry rather than orphaning the refused pass's copy of the archive; an accepted
+  `import --id` re-run therefore also renames its cache entry onto the resolved version
+  successfully, where it previously reported `renamed: false` and (under `-v`) a "could not
+  rename cache entry" warning. `--force` still skips the conflict check entirely. (#303)
 - Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
   frontend from Apply"). `InstallOptions.ConfirmConflicts` and
   `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
