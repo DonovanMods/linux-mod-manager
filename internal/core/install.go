@@ -431,6 +431,11 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 	var profile *domain.Profile
 	if p, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 		profile = p
+	} else if cerr := ctx.Err(); cerr != nil {
+		// Ruling 16 (C): "unreadable profile means no locks" is right for a
+		// missing or corrupt file and wrong for a cancellation, which would
+		// otherwise plan every locked mod as installable.
+		return nil, cerr
 	}
 	// Conflict detection is best-effort on exactly PlanInstall.Conflicts'
 	// terms (see InstallPlanEntry.Conflicts): a resolution failure here just
@@ -917,6 +922,12 @@ func (s *reinstallCacheTransaction) Commit() error {
 func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, opts InstallOptions) error {
 	prof, err := s.NewProfileManager().Get(ctx, plan.GameID, plan.Profile)
 	if err != nil {
+		// Ruling 16 (C): a cancelled read tells us nothing about the lock,
+		// so it must not read as "not locked" - and it is not the profile
+		// fault the log lines below describe.
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if errors.Is(err, domain.ErrProfileNotFound) {
 			// A profile that hasn't been materialized as a YAML file yet is
 			// the everyday case on a first-ever install, not a fault -
@@ -1688,6 +1699,12 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			fail(LockedRefRefusalError(*mod, plan.Profile, ref).Error())
 			return nil
 		}
+	} else if cerr := ctx.Err(); cerr != nil {
+		// Ruling 16 (C): a cancelled read must not degrade this lock gate
+		// open. skip() (not a bare nil) for the same reason the file-loop
+		// check below does it - review finding I2.
+		skip("Error", fmt.Sprintf("cancelled: %v", cerr))
+		return nil
 	}
 
 	if existing, err := s.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {

@@ -42,7 +42,11 @@ func doStatus(ctx context.Context, service *core.Service) error {
 			// Service.Status over zero games is a trivial call whose Games
 			// slice is empty-but-non-nil, so the document stays {"games": []}
 			// without this branch hand-building one.
-			return emitJSON(service.Status(ctx))
+			report, err := service.Status(ctx)
+			if err != nil {
+				return err
+			}
+			return emitJSON(report)
 		}
 		fmt.Println("No games configured.")
 		fmt.Println("\nUse 'lmm game add' to add a game.")
@@ -61,7 +65,10 @@ func doStatus(ctx context.Context, service *core.Service) error {
 	// active-profile mod count); this command only renders it. Built here
 	// rather than above the zero-games check so the `--game <id>` detail
 	// path above never pays for a summary it doesn't print.
-	report := service.Status(ctx)
+	report, err := service.Status(ctx)
+	if err != nil {
+		return err
+	}
 
 	if jsonOutput {
 		return emitJSON(report)

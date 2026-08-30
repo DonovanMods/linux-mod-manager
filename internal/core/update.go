@@ -809,6 +809,11 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
 			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
 		}
+	} else if cerr := ctx.Err(); cerr != nil {
+		// Ruling 16 (C): the fall-through below is for a profile that
+		// cannot hold a lock; a cancelled read is a profile we never got to
+		// ask, and letting it through would update a locked mod.
+		return result, cerr
 	}
 	// (A missing/unreadable profile falls through - matches
 	// PlanProfileSwitch's ignore-errors precedent for profile loads: a lock

@@ -302,6 +302,10 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 			result.Reason = "locked"
 			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
 		}
+	} else if cerr := ctx.Err(); cerr != nil {
+		// Ruling 16 (C): same as ApplyUpdate's gate - a cancelled read is
+		// not the "unloadable profile" the fall-through below is for.
+		return result, cerr
 	}
 	// (A missing/unreadable profile falls through - matches ApplyUpdate's
 	// own precedent: a lock cannot exist in an unloadable profile.)

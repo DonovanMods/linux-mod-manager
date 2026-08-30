@@ -138,7 +138,8 @@ func TestStatus_GamesByIDWithCountsAndDefault(t *testing.T) {
 	seedProfileWithMod(t, svc, "alpha", "default", "src", "a", "1.0")
 	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), "alpha", "default"))
 
-	report := svc.Status(ctx)
+	report, statusErr := svc.Status(ctx)
+	require.NoError(t, statusErr)
 	require.NotNil(t, report)
 	require.Len(t, report.Games, 2)
 
@@ -155,7 +156,8 @@ func TestStatus_GamesByIDWithCountsAndDefault(t *testing.T) {
 // TestStatus_NoGamesIsEmptyNotNil pins the zero-games shape: an empty
 // report, whose Games marshals as "[]" rather than "null".
 func TestStatus_NoGamesIsEmptyNotNil(t *testing.T) {
-	report := newFlowsTestService(t).Status(context.Background())
+	report, statusErr := newFlowsTestService(t).Status(context.Background())
+	require.NoError(t, statusErr)
 	require.NotNil(t, report)
 	assert.Empty(t, report.Games)
 }
@@ -173,7 +175,8 @@ func TestStatus_ConvertPaksOnlyForCompileGames(t *testing.T) {
 	require.NoError(t, svc.SaveGame(ctx, extract))
 	require.NoError(t, svc.SaveGame(ctx, compile))
 
-	report := svc.Status(ctx)
+	report, statusErr := svc.Status(ctx)
+	require.NoError(t, statusErr)
 	require.Len(t, report.Games, 2)
 
 	byID := map[string]core.GameSummary{}

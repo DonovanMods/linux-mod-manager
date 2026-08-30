@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -10,6 +12,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newRuling16Service builds a Service over three temp dirs - the same shape
+// core_test's newFlowsTestService builds, restated here because these two
+// shape tests exercise unexported gates (ensureProfileExists,
+// lockedInstallRefusal) and so must live in package core.
+func newRuling16Service(t *testing.T) *Service {
+	t.Helper()
+	svc, err := NewService(ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return svc
+}
 
 // cancelledContext returns a context that is already cancelled.
 func cancelledContext(t *testing.T) context.Context {
@@ -45,4 +63,49 @@ func TestEnsureProfileExists_CancelledRead_IsReportedNotTreatedAsExisting(t *tes
 	// uncancelled Get still reports ErrProfileNotFound.
 	_, err = pm.Get(context.Background(), "skyrim-se", "brand-new")
 	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+// TestLockedInstallRefusal_CancelledRead_DoesNotDegradeTheGateOpen is the
+// class-(C) shape test for v2 Phase 3 Ruling 16: every lock gate reads the
+// profile behind `err == nil` and treats a failed read as "no lock" - right
+// for a missing or corrupt profile, wrong for a cancellation, which says
+// nothing about the lock at all.
+//
+// The fixture is a genuinely locked ref (asserted, so the test cannot pass
+// vacuously against a gate that would have answered "unlocked" anyway).
+// Against 85a3ed0 the second half fails: the gate returned nil - the same
+// answer it gives an unlocked mod - and ApplyInstall would have installed
+// over the lock.
+func TestLockedInstallRefusal_CancelledRead_DoesNotDegradeTheGateOpen(t *testing.T) {
+	svc := newRuling16Service(t)
+	ctx := context.Background()
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(ctx, "g1", "default", domain.ModReference{SourceID: "src", ModID: "m1", Version: "1.0"}))
+	require.NoError(t, pm.SetModLock(ctx, "g1", "default", "src", "m1", "1.0"))
+
+	plan := &InstallPlan{
+		SourceID: "src",
+		GameID:   "g1",
+		Profile:  "default",
+		Mod:      domain.Mod{ID: "m1", SourceID: "src", Version: "2.0", GameID: "g1"},
+		Files:    []domain.DownloadableFile{{ID: "f1", Name: "Main", FileName: "m1.zip", IsPrimary: true, Version: "2.0"}},
+	}
+
+	profilePath := filepath.Join(svc.configDir, "games", "g1", "profiles", "default.yaml")
+	before, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+
+	require.ErrorIs(t, svc.lockedInstallRefusal(ctx, plan, InstallOptions{}), ErrModLocked,
+		"fixture check: an uncancelled gate must refuse this install")
+
+	err = svc.lockedInstallRefusal(cancelledContext(t), plan, InstallOptions{})
+	require.Error(t, err, "a cancelled read must not answer 'not locked'")
+	assert.ErrorIs(t, err, context.Canceled)
+
+	after, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "a lock gate reads only; the mod's profile ref must be untouched")
 }

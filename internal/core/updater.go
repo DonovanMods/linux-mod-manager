@@ -230,11 +230,16 @@ func lockStateFromProfile(prof *domain.Profile, sourceID, modID string) (locked 
 // need for a SINGLE mod (each already reads the profile once per call, so
 // there is nothing to batch). A missing/unreadable profile reports unlocked
 // rather than an error - matching every other lock gate's convention (a
-// lock cannot exist in a profile that doesn't load); err is always nil
-// today, kept for symmetry with this file's other ctx-taking Service
-// methods.
+// lock cannot exist in a profile that doesn't load). The one read failure
+// that is NOT reported as unlocked is a cancellation (v2 Phase 3 Ruling 16
+// (C)): it says nothing about the lock, so it is returned as err.
 func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, modID string) (locked bool, lockedVersion string, err error) {
-	prof, _ := s.NewProfileManager().Get(ctx, gameID, profileName)
+	prof, readErr := s.NewProfileManager().Get(ctx, gameID, profileName)
+	if readErr != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return false, "", cerr
+		}
+	}
 	locked, lockedVersion = lockStateFromProfile(prof, sourceID, modID)
 	return locked, lockedVersion, nil
 }
@@ -279,7 +284,15 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 	// missing/unreadable profile leaves every entry unlocked, matching every
 	// other "profile load failure means unlocked" precedent (ApplyUpdate's
 	// own lock gate, applySingleUpdate before this task).
-	prof, _ := s.NewProfileManager().Get(ctx, game.ID, profileName)
+	prof, profErr := s.NewProfileManager().Get(ctx, game.ID, profileName)
+	if profErr != nil {
+		// Ruling 16 (C): a cancelled read would leave every entry reported
+		// unlocked, which is a lie the caller acts on; the cancellation
+		// outranks checkErr, which under a cancelled ctx is derived from it.
+		if cerr := ctx.Err(); cerr != nil {
+			return updates, cerr
+		}
+	}
 	for i := range updates {
 		locked, lockedVersion := lockStateFromProfile(prof, updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
 		if locked {

@@ -218,20 +218,32 @@ type GameStatus struct {
 
 // Status summarizes every configured game, ordered by ID (ListGames').
 //
-// Deliberately errorless: every per-game lookup behind a summary row - the
+// Deliberately tolerant: every per-game lookup behind a summary row - the
 // default-game setting, the profile list, the active profile's installed
 // mods - is a best-effort read whose failure degrades that ONE row's counts
 // rather than the whole report, exactly as the pre-extraction CLI's own
 // `profiles, _ := pm.List(...)` reads did. A caller that needs a game's
-// state to be authoritative asks GameStatus, which does report errors.
-func (s *Service) Status(ctx context.Context) *StatusReport {
+// state to be authoritative asks GameStatus, which reports every error.
+//
+// A cancellation is the one read failure NOT degraded that way (v2 Phase 3
+// Ruling 16 (C)): it would report "no profiles" for every remaining game,
+// a summary indistinguishable from a truthful one, so the report is
+// abandoned and ctx.Err() returned instead. That is the only error Status
+// returns - the method was errorless before this ruling, and this is the
+// error it gained.
+func (s *Service) Status(ctx context.Context) (*StatusReport, error) {
 	games := s.ListGames()
 	defaultGame, _ := s.DefaultGame(ctx)
 	pm := s.NewProfileManager()
 
 	report := &StatusReport{Games: make([]GameSummary, 0, len(games))}
 	for _, game := range games {
-		profiles, _ := pm.List(ctx, game.ID)
+		profiles, err := pm.List(ctx, game.ID)
+		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, cerr
+			}
+		}
 		names := make([]string, len(profiles))
 		for i, p := range profiles {
 			names[i] = p.Name
@@ -241,6 +253,8 @@ func (s *Service) Status(ctx context.Context) *StatusReport {
 		if active, err := pm.GetDefault(ctx, game.ID); err == nil {
 			mods, _ := s.GetInstalledMods(ctx, game.ID, active.Name)
 			modCount = len(mods)
+		} else if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
 		}
 
 		summary := GameSummary{
@@ -256,7 +270,7 @@ func (s *Service) Status(ctx context.Context) *StatusReport {
 		}
 		report.Games = append(report.Games, summary)
 	}
-	return report
+	return report, nil
 }
 
 // GameStatus assembles one game's detail: its profiles, the link method that
