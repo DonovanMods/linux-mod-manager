@@ -1,0 +1,30 @@
+{
+  "archive": "<ARCHIVE-DIR>/Bear_Mount.exmodz",
+  "mod": {
+    "id": "<UUID>",
+    "source_id": "local",
+    "name": "Bear_Mount",
+    "version": "unknown",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "icarus",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": []
+  },
+  "linked_source": "local",
+  "auto_detected": false,
+  "files": [],
+  "conflicts": [],
+  "merged_artifact": {
+    "action": "resync",
+    "path": "zzz_LMM_Merged_P.pak"
+  },
+  "hooks": [],
+  "entry_pre_exists": false,
+  "warnings": []
+}

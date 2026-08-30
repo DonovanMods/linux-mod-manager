@@ -474,6 +474,26 @@ func TestJSONGoldens(t *testing.T) {
 			core.AdoptBackfillResult{Backfilled: 2},
 		},
 		{
+			// Every optional key populated at once (a conflicting import
+			// into a compile game, with an enrichment warning), to pin each
+			// one's wire shape - a real plan rarely carries all of them.
+			"import_archive_plan",
+			core.ImportArchivePlan{
+				Archive:      "/downloads/sample-mod-1.2.3.zip",
+				Mod:          jsonGoldenMod,
+				LinkedSource: "nexusmods",
+				AutoDetected: true,
+				Files:        []string{"Data/Sample.esp"},
+				Conflicts: []core.Conflict{
+					{RelativePath: "Data/Sample.esp", CurrentSourceID: "nexusmods", CurrentModID: "7"},
+				},
+				MergedArtifact: &core.MergedArtifactEffect{Action: core.MergedArtifactResync, Path: "zzz_LMM_Merged_P.pak"},
+				Hooks:          []string{"install.before_all", "install.after_all"},
+				EntryPreExists: true,
+				Warnings:       []string{"could not resolve source file for archive: rate limited"},
+			},
+		},
+		{
 			// Every optional key populated at once, to pin each one's wire
 			// shape - a real import rarely produces all four diagnostics.
 			"import_archive_result",

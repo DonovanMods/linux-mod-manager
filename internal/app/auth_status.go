@@ -14,8 +14,8 @@ import (
 // CapabilitiesOf(src).Auth is true, sorted by ID - the built-ins
 // (unconditionally registered) alongside any auth-capable custom source.
 // Shared by `lmm auth login`/`logout`'s interactive picker and error hint
-// (cmd/lmm's own authCapableSources wraps this) and by AuthStatus below, so
-// the two can never disagree about which sources are auth-capable.
+// (cmd/lmm calls this directly) and by AuthStatus below, so the two can
+// never disagree about which sources are auth-capable.
 func AuthCapableSources(svc *core.Service) []source.ModSource {
 	all := svc.ListSources()
 	capable := make([]source.ModSource, 0, len(all))

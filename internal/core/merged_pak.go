@@ -636,7 +636,7 @@ func rawPakMembers(versionDir, retainedPath string, candidates []string) ([]stri
 
 // rawPakRestoreName picks the on-disk name restoreRawPakCopy publishes a
 // healed deployable pak copy under (#250). An import-path fileID IS the
-// original archive filename (Importer.Import stages the deployable copy
+// original archive filename (importWithIdentity stages the deployable copy
 // under exactly that name), so the restore is name-exact - detected by
 // asking the compile source whether the fileID names one of its
 // convertible artifacts (#256: the format test lives behind the seam). A
@@ -1237,4 +1237,64 @@ func (s *Service) mergedArtifactEffectForPurge(game *domain.Game) *MergedArtifac
 		return nil
 	}
 	return &MergedArtifactEffect{Action: MergedArtifactRemove, Path: name}
+}
+
+// mergedArtifactEffectForImport reports what importing one archive into
+// game+profileName would do to the profile's merged artifact - the
+// syncMergedPak call ApplyImportArchive makes once the mod is in (Ruling 8).
+// contributes says whether the archive itself becomes a merge source (a
+// native ".exmodz" or a convertible pak), which is the only thing an import
+// can change about the merge INPUTS.
+//
+// It follows mergedArtifactEffectForUninstall's modelling, minus the
+// remove direction - an import never takes the artifact away:
+//
+//   - the archive contributes a merge source: the fingerprint moves, so the
+//     artifact is rebuilt (resync).
+//   - it contributes none: the inputs are unaffected, but syncMergedPak's
+//     fast path also requires the STORED fingerprint to still match them and
+//     the artifact to actually be on disk. A stale stored fingerprint (e.g. a
+//     base-game patch since the last sync, #196) or a missing artifact (#197
+//     I5) is a resync even though this import changes nothing itself; only a
+//     genuine match, with the artifact present, is no change.
+//
+// Side-effect-free (reads only). A game that does not deploy by compilation,
+// or whose compile source cannot be resolved to name the artifact, has no
+// merged-artifact consequence to report, so the answer is nil - the only
+// error path that answers nil. Every other failed read leaves the outcome
+// undecidable with the name already in hand, and an undecidable outcome
+// answers resync (unit Q review M6): nil renders as silence, which
+// under-states.
+func (s *Service) mergedArtifactEffectForImport(ctx context.Context, game *domain.Game, profileName string, contributes bool) *MergedArtifactEffect {
+	if game.DeployMode != domain.DeployCompile {
+		return nil
+	}
+	mc, err := s.mergeCompilerForGame(game)
+	if err != nil {
+		s.logger().Warn("resolving merge compiler failed while planning an import",
+			"game_id", game.ID, "err", err)
+		return nil
+	}
+	name := mc.MergedArtifactName()
+	resync := &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+
+	if contributes || !isDeployedNow(game, name) {
+		return resync
+	}
+
+	cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+	stored, ok := readMergedFingerprint(cachePath)
+	if !ok {
+		return resync
+	}
+	current, _, cerr := s.currentMergedFingerprint(ctx, game, profileName)
+	if cerr != nil {
+		s.logger().Warn("computing current merge fingerprint failed while planning an import",
+			"game_id", game.ID, "profile", profileName, "err", cerr)
+		return resync
+	}
+	if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr != nil || !eq {
+		return resync
+	}
+	return nil
 }

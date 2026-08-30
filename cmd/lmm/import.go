@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
@@ -32,8 +32,8 @@ Scan mode (no arguments): scans the game's mod_path for files not yet
 tracked by lmm, tries to match each one by name against the game's
 configured sources (skip with --skip-match), and imports whatever is
 left after confirmation. Useful for mods that were installed manually -
-e.g. mods whose author has disabled API downloads. --dry-run and
---skip-match only apply to this mode. Every mod imported this way is
+e.g. mods whose author has disabled API downloads. --skip-match only
+applies to this mode. Every mod imported this way is
 marked as requiring manual download (since lmm did not fetch it itself);
 re-link it to a source with 'lmm mod edit --source' to clear that once
 it can be checked for updates normally.
@@ -42,9 +42,8 @@ Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
 it resolves automatically when the game has exactly one configured
 source, or prompts interactively when it has several) to fetch and
-attach source metadata as part of the import. --dry-run is rejected with
-an error here - there is no preview for this mode yet (see
-https://github.com/DonovanMods/linux-mod-manager/issues/314).
+attach source metadata as part of the import. --dry-run previews it -
+the archive is listed, never extracted, so nothing is written.
 
 Either way, a mod that ends up unmatched to any remote source is
 imported as local - it deploys and installs normally, but 'lmm update'
@@ -66,7 +65,7 @@ func init() {
 	importCmd.Flags().StringVarP(&importSource, "source", "s", "", "source for update tracking (default: auto-detect or local)")
 	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking to source (source resolves automatically; see --source)")
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
-	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes (scan mode only; rejected on an archive path, see --help)")
+	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
 	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip source lookup for untracked mods")
 
 	rootCmd.AddCommand(importCmd)
@@ -80,8 +79,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 // doImport renders `lmm import <archive>`: it validates the argument,
 // resolves --source when only --id was given (that resolution can prompt,
-// so it stays here), then calls core.ImportArchive and prints every line
-// from the event stream and the returned result. The engine itself lives in
+// so it stays here), plans the import, renders the plan's readout, answers
+// the conflict question from it, and applies it - printing every line from
+// the event stream and the returned result. The engine itself lives in
 // internal/core/import_archive.go.
 func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game, args []string) error {
 	profileName, err := resolveProfile(ctx, service, game.ID, importProfile)
@@ -100,17 +100,6 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// Validate archive exists
 	if _, err := os.Stat(archivePath); err != nil {
 		return fmt.Errorf("archive not found: %s", archivePath)
-	}
-
-	// Phase 3 close wave, Important 2: the archive form has no
-	// ImportArchivePlan yet (#314), so --dry-run cannot preview it without
-	// performing the import for real. Reject up front, before source
-	// resolution or any of ImportArchive's cache/DB/profile writes, rather
-	// than silently ignoring the flag - Ruling 15 makes --dry-run --json a
-	// documented promise this command cannot keep today. Under --json the
-	// bare error renders the standard {"error": ...} envelope.
-	if importDryRun {
-		return fmt.Errorf("--dry-run is not supported for archive imports yet (see https://github.com/DonovanMods/linux-mod-manager/issues/314); it previews directory scans only")
 	}
 
 	// If --id is provided without --source, resolve dynamically: a sole
@@ -171,27 +160,55 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		}
 	}
 
-	result, err := service.ImportArchive(ctx, game, profileName, archivePath, opts, quietSink(progress))
+	sink := quietSink(progress)
 
-	// Ruling 1: an unaccepted file conflict comes back as a typed error, not
-	// a callback into this prompt. ImportArchive stopped before it deployed,
-	// saved or added anything to the profile (the archive is cached), so
-	// accepting is simply a re-run of the same call with AcceptConflicts set
-	// - see confirmInstallConflicts' doc comment for the Ruling 7 output
-	// delta that re-run carries.
+	// The metadata-fetch progress line announces work PlanImportArchive is
+	// about to do, so it prints HERE rather than arriving as an event from a
+	// plan (plans emit nothing). core owns the condition so the two cannot
+	// disagree about when the fetch happens.
+	if sink != nil && core.ImportEnrichmentRuns(game, opts) {
+		sink(core.StepEvent{
+			Scope: core.Scope{Op: core.OpImport}, Phase: core.ImportArchiveFetching,
+			Detail: "Fetching metadata from " + opts.SourceID + "...",
+		})
+	}
+
+	plan, err := service.PlanImportArchive(ctx, game, profileName, archivePath, opts)
+	if err != nil {
+		return err
+	}
+
+	// Ruling 18 (#314): the readout - the plan's enrichment warnings and its
+	// Mod/Source/ID/Version/Author/URL/Files block - is rendered ONCE, from
+	// the plan, so it names the identity the apply will persist. Under
+	// --json quietSink has already made this a no-op; the plan or the result
+	// document carries the same facts.
+	core.EmitImportArchiveReadout(plan, sink)
+
+	if importDryRun {
+		// Ruling 15: --dry-run --json is the Plan document.
+		if jsonOutput {
+			return emitJSON(plan)
+		}
+		renderImportArchivePlan(plan, game, profileName)
+		return nil
+	}
+
+	// Ruling 1: the conflict decision is the frontend's, and since #314 it is
+	// answered from the PLAN - no speculative ingest, no re-run, no second
+	// readout (Ruling 18). --force skips the question entirely; core reads it
+	// as AcceptConflicts, so a forced import never gets here.
 	//
-	// Ruling 15/2: under --json the prompt is unanswerable, so the
-	// *core.ConflictError is returned untouched and reportError renders it
-	// as the envelope with details.conflicts - the same contract doInstall's
-	// identical guard gives `install --json` (unit P review, Important 1;
-	// without the guard this caller printed the plain-text conflict block
-	// onto stdout and then collapsed the typed error into
-	// ErrConfirmationRequired at the refused stdin read). --force is how a
-	// non-interactive caller accepts them; core reads it as AcceptConflicts,
-	// so a forced import never gets here at all.
-	var conflictErr *core.ConflictError
-	if errors.As(err, &conflictErr) && !jsonOutput {
-		proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, conflictErr.Conflicts)
+	// Ruling 15/2: under --json the prompt is unanswerable, so the same
+	// *core.ConflictError core would have raised is returned and reportError
+	// renders it as the envelope with details.conflicts - the contract
+	// doInstall's identical guard gives `install --json` (unit P review,
+	// Important 1).
+	if len(plan.Conflicts) > 0 && !importForce {
+		if jsonOutput {
+			return &core.ConflictError{Conflicts: plan.Conflicts}
+		}
+		proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, plan.Conflicts)
 		if readErr != nil {
 			// A genuine stdin read failure, not an ordinary decline - see
 			// confirmInstallConflicts' doc comment.
@@ -201,8 +218,9 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			return fmt.Errorf("import cancelled")
 		}
 		opts.AcceptConflicts = true
-		result, err = service.ImportArchive(ctx, game, profileName, archivePath, opts, quietSink(progress))
 	}
+
+	result, err := service.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
 	if err != nil {
 		return err
 	}
@@ -237,6 +255,65 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	}
 
 	return nil
+}
+
+// renderImportArchivePlan prints `lmm import <archive> --dry-run`'s preview,
+// straight after the readout core.EmitImportArchiveReadout already produced
+// (so the mod's identity, version and file count are on screen above it).
+//
+// The vocabulary mirrors the live summary this replaces line for line -
+// "Would import:" for "✓ Imported:", the same merged-pak wording for a
+// DeployCompile mod that deploys zero files of its own - and follows the
+// Phase 2 dry-run convention the rest of the command tree uses: a "Would ..."
+// summary, --verbose expanding the lists, a hooks line, and scan mode's own
+// closing "(dry run - no changes made)".
+//
+// A dry run does not prompt: there is nothing to confirm when nothing will
+// change. The conflicts it would have prompted about are stated instead.
+//
+// Exit code: like every other --dry-run, a preview that renders successfully
+// returns nil; an archive that cannot be planned at all is a
+// PlanImportArchive error and fails normally.
+func renderImportArchivePlan(plan *core.ImportArchivePlan, game *domain.Game, profileName string) {
+	fmt.Printf("\nWould import: %s\n", plan.Mod.Name)
+	// #197 postsmoke UX fix, mirrored from the live summary: a DeployCompile
+	// ".exmodz" mod deploys zero files of its own by design.
+	if game.DeployMode == domain.DeployCompile && len(plan.Files) == 0 {
+		fmt.Println("  Would install (merged pak updated)")
+	} else {
+		fmt.Printf("  Would deploy %d file(s)\n", len(plan.Files))
+		if verbose {
+			for _, f := range plan.Files {
+				fmt.Printf("    - %s\n", f)
+			}
+		}
+	}
+	fmt.Printf("  Would add to profile: %s\n", profileName)
+
+	if len(plan.Conflicts) > 0 {
+		fmt.Printf("  Would overwrite %d file(s) owned by other mods\n", len(plan.Conflicts))
+		if verbose {
+			for _, c := range plan.Conflicts {
+				fmt.Printf("    - %s (%s)\n", c.RelativePath, domain.ModKey(c.CurrentSourceID, c.CurrentModID))
+			}
+		}
+	}
+
+	// mergedArtifactEffectForImport never returns MergedArtifactRemove - an
+	// import never takes the artifact away - so this only ever resyncs.
+	if plan.MergedArtifact != nil {
+		fmt.Println("  The profile's merged artifact would be resynced afterwards")
+	}
+
+	if len(plan.Hooks) > 0 {
+		fmt.Printf("\nHooks that would run: %s\n", strings.Join(plan.Hooks, ", "))
+	}
+
+	if plan.LinkedSource == domain.SourceLocal {
+		fmt.Println("\nNote: Local mods won't receive update notifications.")
+	}
+
+	fmt.Println("\n(dry run - no changes made)")
 }
 
 // runImportScan renders `lmm import`'s scan mode: it plans the adopt in

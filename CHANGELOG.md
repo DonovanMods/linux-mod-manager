@@ -35,9 +35,11 @@ through import (#296); dry-run merged-artifact lines only print when the
 artifact would actually change (Ruling 8); cancellation mid-mutation always
 finishes a database write's paired profile write rather than splitting the
 two (Ruling 16); a declined import conflict on a reproducible identity
-does not restore the entry it overwrote (#310); and `lmm game show-default`'s
+does not restore the entry it overwrote (#310); `lmm game show-default`'s
 plain text moves from stderr to stdout, where every other command's plain
-text already lands (Ruling 17, #309).
+text already lands (Ruling 17, #309); and an accepted `import <archive>`
+conflict no longer reprints the import readout or mints a second mod ID
+(Ruling 18).
 
 Building lmm now requires Go 1.27. Config and data directories now honor
 `XDG_CONFIG_HOME`/`XDG_DATA_HOME` by default, falling back to the legacy
@@ -207,20 +209,16 @@ profiles}`).
   but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
   after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
   cache already warm: `install` re-prints only "Extracting to cache…" (never a second
-  "Downloading …"/"Checksum: …" block), `import` re-prints its "Fetching metadata…" and
-  Mod/Source/ID/Version/Files readout, before "Deploying to game directory…". An accepted
+  "Downloading …"/"Checksum: …" block). An accepted
   conflict re-run does not re-download cached files (a same-version reinstall or a local
   directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
   with a failing `install.before_all`) now prints after the download lines rather than before
-  them. Declining an `import` now also discards the cache entry that import filled on its way to
-  the question, so a refusal removes the entry this call created and leaves managed state (DB,
-  profile, game tree) untouched; when an entry already existed at a reproducible identity
-  (`--source/--id`, or a NexusMods filename), the import had already overwritten it before the
-  refusal, and that prior entry is not restored (#310). Accepting leaves exactly one entry rather
-  than orphaning the refused pass's copy of the archive; an accepted
-  `import --id` re-run therefore also renames its cache entry onto the resolved version
-  successfully, where it previously reported `renamed: false` and (under `-v`) a "could not
-  rename cache entry" warning. `--force` still skips the conflict check entirely. (#303)
+  them. `--force` still skips the conflict check entirely. **`lmm import <archive>` does not
+  re-run at all** — Ruling 18 below supersedes this entry's import clauses: the conflict question
+  is answered from the plan, before anything is cached, so a declined import writes nothing (and
+  therefore never overwrites a pre-existing entry at a reproducible identity, the residue tracked
+  as #310), and an accepted one neither re-prints its readout nor re-renames its cache entry.
+  (#303)
 - Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
   prompt for confirmation now fails first with `confirmation required: ...` in the
   `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
@@ -510,11 +508,41 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   a `PurgeResult`, matching `import`/`profile switch`/`profile apply`/`profile sync`'s identical
   dry-run/json ordering (phase-end review Important 1). Plain-text `--dry-run` on an empty profile
   is unchanged. (#306)
-- `lmm import <archive> --dry-run` no longer silently performs a real import. The archive form has
-  no plan to preview yet, so `--dry-run` is now rejected with an error (`--dry-run` is not
-  supported for archive imports yet ...) before any side effect — no DB row, no deployed files, no
-  cache entry — instead of ignoring the flag. Fixing this properly (an `ImportArchivePlan`) is
-  tracked as #314; scan-mode `--dry-run` is unaffected. (#314)
+- `lmm import <archive> --dry-run` previews the import instead of performing it. The archive form
+  now has a real Plan/Apply pair (`core.ImportArchivePlan`): the archive's table of contents is
+  READ — `archive/zip` natively, `7z l -slt` for `.7z`/`.rar` — never extracted, so a preview
+  names the mod, its resolved version, the files it would deploy, any file it would overwrite,
+  the merged-artifact effect on a compile game and the hooks that would run, while leaving no DB
+  row, no deployed file, no cache entry and nothing in the staging root. `--dry-run --json` emits
+  the plan document. Between the close wave and this change the flag was rejected outright with
+  an error; scan-mode `--dry-run` is unaffected throughout. Sharing that listing step with the
+  ingest also closes a small gap: `.7z`/`.rar` members are now screened for lmm's reserved
+  namespace and zip-slip path traversal at plan time, the same as zip members always were —
+  previously this check ran only after extraction, and only against reserved names, never path
+  traversal. (#314)
+- `lmm import <archive>`'s readout prints once per import, and the ID it prints is the ID saved
+  (**Ruling 18**). Accepting a file-conflict prompt used to re-run the whole import, reprinting
+  the `Fetching metadata…` / `Mod:` / `Source:` / `ID:` / `Version:` / `Files:` block between the
+  prompt and `Deploying to game directory…`; for an archive with no `--id`, that re-run also
+  minted a _second_ local mod ID, so the ID on screen was not the one written to the database.
+  The command now plans once, prompts from the plan, and applies once. No other line changes; a
+  forced or conflict-free import is byte-identical. One line does move relative to the readout,
+  though: the `-v` `Warning: could not rename cache entry: …` note (raised while applying, not
+  while planning) used to print before it and now prints after — old order `Fetching metadata…` /
+  `Warning: could not rename cache entry: …` / `Mod: …` / `Warning: could not check conflicts: …`,
+  new order `Fetching metadata…` / `Mod: …` / `Warning: could not rename cache entry: …` /
+  `Warning: could not check conflicts: …`. (#314)
+- The reasons an archive cannot be imported at all now report themselves without the
+  `import failed:` prefix, because they are settled while planning rather than mid-ingest
+  (**Ruling 18**). Exactly five lines change: `import failed: unsupported archive format: .txt` →
+  `unsupported archive format: .txt`; `import failed: <compile-source resolver error>` →
+  `<compile-source resolver error>`; `import failed: validating Bear_Mount.exmodz: …` →
+  `validating Bear_Mount.exmodz: …`; `import failed: extracting archive: reserved name detected:
+…` → `reserved name detected: …` (same for `path traversal detected: …`); and
+  `import failed: extracting archive: 7z command not found: install p7zip-full to extract .7z and
+.rar files` → the same sentence with neither prefix. Listing a `.7z`/`.rar` adds one new error
+  class, `7z listing failed: …`. All of them still exit non-zero and render the `{"error", …}`
+  envelope under `--json`. A failure of the ingest itself still reads `import failed: …`. (#314)
 
 ### Removed
 

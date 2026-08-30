@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -413,16 +414,22 @@ func setupImportConflictTest(t *testing.T) (svc *core.Service, game *domain.Game
 
 // expectedConflictBlock is the exact "⚠ File conflicts detected" block both
 // the decline and accept tests share, up to and including the prompt.
-// importReadoutRerunLines is the Ruling 7 delta an accepted conflict adds:
-// the import readout ImportArchive emits again on the AcceptConflicts
-// re-run, printed between the prompt and the deploy line.
-const importReadoutRerunLines = "\nFetching metadata from acme-source...\n" +
-	"\nMod: Second Mod\n" +
-	"  Source: acme-source\n" +
-	"  ID: B1\n" +
-	"  Version: 1.0\n" +
-	"  Files: 1\n"
-
+//
+// RULING 18 (#314) retired this file's `importReadoutRerunLines` constant.
+// Under Ruling 7 an accepted conflict re-ran ImportArchive, so the import
+// readout printed a SECOND time between the prompt and the deploy line -
+// exactly these bytes:
+//
+//	"\nFetching metadata from acme-source...\n" +
+//	"\nMod: Second Mod\n" +
+//	"  Source: acme-source\n" +
+//	"  ID: B1\n" +
+//	"  Version: 1.0\n" +
+//	"  Files: 1\n"
+//
+// doImport now plans once, prompts from plan.Conflicts and applies once, so
+// the readout prints once per user-level import and the ID it printed is the
+// ID persisted. The accept test below is re-pinned without those lines.
 func expectedConflictBlockAndPromptFor(archiveBPath string) string {
 	return "Importing: " + archiveBPath + "\n" +
 		"\nFetching metadata from acme-source...\n" +
@@ -472,12 +479,11 @@ func TestDoImport_ConflictPromptDecline_CancelsWithoutOverwriting(t *testing.T) 
 // twin: "y" proceeds through hooks/deploy/save, mod B ends up installed, and
 // the shared file's content is now B's.
 //
-// Ruling 7 delta: accepting re-runs ImportArchive with AcceptConflicts set
-// (core returns *core.ConflictError instead of calling back into the
-// prompt), so the import's own readout - the metadata fetch and the
-// Mod/Source/ID/Version/Files block - prints a SECOND time between the
-// prompt and "Deploying to game directory...". The re-run's cache work is
-// idempotent; only these lines are new.
+// Ruling 18 delta (#314): accepting no longer re-runs anything. doImport
+// plans once, prompts from plan.Conflicts, and calls ApplyImportArchive with
+// AcceptConflicts set - so the readout that printed twice under Ruling 7
+// prints once, and "Deploying to game directory..." follows the prompt
+// directly.
 func TestDoImport_ConflictPromptAccept_OverwritesAndInstalls(t *testing.T) {
 	svc, game, archiveBPath := setupImportConflictTest(t)
 	importForce = false
@@ -492,7 +498,6 @@ func TestDoImport_ConflictPromptAccept_OverwritesAndInstalls(t *testing.T) {
 
 	require.NoError(t, err)
 	expected := expectedConflictBlockAndPromptFor(archiveBPath) +
-		importReadoutRerunLines +
 		"\nDeploying to game directory...\n" +
 		"\n✓ Imported: Second Mod\n" +
 		"  Files deployed: 1\n" +
@@ -685,6 +690,16 @@ func TestDoImport_BeforeAllHookFails_AbortsWithoutForce_NothingInstalled(t *test
 // "Warning: could not rename cache entry: " prefix is pinned exactly; the
 // deterministic "mod not in cache" text (both the conflict-check warning and
 // the final error) is pinned exactly.
+//
+// #314 review I1 (recorded plain-text delta, Ruling 18): since the readout
+// now renders from the PLAN before ApplyImportArchive runs at all, this
+// warning - raised inside Apply's rename step - moved from BEFORE the
+// readout to AFTER it: old order Fetching metadata.../Warning: could not
+// rename.../Mod: .../Warning: could not check conflicts..., new order
+// Fetching metadata.../Mod: .../Warning: could not rename.../Warning: could
+// not check conflicts.... The order-blind assert.Contains this test used to
+// carry could not have caught that reordering, so it is pinned here with
+// index comparisons instead.
 func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	verbose = true
@@ -710,10 +725,21 @@ func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testi
 
 	require.Error(t, err)
 	assert.Equal(t, "deployment failed: mod not in cache: acme-source/999@2.0", err.Error())
-	assert.Contains(t, out, "Warning: could not rename cache entry: ", "the -v rename-failure warning must print")
-	assert.Contains(t, out, "Warning: could not check conflicts: mod not in cache: acme-source/999@2.0\n",
+
+	modIdx := strings.Index(out, "Mod: Acme Mod")
+	renameIdx := strings.Index(out, "Warning: could not rename cache entry: ")
+	conflictIdx := strings.Index(out, "Warning: could not check conflicts: mod not in cache: acme-source/999@2.0\n")
+	deployIdx := strings.Index(out, "\nDeploying to game directory...\n")
+	require.NotEqual(t, -1, modIdx, "the readout must print")
+	require.NotEqual(t, -1, renameIdx, "the -v rename-failure warning must print")
+	require.NotEqual(t, -1, conflictIdx,
 		"the -v conflict-check-failure warning must also print, since the rename failure leaves the enriched version uncached")
-	assert.Contains(t, out, "\nDeploying to game directory...\n", "the deploy announcement prints before Install's own failure")
+	require.NotEqual(t, -1, deployIdx, "the deploy announcement must print before Install's own failure")
+
+	assert.True(t, modIdx < renameIdx,
+		"#314 review I1 (Ruling 18): the readout, rendered from the plan before Apply runs, must print before Apply's own rename-failure warning")
+	assert.True(t, renameIdx < conflictIdx, "the rename-failure warning must print before the conflict-check warning")
+	assert.True(t, conflictIdx < deployIdx, "the conflict-check warning must print before the deploy announcement")
 
 	data, rErr := os.ReadFile(filepath.Join(oldPath, "mymod.esp"))
 	require.NoError(t, rErr, "a failed rename must leave the original cache directory - and its content - untouched")

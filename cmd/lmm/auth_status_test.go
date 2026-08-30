@@ -123,7 +123,7 @@ func TestDoAuthStatusListsCustomSourcesInSortedOrder(t *testing.T) {
 // Registered sources with stored tokens must NOT be reported as orphaned.
 //
 // Registers nexusmods explicitly: post-Task-3, doAuthStatus's "registered"
-// set comes purely from authCapableSources' registry query, with no more
+// set comes purely from app.AuthCapableSources' registry query, with no more
 // hardcoded built-in-ID special case — a *core.Service built directly here
 // (bypassing app.Open, which registers built-ins in
 // production) must register nexusmods itself for "still-registered

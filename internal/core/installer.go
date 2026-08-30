@@ -560,8 +560,21 @@ func (i *Installer) GetConflicts(ctx context.Context, game *domain.Game, mod *do
 		return nil, fmt.Errorf("resolving deployable files: %w", err)
 	}
 
-	// Check for conflicts
-	dbConflicts, err := i.db.CheckFileConflicts(ctx, game.ID, profileName, files)
+	return i.conflictsForPaths(ctx, game, mod, profileName, files)
+}
+
+// conflictsForPaths is GetConflicts' twin for a caller that already knows the
+// game-dir-relative paths in question rather than owning a cache entry to
+// derive them from (#314): PlanImportArchive computes an archive's file list
+// from its LISTING, so it can ask the conflict question before anything has
+// been ingested. Same self-filter, same wrapping - only the source of the
+// path list differs.
+func (i *Installer) conflictsForPaths(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string, paths []string) ([]Conflict, error) {
+	if i.db == nil {
+		return nil, nil
+	}
+
+	dbConflicts, err := i.db.CheckFileConflicts(ctx, game.ID, profileName, paths)
 	if err != nil {
 		return nil, fmt.Errorf("checking conflicts: %w", err)
 	}

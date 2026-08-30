@@ -20,8 +20,8 @@ Scan mode (no arguments): scans the game's mod_path for files not yet
 tracked by lmm, tries to match each one by name against the game's
 configured sources (skip with --skip-match), and imports whatever is
 left after confirmation. Useful for mods that were installed manually -
-e.g. mods whose author has disabled API downloads. --dry-run and
---skip-match only apply to this mode. Every mod imported this way is
+e.g. mods whose author has disabled API downloads. --skip-match only
+applies to this mode. Every mod imported this way is
 marked as requiring manual download (since lmm did not fetch it itself);
 re-link it to a source with 'lmm mod edit --source' to clear that once
 it can be checked for updates normally.
@@ -31,9 +31,8 @@ Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
 it resolves automatically when the game has exactly one configured
 source, or prompts interactively when it has several) to fetch and
-attach source metadata as part of the import. --dry-run is rejected with
-an error here - there is no preview for this mode yet (see
-https://github.com/DonovanMods/linux-mod-manager/issues/314).
+attach source metadata as part of the import. --dry-run previews it -
+the archive is listed, never extracted, so nothing is written.
 
 .PP
 Either way, a mod that ends up unmatched to any remote source is
@@ -52,7 +51,7 @@ Examples:
 
 .SH OPTIONS
 \fB--dry-run\fP[=false]
-	preview what would be imported without making changes (scan mode only; rejected on an archive path, see --help)
+	preview what would be imported without making changes
 
 .PP
 \fB-f\fP, \fB--force\fP[=false]

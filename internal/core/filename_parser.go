@@ -55,6 +55,11 @@ func ParseNexusModsFilename(filename string) *ParsedFilename {
 // DetectModName determines a display name for an imported mod.
 // It checks for a single top-level directory in the extracted content,
 // falling back to the archive basename if not found.
+//
+// The rule itself lives in modNameFromMembers (#314): PlanImportArchive has
+// to answer the same question from an archive LISTING, before anything is
+// extracted, so this reads the tree and hands the entries to the one
+// implementation both sides share.
 func DetectModName(extractedPath, archiveFilename string) string {
 	// If no extracted path provided, use archive basename
 	if extractedPath == "" {
@@ -63,17 +68,15 @@ func DetectModName(extractedPath, archiveFilename string) string {
 
 	// Try to find a single top-level directory
 	entries, err := os.ReadDir(extractedPath)
-	if err != nil || len(entries) == 0 {
+	if err != nil {
 		return stripExtension(archiveFilename)
 	}
 
-	// If there's exactly one entry and it's a directory, use its name
-	if len(entries) == 1 && entries[0].IsDir() {
-		return entries[0].Name()
+	members := make([]archiveMember, 0, len(entries))
+	for _, entry := range entries {
+		members = append(members, archiveMember{Path: entry.Name(), Dir: entry.IsDir()})
 	}
-
-	// Fallback to archive basename
-	return stripExtension(archiveFilename)
+	return modNameFromMembers(members, archiveFilename)
 }
 
 // stripExtension removes the file extension from a filename

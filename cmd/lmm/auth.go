@@ -253,8 +253,10 @@ func printAuthLoginSuccess(w io.Writer, src source.ModSource, hasValidator bool)
 }
 
 // selectAuthSource resolves the source from args or prompts interactively.
-// Both paths draw from the same registry query (authCapableSources): every
-// registered source with Capabilities().Auth.
+// Both paths test the same capability - CapabilitiesOf(src).Auth - though
+// not via one shared call: a named arg is checked directly through
+// isAuthCapableSource, while the interactive path lists every candidate via
+// promptForSource (app.AuthCapableSources).
 func selectAuthSource(service *core.Service, args []string) (string, error) {
 	if len(args) > 0 {
 		sourceID := args[0]
