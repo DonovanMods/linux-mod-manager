@@ -335,7 +335,7 @@ func TestDoImport_ArchiveDryRun_JSON_EmitsThePlan(t *testing.T) {
 	assert.Empty(t, stderr)
 
 	var plan core.ImportArchivePlan
-	decodeSingleDoc(t, out, &plan)
+	decodeStrict(t, out, &plan)
 	assert.Equal(t, archivePath, plan.Archive)
 	assert.Equal(t, []string{"mymod.esp"}, plan.Files)
 
