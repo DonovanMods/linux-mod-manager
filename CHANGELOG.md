@@ -42,7 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for `game set-default`/`clear-default`. `--json` never prompts: a confirmation with no deciding
   flag fails before mutating anything with the error envelope, and an `install --json` or
   `import <archive> --json` blocked by file conflicts reports them as `details.conflicts` (pass
-  `--force` to accept). `lmm mod files` honours `--json` too, emitting `core.ModFilesReport`. (#303)
+  `--force` to accept). `lmm mod files` honours `--json` too, emitting `core.ModFilesReport`.
+  `install`'s `files_deployed` (and plain-text `Files deployed: N`) now counts the cache entry's
+  files once instead of accumulating a per-archive count, which previously over-counted mods
+  installed from two or more extracted archives (e.g. 3 → 2). (#303)
 - `lmm profile apply`, `lmm profile switch` and `lmm profile sync` gain `--dry-run`: they print
   the same plan preview the live run shows, under a `<Verb> plan for profile "<name>" (dry run)`
   header, and change nothing — including the profile-creating and default-switching writes a
@@ -209,8 +212,11 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
   with a failing `install.before_all`) now prints after the download lines rather than before
   them. Declining an `import` now also discards the cache entry that import filled on its way to
-  the question, so a refusal leaves the cache exactly as it found it and accepting leaves exactly
-  one entry rather than orphaning the refused pass's copy of the archive; an accepted
+  the question, so a refusal removes the entry this call created and leaves managed state (DB,
+  profile, game tree) untouched; when an entry already existed at a reproducible identity
+  (`--source/--id`, or a NexusMods filename), the import had already overwritten it before the
+  refusal, and that prior entry is not restored (#310). Accepting leaves exactly one entry rather
+  than orphaning the refused pass's copy of the archive; an accepted
   `import --id` re-run therefore also renames its cache entry onto the resolved version
   successfully, where it previously reported `renamed: false` and (under `-v`) a "could not
   rename cache entry" warning. `--force` still skips the conflict check entirely. (#303)

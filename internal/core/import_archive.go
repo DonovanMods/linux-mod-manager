@@ -53,13 +53,16 @@ type ImportArchiveOptions struct {
 	// Left false (the default), a non-empty conflict list makes
 	// ImportArchive return *ConflictError carrying it, before the hooks,
 	// the deploy, the DB row and the profile ref - and the cache entry the
-	// call filled on its way there is removed again
-	// (discardImportedCacheEntry), so a refusal leaves the whole system,
-	// managed state and cache alike, exactly as it found it. A frontend
-	// that prompts re-runs ImportArchive with this set, and the re-run
-	// re-caches the archive from disk; the conflict list cannot be computed
-	// before the archive is cached, which is why it is a mid-Apply typed
-	// error rather than a Plan field - see this file's package comment.
+	// call created is removed again (discardImportedCacheEntry), so a
+	// refusal leaves managed state (DB, profile, game tree) untouched. That
+	// removal only undoes what this call created: when an entry already
+	// existed at a reproducible identity (--source/--id, or a NexusMods
+	// filename), the import has already overwritten it before the conflict
+	// gate runs, and a refusal does not restore it (#310). A frontend that
+	// prompts re-runs ImportArchive with this set, and the re-run re-caches
+	// the archive from disk; the conflict list cannot be computed before
+	// the archive is cached, which is why it is a mid-Apply typed error
+	// rather than a Plan field - see this file's package comment.
 	AcceptConflicts bool
 }
 

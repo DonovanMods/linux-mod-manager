@@ -771,10 +771,12 @@ Output is colorized by default whenever stdout is a terminal (headers, status ac
 ### JSON output
 
 `--json` prints **exactly one JSON document to stdout**, 2-space indented,
-with a single trailing newline and nothing else. Warnings, progress and
-human notices go to stderr, so `lmm ... --json | jq` is always safe. Map keys
-and list order are deterministic, so two runs over the same state produce
-byte-identical output.
+with a single trailing newline and nothing else. Warnings and human notices
+travel inside the document itself (its `warnings`/`notes` fields), not
+stderr; stderr stays empty except for `--log-level` diagnostics, so
+`lmm ... --json | jq` is always safe. Map keys and list order are
+deterministic, so two runs over the same state produce byte-identical
+output.
 
 On failure the document is an envelope instead:
 
