@@ -50,8 +50,12 @@ type UninstallPlan struct {
 	// Files cannot express, since the artifact belongs to the profile
 	// rather than to any one mod. Nil when the game does not deploy by
 	// compilation, and nil when the sync would leave the artifact exactly
-	// as it is (Ruling 8). See mergedArtifactEffectForUninstall.
-	MergedArtifact *MergedArtifactEffect `json:"merged_artifact"`
+	// as it is (Ruling 8). See mergedArtifactEffectForUninstall. omitzero
+	// (phase-end review Minor 7): a non-compile game's plan omits the key
+	// entirely instead of carrying merged_artifact: null, matching this
+	// phase's own not-applicable-is-absent convention (convert_paks,
+	// auth, cache_path, updated_at).
+	MergedArtifact *MergedArtifactEffect `json:"merged_artifact,omitzero"`
 
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyUninstall.

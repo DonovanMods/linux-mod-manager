@@ -2,6 +2,5 @@
   "profile": "default",
   "mods": [],
   "uninstall": false,
-  "hooks": [],
-  "merged_artifact": null
+  "hooks": []
 }

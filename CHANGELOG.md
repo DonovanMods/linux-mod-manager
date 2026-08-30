@@ -464,11 +464,12 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   iteration order. (#299)
 - `lmm uninstall --dry-run` and `lmm purge --dry-run` no longer announce a merged-artifact effect
   that would not happen. Both plans now model it (`merged_artifact: {action, path}` under `--json`,
-  `null` when there is nothing to do), computed from the merge sources the operation would leave
+  the key omitted entirely when there is nothing to do — `omitzero`, phase-end review Minor 7;
+  previously present as `null`), computed from the merge sources the operation would leave
   behind and whether the artifact is actually deployed, so a compile-game uninstall of a mod that
   contributes nothing to the merge — or a purge with nothing merged yet — prints no artifact line.
   `lmm import <archive> --json`'s `merged_pak_synced` is likewise set from the sync having run and
-  succeeded rather than from the game's deploy mode. (#304)
+  succeeded rather than from the game's deploy mode. (#304, #306)
 - `lmm status --game X --json` no longer swallows a failure to list the game's profiles into an
   empty-profiles document; it now fails loud, matching the plain-text path (which already did).
   Only reachable when the profiles directory exists but can't be read - a missing directory still

@@ -890,8 +890,9 @@ under its issue number:
 - **Ruling 8 — dry-run merged-artifact modelling.** `lmm uninstall --dry-run`
   and `lmm purge --dry-run` used to always print a merged-artifact line on a
   compile-mode game; the plan now models the actual effect
-  (`merged_artifact: {action, path}` under `--json`, `null`/absent when
-  nothing would change), so a dry run that would leave the artifact alone
+  (`merged_artifact: {action, path}` under `--json`, the key omitted
+  entirely when nothing would change), so a dry run that would leave the
+  artifact alone
   says nothing. `lmm import <archive> --json`'s `merged_pak_synced` is set
   from whether the sync actually ran and succeeded, not from the game's
   deploy mode alone.

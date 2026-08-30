@@ -223,8 +223,12 @@ type PurgePlan struct {
 	// express, since exmodz mods have no per-mod deployment of their own
 	// (#197 I2). Always a removal when set; nil when the game does not
 	// deploy by compilation, and nil when there is no deployed artifact to
-	// remove (Ruling 8). See mergedArtifactEffectForPurge.
-	MergedArtifact *MergedArtifactEffect `json:"merged_artifact"`
+	// remove (Ruling 8). See mergedArtifactEffectForPurge. omitzero
+	// (phase-end review Minor 7): a non-compile game's plan omits the key
+	// entirely instead of carrying merged_artifact: null, matching this
+	// phase's own not-applicable-is-absent convention (convert_paks,
+	// auth, cache_path, updated_at).
+	MergedArtifact *MergedArtifactEffect `json:"merged_artifact,omitzero"`
 
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyPurge.

@@ -27,6 +27,5 @@
     "plugin.esp"
   ],
   "keep_cache": false,
-  "hooks": [],
-  "merged_artifact": null
+  "hooks": []
 }

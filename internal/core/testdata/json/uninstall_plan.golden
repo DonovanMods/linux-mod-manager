@@ -28,6 +28,5 @@
     "Data/Sample.esp"
   ],
   "keep_cache": true,
-  "hooks": [],
-  "merged_artifact": null
+  "hooks": []
 }
