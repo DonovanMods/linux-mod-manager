@@ -260,6 +260,12 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   `--json` document in `warnings` (stderr stays empty under `--json`). It was previously a
   `--verbose`-only stdout note, so a default-verbosity run reported success with a silent
   database-vs-profile divergence. (#294)
+- `lmm update --verbose`'s per-mod progress line (`n/total: <mod>`) now counts across every
+  source's batch instead of restarting at 1 for each source. Checking mods from two sources used
+  to print `1/3 … 3/3` then `1/2 … 2/2`; it now prints one unbroken `1/5 … 5/5`. Each source's own
+  batch position (`Index`/`Total`) is unchanged internally — `UpdateCheckEvent` gains
+  `GlobalIndex`/`GlobalTotal` alongside them — so only the printed numbers move; `--json` is
+  unaffected (progress events are suppressed under `--json` regardless). (#283)
 
 ### Changed — JSON output (v2)
 

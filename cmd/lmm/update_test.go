@@ -198,6 +198,18 @@ func (s *fakeUpdateSource) CheckUpdates(ctx context.Context, installed []domain.
 	return updates, nil
 }
 
+// CheckUpdatesWithProgress makes fakeUpdateSource a
+// source.UpdateProgressReporter, like nexusmods/curseforge, so doUpdate's
+// -v sink fires: report each installed mod's 1-based position in THIS
+// batch, then delegate to CheckUpdates for the actual comparison - mirrors
+// internal/core's reportingMockSource.
+func (s *fakeUpdateSource) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
+	for i, im := range installed {
+		report(i+1, len(installed), im.Name)
+	}
+	return s.CheckUpdates(ctx, installed)
+}
+
 // AddMod registers modID's "new version" definition and its downloadable
 // files (what GetMod/GetModFiles return, and what CheckUpdates compares an
 // installed mod's version against).
@@ -692,4 +704,131 @@ func TestApplyUpdate_AfterEachHookFailures_PrintWarningsAndSucceed(t *testing.T)
 	updated, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the update must have applied despite both after_each hook failures")
+}
+
+// TestDoUpdate_Verbose_GlobalCounterAcrossSources pins Ruling 6 (#283):
+// under -v, doUpdate's per-mod tick prints the GLOBAL position across every
+// source's batch, not each source's own count restarting at 1. Two sources
+// with 2 and 3 checkable mods respectively must print five sequential ticks
+// - 1/5..5/5 - never 1/2..2/2 followed by 1/3..3/3. Which source the
+// Updater visits first is a map iteration and not fixed, so this asserts
+// the sequence property rather than which mod carries which number.
+func TestDoUpdate_Verbose_GlobalCounterAcrossSources(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	srcA := newFakeUpdateSource("src-a")
+	t.Cleanup(srcA.Close)
+	srcB := newFakeUpdateSource("src-b")
+	t.Cleanup(srcB.Close)
+	svc.RegisterSource(srcA)
+	svc.RegisterSource(srcB)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"src-a": "g1", "src-b": "g1"},
+	}
+
+	oldSource, oldProfile, oldAll, oldDryRun, oldForce := updateSource, updateProfile, updateAll, updateDryRun, updateForce
+	oldVerbose, oldNoColor, oldNoHooks, oldJSON := verbose, noColor, noHooks, jsonOutput
+	updateSource, updateProfile, updateAll, updateDryRun, updateForce = "src-a", "", false, false, false
+	verbose, noColor, noHooks, jsonOutput = true, true, false, false
+	t.Cleanup(func() {
+		updateSource, updateProfile, updateAll, updateDryRun, updateForce = oldSource, oldProfile, oldAll, oldDryRun, oldForce
+		verbose, noColor, noHooks, jsonOutput = oldVerbose, oldNoColor, oldNoHooks, oldJSON
+	})
+
+	seedInstalledForUpdate(t, svc, game, "src-a", "a1", "Mod A1", "1.0", nil, map[string][]byte{"a1.esp": []byte("a1")})
+	seedInstalledForUpdate(t, svc, game, "src-a", "a2", "Mod A2", "1.0", nil, map[string][]byte{"a2.esp": []byte("a2")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b1", "Mod B1", "1.0", nil, map[string][]byte{"b1.esp": []byte("b1")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b2", "Mod B2", "1.0", nil, map[string][]byte{"b2.esp": []byte("b2")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b3", "Mod B3", "1.0", nil, map[string][]byte{"b3.esp": []byte("b3")})
+
+	_, stderr, doErr := captureStdoutAndStderr(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+	require.NoError(t, doErr)
+
+	var indices, totals []int
+	for _, line := range strings.Split(strings.TrimRight(stderr, "\n"), "\n") {
+		if !strings.HasPrefix(line, "  ") {
+			continue
+		}
+		var idx, total int
+		var name string
+		n, scanErr := fmt.Sscanf(strings.TrimPrefix(line, "  "), "%d/%d: %s", &idx, &total, &name)
+		require.NoError(t, scanErr)
+		require.Equal(t, 3, n)
+		indices = append(indices, idx)
+		totals = append(totals, total)
+	}
+
+	require.Len(t, indices, 5, "one tick per checkable mod across both sources; got stderr:\n%s", stderr)
+	assert.Equal(t, []int{1, 2, 3, 4, 5}, indices, "global index runs 1..5 across both sources without restarting")
+	for _, total := range totals {
+		assert.Equal(t, 5, total, "global total is the sum of both sources' batches, not either one alone")
+	}
+}
+
+// TestDoUpdate_JSON_TwoSources_NoGlobalCounterLeak confirms Ruling 6's live
+// GlobalIndex/GlobalTotal event fields have no --json equivalent to add:
+// under --json the sink stays nil regardless of --verbose (Ruling 15), so a
+// two-source, progress-reporting listing still emits exactly the one
+// UpdateCheckReport document, stderr stays empty, and nothing
+// update-check-progress-shaped (global_index/global_total) reaches stdout -
+// the existing Updates/Skipped fields already say everything the finished
+// check needs to.
+func TestDoUpdate_JSON_TwoSources_NoGlobalCounterLeak(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+	gameDir := t.TempDir()
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	srcA := newFakeUpdateSource("src-a")
+	t.Cleanup(srcA.Close)
+	srcB := newFakeUpdateSource("src-b")
+	t.Cleanup(srcB.Close)
+	svc.RegisterSource(srcA)
+	svc.RegisterSource(srcB)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{"src-a": "g1", "src-b": "g1"},
+	}
+
+	oldSource, oldProfile, oldAll, oldDryRun, oldForce := updateSource, updateProfile, updateAll, updateDryRun, updateForce
+	oldVerbose, oldNoColor, oldNoHooks, oldJSON := verbose, noColor, noHooks, jsonOutput
+	updateSource, updateProfile, updateAll, updateDryRun, updateForce = "src-a", "", false, false, false
+	verbose, noColor, noHooks, jsonOutput = true, true, false, true
+	t.Cleanup(func() {
+		updateSource, updateProfile, updateAll, updateDryRun, updateForce = oldSource, oldProfile, oldAll, oldDryRun, oldForce
+		verbose, noColor, noHooks, jsonOutput = oldVerbose, oldNoColor, oldNoHooks, oldJSON
+	})
+
+	seedInstalledForUpdate(t, svc, game, "src-a", "a1", "Mod A1", "1.0", nil, map[string][]byte{"a1.esp": []byte("a1")})
+	seedInstalledForUpdate(t, svc, game, "src-b", "b1", "Mod B1", "1.0", nil, map[string][]byte{"b1.esp": []byte("b1")})
+
+	stdout, stderr, doErr := captureStdoutStderrErr(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+	require.NoError(t, doErr)
+	assert.Empty(t, stderr, "--json must leave stderr empty even with --verbose and a progress-reporting source (Ruling 15)")
+
+	var doc core.UpdateCheckReport
+	decodeSingleDoc(t, stdout, &doc)
+	assert.Equal(t, game.ID, doc.GameID)
+	assert.NotContains(t, stdout, "global_index", "no live-event field leaks into the report document")
+	assert.NotContains(t, stdout, "global_total", "no live-event field leaks into the report document")
 }

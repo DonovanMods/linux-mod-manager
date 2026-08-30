@@ -269,7 +269,10 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
 		sink = func(e core.Event) {
 			if uc, ok := e.(core.UpdateCheckEvent); ok {
-				fmt.Fprintf(os.Stderr, "  %d/%d: %s\n", uc.Index, uc.Total, truncate(uc.ModName, 60))
+				// Global, not per-source: a two-source check prints 1/5..5/5
+				// rather than restarting at 1/3..3/3 for the second source
+				// (Ruling 6, #283).
+				fmt.Fprintf(os.Stderr, "  %d/%d: %s\n", uc.GlobalIndex, uc.GlobalTotal, truncate(uc.ModName, 60))
 			}
 		}
 	}

@@ -100,6 +100,7 @@ func TestEventGoldens(t *testing.T) {
 			"update_check",
 			core.UpdateCheckEvent{
 				Scope: sampleScope(core.OpUpdateCheck), SourceID: "nexusmods",
+				GlobalIndex: 7, GlobalTotal: 12,
 			},
 		},
 		{

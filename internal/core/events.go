@@ -132,10 +132,15 @@ type MergeEvent struct {
 
 // UpdateCheckEvent is one per-mod tick while a source checks for updates.
 // Index/Total are within SourceID's batch (each source reports its own
-// batch; see Updater).
+// batch; see Updater); GlobalIndex/GlobalTotal are the same tick's position
+// across every source checked in this run (Ruling 6, #283) - a two-source
+// run reports 1/5..5/5 on GlobalIndex/GlobalTotal even though Index/Total
+// restarts at 1 for the second source's batch.
 type UpdateCheckEvent struct {
 	Scope
-	SourceID string `json:"source_id"`
+	SourceID    string `json:"source_id"`
+	GlobalIndex int    `json:"global_index"`
+	GlobalTotal int    `json:"global_total"`
 }
 
 func (StepEvent) EventType() string        { return "step" }

@@ -50,6 +50,15 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 	var allUpdates []domain.Update
 	var checkErrs []error
 
+	// GlobalIndex/GlobalTotal (Ruling 6, #283) span every source's batch, so
+	// a two-source run reports 1/5..5/5 instead of the per-source Index/Total
+	// restarting at 1 for the second source. globalOffset is reserved for
+	// each source's batch up front, before that source's own success/failure
+	// is known, so the running total stays the sum of every batch size
+	// regardless of which sources actually report progress or error out.
+	globalTotal := len(checkable)
+	globalOffset := 0
+
 	// Check each source
 	for sourceID, mods := range bySource {
 		select {
@@ -57,6 +66,9 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 			return allUpdates, ctx.Err()
 		default:
 		}
+
+		batchOffset := globalOffset
+		globalOffset += len(mods)
 
 		src, err := u.registry.Get(sourceID)
 		if err != nil {
@@ -78,7 +90,10 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 		var updates []domain.Update
 		if rep, ok := src.(source.UpdateProgressReporter); ok && sink != nil {
 			updates, err = rep.CheckUpdatesWithProgress(ctx, mods, func(n, total int, name string) {
-				sink(UpdateCheckEvent{Scope: Scope{Op: OpUpdateCheck, ModName: name, Index: n, Total: total}, SourceID: sourceID})
+				sink(UpdateCheckEvent{
+					Scope: Scope{Op: OpUpdateCheck, ModName: name, Index: n, Total: total}, SourceID: sourceID,
+					GlobalIndex: batchOffset + n, GlobalTotal: globalTotal,
+				})
 			})
 		} else {
 			updates, err = src.CheckUpdates(ctx, mods)
