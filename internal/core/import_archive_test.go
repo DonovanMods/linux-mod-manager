@@ -666,6 +666,31 @@ func TestImportArchive_UnacceptedConflict_RemovesTheCacheEntryItCreated(t *testi
 	assert.Len(t, modsAfter, len(modsBefore), "a refused conflict must write no DB row")
 }
 
+// TestImportArchive_ConflictRefusedThenAccepted_EnrichmentRenameSucceeds
+// pins the one behaviour delta Important 3's fix carries (task-8 review
+// Minor 4's other half). An --id import caches under the pre-enrich identity
+// and renames the entry onto the resolved version; before the fix the
+// refused pass had already populated the destination, so the accept re-run's
+// rename failed with ENOTEMPTY - leaving `Renamed: false` on a json-tagged
+// result field and, under -v, a
+// "Warning: could not rename cache entry: ... file exists" note. With the
+// refusal cleaning up after itself the rename has a clear destination again,
+// so both wrong values are gone.
+func TestImportArchive_ConflictRefusedThenAccepted_EnrichmentRenameSucceeds(t *testing.T) {
+	svc, game, archiveB := setupImportArchiveConflict(t)
+
+	_, err := svc.ImportArchive(context.Background(), game, "default", archiveB,
+		core.ImportArchiveOptions{SourceID: "acme-source", ModID: "B1"}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError), "sanity: the first run must refuse")
+
+	result, err := svc.ImportArchive(context.Background(), game, "default", archiveB,
+		core.ImportArchiveOptions{SourceID: "acme-source", ModID: "B1", AcceptConflicts: true}, nil)
+	require.NoError(t, err)
+
+	assert.True(t, result.Renamed, "the accept re-run's enrichment rename must succeed")
+	assert.Empty(t, result.Notes, "and emit no rename-failure note for the -v readout to print")
+}
+
 // TestImportArchive_ConflictRefusedThenAccepted_LeavesExactlyOneCacheEntry
 // is the accept half: after the frontend's re-run there is exactly ONE new
 // cache entry for the import, and the identity persisted to the DB and the
