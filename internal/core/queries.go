@@ -126,6 +126,32 @@ func (s *Service) ListProfileNames(ctx context.Context, gameID string) (*Profile
 	return &ProfileNames{GameID: gameID, Profiles: names}, nil
 }
 
+// ProfileListing is everything `lmm profile list` renders: one game's
+// profiles, in ProfileManager.List order, each carrying the same
+// ProfileSummary shape GameStatus.Profiles already uses (name, mod count,
+// default marker) - a query scoped to profiles alone rather than to one
+// game's whole status (#309).
+type ProfileListing struct {
+	GameID   string           `json:"game_id"`
+	Profiles []ProfileSummary `json:"profiles"`
+}
+
+// ListProfiles returns gameID's profiles as ProfileSummary rows, in
+// ProfileManager.List order - the document `lmm profile list --json`
+// emits; the plain NAME/MODS/DEFAULT table is rebuilt from it
+// byte-identically (#309).
+func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileListing, error) {
+	profiles, err := s.NewProfileManager().List(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	listing := &ProfileListing{GameID: gameID}
+	for _, p := range profiles {
+		listing.Profiles = append(listing.Profiles, ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault})
+	}
+	return listing, nil
+}
+
 // GameSummary is one row of a StatusReport: a configured game plus the
 // counts `lmm status` shows next to it.
 //

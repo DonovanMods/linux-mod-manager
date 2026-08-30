@@ -676,6 +676,17 @@ func TestJSONGoldens(t *testing.T) {
 			core.ProfileNames{GameID: "skyrim-se", Profiles: []string{"default", "survival"}},
 		},
 		{
+			// `lmm profile list --json`'s document (#309): the same
+			// ProfileSummary rows profile_summary/game_status pin, wrapped
+			// with the game_id stamp - two profiles so both the default
+			// marker and a non-default row are visible.
+			"profile_listing",
+			core.ProfileListing{GameID: "skyrim-se", Profiles: []core.ProfileSummary{
+				{Name: "default", ModCount: 3, IsDefault: true},
+				{Name: "survival", ModCount: 0, IsDefault: false},
+			}},
+		},
+		{
 			// Profiles is deliberately left nil (no `omitempty` on the tag) to
 			// pin that a game with no profiles marshals as "[]", not "null".
 			"game_summary",

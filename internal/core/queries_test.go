@@ -120,6 +120,48 @@ func TestListMods_EmptyProfileHasEmptyMods(t *testing.T) {
 	assert.Empty(t, list.Mods)
 }
 
+// --- ListProfiles ---
+
+// TestListProfiles_NamesModCountsAndDefault covers the document `lmm
+// profile list --json` renders: one ProfileSummary row per profile, in
+// ProfileManager.List order, each with its own mod count and default
+// marker - the same rows GameStatus.Profiles carries, for a query scoped to
+// profiles alone.
+func TestListProfiles_NamesModCountsAndDefault(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "2.0")
+	_, err := svc.NewProfileManager().Create(ctx, "g1", "survival")
+	require.NoError(t, err)
+	require.NoError(t, svc.NewProfileManager().SetDefault(ctx, "g1", "default"))
+
+	listing, err := svc.ListProfiles(ctx, "g1")
+	require.NoError(t, err)
+	require.NotNil(t, listing)
+	assert.Equal(t, "g1", listing.GameID)
+	require.Len(t, listing.Profiles, 2)
+
+	byName := map[string]core.ProfileSummary{}
+	for _, p := range listing.Profiles {
+		byName[p.Name] = p
+	}
+	assert.Equal(t, 2, byName["default"].ModCount)
+	assert.True(t, byName["default"].IsDefault)
+	assert.Equal(t, 0, byName["survival"].ModCount)
+	assert.False(t, byName["survival"].IsDefault)
+}
+
+// TestListProfiles_NoProfilesIsEmptyNotNil pins the zero-profiles shape: the
+// listing itself is never nil, and its Profiles slice marshals as [].
+func TestListProfiles_NoProfilesIsEmptyNotNil(t *testing.T) {
+	listing, err := newFlowsTestService(t).ListProfiles(context.Background(), "g1")
+	require.NoError(t, err)
+	require.NotNil(t, listing)
+	assert.Equal(t, "g1", listing.GameID)
+	assert.Empty(t, listing.Profiles)
+}
+
 // --- Status / GameStatus ---
 
 // TestStatus_GamesByIDWithCountsAndDefault covers the summary `lmm status`
