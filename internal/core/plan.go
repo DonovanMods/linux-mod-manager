@@ -90,3 +90,34 @@ func uninstallHookNames(hooks *ResolvedHooks, skipHooks bool) []string {
 	}
 	return names
 }
+
+// MergedArtifactEffect is what a flow would do to a profile's merged
+// artifact - the single compiled file every exmodz/converted-pak mod on a
+// DeployCompile game reaches the game directory through (#197). It is the
+// half of an uninstall's or a purge's consequences that the plan's own mod
+// and file lists cannot express: those name per-mod deployments, while the
+// merged artifact belongs to the profile as a whole.
+//
+// A nil *MergedArtifactEffect means "no merged-artifact consequence": the
+// game does not deploy by compilation, or the flow would leave the artifact
+// exactly as it is. Ruling 8 (v2 Phase 3): before this, both `uninstall
+// --dry-run` and `purge --dry-run` announced the effect on EVERY compile
+// game, whether or not anything would actually change.
+type MergedArtifactEffect struct {
+	// Action is MergedArtifactResync or MergedArtifactRemove.
+	Action string `json:"action"`
+
+	// Path is the artifact's game-dir-relative path - the compile source's
+	// own MergedArtifactName (#256), the same value DeployResult.
+	// MergedArtifact carries.
+	Path string `json:"path"`
+}
+
+// MergedArtifactResync/MergedArtifactRemove are MergedArtifactEffect.Action's
+// two values: the artifact is rebuilt from the merge sources that remain
+// (which includes generating or redeploying a missing one), or it leaves the
+// game directory entirely.
+const (
+	MergedArtifactResync = "resync"
+	MergedArtifactRemove = "remove"
+)

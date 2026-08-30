@@ -1,7 +1,7 @@
 ## stdout
 Uninstall plan for profile "default" (dry run)
 
-Would uninstall: Bear Mount (fake-compiler:bear-mount)
+Would uninstall: Plain Mod (src:plain)
   Would remove from profile: default
   Would remove 0 file(s) from the game directory
   Cache entry would be deleted
@@ -9,4 +9,4 @@ Would uninstall: Bear Mount (fake-compiler:bear-mount)
 ## error
 <nil>
 ## tree
-<empty>
+zzz_LMM_Merged_P.pak

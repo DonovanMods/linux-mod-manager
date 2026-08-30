@@ -102,7 +102,7 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 		if jsonOutput {
 			return emitJSON(plan)
 		}
-		renderUninstallPlan(plan, game, profileName)
+		renderUninstallPlan(plan, profileName)
 		return nil
 	}
 
@@ -149,14 +149,16 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 // UninstallPlan.Files is the undeploy step's own removal set. On a
 // DeployCompile game the uninstall ALSO resyncs the profile's merged
 // artifact afterwards (rebuilding it, or removing it once the last merge
-// source is gone) - an effect the plan type does not model, so the render
-// says so in a line of its own rather than letting the file count read as
-// the whole story.
+// source is gone) - an effect Files cannot express, so it gets a line of
+// its own rather than letting the file count read as the whole story. That
+// line comes from plan.MergedArtifact and is printed only when the sync
+// would actually change something (Ruling 8): a compile game whose
+// uninstall target is not a merge source gets no line at all.
 //
 // Exit code: like `deploy --dry-run`, a dry run that renders successfully
 // returns nil. A mod that cannot be resolved at all is still a PlanUninstall
 // error and fails normally, exactly as the live path does.
-func renderUninstallPlan(plan *core.UninstallPlan, game *domain.Game, profileName string) {
+func renderUninstallPlan(plan *core.UninstallPlan, profileName string) {
 	fmt.Printf("Uninstall plan for profile %q (dry run)\n\n", profileName)
 
 	fmt.Printf("Would uninstall: %s (%s)\n", plan.Mod.Name, domain.ModKey(plan.Mod.SourceID, plan.Mod.ID))
@@ -172,8 +174,12 @@ func renderUninstallPlan(plan *core.UninstallPlan, game *domain.Game, profileNam
 	} else {
 		fmt.Println("  Cache entry would be deleted")
 	}
-	if game.DeployMode == domain.DeployCompile {
-		fmt.Println("  The profile's merged artifact would be resynced afterwards")
+	if e := plan.MergedArtifact; e != nil {
+		if e.Action == core.MergedArtifactRemove {
+			fmt.Println("  The profile's merged artifact would be removed afterwards")
+		} else {
+			fmt.Println("  The profile's merged artifact would be resynced afterwards")
+		}
 	}
 
 	if len(plan.Hooks) > 0 {

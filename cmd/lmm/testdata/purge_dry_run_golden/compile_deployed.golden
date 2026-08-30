@@ -9,8 +9,9 @@ Purging mods from Game...
   ✓ Bear Mount
 
 Would purge: 1 mod(s)
+The profile's merged artifact would be removed too
 ## stderr
 ## error
 <nil>
 ## tree
-<empty>
+zzz_LMM_Merged_P.pak

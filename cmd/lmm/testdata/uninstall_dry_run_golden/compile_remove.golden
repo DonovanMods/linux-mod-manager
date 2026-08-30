@@ -5,8 +5,9 @@ Would uninstall: Bear Mount (fake-compiler:bear-mount)
   Would remove from profile: default
   Would remove 0 file(s) from the game directory
   Cache entry would be deleted
+  The profile's merged artifact would be removed afterwards
 ## stderr
 ## error
 <nil>
 ## tree
-<empty>
+zzz_LMM_Merged_P.pak

@@ -191,7 +191,16 @@ func TestJSONGoldens(t *testing.T) {
 				},
 				Uninstall: true,
 				Hooks:     []string{"uninstall.before_all", "uninstall.after_all"},
+				// Non-nil here and nil in uninstall_plan above, so the two
+				// goldens between them pin both halves of Ruling 8's
+				// optional field: the nested object and the JSON null a
+				// "nothing would change" plan carries.
+				MergedArtifact: &core.MergedArtifactEffect{Action: core.MergedArtifactRemove, Path: "zzz_LMM_Merged_P.pak"},
 			},
+		},
+		{
+			"merged_artifact_effect",
+			core.MergedArtifactEffect{Action: core.MergedArtifactResync, Path: "zzz_LMM_Merged_P.pak"},
 		},
 		{
 			// ToDisable is deliberately left nil (no `omitempty` on the tag)

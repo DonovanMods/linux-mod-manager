@@ -45,6 +45,14 @@ type UninstallPlan struct {
 	// SkipHooks.
 	Hooks []string `json:"hooks"`
 
+	// MergedArtifact is what the post-uninstall merged-pak sync would do to
+	// the profile's merged artifact on a DeployCompile game - an effect
+	// Files cannot express, since the artifact belongs to the profile
+	// rather than to any one mod. Nil when the game does not deploy by
+	// compilation, and nil when the sync would leave the artifact exactly
+	// as it is (Ruling 8). See mergedArtifactEffectForUninstall.
+	MergedArtifact *MergedArtifactEffect `json:"merged_artifact"`
+
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyUninstall.
 	snapshot installedSnapshot `json:"-"`
@@ -95,10 +103,11 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 	}
 
 	plan := &UninstallPlan{
-		Mod:       *mod,
-		KeepCache: opts.KeepCache,
-		Hooks:     uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks),
-		snapshot:  snapshotOf(installed),
+		Mod:            *mod,
+		KeepCache:      opts.KeepCache,
+		Hooks:          uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks),
+		MergedArtifact: s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod),
+		snapshot:       snapshotOf(installed),
 	}
 	for _, f := range s.deployedPathsFor(ctx, game, profileName, mod) {
 		if isDeployedNow(game, f) {

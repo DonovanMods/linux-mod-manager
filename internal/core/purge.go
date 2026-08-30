@@ -210,6 +210,14 @@ type PurgePlan struct {
 	// and none for an empty Mods set.
 	Hooks []string `json:"hooks"`
 
+	// MergedArtifact is what purgeMergedPak would do to the profile's
+	// merged artifact on a DeployCompile game - an effect Mods cannot
+	// express, since exmodz mods have no per-mod deployment of their own
+	// (#197 I2). Always a removal when set; nil when the game does not
+	// deploy by compilation, and nil when there is no deployed artifact to
+	// remove (Ruling 8). See mergedArtifactEffectForPurge.
+	MergedArtifact *MergedArtifactEffect `json:"merged_artifact"`
+
 	// snapshot is Ruling 5's precondition: the installed-mod set this plan
 	// was computed from, re-derived and compared by ApplyPurge.
 	snapshot installedSnapshot `json:"-"`
@@ -228,10 +236,11 @@ func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName 
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 	plan := &PurgePlan{
-		Profile:   profileName,
-		Mods:      mods,
-		Uninstall: opts.Uninstall,
-		snapshot:  snapshotOf(mods),
+		Profile:        profileName,
+		Mods:           mods,
+		Uninstall:      opts.Uninstall,
+		MergedArtifact: s.mergedArtifactEffectForPurge(game),
+		snapshot:       snapshotOf(mods),
 	}
 	if len(mods) > 0 {
 		plan.Hooks = uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)

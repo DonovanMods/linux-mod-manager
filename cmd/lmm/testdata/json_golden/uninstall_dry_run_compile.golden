@@ -1,8 +1,8 @@
 {
   "mod": {
-    "id": "1",
-    "source_id": "src",
-    "name": "Test Mod",
+    "id": "bear-mount",
+    "source_id": "fake-compiler",
+    "name": "Bear Mount",
     "version": "1.0",
     "author": "",
     "summary": "",
@@ -21,13 +21,17 @@
     "enabled": true,
     "deployed": false,
     "link_method": "symlink",
+    "file_ids": [
+      "exmodz-file"
+    ],
     "manual_download": false,
     "convert_paks": true
   },
-  "files": [
-    "plugin.esp"
-  ],
+  "files": [],
   "keep_cache": false,
   "hooks": [],
-  "merged_artifact": null
+  "merged_artifact": {
+    "action": "remove",
+    "path": "zzz_LMM_Merged_P.pak"
+  }
 }

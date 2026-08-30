@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -729,4 +730,31 @@ func TestImportArchive_ConflictRefusedThenAccepted_LeavesExactlyOneCacheEntry(t 
 	}
 	assert.Contains(t, ids, result.Mod.ID)
 	assert.Len(t, mods, 2, "the accepted import adds exactly one row alongside mod A")
+}
+
+// --- MergedPakSynced reports the sync, not the game's deploy mode (Ruling 8) ---
+
+// TestImportArchive_DeployCompile_SyncFailure_LeavesMergedPakSyncedFalse pins
+// ImportArchiveResult.MergedPakSynced's contract from the sync's own side: a
+// DeployCompile import whose end-of-import syncMergedPak call fails reports
+// the failure as a warning and does NOT claim the merged pak was synced. The
+// field is set inside the branch that actually ran the sync, never
+// re-derived from game.DeployMode beside it.
+func TestImportArchive_DeployCompile_SyncFailure_LeavesMergedPakSyncedFalse(t *testing.T) {
+	svc, _, game := newImportCompileTestGame(t)
+
+	// Remove the base artifact the merge needs: syncMergedPak's
+	// ResolveBaseArtifact then fails, which is a warning on the import (the
+	// mod is already installed and recorded by then), not an error.
+	require.NoError(t, os.Remove(filepath.Join(game.InstallPath, "Icarus", "Content", "Data", "data.pak")))
+
+	archivePath := filepath.Join(t.TempDir(), "Bear_Mount.exmodz")
+	require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0644))
+
+	result, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.False(t, result.MergedPakSynced, "a failed sync must not report itself as synced")
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "could not sync merged pak")
 }

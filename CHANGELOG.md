@@ -17,14 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lmm uninstall --dry-run` prints what an uninstall would do — which mod the ID resolves to
   (with its source, so a bare ID's first-match rule is visible), how many files would leave the
   game directory, what happens to the cache, and the hooks that would run — without changing
-  anything. `--verbose` lists the files. On a compile-mode game it also states that the profile's
-  merged artifact would be resynced afterwards; that line is unconditional on compile games, not
-  gated on whether a resync would actually change anything. (#293)
+  anything. `--verbose` lists the files. On a compile-mode game it also states what would happen
+  to the profile's merged artifact — resynced, or removed once the last merge source goes — and
+  says nothing at all when the uninstall would leave the artifact exactly as it is. (#293, #304)
 - `lmm purge --dry-run` prints what a purge would do — the mods it would undeploy, what happens
   to their records, and the hooks that would run — without changing anything and without
-  prompting. On a compile-mode game it also states that the profile's merged artifact would be
-  removed too; that line is unconditional on compile games, not gated on whether anything would
-  actually be removed. (#293)
+  prompting. On a compile-mode game with a merged artifact deployed it also states that the
+  artifact would be removed too; with nothing merged yet there is nothing to remove and the line
+  is absent. (#293, #304)
 - `lmm profile switch` and `lmm profile sync` gain `-y`/`--yes` to skip their confirmation
   prompt; `lmm profile import` gains `-y`/`--yes` to answer its "Download and install mods?"
   prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
@@ -375,6 +375,13 @@ profiles}`).
   instead of Go's randomized map iteration order. (#298)
 - `lmm status` and `lmm game list` order games by game ID, instead of Go's randomized map
   iteration order. (#299)
+- `lmm uninstall --dry-run` and `lmm purge --dry-run` no longer announce a merged-artifact effect
+  that would not happen. Both plans now model it (`merged_artifact: {action, path}` under `--json`,
+  `null` when there is nothing to do), computed from the merge sources the operation would leave
+  behind and whether the artifact is actually deployed, so a compile-game uninstall of a mod that
+  contributes nothing to the merge — or a purge with nothing merged yet — prints no artifact line.
+  `lmm import <archive> --json`'s `merged_pak_synced` is likewise set from the sync having run and
+  succeeded rather than from the game's deploy mode. (#304)
 - `lmm status --game X --json` no longer swallows a failure to list the game's profiles into an
   empty-profiles document; it now fails loud, matching the plain-text path (which already did).
   Only reachable when the profiles directory exists but can't be read - a missing directory still

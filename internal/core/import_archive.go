@@ -369,12 +369,20 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	// its own (validate+retain only) - without this, the imported mod's
 	// content never reaches the game directory until some OTHER flow happens
 	// to sync the merged pak.
-	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
-		warn("could not sync merged pak: %v", syncErr)
-	} else {
-		result.MergedPakSynced = game.DeployMode == domain.DeployCompile
-		for _, w := range syncWarnings {
-			warn("%s", w)
+	//
+	// Ruling 8: MergedPakSynced is set from the sync HAVING RUN, inside the
+	// branch that ran it - syncMergedPak returns immediately for a
+	// non-DeployCompile game, so the call is guarded by the same predicate
+	// rather than re-derived from game.DeployMode next to the assignment,
+	// where the two could drift apart.
+	if game.DeployMode == domain.DeployCompile {
+		if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {
+			warn("could not sync merged pak: %v", syncErr)
+		} else {
+			result.MergedPakSynced = true
+			for _, w := range syncWarnings {
+				warn("%s", w)
+			}
 		}
 	}
 
