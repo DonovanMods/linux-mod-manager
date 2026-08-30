@@ -1036,3 +1036,70 @@ func TestDoImport_JSON_ConflictWithoutForce_SurfacesEnvelopeWithDetails(t *testi
 	assert.Contains(t, envelope, "\"details\"")
 	assert.Contains(t, envelope, "\"conflicts\"")
 }
+
+// TestDoInstall_JSON_SearchPath_EmitsExactlyOneDocument covers the install
+// forms that reach searchAndSelectMods - every form but `--id` (unit P
+// review, Important 2). setupDoInstallTest pins installModID = "mod1", so
+// until now every install JSON test drove the `--id` path and the search
+// path's own `Searching for "<query>"...` header sat on stdout ahead of the
+// document, unseen. runJSONCommand asserts both framing invariants (exactly
+// one document on stdout, nothing on stderr) on the success and --force
+// paths; the conflict path emits no document at all, so it asserts empty
+// stdout beside the typed error directly.
+func TestDoInstall_JSON_SearchPath_EmitsExactlyOneDocument(t *testing.T) {
+	seedSearchable := func(t *testing.T, src *fakeInstallSource, fileName string) {
+		t.Helper()
+		mod := domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"}
+		src.AddMod(&mod, []domain.DownloadableFile{{ID: "main", FileName: fileName, IsPrimary: true}})
+		src.AddDownload("main", []byte("plugin content"))
+		src.searchResults = []domain.Mod{mod}
+		installModID = ""
+	}
+
+	t.Run("success", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		seedSearchable(t, src, "mod1.esp")
+
+		out := runJSONCommand(t, func() error {
+			return doInstall(context.Background(), svc, game, []string{"Mod One"})
+		})
+
+		var result core.InstallResult
+		decodeSingleDoc(t, out, &result)
+		require.Len(t, result.Installed, 1)
+		assert.Equal(t, "mod1", result.Installed[0].ModID)
+	})
+
+	t.Run("force_over_conflict", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		installForce = true
+		seedConflictingOwner(t, svc, game)
+		seedSearchable(t, src, "shared.esp")
+
+		out := runJSONCommand(t, func() error {
+			return doInstall(context.Background(), svc, game, []string{"Mod One"})
+		})
+
+		var result core.InstallResult
+		decodeSingleDoc(t, out, &result)
+		require.Len(t, result.Installed, 1)
+		assert.Equal(t, "mod1", result.Installed[0].ModID)
+	})
+
+	t.Run("conflict_without_force", func(t *testing.T) {
+		svc, game, src := setupDoInstallTest(t)
+		withJSONOutput(t)
+		seedConflictingOwner(t, svc, game)
+		seedSearchable(t, src, "shared.esp")
+
+		stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+			return assertStdinNeverRead(t, func() error {
+				return doInstall(context.Background(), svc, game, []string{"Mod One"})
+			})
+		})
+
+		require.ErrorAs(t, err, new(*core.ConflictError))
+		assert.Empty(t, stdout, "the search header must not print ahead of the envelope either")
+		assert.Empty(t, stderr)
+	})
+}

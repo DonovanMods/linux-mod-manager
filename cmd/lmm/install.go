@@ -218,7 +218,13 @@ func selectInstallFilesFrom(r io.Reader, files []domain.DownloadableFile, valida
 func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, source, query, profileName string) ([]*domain.Mod, error) {
 	const displayPageSize = 10
 
-	fmt.Printf("Searching for \"%s\"...\n\n", query)
+	// Ruling 15: the header announces an interactive search whose listing
+	// and prompt below are already gated - under --json the run's whole
+	// output is the one document, and this line is the only thing that ever
+	// printed ahead of it (unit P review, Important 2).
+	if !jsonOutput {
+		fmt.Printf("Searching for \"%s\"...\n\n", query)
+	}
 
 	searchResult, err := service.SearchMods(ctx, source, gameID, query, "", nil, 0, displayPageSize)
 	if err != nil {
