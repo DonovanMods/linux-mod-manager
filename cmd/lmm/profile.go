@@ -1027,7 +1027,12 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	// events - the same Switch* phase vocabulary doProfileSwitch renders,
 	// because the two flows print the same lines (see core's profile_apply.go).
 	// Everything here is stdout; result.Notes is never batch-printed below
-	// since every entry already has an event here.
+	// since every entry already has an event here. The install loop's
+	// UpsertMod refusal is a SwitchInstallWarning, not the --verbose-only
+	// SwitchInstallNote it used to be (ApplyProfileSwitch's identical
+	// refusal followed suit in Task 13b) - it reaches the user
+	// unconditionally through result.Warnings below instead of a case here
+	// (printing it here as well would duplicate it).
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -1058,11 +1063,6 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		case core.SwitchInstalled:
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
 		}
-		// #294 (Ruling 5): ApplyProfileApply's UpsertMod refusal is a
-		// SwitchInstallWarning, not the --verbose-only SwitchInstallNote it
-		// used to be (ApplyProfileSwitch's identical refusal followed suit
-		// in Task 13b) - it reaches the user through result.Warnings below
-		// (printing it here as well would duplicate it).
 	}
 
 	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
