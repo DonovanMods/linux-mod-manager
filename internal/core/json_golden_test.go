@@ -223,13 +223,23 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Task 13 review round 1, Minor 7: the install loop's UpsertMod
+			// refusal is a Warning (no "Warning: " prefix baked in - the
+			// caller renders one), ahead of the end-of-switch merged-pak
+			// diagnostics - mirroring profile_apply_result's identical #294
+			// shape below; Notes keeps only the disable/enable loops'
+			// --verbose-only entries, which still carry their historical
+			// prefix.
 			"switch_result",
 			core.SwitchResult{
 				Disabled:  1,
 				Enabled:   2,
 				Installed: 1,
-				Notes:     []string{"enabled Realistic Needs"},
-				Warnings:  []string{"failed to set enabled for OldMod"},
+				Notes:     []string{"Warning: failed to update Realistic Needs: some error"},
+				Warnings: []string{
+					"could not update profile: mod is locked",
+					"could not sync merged pak: base pak missing",
+				},
 			},
 		},
 		{
