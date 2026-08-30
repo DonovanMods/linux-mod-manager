@@ -31,12 +31,6 @@ import (
 // panics on a duplicate registration within one test binary.
 var updateJSONCLIGoldens = flag.Bool("update-json-cli", false, "re-record cmd/lmm/testdata/json_golden/*.golden")
 
-// recordJSONLegacy writes each scenario's CURRENT output to
-// testdata/json_legacy/<name>.json instead of comparing it, capturing the
-// pre-v2 shapes as a review reference. Recorded once, before the switch;
-// deleted at phase close (Unit S).
-var recordJSONLegacy = flag.Bool("record-json-legacy", false, "record cmd/lmm/testdata/json_legacy/*.json (pre-v2 shapes)")
-
 // volatileTime matches an RFC 3339 timestamp anywhere in a document. Several
 // core types carry real clock values (installed_at, last_deploy, updated_at),
 // so goldens would drift every run without this; the substitution keeps the
@@ -72,18 +66,10 @@ func scrubJSON(actual string, subs ...string) string {
 }
 
 // assertJSONCLIGolden compares one command's --json document against its
-// recorded golden (or records it under -update-json-cli / captures the
-// pre-v2 shape under -record-json-legacy).
+// recorded golden (or records it under -update-json-cli).
 func assertJSONCLIGolden(t *testing.T, name, actual string, subs ...string) {
 	t.Helper()
 	scrubbed := scrubJSON(actual, subs...)
-
-	if *recordJSONLegacy {
-		path := filepath.Join("testdata", "json_legacy", name+".json")
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(scrubbed), 0o644))
-		return
-	}
 
 	path := filepath.Join("testdata", "json_golden", name+".golden")
 	if *updateJSONCLIGoldens {

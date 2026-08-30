@@ -35,11 +35,6 @@ lint:
       paths:
         # Generated Docs
         - docs/**
-        # Byte-exact captures of the pre-v2 --json documents (#302). A
-        # formatter re-indenting these would erase the very thing they
-        # record - `source list` was the one command emitting unindented
-        # JSON. Reference only; deleted at Phase 3 close.
-        - cmd/lmm/testdata/json_legacy/**
 actions:
   enabled:
     - trunk-announce
