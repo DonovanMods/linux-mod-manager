@@ -299,12 +299,10 @@ func renderImportArchivePlan(plan *core.ImportArchivePlan, game *domain.Game, pr
 		}
 	}
 
-	if e := plan.MergedArtifact; e != nil {
-		if e.Action == core.MergedArtifactRemove {
-			fmt.Println("  The profile's merged artifact would be removed afterwards")
-		} else {
-			fmt.Println("  The profile's merged artifact would be resynced afterwards")
-		}
+	// mergedArtifactEffectForImport never returns MergedArtifactRemove - an
+	// import never takes the artifact away - so this only ever resyncs.
+	if plan.MergedArtifact != nil {
+		fmt.Println("  The profile's merged artifact would be resynced afterwards")
 	}
 
 	if len(plan.Hooks) > 0 {
