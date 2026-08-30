@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -367,4 +369,139 @@ func TestDoProfileApply_LockedRef_UpsertRefusal_JSON(t *testing.T) {
 	assert.Empty(t, doc.Notes, "#294: the refusal is no longer a note")
 	require.Len(t, doc.Warnings, 1)
 	assert.Equal(t, applyLockRefusalDetail, doc.Warnings[0])
+}
+
+// applyTwoModCancelFixture extends applyLockRefusalFixture with a second,
+// unlocked, installable mod ("second-src:mod2") so the resulting
+// ProfileApplyPlan.ToInstall has two entries: the locked mod1 first (whose
+// UpsertMod refusal records the #294 warning), mod2 second. A fresh call
+// builds a fully independent fixture (own temp dirs/service), so the same
+// scenario can be run twice - once to measure, once to assert.
+func applyTwoModCancelFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := applyLockRefusalFixture(t)
+	pm := getProfileManager(svc)
+
+	src := newFakeInstallSource("second-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs["second-src"] = game.ID
+	src.AddMod(&domain.Mod{ID: "mod2", SourceID: "second-src", Name: "Mod Two", Version: "1.0", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main", FileName: "mod2.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
+		})
+	src.AddDownload("main", []byte("plugin content"))
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "second-src", ModID: "mod2"}))
+
+	return svc, game
+}
+
+// errCalledFromCore reports whether the caller of the current Err() method
+// (one frame further up, i.e. two frames from HERE) is internal/core's own
+// code - as opposed to database/sql's (*Rows).awaitDone, which watches a
+// query's context on its OWN background goroutine and calls ctx.Err()
+// asynchronously once the query completes. That watcher call is real but
+// non-deterministic relative to the calling goroutine's own progress (it can
+// land before or after any given line of core's code runs), so counting it
+// would make cancelOnceTrue/cancelAfterNCalls racy; only core's own
+// synchronous, same-goroutine ctx.Err() checks (beginOp, checkPlanFresh, the
+// loops' own top-of-iteration checks) are deterministic enough to count.
+func errCalledFromCore() bool {
+	pc, _, _, ok := runtime.Caller(2)
+	if !ok {
+		return false
+	}
+	name := runtime.FuncForPC(pc).Name()
+	return strings.Contains(name, "linux-mod-manager/internal/core.")
+}
+
+// countingCoreContext counts every synchronous, same-goroutine ctx.Err()
+// call a run's own code makes (see errCalledFromCore), reporting itself live
+// throughout - used to MEASURE, rather than guess, exactly how many such
+// checks a full, uncancelled run makes, so a later run's cancelAfterNCalls
+// can target the loop's LAST such check (one less than the total) without
+// pinning a magic number tied to beginOp/checkPlanFresh/loop internals that
+// aren't this test's contract. Not goroutine-safe by design: the call it
+// instruments runs on the calling goroutine only.
+type countingCoreContext struct {
+	context.Context
+	calls int
+}
+
+func (c *countingCoreContext) Err() error {
+	if errCalledFromCore() {
+		c.calls++
+	}
+	return c.Context.Err()
+}
+
+// cancelAfterNCalls reports itself live for the first `live` synchronous,
+// same-goroutine ctx.Err() calls a run's own code makes (see
+// errCalledFromCore) and cancelled for every one after - mirrors
+// internal/core/service_download_local_test.go's cancelAfterFirstEntry, with
+// a configurable live count since a caller's own loop-top ctx.Err() checks
+// are not the first ones a run makes (beginOp/checkPlanFresh check first).
+// Not goroutine-safe by design: the loop it instruments runs on the calling
+// goroutine only.
+type cancelAfterNCalls struct {
+	context.Context
+	cancel context.CancelFunc
+	live   int
+	calls  int
+}
+
+func (c *cancelAfterNCalls) Err() error {
+	if !errCalledFromCore() {
+		return c.Context.Err()
+	}
+	c.calls++
+	if c.calls > c.live {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestDoProfileApply_LockedRefWarningSurvivesFatalContextCancellation pins
+// Task 13 review round 1's Important 1 fix for doProfileApply: unlike
+// doProfileSwitch (whose fatal path is the final SetDefault call),
+// ApplyProfileApply's ToInstall loop never returns fatally on its own - the
+// only reachable "warning already recorded, then fatal" path is ctx
+// cancellation between two ToInstall entries. The first entry (locked)
+// records the #294 warning; cancellation must land on the second entry's
+// loop-top ctx.Err() check, before it is ever processed. Before the fix,
+// this warning was dropped because doProfileApply printed result.Warnings
+// only on the success path.
+//
+// The exact number of ctx.Err() calls a run makes (beginOp, checkPlanFresh,
+// each loop-top check, ...) is an internal-implementation detail, not a
+// contract - so rather than pin a magic number, this measures it directly:
+// an uninstrumented pass over an identical, independent fixture runs both
+// mods to completion while counting every core-originated ctx.Err() call,
+// then the real pass treats all but the LAST of those calls as live -
+// guaranteeing cancellation lands on that last call, mod2's own loop-top
+// check, before mod2 is ever touched.
+func TestDoProfileApply_LockedRefWarningSurvivesFatalContextCancellation(t *testing.T) {
+	countSvc, countGame := applyTwoModCancelFixture(t)
+	counter := &countingCoreContext{Context: context.Background()}
+	require.NoError(t, doProfileApply(counter, countSvc, countGame, nil),
+		"the measurement pass must install both mods uncancelled")
+	require.Positive(t, counter.calls, "the measurement pass must observe at least one core ctx.Err() check")
+
+	svc, game := applyTwoModCancelFixture(t)
+	inner, cancel := context.WithCancel(context.Background())
+	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 1}
+
+	out, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileApply(ctx, svc, game, nil)
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, applyLockRefusalWarning, stderr,
+		"Important 1: the accumulated #294 warning must survive the fatal path, not be silently dropped")
+	assert.Contains(t, out, "    ✓ Installed: Mod One\n")
+	assert.NotContains(t, out, "Mod Two", "mod2 must never have been reached")
+
+	_, err = svc.GetInstalledMod(context.Background(), "second-src", "mod2", game.ID, "default")
+	assert.Error(t, err, "the second mod must never have been installed")
 }

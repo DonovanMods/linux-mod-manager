@@ -466,9 +466,17 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 	result, err := service.ApplyProfileSwitch(ctx, game, plan, quietSink(progress))
 	if err != nil {
-		// Diagnostics accumulated before a fatal error (ApplyProfileSwitch's
-		// error-path convention returns them alongside it) were already
-		// printed above, live, via progress - nothing left to print here.
+		// Task 13 review round 1, Important 1: ApplyProfileSwitch's
+		// error-path convention returns diagnostics accumulated before the
+		// failure alongside it, but the #294 install-loop warning below
+		// lives on result.Warnings, not on a live progress event - it was
+		// never printed above, so it must be printed here or it is silently
+		// dropped on the fatal path.
+		if !jsonOutput && result != nil {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return err
 	}
 
@@ -799,6 +807,16 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 
 	result, err := service.ApplyProfileSync(ctx, game, plan, quietSink(progress))
 	if err != nil {
+		// Task 13 review round 1, Important 1: the #294 warning below lives
+		// on result.Warnings, not a live progress event, so it was never
+		// printed live - it must be printed here or it is silently dropped
+		// on the fatal path (ctx cancellation is the only reachable fatal
+		// error once a toUpdate entry has already warned).
+		if !jsonOutput && result != nil {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return err
 	}
 
@@ -1047,8 +1065,16 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 
 	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
 	if err != nil {
-		// Diagnostics accumulated before a fatal error were already printed
-		// live via progress - nothing left to print here.
+		// Task 13 review round 1, Important 1: the #294 warning above lives
+		// on result.Warnings, not a live progress event, so it was never
+		// printed live - it must be printed here or it is silently dropped
+		// on the fatal path (ctx cancellation is the only reachable fatal
+		// error once a ToInstall entry has already warned).
+		if !jsonOutput && result != nil {
+			for _, w := range result.Warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return err
 	}
 

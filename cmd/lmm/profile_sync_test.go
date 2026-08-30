@@ -408,3 +408,64 @@ func TestDoProfileSync_DeployCompile_MergedPakSyncFailureWarnsUnconditionally(t 
 
 	assert.Contains(t, stderr, "Warning: could not sync merged pak: ")
 }
+
+// syncTwoUpdateCancelFixture extends syncLockRefusalFixture with a second,
+// unlocked toUpdate entry ("src:mod2", also needing a FileIDs backfill) so
+// the resulting ProfileSyncPlan.ToUpdate has two entries in profile.Mods
+// order: the locked lock1 first (whose UpsertMod refusal records the #294
+// warning), mod2 second. A fresh call builds a fully independent fixture
+// (own temp dirs/service), so the same scenario can be run twice - once to
+// measure, once to assert.
+func syncTwoUpdateCancelFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := syncLockRefusalFixture(t)
+	seedSyncInstalledMod(t, svc, game, "src", "mod2", "Mod Two", "2.0", "default", true, []string{"main2"})
+	require.NoError(t, getProfileManager(svc).AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod2"}))
+	return svc, game
+}
+
+// TestDoProfileSync_LockedRefWarningSurvivesFatalContextCancellation pins
+// Task 13 review round 1's Important 1 fix for doProfileSync: unlike
+// doProfileSwitch (whose fatal path is the final SetDefault call),
+// ApplyProfileSync's toUpdate loop never returns fatally on its own - the
+// only reachable "warning already recorded, then fatal" path is ctx
+// cancellation between two toUpdate entries. The first entry (locked)
+// records the #294 warning; cancellation must land on the second entry's
+// loop-top ctx.Err() check, before it is ever processed. Before the fix,
+// this warning was dropped because doProfileSync printed result.Warnings
+// only on the success path. See cmd/lmm/profile_apply_test.go's identical
+// counting/cancelAfterNCalls helpers and their doc comments for why the
+// live threshold is measured rather than hard-coded.
+func TestDoProfileSync_LockedRefWarningSurvivesFatalContextCancellation(t *testing.T) {
+	countSvc, countGame := syncTwoUpdateCancelFixture(t)
+	oldYes := profileSyncYes
+	profileSyncYes = true
+	t.Cleanup(func() { profileSyncYes = oldYes })
+
+	counter := &countingCoreContext{Context: context.Background()}
+	require.NoError(t, doProfileSync(counter, countSvc, countGame, nil),
+		"the measurement pass must update both mods uncancelled")
+	require.Positive(t, counter.calls, "the measurement pass must observe at least one core ctx.Err() check")
+
+	svc, game := syncTwoUpdateCancelFixture(t)
+	inner, cancel := context.WithCancel(context.Background())
+	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 1}
+
+	out, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileSync(ctx, svc, game, nil)
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, syncLockRefusalWarning, stderr,
+		"Important 1: the accumulated #294 warning must survive the fatal path, not be silently dropped")
+	assert.NotContains(t, out, "✓ Synced profile", "the sync must not have completed")
+
+	profile, err := getProfileManager(svc).Get(game.ID, "default")
+	require.NoError(t, err)
+	for _, mr := range profile.Mods {
+		if mr.ModID == "mod2" {
+			assert.Empty(t, mr.FileIDs, "mod2 must never have been reached")
+		}
+	}
+}

@@ -546,6 +546,42 @@ func TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON(t *testing.T) {
 	assert.Equal(t, switchLockRefusalDetail, doc.Warnings[0])
 }
 
+// TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError pins Task
+// 13 review round 1's Important 1 fix: the install loop's #294 warning must
+// reach stderr even when ApplyProfileSwitch fails fatally afterward - the
+// core scenario
+// TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnostics_ReturnsPartialResult
+// documents, driven here through doProfileSwitch itself. Before the fix,
+// result.Warnings was only ever printed on the success path, so a refusal
+// followed by a fatal SetDefault error was silently dropped on stderr - the
+// exact failure mode #294 exists to close, just narrowed to the error path.
+func TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError(t *testing.T) {
+	svc, game := switchLockRefusalFixture(t)
+
+	// Force SetDefault's "clearing default on default" step to fail: it
+	// loads "target" (untouched, so the install loop's lock refusal above is
+	// unaffected) then tries to save the OLD default profile ("default") to
+	// clear its flag - making default.yaml unwritable fails SetDefault
+	// deterministically without touching the install loop at all.
+	defaultPath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(defaultPath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(defaultPath, 0o644) })
+
+	var out, stderr string
+	var err error
+	withStdin(t, "y\n", func() {
+		out, stderr, err = captureStdoutStderrErr(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "target")
+		})
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting default profile")
+	assert.Equal(t, switchLockRefusalWarning, stderr,
+		"Important 1: the accumulated #294 warning must survive the fatal path, not be silently dropped")
+	assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the install itself succeeded before the later fatal SetDefault error")
+}
+
 // seedApplyCandidateMod stores files (if any) in the game's cache and saves
 // an InstalledMod DB record under the "default" profile with the given
 // Enabled state, WITHOUT adding it to any profile's Mods list - unlike
