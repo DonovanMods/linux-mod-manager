@@ -19,7 +19,7 @@ type Op string
 // `lmm import` archive mode, OpMergeRegen = a standalone merged-pak
 // recompile, OpVerify = `lmm verify`, OpUpdateCheck = the read-only check
 // that precedes OpUpdate, OpDownload = a raw Downloader.Download call with
-// no owning flow); the three below have their own comment because their
+// no owning flow); the four below have their own comment because their
 // name alone doesn't disambiguate them from a sibling Op.
 const (
 	OpInstall Op = "install"
