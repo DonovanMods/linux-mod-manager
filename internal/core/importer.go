@@ -197,7 +197,8 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 	convertEligiblePak := kind == importKindConvertPak
 
 	// Handle based on game's deploy mode
-	if kind == importKindMergeSource || kind == importKindConvertPak {
+	switch kind {
+	case importKindMergeSource, importKindConvertPak:
 		// Validate mode (#197): Import has no real source file ID the way a
 		// download does (DownloadableFile.ID is resolved later, outside
 		// Import, only when --id was given), so the retained source is
@@ -240,7 +241,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, err
 		}
 		retainedFileID = filename
-	} else if kind == importKindCopy {
+	case importKindCopy:
 		// Copy mode: just copy the file as-is to cache (don't extract)
 		modName = importedModName(kind, filename, version, nil)
 
@@ -259,7 +260,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, fmt.Errorf("copying to cache: %w", err)
 		}
 		fileCount = 1
-	} else {
+	default:
 		// Extract mode: validate and extract the archive
 		if !i.extractor.CanExtract(archivePath) {
 			return nil, fmt.Errorf("unsupported archive format: %s", filepath.Ext(archivePath))
