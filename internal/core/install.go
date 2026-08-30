@@ -2039,7 +2039,6 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 				st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
 			}
 
-			result.FilesDeployed += downloadResult.FilesExtracted
 		} else if !opts.SkipVerify {
 			// Ruling 2 (task-8 review, Important 2): the cache-first guard
 			// skips the download for ANY install, not only the accept
@@ -2073,14 +2072,19 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		}
 	}
 
-	// A warm entry deployed nothing new, but the count the frontend prints
-	// ("Files deployed: N") describes the CACHE ENTRY, not the transfer -
-	// read it back the same way downloadModToCache's own extract branch
-	// counts it, so a skipped download reports what a real one would have.
-	if cacheWarm {
-		if files, lerr := downloadCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version); lerr == nil {
-			result.FilesDeployed += len(files)
-		}
+	// The count the frontend prints ("Files deployed: N") describes the
+	// CACHE ENTRY, not the transfer - so it is read back ONCE, here, the
+	// same way downloadModToCache's own extract branch counts it, for a warm
+	// fill (which transferred nothing) and a cold one alike.
+	//
+	// task-8 review Minor 3 / unit P review Minor 6: the cold path used to
+	// accumulate downloadResult.FilesExtracted per file instead, and on the
+	// extract branch that value is ALREADY the whole entry's listing
+	// (service.go's "Count extracted files") - so a 2-file mod reported
+	// a + (a+b). files_deployed is a json-tagged contract field; both fills
+	// now report the same, correct number.
+	if files, lerr := downloadCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version); lerr == nil {
+		result.FilesDeployed += len(files)
 	}
 
 	// A retained-for-merge file was never "extracted" - announce the step

@@ -759,6 +759,64 @@ func TestService_ApplyInstall_KeepCacheReinstall_VerifyReportsOk(t *testing.T) {
 	assert.Zero(t, report.Result.Warnings)
 }
 
+// TestService_ApplyInstall_MultiFileMod_FilesDeployedCountsTheEntryOnce
+// pins InstallResult.FilesDeployed for a mod installed from more than one
+// archive (unit P review, Minor 6; task-8 review Minor 3). The cold path
+// used to ACCUMULATE downloadModToCache's own FilesExtracted per file, and
+// that value is itself the whole cache ENTRY's listing on the extract
+// branch - so a 2-file mod counted a + (a+b) = 3 for 2 deployed files, while
+// the warm branch's single ListFiles reported the correct 2. files_deployed
+// is a json-tagged contract field, so both paths now report the entry's own
+// count.
+//
+// RED before the fix: 3 on the cold pass, 2 on the warm one.
+func TestService_ApplyInstall_MultiFileMod_FilesDeployedCountsTheEntryOnce(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	// Two ARCHIVES, one member each: the extract branch is the one whose
+	// FilesExtracted counts the whole entry rather than its own members, so
+	// a copy-branch (.esp) fixture would not reproduce the over-count.
+	src := &multiFileDownloadSource{
+		mockSourceWithDownloads: newMockSourceWithDownloads("src"),
+		files: []domain.DownloadableFile{
+			{ID: "f1", Name: "File 1", FileName: "mod1-f1.zip", IsPrimary: true},
+			{ID: "f2", Name: "File 2", FileName: "mod1-f2.zip"},
+		},
+	}
+	defer src.Close()
+	svc.RegisterSource(src)
+	src.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"})
+	for _, f := range []struct{ id, member string }{{"f1", "one.esp"}, {"f2", "two.esp"}} {
+		zipBytes, err := os.ReadFile(createTestZip(t, t.TempDir(), map[string]string{f.member: f.id + "-payload"}))
+		require.NoError(t, err)
+		src.AddDownload(f.id, zipBytes)
+	}
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	plan.Files = src.files // both files, as the CLI's --file/picker path sets it
+
+	result, err := svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+
+	cached, err := svc.GetGameCache(game).ListFiles("g1", "src", "mod1", "1.0")
+	require.NoError(t, err)
+	require.Len(t, cached, 2, "sanity: the entry holds one member per archive")
+	assert.Equal(t, 2, result.FilesDeployed, "the cold fill must report the entry's file count, not the running sum of per-file listings")
+
+	// The warm fill's own count, for the same entry.
+	_, err = svc.UninstallMod(context.Background(), game, "default", "src", "mod1", core.UninstallOptions{KeepCache: true})
+	require.NoError(t, err)
+	plan2, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	plan2.Files = src.files
+
+	warm, err := svc.ApplyInstall(context.Background(), game, plan2, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, warm.FilesDeployed, "the warm fill already reported the entry's count; the two must agree")
+}
+
 // TestService_ApplyInstall_HookOrder proves install.before_all ->
 // install.before_each -> (deploy) -> install.after_each -> install.after_all
 // ordering for a single-mod (no dependencies) plan, mirroring
