@@ -90,6 +90,15 @@ func completeProfileWrite(ctx context.Context, write func(context.Context) error
 // caller still ends the run with context.Canceled (v2 Phase 3 Ruling 16,
 // fix wave round 1's residual - see completeProfileWrite's own comment for
 // the shared cancellation-precedence contract callers rely on).
+//
+// context.WithoutCancel also drops any deadline the caller's ctx carried, not
+// just its cancellation signal - immaterial for completeProfileWrite (its
+// wrapped writes never hand a ctx to I/O; config.LoadProfile/SaveProfile take
+// none) but real here, since write's saveInstalledMod does pass ctx to
+// database/sql. Acceptable: this completes a single row already-committed on
+// the profile side, over a local SQLite connection with no network round
+// trip - the write finishes in microseconds regardless of the caller's own
+// deadline, so running it deadline-free costs nothing a caller would notice.
 func completeDBWrite(ctx context.Context, write func(context.Context) error) error {
 	err := write(context.WithoutCancel(ctx))
 	if cerr := ctx.Err(); cerr != nil {
