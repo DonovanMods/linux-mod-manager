@@ -251,7 +251,10 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
   The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
 --version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
-  unlock …'" wording. For the three `lmm update` branches this replaces two lines with two: a
+  unlock …'" wording. Where that "move the lock" remedy survives, its version argument is the
+  literal placeholder `<version>`, not the concrete target version the retired "Move the lock:
+  lmm mod lock -s … -p … `<mod>` 2.0" line filled in — so it is edit-then-run rather than
+  paste-and-run. For the three `lmm update` branches this replaces two lines with two: a
   context line stating what is available ("Update available: 1.0 → 2.0", "Rollback available:
   2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
   whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
