@@ -83,6 +83,15 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	}
 	mods := plan.Mods
 
+	// Ruling 15: --dry-run --json is the Plan document, emitted before any
+	// other early return - including the empty-profile one below, which an
+	// empty PurgePlan already states on its own (zero-length Mods) -
+	// matching import/profile switch/apply/sync's identical ordering
+	// (Phase 3 close wave, Important 1).
+	if purgeDryRun && jsonOutput {
+		return emitJSON(plan)
+	}
+
 	if len(mods) == 0 {
 		// Ruling 15: nothing to purge is not an error, and a --json caller
 		// is still owed a document - the Result a purge of nothing
@@ -123,10 +132,8 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	}
 
 	if purgeDryRun {
-		// Ruling 15: the plan document itself, never its rendering.
-		if jsonOutput {
-			return emitJSON(plan)
-		}
+		// Ruling 15: --dry-run --json already returned above, before the
+		// empty-profile check; this is the plain-text rendering only.
 		renderPurgePlan(plan, game, progress)
 		return nil
 	}

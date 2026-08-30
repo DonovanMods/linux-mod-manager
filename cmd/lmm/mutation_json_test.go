@@ -152,6 +152,23 @@ func TestJSONGolden_Purge(t *testing.T) {
 		assertJSONCLIGolden(t, "purge_dry_run_compile", out, fx.game.ModPath, "<GAME-DIR>")
 	})
 
+	// Phase 3 close wave, Important 1: an empty profile under --dry-run
+	// --json still owes the Plan document (Ruling 15), not the Result the
+	// non-dry-run empty case below returns - the len(mods)==0 early return
+	// must not shadow the dry-run/json branch, matching
+	// import/profile switch/apply/sync's identical ordering.
+	t.Run("dry_run_plan_empty", func(t *testing.T) {
+		svc, game := setupDoPurgeTest(t)
+		_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
+		require.NoError(t, err)
+		purgeDryRun = true
+
+		out := runJSONCommand(t, func() error {
+			return doPurge(context.Background(), svc, game)
+		})
+		assertJSONCLIGolden(t, "purge_dry_run_empty", out)
+	})
+
 	// Nothing installed is not an error and still owes the caller a
 	// document: the Result a purge of nothing produces.
 	t.Run("nothing_installed", func(t *testing.T) {

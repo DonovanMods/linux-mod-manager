@@ -483,6 +483,10 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   vanish from the result at once. A cancelled run also now prints `Cancelled.` to stderr in plain
   mode before exiting 2 (`--json` stays silent, as `--json` output is otherwise unaffected). No
   other output changes on any non-cancelled path. (#305)
+- `lmm purge --dry-run --json` on an empty profile now emits the `PurgePlan` document instead of
+  a `PurgeResult`, matching `import`/`profile switch`/`profile apply`/`profile sync`'s identical
+  dry-run/json ordering (phase-end review Important 1). Plain-text `--dry-run` on an empty profile
+  is unchanged. (#306)
 
 ### Removed
 
