@@ -387,7 +387,10 @@ func (s *Service) ImportArchive(ctx context.Context, game *domain.Game, profileN
 	if sink != nil && ImportEnrichmentRuns(game, opts) {
 		// The progress line for work PlanImportArchive already did. A
 		// frontend that renders a preview prints it AHEAD of the plan
-		// instead, where a progress line belongs.
+		// instead, where a progress line belongs - so its Scope carries no
+		// mod on either path (before #314 it did, because the fetch ran
+		// after the ingest had already resolved one). Nothing renders from
+		// that scope; the readout below carries the identity.
 		sink(StepEvent{
 			Scope: Scope{Op: OpImport}, Phase: ImportArchiveFetching,
 			Detail: "Fetching metadata from " + opts.SourceID + "...",
