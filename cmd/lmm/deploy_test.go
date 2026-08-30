@@ -512,7 +512,7 @@ func TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmedia
 // a cache-miss mod's redownload loop, on the success path (git show
 // b2ad559:cmd/lmm/deploy.go) - a blank line between "cache missing,
 // re-downloading..." and the mod's own "✓" success line. The extracted
-// flow (internal/core/flows.go's redeployFromSource) emits no event for
+// flow (internal/core/deploy.go's redeployFromSource) emits no event for
 // this on success, so doDeploy has nothing to print it from. A real custom
 // manifest source served over httptest provides a working redownload
 // (mockSourceWithDownloads/createTestZip are internal/core-only test

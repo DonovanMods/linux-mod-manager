@@ -500,7 +500,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 	if err != nil {
 		// DisableMod's error-path convention returns any diagnostics
 		// accumulated before the fatal error alongside it (see DisableMod's
-		// doc comment in flows.go, and mirrors UninstallMod's own convention
+		// doc comment in mod_toggle.go, and mirrors UninstallMod's own convention
 		// - see uninstall.go's printUninstallDiagnostics); print them now,
 		// or they'd otherwise be lost even though they already happened
 		// (e.g. an undeploy-failure Note recorded, then a later
@@ -538,7 +538,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 // error path (doModEnable/doModDisable above) must check that pointer for
 // nil before passing its .Notes field, since it panics on a nil receiver
 // otherwise (EnableMod/DisableMod both return a nil result on some error
-// paths - see their own doc comments in flows.go).
+// paths - see their own doc comments in mod_toggle.go).
 func printModNotes(notes []string) {
 	// Ruling 15: nothing but the document under --json - the Result carries
 	// Notes itself. Guarded here, not at each call site, because the error

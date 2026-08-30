@@ -39,7 +39,7 @@ type Profile struct {
 // instead of guarding it separately.
 //
 // Consolidates what used to be five near-identical "scan profile.Mods for
-// one ref" loops (#97 review) spread across internal/core/flows.go,
+// one ref" loops (#97 review) spread across several internal/core files,
 // cmd/lmm/update.go, cmd/lmm/list.go, and cmd/lmm/mod.go, some of which used
 // inconsistent key-separator conventions ("|" vs ":") despite all meaning
 // the same domain.ModKey identity.

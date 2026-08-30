@@ -584,7 +584,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 // not the game-level one (#152): a profile-level copy/hardlink override
 // would otherwise be "repaired" back to the game's method, re-introducing
 // exactly the drift verify exists to fix. The method is resolved once (the
-// same single-resolve shape as DeployProfile, internal/core/flows.go) and,
+// same single-resolve shape as DeployProfile, internal/core/deploy.go) and,
 // on a successful install, recorded on the row via SetModLinkMethod exactly
 // like DeployProfile records its own deploys - the row was just re-linked
 // with the effective method, and leaving it claiming the old one would be a
@@ -618,7 +618,7 @@ func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, m
 	}
 	installer := r.svc.newInstallerWithLinker(r.game, r.svc.getLinker(method))
 	// Undeploy-then-install, the same shape DeployProfile uses
-	// (internal/core/flows.go) and for the same reason: dst still holds
+	// (internal/core/deploy.go) and for the same reason: dst still holds
 	// whatever the previous deployment left behind (here, the dangling
 	// symlinks the cache re-key orphaned), and only the symlink and
 	// hardlink linkers' Deploy clear an existing dst themselves - the copy

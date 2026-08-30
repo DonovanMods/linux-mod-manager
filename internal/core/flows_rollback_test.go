@@ -2,7 +2,7 @@ package core_test
 
 // Tests for Service.ApplyRollback - the behavior-preserving extraction of
 // cmd/lmm/update.go's doUpdateRollback, per Phase 6b Task 5. See
-// internal/core/flows.go's ApplyRollback/RollbackResult/RollbackOptions doc
+// internal/core/rollback.go's ApplyRollback/RollbackResult/RollbackOptions doc
 // comments for the exact behavior being tested here, and
 // .superpowers/sdd/task-5-report.md for the full mapping/decision log.
 //

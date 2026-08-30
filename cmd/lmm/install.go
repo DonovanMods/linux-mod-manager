@@ -619,7 +619,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// the interactive path re-prompts on a mixed pak+exmodz pick, --file
 	// hard-errors immediately - both friendlier/earlier than the identical
 	// backstop core.ApplyInstall applies to plan.Files right before this
-	// override (internal/core/flows.go ~line 3671).
+	// override (internal/core/install.go).
 	validateFileSelection := func(sel []domain.DownloadableFile) error {
 		return service.ValidateInstallFileSelection(plan.SourceID, sel)
 	}
@@ -835,7 +835,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	// of occurrence, driven entirely by core.ApplyInstall's BATCH-path
 	// progress events - reproducing batchInstallMods' console output
 	// byte-for-byte. See each Install* constant's doc comment (in
-	// internal/core/flows.go, starting at InstallDepInstalling) for the
+	// internal/core/phases.go, starting at InstallDepInstalling) for the
 	// exact text/semantics being restored here.
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)

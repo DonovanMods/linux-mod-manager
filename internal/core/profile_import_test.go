@@ -2,7 +2,7 @@ package core_test
 
 // Tests for Service.PlanImport/ApplyImport - the behavior-preserving
 // extraction of cmd/lmm/profile.go's doProfileImport, per Phase 6b Task 8.
-// See internal/core/flows.go's PlanImport/ApplyImport/ImportPlan/
+// See internal/core/profile_import.go's PlanImport/ApplyImport/ImportPlan/
 // ProfileImportOptions/ProfileImportResult doc comments for the exact
 // behavior under test here (note: named ProfileImportOptions/
 // ProfileImportResult, not ImportOptions/ImportResult, to avoid colliding

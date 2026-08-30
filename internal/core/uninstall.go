@@ -2,7 +2,7 @@
 // uninstall.go holds the single-mod uninstall flow: UninstallOptions/
 // UninstallResult and UninstallMod. Moved verbatim out of flows.go by v2
 // Phase 2 Unit M (#293); runHook, which UninstallMod shares with
-// DeployProfile, stays behind in flows.go.
+// DeployProfile, lives in hooks.go.
 package core
 
 import (

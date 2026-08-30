@@ -2,7 +2,7 @@ package core_test
 
 // Tests for Service.PlanInstall - the pure, read-only half of the
 // pre-extraction CLI's doInstall (cmd/lmm/install.go), extracted per Phase
-// 5b Task 1. See internal/core/flows.go's InstallPlan/PlanInstall doc
+// 5b Task 1. See internal/core/install.go's InstallPlan/PlanInstall doc
 // comments for the exact behavior being tested here, and
 // docs/plans/.superpowers/sdd/task-1-report.md for the full mapping/decision
 // log.
@@ -1072,7 +1072,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 	})
 
 	// This subtest pins that prepareReinstallCacheTransaction's ephemeral
-	// snapshot/staged caches (flows.go) are wired to the service's own
+	// snapshot/staged caches (install.go) are wired to the service's own
 	// logger via SetLogger, not left on cache.New's silent-discard default
 	// (#284). Neither cache.Cache method the reinstall path actually calls
 	// logs anything on a clean run, so the only observable signal is
@@ -1610,7 +1610,7 @@ func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T
 
 // TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion pins
 // the other observable consequence of the #94 stamp: fillPrimaryCache
-// sets hookCtx.ModVersion (flows.go, right after the stamp) from the SAME
+// sets hookCtx.ModVersion (install.go, right after the stamp) from the SAME
 // now-effective mod.Version, so install.before_each - and therefore the
 // LMM_MOD_VERSION env var a hook script sees (hooks.go's Run) - reports the
 // file actually being installed ("1.0"), not the mod's own latest version

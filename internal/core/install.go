@@ -2027,7 +2027,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
 	// DownloadModToCache itself gates on), re-derived here rather than read
-	// back from DownloadModToCache's result since flows.go already has
+	// back from DownloadModToCache's result since this file already has
 	// everything the condition needs. Drives the InstallCompiling
 	// announcement below in place of the generic InstallExtracting one.
 	// #221: convert-eligible .pak files are only included if the source

@@ -227,7 +227,7 @@ func TestDoProfileReorder_ProfileFlag_SelectsNonDefaultProfile(t *testing.T) {
 }
 
 // TestDoProfileReorder_DeployCompile_ResyncsMergedPak proves
-// service.ReorderProfileMods' merged-pak sync (internal/core/flows.go's
+// service.ReorderProfileMods' merged-pak sync (internal/core/profile_reorder.go's
 // reorderProfileMods, #197) actually fires end-to-end through
 // doProfileReorder for a DeployCompile game - the merged pak's byte content
 // reflects the NEW load order without any separate SyncMergedPak call,

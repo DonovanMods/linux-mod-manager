@@ -216,7 +216,7 @@ func TestModDisableCmd_NoModID(t *testing.T) {
 // guards Task 6 item a: EnableMod/DisableMod's (bool, error) -> result-struct
 // convergence restores the pre-5a --verbose diagnostic doModDisable dropped
 // in 5a Task 1 (adjudicated acceptable-until-convergence at the time - see
-// DisableMod's doc comment in flows.go). Asserts the printed line is
+// DisableMod's doc comment in mod_toggle.go). Asserts the printed line is
 // byte-identical to `git show v1.10.0:cmd/lmm/mod.go`'s
 // `fmt.Printf("  Warning: failed to undeploy some files: %v\n", err)`.
 func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t *testing.T) {
@@ -306,7 +306,7 @@ func blockEnabledColumnUpdates(t *testing.T, dbPath string) {
 // recording a Note; a SUBSEQUENT SetModEnabled failure is then forced via
 // blockEnabledColumnUpdates above, so DisableMod returns its accumulated
 // *DisableResult alongside the fatal error (see DisableMod's doc comment in
-// flows.go: undeploy failures are non-fatal, but a SetModEnabled failure is
+// mod_toggle.go: undeploy failures are non-fatal, but a SetModEnabled failure is
 // not).
 func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 	configDir = t.TempDir()
@@ -364,7 +364,7 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 // counterpart of doModDisable's fix above: printModNotes(result.Notes) must
 // now be reachable before doModEnable returns its error too, for consistency
 // and forward-compat with a future EnableMod diagnostic (see EnableResult's
-// doc comment in flows.go: Notes is "kept for parity with DisableResult...
+// doc comment in mod_toggle.go: Notes is "kept for parity with DisableResult...
 // so a future EnableMod diagnostic wouldn't need another signature change").
 //
 // Unlike DisableMod, EVERY error path EnableMod has today returns a nil

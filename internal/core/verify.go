@@ -783,7 +783,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 				if ref != nil && ref.Locked {
 					// #142 round 5: name the source/profile in both remedies -
 					// same "copy-paste acts on the wrong target" fix already
-					// applied to the core gates (internal/core/flows.go's
+					// applied to the core gates (internal/core/update.go's
 					// LockedRefRefusalError) and the sibling-repair warning
 					// below - a bare 'lmm mod lock <id> <version>' would
 					// resolve against the active profile/an ambiguous source

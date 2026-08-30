@@ -240,7 +240,7 @@ func parseManifest(body []byte) FileManifest {
 // download run that stored file 1 of 2 before failing - each file is
 // committed to the cache individually, so a broken-off run leaves the
 // directory present but incomplete). Callers doing a "cache already has this,
-// skip downloading" check (see internal/core/flows.go's ApplyProfileSwitch
+// skip downloading" check (see internal/core/switch.go's ApplyProfileSwitch
 // and cmd/lmm/profile.go's doProfileApply, both #96) should use this instead
 // of Exists to decide whether a re-download is genuinely unnecessary.
 //
@@ -658,7 +658,7 @@ func (c *Cache) GetFilePath(gameID, sourceID, modID, version, relativePath strin
 // Unlike every other walker it deliberately INCLUDES lmm's own .lmm-*
 // bookkeeping entries: a clone is meant to reproduce the entry itself, not
 // enumerate its mod content, and the reinstall cache transaction
-// (internal/core/flows.go) round-trips a live entry through a staged/snapshot
+// (internal/core/install.go) round-trips a live entry through a staged/snapshot
 // cache and back. Dropping the completion markers on that round trip would
 // silently downgrade a complete entry to a pre-marker one and cost a
 // redundant redownload on the next cache-first check.

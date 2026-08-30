@@ -317,7 +317,7 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 }
 
 // SetModLock marks the profile ref for sourceID/modID as locked (#97: the
-// mod refuses `lmm update` while this is set - see flows.go's ApplyUpdate
+// mod refuses `lmm update` while this is set - see update.go's ApplyUpdate
 // gate). A non-empty version also moves the lock's target - ref.Version, the
 // same field the installed-version record lives in (a lock has no separate
 // target field: the record IS the target while locked). version == ""

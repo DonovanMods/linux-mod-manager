@@ -2,7 +2,7 @@ package main
 
 // Capture tests for doUpdateRollback (Phase 6b Task 5), pinning the
 // pre-extraction CLI's console output and error text BEFORE
-// Service.ApplyRollback existed - see internal/core/flows.go's
+// Service.ApplyRollback existed - see internal/core/rollback.go's
 // ApplyRollback/RollbackResult/RollbackOptions doc comments for the
 // extraction target, and .superpowers/sdd/task-5-report.md for the full
 // before/after comparison. These reuse setupDoUpdateTest/

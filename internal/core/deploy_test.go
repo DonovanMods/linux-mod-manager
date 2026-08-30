@@ -1221,7 +1221,7 @@ func TestService_DeployProfile_PerModNoteDiagnostics_CarryModAttributionAndPrece
 
 // TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent
 // guards finding 3's third deploy-loop diagnostic (undeploy-before-redeploy
-// failure, flows.go's "Warning: undeploy %s: %v" - the only one of the
+// failure, deploy.go's "Warning: undeploy %s: %v" - the only one of the
 // three whose text DOES carry a mod name already), corrupting a previously
 // deployed symlink into a plain file so the redeploy's own undeploy step
 // fails deterministically, mirroring
