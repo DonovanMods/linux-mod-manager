@@ -706,6 +706,59 @@ func TestService_ApplyInstall_KeepCacheReinstall_SavesChecksumFromCache(t *testi
 	assert.NotEmpty(t, files[0].Checksum, "a cached install must still save a checksum, not leave `verify` reporting NO CHECKSUM")
 }
 
+// TestService_ApplyInstall_KeepCacheReinstall_VerifyReportsOk pins the
+// invariant that keeps checksumFromCache's fallback VALUE inert (unit P
+// review, Minor 5): verify never compares checksum values, only their
+// presence. The warm-fill path records digestDirectoryMembers' path+member
+// fold for a plain extracted mod, which is deliberately NOT the archive-level
+// md5 a fresh download records - so if verify ever grew a value comparison,
+// every cache-warm install would be flagged. This is the test that would go
+// red the day it does; see verify's own doc comment for the contract.
+func TestService_ApplyInstall_KeepCacheReinstall_VerifyReportsOk(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
+	defer mock.Close()
+	svc.RegisterSource(mock)
+	registerDownloadableMod(t, mock, &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0", GameID: "g1"}, "mod1.zip", "payload")
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+
+	fresh, err := svc.GetFilesWithChecksums(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, fresh, 1)
+	require.NotEmpty(t, fresh[0].Checksum, "sanity: the cold install recorded the download's own checksum")
+
+	_, err = svc.UninstallMod(context.Background(), game, "default", "src", "mod1", core.UninstallOptions{KeepCache: true})
+	require.NoError(t, err)
+
+	plan2, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	_, err = svc.ApplyInstall(context.Background(), game, plan2, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, mock.DownloadCount(), "sanity: the reinstall read the cache warm")
+
+	warm, err := svc.GetFilesWithChecksums(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, warm, 1)
+	require.NotEmpty(t, warm[0].Checksum)
+	require.NotEqual(t, fresh[0].Checksum, warm[0].Checksum,
+		"fixture must exercise the divergence: a plain extracted entry has no retained original to re-hash, so the warm value is digestDirectoryMembers' fold, not the archive-level md5")
+
+	report, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []core.VerifyFinding{
+		{ModID: "mod1", ModName: "Mod One", FileID: "mod1", Status: "ok"},
+	}, report.Result.Findings, "a cache-warm install must verify clean: presence is all verify checks")
+	assert.Zero(t, report.Result.Issues)
+	assert.Zero(t, report.Result.Warnings)
+}
+
 // TestService_ApplyInstall_HookOrder proves install.before_all ->
 // install.before_each -> (deploy) -> install.after_each -> install.after_all
 // ordering for a single-mod (no dependencies) plan, mirroring

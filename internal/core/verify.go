@@ -234,6 +234,18 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 // entirely). Called only through verifyGated, which applies the --fix
 // mutation gate above.
 //
+// CONTRACT: verify never compares checksum VALUES; it only checks presence.
+// A recorded checksum is reported "ok" whatever it says, and only an EMPTY
+// one is "no_checksum" (perFileWalk's `f.Checksum == ""` test is the sole
+// reader of the column here). That is load-bearing, not incidental: the
+// values stored for one file are not all the same fingerprint - a fresh
+// download records the archive-level md5, while a cache-warm install records
+// checksumFromCache's fold over the entry's members for anything with no
+// retained original to re-hash (see its doc comment). A future deep tier
+// that compares values must re-ingest or re-derive first, or it will flag
+// every cache-warm install; TestService_ApplyInstall_KeepCacheReinstall_-
+// VerifyReportsOk pins the contract from the install side.
+//
 // #224 Task 6 completes the engine: the fix-mode merged-pak resync and the
 // deploy-convergence sweep (convergeDeployedFiles) that close out every run,
 // including the #217 empty-profile path, which now runs nothing BUT that
