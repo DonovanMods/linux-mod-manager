@@ -915,8 +915,26 @@ func TestProfileManager_Mutators_HonourCancellation(t *testing.T) {
 		{"SetModLock", func(ctx context.Context, pm *core.ProfileManager) error {
 			return pm.SetModLock(ctx, gameID, profileName, seeded.SourceID, seeded.ModID, "1.0")
 		}},
+		{"ClearModLock", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.ClearModLock(ctx, gameID, profileName, seeded.SourceID, seeded.ModID)
+		}},
 		{"ReorderMods", func(ctx context.Context, pm *core.ProfileManager) error {
 			return pm.ReorderMods(ctx, gameID, profileName, []domain.ModReference{seeded})
+		}},
+		{"Export", func(ctx context.Context, pm *core.ProfileManager) error {
+			_, err := pm.Export(ctx, gameID, profileName)
+			return err
+		}},
+		{"ImportWithOptions", func(ctx context.Context, pm *core.ProfileManager) error {
+			_, err := pm.ImportWithOptions(ctx, nil, false)
+			return err
+		}},
+		{"SetDefault", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.SetDefault(ctx, gameID, profileName)
+		}},
+		{"CreateOrResetDefault", func(ctx context.Context, pm *core.ProfileManager) error {
+			_, err := pm.CreateOrResetDefault(ctx, gameID)
+			return err
 		}},
 		{"Delete", func(ctx context.Context, pm *core.ProfileManager) error {
 			return pm.Delete(ctx, gameID, profileName)

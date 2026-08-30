@@ -138,7 +138,7 @@ type Mod struct {
 	SourceURL    string         `json:"source_url"`  // Web page URL (e.g. CurseForge mod page)
 	Files        []ModFile      `json:"files"`
 	Dependencies []ModReference `json:"dependencies"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	UpdatedAt    time.Time      `json:"updated_at,omitzero"`
 }
 
 // InstalledMod tracks a mod installed in a profile

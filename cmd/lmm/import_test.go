@@ -287,6 +287,57 @@ func setupDoImportTest(t *testing.T) (*core.Service, *domain.Game) {
 	return svc, game
 }
 
+// TestDoImport_ArchiveDryRun_RejectsWithNoSideEffects pins Important 2 of
+// the phase-end review: the archive form has no ImportArchivePlan yet
+// (#314), so --dry-run is rejected up front instead of silently performing
+// a real import - proven by checking every side effect ImportArchive would
+// have produced stays absent.
+func TestDoImport_ArchiveDryRun_RejectsWithNoSideEffects(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
+	createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
+
+	importDryRun = true
+
+	out, err := captureStdoutErr(t, func() error {
+		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--dry-run is not supported for archive imports yet")
+	assert.Contains(t, err.Error(), "https://github.com/DonovanMods/linux-mod-manager/issues/314")
+	assert.Empty(t, out, "nothing prints ahead of the rejection")
+
+	mods, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Empty(t, mods, "no DB row")
+
+	assert.Equal(t, "<empty>\n", dumpTree(t, game.ModPath), "no files deployed")
+	assert.Equal(t, "<empty>\n", dumpTree(t, svc.GetGameCachePath(game)), "no cache entry")
+}
+
+// TestDoImport_ArchiveDryRun_JSON_ReturnsTheSameBareError pins the --json
+// half: the rejection is a plain error (no Details() implementer), so
+// reportError renders it as the standard {"error": ...} envelope - the same
+// contract every other bare error gets under Ruling 15.
+func TestDoImport_ArchiveDryRun_JSON_ReturnsTheSameBareError(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	withJSONOutput(t)
+	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
+	createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
+
+	importDryRun = true
+
+	out, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--dry-run is not supported for archive imports yet")
+	assert.Empty(t, out, "no document on stdout for a run that never mutated anything")
+	assert.Empty(t, stderr)
+}
+
 // TestDoImport_IDDefault_SoleConfiguredSource_AutoResolves guards
 // resolveSource's auto-select path reached through --id with no --source:
 // exactly one configured source resolves without prompting.

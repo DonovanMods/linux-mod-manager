@@ -859,6 +859,10 @@ func normalizeOutcomes(mods []MergedFingerprintEntry, classify mergeSourceClassi
 // retains the source on redownload, and the next SyncMergedPak picks it up.
 // Gated on BOTH game- and mod-level ConvertPaks (like enabledMergeSources'
 // own participation gate) so a legacy/opted-out mod is never touched.
+//
+// No cmd/app caller today (Verify calls it internally); kept exported as a
+// serve-facing query (Phase 3 Ruling 10) - a frontend surfacing pending
+// lazy-migration state needs the same detector.
 func (s *Service) PakNeedsReingest(ctx context.Context, game *domain.Game, mod *domain.InstalledMod, fileID string) (bool, error) {
 	if game.DeployMode != domain.DeployCompile || !game.ConvertPaks || !mod.ConvertPaks {
 		return false, nil
@@ -964,6 +968,10 @@ func (s *Service) currentMergedFingerprint(ctx context.Context, game *domain.Gam
 // model). Returns nil, nil - not an error - when the merged pak is
 // up to date, when there is nothing to merge (zero enabled exmodz mods),
 // or when game is not a DeployCompile game.
+//
+// No cmd/app caller today (Updater.CheckUpdates and Verify call it
+// internally); kept exported as a serve-facing query (Phase 3 Ruling 10) -
+// a frontend showing merged-pak status needs the same staleness check.
 func (s *Service) CheckMergedPakStaleness(ctx context.Context, game *domain.Game, profileName string) (*domain.Update, error) {
 	if game.DeployMode != domain.DeployCompile {
 		return nil, nil

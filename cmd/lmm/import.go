@@ -42,7 +42,9 @@ Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
 it resolves automatically when the game has exactly one configured
 source, or prompts interactively when it has several) to fetch and
-attach source metadata as part of the import.
+attach source metadata as part of the import. --dry-run is rejected with
+an error here - there is no preview for this mode yet (see
+https://github.com/DonovanMods/linux-mod-manager/issues/314).
 
 Either way, a mod that ends up unmatched to any remote source is
 imported as local - it deploys and installs normally, but 'lmm update'
@@ -64,7 +66,7 @@ func init() {
 	importCmd.Flags().StringVarP(&importSource, "source", "s", "", "source for update tracking (default: auto-detect or local)")
 	importCmd.Flags().StringVar(&importModID, "id", "", "mod ID for linking to source (source resolves automatically; see --source)")
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
-	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
+	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes (scan mode only; rejected on an archive path, see --help)")
 	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip source lookup for untracked mods")
 
 	rootCmd.AddCommand(importCmd)
@@ -98,6 +100,17 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// Validate archive exists
 	if _, err := os.Stat(archivePath); err != nil {
 		return fmt.Errorf("archive not found: %s", archivePath)
+	}
+
+	// Phase 3 close wave, Important 2: the archive form has no
+	// ImportArchivePlan yet (#314), so --dry-run cannot preview it without
+	// performing the import for real. Reject up front, before source
+	// resolution or any of ImportArchive's cache/DB/profile writes, rather
+	// than silently ignoring the flag - Ruling 15 makes --dry-run --json a
+	// documented promise this command cannot keep today. Under --json the
+	// bare error renders the standard {"error": ...} envelope.
+	if importDryRun {
+		return fmt.Errorf("--dry-run is not supported for archive imports yet (see https://github.com/DonovanMods/linux-mod-manager/issues/314); it previews directory scans only")
 	}
 
 	// If --id is provided without --source, resolve dynamically: a sole

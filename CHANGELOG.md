@@ -20,7 +20,11 @@ document is now a type from `internal/core`, `internal/domain`, or
 [JSON output](README.md#json-output) section for the full command →
 document table. **`--json` never prompts**: every confirmation now has a
 deciding flag (`-y`/`--yes`, `--force`), and a run that would otherwise
-prompt fails first with the error envelope instead of reading stdin.
+prompt fails first with the error envelope instead of reading stdin. A mod
+with no source-supplied timestamp now omits `updated_at` entirely instead of
+carrying the zero-value `0001-01-01T00:00:00Z`, matching the
+not-applicable-is-absent convention `convert_paks`/`auth`/`cache_path`
+already use.
 
 A handful of plain-text and event behaviours changed alongside the JSON
 contract, each pinned by a re-recorded capture and detailed below: lock
@@ -40,6 +44,10 @@ paths when they still exist (#274).
 The Go module path is not decided here — whether v2.0.0 adopts a `.../v2`
 suffix (semantic import versioning) or keeps the existing path is an owner
 decision recorded in `docs/plans/v2.0.0-release-checklist.md`.
+
+This preamble, the README's v2 architecture and JSON-contract sections, and
+`docs/plans/v2.0.0-release-checklist.md` were themselves written as the
+phase's docs unit (#306).
 
 ### Added
 
@@ -64,7 +72,11 @@ decision recorded in `docs/plans/v2.0.0-release-checklist.md`.
   prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
   detected game — the same set the interactive "all" answer selects) and `--select <indices>`
   (the same 1-based indices the prompt accepts, including an already-configured game's index for
-  a repair); the two are mutually exclusive and both skip the prompt entirely. (#303)
+  a repair); the two are mutually exclusive and both skip the prompt entirely. As a side effect of
+  the same prompt-reading change, `lmm game detect` on a closed/EOF stdin (no `--all`/`--select`)
+  now reads that as an empty answer and prints `No games added.` exiting `0`, instead of
+  `Error: reading input: EOF` exiting `1`; every other prompting command's EOF behaviour is
+  unchanged. (#303)
 - **`--json` on every mutating command.** `install`, `import` (archive and scan), `deploy`,
   `uninstall`, `purge`, `profile apply/switch/sync/import/create/delete/reorder`,
   `mod enable/disable/lock/unlock/set-update/convert/edit` and
@@ -452,11 +464,12 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   iteration order. (#299)
 - `lmm uninstall --dry-run` and `lmm purge --dry-run` no longer announce a merged-artifact effect
   that would not happen. Both plans now model it (`merged_artifact: {action, path}` under `--json`,
-  `null` when there is nothing to do), computed from the merge sources the operation would leave
+  the key omitted entirely when there is nothing to do — `omitzero`, phase-end review Minor 7;
+  previously present as `null`), computed from the merge sources the operation would leave
   behind and whether the artifact is actually deployed, so a compile-game uninstall of a mod that
   contributes nothing to the merge — or a purge with nothing merged yet — prints no artifact line.
   `lmm import <archive> --json`'s `merged_pak_synced` is likewise set from the sync having run and
-  succeeded rather than from the game's deploy mode. (#304)
+  succeeded rather than from the game's deploy mode. (#304, #306)
 - `lmm status --game X --json` no longer swallows a failure to list the game's profiles into an
   empty-profiles document; it now fails loud, matching the plain-text path (which already did).
   Only reachable when the profiles directory exists but can't be read - a missing directory still
@@ -483,6 +496,15 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   vanish from the result at once. A cancelled run also now prints `Cancelled.` to stderr in plain
   mode before exiting 2 (`--json` stays silent, as `--json` output is otherwise unaffected). No
   other output changes on any non-cancelled path. (#305)
+- `lmm purge --dry-run --json` on an empty profile now emits the `PurgePlan` document instead of
+  a `PurgeResult`, matching `import`/`profile switch`/`profile apply`/`profile sync`'s identical
+  dry-run/json ordering (phase-end review Important 1). Plain-text `--dry-run` on an empty profile
+  is unchanged. (#306)
+- `lmm import <archive> --dry-run` no longer silently performs a real import. The archive form has
+  no plan to preview yet, so `--dry-run` is now rejected with an error (`--dry-run` is not
+  supported for archive imports yet ...) before any side effect — no DB row, no deployed files, no
+  cache entry — instead of ignoring the flag. Fixing this properly (an `ImportArchivePlan`) is
+  tracked as #314; scan-mode `--dry-run` is unaffected. (#314)
 
 ### Removed
 

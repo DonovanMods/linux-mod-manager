@@ -643,6 +643,26 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// ConvertPaks left nil - pak conversion does not apply at all
+			// (a non-compile game), the common shape mod_listing above does
+			// NOT cover (phase-end review Minor 8 / Unit N M3): the
+			// omitempty tag must drop convert_paks entirely here, not
+			// emit false or null.
+			"mod_listing_not_applicable",
+			core.ModListing{
+				InstalledMod: domain.InstalledMod{
+					Mod:          jsonGoldenMod,
+					ProfileName:  "default",
+					UpdatePolicy: domain.UpdateNotify,
+					InstalledAt:  fixedTime,
+					LinkMethod:   domain.LinkSymlink,
+					Enabled:      true,
+					Deployed:     true,
+				},
+				ConvertPaks: nil,
+			},
+		},
+		{
 			// Mods is deliberately left nil (no `omitempty` on the tag) to
 			// pin that an empty listing marshals as "[]", not "null".
 			"mod_list",

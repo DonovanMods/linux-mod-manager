@@ -14,8 +14,7 @@
     "picture_url": "https://example.invalid/img/1.png",
     "source_url": "https://example.invalid/mods/1",
     "files": [],
-    "dependencies": [],
-    "updated_at": "0001-01-01T00:00:00Z"
+    "dependencies": []
   },
   "installed": {
     "version": "1.5",
