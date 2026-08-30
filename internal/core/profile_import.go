@@ -421,7 +421,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			FileIDs:      downloadedFileIDs,
 			Deployed:     true, // installer.Install above just succeeded
 		}
-		installedMod.Mod.GameID = game.ID
+		installedMod.GameID = game.ID
 		if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 			fail(fmt.Sprintf("save failed: %v", err))
 			continue
