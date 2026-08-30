@@ -97,7 +97,8 @@ func TestService_PlanRollback_Locked(t *testing.T) {
 	assert.Equal(t, "2.0", plan.LockedVersion)
 	require.NotEmpty(t, plan.Refusal)
 	assert.Contains(t, plan.Refusal, "locked at v2.0")
-	assert.Contains(t, plan.Refusal, "lmm mod lock")
+	assert.Contains(t, plan.Refusal, "lmm mod unlock -s src -p default mod1")
+	assert.NotContains(t, plan.Refusal, "lmm mod lock", "unit Q review I1: ApplyRollback refuses on the lock alone")
 }
 
 // TestService_PlanRollback_CacheMissing covers the fourth pre-extraction

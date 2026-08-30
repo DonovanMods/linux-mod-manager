@@ -50,14 +50,17 @@ type RelinkPlan struct {
 	LockedVersion string `json:"locked_version,omitempty"`
 	// Refusal is populated whenever Relink && Locked: re-linking a locked
 	// ref is always refused (#146), regardless of the target version. Since
-	// #294 (Ruling 5) the text is LockedRefRefusalError's - one wording for
-	// every lock refusal in the product - but the SENTENCE half only
-	// (lockedRefRefusalMessage), without the ErrModLocked sentinel prefix
+	// #294 (Ruling 5) the text is the canonical one - one wording for every
+	// lock refusal of this KIND in the product - specifically
+	// LockedRefUnlockOnlyRefusalError's, since this gate ignores the
+	// version and only unlocking can unblock it (unit Q review, I1); and
+	// the SENTENCE half only (lockedRefUnlockOnlyMessage), without the
+	// ErrModLocked sentinel prefix
 	// UpdatePlan.Refusal/RollbackPlan.Refusal carry, because doModEdit
 	// re-wraps it (`fmt.Errorf("%w: %s", core.ErrModLocked, plan.Refusal)`)
 	// and would otherwise print the prefix twice. The wrapped result is
-	// byte-identical to LockedRefRefusalError(...).Error(), which is what
-	// ApplyRelinkMod itself returns. A version-only edit while locked is NOT
+	// byte-identical to LockedRefUnlockOnlyRefusalError(...).Error(), which
+	// is what ApplyRelinkMod itself returns. A version-only edit while locked is NOT
 	// decidable here (PlanRelinkMod has no version argument); ApplyRelinkMod
 	// re-derives that guard independently from RelinkOptions.Version,
 	// mirroring ApplyRollback/ApplyUpdate's own independent lock re-checks.
@@ -130,7 +133,7 @@ func (s *Service) PlanRelinkMod(ctx context.Context, game *domain.Game, profileN
 		if relink {
 			// #294 (Ruling 5): LockedRefRefusalError's sentence half - see
 			// RelinkPlan.Refusal for why the sentinel prefix is left off.
-			plan.Refusal = lockedRefRefusalMessage(mod.Mod, profileName, &domain.ModReference{Version: lockedVersion})
+			plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, &domain.ModReference{Version: lockedVersion})
 		}
 	}
 
@@ -189,9 +192,11 @@ type RelinkResult struct {
 // trusted from plan - a plan is a snapshot, mirroring ApplyRollback/
 // ApplyUpdate's own independent lock re-checks: a re-link refuses
 // unconditionally when the ref is locked (plan.Refusal's wording, wrapped in
-// ErrModLocked so callers can errors.Is it); a metadata-only edit refuses
-// only when opts.Version is set and differs from the lock's own target
-// (LockedRefRefusalError) - a --version equal to the locked version is a
+// ErrModLocked so callers can errors.Is it - LockedRefUnlockOnlyRefusalError,
+// since moving the lock cannot unblock a re-link); a metadata-only edit
+// refuses only when opts.Version is set and differs from the lock's own
+// target (LockedRefRefusalError, whose "move the lock" remedy DOES work
+// here) - a --version equal to the locked version is a
 // realign, not a move, and stays allowed, matching UpsertMod's own
 // same-version allowance.
 func (s *Service) ApplyRelinkMod(ctx context.Context, game *domain.Game, plan *RelinkPlan, opts RelinkOptions, sink EventSink) (*RelinkResult, error) {
@@ -241,9 +246,11 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	}
 	if locked {
 		if plan.Relink {
-			// #294 (Ruling 5): the same canonical refusal every other lock
-			// gate returns, replacing the hand-worded re-link wording.
-			return nil, LockedRefRefusalError(mod.Mod, profileName, &domain.ModReference{Version: lockedVersion})
+			// #294 (Ruling 5), as refined by the unit Q review (I1): the
+			// canonical refusal, in its UNLOCK-ONLY variant - this gate
+			// refuses on the lock alone, so moving the lock cannot unblock
+			// it and must not be offered as a remedy.
+			return nil, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, &domain.ModReference{Version: lockedVersion})
 		}
 		if opts.Version != "" && opts.Version != lockedVersion {
 			ref := &domain.ModReference{Version: lockedVersion}

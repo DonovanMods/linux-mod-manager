@@ -39,7 +39,7 @@
   "target_installed": true,
   "locked": true,
   "locked_version": "1.2.3",
-  "refusal": "Sample Mod is locked at v1.2.3 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
+  "refusal": "Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
   "merged_pak_affected": true,
   "profile": "default"
 }

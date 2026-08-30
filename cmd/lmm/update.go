@@ -554,10 +554,12 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 				return emitJSON(planUpdateResult(plan, plan.Mod.Version, core.UpdateSkipped, "locked"))
 			}
 			// #294 (Ruling 5): the context line says what is available,
-			// then UpdatePlan.Refusal - core.LockedRefRefusalError's
-			// canonical text, which already names both -s/-p remedies
-			// inline - says why nothing happened. Replaces the hand-worded
-			// refusal and its own "Move the lock:" duplicate.
+			// then UpdatePlan.Refusal - the canonical refusal text, which
+			// already names its -s/-p remedy inline - says why nothing
+			// happened. Replaces the hand-worded refusal and its own
+			// "Move the lock:" duplicate; that duplicate is not restored by
+			// the unit Q review's I1 either, since ApplyUpdate refuses on
+			// the lock alone and moving it changes nothing.
 			fmt.Printf("Recompile needed for %s (base pak updated).\n", plan.Mod.Name)
 			fmt.Println(plan.Refusal)
 			return nil
@@ -601,14 +603,16 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		// the "Updating..." header/changelog for a call that will never
 		// actually apply, and gives an actionable message naming both
 		// remedy commands instead of surfacing the core gate's raw error.
-		// #294 (Ruling 5): that message is now UpdatePlan.Refusal -
-		// core.LockedRefRefusalError's canonical text, one wording for
-		// every lock refusal - printed after a context line stating what
-		// is available. The refusal already names both remedies with -s/-p
-		// (#142 round 5: update honors -p, and a mod ID may exist under
-		// more than one configured source, so a bare copy-paste could
-		// otherwise resolve against the wrong profile/an ambiguous source),
-		// which is why the hand-worded "Move the lock:" line is gone.
+		// #294 (Ruling 5): that message is now UpdatePlan.Refusal - the
+		// canonical text, one wording for every lock refusal of this kind
+		// - printed after a context line stating what is available. The
+		// refusal names its remedy with -s/-p (#142 round 5: update honors
+		// -p, and a mod ID may exist under more than one configured source,
+		// so a bare copy-paste could otherwise resolve against the wrong
+		// profile/an ambiguous source), which is why the hand-worded
+		// "Move the lock:" line is gone. Since the unit Q review's I1 that
+		// remedy is unlocking only: this gate refuses regardless of the
+		// locked version, so "move the lock" was a no-op instruction.
 		if plan.Locked {
 			if jsonOutput {
 				return emitJSON(planUpdateResult(plan, newVersion, core.UpdateSkipped, "locked"))
@@ -839,9 +843,10 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		}
 		// #294 (Ruling 5): RollbackPlan.Refusal, the same canonical text
 		// applySingleUpdate's locked branch prints - it carries -s/-p on
-		// both remedies for the same reason (#142 round 5: a bare
-		// copy-paste could resolve against the wrong profile or an
-		// ambiguous source).
+		// its remedy for the same reason (#142 round 5: a bare copy-paste
+		// could resolve against the wrong profile or an ambiguous source),
+		// and names unlocking only (unit Q review, I1: ApplyRollback
+		// refuses on the lock alone).
 		fmt.Printf("Rollback available: %s → %s\n", plan.FromVersion, plan.ToVersion)
 		fmt.Println(plan.Refusal)
 		return nil

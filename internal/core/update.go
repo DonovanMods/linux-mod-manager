@@ -366,13 +366,16 @@ type UpdatePlan struct {
 	// Changelog is CleanChangelog(Update.Changelog) - empty when Update is
 	// nil or carries no changelog.
 	Changelog string `json:"changelog,omitempty"`
-	// Refusal is LockedRefRefusalError's full text (sentinel prefix
-	// included, unlike RelinkPlan.Refusal's sentence-only half),
+	// Refusal is LockedRefUnlockOnlyRefusalError's full text (sentinel
+	// prefix included, unlike RelinkPlan.Refusal's sentence-only half),
 	// precomputed whenever Locked && Update != nil. Since #294 (Ruling 5)
 	// cmd/lmm's renderer PRINTS this verbatim for both locked branches
 	// (an available update and a needed recompile), in place of the two
 	// hand-worded lines it used to compose - one wording for every lock
-	// refusal in the product.
+	// refusal of this KIND in the product. The unlock-only variant,
+	// because ApplyUpdate refuses on the lock alone regardless of version:
+	// moving the lock to the target version leaves it refusing, so naming
+	// that remedy would be false guidance (unit Q review, I1).
 	Refusal string `json:"refusal,omitempty"`
 	// snapshot is the installed-mod set this plan was computed against
 	// (Ruling 5): ApplyUpdate re-derives it under beginOp and returns
@@ -481,7 +484,7 @@ func (s *Service) planUpdateFrom(ctx context.Context, game *domain.Game, profile
 	plan.Changelog = CleanChangelog(upd.Changelog)
 	if plan.Locked {
 		ref := &domain.ModReference{Version: plan.LockedVersion}
-		plan.Refusal = LockedRefRefusalError(mod.Mod, profileName, ref).Error()
+		plan.Refusal = LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref).Error()
 	}
 
 	return plan, nil
@@ -605,13 +608,14 @@ type UpdateApplyResult struct {
 // locked (#97). Callers branch with errors.Is.
 var ErrModLocked = errors.New("mod is locked")
 
-// LockedRefRefusalError builds the ErrModLocked-wrapping refusal every
-// lock gate returns when mod's profile ref is locked - ApplyUpdate,
-// ApplyRollback, install gating (lockedInstallRefusal /
-// applyInstallBatchMod), and cmd/lmm's mod-edit version gate - factored
-// into one function specifically so the call sites can never drift apart
-// in wording (exported since #146 so cmd/lmm can reuse the exact same
-// refusal instead of hand-copying it;
+// LockedRefRefusalError builds the ErrModLocked-wrapping refusal a lock
+// gate returns when mod's profile ref is locked AND the gate would only have
+// proceeded at a different version - install gating (lockedInstallRefusal /
+// applyInstallBatchMod) and ApplyRelinkMod's metadata-only --version guard -
+// factored into one function specifically so the call sites can never drift
+// apart in wording. A gate that refuses on the lock alone takes
+// LockedRefUnlockOnlyRefusalError instead (exported since #146 so cmd/lmm
+// can reuse the exact same refusal instead of hand-copying it;
 // PR #142 Copilot round-4: the prior hand-duplicated
 // version named no source/profile in its remedies, so a user running the
 // refused operation against a non-active profile, or a mod ID that exists
@@ -629,6 +633,26 @@ func LockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModRe
 	return fmt.Errorf("%w: %s", ErrModLocked, lockedRefRefusalMessage(mod, profileName, ref))
 }
 
+// LockedRefUnlockOnlyRefusalError is LockedRefRefusalError's sibling for the
+// gates that refuse on ref.Locked ALONE, regardless of version: ApplyUpdate,
+// ApplyRollback and ApplyRelinkMod's re-link branch (#146). Moving the lock
+// to the target version leaves all three still refusing, so their refusal
+// offers only the remedy that works - "unlock with '...' first" - and never
+// names 'lmm mod lock' at all (unit Q review, I1: the unified wording named a
+// remedy the gate does not honour, which is worse guidance than the
+// hand-worded sentences Ruling 5 replaced).
+//
+// Both constructors go through lockedRefSentence, so Ruling 5's actual
+// rationale still holds: one wording per refusal KIND, and the call sites of
+// a kind can never drift apart. Use this one when the gate ignores the
+// version; use LockedRefRefusalError when the gate compares versions
+// (lockedInstallRefusal, applyInstallBatchMod, ApplyRelinkMod's
+// metadata-only --version guard), where moving the lock genuinely unblocks
+// the operation.
+func LockedRefUnlockOnlyRefusalError(mod domain.Mod, profileName string, ref *domain.ModReference) error {
+	return fmt.Errorf("%w: %s", ErrModLocked, lockedRefUnlockOnlyMessage(mod, profileName, ref))
+}
+
 // lockedRefRefusalMessage is LockedRefRefusalError's human-readable half:
 // the refusal sentence WITHOUT the ErrModLocked sentinel prefix. Split out
 // (#288) because the BATCH install engine's InstallLockRefusal event carries
@@ -637,8 +661,45 @@ func LockedRefRefusalError(mod domain.Mod, profileName string, ref *domain.ModRe
 // and splitting it here is what keeps the two from drifting apart in wording
 // the way the four hand-copied refusals LockedRefRefusalError replaced did.
 func lockedRefRefusalMessage(mod domain.Mod, profileName string, ref *domain.ModReference) string {
-	return fmt.Sprintf("%s is locked at v%s in profile %s - move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
-		mod.Name, ref.Version, profileName, mod.SourceID, profileName, mod.ID, mod.SourceID, profileName, mod.ID)
+	return lockedRefSentence(mod, profileName, ref, lockedRefRemedyMoveOrUnlock)
+}
+
+// lockedRefUnlockOnlyMessage is LockedRefUnlockOnlyRefusalError's sentence
+// half, on the same terms as lockedRefRefusalMessage. UpdatePlan.Refusal,
+// RollbackPlan.Refusal and RelinkPlan.Refusal all carry THIS - the sentence
+// without the sentinel - so cmd/lmm prints plan data verbatim without a
+// "mod is locked: mod is locked:" stutter (unit Q review, M1).
+func lockedRefUnlockOnlyMessage(mod domain.Mod, profileName string, ref *domain.ModReference) string {
+	return lockedRefSentence(mod, profileName, ref, lockedRefRemedyUnlockOnly)
+}
+
+// lockedRefRemedy selects which remedy clause lockedRefSentence appends.
+type lockedRefRemedy int
+
+const (
+	// lockedRefRemedyMoveOrUnlock offers both 'lmm mod lock <version>' and
+	// 'lmm mod unlock' - correct only where the gate compares the ref's
+	// locked version against a target version.
+	lockedRefRemedyMoveOrUnlock lockedRefRemedy = iota
+	// lockedRefRemedyUnlockOnly offers only 'lmm mod unlock' - for gates
+	// that refuse on the lock alone, where moving it changes nothing.
+	lockedRefRemedyUnlockOnly
+)
+
+// lockedRefSentence is the ONE builder behind every canonical lock refusal:
+// a shared "<name> is locked at v<version> in profile <profile>" head plus
+// exactly one of two remedy clauses. Both clauses carry the mod's actual
+// source (-s) and the profile actually holding the lock (-p), so a
+// copy-pasted remedy always resolves against the SAME ref the refusal is
+// about (PR #142 Copilot round-4).
+func lockedRefSentence(mod domain.Mod, profileName string, ref *domain.ModReference, remedy lockedRefRemedy) string {
+	unlock := fmt.Sprintf("unlock with 'lmm mod unlock -s %s -p %s %s'", mod.SourceID, profileName, mod.ID)
+	clause := unlock + " first"
+	if remedy == lockedRefRemedyMoveOrUnlock {
+		clause = fmt.Sprintf("move the lock with 'lmm mod lock -s %s -p %s %s <version>' or %s",
+			mod.SourceID, profileName, mod.ID, unlock)
+	}
+	return fmt.Sprintf("%s is locked at v%s in profile %s - %s", mod.Name, ref.Version, profileName, clause)
 }
 
 // ApplyUpdate applies upd to the installed mod it references
@@ -742,7 +803,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// contract. Checked before any network or hook side effect.
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
-			return result, LockedRefRefusalError(mod.Mod, profileName, ref)
+			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches

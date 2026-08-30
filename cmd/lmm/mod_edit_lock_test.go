@@ -56,7 +56,7 @@ func TestDoModEdit_ReLink_LockedRef_Refuses(t *testing.T) {
 	// refusal is LockedRefRefusalError's canonical wording, byte-for-byte,
 	// like every other lock refusal. internal/core/mod_edit_test.go pins
 	// that the old sentence is absent.
-	assert.Equal(t, "mod is locked: Mod A is locked at v1.0 in profile default - move the lock with 'lmm mod lock -s src -p default a <version>' or unlock with 'lmm mod unlock -s src -p default a'", err.Error())
+	assert.Equal(t, "mod is locked: Mod A is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s src -p default a' first", err.Error())
 
 	profile, loadErr := config.LoadProfile(configDir, game.ID, "default")
 	require.NoError(t, loadErr)

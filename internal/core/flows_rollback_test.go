@@ -192,8 +192,8 @@ func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
 	assert.ErrorIs(t, err, core.ErrModLocked)
 	assert.Contains(t, err.Error(), "locked at v")
 	assert.Contains(t, err.Error(), "in profile default", "the remedy must name the profile actually holding the lock (#142 round 4)")
-	assert.Contains(t, err.Error(), "lmm mod lock -s src -p default mod1", "the remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile")
-	assert.Contains(t, err.Error(), "lmm mod unlock -s src -p default mod1")
+	assert.NotContains(t, err.Error(), "lmm mod lock", "unit Q review I1: this gate refuses on the lock alone, so moving the lock is not a remedy")
+	assert.Contains(t, err.Error(), "lmm mod unlock -s src -p default mod1", "the remedy must carry -s/-p so a copy-paste can never resolve against a different source/profile")
 	require.NotNil(t, result)
 	assert.Empty(t, result.ModName, "no identity fields should be populated before this guard")
 	// #301: the refusal is reported as the same skipped/locked pair

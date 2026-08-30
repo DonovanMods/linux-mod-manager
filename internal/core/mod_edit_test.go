@@ -94,8 +94,10 @@ func TestService_PlanRelinkMod_TargetInstalled_Detected(t *testing.T) {
 
 // TestService_PlanRelinkMod_Locked_Relink_SetsRefusal guards #146: a
 // re-link request against a locked ref precomputes the refusal. Since #294
-// (Ruling 5) that text is LockedRefRefusalError's canonical sentence, not a
-// hand-worded one of its own - RelinkPlan.Refusal carries the SENTENCE (no
+// (Ruling 5) that text is the canonical sentence, not a hand-worded one of
+// its own - specifically LockedRefUnlockOnlyRefusalError's, since a re-link
+// is refused on the lock alone (unit Q review, I1) - and
+// RelinkPlan.Refusal carries the SENTENCE (no
 // ErrModLocked prefix), so prefixing the sentinel reproduces the canonical
 // error byte-for-byte, which is exactly what doModEdit/ApplyRelinkMod
 // return.
@@ -112,11 +114,13 @@ func TestService_PlanRelinkMod_Locked_Relink_SetsRefusal(t *testing.T) {
 
 	installed, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
-	canonical := core.LockedRefRefusalError(installed.Mod, "default", &domain.ModReference{Version: "1.5"}).Error()
+	canonical := core.LockedRefUnlockOnlyRefusalError(installed.Mod, "default", &domain.ModReference{Version: "1.5"}).Error()
 	assert.Equal(t, canonical, "mod is locked: "+plan.Refusal,
-		"#294: every lock refusal is LockedRefRefusalError's wording; Refusal is its sentence half")
+		"#294: every lock refusal is the canonical wording; Refusal is its sentence half")
 	assert.NotContains(t, plan.Refusal, "re-linking would replace the locked ref",
 		"#294: the hand-worded re-link refusal is gone")
+	assert.NotContains(t, plan.Refusal, "move the lock",
+		"unit Q review I1: a re-link is refused on the lock alone, so moving it is not a remedy")
 }
 
 // TestService_PlanRelinkMod_Locked_MetadataOnly_NoRefusal guards the
@@ -267,8 +271,9 @@ func TestService_ApplyRelinkMod_Relink_UnconfiguredTargetSource_Errors(t *testin
 
 // TestService_ApplyRelinkMod_Relink_Locked_Refuses guards #146: identical
 // to PlanRelinkMod's own Refusal text, wrapped in ErrModLocked so callers
-// can errors.Is it, and no state moves. Since #294 that text IS
-// LockedRefRefusalError's, byte-for-byte.
+// can errors.Is it, and no state moves. Since #294 that text IS the
+// canonical one, byte-for-byte - its unlock-only variant since the unit Q
+// review's I1.
 func TestService_ApplyRelinkMod_Relink_Locked_Refuses(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
@@ -283,8 +288,8 @@ func TestService_ApplyRelinkMod_Relink_Locked_Refuses(t *testing.T) {
 	result, err := svc.ApplyRelinkMod(context.Background(), game, plan, core.RelinkOptions{}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, core.ErrModLocked)
-	assert.Equal(t, core.LockedRefRefusalError(installed.Mod, "default", &domain.ModReference{Version: "1.5"}).Error(), err.Error(),
-		"#294: the re-link refusal is LockedRefRefusalError's canonical text")
+	assert.Equal(t, core.LockedRefUnlockOnlyRefusalError(installed.Mod, "default", &domain.ModReference{Version: "1.5"}).Error(), err.Error(),
+		"#294 + unit Q review I1: the re-link refusal is the canonical text's unlock-only variant")
 	assert.Nil(t, result)
 
 	saved, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")

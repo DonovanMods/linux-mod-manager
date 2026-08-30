@@ -40,12 +40,13 @@ type RollbackPlan struct {
 	// v%s") cannot substitute FromVersion for it.
 	Locked        bool   `json:"locked"`
 	LockedVersion string `json:"locked_version,omitempty"`
-	// Refusal is LockedRefRefusalError's full text, precomputed whenever
-	// Locked - mirrors UpdatePlan.Refusal (there populated only when Locked
-	// && Update != nil; here a rollback is always "available" once
-	// PlanRollback returns successfully, so Locked alone gates it),
+	// Refusal is LockedRefUnlockOnlyRefusalError's full text, precomputed
+	// whenever Locked - mirrors UpdatePlan.Refusal (there populated only
+	// when Locked && Update != nil; here a rollback is always "available"
+	// once PlanRollback returns successfully, so Locked alone gates it),
 	// including that cmd/lmm's renderer prints it verbatim since #294
-	// (Ruling 5).
+	// (Ruling 5) and that ApplyRollback's own gate ignores the version, so
+	// the refusal offers unlocking only (unit Q review, I1).
 	Refusal string `json:"refusal,omitempty"`
 	// CacheMissing reports that ToVersion's cache entry is gone (pruned, or
 	// manually deleted since the update that set PreviousVersion) - the
@@ -112,7 +113,7 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 		plan.Locked = true
 		plan.LockedVersion = lockedVersion
 		ref := &domain.ModReference{Version: lockedVersion}
-		plan.Refusal = LockedRefRefusalError(mod.Mod, profileName, ref).Error()
+		plan.Refusal = LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref).Error()
 	}
 
 	plan.CacheMissing = !s.GetGameCache(game).Exists(game.ID, mod.SourceID, mod.ID, mod.PreviousVersion)
@@ -297,7 +298,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
 			result.Reason = "locked"
-			return result, LockedRefRefusalError(mod.Mod, profileName, ref)
+			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
 		}
 	}
 	// (A missing/unreadable profile falls through - matches ApplyUpdate's

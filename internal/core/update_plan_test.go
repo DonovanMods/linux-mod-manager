@@ -139,7 +139,8 @@ func TestService_PlanUpdate_VersionBumpAvailable_Locked(t *testing.T) {
 	assert.Equal(t, "1.0", plan.LockedVersion)
 	require.NotEmpty(t, plan.Refusal, "Refusal must be populated when Locked && Update != nil")
 	assert.Contains(t, plan.Refusal, "locked at v1.0")
-	assert.Contains(t, plan.Refusal, "lmm mod lock")
+	assert.Contains(t, plan.Refusal, "lmm mod unlock -s src -p default mod1")
+	assert.NotContains(t, plan.Refusal, "lmm mod lock", "unit Q review I1: ApplyUpdate refuses on the lock alone")
 }
 
 func TestService_PlanUpdate_RecompileNeeded(t *testing.T) {
@@ -243,7 +244,8 @@ func TestService_PlanUpdateFrom_RefusesLocked(t *testing.T) {
 	assert.Equal(t, "1.0", plan.LockedVersion)
 	require.NotEmpty(t, plan.Refusal, "Refusal must be populated when Locked && Update != nil")
 	assert.Contains(t, plan.Refusal, "locked at v1.0")
-	assert.Contains(t, plan.Refusal, "lmm mod lock")
+	assert.Contains(t, plan.Refusal, "lmm mod unlock -s src -p default mod1")
+	assert.NotContains(t, plan.Refusal, "lmm mod lock", "unit Q review I1: ApplyUpdate refuses on the lock alone")
 }
 
 // TestService_ApplyUpdate_ErrStalePlan_FromPlanUpdateFrom is

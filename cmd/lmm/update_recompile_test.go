@@ -179,7 +179,7 @@ func TestApplySingleUpdate_RecompileLocked_Text(t *testing.T) {
 
 	// #294 (Ruling 5): the whole refused-recompile readout, byte-exact -
 	// see lock_visibility_test.go's sibling capture.
-	assert.Equal(t, "Recompile needed for Bear Mount (base pak updated).\nmod is locked: Bear Mount is locked at v3.3 in profile default - move the lock with 'lmm mod lock -s fake-compiler -p default bear-mount <version>' or unlock with 'lmm mod unlock -s fake-compiler -p default bear-mount'\n", out)
+	assert.Equal(t, "Recompile needed for Bear Mount (base pak updated).\nmod is locked: Bear Mount is locked at v3.3 in profile default - unlock with 'lmm mod unlock -s fake-compiler -p default bear-mount' first\n", out)
 	assert.NotContains(t, out, "Recompiling", "must never print the applying header - it never applies")
 	assert.Equal(t, 0, compiler.compileCalls, "a locked mod must never actually recompile")
 }

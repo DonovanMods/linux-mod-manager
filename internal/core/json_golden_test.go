@@ -851,7 +851,7 @@ func TestJSONGoldens(t *testing.T) {
 				},
 				RecompileNeeded: true,
 				Changelog:       "Fixed a crash on load.",
-				Refusal:         "mod is locked: Sample Mod is locked at v1.2.2 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
+				Refusal:         "mod is locked: Sample Mod is locked at v1.2.2 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
 			},
 		},
 		{
@@ -904,7 +904,7 @@ func TestJSONGoldens(t *testing.T) {
 				// "mod is locked: " sentinel prefix that update_plan's and
 				// rollback_plan's Refusal carry, because doModEdit re-wraps
 				// it. This is exactly what PlanRelinkMod produces.
-				Refusal:           "Sample Mod is locked at v1.2.3 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
+				Refusal:           "Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
 				MergedPakAffected: true,
 				Profile:           "default",
 			},
@@ -972,7 +972,7 @@ func TestJSONGoldens(t *testing.T) {
 				ToVersion:     "1.2.2",
 				Locked:        true,
 				LockedVersion: "1.2.3",
-				Refusal:       "mod is locked: Sample Mod is locked at v1.2.3 in profile default - move the lock with 'lmm mod lock -s nexusmods -p default 42 <version>' or unlock with 'lmm mod unlock -s nexusmods -p default 42'",
+				Refusal:       "mod is locked: Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
 				CacheMissing:  true,
 			},
 		},
