@@ -341,6 +341,52 @@ func TestApplyImportArchive_ConflictRefusalLeavesNoCacheEntry(t *testing.T) {
 	assert.Equal(t, "from-A", string(data))
 }
 
+// TestApplyImportArchive_ConflictSetChangedSincePlan_ReturnsErrStalePlan pins
+// R-B3's mandated branch (#314 review I2, import_archive.go's sameConflicts
+// mismatch case): Apply RECOMPUTES the conflict set from what it actually
+// ingested, and a set that no longer matches plan.Conflicts is ErrStalePlan,
+// not a decision made about the wrong files.
+//
+// installedSnapshot (the checkPlanFresh precondition) keys only
+// "source:id -> version|enabled", so it cannot see an already-installed
+// mod's OWNED FILES changing - here, mod A gains "shared.txt" between the
+// plan and the apply without any version or enabled change, entirely
+// invisible to checkPlanFresh. The conflict-set comparison is what catches
+// it instead.
+func TestApplyImportArchive_ConflictSetChangedSincePlan_ReturnsErrStalePlan(t *testing.T) {
+	svc, game := newImportArchiveTestService(t)
+
+	seedInstalledMod(t, svc, game, "other-src", "A1", "1.0", true, map[string][]byte{"a-only.txt": []byte("from-A")})
+	seedProfileWithMod(t, svc, "g1", "default", "other-src", "A1", "1.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	archiveB := filepath.Join(t.TempDir(), "second.zip")
+	createImportTestZip(t, archiveB, map[string]string{"shared.txt": "from-B"})
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archiveB, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	require.Empty(t, plan.Conflicts, "sanity: A does not own shared.txt at plan time")
+
+	// A's cache gains a file - not its version, not its enabled state -
+	// between the plan and the apply, and DeployProfile re-syncs the DB's
+	// deployed-file ownership from it exactly as a real redeploy would.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store("g1", "other-src", "A1", "1.0", "shared.txt", []byte("from-A-too")))
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	_, err = svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
+
+	assert.False(t, gameCache.Exists("g1", plan.Mod.SourceID, plan.Mod.ID, plan.Mod.Version),
+		"a stale-conflict refusal must discard the cache entry this apply created")
+
+	mods, mErr := svc.GetInstalledMods(context.Background(), "g1", "default")
+	require.NoError(t, mErr)
+	require.Len(t, mods, 1, "the refused import must not touch the DB/profile")
+	assert.Equal(t, "A1", mods[0].ID)
+}
+
 // TestPlanImportArchive_CompileGame_ReportsMergedArtifactEffect pins the
 // Ruling 8 modelling for the import direction: importing a merge source into
 // a DeployCompile game resyncs the profile's merged artifact.
