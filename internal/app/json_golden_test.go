@@ -95,6 +95,13 @@ func TestAppJSONGoldens(t *testing.T) {
 				},
 			},
 		},
+		{
+			// Sources/Orphaned deliberately left nil (no `omitempty` on
+			// either tag, task A review round 1, Minor 6) to pin that a
+			// report with nothing to say marshals both as "[]", not "null".
+			"auth_status_report_empty",
+			AuthStatusReport{},
+		},
 	}
 
 	for _, tt := range tests {

@@ -687,6 +687,15 @@ func TestJSONGoldens(t *testing.T) {
 			}},
 		},
 		{
+			// Profiles deliberately left nil (no `omitempty` on the tag,
+			// task A review round 1, Minor 6) to pin that a game with no
+			// profiles marshals its listing as "[]", not "null" - the
+			// game_summary/mod_list precedent above, for the one new list
+			// document that lacked it.
+			"profile_listing_empty",
+			core.ProfileListing{GameID: "skyrim-se", Profiles: nil},
+		},
+		{
 			// Profiles is deliberately left nil (no `omitempty` on the tag) to
 			// pin that a game with no profiles marshals as "[]", not "null".
 			"game_summary",

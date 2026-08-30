@@ -8,6 +8,7 @@ package core_test
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"runtime"
@@ -154,13 +155,19 @@ func TestListProfiles_NamesModCountsAndDefault(t *testing.T) {
 }
 
 // TestListProfiles_NoProfilesIsEmptyNotNil pins the zero-profiles shape: the
-// listing itself is never nil, and its Profiles slice marshals as [].
+// listing itself is never nil, and its Profiles slice marshals as [] - not
+// merely assert.Empty (task A review round 1, Minor 6), which passes just
+// as well for nil as for "[]" and so never actually pinned the rendering.
 func TestListProfiles_NoProfilesIsEmptyNotNil(t *testing.T) {
 	listing, err := newFlowsTestService(t).ListProfiles(context.Background(), "g1")
 	require.NoError(t, err)
 	require.NotNil(t, listing)
 	assert.Equal(t, "g1", listing.GameID)
-	assert.Empty(t, listing.Profiles)
+	assert.Nil(t, listing.Profiles)
+
+	b, err := json.Marshal(listing)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"game_id":"g1","profiles":[]}`, string(b))
 }
 
 // --- ExportProfile ---
