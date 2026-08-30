@@ -166,8 +166,18 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	// accepting is simply a re-run of the same call with AcceptConflicts set
 	// - see confirmInstallConflicts' doc comment for the Ruling 7 output
 	// delta that re-run carries.
+	//
+	// Ruling 15/2: under --json the prompt is unanswerable, so the
+	// *core.ConflictError is returned untouched and reportError renders it
+	// as the envelope with details.conflicts - the same contract doInstall's
+	// identical guard gives `install --json` (unit P review, Important 1;
+	// without the guard this caller printed the plain-text conflict block
+	// onto stdout and then collapsed the typed error into
+	// ErrConfirmationRequired at the refused stdin read). --force is how a
+	// non-interactive caller accepts them; core reads it as AcceptConflicts,
+	// so a forced import never gets here at all.
 	var conflictErr *core.ConflictError
-	if errors.As(err, &conflictErr) {
+	if errors.As(err, &conflictErr) && !jsonOutput {
 		proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, conflictErr.Conflicts)
 		if readErr != nil {
 			// A genuine stdin read failure, not an ordinary decline - see

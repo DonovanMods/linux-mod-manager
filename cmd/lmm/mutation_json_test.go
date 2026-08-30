@@ -996,3 +996,43 @@ func TestDoUpdate_JSON_BulkCheckError_NoStderrLeak(t *testing.T) {
 	decodeSingleDoc(t, stdout, &doc)
 	assert.Contains(t, doc.ErrorMessage, "unregistered-src", "the message must still reach the document")
 }
+
+// TestDoImport_JSON_ConflictWithoutForce_SurfacesEnvelopeWithDetails is the
+// archive-import twin of
+// TestDoInstall_JSON_ConflictWithoutForce_SurfacesEnvelopeWithDetails (unit
+// P review, Important 1): doImport and doInstall share
+// confirmInstallConflicts, so import's caller needs install's `&&
+// !jsonOutput` guard too. Without it the conflict block prints to stdout
+// ahead of the envelope and the *core.ConflictError collapses into
+// ErrConfirmationRequired at the refused stdin read, losing
+// details.conflicts entirely.
+func TestDoImport_JSON_ConflictWithoutForce_SurfacesEnvelopeWithDetails(t *testing.T) {
+	svc, game, archiveBPath := setupImportConflictTest(t)
+	importForce = false
+	withJSONOutput(t)
+
+	before := snapshotDryRunState(t, svc, game, "default")
+
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archiveBPath})
+		})
+	})
+
+	var conflictErr *core.ConflictError
+	require.ErrorAs(t, err, &conflictErr)
+	require.NotEmpty(t, conflictErr.Conflicts)
+	assert.Equal(t, "shared.txt", conflictErr.Conflicts[0].RelativePath)
+	assert.Equal(t, "A1", conflictErr.Conflicts[0].CurrentModID)
+	assert.Empty(t, stdout, "the conflict path emits no document and no prompt text")
+	assert.Empty(t, stderr)
+
+	assert.Equal(t, before, snapshotDryRunState(t, svc, game, "default"),
+		"a refused conflict must leave the DB, the profile, the cache and the game dir exactly as it found them")
+
+	// The envelope reportError would print for that error carries the
+	// conflicts as data, exactly as install's does.
+	envelope := captureStdout(t, func() error { reportError(err); return nil })
+	assert.Contains(t, envelope, "\"details\"")
+	assert.Contains(t, envelope, "\"conflicts\"")
+}
