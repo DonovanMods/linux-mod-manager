@@ -105,3 +105,81 @@ func TestService_PurgeProfile_CancellationBetweenRecordDeleteAndProfileRefRemova
 	assert.NotNil(t, profile.FindRef(second.SourceID, second.ID),
 		"the next mod must not be processed after the cancellation")
 }
+
+// TestService_ApplyRelinkMod_CancellationBetweenDBDeleteAndProfileMove is the
+// residual class-(A) shape for v2 Phase 3 Ruling 16, left open at fix wave
+// round 1's "Left for the coordinator" (deviation 3): a re-link deletes the
+// old DB row, then moves the profile ref, then saves the new DB row - one
+// three-step commit once the old row is gone. Reuses
+// cancelAtCompletingProfileWrite unmodified: the re-link branch's FIRST
+// completeProfileWrite call is the pair's RemoveMod(old ref), which runs
+// immediately after the DB delete with no core-originated ctx.Err() check in
+// between, so the harness's existing trigger point already lands exactly
+// where this test needs it.
+//
+// Against 611b00d this fails on the new-DB-row assertion: the profile pair
+// finishes under WithoutCancel (round 1's fix), but the run then returns
+// before the new DB row is ever saved - the profile agrees with the NEW
+// identity while the DB has NEITHER identity's row.
+func TestService_ApplyRelinkMod_CancellationBetweenDBDeleteAndProfileMove(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "a", "1.5")
+	game.SourceIDs["src"] = game.ID // relink target must be a configured source
+
+	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "src", "b")
+	require.NoError(t, err)
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+
+	result, err := svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the run must end with the cancellation, not absorb it")
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on a completing profile write")
+	assert.Nil(t, result)
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "the old identity's DB row must be gone")
+
+	moved, err := svc.GetInstalledMod(context.Background(), "src", "b", game.ID, "default")
+	require.NoError(t, err, "Ruling 16 (A): the new DB row must be saved even though the run was cancelled")
+	assert.Equal(t, "1.5", moved.Version)
+
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Nil(t, prof.FindRef("src", "a"), "the old profile ref must be removed")
+	require.NotNil(t, prof.FindRef("src", "b"), "the new profile ref must exist, agreeing with the DB")
+}
+
+// TestService_ApplyRelinkMod_CancelledBeforeApply_LeavesEverythingUntouched
+// is the bracketing counterpart: a cancellation that lands before the run
+// ever starts (beginOp's own guard) must not touch the old DB row, the new
+// identity, or the profile at all.
+func TestService_ApplyRelinkMod_CancelledBeforeApply_LeavesEverythingUntouched(t *testing.T) {
+	svc, game, _ := newModDetailTestService(t)
+	seedModDetailInstalled(t, svc, game, "a", "1.5")
+	game.SourceIDs["src"] = game.ID
+
+	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "src", "b")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := svc.ApplyRelinkMod(ctx, game, plan, core.RelinkOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, result)
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	assert.NoError(t, err, "a cancellation before the run starts must not touch the old record")
+
+	_, err = svc.GetInstalledMod(context.Background(), "src", "b", game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "the new identity must not have been created")
+
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NotNil(t, prof.FindRef("src", "a"), "the old profile ref must be untouched")
+	assert.Nil(t, prof.FindRef("src", "b"))
+}

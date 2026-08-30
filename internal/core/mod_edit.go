@@ -320,11 +320,14 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 			return nil, fmt.Errorf("removing old record: %w", err)
 		}
 
-		// Ruling 16 (A): the old DB record is already deleted, so BOTH
-		// halves of the profile move that completes it - dropping the old
-		// ref and writing the new one - run to the end even under a
-		// cancelled ctx. They are one completion, so the cancellation is
-		// re-checked once, after the pair, and never between them.
+		// Ruling 16 (A): the old DB record is already deleted, so ALL THREE
+		// steps that complete it - dropping the old profile ref, writing
+		// the new one, and saving the new DB row under the new identity -
+		// run to the end even under a cancelled ctx. They are one
+		// completion, so the cancellation is re-checked once, after all
+		// three, and never in between (fix wave round 1's residual: this
+		// used to stop after the profile pair, leaving the profile agreeing
+		// with the NEW identity while the DB had NEITHER identity's row).
 		pm := s.NewProfileManager()
 		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
 			return pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID)
@@ -337,6 +340,11 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		}); err != nil && ctx.Err() == nil {
 			note("Warning: could not update profile: %v", err)
 		}
+		if err := completeDBWrite(ctx, func(ctx context.Context) error {
+			return s.saveInstalledMod(ctx, &mod)
+		}); err != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("saving changes: %w", err)
+		}
 		if cerr := ctx.Err(); cerr != nil {
 			return nil, cerr
 		}
@@ -348,8 +356,13 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		return result, nil
 	}
 
-	if err := s.saveInstalledMod(ctx, &mod); err != nil {
-		return nil, fmt.Errorf("saving changes: %w", err)
+	if !plan.Relink {
+		// A re-link already saved mod under its new identity above, as the
+		// last step of that one completion chain - saving it again here
+		// would be a harmless but redundant duplicate write.
+		if err := s.saveInstalledMod(ctx, &mod); err != nil {
+			return nil, fmt.Errorf("saving changes: %w", err)
+		}
 	}
 
 	if opts.Version != "" && !plan.Relink {

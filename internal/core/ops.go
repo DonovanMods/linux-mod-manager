@@ -72,3 +72,28 @@ func completeProfileWrite(ctx context.Context, write func(context.Context) error
 	}
 	return err
 }
+
+// completeDBWrite runs write - a DB mutation that COMPLETES a profile-file
+// mutation the caller has ALREADY applied - under a context that cannot be
+// cancelled, then reports the caller's own cancellation if there was one.
+//
+// Mirrors completeProfileWrite exactly, direction reversed: a re-link
+// (ApplyRelinkMod) moves a mod to a new source_id/mod_id identity by first
+// completing its profile-ref move (two completeProfileWrite calls dropping
+// the old ref and writing the new one, once the OLD DB row is already
+// deleted), then saving the NEW installed_mods row. A Ctrl-C landing after
+// the profile move but before that save would leave the profile pointing at
+// an identity with no DB row behind it - the same drift completeProfileWrite
+// prevents, on the other side of the pair. write always runs under
+// context.WithoutCancel(ctx) and always finishes; ctx.Err() is re-checked
+// immediately afterwards and takes precedence over write's own error, so the
+// caller still ends the run with context.Canceled (v2 Phase 3 Ruling 16,
+// fix wave round 1's residual - see completeProfileWrite's own comment for
+// the shared cancellation-precedence contract callers rely on).
+func completeDBWrite(ctx context.Context, write func(context.Context) error) error {
+	err := write(context.WithoutCancel(ctx))
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	return err
+}
