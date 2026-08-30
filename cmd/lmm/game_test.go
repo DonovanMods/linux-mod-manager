@@ -136,6 +136,90 @@ func TestGameShowDefault_WithDefault(t *testing.T) {
 	assert.Contains(t, buf.String(), "test-game")
 }
 
+// TestGameShowDefault_PlainTextIsOnStdoutNotStderr pins Ruling 17
+// (#309): before this, doGameShowDefault's lines went to
+// Command.OutOrStderr() (an accident of cmd.Println/Printf) rather than
+// stdout, so a caller piping only stdout got nothing. Uses SEPARATE
+// stdout/stderr buffers - TestGameShowDefault_NoDefault/_WithDefault point
+// both cmd.SetOut and cmd.SetErr at the SAME buffer, which cannot
+// distinguish the two streams.
+func TestGameShowDefault_PlainTextIsOnStdoutNotStderr(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir = tmpDir
+	dataDir = filepath.Join(tmpDir, "data")
+
+	outBuf, errBuf := new(bytes.Buffer), new(bytes.Buffer)
+	cmd := &cobra.Command{Use: "test"}
+	gameCmdCopy := &cobra.Command{Use: "game"}
+	showDefaultCmdCopy := &cobra.Command{Use: "show-default", Args: cobra.NoArgs, RunE: runGameShowDefault}
+	gameCmdCopy.AddCommand(showDefaultCmdCopy)
+	cmd.AddCommand(gameCmdCopy)
+	cmd.SetOut(outBuf)
+	cmd.SetErr(errBuf)
+	cmd.SetArgs([]string{"game", "show-default"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, outBuf.String(), "No default game set")
+	assert.Empty(t, errBuf.String(), "the plain lines must not land on stderr (Ruling 17)")
+}
+
+// TestGameShowDefault_UnresolvableID matches the plain path's own
+// fallback: a configured default that no longer names a known game prints
+// just the bare ID, no "(name)".
+func TestGameShowDefault_UnresolvableID(t *testing.T) {
+	tmpDir := t.TempDir()
+	configDir = tmpDir
+	dataDir = filepath.Join(tmpDir, "data")
+	cfg := &config.Config{DefaultGame: "ghost-game"}
+	require.NoError(t, cfg.Save(tmpDir))
+
+	outBuf := new(bytes.Buffer)
+	cmd := &cobra.Command{Use: "test"}
+	gameCmdCopy := &cobra.Command{Use: "game"}
+	showDefaultCmdCopy := &cobra.Command{Use: "show-default", Args: cobra.NoArgs, RunE: runGameShowDefault}
+	gameCmdCopy.AddCommand(showDefaultCmdCopy)
+	cmd.AddCommand(gameCmdCopy)
+	cmd.SetOut(outBuf)
+	cmd.SetErr(outBuf)
+	cmd.SetArgs([]string{"game", "show-default"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "Default game: ghost-game\n", outBuf.String())
+}
+
+// TestDoGameShowDefault_JSON pins the DefaultGame document's framing (one
+// document, empty stderr) and its recorded golden (#309), for both the
+// "set, resolves" and "none set" shapes.
+func TestDoGameShowDefault_JSON(t *testing.T) {
+	t.Run("set", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		require.NoError(t, svc.SaveGame(context.Background(), goldenStatusGame("skyrim-se", "Skyrim SE")))
+		require.NoError(t, svc.SetDefaultGame(context.Background(), "skyrim-se"))
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		out := runJSONCommand(t, func() error {
+			return doGameShowDefault(context.Background(), cmd, svc)
+		})
+		var got core.DefaultGame
+		decodeStrict(t, out, &got)
+		assertJSONCLIGolden(t, "game_show_default_set", out)
+	})
+
+	t.Run("none", func(t *testing.T) {
+		svc := setupGameAddTest(t)
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		out := runJSONCommand(t, func() error {
+			return doGameShowDefault(context.Background(), cmd, svc)
+		})
+		var got core.DefaultGame
+		decodeStrict(t, out, &got)
+		assertJSONCLIGolden(t, "game_show_default_none", out)
+	})
+}
+
 func TestGameClearDefault_NoDefault(t *testing.T) {
 	// Use temp directories
 	tmpDir := t.TempDir()

@@ -713,6 +713,14 @@ func TestJSONGoldens(t *testing.T) {
 			core.ProfileSummary{Name: "default", ModCount: 3, IsDefault: true},
 		},
 		{
+			// `lmm game show-default --json`'s document (#309): the fully
+			// populated shape - a game with no default set is the
+			// zero-value core.DefaultGame{}, already covered by every
+			// other golden's implicit "omitzero drops the key" pattern.
+			"default_game",
+			core.DefaultGame{Set: true, ID: "skyrim-se", Name: "Skyrim SE"},
+		},
+		{
 			// EffectiveLinkMethod deliberately differs from LinkMethod (the
 			// profile override case, #155), and every optional key is
 			// populated, so the golden pins each key's wire shape rather than

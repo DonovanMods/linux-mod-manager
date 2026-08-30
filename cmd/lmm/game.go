@@ -139,31 +139,36 @@ func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault stri
 }
 
 func runGameShowDefault(cmd *cobra.Command, args []string) error {
-	svcCfg, err := getServiceConfig()
-	if err != nil {
-		return err
-	}
-	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
+	return withService(cmd, func(ctx context.Context, service *core.Service) error {
+		return doGameShowDefault(ctx, cmd, service)
+	})
+}
+
+// doGameShowDefault renders the DefaultGame query (#309). Ruling 17
+// (recorded plain-text delta): the plain lines move from stderr - an
+// accident of cmd.Println/Printf, which write to Command.OutOrStderr() -
+// to stdout via cmd.OutOrStdout(); the bytes themselves are unchanged.
+func doGameShowDefault(ctx context.Context, cmd *cobra.Command, service *core.Service) error {
+	info, err := service.DefaultGameInfo(ctx)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if defaultGame == "" {
-		cmd.Println("No default game set")
-		cmd.Println("Use 'lmm game set-default <game-id>' to set one")
+	if jsonOutput {
+		return emitJSON(info)
+	}
+
+	out := cmd.OutOrStdout()
+	if !info.Set {
+		fmt.Fprintln(out, "No default game set")
+		fmt.Fprintln(out, "Use 'lmm game set-default <game-id>' to set one")
 		return nil
 	}
-
-	// Try to get game name for display
-	if service, err := initService(cmd.Context()); err == nil {
-		defer closeService(service)
-		if game, err := service.GetGame(defaultGame); err == nil {
-			cmd.Printf("Default game: %s (%s)\n", game.Name, defaultGame)
-			return nil
-		}
+	if info.Name != "" {
+		fmt.Fprintf(out, "Default game: %s (%s)\n", info.Name, info.ID)
+		return nil
 	}
-
-	cmd.Printf("Default game: %s\n", defaultGame)
+	fmt.Fprintf(out, "Default game: %s\n", info.ID)
 	return nil
 }
 

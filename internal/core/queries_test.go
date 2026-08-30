@@ -202,6 +202,50 @@ func TestExportProfile_MissingProfile(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// --- DefaultGameInfo ---
+
+// TestDefaultGameInfo_NoneSet covers the "no default configured" shape:
+// Set false, ID/Name both empty.
+func TestDefaultGameInfo_NoneSet(t *testing.T) {
+	info, err := newFlowsTestService(t).DefaultGameInfo(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.False(t, info.Set)
+	assert.Empty(t, info.ID)
+	assert.Empty(t, info.Name)
+}
+
+// TestDefaultGameInfo_ResolvesName covers the common case: the configured
+// default game still resolves via GetGame, so Name is populated alongside
+// the ID.
+func TestDefaultGameInfo_ResolvesName(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: "skyrim-se", Name: "Skyrim SE", ModPath: t.TempDir()}))
+	require.NoError(t, svc.SetDefaultGame(ctx, "skyrim-se"))
+
+	info, err := svc.DefaultGameInfo(ctx)
+	require.NoError(t, err)
+	assert.True(t, info.Set)
+	assert.Equal(t, "skyrim-se", info.ID)
+	assert.Equal(t, "Skyrim SE", info.Name)
+}
+
+// TestDefaultGameInfo_UnresolvableID matches the plain path's own
+// fallback: a configured default that no longer names a known game (e.g.
+// games.yaml was edited) still reports Set/ID, just with an empty Name.
+func TestDefaultGameInfo_UnresolvableID(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	require.NoError(t, svc.SetDefaultGame(ctx, "ghost-game"))
+
+	info, err := svc.DefaultGameInfo(ctx)
+	require.NoError(t, err)
+	assert.True(t, info.Set)
+	assert.Equal(t, "ghost-game", info.ID)
+	assert.Empty(t, info.Name)
+}
+
 // --- Status / GameStatus ---
 
 // TestStatus_GamesByIDWithCountsAndDefault covers the summary `lmm status`

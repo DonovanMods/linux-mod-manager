@@ -167,6 +167,37 @@ func (s *Service) ExportProfile(ctx context.Context, gameID, profileName string)
 	return config.ExportProfileValue(profile), nil
 }
 
+// DefaultGame is `lmm game show-default --json`'s document (#309): Set is
+// false when no default game is configured, in which case ID/Name are both
+// empty. Name is empty when the configured ID no longer resolves via
+// GetGame (e.g. games.yaml was edited since) - matching the plain path's
+// own "Default game: <id>" (no name) fallback for that case.
+type DefaultGame struct {
+	Set  bool   `json:"set"`
+	ID   string `json:"id,omitzero"`
+	Name string `json:"name,omitzero"`
+}
+
+// DefaultGameInfo resolves the configured default game into the DefaultGame
+// report `lmm game show-default --json` emits: built on top of the
+// existing (*Service).DefaultGame (left unchanged - it has its own
+// internal callers and direct tests) rather than replacing it, with the
+// game's Name added when it still resolves (#309).
+func (s *Service) DefaultGameInfo(ctx context.Context) (*DefaultGame, error) {
+	id, err := s.DefaultGame(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if id == "" {
+		return &DefaultGame{}, nil
+	}
+	info := &DefaultGame{Set: true, ID: id}
+	if game, err := s.GetGame(id); err == nil {
+		info.Name = game.Name
+	}
+	return info, nil
+}
+
 // GameSummary is one row of a StatusReport: a configured game plus the
 // counts `lmm status` shows next to it.
 //
