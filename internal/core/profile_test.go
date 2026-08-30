@@ -879,3 +879,76 @@ func TestProfileManager_ClearModLock_NotInProfile(t *testing.T) {
 	require.Error(t, err)
 	assert.EqualError(t, err, `mod nexusmods:12345 not found in profile "test"`)
 }
+
+// TestProfileManager_Mutators_HonourCancellation is the mutator half of
+// TestProfileManager_Get_HonoursCancellation (above), which pins a read only.
+// v2 Phase 3 Task 18 gave every I/O method a ctx.Err() pre-check ahead of any
+// disk access; for a mutator the observable contract is two-part - the call
+// returns context.Canceled, AND the profile file on disk is byte-identical
+// afterwards - and only a mutator can demonstrate the second half (task-18
+// review, Minor 4).
+//
+// Every case targets the SEEDED profile, so an ordinary uncancelled call
+// would succeed and rewrite the file: the unchanged bytes are evidence the
+// guard returned first, not that the call had nothing to do.
+func TestProfileManager_Mutators_HonourCancellation(t *testing.T) {
+	const gameID, profileName = "skyrim-se", "default"
+	seeded := domain.ModReference{SourceID: "src", ModID: "m1", Version: "1.0"}
+
+	cases := []struct {
+		name string
+		call func(context.Context, *core.ProfileManager) error
+	}{
+		{"Create", func(ctx context.Context, pm *core.ProfileManager) error {
+			_, err := pm.Create(ctx, gameID, "second")
+			return err
+		}},
+		{"AddMod", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.AddMod(ctx, gameID, profileName, domain.ModReference{SourceID: "src", ModID: "m2", Version: "1.0"})
+		}},
+		{"UpsertMod", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.UpsertMod(ctx, gameID, profileName, domain.ModReference{SourceID: "src", ModID: "m1", Version: "2.0"})
+		}},
+		{"RemoveMod", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.RemoveMod(ctx, gameID, profileName, seeded.SourceID, seeded.ModID)
+		}},
+		{"SetModLock", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.SetModLock(ctx, gameID, profileName, seeded.SourceID, seeded.ModID, "1.0")
+		}},
+		{"ReorderMods", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.ReorderMods(ctx, gameID, profileName, []domain.ModReference{seeded})
+		}},
+		{"Delete", func(ctx context.Context, pm *core.ProfileManager) error {
+			return pm.Delete(ctx, gameID, profileName)
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			database, err := db.New(":memory:")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, database.Close()) })
+
+			pm := core.NewProfileManager(dir, database)
+			_, err = pm.Create(context.Background(), gameID, profileName)
+			require.NoError(t, err)
+			require.NoError(t, pm.AddMod(context.Background(), gameID, profileName, seeded))
+
+			path := filepath.Join(dir, "games", gameID, "profiles", profileName+".yaml")
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			err = tc.call(ctx, pm)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, context.Canceled)
+
+			after, err := os.ReadFile(path)
+			require.NoError(t, err, "the profile file must still be there")
+			assert.Equal(t, before, after, "a cancelled mutator must not touch the profile YAML")
+		})
+	}
+}
