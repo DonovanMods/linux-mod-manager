@@ -57,6 +57,20 @@ func TestAppJSONGoldens(t *testing.T) {
 			newSourceInfoError("nexusmods", errors.New("id already in use")),
 		},
 		{
+			"source_probe_result",
+			SourceProbeResult{OK: true, Summary: "ok — 3 mod(s) visible"},
+		},
+		{
+			// `lmm source validate --probe <file> --json`'s document (#309):
+			// a valid, probed definition - the fullest populated shape (an
+			// invalid file's report is a subset with no id/type/probe).
+			"source_validation_report",
+			SourceValidationReport{
+				Path: "/config/sources/my-mods.yaml", ID: "my-mods", Type: "directory", Valid: true,
+				Probe: &SourceProbeResult{OK: true, Summary: "ok — 3 mod(s) visible"},
+			},
+		},
+		{
 			"auth_source_status",
 			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyMasked: "abc...xyz"},
 		},

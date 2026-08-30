@@ -182,31 +182,78 @@ Examples:
   lmm source validate ~/.config/lmm/sources/my-source.yaml --probe --id 12345`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		def, err := app.LoadSourceDefinitionFile(args[0])
+		// #309: an invalid definition keeps failing the command (non-zero
+		// exit) under both plain and --json output - --json wraps the
+		// failure in sourceValidationError so the envelope's "details"
+		// carries the report (id/type empty: there was no definition to
+		// read them from).
+		report, def, err := app.ValidateSourceFile(args[0])
 		if err != nil {
-			return err
+			return &sourceValidationError{err: err, report: report}
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", args[0], def.Type, def.ID)
+
+		if !jsonOutput {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", args[0], def.Type, def.ID)
+		}
 		if !sourceProbe {
+			if jsonOutput {
+				return emitJSON(report)
+			}
 			return nil
 		}
 		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
-			return probeSource(ctx, cmd, svc, def)
+			return probeSource(ctx, cmd, svc, def, report)
 		})
 	},
 }
 
 // probeSource constructs the definition's source and performs one live
 // operation against it, so users can smoke-test a definition before relying
-// on it (design §8).
-func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def source.SourceDefinition) error {
+// on it (design §8). report already carries the definition's own
+// validation result (Valid true - a probe never runs against an invalid
+// one); this fills in report.Probe and, under --json, emits the whole
+// report as either the single success document or (a live-check failure)
+// the error envelope's details.
+func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def source.SourceDefinition, report *app.SourceValidationReport) error {
 	summary, err := app.ProbeSource(ctx, svc, def, sourceProbeID)
 	if err != nil {
-		return fmt.Errorf("probe: %w", err)
+		wrapped := fmt.Errorf("probe: %w", err)
+		report.Probe = &app.SourceProbeResult{Error: err.Error()}
+		if jsonOutput {
+			return &sourceValidationError{err: wrapped, report: report}
+		}
+		return wrapped
+	}
+	report.Probe = &app.SourceProbeResult{OK: true, Summary: summary}
+	if jsonOutput {
+		return emitJSON(report)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "probe: %s\n", summary)
 	return nil
 }
+
+// sourceValidationError reports a `lmm source validate --json` failure - an
+// invalid definition, or (with --probe) a live probe failure against an
+// otherwise-valid one - for the --json error envelope: Details() is the
+// SourceValidationReport itself, so a caller sees exactly which part
+// failed instead of a bare message. Follows the core.ConflictError /
+// gameDetectPartialError pattern (jsonout.go).
+type sourceValidationError struct {
+	err    error
+	report *app.SourceValidationReport
+}
+
+// Error returns the wrapped failure's own message - the definition's
+// load/validate error, or "probe: <cause>" - identical to what the plain
+// path prints via Execute's "Error: %v".
+func (e *sourceValidationError) Error() string { return e.err.Error() }
+
+// Unwrap exposes the wrapped failure for errors.Is/errors.As.
+func (e *sourceValidationError) Unwrap() error { return e.err }
+
+// Details returns the SourceValidationReport for the --json error
+// envelope's "details" field.
+func (e *sourceValidationError) Details() any { return e.report }
 
 func init() {
 	sourceValidateCmd.Flags().BoolVar(&sourceProbe, "probe", false, "perform a live smoke test after validation")

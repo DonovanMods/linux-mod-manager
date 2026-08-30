@@ -1,0 +1,8 @@
+{
+  "path": "<PATH>",
+  "id": "my-mods",
+  "type": "directory",
+  "valid": true,
+  "errors": [],
+  "warnings": []
+}

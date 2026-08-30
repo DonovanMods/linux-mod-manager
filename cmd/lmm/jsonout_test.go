@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/stretchr/testify/assert"
@@ -148,6 +149,35 @@ func TestReportError_JSON_ConflictError(t *testing.T) {
 		"  }\n"+
 		"}\n", out)
 	assert.ErrorIs(t, err, domain.ErrFileConflict, "the envelope text is the domain sentinel's, plus the count")
+}
+
+// TestReportError_JSON_SourceValidationError pins sourceValidationError's
+// --json envelope shape (#309, detailsCoverage): the wrapped error's own
+// message on "error" (identical to the plain path's "Error: %v" text) and
+// the SourceValidationReport, unmarshaled, on "details".
+func TestReportError_JSON_SourceValidationError(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	wrapped := errors.New(`invalid definition: id "BAD_ID" must match ^[a-z0-9-]+$`)
+	err := &sourceValidationError{err: wrapped, report: &app.SourceValidationReport{
+		Path: "/config/sources/bad.yaml", Errors: []string{wrapped.Error()}, Warnings: []string{},
+	}}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"invalid definition: id \\\"BAD_ID\\\" must match ^[a-z0-9-]+$\",\n"+
+		"  \"details\": {\n"+
+		"    \"path\": \"/config/sources/bad.yaml\",\n"+
+		"    \"valid\": false,\n"+
+		"    \"errors\": [\n"+
+		"      \"invalid definition: id \\\"BAD_ID\\\" must match ^[a-z0-9-]+$\"\n"+
+		"    ],\n"+
+		"    \"warnings\": []\n"+
+		"  }\n"+
+		"}\n", out)
+	assert.ErrorIs(t, err, wrapped, "Unwrap must expose the original load/validate error")
 }
 
 // TestReportError_JSON_SuppressesAlreadyReported and ErrCancelled's exit-2,
