@@ -437,6 +437,115 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 	assert.Contains(t, out, "  ✓ Disabled: Test Mod\n")
 }
 
+// switchLockRefusalFixture seeds the one scenario every #294 switch capture
+// needs (mirroring applyLockRefusalFixture, cmd/lmm/profile_apply_test.go):
+// a "target" profile referencing an installable "test-src:mod1" v1.1 whose
+// ref is LOCKED with no recorded version, so the post-install UpsertMod
+// (which records the version actually installed) hits the lock gate (#143).
+func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+
+	src := newFakeInstallSource("test-src")
+	t.Cleanup(src.Close)
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"test-src": game.ID}
+
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.1", GameID: game.ID},
+		[]domain.DownloadableFile{
+			{ID: "main", Name: "Main", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN", Version: "1.1"},
+		})
+	src.AddDownload("main", []byte("plugin content"))
+
+	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{
+		SourceID: "test-src", ModID: "mod1", Locked: true,
+	}))
+
+	withProfileSwitchYes(t)
+	return svc, game
+}
+
+// switchLockRefusalDetail is the exact SwitchResult.Warnings entry #294
+// (Ruling 5's class extension, Task 13b) records for switchLockRefusalFixture's
+// refusal: core wraps ProfileManager.UpsertMod's own refusal sentence as
+// "could not update profile: <err>", with no "Warning: " prefix baked in.
+// switchLockRefusalWarning is the stderr line the CLI renders from it.
+const switchLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile \"target\" - refusing to record v1.1; move the lock with 'lmm mod lock -s test-src -p target mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p target mod1'"
+
+const switchLockRefusalWarning = "Warning: " + switchLockRefusalDetail + "\n"
+
+// TestDoProfileSwitch_LockedRef_UpsertRefusalWarnsUnconditionally pins #294's
+// class extension (Ruling 5, Task 13b): the install loop's swallowed
+// UpsertMod refusal is now the same unconditional stderr "Warning: ..."
+// line doProfileApply/doProfileSync already print for the identical
+// refusal - identical with and without --verbose, and never on stdout -
+// instead of the --verbose-only stdout note doProfileSwitch used to print
+// it as. Mirrors TestDoProfileApply_LockedRef_UpsertRefusalWarnsUnconditionally
+// exactly. The mod still counts as installed.
+func TestDoProfileSwitch_LockedRef_UpsertRefusalWarnsUnconditionally(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		verbose bool
+	}{
+		{"verbose", true},
+		{"quiet", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, game := switchLockRefusalFixture(t)
+			pm := getProfileManager(svc)
+			oldVerbose := verbose
+			verbose = tc.verbose
+			t.Cleanup(func() { verbose = oldVerbose })
+
+			var out, stderr string
+			var err error
+			withStdin(t, "y\n", func() {
+				out, stderr, err = captureStdoutStderrErr(t, func() error {
+					return doProfileSwitch(context.Background(), svc, game, "target")
+				})
+			})
+			require.NoError(t, err)
+
+			assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the lock refusal must not fail the install")
+			assert.Equal(t, switchLockRefusalWarning, stderr,
+				"#294: the refusal is an unconditional stderr warning, identical at both verbosities")
+			assert.NotContains(t, out, "could not update profile",
+				"#294: the refusal left stdout entirely - it is no longer a --verbose-only note")
+
+			installed, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "target")
+			require.NoError(t, err)
+			assert.Equal(t, "1.1", installed.Version)
+
+			profile, err := pm.Get(game.ID, "target")
+			require.NoError(t, err)
+			require.Len(t, profile.Mods, 1)
+			assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
+		})
+	}
+}
+
+// TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON is #294's --json framing
+// sibling (Ruling 15 / Unit P): the new warning reaches the document via
+// SwitchResult.Warnings and NOT stderr - exactly one document on stdout,
+// nothing on stderr.
+func TestDoProfileSwitch_LockedRef_UpsertRefusal_JSON(t *testing.T) {
+	svc, game := switchLockRefusalFixture(t)
+
+	var doc core.SwitchResult
+	raw := runJSONCommand(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+	decodeSingleDoc(t, raw, &doc)
+
+	assert.Equal(t, 1, doc.Installed)
+	assert.Empty(t, doc.Notes, "#294: the refusal is no longer a note")
+	require.Len(t, doc.Warnings, 1)
+	assert.Equal(t, switchLockRefusalDetail, doc.Warnings[0])
+}
+
 // seedApplyCandidateMod stores files (if any) in the game's cache and saves
 // an InstalledMod DB record under the "default" profile with the given
 // Enabled state, WITHOUT adding it to any profile's Mods list - unlike

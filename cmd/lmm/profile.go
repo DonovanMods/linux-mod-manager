@@ -422,11 +422,12 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 	// progress prints every diagnostic and per-mod status line at its exact
 	// point of occurrence, driven entirely by core.ApplyProfileSwitch's
-	// progress events - doProfileSwitch never wrote to stderr, so every
-	// printed diagnostic here is --verbose-gated stdout (a Note), matching
-	// the SwitchResult.Notes display contract. result.Notes is never
-	// separately batch-printed below: every entry has a corresponding event
-	// here already.
+	// events. result.Notes is never separately batch-printed below: every
+	// Notes entry (the disable/enable loops' --verbose-gated warnings) has
+	// a corresponding event here already. The install loop's UpsertMod
+	// refusal is a SwitchInstallWarning now, not a Note (#294, Ruling 5's
+	// class extension - Task 13b) - it reaches the user unconditionally
+	// through result.Warnings below instead of a case here.
 	progress := func(e core.Event) {
 		p, ok := lineOf(e)
 		if !ok {
@@ -460,10 +461,6 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			fmt.Println()
 		case core.SwitchInstalled:
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
-		case core.SwitchInstallNote:
-			if verbose {
-				fmt.Printf("    %s\n", p.Detail)
-			}
 		}
 	}
 
@@ -480,9 +477,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		return emitJSON(result)
 	}
 
-	// #197 postsmoke fix: SwitchResult.Warnings (unconditional stderr,
-	// unlike .Notes above) - today, only a merged-pak sync failure for the
-	// target profile. Previously this whole result was discarded.
+	// #197 postsmoke fix / #294 Ruling 5's class extension (Task 13b):
+	// SwitchResult.Warnings (unconditional stderr, unlike .Notes above) -
+	// the install loop's refused UpsertMod (a LOCKED profile ref, #143),
+	// then a merged-pak sync failure for the target profile. Previously
+	// this whole result was discarded.
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -1040,10 +1039,10 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			fmt.Printf("    ✓ Installed: %s\n", p.ModName)
 		}
 		// #294 (Ruling 5): ApplyProfileApply's UpsertMod refusal is a
-		// SwitchInstallWarning now, not the --verbose-only SwitchInstallNote
-		// ApplyProfileSwitch still emits - it reaches the user through
-		// result.Warnings below (printing it here as well would duplicate
-		// it).
+		// SwitchInstallWarning, not the --verbose-only SwitchInstallNote it
+		// used to be (ApplyProfileSwitch's identical refusal followed suit
+		// in Task 13b) - it reaches the user through result.Warnings below
+		// (printing it here as well would duplicate it).
 	}
 
 	result, err := service.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, quietSink(progress))
