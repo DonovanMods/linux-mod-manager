@@ -16,6 +16,9 @@ import (
 // checks). Later tasks gate the network-touching phases on this.
 type VerifyTier int
 
+// VerifyLocal and VerifyFull are VerifyTier's two values, in strictness
+// order: VerifyLocal is the default (offline) tier, VerifyFull the
+// network-touching one VerifyOptions.Tier opts into (`lmm verify --full`).
 const (
 	VerifyLocal VerifyTier = iota
 	VerifyFull
@@ -94,6 +97,12 @@ type VerifyResult struct {
 // VerifyEventKind identifies what a VerifyEvent carries.
 type VerifyEventKind int
 
+// The VerifyEventKind values, in emission order within a run: VerifyEvBegin
+// opens it, VerifyEvFinding/VerifyEvProgress are the per-mod/per-file ticks,
+// VerifyEvRepairDetail is a --fix sub-line under a finding,
+// VerifyEvSyncWarning/VerifyEvVerbose are diagnostics (stderr-bound and
+// -v-gated respectively). The trailing comment on each names which
+// VerifyEvent field the kind's extra data lives in.
 const (
 	VerifyEvBegin        VerifyEventKind = iota // HasFiles
 	VerifyEvFinding                             // Finding + extras; row was appended to Findings

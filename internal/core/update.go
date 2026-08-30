@@ -520,6 +520,14 @@ type UpdateOptions struct {
 // whose Name is still empty - see UpdateApplyResult's doc comment.
 type UpdateStatus int
 
+// The UpdateStatus values classify what an update operation did or would
+// do: UpdateUpdated is a completed normal version-bump update,
+// UpdateUpToDate found nothing newer, UpdateSkipped covers a locked/refused
+// mod (Reason names why), UpdateRecompiled/UpdateRecompileAvailable are the
+// applied/dry-run outcomes of a base-pak recompile (#196 - no version
+// change, only the compiled artifact is rebuilt), UpdateAvailable is a
+// normal update's `--dry-run` outcome, and UpdateRolledBack marks a
+// completed ApplyRollback.
 const (
 	UpdateUpdated UpdateStatus = iota
 	UpdateUpToDate

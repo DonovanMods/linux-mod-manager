@@ -20,12 +20,20 @@ const SourceMerged = "lmm-merged"
 // UpdatePolicy determines how a mod handles updates
 type UpdatePolicy int
 
+// UpdateNotify, UpdateAuto, and UpdatePinned are UpdatePolicy's three
+// values: notify is the default (an available update is reported but
+// requires explicit `lmm update`), auto applies an update as soon as
+// CheckGameUpdates finds one, pinned refuses every update (distinct from a
+// lock - see ModReference.Locked - which pins to a specific version rather
+// than refusing all update checks).
 const (
 	UpdateNotify UpdatePolicy = iota // Default: show available, require approval
 	UpdateAuto                       // Automatically apply updates
 	UpdatePinned                     // Never update
 )
 
+// String returns the policy's wire/config name ("notify", "auto", or
+// "pinned"; "notify" also for an out-of-range value).
 func (p UpdatePolicy) String() string {
 	switch p {
 	case UpdateAuto:

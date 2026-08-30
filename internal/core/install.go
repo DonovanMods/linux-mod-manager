@@ -902,6 +902,9 @@ func (s *reinstallCacheTransaction) Rollback(ctx context.Context) error {
 	return errors.Join(restoreErr, rmErr)
 }
 
+// Commit discards the temp-dir snapshot RestoreLive would otherwise restore
+// from - called once the reinstall has fully succeeded and the snapshot is
+// no longer needed.
 func (s *reinstallCacheTransaction) Commit() error {
 	if s == nil {
 		return nil

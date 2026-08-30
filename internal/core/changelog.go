@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+// changelogBreakRE/changelogTagRE are CleanChangelog's tag-stripping
+// patterns, compiled once at package init rather than per call.
+var (
+	changelogBreakRE = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`)
+	changelogTagRE   = regexp.MustCompile(`<[^>]*>`)
+)
+
 // CleanChangelog strips HTML markup from html for readable terminal
 // display: <br> and <p>/</p> become newlines, every other tag is removed
 // outright, and the five common HTML entities a mod source's changelog HTML
@@ -24,11 +31,6 @@ import (
 // descriptions through it, so `lmm mod show` renders a source's markup
 // through the same cleaner. Left named CleanChangelog to avoid churning
 // three unrelated call sites for a rename.
-var (
-	changelogBreakRE = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`)
-	changelogTagRE   = regexp.MustCompile(`<[^>]*>`)
-)
-
 func CleanChangelog(html string) string {
 	// Replace block/line breaks with newlines
 	html = changelogBreakRE.ReplaceAllString(html, "\n")

@@ -10,6 +10,17 @@ import (
 // Op names the operation an event belongs to.
 type Op string
 
+// The values below name every operation an event's Scope can belong to -
+// the value cmd/lmm's -v/JSON event stream and OpProfileApply/OpProfileSync's
+// package comments key off. Most are self-explanatory from the command they
+// back (OpInstall = `lmm install`, OpDeploy = `lmm profile apply`'s deploy
+// phase, OpPurge = `lmm profile purge`, OpSwitch = `lmm profile switch`,
+// OpUpdate = `lmm update`, OpRollback = `lmm rollback`, OpImport =
+// `lmm import` archive mode, OpMergeRegen = a standalone merged-pak
+// recompile, OpVerify = `lmm verify`, OpUpdateCheck = the read-only check
+// that precedes OpUpdate, OpDownload = a raw Downloader.Download call with
+// no owning flow); the three below have their own comment because their
+// name alone doesn't disambiguate them from a sibling Op.
 const (
 	OpInstall Op = "install"
 	OpDeploy  Op = "deploy"
@@ -143,20 +154,44 @@ type UpdateCheckEvent struct {
 	GlobalTotal int    `json:"global_total"`
 }
 
-func (StepEvent) EventType() string        { return "step" }
-func (DownloadEvent) EventType() string    { return "download" }
-func (ModEvent) EventType() string         { return "mod" }
-func (HookEvent) EventType() string        { return "hook" }
-func (WarningEvent) EventType() string     { return "warning" }
-func (MergeEvent) EventType() string       { return "merge" }
+// EventType implements Event: a StepEvent's wire "type" is "step".
+func (StepEvent) EventType() string { return "step" }
+
+// EventType implements Event: a DownloadEvent's wire "type" is "download".
+func (DownloadEvent) EventType() string { return "download" }
+
+// EventType implements Event: a ModEvent's wire "type" is "mod".
+func (ModEvent) EventType() string { return "mod" }
+
+// EventType implements Event: a HookEvent's wire "type" is "hook".
+func (HookEvent) EventType() string { return "hook" }
+
+// EventType implements Event: a WarningEvent's wire "type" is "warning".
+func (WarningEvent) EventType() string { return "warning" }
+
+// EventType implements Event: a MergeEvent's wire "type" is "merge".
+func (MergeEvent) EventType() string { return "merge" }
+
+// EventType implements Event: an UpdateCheckEvent's wire "type" is "update_check".
 func (UpdateCheckEvent) EventType() string { return "update_check" }
 
-func (e StepEvent) FlowPhase() DeployPhase     { return e.Phase }
+// FlowPhase implements FlowEvent by returning the embedded Phase field.
+func (e StepEvent) FlowPhase() DeployPhase { return e.Phase }
+
+// FlowPhase implements FlowEvent by returning the embedded Phase field.
 func (e DownloadEvent) FlowPhase() DeployPhase { return e.Phase }
-func (e ModEvent) FlowPhase() DeployPhase      { return e.Phase }
-func (e HookEvent) FlowPhase() DeployPhase     { return e.Phase }
-func (e WarningEvent) FlowPhase() DeployPhase  { return e.Phase }
-func (e MergeEvent) FlowPhase() DeployPhase    { return e.Phase }
+
+// FlowPhase implements FlowEvent by returning the embedded Phase field.
+func (e ModEvent) FlowPhase() DeployPhase { return e.Phase }
+
+// FlowPhase implements FlowEvent by returning the embedded Phase field.
+func (e HookEvent) FlowPhase() DeployPhase { return e.Phase }
+
+// FlowPhase implements FlowEvent by returning the embedded Phase field.
+func (e WarningEvent) FlowPhase() DeployPhase { return e.Phase }
+
+// FlowPhase implements FlowEvent by returning the embedded Phase field.
+func (e MergeEvent) FlowPhase() DeployPhase { return e.Phase }
 
 // MarshalEvent renders e in the fixed wire envelope {"type": …, "data": …}.
 // This is the SSE payload a future frontend receives.
