@@ -44,9 +44,8 @@ func TestRunListProfiles_ListsAndMarksDefault(t *testing.T) {
 	svc, game := setupListProfilesTest(t)
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
 	out := captureStdout(t, func() error {
-		return runListProfiles(cmd, svc, game.ID, game.Name)
+		return runListProfiles(context.Background(), cmd, svc, game.ID, game.Name)
 	})
 
 	assert.Contains(t, out, "Profiles for Game (g1):")
@@ -62,9 +61,8 @@ func TestRunListProfiles_JSONOutput(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = oldJSON })
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
 	out := captureStdout(t, func() error {
-		return runListProfiles(cmd, svc, game.ID, game.Name)
+		return runListProfiles(context.Background(), cmd, svc, game.ID, game.Name)
 	})
 
 	assert.Contains(t, out, `"game_id": "g1"`)
@@ -82,9 +80,8 @@ func TestRunListProfiles_NoProfiles(t *testing.T) {
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
 	out := captureStdout(t, func() error {
-		return runListProfiles(cmd, svc, game.ID, game.Name)
+		return runListProfiles(context.Background(), cmd, svc, game.ID, game.Name)
 	})
 
 	assert.Contains(t, out, "No profiles for Empty Game.")
@@ -106,9 +103,8 @@ func TestRunListProfiles_MalformedProfileStillListed(t *testing.T) {
 	require.NoError(t, os.WriteFile(profilePath, append(data, []byte("\nlink_method: bogus\n")...), 0644))
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.Background())
 	out := captureStdout(t, func() error {
-		return runListProfiles(cmd, svc, game.ID, game.Name)
+		return runListProfiles(context.Background(), cmd, svc, game.ID, game.Name)
 	})
 
 	assert.Contains(t, out, "default (default)")

@@ -124,9 +124,8 @@ func TestJSONGolden_List(t *testing.T) {
 		t.Cleanup(func() { jsonOutput = old })
 
 		cmd := &cobra.Command{}
-		cmd.SetContext(context.Background())
 		out := captureStdout(t, func() error {
-			return runListProfiles(cmd, svc, game.ID, game.Name)
+			return runListProfiles(context.Background(), cmd, svc, game.ID, game.Name)
 		})
 		assertJSONCLIGolden(t, "list_profiles", out)
 	})
