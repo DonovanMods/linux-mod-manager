@@ -426,7 +426,16 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		}
 
 		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-		if err := pm.UpsertMod(ctx, game.ID, profile.Name, modRef); err != nil {
+		// Ruling 16 (A): the DB row and the deployment are already in
+		// place, so the profile ref that completes them is written even
+		// under a cancelled ctx; the cancellation then ends the run before
+		// result.Installed counts this mod or the next one is touched.
+		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+			return pm.UpsertMod(ctx, game.ID, profile.Name, modRef)
+		}); err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return result, cerr
+			}
 			msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})

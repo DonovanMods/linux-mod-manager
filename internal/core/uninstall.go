@@ -281,7 +281,15 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		return result, fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
-	if err := s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, modID); err != nil {
+	// Ruling 16 (A): the DB row is already gone, so the ref removal that
+	// completes it runs to the end even under a cancelled ctx; the
+	// cancellation is then reported, never absorbed into the Note below.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, modID)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
+		}
 		// Don't fail if not in profile. Always recorded, historical "Note: "
 		// prefix baked into the text (see UninstallResult's doc comment).
 		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))

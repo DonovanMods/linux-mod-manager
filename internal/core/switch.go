@@ -471,7 +471,17 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			}
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-			if err := pm.UpsertMod(ctx, game.ID, plan.To, modRef); err != nil {
+			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+				return pm.UpsertMod(ctx, game.ID, plan.To, modRef)
+			}); err != nil {
+				// Ruling 16 (A): the DB row and the deployment are already in
+				// place, so the ref that completes them is written even under
+				// a cancelled ctx - and the cancellation stays fatal instead
+				// of being absorbed into the #294 warning below, which is for
+				// a business refusal.
+				if cerr := ctx.Err(); cerr != nil {
+					return result, cerr
+				}
 				// #294 (Ruling 5's class extension, Task 13b): a refusal
 				// here (today, only a LOCKED ref, #143) leaves the profile
 				// ref unwritten while the DB row moved, so it is a Warning

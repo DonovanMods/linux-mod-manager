@@ -360,7 +360,15 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		Version:  result.Mod.Version,
 		FileIDs:  result.FileIDs,
 	}
-	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
+	// Ruling 16 (A): the DB row is already saved, so the profile ref that
+	// completes it is written even under a cancelled ctx; the cancellation
+	// itself is then fatal rather than a Note.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, game.ID, profileName, modRef)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
+		}
 		// Non-fatal (ruling 9: today this can only be a LOCKED ref, #143).
 		note(ImportArchiveProfileNote, "Warning: could not update profile: %v", err)
 	}

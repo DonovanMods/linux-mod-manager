@@ -35,3 +35,40 @@ func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
 		return nil, ctx.Err()
 	}
 }
+
+// completeProfileWrite runs write - a profile-file mutation that COMPLETES a
+// DB mutation the caller has ALREADY applied - under a context that cannot be
+// cancelled, then reports the caller's own cancellation if there was one.
+//
+// The DB row and the profile ref are a two-step commit: an install writes the
+// installed_mods row and then the profile's ModReference; an uninstall or a
+// `purge --uninstall` deletes the row and then the ref. A Ctrl-C landing
+// between the two steps used to abort the second one, leaving a mod in the
+// database but absent from its profile YAML (or a ref pointing at a row that
+// is already gone) - the drift Phase 1's "completion and recovery never
+// inherit cancellation" rule exists to prevent. So write always runs under
+// context.WithoutCancel(ctx) and always finishes.
+//
+// The cancellation is not swallowed: ctx.Err() is re-checked immediately
+// afterwards and takes precedence over write's own error, so the caller still
+// ends the run with context.Canceled and processes no further items. Callers
+// tell the two apart by re-checking ctx.Err() in their error branch:
+//
+//	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+//		return pm.UpsertMod(ctx, gameID, profile, ref)
+//	}); err != nil {
+//		if cerr := ctx.Err(); cerr != nil {
+//			return result, cerr // fatal: stop the run right here
+//		}
+//		// ... this site's existing warning/note handling for err
+//	}
+//
+// A non-cancellation failure is returned unchanged, so every site's existing
+// warning/note text is byte-for-byte what it was (v2 Phase 3 Ruling 16).
+func completeProfileWrite(ctx context.Context, write func(context.Context) error) error {
+	err := write(context.WithoutCancel(ctx))
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	return err
+}

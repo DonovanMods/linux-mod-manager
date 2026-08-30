@@ -1792,7 +1792,18 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
-	if err := pm.UpsertMod(ctx, game.ID, plan.Profile, modRef); err != nil {
+	// Ruling 16 (A): the DB row and the deployment are already in place, so
+	// the profile ref that completes them is written even under a cancelled
+	// ctx. Returning here skips this mod's Installed entry and its
+	// after_each hook; both batch loops re-check ctx.Err() after the loop
+	// (review finding I2), which turns the cancellation into ApplyInstall's
+	// own fatal return.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+	}); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
@@ -2240,7 +2251,15 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-	if err := pm.UpsertMod(ctx, game.ID, plan.Profile, modRef); err != nil {
+	// Ruling 16 (A): the DB row and the deployment are already in place, so
+	// the profile ref that completes them is written even under a cancelled
+	// ctx; the cancellation is then fatal to ApplyInstall as a whole.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})

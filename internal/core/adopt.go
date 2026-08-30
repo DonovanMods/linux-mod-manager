@@ -592,7 +592,15 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 		Version:  r.Mod.Version,
 		FileIDs:  fileIDs,
 	}
-	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
+	// Ruling 16 (A): the DB row is already saved, so the profile ref that
+	// completes it is written even under a cancelled ctx; the cancellation
+	// itself is then fatal rather than a Note.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, game.ID, profileName, modRef)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		// Non-fatal (ruling 9: today this can only be a LOCKED ref, #143).
 		step(r, AdoptNote, fmt.Sprintf("Warning: could not update profile: %v", err))
 	}

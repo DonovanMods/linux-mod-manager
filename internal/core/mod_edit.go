@@ -320,13 +320,25 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 			return nil, fmt.Errorf("removing old record: %w", err)
 		}
 
+		// Ruling 16 (A): the old DB record is already deleted, so BOTH
+		// halves of the profile move that completes it - dropping the old
+		// ref and writing the new one - run to the end even under a
+		// cancelled ctx. They are one completion, so the cancellation is
+		// re-checked once, after the pair, and never between them.
 		pm := s.NewProfileManager()
-		if err := pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID); err != nil {
+		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+			return pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID)
+		}); err != nil && ctx.Err() == nil {
 			note("Warning: could not remove old profile entry: %v", err)
 		}
 		modRef := domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version}
-		if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
+		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+			return pm.UpsertMod(ctx, game.ID, profileName, modRef)
+		}); err != nil && ctx.Err() == nil {
 			note("Warning: could not update profile: %v", err)
+		}
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
 		}
 	}
 
@@ -343,7 +355,15 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	if opts.Version != "" && !plan.Relink {
 		pm := s.NewProfileManager()
 		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}
-		if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
+		// Ruling 16 (A): saveInstalledMod above already committed the new
+		// version, so the profile ref that completes it is written even
+		// under a cancelled ctx; the cancellation is then fatal.
+		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+			return pm.UpsertMod(ctx, game.ID, profileName, modRef)
+		}); err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return nil, cerr
+			}
 			note("Warning: could not update profile version: %v", err)
 		}
 	}

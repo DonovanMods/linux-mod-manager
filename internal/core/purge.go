@@ -132,7 +132,15 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 				*spec.skipped = append(*spec.skipped, skippedRef(&mod, fmt.Sprintf("failed to remove record: %v", err)))
 				continue
 			}
-			if err := s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			// Ruling 16 (A): the record delete above already committed, so
+			// the ref removal that completes it finishes regardless of
+			// cancellation; the cancellation itself then ends the loop.
+			if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+				return s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+			}); err != nil {
+				if cerr := ctx.Err(); cerr != nil {
+					return cerr
+				}
 				msg := fmt.Sprintf("Note: %s - %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
 				spec.emit(StepEvent{Scope: scope, Phase: PurgeNote, Detail: msg})
