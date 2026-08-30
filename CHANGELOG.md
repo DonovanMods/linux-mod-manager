@@ -246,11 +246,11 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
 - Every lock refusal now reads the same way. `lmm update <mod>` (an available update, and a
   compile game's needed recompile), `lmm update --rollback <mod>` and `lmm mod edit`'s re-link
   refusal each used to word the refusal themselves; all four now print the canonical
-  "<mod> is locked at v<version> in profile <profile> - move the lock with 'lmm mod lock …' or
+  "`<mod>` is locked at v`<version>` in profile `<profile>` - move the lock with 'lmm mod lock …' or
   unlock with 'lmm mod unlock …'" text the core lock gates have always returned. For the three
   `lmm update` branches this replaces two lines with two: a context line stating what is
   available ("Update available: 1.0 → 2.0", "Rollback available: 2.0 → 1.0", "Recompile needed
-  for <mod> (base pak updated).") followed by the refusal, whose own inline remedies (both
+  for `<mod>` (base pak updated).") followed by the refusal, whose own inline remedies (both
   carrying `-s`/`-p`) supersede the separate "Move the lock: … | Unlock: …" line. (#294)
 - `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a lock refusal
   behind `--verbose`. When a LOCKED profile ref makes the post-install/`toUpdate` profile write
