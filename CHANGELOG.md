@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### v2 migration notes
+
+This release removes the interactive TUI (#273); the CLI is the only
+shipped frontend on the v2 line, with a local web UI (`lmm serve`) planned
+for later.
+
+**`--json` output changes once, deliberately, in this release.** Every
+document is now a type from `internal/core`, `internal/domain`, or
+`internal/app` rather than a CLI-only view struct, and the error envelope is
+`{"error": "...", "details": {...}}`; see the README's
+[JSON output](README.md#json-output) section for the full command →
+document table. **`--json` never prompts**: every confirmation now has a
+deciding flag (`-y`/`--yes`, `--force`), and a run that would otherwise
+prompt fails first with the error envelope instead of reading stdin.
+
+A handful of plain-text and event behaviours changed alongside the JSON
+contract, each pinned by a re-recorded capture and detailed below: lock
+refusals now read one canonical wording per refusal kind (#294); a
+multi-source update check's `-v` progress counts globally instead of
+restarting per source (#283); a profile export round-trips hook overrides
+through import (#296); dry-run merged-artifact lines only print when the
+artifact would actually change (Ruling 8); cancellation mid-mutation always
+finishes a database write's paired profile write rather than splitting the
+two (Ruling 16); and a declined import conflict on a reproducible identity
+does not restore the entry it overwrote (#310).
+
+Building lmm now requires Go 1.27. Config and data directories now honor
+`XDG_CONFIG_HOME`/`XDG_DATA_HOME` by default, falling back to the legacy
+paths when they still exist (#274).
+
+The Go module path is not decided here — whether v2.0.0 adopts a `.../v2`
+suffix (semantic import versioning) or keeps the existing path is an owner
+decision recorded in `docs/plans/v2.0.0-release-checklist.md`.
+
 ### Added
 
 - `--log-level` (off|error|warn|info|debug) writes diagnostics to stderr; default off. (#281)
@@ -51,16 +85,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header, and change nothing — including the profile-creating and default-switching writes a
   no-changes run would otherwise still perform. (#303)
 
-### Removed
-
-- The interactive terminal UI (`lmm tui`) and the `internal/tui` package. v2's interfaces are the CLI and, in a later release, a local web UI (`lmm serve`). Design: `docs/plans/2026-08-27-v2-core-refactor-design.md`.
-
 ### Changed
 
 - Building lmm now requires Go 1.27.
 - Default config and data directories honor `XDG_CONFIG_HOME` / `XDG_DATA_HOME` (defaults `~/.config/lmm` and `~/.local/share/lmm`). When an XDG variable is set but its lmm directory does not exist and the legacy one does, the legacy directory is used so existing installs keep working. `--config`/`--data` and `cache_path` still override. Bootstrap (paths, directory hardening, source registration) now lives in `internal/app` so every frontend resolves identically. (#270)
 - `lmm --config X --data Y` no longer requires `$HOME` to be set. (#277)
 - Every I/O method on the core service takes a `context.Context`; long-running loops (downloads, deploys, verify) stop at the next iteration after cancellation, and best-effort recovery paths never inherit the caller's cancellation. (#278)
+- Every `--json` document is now a core/domain type marshalled with
+  `encoding/json/v2` (deterministic key order, 2-space indent, exactly one
+  document on stdout with one trailing newline). The nine commands that
+  supported `--json` no longer project their own view structs — those are
+  deleted — so the CLI's wire shape is the same contract `internal/{core,domain,app}`'s
+  recorded goldens pin, and `lmm serve` will render the same documents. **This
+  is a breaking change for scripts written against the 1.x JSON**; it happens
+  once, in the v2.0.0 window. The error envelope is now
+  `{"error": "...", "details": {...}}`, with `details` present only for typed
+  errors that carry data. See the README's "JSON output" section. (#302)
+
+Per command:
+
+- `lmm list` → `core.ModList`. Each `mods[]` row is the whole
+  `domain.InstalledMod` plus `locked`/`locked_version`/`convert_paks`:
+  `source` → `source_id`, and author, summary, description, game_id,
+  category, downloads, picture_url, source_url, files, dependencies,
+  updated_at, profile_name, installed_at and manual_download are now present.
+- `lmm list --profiles` → `core.ProfileNames` (unchanged shape: `{game_id,
+profiles}`).
+- `lmm status` → `core.StatusReport`; `lmm status -g <id>` →
+  `core.GameStatus`. Each game row is the whole `domain.Game` (source_ids,
+  link_method_explicit, hooks, deploy_mode, convert_paks_explicit), and
+  `is_default`, `installed_mod_count`, `enabled_mod_count` and
+  `conversion_failures` are always present rather than omitted when zero.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state convention `list --json` already used for
+  mods. `lmm status -g <id> --json`'s `cache_path` also changes meaning: it
+  used to be the _resolved_ cache root and is now the _configured per-game
+  override_ (absent when unset); the resolved value moved to the new
+  `resolved_cache_path`, which is always present.
+- `lmm search` → `core.SearchReport`. Each hit is the whole `domain.Mod`
+  plus `installed` (`source` → `source_id`); `warnings` is now
+  `[{source_id, error}]` instead of pre-formatted strings and is always
+  present; `total_results` (the untruncated count behind a `--limit`-capped
+  `mods[]`) and `attempted_count` (how many sources could actually search)
+  are new.
+- `lmm verify` → `core.VerifyReport`. Findings and counts move under
+  `result`: `files` → `result.findings`, plus `result.checked` and
+  `result.has_files`. Finding keys are omitted when unset, and a finding may
+  now carry `recorded`/`effective`/`version`.
+- `lmm conflicts` → `core.ConflictReport`. `owner`, each `also_in` entry and
+  `winner` → `load_order_winner` are now `{key, name}` objects, where `key`
+  is `"<source_id>:<mod_id>"`, instead of bare display names.
+- `lmm mod show` → `core.ModDetail`. The source metadata moves under `mod`:
+  `{mod: {...}, installed?: {...}}`. The `installed` block is unchanged.
+- `lmm source list` → `[]app.SourceInfo`. Now indented like every other
+  document (it was the last compact one). `auth` is the enum
+  `none|required|authenticated` (was `n/a|no|yes`) and `capabilities` is a
+  string array (was a comma-joined string). An error row (a source that
+  failed to construct) now omits the `auth` key entirely, rather than
+  carrying it as `""`.
+- `lmm game list` → `[]core.GameListEntry`. Each row is the whole
+  `domain.Game` plus `default`: `sources` → `source_ids`, and link_method,
+  link_method_explicit, cache_path, hooks and convert_paks_explicit are new.
+  `convert_paks` is present only for `deploy_mode: compile` games, absent
+  otherwise — the same tri-state `list --json` already used for mods.
+- `lmm update` (bulk) → `core.UpdateCheckReport`. Each `updates[]` entry is a
+  `domain.Update`: the installed mod under `installed_mod` (carrying
+  `update_policy`) plus `new_version`, replacing the flat
+  mod_id/name/current_version/available_version/update_policy row.
+  `reason: "stale_compile"` → `recompile_reason`, carrying core's own wording.
+- `lmm update <mod-id>` → `core.UpdateApplyResult`; `lmm update rollback` →
+  `core.RollbackResult`. `mod_id` → `mod`, the profile reference
+  `{source_id, mod_id, version, locked}`, so a document names its source;
+  rollback's `name` → `mod_name`; `to_version` is always present; `warnings`
+  and `notes` appear when the operation produced any.
+- `core.DeployResult.Skipped`, `core.PurgeResult.Skipped` and
+  `core.ProfileApplyResult.Failed` are arrays of objects
+  (`{source_id, mod_id, name, version, reason}`) instead of pre-formatted
+  `"<name>: <reason>"` strings — JSON carries data, never rendered text. The
+  plain-text output is unchanged. (#303)
+- `core.RollbackResult` gains `Mod` (a `domain.ModReference`), matching
+  `UpdateApplyResult` — without it the rollback document had no way to say
+  which mod, from which source, it was reporting on. (#302)
+- A `false` boolean or `0` tagged `omitempty` is now emitted rather than
+  omitted (`encoding/json/v2` omits only empty JSON values — `""`, `null`,
+  `{}`, `[]`); `lmm update --json`'s unlocked `updates[]` entries therefore
+  carry `"locked": false` explicitly.
+- `encoding/json/v2` no longer HTML-escapes the angle-bracket and ampersand
+  characters the way `encoding/json` did; string fields that can carry
+  markup (`mod show`'s `description`, `update <mod-id>`'s `changelog`) may
+  now contain those characters literally instead of as escape sequences.
+  Semantically identical after decoding, but pasting lmm's JSON directly
+  into an HTML/script context is no longer incidentally safe.
+- `lmm profile import` now asks "Download and install mods?" **before** it saves the profile,
+  not after: the prompt (and, on a decline, its "Skipped." line) precede the
+  `✓ Imported profile: <name>` line. A save that fails (importing over an existing profile without `--force`) therefore
+  prints the prompt first, and a prompt read failure now leaves the profile unsaved. (#303)
+- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, and
+  the question still comes after the download/extract step that makes the conflict detectable —
+  but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
+  after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
+  cache already warm: `install` re-prints only "Extracting to cache…" (never a second
+  "Downloading …"/"Checksum: …" block), `import` re-prints its "Fetching metadata…" and
+  Mod/Source/ID/Version/Files readout, before "Deploying to game directory…". An accepted
+  conflict re-run does not re-download cached files (a same-version reinstall or a local
+  directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
+  with a failing `install.before_all`) now prints after the download lines rather than before
+  them. Declining an `import` now also discards the cache entry that import filled on its way to
+  the question, so a refusal removes the entry this call created and leaves managed state (DB,
+  profile, game tree) untouched; when an entry already existed at a reproducible identity
+  (`--source/--id`, or a NexusMods filename), the import had already overwritten it before the
+  refusal, and that prior entry is not restored (#310). Accepting leaves exactly one entry rather
+  than orphaning the refused pass's copy of the archive; an accepted
+  `import --id` re-run therefore also renames its cache entry onto the resolved version
+  successfully, where it previously reported `renamed: false` and (under `-v`) a "could not
+  rename cache entry" warning. `--force` still skips the conflict check entirely. (#303)
+- Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
+  prompt for confirmation now fails first with `confirmation required: ...` in the
+  `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
+  positional argument that decides it non-interactively instead — never a blocking read. `lmm
+game add` and `lmm auth login` have no non-interactive form yet (a flag-driven one is a
+  follow-up issue) and reject `--json` outright with `this command is interactive-only and does
+not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all`/`--select`)
+  both already have one. (#303)
+- Every lock refusal now reads the same way, with one wording per refusal _kind_. `lmm update
+<mod>` (an available update, and a compile game's needed recompile), `lmm update --rollback
+<mod>` and `lmm mod edit`'s re-link refusal each used to word the refusal themselves; all four
+  now print the canonical text the core lock gates return. Those four gates refuse whatever
+  version you name, so their remedy is "`<mod>` is locked at v`<version>` in profile
+  `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
+  `lmm update --all`'s combined locked-skip summary reports the same `ApplyUpdate` gate for
+  multiple mods at once, so it names no single mod's version and isn't this canonical sentence —
+  but it dropped the same no-op "move the lock" clause, down to "`N` locked mod(s) not applied:
+  `<mod>`[, `<mod>`...] - unlock to update."
+  The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
+--version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
+  unlock …'" wording. Where that "move the lock" remedy survives, its version argument is the
+  literal placeholder `<version>`, not the concrete target version the retired "Move the lock:
+  lmm mod lock -s … -p … `<mod>` 2.0" line filled in — so it is edit-then-run rather than
+  paste-and-run. For the three `lmm update` branches this replaces two lines with two: a
+  context line stating what is available ("Update available: 1.0 → 2.0", "Rollback available:
+  2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
+  whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
+  Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
+edit` prints it as an error, so there it is prefixed with `Error: mod is locked:` the way
+  every failing command's message is. The same sentence is also the `refusal` field
+  (`json:"refusal,omitempty"`) on `core.UpdatePlan`/`RollbackPlan`/`RelinkPlan`, though no command
+  emits those documents directly today — `lmm update --dry-run --json` on a locked mod emits its
+  own hand-built result document instead, which carries no `refusal` key. (#294)
+- `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
+  failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
+  (the record in the database moves while the profile ref does not) but also any profile
+  load/save failure (e.g. the profile going missing mid-run). The warning now prints
+  unconditionally to stderr as `Warning: could not update …`, and is carried on the command's
+  `--json` document in `warnings` (stderr stays empty under `--json`). If the run then fails
+  fatally, so that there is no result document to carry them, the `--json` error envelope
+  carries them instead as `details.warnings`. It was previously a `--verbose`-only stdout note,
+  so a default-verbosity run reported success with a silent database-vs-profile divergence.
+  (#294)
+- `lmm update --verbose`'s per-mod progress line (`n/total: <mod>`) now counts across every
+  source's batch instead of restarting at 1 for each source. Checking mods from two sources used
+  to print `1/3 … 3/3` then `1/2 … 2/2`; it now prints one unbroken `1/5 … 5/5`. Each source's own
+  batch position (`Index`/`Total`) is unchanged internally — `UpdateCheckEvent` gains
+  `GlobalIndex`/`GlobalTotal` alongside them — so only the printed numbers move; `--json` is
+  unaffected (progress events are suppressed under `--json` regardless). (#283)
 - Internal: `core.Service` documents and enforces a concurrency contract — query methods run
   concurrently with each other and with at most one in-flight mutation; mutations are serialized
   service-wide through a one-slot semaphore acquired with the caller's context, so a waiter is
@@ -197,29 +384,6 @@ list` is only visible to app). Each carries snake_case json tags and a recorded 
   joins `lmm list`, `lmm status`, `lmm search`, `lmm game list`, `lmm source list` and `lmm
 verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
   the query types; CLI output — text and JSON — is unchanged. (#301)
-- `lmm profile import` now asks "Download and install mods?" **before** it saves the profile,
-  not after: the prompt (and, on a decline, its "Skipped." line) precede the
-  `✓ Imported profile: <name>` line. A save that fails (importing over an existing profile without `--force`) therefore
-  prints the prompt first, and a prompt read failure now leaves the profile unsaved. (#303)
-- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, and
-  the question still comes after the download/extract step that makes the conflict detectable —
-  but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
-  after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
-  cache already warm: `install` re-prints only "Extracting to cache…" (never a second
-  "Downloading …"/"Checksum: …" block), `import` re-prints its "Fetching metadata…" and
-  Mod/Source/ID/Version/Files readout, before "Deploying to game directory…". An accepted
-  conflict re-run does not re-download cached files (a same-version reinstall or a local
-  directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
-  with a failing `install.before_all`) now prints after the download lines rather than before
-  them. Declining an `import` now also discards the cache entry that import filled on its way to
-  the question, so a refusal removes the entry this call created and leaves managed state (DB,
-  profile, game tree) untouched; when an entry already existed at a reproducible identity
-  (`--source/--id`, or a NexusMods filename), the import had already overwritten it before the
-  refusal, and that prior entry is not restored (#310). Accepting leaves exactly one entry rather
-  than orphaning the refused pass's copy of the archive; an accepted
-  `import --id` re-run therefore also renames its cache entry onto the resolved version
-  successfully, where it previously reported `renamed: false` and (under `-v`) a "could not
-  rename cache entry" warning. `--force` still skips the conflict check entirely. (#303)
 - Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
   frontend from Apply"). `InstallOptions.ConfirmConflicts` and
   `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
@@ -228,14 +392,6 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   profile write, and the frontend prompts and re-runs Apply. `ProfileImportOptions.ConfirmInstall`
   becomes `Install bool`, decided from `ImportPlan.NeedsRedownload`/`Missing`. New
   `internal/core/errors.go` also adds `ErrConfirmationRequired` and `ErrInteractiveOnly`. (#303)
-- Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
-  prompt for confirmation now fails first with `confirmation required: ...` in the
-  `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
-  positional argument that decides it non-interactively instead — never a blocking read. `lmm
-game add` and `lmm auth login` have no non-interactive form yet (a flag-driven one is a
-  follow-up issue) and reject `--json` outright with `this command is interactive-only and does
-not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all`/`--select`)
-  both already have one. (#303)
 - Internal: `lmm mod edit`, `lmm mod files`, and `lmm mod lock`/`unlock`/`set-update`/`convert`
   get core flows instead of driving `ProfileManager`/DB writes directly from `cmd/lmm`.
   `core.PlanRelinkMod`/`ApplyRelinkMod` back `mod edit` (a metadata-only edit or a re-link to a
@@ -243,135 +399,31 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   `ClearModLock`/`SetModUpdatePolicy`/`SetModConvertPaks` all return a `*core.ModSettingResult`
   (the mod's full post-write lock/policy/pak-conversion snapshot). No user-visible change: CLI
   output is byte-identical. (#303)
-- Every lock refusal now reads the same way, with one wording per refusal _kind_. `lmm update
-<mod>` (an available update, and a compile game's needed recompile), `lmm update --rollback
-<mod>` and `lmm mod edit`'s re-link refusal each used to word the refusal themselves; all four
-  now print the canonical text the core lock gates return. Those four gates refuse whatever
-  version you name, so their remedy is "`<mod>` is locked at v`<version>` in profile
-  `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
-  `lmm update --all`'s combined locked-skip summary reports the same `ApplyUpdate` gate for
-  multiple mods at once, so it names no single mod's version and isn't this canonical sentence —
-  but it dropped the same no-op "move the lock" clause, down to "`N` locked mod(s) not applied:
-  `<mod>`[, `<mod>`...] - unlock to update."
-  The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
---version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
-  unlock …'" wording. Where that "move the lock" remedy survives, its version argument is the
-  literal placeholder `<version>`, not the concrete target version the retired "Move the lock:
-  lmm mod lock -s … -p … `<mod>` 2.0" line filled in — so it is edit-then-run rather than
-  paste-and-run. For the three `lmm update` branches this replaces two lines with two: a
-  context line stating what is available ("Update available: 1.0 → 2.0", "Rollback available:
-  2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
-  whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
-  Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
-edit` prints it as an error, so there it is prefixed with `Error: mod is locked:` the way
-  every failing command's message is. The same sentence is also the `refusal` field
-  (`json:"refusal,omitempty"`) on `core.UpdatePlan`/`RollbackPlan`/`RelinkPlan`, though no command
-  emits those documents directly today — `lmm update --dry-run --json` on a locked mod emits its
-  own hand-built result document instead, which carries no `refusal` key. (#294)
-- `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
-  failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
-  (the record in the database moves while the profile ref does not) but also any profile
-  load/save failure (e.g. the profile going missing mid-run). The warning now prints
-  unconditionally to stderr as `Warning: could not update …`, and is carried on the command's
-  `--json` document in `warnings` (stderr stays empty under `--json`). If the run then fails
-  fatally, so that there is no result document to carry them, the `--json` error envelope
-  carries them instead as `details.warnings`. It was previously a `--verbose`-only stdout note,
-  so a default-verbosity run reported success with a silent database-vs-profile divergence.
-  (#294)
-- `lmm update --verbose`'s per-mod progress line (`n/total: <mod>`) now counts across every
-  source's batch instead of restarting at 1 for each source. Checking mods from two sources used
-  to print `1/3 … 3/3` then `1/2 … 2/2`; it now prints one unbroken `1/5 … 5/5`. Each source's own
-  batch position (`Index`/`Total`) is unchanged internally — `UpdateCheckEvent` gains
-  `GlobalIndex`/`GlobalTotal` alongside them — so only the printed numbers move; `--json` is
-  unaffected (progress events are suppressed under `--json` regardless). (#283)
-
-### Changed — JSON output (v2)
-
-Every `--json` document is now a core/domain type marshalled with
-`encoding/json/v2` (deterministic key order, 2-space indent, exactly one
-document on stdout with one trailing newline). The nine commands that
-supported `--json` no longer project their own view structs — those are
-deleted — so the CLI's wire shape is the same contract `internal/{core,domain,app}`'s
-recorded goldens pin, and `lmm serve` will render the same documents. **This
-is a breaking change for scripts written against the 1.x JSON**; it happens
-once, in the v2.0.0 window. The error envelope is now
-`{"error": "...", "details": {...}}`, with `details` present only for typed
-errors that carry data. See the README's "JSON output" section. (#302)
-
-Per command:
-
-- `lmm list` → `core.ModList`. Each `mods[]` row is the whole
-  `domain.InstalledMod` plus `locked`/`locked_version`/`convert_paks`:
-  `source` → `source_id`, and author, summary, description, game_id,
-  category, downloads, picture_url, source_url, files, dependencies,
-  updated_at, profile_name, installed_at and manual_download are now present.
-- `lmm list --profiles` → `core.ProfileNames` (unchanged shape: `{game_id,
-profiles}`).
-- `lmm status` → `core.StatusReport`; `lmm status -g <id>` →
-  `core.GameStatus`. Each game row is the whole `domain.Game` (source_ids,
-  link_method_explicit, hooks, deploy_mode, convert_paks_explicit), and
-  `is_default`, `installed_mod_count`, `enabled_mod_count` and
-  `conversion_failures` are always present rather than omitted when zero.
-  `convert_paks` is present only for `deploy_mode: compile` games, absent
-  otherwise — the same tri-state convention `list --json` already used for
-  mods. `lmm status -g <id> --json`'s `cache_path` also changes meaning: it
-  used to be the _resolved_ cache root and is now the _configured per-game
-  override_ (absent when unset); the resolved value moved to the new
-  `resolved_cache_path`, which is always present.
-- `lmm search` → `core.SearchReport`. Each hit is the whole `domain.Mod`
-  plus `installed` (`source` → `source_id`); `warnings` is now
-  `[{source_id, error}]` instead of pre-formatted strings and is always
-  present; `total_results` (the untruncated count behind a `--limit`-capped
-  `mods[]`) and `attempted_count` (how many sources could actually search)
-  are new.
-- `lmm verify` → `core.VerifyReport`. Findings and counts move under
-  `result`: `files` → `result.findings`, plus `result.checked` and
-  `result.has_files`. Finding keys are omitted when unset, and a finding may
-  now carry `recorded`/`effective`/`version`.
-- `lmm conflicts` → `core.ConflictReport`. `owner`, each `also_in` entry and
-  `winner` → `load_order_winner` are now `{key, name}` objects, where `key`
-  is `"<source_id>:<mod_id>"`, instead of bare display names.
-- `lmm mod show` → `core.ModDetail`. The source metadata moves under `mod`:
-  `{mod: {...}, installed?: {...}}`. The `installed` block is unchanged.
-- `lmm source list` → `[]app.SourceInfo`. Now indented like every other
-  document (it was the last compact one). `auth` is the enum
-  `none|required|authenticated` (was `n/a|no|yes`) and `capabilities` is a
-  string array (was a comma-joined string). An error row (a source that
-  failed to construct) now omits the `auth` key entirely, rather than
-  carrying it as `""`.
-- `lmm game list` → `[]core.GameListEntry`. Each row is the whole
-  `domain.Game` plus `default`: `sources` → `source_ids`, and link_method,
-  link_method_explicit, cache_path, hooks and convert_paks_explicit are new.
-  `convert_paks` is present only for `deploy_mode: compile` games, absent
-  otherwise — the same tri-state `list --json` already used for mods.
-- `lmm update` (bulk) → `core.UpdateCheckReport`. Each `updates[]` entry is a
-  `domain.Update`: the installed mod under `installed_mod` (carrying
-  `update_policy`) plus `new_version`, replacing the flat
-  mod_id/name/current_version/available_version/update_policy row.
-  `reason: "stale_compile"` → `recompile_reason`, carrying core's own wording.
-- `lmm update <mod-id>` → `core.UpdateApplyResult`; `lmm update rollback` →
-  `core.RollbackResult`. `mod_id` → `mod`, the profile reference
-  `{source_id, mod_id, version, locked}`, so a document names its source;
-  rollback's `name` → `mod_name`; `to_version` is always present; `warnings`
-  and `notes` appear when the operation produced any.
-- `core.DeployResult.Skipped`, `core.PurgeResult.Skipped` and
-  `core.ProfileApplyResult.Failed` are arrays of objects
-  (`{source_id, mod_id, name, version, reason}`) instead of pre-formatted
-  `"<name>: <reason>"` strings — JSON carries data, never rendered text. The
-  plain-text output is unchanged. (#303)
-- `core.RollbackResult` gains `Mod` (a `domain.ModReference`), matching
-  `UpdateApplyResult` — without it the rollback document had no way to say
-  which mod, from which source, it was reporting on. (#302)
-- A `false` boolean or `0` tagged `omitempty` is now emitted rather than
-  omitted (`encoding/json/v2` omits only empty JSON values — `""`, `null`,
-  `{}`, `[]`); `lmm update --json`'s unlocked `updates[]` entries therefore
-  carry `"locked": false` explicitly.
-- `encoding/json/v2` no longer HTML-escapes the angle-bracket and ampersand
-  characters the way `encoding/json` did; string fields that can carry
-  markup (`mod show`'s `description`, `update <mod-id>`'s `changelog`) may
-  now contain those characters literally instead of as escape sequences.
-  Semantically identical after decoding, but pasting lmm's JSON directly
-  into an HTML/script context is no longer incidentally safe.
+- Internal: `internal/core/flows.go` and `flows_test.go` are gone, completing the series of moves CHANGELOG
+  entries for Units H, I, J, and M already recorded. The remaining flows move into subject-named
+  files: `EnableMod`/`DisableMod` (`mod_toggle.go`), `DeployPhase` and its
+  `String`/`MarshalText`/`UnmarshalText` (`phases.go`), `PlanProfileSwitch`/`ApplyProfileSwitch`
+  (`switch.go`), `PlanImport`/`ApplyImport` (`profile_import.go`), plus `runHook` (`hooks.go`),
+  `sameFileIDSet` (`selection.go`), and `orderByProfile` (`deploy.go`). The seven
+  `flows_*_test.go` files are renamed to match: `deploy_compile_readout_test.go`,
+  `deploy_selfheal_test.go`, `install_directory_test.go`, `install_test.go`, `rollback_test.go`,
+  `update_test.go`, `variant_exclusivity_test.go`. No user-visible change: CLI output is
+  byte-identical. (#305)
+- Internal: `core.Service`'s fixture-only exports resolved (Ruling 10): `DownloadMod`, `GetInstaller`, and
+  `PurgeMergedPak` are unexported — production never called the exported forms, only test
+  fixtures did — with `cmd/lmm` tests re-seeded through the real `PlanInstall`/`ApplyInstall`,
+  `PlanDeploy`/`ApplyDeploy`, and `PurgeProfile` flows instead. `SaveInstalledMod`, `GetGameCache`,
+  `SyncMergedPak`, `SaveFileChecksum`, `AvailableModVersions`, `IsSourceAuthenticated`, `ScanLocal`,
+  `Logger`, `SetModLinkMethod`, `SetModDeployed`, and `DeleteInstalledMod` stay exported as
+  documented test-seed APIs or frontend-facing queries, each with a doc comment stating why. No
+  behavior change. (#305)
+- Internal: Every exported identifier in `internal/core`, `internal/domain`, and `internal/app` now carries
+  a doc comment, enforced by a `go/ast` test in each package
+  (`TestExportedIdentifiersHaveDocComments`) rather than tracked as a one-time count.
+  `cmd/lmm`'s import-boundary test drops its allow-list mechanism (empty since Task 1) in favor of
+  asserting the hard rule directly; a new `TestDetailsTypesAreCovered` (Unit P review finding M7)
+  requires every type implementing the `--json` error envelope's `Details() any` extension point
+  to have a named test pinning its wire shape. No behavior change. (#305)
 
 ### Fixed
 
@@ -410,19 +462,6 @@ profiles}`).
   Only reachable when the profiles directory exists but can't be read - a missing directory still
   returns no error. The plain-text path also drops one duplicated `listing profiles:` prefix
   (`ProfileManager.List` already wraps that error with it). (#301)
-
-### Internal
-
-- `internal/core/flows.go` and `flows_test.go` are gone, completing the series of moves CHANGELOG
-  entries for Units H, I, J, and M already recorded. The remaining flows move into subject-named
-  files: `EnableMod`/`DisableMod` (`mod_toggle.go`), `DeployPhase` and its
-  `String`/`MarshalText`/`UnmarshalText` (`phases.go`), `PlanProfileSwitch`/`ApplyProfileSwitch`
-  (`switch.go`), `PlanImport`/`ApplyImport` (`profile_import.go`), plus `runHook` (`hooks.go`),
-  `sameFileIDSet` (`selection.go`), and `orderByProfile` (`deploy.go`). The seven
-  `flows_*_test.go` files are renamed to match: `deploy_compile_readout_test.go`,
-  `deploy_selfheal_test.go`, `install_directory_test.go`, `install_test.go`, `rollback_test.go`,
-  `update_test.go`, `variant_exclusivity_test.go`. No user-visible change: CLI output is
-  byte-identical. (#305)
 - Cancellation mid-mutation can no longer leave a mod in the DB but absent from its profile (or
   vice-versa). Every profile-file write that completes an already-applied database mutation —
   install, dependency install, archive import, adopt, profile import, profile switch, uninstall,
@@ -444,21 +483,10 @@ profiles}`).
   vanish from the result at once. A cancelled run also now prints `Cancelled.` to stderr in plain
   mode before exiting 2 (`--json` stays silent, as `--json` output is otherwise unaffected). No
   other output changes on any non-cancelled path. (#305)
-- `core.Service`'s fixture-only exports resolved (Ruling 10): `DownloadMod`, `GetInstaller`, and
-  `PurgeMergedPak` are unexported — production never called the exported forms, only test
-  fixtures did — with `cmd/lmm` tests re-seeded through the real `PlanInstall`/`ApplyInstall`,
-  `PlanDeploy`/`ApplyDeploy`, and `PurgeProfile` flows instead. `SaveInstalledMod`, `GetGameCache`,
-  `SyncMergedPak`, `SaveFileChecksum`, `AvailableModVersions`, `IsSourceAuthenticated`, `ScanLocal`,
-  `Logger`, `SetModLinkMethod`, `SetModDeployed`, and `DeleteInstalledMod` stay exported as
-  documented test-seed APIs or frontend-facing queries, each with a doc comment stating why. No
-  behavior change. (#305)
-- Every exported identifier in `internal/core`, `internal/domain`, and `internal/app` now carries
-  a doc comment, enforced by a `go/ast` test in each package
-  (`TestExportedIdentifiersHaveDocComments`) rather than tracked as a one-time count.
-  `cmd/lmm`'s import-boundary test drops its allow-list mechanism (empty since Task 1) in favor of
-  asserting the hard rule directly; a new `TestDetailsTypesAreCovered` (Unit P review finding M7)
-  requires every type implementing the `--json` error envelope's `Details() any` extension point
-  to have a named test pinning its wire shape. No behavior change. (#305)
+
+### Removed
+
+- The interactive terminal UI (`lmm tui`) and the `internal/tui` package. v2's interfaces are the CLI and, in a later release, a local web UI (`lmm serve`). Design: `docs/plans/2026-08-27-v2-core-refactor-design.md`.
 
 ## [1.30.1] - 2026-08-08
 
