@@ -67,7 +67,7 @@ func TestDoProfileApply_DisableAndEnable_PrintsExactOutput(t *testing.T) {
 	seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true, map[string][]byte{"dis1.esp": []byte("dis")})
 	// Installed + disabled + cached, referenced by profile.Mods -> enable.
 	seedApplyCandidateMod(t, svc, game, "src", "en1", "En One", "1.0", false, map[string][]byte{"en1.esp": []byte("en")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
 
 	applyYes(t)
 
@@ -102,7 +102,7 @@ func TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
 
 	var out string
 	withStdin(t, "n\n", func() {
@@ -129,7 +129,7 @@ func TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 func TestDoProfileApply_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
 	withJSONOutput(t)
 
 	err := assertStdinNeverRead(t, func() error {
@@ -171,7 +171,7 @@ func TestDoProfileApply_DisabledModCacheGone_SchedulesRedownload(t *testing.T) {
 	}))
 	require.False(t, svc.GetGameCache(game).Exists(game.ID, "test-src", "mod1", "1.0"),
 		"precondition: the cache entry must be gone")
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	applyYes(t)
 
@@ -215,7 +215,7 @@ func TestDoProfileApply_InstallLoop_PerModErrorsContinue(t *testing.T) {
 	src.AddDownload("main", []byte("plugin content"))
 
 	for _, id := range []string{"ghost", "empty", "good"} {
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: id, Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: id, Version: "1.0"}))
 	}
 
 	applyYes(t)
@@ -258,7 +258,7 @@ func TestDoProfileApply_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *tes
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0o644))
 	// Drop it from the profile so the apply classifies it as a disable.
-	require.NoError(t, pm.RemoveMod(game.ID, "default", "src", "1"))
+	require.NoError(t, pm.RemoveMod(context.Background(), game.ID, "default", "src", "1"))
 
 	applyYes(t)
 	applyVerbose(t, true)
@@ -290,7 +290,7 @@ func applyLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 		})
 	src.AddDownload("main", []byte("plugin content"))
 
-	require.NoError(t, getProfileManager(svc).AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, getProfileManager(svc).AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Locked: true,
 	}))
 
@@ -343,7 +343,7 @@ func TestDoProfileApply_LockedRef_UpsertRefusalWarnsUnconditionally(t *testing.T
 			require.NoError(t, err)
 			assert.Equal(t, "1.1", installed.Version)
 
-			profile, err := pm.Get(game.ID, "default")
+			profile, err := pm.Get(context.Background(), game.ID, "default")
 			require.NoError(t, err)
 			require.Len(t, profile.Mods, 1)
 			assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
@@ -391,7 +391,7 @@ func applyTwoModCancelFixture(t *testing.T) (*core.Service, *domain.Game) {
 			{ID: "main", Name: "Main", FileName: "mod2.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 		})
 	src.AddDownload("main", []byte("plugin content"))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "second-src", ModID: "mod2"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "second-src", ModID: "mod2"}))
 
 	return svc, game
 }
@@ -489,7 +489,14 @@ func TestDoProfileApply_LockedRefWarningSurvivesFatalContextCancellation(t *test
 
 	svc, game := applyTwoModCancelFixture(t)
 	inner, cancel := context.WithCancel(context.Background())
-	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 1}
+	// live is counter.calls-2, not -1: v2 Phase 3 Task 18 gave
+	// ProfileManager.UpsertMod its own ctx.Err() guard, so mod2's iteration
+	// now makes TWO core-originated checks (the loop-top check, then
+	// UpsertMod's internal one) rather than one - the LAST measured call is
+	// UpsertMod's, which runs after mod2 is already downloaded, deployed and
+	// DB-saved. Targeting one call earlier still lands on mod2's loop-top
+	// check, before any of that runs, preserving this test's original intent.
+	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 2}
 
 	out, stderr, err := captureStdoutStderrErr(t, func() error {
 		return doProfileApply(ctx, svc, game, nil)

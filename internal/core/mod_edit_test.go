@@ -85,7 +85,7 @@ func TestService_PlanRelinkMod_TargetInstalled_Detected(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.NewProfileManager().AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "b", Version: "2.0"}))
+	require.NoError(t, svc.NewProfileManager().AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "b", Version: "2.0"}))
 
 	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "src", "b")
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestService_PlanRelinkMod_TargetInstalled_Detected(t *testing.T) {
 func TestService_PlanRelinkMod_Locked_Relink_SetsRefusal(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", ""))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 
 	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "curseforge", "99")
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestService_PlanRelinkMod_Locked_Relink_SetsRefusal(t *testing.T) {
 func TestService_PlanRelinkMod_Locked_MetadataOnly_NoRefusal(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", ""))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 
 	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "", "")
 	require.NoError(t, err)
@@ -201,7 +201,7 @@ func TestService_ApplyRelinkMod_Relink_MovesDBRowAndProfileRef(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", moved.Version)
 
-	prof, err := svc.NewProfileManager().Get(game.ID, "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	assert.Nil(t, prof.FindRef("src", "a"), "the old profile ref must be removed")
 	require.NotNil(t, prof.FindRef("src", "b"), "the new profile ref must exist")
@@ -277,7 +277,7 @@ func TestService_ApplyRelinkMod_Relink_UnconfiguredTargetSource_Errors(t *testin
 func TestService_ApplyRelinkMod_Relink_Locked_Refuses(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", ""))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 
 	installed, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestService_ApplyRelinkMod_Relink_Locked_Refuses(t *testing.T) {
 func TestService_ApplyRelinkMod_VersionOnly_Locked_MismatchedVersion_Refuses(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", ""))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 
 	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "", "")
 	require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestService_ApplyRelinkMod_VersionOnly_Locked_MismatchedVersion_Refuses(t *
 func TestService_ApplyRelinkMod_VersionOnly_Locked_MatchingVersion_Allowed(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "2.0")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", "1.5"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", "1.5"))
 
 	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "", "")
 	require.NoError(t, err)
@@ -331,7 +331,7 @@ func TestService_ApplyRelinkMod_VersionOnly_Locked_MatchingVersion_Allowed(t *te
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", result.Mod.Version)
 
-	prof, err := svc.NewProfileManager().Get(game.ID, "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	ref := prof.FindRef("src", "a")
 	require.NotNil(t, ref)

@@ -62,7 +62,7 @@ func runPurge(cmd *cobra.Command, args []string) error {
 }
 
 func doPurge(ctx context.Context, service *core.Service, game *domain.Game) error {
-	profileName, err := resolveProfile(service, game.ID, purgeProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, purgeProfile)
 	if err != nil {
 		return err
 	}

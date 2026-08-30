@@ -76,7 +76,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 }
 
 func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	profileName, err := resolveProfile(service, game.ID, deployProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, deployProfile)
 	if err != nil {
 		return err
 	}

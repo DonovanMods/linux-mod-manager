@@ -54,7 +54,7 @@ func TestProfileManager_Export_WritesHookOverrides(t *testing.T) {
 	configDir := svc.ConfigDir()
 	writeProfileWithHooks(t, configDir, "g1", "modded", "/opt/lmm/cleanup.sh")
 
-	data, err := svc.NewProfileManager().Export("g1", "modded")
+	data, err := svc.NewProfileManager().Export(context.Background(), "g1", "modded")
 	require.NoError(t, err)
 
 	round, err := config.ImportProfile(data)
@@ -72,10 +72,10 @@ func TestProfileManager_Export_WritesHookOverrides(t *testing.T) {
 func TestProfileManager_Export_NoHooks_OmitsTheBlock(t *testing.T) {
 	svc := newFlowsTestService(t)
 	pm := svc.NewProfileManager()
-	_, err := pm.Create("g1", "plain")
+	_, err := pm.Create(context.Background(), "g1", "plain")
 	require.NoError(t, err)
 
-	data, err := pm.Export("g1", "plain")
+	data, err := pm.Export(context.Background(), "g1", "plain")
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "hooks:")
 }
@@ -88,7 +88,7 @@ func TestPlanImport_ApplyImport_RoundTripsHookOverrides(t *testing.T) {
 	configDir := svc.ConfigDir()
 	writeProfileWithHooks(t, configDir, "g1", "modded", "/opt/lmm/cleanup.sh")
 
-	data, err := svc.NewProfileManager().Export("g1", "modded")
+	data, err := svc.NewProfileManager().Export(context.Background(), "g1", "modded")
 	require.NoError(t, err)
 
 	// Import it under a fresh name so the save is a real create, not an

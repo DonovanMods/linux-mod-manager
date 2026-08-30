@@ -76,9 +76,9 @@ func setupDoUpdateRecompileTest(t *testing.T) (*core.Service, *domain.Game, *com
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
 	pm := svc.NewProfileManager()
-	_, cerr := pm.Create(game.ID, "default")
+	_, cerr := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, cerr)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
 	return svc, game, compiler, filepath.Join(game.ModPath, "zzz_LMM_Merged_P.pak")
 }

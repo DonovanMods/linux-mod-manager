@@ -274,7 +274,7 @@ func saveGameConfig(ctx context.Context, cmd *cobra.Command, service *core.Servi
 	// Create default profile - the same core helper 'lmm game detect' uses
 	// (ApplyGameDetect), so both call sites share the unconditional
 	// overwrite-on-repair semantics documented there.
-	if _, err := service.NewProfileManager().CreateOrResetDefault(gameSlug); err != nil {
+	if _, err := service.NewProfileManager().CreateOrResetDefault(ctx, gameSlug); err != nil {
 		return fmt.Errorf("creating default profile: %w", err)
 	}
 

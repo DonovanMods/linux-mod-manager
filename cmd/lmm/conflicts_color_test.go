@@ -15,7 +15,7 @@ import (
 func TestDoConflicts_Stale_ColorPath(t *testing.T) {
 	svc, game := setupConflictsTest(t)
 	seedTwinConflictFixture(t, svc, game)
-	require.NoError(t, svc.NewProfileManager().ReorderMods(game.ID, "default", []domain.ModReference{
+	require.NoError(t, svc.NewProfileManager().ReorderMods(context.Background(), game.ID, "default", []domain.ModReference{
 		{SourceID: "src", ModID: "b", Version: "1.0"},
 		{SourceID: "src", ModID: "a", Version: "1.0"},
 	}))

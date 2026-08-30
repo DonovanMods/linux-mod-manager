@@ -88,7 +88,7 @@ func TestService_PlanRollback_Locked(t *testing.T) {
 		[]string{"old-1"}, []string{"new-1"},
 		map[string][]byte{"mod1-old.esp": []byte("old-content")},
 		map[string][]byte{"mod1-new.esp": []byte("new-content")})
-	require.NoError(t, svc.NewProfileManager().SetModLock("g1", "default", "src", "mod1", "2.0"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), "g1", "default", "src", "mod1", "2.0"))
 
 	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
 	require.NoError(t, err)

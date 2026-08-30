@@ -61,14 +61,14 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 	seedMod("icarus", "disabled-mod", "1.0", []string{"exmodz-file"}, false)
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	// Profile load order: first-mod, then second-mod (disabled-mod
 	// intentionally omitted - membership in Profile.Mods, not just an
 	// Enabled DB row, is what GetInstalledModsInProfileOrder requires).
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "first-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "second-mod", Version: "1.0", FileIDs: []string{"exmodz-file", "pak-file"}}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "disabled-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "first-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "second-mod", Version: "1.0", FileIDs: []string{"exmodz-file", "pak-file"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "disabled-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
 
 	sources, err := svc.EnabledMergeSourcesForTest(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -117,9 +117,9 @@ func TestClassifyCompileDeployMods_UnreadableRetainedPathWarns(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
 
 	versionDir := gameCache.ModPath(game.ID, "icarus", "mod1", "1.0")
 	require.NoError(t, os.Chmod(versionDir, 0o000))
@@ -167,9 +167,9 @@ func TestClassifyCompileDeployMods_CompilerResolutionFailureWarns(t *testing.T) 
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
 
 	mod, err := svc.GetInstalledMod(context.Background(), "icarus", "mod1", game.ID, "default")
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func newMergedPakTestGame(t *testing.T) (*core.Service, *domain.Game, string) {
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	return svc, game, basePak
@@ -227,7 +227,7 @@ func seedEnabledExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, so
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
 // TestSyncMergedPak_GeneratesAndDeploys is the happy path: one enabled
@@ -546,7 +546,7 @@ func TestReconcilePakManifests_TwoPakFileIDs_EachClaimsOwnMember(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{mainFileID, liteFileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{mainFileID, liteFileID}}))
 
 	gc := svc.GetGameCache(game)
 	inst := core.NewInstaller(gc, linker.New(game.LinkMethod), nil)
@@ -657,7 +657,7 @@ func TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy(t *testi
 				UpdatePolicy: domain.UpdateNotify,
 			}))
 			pm := svc.NewProfileManager()
-			require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{tc.fileID}}))
+			require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{tc.fileID}}))
 
 			inst := core.NewInstaller(gameCache, linker.New(game.LinkMethod), nil)
 			_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
@@ -728,7 +728,7 @@ func TestSyncMergedPak_OptOutAfterPrunedConvertedPak_RestoresRawDeploy(t *testin
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{"pak"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{"pak"}}))
 
 	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

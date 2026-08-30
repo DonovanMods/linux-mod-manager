@@ -18,7 +18,7 @@ import (
 // (mirrors pin_visibility_test.go's setPolicy).
 func setLockedForUpdate(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID, version string) {
 	t.Helper()
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", sourceID, modID, version))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", sourceID, modID, version))
 }
 
 // TestApplySingleUpdate_Locked_RefusesUpdate_Text: `lmm update <mod-id>` on a

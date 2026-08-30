@@ -102,7 +102,7 @@ func TestShowGameStatus_RicherValues_ColoredWhenTTY(t *testing.T) {
 	resetColorFlags(t)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
-	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), game.ID, "default"))
 
 	withColorCapableStdout(t, true)
 	out := captureStdout(t, func() error {
@@ -123,7 +123,7 @@ func TestShowGameStatus_RicherValues_PlainWhenColorDisabled(t *testing.T) {
 	resetColorFlags(t)
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "a.esp")
-	require.NoError(t, svc.NewProfileManager().SetDefault(game.ID, "default"))
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), game.ID, "default"))
 
 	out := captureStdout(t, func() error {
 		return showGameStatus(context.Background(), svc, game.ID)

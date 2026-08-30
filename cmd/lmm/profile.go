@@ -213,14 +213,14 @@ func getProfileManager(service *core.Service) *core.ProfileManager {
 
 func runProfileList(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileList(service, game)
+		return doProfileList(ctx, service, game)
 	})
 }
 
-func doProfileList(service *core.Service, game *domain.Game) error {
+func doProfileList(ctx context.Context, service *core.Service, game *domain.Game) error {
 	pm := getProfileManager(service)
 
-	profiles, err := pm.List(game.ID)
+	profiles, err := pm.List(ctx, game.ID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
@@ -256,14 +256,14 @@ func doProfileList(service *core.Service, game *domain.Game) error {
 
 func runProfileCreate(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileCreate(service, game, args[0])
+		return doProfileCreate(ctx, service, game, args[0])
 	})
 }
 
-func doProfileCreate(service *core.Service, game *domain.Game, name string) error {
+func doProfileCreate(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	profile, err := pm.Create(game.ID, name)
+	profile, err := pm.Create(ctx, game.ID, name)
 	if err != nil {
 		return fmt.Errorf("creating profile: %w", err)
 	}
@@ -279,11 +279,11 @@ func doProfileCreate(service *core.Service, game *domain.Game, name string) erro
 
 func runProfileDelete(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileDelete(service, game, args[0])
+		return doProfileDelete(ctx, service, game, args[0])
 	})
 }
 
-func doProfileDelete(service *core.Service, game *domain.Game, name string) error {
+func doProfileDelete(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
 	// Under --json the document reports WHICH profile was deleted, which
@@ -294,14 +294,14 @@ func doProfileDelete(service *core.Service, game *domain.Game, name string) erro
 	// profile still deletes - the document then names it and nothing else.
 	var deleted domain.Profile
 	if jsonOutput {
-		if p, err := pm.Get(game.ID, name); err == nil {
+		if p, err := pm.Get(ctx, game.ID, name); err == nil {
 			deleted = *p
 		} else {
 			deleted = domain.Profile{Name: name, GameID: game.ID}
 		}
 	}
 
-	if err := pm.Delete(game.ID, name); err != nil {
+	if err := pm.Delete(ctx, game.ID, name); err != nil {
 		return fmt.Errorf("deleting profile: %w", err)
 	}
 
@@ -505,14 +505,14 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 
 func runProfileExport(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileExport(service, game, args[0])
+		return doProfileExport(ctx, service, game, args[0])
 	})
 }
 
-func doProfileExport(service *core.Service, game *domain.Game, name string) error {
+func doProfileExport(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
 	pm := getProfileManager(service)
 
-	data, err := pm.Export(game.ID, name)
+	data, err := pm.Export(ctx, game.ID, name)
 	if err != nil {
 		return fmt.Errorf("exporting profile: %w", err)
 	}
@@ -695,7 +695,7 @@ func runProfileSync(cmd *cobra.Command, args []string) error {
 }
 
 func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	profileName := profileSyncTarget(service, game, args)
+	profileName := profileSyncTarget(ctx, service, game, args)
 
 	plan, err := service.PlanProfileSync(ctx, game, profileName)
 	if err != nil {
@@ -852,11 +852,11 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 // positional argument when given, else the game's default profile, else the
 // literal "default" (an unreadable default is not an error here - the
 // plan's own profile lookup handles a missing profile via Plan.Missing).
-func profileSyncTarget(service *core.Service, game *domain.Game, args []string) string {
+func profileSyncTarget(ctx context.Context, service *core.Service, game *domain.Game, args []string) string {
 	if len(args) > 0 {
 		return args[0]
 	}
-	defaultProfile, err := getProfileManager(service).GetDefault(game.ID)
+	defaultProfile, err := getProfileManager(service).GetDefault(ctx, game.ID)
 	if err != nil {
 		return "default"
 	}
@@ -871,13 +871,13 @@ func runProfileReorder(cmd *cobra.Command, args []string) error {
 
 func doProfileReorder(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
 
-	profileName, err := resolveProfile(service, game.ID, profileReorderProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, profileReorderProfile)
 	if err != nil {
 		return err
 	}
 
 	if len(args) == 0 {
-		profile, err := getProfileManager(service).Get(game.ID, profileName)
+		profile, err := getProfileManager(service).Get(ctx, game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
@@ -932,7 +932,7 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 	// re-read so the document reports what was persisted rather than what
 	// was requested.
 	if jsonOutput {
-		profile, err := getProfileManager(service).Get(game.ID, profileName)
+		profile, err := getProfileManager(service).Get(ctx, game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
@@ -956,7 +956,7 @@ func runProfileApply(cmd *cobra.Command, args []string) error {
 // deliberately stays here rather than in core: core never blocks on user
 // input.
 func doProfileApply(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	profileName := profileApplyTarget(service, game, args)
+	profileName := profileApplyTarget(ctx, service, game, args)
 
 	plan, err := service.PlanProfileApply(ctx, game, profileName)
 	if err != nil {
@@ -1117,11 +1117,11 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 // positional argument when given, else the game's default profile, else the
 // literal "default" (an unreadable default is not an error here - the plan's
 // own profile lookup reports a missing profile).
-func profileApplyTarget(service *core.Service, game *domain.Game, args []string) string {
+func profileApplyTarget(ctx context.Context, service *core.Service, game *domain.Game, args []string) string {
 	if len(args) > 0 {
 		return args[0]
 	}
-	defaultProfile, err := getProfileManager(service).GetDefault(game.ID)
+	defaultProfile, err := getProfileManager(service).GetDefault(ctx, game.ID)
 	if err != nil {
 		return "default"
 	}

@@ -234,7 +234,7 @@ func lockStateFromProfile(prof *domain.Profile, sourceID, modID string) (locked 
 // today, kept for symmetry with this file's other ctx-taking Service
 // methods.
 func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, modID string) (locked bool, lockedVersion string, err error) {
-	prof, _ := s.NewProfileManager().Get(gameID, profileName)
+	prof, _ := s.NewProfileManager().Get(ctx, gameID, profileName)
 	locked, lockedVersion = lockStateFromProfile(prof, sourceID, modID)
 	return locked, lockedVersion, nil
 }
@@ -279,7 +279,7 @@ func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profi
 	// missing/unreadable profile leaves every entry unlocked, matching every
 	// other "profile load failure means unlocked" precedent (ApplyUpdate's
 	// own lock gate, applySingleUpdate before this task).
-	prof, _ := s.NewProfileManager().Get(game.ID, profileName)
+	prof, _ := s.NewProfileManager().Get(ctx, game.ID, profileName)
 	for i := range updates {
 		locked, lockedVersion := lockStateFromProfile(prof, updates[i].InstalledMod.SourceID, updates[i].InstalledMod.ID)
 		if locked {

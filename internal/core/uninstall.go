@@ -281,7 +281,7 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		return result, fmt.Errorf("failed to remove mod record: %w", err)
 	}
 
-	if err := s.NewProfileManager().RemoveMod(game.ID, profileName, mod.SourceID, modID); err != nil {
+	if err := s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, modID); err != nil {
 		// Don't fail if not in profile. Always recorded, historical "Note: "
 		// prefix baked into the text (see UninstallResult's doc comment).
 		result.Notes = append(result.Notes, fmt.Sprintf("Note: %v", err))

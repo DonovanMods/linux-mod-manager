@@ -137,9 +137,9 @@ func setupDoProfileSwitchTest(t *testing.T) (*core.Service, *domain.Game) {
 	t.Cleanup(func() { verbose = oldVerbose })
 
 	pm := getProfileManager(svc)
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	return svc, game
 }
@@ -163,11 +163,11 @@ func TestDoProfileSwitch_AlreadyActive_PrintsMessageAndReturnsNil(t *testing.T) 
 func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "other")
+	_, err := pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "shared", "Shared Mod", "shared.esp")
-	require.NoError(t, pm.AddMod(game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 
 	out := captureStdout(t, func() error {
 		return doProfileSwitch(context.Background(), svc, game, "other")
@@ -175,7 +175,7 @@ func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T)
 
 	assert.Equal(t, "Switching to profile: other\n\n✓ Switched to profile: other\n", out)
 
-	def, err := pm.GetDefault(game.ID)
+	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "other", def.Name)
 }
@@ -188,7 +188,7 @@ func TestDoProfileSwitch_NoChanges_SwitchesDefaultWithoutPrompting(t *testing.T)
 func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
@@ -206,7 +206,7 @@ func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *tes
 	assert.Contains(t, out, "\nProceed? [Y/n]: ")
 	assert.Contains(t, out, "Cancelled.\n")
 
-	def, err := pm.GetDefault(game.ID)
+	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "default", def.Name, "declining must not switch the default profile")
 
@@ -223,7 +223,7 @@ func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *tes
 func TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
 	withJSONOutput(t)
@@ -233,7 +233,7 @@ func TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	})
 
 	require.ErrorIs(t, err, core.ErrConfirmationRequired)
-	def, derr := pm.GetDefault(game.ID)
+	def, derr := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, derr)
 	assert.Equal(t, "default", def.Name, "must not switch the default profile")
 	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
@@ -248,7 +248,7 @@ func TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 func TestDoProfileSwitch_YesFlagSkipsPromptEntirely(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
 	oldYes := profileSwitchYes
@@ -262,7 +262,7 @@ func TestDoProfileSwitch_YesFlagSkipsPromptEntirely(t *testing.T) {
 	assert.NotContains(t, out, "Proceed?")
 	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
 
-	def, derr := pm.GetDefault(game.ID)
+	def, derr := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, derr)
 	assert.Equal(t, "target", def.Name)
 	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
@@ -280,7 +280,7 @@ func TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing
 	svc, game := setupDoProfileSwitchTest(t)
 	withJSONOutput(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
 	oldYes := profileSwitchYes
@@ -304,7 +304,7 @@ func TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing
 	decodeSingleDoc(t, out, &doc)
 	assert.Equal(t, 1, doc.Disabled)
 
-	active, err := pm.GetDefault(game.ID)
+	active, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "target", active.Name)
 }
@@ -321,7 +321,7 @@ func TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput(t *testi
 	svc, game := setupDoProfileSwitchTest(t)
 	game.DeployMode = domain.DeployCopy
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	// disable-me: enabled under "default", absent from "target".
@@ -335,7 +335,7 @@ func TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput(t *testi
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      false,
 	}))
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "enable-me", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "enable-me", Version: "1.0"}))
 
 	// install-me: referenced by "target" only, not installed at all.
 	mux := http.NewServeMux()
@@ -366,7 +366,7 @@ mods:
 	})
 	require.NoError(t, err)
 	svc.RegisterSource(src)
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "e2e-repo", ModID: "install-me", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "e2e-repo", ModID: "install-me", Version: "1.0"}))
 
 	var out string
 	withStdin(t, "y\n", func() {
@@ -387,7 +387,7 @@ mods:
 	assert.Contains(t, out, "    ✓ Installed: Install Me\n")
 	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
 
-	def, err := pm.GetDefault(game.ID)
+	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "target", def.Name)
 
@@ -410,7 +410,7 @@ mods:
 func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
@@ -447,7 +447,7 @@ func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	src := newFakeInstallSource("test-src")
@@ -461,7 +461,7 @@ func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 		})
 	src.AddDownload("main", []byte("plugin content"))
 
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Locked: true,
 	}))
 
@@ -520,7 +520,7 @@ func TestDoProfileSwitch_LockedRef_UpsertRefusalWarnsUnconditionally(t *testing.
 			require.NoError(t, err)
 			assert.Equal(t, "1.1", installed.Version)
 
-			profile, err := pm.Get(game.ID, "target")
+			profile, err := pm.Get(context.Background(), game.ID, "target")
 			require.NoError(t, err)
 			require.Len(t, profile.Mods, 1)
 			assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
@@ -641,7 +641,7 @@ func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testi
 // report.
 func TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
-	_, err := getProfileManager(svc).Create(game.ID, "target")
+	_, err := getProfileManager(svc).Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	withProfileSwitchYes(t)
 	chmodDefaultProfileReadOnly(t, game)
@@ -722,7 +722,7 @@ func TestDoProfileApply_PrintsDeterministicOrder_MatchesProfileMods(t *testing.T
 	// profile.Mods interleaves enable/install refs in an order matching
 	// neither alphabetical nor insertion order for either sub-sequence.
 	for _, id := range []string{"enC", "insB", "enA", "insC", "enB", "insA"} {
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
 	}
 
 	origYes := profileApplyYes
@@ -787,7 +787,7 @@ func TestDoProfileApply_StampsSelectedFileVersion(t *testing.T) {
 	src.AddDownload("main", []byte("plugin content"))
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: ""}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: ""}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -843,8 +843,8 @@ func TestDoProfileApply_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing
 	src.AddDownload("main2", []byte("plugin content"))
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod2", Version: "1.0", FileIDs: []string{"main2"}}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0", FileIDs: []string{"stale-id"}}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod2", Version: "1.0", FileIDs: []string{"main2"}}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -877,7 +877,7 @@ func TestDoProfileApply_VersionDrift_SchedulesReinstall(t *testing.T) {
 	pm := getProfileManager(svc)
 
 	seedApplyCandidateMod(t, svc, game, "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	var out string
 	withStdin(t, "n\n", func() {
@@ -904,7 +904,7 @@ func TestDoProfileApply_MatchingVersion_RemainsNoop(t *testing.T) {
 	pm := getProfileManager(svc)
 
 	seedApplyCandidateMod(t, svc, game, "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	out := captureStdout(t, func() error {
 		return doProfileApply(context.Background(), svc, game, nil)
@@ -952,7 +952,7 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -1008,7 +1008,7 @@ func TestDoProfileApply_PartialCacheEntry_StillDownloads(t *testing.T) {
 	require.NoError(t, os.MkdirAll(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), 0755))
 	require.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "precondition: bare Exists must see the empty dir as already cached")
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -1060,7 +1060,7 @@ func TestDoProfileApply_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	require.NoError(t, gameCache.Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("plugin content")))
 	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "test-src", "mod1", "1.0"), "main"))
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true
@@ -1124,7 +1124,7 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 	require.NoError(t, gameCache.Delete(game.ID, "test-src", "mod1", "1.5"))
 	require.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "precondition: the old cache entry must be gone")
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	origYes := profileApplyYes
 	profileApplyYes = true

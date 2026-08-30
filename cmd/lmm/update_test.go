@@ -292,11 +292,11 @@ func seedInstalledForUpdate(t *testing.T, svc *core.Service, game *domain.Game, 
 	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
 
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
-		_, cerr := pm.Create(game.ID, "default")
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
+		_, cerr := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, cerr)
 	}
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
 
 	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
 	require.NoError(t, err)

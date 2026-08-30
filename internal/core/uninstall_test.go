@@ -23,12 +23,12 @@ import (
 func seedProfileWithMod(t *testing.T, svc *core.Service, gameID, profileName, sourceID, modID, version string) {
 	t.Helper()
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(gameID, profileName); err != nil {
+	if _, err := pm.Get(context.Background(), gameID, profileName); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(gameID, profileName)
+		_, err := pm.Create(context.Background(), gameID, profileName)
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(gameID, profileName, domain.ModReference{SourceID: sourceID, ModID: modID, Version: version}))
+	require.NoError(t, pm.AddMod(context.Background(), gameID, profileName, domain.ModReference{SourceID: sourceID, ModID: modID, Version: version}))
 }
 
 // seedHooks sets game's hooks and persists them (mirroring a real games.yaml
@@ -98,7 +98,7 @@ func TestService_UninstallMod_FullUninstall(t *testing.T) {
 	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should be removed")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "profile should no longer list the mod")
 }
@@ -130,7 +130,7 @@ func TestService_UninstallMod_KeepCache(t *testing.T) {
 	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "DB row should still be removed")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "profile should still no longer list the mod")
 }

@@ -84,7 +84,7 @@ func TestModShowGolden_InstalledLockedWithConvergeHint(t *testing.T) {
 	svc, game, src := setupDoModLockTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
 	src.AddMod(richMod(game.ID), nil)
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", "1.2.3"))
 
 	out := captureStdout(t, func() error {
 		return doModShow(context.Background(), svc, game, "a")

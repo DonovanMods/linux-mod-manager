@@ -220,7 +220,7 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
@@ -291,7 +291,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
@@ -337,7 +337,7 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 			return err
 		}
 	} else {
-		profile, err := pm.Get(game.ID, profileName)
+		profile, err := pm.Get(ctx, game.ID, profileName)
 		if err != nil {
 			return fmt.Errorf("loading profile: %w", err)
 		}
@@ -389,7 +389,7 @@ func doModUnlock(ctx context.Context, service *core.Service, game *domain.Game, 
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
@@ -426,7 +426,7 @@ func doModEnable(ctx context.Context, service *core.Service, game *domain.Game, 
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
@@ -485,7 +485,7 @@ func doModDisable(ctx context.Context, service *core.Service, game *domain.Game,
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
@@ -571,7 +571,7 @@ func runModFiles(cmd *cobra.Command, args []string) error {
 }
 
 func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID string) error {
-	profileName, err := resolveProfile(svc, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, svc, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
@@ -635,7 +635,7 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	// than erroring. Profile resolves BEFORE the detail call now that the
 	// composition lives in core (#86) - accepted deviation: when BOTH the
 	// profile and the mod ID are invalid, the profile error surfaces first.
-	profileName, err := resolveProfile(svc, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, svc, game.ID, modProfile)
 	if err != nil {
 		return err
 	}
@@ -754,7 +754,7 @@ func doModConvert(ctx context.Context, service *core.Service, game *domain.Game,
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, modProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, modProfile)
 	if err != nil {
 		return err
 	}

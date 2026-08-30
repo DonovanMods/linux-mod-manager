@@ -116,15 +116,17 @@ func TestJSONGolden_List(t *testing.T) {
 	t.Run("profiles", func(t *testing.T) {
 		svc, game := setupDoDeployTest(t)
 		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
-		_, err := svc.NewProfileManager().Create(game.ID, "survival")
+		_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "survival")
 		require.NoError(t, err)
 
 		old := jsonOutput
 		jsonOutput = true
 		t.Cleanup(func() { jsonOutput = old })
 
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
 		out := captureStdout(t, func() error {
-			return runListProfiles(&cobra.Command{}, svc, game.ID, game.Name)
+			return runListProfiles(cmd, svc, game.ID, game.Name)
 		})
 		assertJSONCLIGolden(t, "list_profiles", out)
 	})
@@ -158,7 +160,7 @@ func TestJSONGolden_Status(t *testing.T) {
 		withStatusFlags(t, "")
 		for _, g := range []*domain.Game{goldenStatusGame("zulu", "Zulu"), goldenStatusGame("alpha", "Alpha")} {
 			require.NoError(t, svc.SaveGame(context.Background(), g))
-			_, err := svc.NewProfileManager().Create(g.ID, "default")
+			_, err := svc.NewProfileManager().Create(context.Background(), g.ID, "default")
 			require.NoError(t, err)
 		}
 
@@ -180,9 +182,9 @@ func TestJSONGolden_Status(t *testing.T) {
 		game := goldenStatusGame("alpha", "Alpha")
 		require.NoError(t, svc.SaveGame(context.Background(), game))
 		pm := svc.NewProfileManager()
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
-		_, err = pm.Create(game.ID, "survival")
+		_, err = pm.Create(context.Background(), game.ID, "survival")
 		require.NoError(t, err)
 
 		out := captureStdout(t, func() error {

@@ -70,7 +70,7 @@ func runModEdit(cmd *cobra.Command, args []string) error {
 }
 
 func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, currentID string) error {
-	profileName, err := resolveProfile(service, game.ID, editProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, editProfile)
 	if err != nil {
 		return err
 	}

@@ -27,12 +27,12 @@ func seedLocalMod(t *testing.T, svc *core.Service, game *domain.Game, modID, nam
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: domain.SourceLocal, ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: domain.SourceLocal, ModID: modID, Version: "1.0"}))
 }
 
 func localUpdateGame(t *testing.T) (*core.Service, *domain.Game) {

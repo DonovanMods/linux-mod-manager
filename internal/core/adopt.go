@@ -592,7 +592,7 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 		Version:  r.Mod.Version,
 		FileIDs:  fileIDs,
 	}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
 		// Non-fatal (ruling 9: today this can only be a LOCKED ref, #143).
 		step(r, AdoptNote, fmt.Sprintf("Warning: could not update profile: %v", err))
 	}

@@ -70,7 +70,7 @@ func (s *Service) ListMods(ctx context.Context, game *domain.Game, profileName s
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
-	profile, err := s.NewProfileManager().Get(game.ID, profileName)
+	profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
 	if err != nil && !errors.Is(err, domain.ErrProfileNotFound) {
 		return nil, fmt.Errorf("loading profile: %w", err)
 	}
@@ -118,8 +118,8 @@ type ProfileNames struct {
 // name comes from the directory entry, not the file's contents), so a
 // malformed profile never disappears from the listing that would let a user
 // find it.
-func (s *Service) ListProfileNames(gameID string) (*ProfileNames, error) {
-	names, err := s.NewProfileManager().ListNames(gameID)
+func (s *Service) ListProfileNames(ctx context.Context, gameID string) (*ProfileNames, error) {
+	names, err := s.NewProfileManager().ListNames(ctx, gameID)
 	if err != nil {
 		return nil, err
 	}
@@ -231,14 +231,14 @@ func (s *Service) Status(ctx context.Context) *StatusReport {
 
 	report := &StatusReport{Games: make([]GameSummary, 0, len(games))}
 	for _, game := range games {
-		profiles, _ := pm.List(game.ID)
+		profiles, _ := pm.List(ctx, game.ID)
 		names := make([]string, len(profiles))
 		for i, p := range profiles {
 			names[i] = p.Name
 		}
 
 		var modCount int
-		if active, err := pm.GetDefault(game.ID); err == nil {
+		if active, err := pm.GetDefault(ctx, game.ID); err == nil {
 			mods, _ := s.GetInstalledMods(ctx, game.ID, active.Name)
 			modCount = len(mods)
 		}
@@ -270,7 +270,7 @@ func (s *Service) Status(ctx context.Context) *StatusReport {
 // default profile is not an error - ActiveProfile simply stays empty.
 func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatus, error) {
 	pm := s.NewProfileManager()
-	profiles, err := pm.List(game.ID)
+	profiles, err := pm.List(ctx, game.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +295,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 		status.Profiles[i] = ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault}
 	}
 
-	active, err := pm.GetDefault(game.ID)
+	active, err := pm.GetDefault(ctx, game.ID)
 	if err != nil {
 		// No default profile: an ordinary state (a freshly added game), and
 		// the only thing it costs is the per-profile detail below.

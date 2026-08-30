@@ -224,7 +224,7 @@ func TestApplyGameDetect_SavesGamesAndCreatesDefaultProfiles(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, g.Name, saved.Name)
 
-		profile, err := svc.NewProfileManager().Get(g.Slug, "default")
+		profile, err := svc.NewProfileManager().Get(context.Background(), g.Slug, "default")
 		require.NoError(t, err)
 		assert.True(t, profile.IsDefault)
 		assert.Empty(t, profile.Mods)
@@ -244,9 +244,9 @@ func TestApplyGameDetect_OverwritesExistingDefaultProfileMods(t *testing.T) {
 
 	_, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{game})
 	require.NoError(t, err)
-	require.NoError(t, svc.NewProfileManager().UpsertMod(game.Slug, "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
+	require.NoError(t, svc.NewProfileManager().UpsertMod(context.Background(), game.Slug, "default", domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.0"}))
 
-	before, err := svc.NewProfileManager().Get(game.Slug, "default")
+	before, err := svc.NewProfileManager().Get(context.Background(), game.Slug, "default")
 	require.NoError(t, err)
 	require.NotEmpty(t, before.Mods, "test setup: profile must have a mod before the repair")
 
@@ -255,7 +255,7 @@ func TestApplyGameDetect_OverwritesExistingDefaultProfileMods(t *testing.T) {
 	assert.Equal(t, []string{"skyrim-se"}, result.Saved)
 	assert.Equal(t, []string{"skyrim-se/default"}, result.Profiles)
 
-	after, err := svc.NewProfileManager().Get(game.Slug, "default")
+	after, err := svc.NewProfileManager().Get(context.Background(), game.Slug, "default")
 	require.NoError(t, err)
 	assert.Empty(t, after.Mods, "repairing a configured game must wipe its default profile's mod list")
 }

@@ -101,9 +101,9 @@ func newAdoptTestService(t *testing.T) (*core.Service, *domain.Game) {
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 	return svc, game
 }
 
@@ -447,7 +447,7 @@ func TestApplyAdopt_CopyMode_WritesCacheSavesRowAndProfile(t *testing.T) {
 	require.NoError(t, rErr, "copy-mode adoption must write the source file into the cache")
 	assert.Equal(t, "loose-payload", string(data))
 
-	profile, pErr := svc.NewProfileManager().Get(game.ID, "default")
+	profile, pErr := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, pErr)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, installed.ID, profile.Mods[0].ModID)

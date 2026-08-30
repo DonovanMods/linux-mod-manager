@@ -347,9 +347,9 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	}
 
 	pm := s.NewProfileManager()
-	if _, err := pm.Get(game.ID, profileName); err != nil {
+	if _, err := pm.Get(ctx, game.ID, profileName); err != nil {
 		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(game.ID, profileName); err != nil {
+			if _, err := pm.Create(ctx, game.ID, profileName); err != nil {
 				note(ImportArchiveProfileNote, "Warning: could not create profile: %v", err)
 			}
 		}
@@ -360,7 +360,7 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		Version:  result.Mod.Version,
 		FileIDs:  result.FileIDs,
 	}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
 		// Non-fatal (ruling 9: today this can only be a LOCKED ref, #143).
 		note(ImportArchiveProfileNote, "Warning: could not update profile: %v", err)
 	}

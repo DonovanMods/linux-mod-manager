@@ -400,11 +400,11 @@ func requireGame(cmd *cobra.Command) error {
 // resolved by ProfileManager.GetDefault (the IsDefault profile set by
 // `lmm profile switch`, else the first profile). Falls back to "default" when
 // no profiles exist yet so a fresh setup still works.
-func resolveProfile(svc *core.Service, gameID, flagValue string) (string, error) {
+func resolveProfile(ctx context.Context, svc *core.Service, gameID, flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
-	profile, err := svc.NewProfileManager().GetDefault(gameID)
+	profile, err := svc.NewProfileManager().GetDefault(ctx, gameID)
 	if err != nil {
 		if errors.Is(err, domain.ErrProfileNotFound) {
 			return "default", nil

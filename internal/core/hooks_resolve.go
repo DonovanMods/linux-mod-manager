@@ -36,10 +36,10 @@ func (s *Service) hookRunner(_ context.Context) (*HookRunner, error) {
 // error for forward-compatibility with callers that resolve hooks before a
 // mutation and must propagate a real failure; today this always returns
 // nil.
-func (s *Service) resolvedHooks(_ context.Context, game *domain.Game, profileName string) (*ResolvedHooks, error) {
+func (s *Service) resolvedHooks(ctx context.Context, game *domain.Game, profileName string) (*ResolvedHooks, error) {
 	var profile *domain.Profile
 	if profileName != "" {
-		if p, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		if p, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 			profile = p
 		}
 	}

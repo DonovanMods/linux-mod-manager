@@ -260,7 +260,7 @@ func seedEnabledPakMod(t *testing.T, svc *core.Service, game *domain.Game, sourc
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
 // TestDownloadPakRetainsAndDeploysRaw proves the #221 ingest-widening
@@ -436,7 +436,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	mod := &domain.Mod{ID: "coolmod", SourceID: "fake-compiler", GameID: game.ID, Version: "1.0"}
@@ -457,7 +457,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 		FileIDs:      []string{file.ID},
 		UpdatePolicy: domain.UpdateNotify,
 	}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: []string{file.ID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: []string{file.ID}}))
 
 	installer, err := svc.GetInstallerForProfileForTest(context.Background(), game, "default")
 	require.NoError(t, err)

@@ -429,7 +429,7 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 	// A missing/unreadable profile simply holds no locks - PlanInstall's and
 	// lockedInstallRefusal's own tolerant convention.
 	var profile *domain.Profile
-	if p, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+	if p, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 		profile = p
 	}
 	// Conflict detection is best-effort on exactly PlanInstall.Conflicts'
@@ -775,10 +775,10 @@ type InstallResult struct {
 // doInstall's own "Log but don't fail - mod is installed" comment) and
 // reported by the caller via the returned error (nil on success or
 // already-exists).
-func ensureProfileExists(pm *ProfileManager, gameID, profileName string) error {
-	if _, err := pm.Get(gameID, profileName); err != nil {
+func ensureProfileExists(ctx context.Context, pm *ProfileManager, gameID, profileName string) error {
+	if _, err := pm.Get(ctx, gameID, profileName); err != nil {
 		if errors.Is(err, domain.ErrProfileNotFound) {
-			if _, err := pm.Create(gameID, profileName); err != nil {
+			if _, err := pm.Create(ctx, gameID, profileName); err != nil {
 				return err
 			}
 		}
@@ -910,7 +910,7 @@ func (s *reinstallCacheTransaction) Commit() error {
 // ErrModLocked guard as the final backstop). A missing/unreadable profile
 // cannot hold a lock - ApplyUpdate's tolerant precedent.
 func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, opts InstallOptions) error {
-	prof, err := s.NewProfileManager().Get(plan.GameID, plan.Profile)
+	prof, err := s.NewProfileManager().Get(ctx, plan.GameID, plan.Profile)
 	if err != nil {
 		if errors.Is(err, domain.ErrProfileNotFound) {
 			// A profile that hasn't been materialized as a YAML file yet is
@@ -1459,7 +1459,7 @@ func (s *Service) syncMergedPakAfterInstall(ctx context.Context, game *domain.Ga
 // summary counts rather than an error is how this path reports trouble.
 func (s *Service) applyInstallBatch(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, result *InstallResult, emit func(Event)) (*InstallResult, error) {
 	pm := s.NewProfileManager()
-	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
 		return result, fmt.Errorf("could not create profile: %w", err)
 	}
 
@@ -1672,7 +1672,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// only a ref without a DB row still resolves as a dependency - which
 	// would otherwise deploy and leave drift behind UpsertMod's refusal
 	// Note below.
-	if prof, err := pm.Get(game.ID, plan.Profile); err == nil {
+	if prof, err := pm.Get(ctx, game.ID, plan.Profile); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
 			// InstallLockRefusal, not the generic InstallDepSkipped: the
 			// event carries the refusal SENTENCE and the result carries the
@@ -1786,13 +1786,13 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 	}
 
-	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
-	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
+	if err := pm.UpsertMod(ctx, game.ID, plan.Profile, modRef); err != nil {
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
@@ -2234,13 +2234,13 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		}
 	}
 
-	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
+	if err := pm.UpsertMod(ctx, game.ID, plan.Profile, modRef); err != nil {
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})

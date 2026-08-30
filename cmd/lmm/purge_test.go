@@ -262,7 +262,7 @@ func TestDoPurge_Uninstall_OmitsPreservedTrailer_RemovesRecords(t *testing.T) {
 
 	_, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "--uninstall must delete the DB record")
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "--uninstall must remove the profile YAML entry")
 }

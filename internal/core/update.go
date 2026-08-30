@@ -805,7 +805,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 
 	// #97: a locked ref refuses update-apply entirely - the lock's whole
 	// contract. Checked before any network or hook side effect.
-	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+	if prof, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
 			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
 		}
@@ -960,7 +960,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 
 	pm := s.NewProfileManager()
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {

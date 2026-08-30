@@ -43,9 +43,9 @@ func TestDoModEdit_DeployCompile_VersionEditSyncsMergedPak(t *testing.T) {
 	}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := getProfileManager(svc)
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	const modID, oldVersion, fileID = "bear-mount", "1.0", "exmodz-file"
 	gameCache := svc.GetGameCache(game)
@@ -57,7 +57,7 @@ func TestDoModEdit_DeployCompile_VersionEditSyncsMergedPak(t *testing.T) {
 		FileIDs:      []string{fileID},
 		UpdatePolicy: domain.UpdateNotify,
 	}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: oldVersion, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: oldVersion, FileIDs: []string{fileID}}))
 
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

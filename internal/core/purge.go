@@ -132,7 +132,7 @@ func (s *Service) purgeMods(ctx context.Context, game *domain.Game, profileName 
 				*spec.skipped = append(*spec.skipped, skippedRef(&mod, fmt.Sprintf("failed to remove record: %v", err)))
 				continue
 			}
-			if err := s.NewProfileManager().RemoveMod(game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			if err := s.NewProfileManager().RemoveMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
 				msg := fmt.Sprintf("Note: %s - %v", mod.Name, err)
 				*spec.notes = append(*spec.notes, msg)
 				spec.emit(StepEvent{Scope: scope, Phase: PurgeNote, Detail: msg})

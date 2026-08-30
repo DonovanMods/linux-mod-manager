@@ -122,7 +122,7 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// Resolved up front so core.Search can mark already-installed hits; it
 	// only reads the profile when there is something to mark.
-	profileName, err := resolveProfile(service, game.ID, searchProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, searchProfile)
 	if err != nil {
 		return err
 	}

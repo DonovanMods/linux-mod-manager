@@ -52,7 +52,7 @@ hooks:
 `), 0o644))
 
 	out := captureStdout(t, func() error {
-		return doProfileExport(svc, game, "modded")
+		return doProfileExport(context.Background(), svc, game, "modded")
 	})
 
 	// The explicit `null`s are the profile FILE's own shape: the export
@@ -81,11 +81,11 @@ hooks:
 // nothing about an ordinary export moved.
 func TestDoProfileExport_NoHooks_PrintsNoHooksBlock(t *testing.T) {
 	svc, game, _ := newProfileExportTestService(t)
-	_, err := getProfileManager(svc).Create(game.ID, "plain")
+	_, err := getProfileManager(svc).Create(context.Background(), game.ID, "plain")
 	require.NoError(t, err)
 
 	out := captureStdout(t, func() error {
-		return doProfileExport(svc, game, "plain")
+		return doProfileExport(context.Background(), svc, game, "plain")
 	})
 
 	assert.Equal(t, "name: plain\ngame_id: g1\nmods: []\n", out)

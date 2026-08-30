@@ -35,11 +35,11 @@ func newResolveTestService(t *testing.T) *core.Service {
 func TestResolveProfile_ExplicitFlagWins(t *testing.T) {
 	svc := newResolveTestService(t)
 	pm := svc.NewProfileManager()
-	_, err := pm.Create("testgame", "active")
+	_, err := pm.Create(context.Background(), "testgame", "active")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault("testgame", "active"))
+	require.NoError(t, pm.SetDefault(context.Background(), "testgame", "active"))
 
-	got, err := resolveProfile(svc, "testgame", "explicit")
+	got, err := resolveProfile(context.Background(), svc, "testgame", "explicit")
 	require.NoError(t, err)
 	assert.Equal(t, "explicit", got, "an explicit -p value must win over the active profile")
 }
@@ -48,13 +48,13 @@ func TestResolveProfile_UsesActiveProfileAfterSwitch(t *testing.T) {
 	svc := newResolveTestService(t)
 	pm := svc.NewProfileManager()
 	for _, name := range []string{"default", "target"} {
-		_, err := pm.Create("testgame", name)
+		_, err := pm.Create(context.Background(), "testgame", name)
 		require.NoError(t, err)
 	}
 	// Equivalent of `lmm profile switch target` for an empty profile.
-	require.NoError(t, pm.SetDefault("testgame", "target"))
+	require.NoError(t, pm.SetDefault(context.Background(), "testgame", "target"))
 
-	got, err := resolveProfile(svc, "testgame", "")
+	got, err := resolveProfile(context.Background(), svc, "testgame", "")
 	require.NoError(t, err)
 	assert.Equal(t, "target", got, "flagless commands must operate on the active profile, not the literal \"default\"")
 }
@@ -62,10 +62,10 @@ func TestResolveProfile_UsesActiveProfileAfterSwitch(t *testing.T) {
 func TestResolveProfile_FallsBackToFirstProfile(t *testing.T) {
 	svc := newResolveTestService(t)
 	pm := svc.NewProfileManager()
-	_, err := pm.Create("testgame", "solo")
+	_, err := pm.Create(context.Background(), "testgame", "solo")
 	require.NoError(t, err)
 
-	got, err := resolveProfile(svc, "testgame", "")
+	got, err := resolveProfile(context.Background(), svc, "testgame", "")
 	require.NoError(t, err)
 	assert.Equal(t, "solo", got, "with no IsDefault flag set, GetDefault's first-profile fallback applies")
 }
@@ -73,7 +73,7 @@ func TestResolveProfile_FallsBackToFirstProfile(t *testing.T) {
 func TestResolveProfile_NoProfilesFallsBackToDefault(t *testing.T) {
 	svc := newResolveTestService(t)
 
-	got, err := resolveProfile(svc, "testgame", "")
+	got, err := resolveProfile(context.Background(), svc, "testgame", "")
 	require.NoError(t, err)
 	assert.Equal(t, "default", got, "a fresh setup with no profiles keeps the historical \"default\" convention")
 }
@@ -84,10 +84,10 @@ func TestListCmd_UsesActiveProfileAfterSwitch(t *testing.T) {
 	svc := newResolveTestService(t)
 	pm := svc.NewProfileManager()
 	for _, name := range []string{"default", "target"} {
-		_, err := pm.Create("testgame", name)
+		_, err := pm.Create(context.Background(), "testgame", name)
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.SetDefault("testgame", "target"))
+	require.NoError(t, pm.SetDefault(context.Background(), "testgame", "target"))
 
 	game, err := svc.GetGame("testgame")
 	require.NoError(t, err)

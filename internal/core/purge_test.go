@@ -135,7 +135,7 @@ func TestService_PurgeProfile_Uninstall_RemovesRecordsAndProfileEntries(t *testi
 	assert.True(t, os.IsNotExist(err))
 	_, err = svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "Uninstall must delete the DB record")
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "Uninstall must remove the profile YAML entry")
 }
@@ -410,7 +410,7 @@ func TestService_PurgeProfile_Uninstall_ProfileRemoveFailure_RecordsNote(t *test
 	// Profile exists but does NOT reference the mod, so RemoveMod returns
 	// domain.ErrModNotFound - the non-fatal "Note:" path.
 	pm := svc.NewProfileManager()
-	_, err := pm.Create("g1", "default")
+	_, err := pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
 
 	mods, err := svc.GetInstalledMods(context.Background(), "g1", "default")

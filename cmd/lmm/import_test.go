@@ -349,7 +349,7 @@ func TestDoImport_ArchiveWithID_ResolvesFileIDAndStampsMarker(t *testing.T) {
 	assert.True(t, manifests["55"].Recorded, "the marker must carry a recorded member manifest")
 	assert.Equal(t, []string{"mymod.esp"}, manifests["55"].Members)
 
-	prof, err := svc.NewProfileManager().Get("g1", "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, prof.Mods, 1)
 	assert.Equal(t, []string{"55"}, prof.Mods[0].FileIDs,

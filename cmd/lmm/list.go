@@ -54,7 +54,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		return runListProfiles(cmd, service, game.ID, game.Name)
 	}
 
-	profileName, err := resolveProfile(service, game.ID, listProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, listProfile)
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 
 func runListProfiles(cmd *cobra.Command, service *core.Service, gameID, gameName string) error {
 	pm := service.NewProfileManager()
-	profiles, err := service.ListProfileNames(gameID)
+	profiles, err := service.ListProfileNames(cmd.Context(), gameID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
@@ -183,7 +183,7 @@ func runListProfiles(cmd *cobra.Command, service *core.Service, gameID, gameName
 
 	fmt.Printf("Profiles for %s (%s):\n", gameName, gameID)
 	for _, name := range names {
-		prof, err := pm.Get(gameID, name)
+		prof, err := pm.Get(cmd.Context(), gameID, name)
 		if err == nil && prof.IsDefault {
 			fmt.Printf("  %s (default)\n", name)
 		} else {

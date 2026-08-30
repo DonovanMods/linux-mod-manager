@@ -297,7 +297,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	// update would, and the lock's whole contract is that only an explicit
 	// re-lock or unlock may do that. Checked before any side effect (hooks,
 	// Replace, DB/profile writes).
-	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+	if prof, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
 			result.Reason = "locked"
 			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
@@ -407,7 +407,7 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 		Version:  rolledBackMod.Version,
 		FileIDs:  rolledBackMod.FileIDs,
 	}
-	if err := pm.UpsertMod(game.ID, profileName, restoredRef); err != nil {
+	if err := pm.UpsertMod(ctx, game.ID, profileName, restoredRef); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {

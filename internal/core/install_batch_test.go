@@ -133,7 +133,7 @@ func batchInstalledRows(t *testing.T, svc *core.Service, gameID, profileName str
 
 func batchProfileRefs(t *testing.T, svc *core.Service, gameID, profileName string) []batchStateRef {
 	t.Helper()
-	profile, err := svc.NewProfileManager().Get(gameID, profileName)
+	profile, err := svc.NewProfileManager().Get(context.Background(), gameID, profileName)
 	require.NoError(t, err)
 	refs := make([]batchStateRef, 0, len(profile.Mods))
 	for _, r := range profile.Mods {
@@ -286,7 +286,7 @@ func TestService_ApplyInstall_Batch_LockedRefDifferentVersion_SkippedBeforeUnins
 	require.NoError(t, err)
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod-a", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod-a", ""))
 
 	latest := &domain.Mod{ID: "mod-a", SourceID: "test-src", Name: "Mod A", Version: "2.0", Author: "Alice", GameID: "g1"}
 	src.addZipMod(t, latest, domain.DownloadableFile{ID: "f2", Name: "Main", FileName: "modA.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"}, "modA.esp", "v2 content")
@@ -609,7 +609,7 @@ func TestService_PlanInstallMany_PerformsZeroMutations(t *testing.T) {
 	modB := batchModB(t, src, "mod b content")
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	// Unrelated pre-existing state to prove untouched.

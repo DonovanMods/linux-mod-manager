@@ -25,7 +25,7 @@ func setupResolveReorderTest(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
-	_, err := svc.NewProfileManager().Create(game.ID, "default")
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	return svc, game
 }
@@ -34,7 +34,7 @@ func setupResolveReorderTest(t *testing.T) (*core.Service, *domain.Game) {
 // the game's "default" profile load order.
 func addResolveReorderMod(t *testing.T, svc *core.Service, game *domain.Game, sourceID, modID string) {
 	t.Helper()
-	require.NoError(t, svc.NewProfileManager().AddMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: "1.0"}))
+	require.NoError(t, svc.NewProfileManager().AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: "1.0"}))
 }
 
 func TestService_ResolveReorder_ExplicitSourceModIDKeys(t *testing.T) {

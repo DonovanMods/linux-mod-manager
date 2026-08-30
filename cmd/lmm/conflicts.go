@@ -56,7 +56,7 @@ func runConflicts(cmd *cobra.Command, args []string) error {
 // The empty-mods vs no-conflicts distinction is presentation-only, so the
 // installed-mod count check stays here rather than in core.
 func doConflicts(ctx context.Context, svc *core.Service, game *domain.Game) error {
-	profileName, err := resolveProfile(svc, game.ID, conflictsProfile)
+	profileName, err := resolveProfile(ctx, svc, game.ID, conflictsProfile)
 	if err != nil {
 		return err
 	}

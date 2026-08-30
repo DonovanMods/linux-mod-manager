@@ -26,9 +26,9 @@ func newSyncTestService(t *testing.T) (*core.Service, *domain.Game) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 	return svc, game
 }
 
@@ -69,8 +69,8 @@ func TestPlanProfileSync_ClassifiesAddRemoveUpdate(t *testing.T) {
 
 	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
 	seedSyncInstalledMod(t, svc, game, "src", "upd1", "Upd One", "1.0", "default", true, []string{"main"})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "upd1", Version: "1.0"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "upd1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -111,8 +111,8 @@ func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
 	// in the profile, so installed order and profile order disagree.
 	seedSyncInstalledMod(t, svc, game, "src", "bravo", "Bravo", "1.0", "default", true, []string{"main"})
 	seedSyncInstalledMod(t, svc, game, "src", "yankee", "Yankee", "1.0", "default", true, []string{"main"})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "yankee", Version: "1.0"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bravo", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "yankee", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bravo", Version: "1.0"}))
 
 	// ToRemove: listed in the profile, not enabled in the DB - each was
 	// installed-then-disabled (so it carries an installed_at) with
@@ -120,8 +120,8 @@ func TestPlanProfileSync_BucketsAreDeterministicallyOrdered(t *testing.T) {
 	// installed before romeo, but romeo is listed first in the profile.
 	seedSyncInstalledMod(t, svc, game, "src", "delta", "Delta", "1.0", "default", false, nil)
 	seedSyncInstalledMod(t, svc, game, "src", "romeo", "Romeo", "1.0", "default", false, nil)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "romeo", Version: "1.0"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "delta", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "romeo", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "delta", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestPlanProfileSync_Names_OnlyForAddAndUpdate(t *testing.T) {
 	pm := svc.NewProfileManager()
 
 	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func TestPlanProfileSync_MissingProfile_ComputesAsEmptyWithoutCreating(t *testin
 	seedSyncInstalledMod(t, svc, game, "src", "auto1", "New Auto", "1.0", "newprof", true, nil)
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Get(game.ID, "newprof")
+	_, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.Error(t, err, "precondition: newprof must not exist yet")
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "newprof")
@@ -177,7 +177,7 @@ func TestPlanProfileSync_MissingProfile_ComputesAsEmptyWithoutCreating(t *testin
 	require.Len(t, plan.ToAdd, 1)
 	assert.Equal(t, "auto1", plan.ToAdd[0].ModID)
 
-	_, err = pm.Get(game.ID, "newprof")
+	_, err = pm.Get(context.Background(), game.ID, "newprof")
 	assert.Error(t, err, "PlanProfileSync must not have created the profile")
 }
 
@@ -194,7 +194,7 @@ func TestApplyProfileSync_CreatesMissingProfileThenAdds(t *testing.T) {
 	assert.Equal(t, 1, result.Added)
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get(game.ID, "newprof")
+	profile, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.NoError(t, err, "ApplyProfileSync must have created the profile")
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "auto1", profile.Mods[0].ModID)
@@ -220,7 +220,7 @@ func TestApplyProfileSync_CreatesMissingProfile_EvenWithEmptyDiff(t *testing.T) 
 	assert.Zero(t, result.Added)
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get(game.ID, "newprof")
+	profile, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.NoError(t, err, "ApplyProfileSync must create the profile even when nothing needs syncing")
 	assert.Empty(t, profile.Mods)
 }
@@ -234,8 +234,8 @@ func TestApplyProfileSync_AppliesAllThreeBuckets(t *testing.T) {
 
 	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
 	seedSyncInstalledMod(t, svc, game, "src", "upd1", "Upd One", "1.0", "default", true, []string{"main"})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "upd1", Version: "1.0"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "upd1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestApplyProfileSync_AppliesAllThreeBuckets(t *testing.T) {
 	assert.Equal(t, 1, result.Updated)
 	assert.Empty(t, result.Warnings)
 
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 2)
 
@@ -274,7 +274,7 @@ func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsWarning(t *testing.T) {
 	pm := svc.NewProfileManager()
 
 	seedSyncInstalledMod(t, svc, game, "src", "lock1", "Locked One", "2.0", "default", true, []string{"main"})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "lock1", Version: "1.0", Locked: true}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "lock1", Version: "1.0", Locked: true}))
 
 	plan, err := svc.PlanProfileSync(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -304,7 +304,7 @@ func TestApplyProfileSync_UpsertMod_LockedRefRefusalIsWarning(t *testing.T) {
 	require.Len(t, result.Warnings, 1, "#294: the refusal must also reach ProfileSyncResult.Warnings")
 	assert.Equal(t, warnDetail, result.Warnings[0])
 
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods[0].FileIDs, "the locked ref's FileIDs must NOT have been backfilled")
 }
@@ -371,7 +371,7 @@ func TestApplyProfileSync_MissingProfileWithEmptyDiff_CreatesProfileWithoutSynci
 	assert.Equal(t, 0, result.Updated)
 	assert.Empty(t, result.Warnings, "no merged-pak sync ran, so there is nothing to warn about")
 
-	_, gErr := svc.NewProfileManager().Get(game.ID, "fresh")
+	_, gErr := svc.NewProfileManager().Get(context.Background(), game.ID, "fresh")
 	require.NoError(t, gErr, "the missing profile is still created")
 
 	assert.True(t, gameCache.Exists(game.ID, domain.SourceMerged, "merged-pak", "merged"),

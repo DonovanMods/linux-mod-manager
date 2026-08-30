@@ -168,7 +168,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	// Determine profile
-	profileName, err := resolveProfile(service, game.ID, updateProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, updateProfile)
 	if err != nil {
 		return err
 	}
@@ -806,7 +806,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, updateProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, updateProfile)
 	if err != nil {
 		return err
 	}

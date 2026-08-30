@@ -493,7 +493,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		return err
 	}
 
-	profileName, err := resolveProfile(service, game.ID, installProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, installProfile)
 	if err != nil {
 		return err
 	}

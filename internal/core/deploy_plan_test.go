@@ -482,7 +482,7 @@ func TestPlanDeploy_EmptyProfile_ReportsNoChanges(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	plan, err := svc.PlanDeploy(context.Background(), game, "default", core.DeployOptions{})

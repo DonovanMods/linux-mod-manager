@@ -58,7 +58,7 @@ func TestListMods_LockStateFromProfile(t *testing.T) {
 	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "2.0", true, nil)
 	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
 	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "2.0")
-	require.NoError(t, svc.NewProfileManager().SetModLock("g1", "default", "src", "a", "1.0"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), "g1", "default", "src", "a", "1.0"))
 
 	list, err := svc.ListMods(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestStatus_GamesByIDWithCountsAndDefault(t *testing.T) {
 
 	seedNamedInstalledMod(t, svc, alpha, "src", "a", "Mod A", "1.0", true, nil)
 	seedProfileWithMod(t, svc, "alpha", "default", "src", "a", "1.0")
-	require.NoError(t, svc.NewProfileManager().SetDefault("alpha", "default"))
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), "alpha", "default"))
 
 	report := svc.Status(ctx)
 	require.NotNil(t, report)
@@ -198,7 +198,7 @@ func TestGameStatus_ActiveProfileDetail(t *testing.T) {
 	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "2.0", false, nil)
 	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
 	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "2.0")
-	require.NoError(t, svc.NewProfileManager().SetDefault("g1", "default"))
+	require.NoError(t, svc.NewProfileManager().SetDefault(context.Background(), "g1", "default"))
 
 	st, err := svc.GameStatus(ctx, game)
 	require.NoError(t, err)
@@ -249,10 +249,10 @@ func TestGameStatus_LinkMethodSource(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy, LinkMethodExplicit: true}
 		require.NoError(t, svc.SaveGame(ctx, game))
 		pm := svc.NewProfileManager()
-		_, err := pm.Create("g1", "default")
+		_, err := pm.Create(context.Background(), "g1", "default")
 		require.NoError(t, err)
 		setProfileLinkMethod(t, svc, "g1", "default", domain.LinkHardlink)
-		require.NoError(t, pm.SetDefault("g1", "default"))
+		require.NoError(t, pm.SetDefault(context.Background(), "g1", "default"))
 
 		st, err := svc.GameStatus(ctx, game)
 		require.NoError(t, err)

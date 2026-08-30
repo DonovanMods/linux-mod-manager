@@ -77,9 +77,9 @@ mods:
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := getProfileManager(svc)
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "e2e-repo",
 		ModID:    "cool-mod",
 		Version:  "1.2.0",

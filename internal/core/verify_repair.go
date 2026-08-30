@@ -194,7 +194,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	}
 
 	pm := r.svc.NewProfileManager()
-	if err := pm.UpsertMod(r.game.ID, r.profile, domain.ModReference{
+	if err := pm.UpsertMod(ctx, r.game.ID, r.profile, domain.ModReference{
 		SourceID: mod.SourceID,
 		ModID:    mod.ID,
 		Version:  effective,
@@ -396,7 +396,7 @@ func fileIDsEqual(a, b []string) bool {
 // repairModVersion's own port.
 func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int) {
 	pm := r.svc.NewProfileManager()
-	profiles, err := pm.List(r.game.ID)
+	profiles, err := pm.List(ctx, r.game.ID)
 	if err != nil {
 		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", err)
 		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
@@ -439,7 +439,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		// would silently move what the lock means, just as surely as
 		// rewriting the primary would. Loaded fresh per-sibling since the
 		// lock lives in that sibling's own profile YAML, not the primary's.
-		if siblingProfile, perr := pm.Get(r.game.ID, p.Name); perr == nil {
+		if siblingProfile, perr := pm.Get(ctx, r.game.ID, p.Name); perr == nil {
 			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
 				locked = append(locked, p.Name)
 				// #142 round 5: also name -s (in addition to the -p this
@@ -459,7 +459,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		// ApplyUpdate/ApplyRollback's own precedent: a lock cannot exist in
 		// an unloadable profile.)
 
-		if err := pm.UpsertMod(r.game.ID, p.Name, domain.ModReference{
+		if err := pm.UpsertMod(ctx, r.game.ID, p.Name, domain.ModReference{
 			SourceID: sibling.SourceID,
 			ModID:    sibling.ID,
 			Version:  effective,

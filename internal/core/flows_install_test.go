@@ -492,7 +492,7 @@ func TestService_PlanInstall_PerformsZeroMutations(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	// Unrelated pre-existing state to prove untouched.
@@ -656,7 +656,7 @@ func TestService_ApplyInstall_FreshInstallEndToEnd(t *testing.T) {
 	assert.NotEmpty(t, files[0].Checksum, "the downloaded file's checksum must be saved")
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err, "the profile must have been created since it didn't exist yet")
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "mod1", profile.Mods[0].ModID)
@@ -1722,12 +1722,12 @@ func TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion(t *testing.T)
 func lockProfileRef(t *testing.T, svc *core.Service, gameID, profileName, sourceID, modID, version string, fileIDs []string) {
 	t.Helper()
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(gameID, profileName)
+	_, err := pm.Create(context.Background(), gameID, profileName)
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(gameID, profileName, domain.ModReference{
+	require.NoError(t, pm.UpsertMod(context.Background(), gameID, profileName, domain.ModReference{
 		SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs,
 	}))
-	require.NoError(t, pm.SetModLock(gameID, profileName, sourceID, modID, ""))
+	require.NoError(t, pm.SetModLock(context.Background(), gameID, profileName, sourceID, modID, ""))
 }
 
 // TestService_ApplyInstall_LockedRefDifferentVersion_RefusedBeforeAnySideEffect
@@ -1780,7 +1780,7 @@ func TestService_ApplyInstall_LockedRefDifferentVersion_RefusedBeforeAnySideEffe
 	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	assert.True(t, errors.Is(err, domain.ErrModNotFound), "no DB row may be written")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "mod1")
 	require.NotNil(t, ref)
@@ -1819,7 +1819,7 @@ func TestService_ApplyInstall_LockedRef_EmptyPlanFiles_NotRefusedAsLocked(t *tes
 		"an underivable target version (empty plan.Files) must not be refused as a lock conflict, got: %v", err)
 
 	// The backstop still holds: the locked ref is untouched either way.
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "mod1")
 	require.NotNil(t, ref)
@@ -1860,7 +1860,7 @@ func TestService_ApplyInstall_LockedRefExactVersion_Succeeds(t *testing.T) {
 	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 	assert.Empty(t, result.Notes, "the profile upsert must succeed, not demote to a Note")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "mod1")
 	require.NotNil(t, ref)
@@ -1962,7 +1962,7 @@ func TestService_ApplyInstall_LockedDependency_BatchPath_SkippedNotMoved(t *test
 	_, err = os.Lstat(filepath.Join(gameDir, "dep1.esp"))
 	assert.True(t, os.IsNotExist(err), "the locked dependency must not be deployed")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "dep1")
 	require.NotNil(t, ref)
@@ -2063,7 +2063,7 @@ func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBefor
 	require.NoError(t, dbErr)
 	assert.Equal(t, "1.0", got.Version, "the DB row must stay at the locked version")
 
-	profile, pErr := svc.NewProfileManager().Get("g1", "default")
+	profile, pErr := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, pErr)
 	ref := profile.FindRef("src", "root")
 	require.NotNil(t, ref)
@@ -2507,7 +2507,7 @@ func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 		_, dbErr := svc.GetInstalledMod(context.Background(), "src", "newmod", "g1", "default")
 		assert.Error(t, dbErr, "an unaccepted conflict must leave zero DB mutations")
 
-		profile, perr := svc.NewProfileManager().Get("g1", "default")
+		profile, perr := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 		if perr == nil {
 			for _, ref := range profile.Mods {
 				assert.NotEqual(t, "newmod", ref.ModID, "an unaccepted conflict must leave zero profile mutations")
@@ -2829,7 +2829,7 @@ func TestService_ApplyInstall_BatchPath_TargetVersionWithFileIDs_HonorsFileForPr
 	assert.Equal(t, []string{"root-main-1"}, got.FileIDs, "the pinned --file must win over the version pool's auto-pick")
 	assert.Equal(t, "1.0", got.Version)
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "root")
 	require.NotNil(t, ref)
@@ -3052,7 +3052,7 @@ func TestService_ApplyInstall_StrictPath_TargetVersionConvergesToLock_Allowed(t 
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", got.Version)
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "root")
 	require.NotNil(t, ref)

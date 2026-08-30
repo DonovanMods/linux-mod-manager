@@ -58,9 +58,9 @@ func setupDoVerifyConvergeTest(t *testing.T) (*cobra.Command, *core.Service, *do
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), domain.SourceLocal, "mod1", game.ID, "default", "a.esp", "deadbeef"))
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: domain.SourceLocal, ModID: "mod1", Version: "1.0", FileIDs: []string{"a.esp"},
 	}))
 
@@ -230,7 +230,7 @@ func setupDoVerifyEmptyProfileConvergeTest(t *testing.T) (*cobra.Command, *core.
 	svc, game, _ := setupDoInstallTest(t)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	cacheRoot := svc.GetGameCachePath(game)

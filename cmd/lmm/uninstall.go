@@ -64,7 +64,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 
 func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, modID string) error {
 	// Determine profile
-	profileName, err := resolveProfile(service, game.ID, uninstallProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, uninstallProfile)
 	if err != nil {
 		return err
 	}

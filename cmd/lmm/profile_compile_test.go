@@ -42,7 +42,7 @@ func TestDoProfileApply_DeployCompile_SyncsMergedPakOnDisable(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestDoProfileApply_DeployCompile_SyncsMergedPakOnDisable(t *testing.T) {
 
 	// Remove the mod from profile.Mods (still installed+enabled in the DB)
 	// - doProfileApply's toDisable path.
-	require.NoError(t, pm.RemoveMod(game.ID, "default", "fake-compiler", modID))
+	require.NoError(t, pm.RemoveMod(context.Background(), game.ID, "default", "fake-compiler", modID))
 
 	origYes := profileApplyYes
 	profileApplyYes = true

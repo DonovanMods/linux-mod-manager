@@ -321,11 +321,11 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 		}
 
 		pm := s.NewProfileManager()
-		if err := pm.RemoveMod(game.ID, profileName, oldSourceID, oldModID); err != nil {
+		if err := pm.RemoveMod(ctx, game.ID, profileName, oldSourceID, oldModID); err != nil {
 			note("Warning: could not remove old profile entry: %v", err)
 		}
 		modRef := domain.ModReference{SourceID: newSourceID, ModID: newModID, Version: mod.Version}
-		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+		if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
 			note("Warning: could not update profile: %v", err)
 		}
 	}
@@ -343,7 +343,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	if opts.Version != "" && !plan.Relink {
 		pm := s.NewProfileManager()
 		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}
-		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+		if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
 			note("Warning: could not update profile version: %v", err)
 		}
 	}

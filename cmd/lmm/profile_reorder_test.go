@@ -26,7 +26,7 @@ import (
 // profile.Mods only and never touches GetInstalledMods.
 func addProfileMod(t *testing.T, svc *core.Service, game *domain.Game, profile, sourceID, modID string) {
 	t.Helper()
-	require.NoError(t, getProfileManager(svc).AddMod(game.ID, profile, domain.ModReference{SourceID: sourceID, ModID: modID, Version: "1.0"}))
+	require.NoError(t, getProfileManager(svc).AddMod(context.Background(), game.ID, profile, domain.ModReference{SourceID: sourceID, ModID: modID, Version: "1.0"}))
 }
 
 // reloadProfile re-reads profile from disk, bypassing any in-memory state,
@@ -197,7 +197,7 @@ func TestDoProfileReorder_DuplicateArgs_Deduped(t *testing.T) {
 func TestDoProfileReorder_ProfileFlag_SelectsNonDefaultProfile(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "other")
+	_, err := pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	addProfileMod(t, svc, game, "default", "src1", "alpha")
@@ -264,8 +264,8 @@ func TestDoProfileReorder_DeployCompile_ResyncsMergedPak(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0", FileIDs: []string{"exmodz-a"}}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "wolf-mount", Version: "1.0", FileIDs: []string{"exmodz-b"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0", FileIDs: []string{"exmodz-a"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "wolf-mount", Version: "1.0", FileIDs: []string{"exmodz-b"}}))
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

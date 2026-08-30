@@ -160,7 +160,7 @@ func TestService_DeployProfile_DeployOrderWinsFileConflicts(t *testing.T) {
 	assert.Equal(t, "Y-content", string(content), "modY deploys later (last in profile order) and must win the shared file")
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.ReorderMods(game.ID, "default", []domain.ModReference{
+	require.NoError(t, pm.ReorderMods(context.Background(), game.ID, "default", []domain.ModReference{
 		{SourceID: "src", ModID: "modY", Version: "1.0"},
 		{SourceID: "src", ModID: "modX", Version: "1.0"},
 	}))
@@ -256,7 +256,7 @@ func TestService_GetEffectiveLinkMethod_Precedence(t *testing.T) {
 			game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: tc.gameMethod, LinkMethodExplicit: tc.gameExplicit}
 
 			if tc.profileExists {
-				_, err := svc.NewProfileManager().Create("g1", "default")
+				_, err := svc.NewProfileManager().Create(context.Background(), "g1", "default")
 				require.NoError(t, err)
 				if tc.profileMethod != nil {
 					setProfileLinkMethod(t, svc, "g1", "default", *tc.profileMethod)
@@ -281,7 +281,7 @@ func TestService_GetEffectiveLinkMethod_InvalidLinkMethodSurfaces(t *testing.T) 
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkHardlink, LinkMethodExplicit: true}
 
-	_, err := svc.NewProfileManager().Create("g1", "default")
+	_, err := svc.NewProfileManager().Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	profilePath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
 	data, err := os.ReadFile(profilePath)
@@ -675,7 +675,7 @@ func TestService_DeployProfile_StoredIDsGone_HealPersistsFileIDs(t *testing.T) {
 	assert.Equal(t, []string{"9"}, installed.FileIDs,
 		"a successful heal must persist the healed FileIDs, not keep the dead ones")
 
-	data, err := svc.NewProfileManager().Export("g1", "default")
+	data, err := svc.NewProfileManager().Export(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "999",
 		"profile export must no longer emit the dead FileIDs after a heal")
@@ -859,7 +859,7 @@ func TestService_DeployProfile_AppliesProfileOverrides(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	profile.Overrides = map[string][]byte{"tweaks.ini": []byte("[General]\nfoo=bar\n")}
 	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
@@ -1443,7 +1443,7 @@ func TestService_DeployProfile_OverridesWarningEmittedBeforeDeferredHookWarnings
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	// An absolute override path is rejected by ApplyProfileOverrides
 	// deterministically, with no filesystem trickery required.

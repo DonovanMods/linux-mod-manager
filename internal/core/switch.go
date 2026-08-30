@@ -57,18 +57,16 @@ type SwitchPlan struct {
 // default profile and target, without mutating anything (no DB writes, no
 // filesystem changes, no deploys) - callers may call this speculatively (to
 // render a confirmation prompt) and discard the result without consequence.
-// See SwitchPlan's doc comment; ctx is accepted for API consistency with the
-// rest of Service's methods and future-proofing, even though today's
-// algorithm performs no I/O that needs it.
+// See SwitchPlan's doc comment.
 func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, target string) (*SwitchPlan, error) {
 	pm := s.NewProfileManager()
 
-	targetProfile, err := pm.Get(game.ID, target)
+	targetProfile, err := pm.Get(ctx, game.ID, target)
 	if err != nil {
 		return nil, fmt.Errorf("profile not found: %s", target)
 	}
 
-	currentProfile, err := pm.GetDefault(game.ID)
+	currentProfile, err := pm.GetDefault(ctx, game.ID)
 	var currentName string
 	if err != nil {
 		currentName = "default"
@@ -473,7 +471,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			}
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-			if err := pm.UpsertMod(game.ID, plan.To, modRef); err != nil {
+			if err := pm.UpsertMod(ctx, game.ID, plan.To, modRef); err != nil {
 				// #294 (Ruling 5's class extension, Task 13b): a refusal
 				// here (today, only a LOCKED ref, #143) leaves the profile
 				// ref unwritten while the DB row moved, so it is a Warning
@@ -490,7 +488,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		}
 	}
 
-	if err := pm.SetDefault(game.ID, plan.To); err != nil {
+	if err := pm.SetDefault(ctx, game.ID, plan.To); err != nil {
 		return result, fmt.Errorf("setting default profile: %w", err)
 	}
 

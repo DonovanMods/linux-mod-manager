@@ -1715,7 +1715,7 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), "g1", "default", "test-src", "mod1", ""))
 
 	// The source now serves v2.0 as its latest.
 	latest := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", Author: "Someone", GameID: "g1"}
@@ -1740,7 +1740,7 @@ func TestBatchInstallMods_LockedRefDifferentVersion_SkippedBeforeUninstall(t *te
 	installed, dbErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, dbErr)
 	assert.Equal(t, "1.0", installed.Version, "the DB row must stay at the locked version")
-	profile, pErr := pm.Get("g1", "default")
+	profile, pErr := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, pErr)
 	ref := profile.FindRef("test-src", "mod1")
 	require.NotNil(t, ref)
@@ -1772,7 +1772,7 @@ func TestBatchInstallMods_FetchFailure_SkipsBeforeUninstall(t *testing.T) {
 	require.FileExists(t, filepath.Join(game.ModPath, "mod1.esp"))
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock("g1", "default", "test-src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), "g1", "default", "test-src", "mod1", ""))
 
 	// The files endpoint now fails (transiently, as far as the user knows).
 	src.getModFilesErr = errBoomInstall

@@ -16,7 +16,7 @@ func TestDoModShow_ColorPath_PlainByDefault(t *testing.T) {
 	svc, game, src := setupDoModLockTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
 	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"}, nil)
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", "1.2.3"))
 
 	out := captureStdout(t, func() error {
 		return doModShow(context.Background(), svc, game, "a")
@@ -33,7 +33,7 @@ func TestDoModShow_ColorPath_NameBolded_LockAccented(t *testing.T) {
 	svc, game, src := setupDoModLockTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
 	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"}, nil)
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", "1.2.3"))
 
 	resetColorFlags(t)
 	withColorCapableStdout(t, true)

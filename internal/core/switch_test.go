@@ -80,9 +80,9 @@ func TestService_PlanProfileSwitch_AlreadyActive(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -107,15 +107,15 @@ func TestService_PlanProfileSwitch_NoChangesWhenModSetsMatch(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "other")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	seedInstalledMod(t, svc, game, "src", "shared", "1.0", true, map[string][]byte{"shared.esp": []byte("s")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
-	require.NoError(t, pm.AddMod(game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "other")
 	require.NoError(t, err)
@@ -137,23 +137,23 @@ func TestService_PlanProfileSwitch_ComputesDisableEnableInstallBuckets(t *testin
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	// modC: enabled under "default", absent from "target" -> ToDisable.
 	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
 
 	// modB: installed (under "default") but disabled, cached, referenced by
 	// "target" -> ToEnable.
 	seedNamedInstalledMod(t, svc, game, "src", "modB", "Mod B", "1.0", false, map[string][]byte{"b.esp": []byte("b")})
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modB", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modB", Version: "1.0"}))
 
 	// modD: referenced by "target" only, no DB row at all -> ToInstall.
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modD", Version: "2.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modD", Version: "2.0"}))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
 	require.NoError(t, err)
@@ -186,17 +186,17 @@ func TestService_PlanProfileSwitch_DeterministicOrder(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	// ToDisable candidates: enabled under "default", absent from "target".
 	// default.Mods is deliberately not alphabetical (disC, disA, disB).
 	for _, id := range []string{"disC", "disA", "disB"} {
 		seedNamedInstalledMod(t, svc, game, "src", id, "Dis "+id, "1.0", true, nil)
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
 	}
 
 	// ToEnable candidates: installed (under "default") but disabled, cached,
@@ -209,7 +209,7 @@ func TestService_PlanProfileSwitch_DeterministicOrder(t *testing.T) {
 	// target.Mods interleaves enable/install refs in an order that matches
 	// neither alphabetical nor insertion order for either sub-sequence.
 	for _, id := range []string{"enC", "insB", "enA", "insC", "enB", "insA"} {
-		require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
 	}
 
 	plan1, err := svc.PlanProfileSwitch(context.Background(), game, "target")
@@ -251,10 +251,10 @@ func TestService_PlanProfileSwitch_CacheMissForcesReinstallWithPreservedFileIDs(
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	// DB row exists (with FileIDs), but nothing was ever stored in the cache.
@@ -267,7 +267,7 @@ func TestService_PlanProfileSwitch_CacheMissForcesReinstallWithPreservedFileIDs(
 	}))
 	// Profile YAML's own FileIDs are deliberately absent, to prove
 	// PlanProfileSwitch uses the INSTALLED mod's FileIDs, not the profile's.
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modE", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modE", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
 	require.NoError(t, err)
@@ -300,17 +300,17 @@ func TestService_PlanProfileSwitch_PerformsZeroMutations(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
 	seedNamedInstalledMod(t, svc, game, "src", "modB", "Mod B", "1.0", false, map[string][]byte{"b.esp": []byte("b")})
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modB", Version: "1.0"}))
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modD", Version: "2.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modB", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "modD", Version: "2.0"}))
 
 	defaultPath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "default.yaml")
 	targetPath := filepath.Join(svc.ConfigDir(), "games", "g1", "profiles", "target.yaml")
@@ -350,14 +350,14 @@ func TestApplyProfileSwitch_StalePlan_ReturnsErrStalePlan(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedNamedInstalledMod(t, svc, game, "src", "modC", "Mod C", "1.0", true, map[string][]byte{"c.esp": []byte("c")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "modC", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "target")
 	require.NoError(t, err)
@@ -391,9 +391,9 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	seedNamedInstalledMod(t, svc, game, "src", "disable-me", "Disable Me", "1.0", true, map[string][]byte{"disable.esp": []byte("d")})
 	installer := svc.GetInstaller(game)
@@ -454,7 +454,7 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	assert.Less(t, disabledIdx, enabledIdx, "disable phase must complete before the enable phase starts")
 	assert.Less(t, enabledIdx, installingIdx, "enable phase must complete before the install phase starts")
 
-	def, err := pm.GetDefault(game.ID)
+	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "default", def.Name, "a failed SetDefault must leave the previous default profile in place")
 }
@@ -472,12 +472,12 @@ func TestApplyProfileSwitch_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "mod1", Locked: true}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "mod1", Locked: true}))
 
 	svc.RegisterSource(newTwoVersionSource(t))
 
@@ -501,7 +501,7 @@ func TestApplyProfileSwitch_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
 	assert.Contains(t, phases, core.SwitchInstallWarning)
 	assert.NotContains(t, phases, core.SwitchInstallNote)
 
-	profile, err := pm.Get(game.ID, "target")
+	profile, err := pm.Get(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
@@ -518,10 +518,10 @@ func TestService_ApplyProfileSwitch_UsesTargetProfileLinkMethod(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	setProfileLinkMethod(t, svc, "g1", "target", domain.LinkCopy)
 
@@ -556,10 +556,10 @@ func TestService_ApplyProfileSwitch_DisableLoopUsesSourceProfileLinkMethod(t *te
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink, LinkMethodExplicit: true}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	setProfileLinkMethod(t, svc, "g1", "default", domain.LinkCopy)
 
@@ -608,10 +608,10 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
@@ -671,10 +671,10 @@ func TestService_ApplyProfileSwitch_EnableLoop_InstallFailureSkipsModEntirely(t 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	// Block deployment deterministically: "blocked" already exists as a
@@ -725,10 +725,10 @@ func TestService_ApplyProfileSwitch_EnableLoop_SetModEnabledFailureIsNonFatalNot
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "1", "Test Mod", "1.0", false, map[string][]byte{"plugin.esp": []byte("data")})
@@ -777,9 +777,9 @@ func TestService_ApplyProfileSwitch_EnableLoop_ModInstalledUnderOtherProfile_Cre
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	// Installed+disabled under "default"; referenced by "target"'s YAML
 	// without ever having been installed there.
@@ -824,10 +824,10 @@ func TestService_ApplyProfileSwitch_InstallLoop_FetchFailureSkipsModAndContinues
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	mock := newMockSourceWithDownloads("src")
@@ -881,10 +881,10 @@ func TestService_ApplyProfileSwitch_InstallLoop_DownloadFailureEmitsBlankErrorBl
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	mock := newMockSourceWithDownloads("src") // no AddDownload: the server 404s every file ID
@@ -931,10 +931,10 @@ func TestService_ApplyProfileSwitch_InstallLoop_StoredFileIDsGone_FailsMod(t *te
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	mock := newMockSourceWithDownloads("src")
@@ -1005,10 +1005,10 @@ func TestService_ApplyProfileSwitch_InstallLoop_RecordsFileVersion(t *testing.T)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	mock := &versionedFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1086,10 +1086,10 @@ func TestApplyProfileSwitch_HonorsProfileVersion_Downgrade(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1122,10 +1122,10 @@ func TestApplyProfileSwitch_StoredIDsGone_HealsToRecordedVersion(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1158,10 +1158,10 @@ func TestApplyProfileSwitch_StoredIDsGone_VersionAlsoGone_HardFails(t *testing.T
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1210,10 +1210,10 @@ func TestApplyProfileSwitch_VersionlessSource_KeepsLegacyBehavior(t *testing.T) 
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	// mockSourceWithDownloads' embedded mockSource.GetModFiles always returns
@@ -1274,10 +1274,10 @@ func TestApplyProfileSwitch_StoredIDsBothAgree_FastPathReturnsWholeSet(t *testin
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1310,10 +1310,10 @@ func TestApplyProfileSwitch_VersionMatchesNothing_NoStoredIDs_ErrVersionNotFound
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1355,10 +1355,10 @@ func TestApplyProfileSwitch_StoredIDPresentButVersionGone_NewErrorWording(t *tes
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1398,15 +1398,15 @@ func TestPlanProfileSwitch_VersionDrift_SchedulesReinstall(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "testing")
+	_, err := pm.Create(context.Background(), game.ID, "testing")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "testing"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "testing"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	seedInstalledModUnderProfile(t, svc, game, "testing", "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
-	require.NoError(t, pm.AddMod(game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
-	require.NoError(t, pm.UpsertMod(game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
 	require.NoError(t, err)
@@ -1429,15 +1429,15 @@ func TestPlanProfileSwitch_MatchingVersion_RemainsNoop(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "testing")
+	_, err := pm.Create(context.Background(), game.ID, "testing")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "testing"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "testing"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	seedInstalledModUnderProfile(t, svc, game, "testing", "src", "mod1", "Mod One", "1.5", true, map[string][]byte{"mod1.esp": []byte("v1.5")})
-	require.NoError(t, pm.AddMod(game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
-	require.NoError(t, pm.UpsertMod(game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "testing", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
 	require.NoError(t, err)
@@ -1465,10 +1465,10 @@ func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1489,8 +1489,8 @@ func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
-	require.NoError(t, pm.UpsertMod(game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "stable", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileSwitch(context.Background(), game, "stable")
 	require.NoError(t, err)
@@ -1528,10 +1528,10 @@ func TestApplyProfileSwitch_PartialCacheEntry_StillDownloads(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1591,10 +1591,10 @@ func TestApplyProfileSwitch_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "stable")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "stable")
 	require.NoError(t, err)
 
 	mock := newTwoVersionSource(t)
@@ -1640,10 +1640,10 @@ func TestService_ApplyProfileSwitch_InstallLoop_SavesWithNormalizedGameID(t *tes
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	mock := newMockSourceWithDownloads("src")
@@ -1686,9 +1686,9 @@ func TestService_ApplyProfileSwitch_FatalSetDefaultErrorAfterAccumulatedDiagnost
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 	// "target" is never created, so both UpsertMod and the final SetDefault
 	// fail deterministically.
 
@@ -1726,10 +1726,10 @@ func TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
@@ -1765,9 +1765,9 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_Retur
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
 	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
@@ -1809,10 +1809,10 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenEnableLoopMods_Return
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "a", "Mod A", "1.0", false, map[string][]byte{"a.esp": []byte("a")})
@@ -1852,10 +1852,10 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenInstallLoopMods_Retur
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
-	_, err = pm.Create(game.ID, "target")
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	_, err = pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 
 	mock := newMockSourceWithDownloads("src")

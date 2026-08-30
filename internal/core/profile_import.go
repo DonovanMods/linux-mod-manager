@@ -84,9 +84,7 @@ type ImportPlan struct {
 // PlanImport parses data (an exported profile) and categorizes its mods
 // against game's current installed/cache state, without saving anything or
 // touching the network - mirrors doProfileImport's preview step
-// (:411-459) exactly. ctx is accepted for API consistency with the rest of
-// Service's methods (see PlanProfileSwitch's own doc comment for why a
-// speculative, side-effect-free plan doesn't need it today).
+// (:411-459) exactly.
 func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte) (*ImportPlan, error) {
 	pm := s.NewProfileManager()
 
@@ -95,7 +93,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		return nil, fmt.Errorf("parsing profile: %w", err)
 	}
 
-	_, existErr := pm.Get(game.ID, profile.Name)
+	_, existErr := pm.Get(ctx, game.ID, profile.Name)
 	exists := existErr == nil
 
 	// installedData keeps each mod key's full installed row (doProfileImport
@@ -119,7 +117,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	// profile still counts as "installed", not "missing". Errors from List/
 	// GetInstalledMods are ignored, matching doProfileImport exactly (a
 	// missing/unreadable profile simply contributes nothing).
-	allProfiles, _ := pm.List(game.ID)
+	allProfiles, _ := pm.List(ctx, game.ID)
 	for _, p := range allProfiles {
 		mods, _ := s.GetInstalledMods(ctx, game.ID, p.Name)
 		for _, im := range mods {
@@ -276,7 +274,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	}
 
 	pm := s.NewProfileManager()
-	profile, err := pm.ImportWithOptions(plan.data, opts.Force)
+	profile, err := pm.ImportWithOptions(ctx, plan.data, opts.Force)
 	if err != nil {
 		return result, fmt.Errorf("importing profile: %w", err)
 	}
@@ -428,7 +426,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		}
 
 		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-		if err := pm.UpsertMod(game.ID, profile.Name, modRef); err != nil {
+		if err := pm.UpsertMod(ctx, game.ID, profile.Name, modRef); err != nil {
 			msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})

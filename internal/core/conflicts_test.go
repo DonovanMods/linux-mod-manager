@@ -57,7 +57,7 @@ func TestGetProfileConflictsWinnerAndStale(t *testing.T) {
 	assert.Equal(t, []core.ConflictModRef{{Key: "src:modX", Name: "Mod X"}}, c.AlsoIn)
 	assert.False(t, c.Stale)
 
-	require.NoError(t, svc.NewProfileManager().ReorderMods("g1", "default", []domain.ModReference{
+	require.NoError(t, svc.NewProfileManager().ReorderMods(context.Background(), "g1", "default", []domain.ModReference{
 		{SourceID: "src", ModID: "modY", Version: "1.0"},
 		{SourceID: "src", ModID: "modX", Version: "1.0"},
 	}))

@@ -167,7 +167,7 @@ func TestList_VerboseShowsLockedVersion(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "b", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "b", "1.2.3"))
 
 	out := listVerbose(t, svc, game, false)
 
@@ -195,7 +195,7 @@ func TestList_JSONIncludesLockState(t *testing.T) {
 	svc, game := setupDoDeployTest(t)
 	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 	seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "b", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "b", "1.2.3"))
 
 	var out struct {
 		Mods []struct {

@@ -72,7 +72,7 @@ func versionMismatchLockedGoldenFixture(t *testing.T) (*cobra.Command, *core.Ser
 	t.Helper()
 	cmd, svc, game := setupDoVerifyFixTest(t, false)
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod1", "1.5"))
 	return cmd, svc, game
 }
 

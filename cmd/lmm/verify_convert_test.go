@@ -75,7 +75,7 @@ func seedEnabledPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, so
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
 // seedLegacyPakModCLI installs an ENABLED pak-kind mod in the PRE-#221 shape:
@@ -95,7 +95,7 @@ func seedLegacyPakModCLI(t *testing.T, svc *core.Service, game *domain.Game, sou
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
 // TestVerifyReportsConversionFailed proves `lmm verify` surfaces a #221
@@ -415,7 +415,7 @@ func TestVerifyFileCountCarveOutMembersAware(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 
 	verifyProfile = "default"
 	jsonOutput = true

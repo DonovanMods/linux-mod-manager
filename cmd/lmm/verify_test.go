@@ -347,9 +347,9 @@ func setupDoVerifyFixTest(t *testing.T, deployed bool) (*cobra.Command, *core.Se
 	}
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
 	}))
 
@@ -398,7 +398,7 @@ func TestDoVerify_Fix_VersionMismatch_NotDeployed_RepairsRecord(t *testing.T) {
 	assert.Equal(t, "1.0", mod.Version, "DB row must be corrected to the effective version")
 
 	pm := getProfileManager(svc)
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	profileFound := false
 	for _, ref := range profile.Mods {
@@ -914,9 +914,9 @@ func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *
 
 	pm := getProfileManager(svc)
 
-	_, err := pm.Create(game.ID, "second")
+	_, err := pm.Create(context.Background(), game.ID, "second")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "second", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "second", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
 	}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
@@ -932,9 +932,9 @@ func setupDoVerifyFixSiblingTest(t *testing.T) (*cobra.Command, *core.Service, *
 	// Finding 1's class, Copilot round 8).
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "second", "2", "deadbeef"))
 
-	_, err = pm.Create(game.ID, "third")
+	_, err = pm.Create(context.Background(), game.ID, "third")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "third", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "third", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "2.0", FileIDs: []string{"2"},
 	}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
@@ -964,7 +964,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotInstalled_SkippedSilentl
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "fourth")
+	_, err := pm.Create(context.Background(), game.ID, "fourth")
 	require.NoError(t, err)
 	// Deliberately no pm.AddMod / svc.SaveInstalledMod for mod1 in "fourth" -
 	// it's a profile that exists but never had this mod installed.
@@ -1010,7 +1010,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t
 	assert.Equal(t, "1.0", secondMod.Version, "sibling DB row must be corrected to the effective version")
 
 	pm := getProfileManager(svc)
-	secondProfile, err := pm.Get(game.ID, "second")
+	secondProfile, err := pm.Get(context.Background(), game.ID, "second")
 	require.NoError(t, err)
 	found := false
 	for _, ref := range secondProfile.Mods {
@@ -1025,7 +1025,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_NotDeployed_RepairsRecord(t
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", thirdMod.Version, "sibling with a different recorded version must not be touched")
 
-	thirdProfile, err := pm.Get(game.ID, "third")
+	thirdProfile, err := pm.Get(context.Background(), game.ID, "third")
 	require.NoError(t, err)
 	for _, ref := range thirdProfile.Mods {
 		if ref.SourceID == "test-src" && ref.ModID == "mod1" {
@@ -1102,9 +1102,9 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_DifferentFileIDs_NotAutoRep
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "differs")
+	_, err := pm.Create(context.Background(), game.ID, "differs")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "differs", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "differs", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"3"},
 	}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
@@ -1160,7 +1160,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *t
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.SetModLock(game.ID, "second", "test-src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "second", "test-src", "mod1", ""))
 
 	oldJSON := jsonOutput
 	jsonOutput = false
@@ -1178,7 +1178,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_Locked_DeclinesRewrite(t *t
 	require.NoError(t, err)
 	assert.Equal(t, "1.5", secondMod.Version, "a locked sibling must NOT be auto-repaired - rewriting it would move the lock's target")
 
-	secondProfile, err := pm.Get(game.ID, "second")
+	secondProfile, err := pm.Get(context.Background(), game.ID, "second")
 	require.NoError(t, err)
 	ref := secondProfile.FindRef("test-src", "mod1")
 	require.NotNil(t, ref)
@@ -1198,7 +1198,7 @@ func TestDoVerify_Fix_VersionMismatch_SiblingProfile_LockedAndDeployed_WarnsDepl
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.SetModLock(game.ID, "second", "test-src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "second", "test-src", "mod1", ""))
 	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "second", true))
 	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "second", domain.LinkSymlink))
 
@@ -2096,7 +2096,7 @@ func TestDoVerify_Fix_VersionMismatchLocked_RefusesRepair(t *testing.T) {
 	cmd, svc, game := setupDoVerifyFixTest(t, false)
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod1", "1.5"))
 
 	oldJSON := jsonOutput
 	jsonOutput = false
@@ -2123,7 +2123,7 @@ func TestDoVerify_Fix_VersionMismatchLocked_RefusesRepair(t *testing.T) {
 	assert.True(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.5"), "cache must remain keyed at the recorded version")
 	assert.False(t, gameCache.Exists(game.ID, "test-src", "mod1", "1.0"), "cache must not be renamed to the effective version for a locked mod")
 
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("test-src", "mod1")
 	require.NotNil(t, ref)
@@ -2140,7 +2140,7 @@ func TestDoVerify_Fix_VersionMismatchLocked_JSONKeepsStatusAndNotesLocked(t *tes
 	cmd, svc, game := setupDoVerifyFixTest(t, false)
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod1", "1.5"))
 
 	oldJSON := jsonOutput
 	jsonOutput = true
@@ -2204,12 +2204,12 @@ func setupDoVerifyLockDriftTest(t *testing.T) (*cobra.Command, *core.Service, *d
 	})
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
 	}))
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "2.0"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod1", "2.0"))
 
 	return cmd, svc, game
 }
@@ -2276,13 +2276,13 @@ func TestDoVerify_LockedConverged_NoNote(t *testing.T) {
 	})
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Version: "1.5", FileIDs: []string{"2"},
 	}))
 	// Lock target equals the already-installed version: converged, nothing pending.
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod1", "1.5"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod1", "1.5"))
 
 	oldJSON := jsonOutput
 	jsonOutput = false
