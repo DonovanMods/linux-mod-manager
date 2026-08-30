@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -689,6 +690,16 @@ func TestDoImport_BeforeAllHookFails_AbortsWithoutForce_NothingInstalled(t *test
 // "Warning: could not rename cache entry: " prefix is pinned exactly; the
 // deterministic "mod not in cache" text (both the conflict-check warning and
 // the final error) is pinned exactly.
+//
+// #314 review I1 (recorded plain-text delta, Ruling 18): since the readout
+// now renders from the PLAN before ApplyImportArchive runs at all, this
+// warning - raised inside Apply's rename step - moved from BEFORE the
+// readout to AFTER it: old order Fetching metadata.../Warning: could not
+// rename.../Mod: .../Warning: could not check conflicts..., new order
+// Fetching metadata.../Mod: .../Warning: could not rename.../Warning: could
+// not check conflicts.... The order-blind assert.Contains this test used to
+// carry could not have caught that reordering, so it is pinned here with
+// index comparisons instead.
 func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	verbose = true
@@ -714,10 +725,21 @@ func TestDoImport_VerboseCacheRenameFailure_CascadesToDeploymentFailure(t *testi
 
 	require.Error(t, err)
 	assert.Equal(t, "deployment failed: mod not in cache: acme-source/999@2.0", err.Error())
-	assert.Contains(t, out, "Warning: could not rename cache entry: ", "the -v rename-failure warning must print")
-	assert.Contains(t, out, "Warning: could not check conflicts: mod not in cache: acme-source/999@2.0\n",
+
+	modIdx := strings.Index(out, "Mod: Acme Mod")
+	renameIdx := strings.Index(out, "Warning: could not rename cache entry: ")
+	conflictIdx := strings.Index(out, "Warning: could not check conflicts: mod not in cache: acme-source/999@2.0\n")
+	deployIdx := strings.Index(out, "\nDeploying to game directory...\n")
+	require.NotEqual(t, -1, modIdx, "the readout must print")
+	require.NotEqual(t, -1, renameIdx, "the -v rename-failure warning must print")
+	require.NotEqual(t, -1, conflictIdx,
 		"the -v conflict-check-failure warning must also print, since the rename failure leaves the enriched version uncached")
-	assert.Contains(t, out, "\nDeploying to game directory...\n", "the deploy announcement prints before Install's own failure")
+	require.NotEqual(t, -1, deployIdx, "the deploy announcement must print before Install's own failure")
+
+	assert.True(t, modIdx < renameIdx,
+		"#314 review I1 (Ruling 18): the readout, rendered from the plan before Apply runs, must print before Apply's own rename-failure warning")
+	assert.True(t, renameIdx < conflictIdx, "the rename-failure warning must print before the conflict-check warning")
+	assert.True(t, conflictIdx < deployIdx, "the conflict-check warning must print before the deploy announcement")
 
 	data, rErr := os.ReadFile(filepath.Join(oldPath, "mymod.esp"))
 	require.NoError(t, rErr, "a failed rename must leave the original cache directory - and its content - untouched")

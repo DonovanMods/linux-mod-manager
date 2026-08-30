@@ -522,7 +522,12 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   prompt and `Deploying to game directory…`; for an archive with no `--id`, that re-run also
   minted a _second_ local mod ID, so the ID on screen was not the one written to the database.
   The command now plans once, prompts from the plan, and applies once. No other line changes; a
-  forced or conflict-free import is byte-identical. (#314)
+  forced or conflict-free import is byte-identical. One line does move relative to the readout,
+  though: the `-v` `Warning: could not rename cache entry: …` note (raised while applying, not
+  while planning) used to print before it and now prints after — old order `Fetching metadata…` /
+  `Warning: could not rename cache entry: …` / `Mod: …` / `Warning: could not check conflicts: …`,
+  new order `Fetching metadata…` / `Mod: …` / `Warning: could not rename cache entry: …` /
+  `Warning: could not check conflicts: …`. (#314)
 - The reasons an archive cannot be imported at all now report themselves without the
   `import failed:` prefix, because they are settled while planning rather than mid-ingest
   (**Ruling 18**). Exactly five lines change: `import failed: unsupported archive format: .txt` →
