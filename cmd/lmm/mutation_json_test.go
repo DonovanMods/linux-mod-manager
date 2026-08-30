@@ -1103,3 +1103,28 @@ func TestDoInstall_JSON_SearchPath_EmitsExactlyOneDocument(t *testing.T) {
 		assert.Empty(t, stderr)
 	})
 }
+
+// --- mod files ---
+
+// TestJSONGolden_ModFiles pins `lmm mod files --json` (unit P review, Minor
+// 4). ModFiles/ModFilesReport were built by Task 10 precisely so a frontend
+// could consume this listing, and --json is a persistent root flag, so
+// rendering the plain-text listing under it left the flag silently doing
+// nothing on the one core report type in the package with no reader.
+// `mod files` is read-only, so there is no plan/result pair - the report is
+// the whole document either way.
+func TestJSONGolden_ModFiles(t *testing.T) {
+	svc, game := setupDoDeployTest(t)
+	seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+	game.SourceIDs = map[string]string{"src": game.ID}
+	withModSourceFlags(t)
+
+	// Deploy first: ModFiles reports what the DB records as deployed, which
+	// only a real deploy writes.
+	captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+
+	out := runJSONCommand(t, func() error {
+		return doModFiles(context.Background(), svc, game, "a")
+	})
+	assertJSONCLIGolden(t, "mod_files_report", out)
+}

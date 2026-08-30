@@ -586,6 +586,14 @@ func doModFiles(ctx context.Context, svc *core.Service, game *domain.Game, modID
 		return err
 	}
 
+	// Ruling 15: the report IS the document - every line below renders one
+	// of its fields, and --json is a persistent root flag, so rendering the
+	// listing under it would leave the flag silently doing nothing (unit P
+	// review, Minor 4).
+	if jsonOutput {
+		return emitJSON(report)
+	}
+
 	fmt.Printf("Files deployed by %s (%s):\n\n", report.Mod.Name, modID)
 
 	if len(report.Files) == 0 {
