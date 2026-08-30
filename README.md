@@ -755,16 +755,16 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 ### Global Flags
 
-| Flag          | Short | Description                                                                                                                                     |
-| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                        |
-| `--verbose`   | `-v`  | Enable verbose output                                                                                                                           |
-| `--config`    |       | Custom config directory                                                                                                                         |
-| `--data`      |       | Custom data directory                                                                                                                           |
-| `--json`      |       | Output JSON instead of text; mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
-| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                    |
-| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                  |
-| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                 |
+| Flag          | Short | Description                                                                                                                                                                                 |
+| ------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                                                                    |
+| `--verbose`   | `-v`  | Enable verbose output                                                                                                                                                                       |
+| `--config`    |       | Custom config directory                                                                                                                                                                     |
+| `--data`      |       | Custom data directory                                                                                                                                                                       |
+| `--json`      |       | Output JSON instead of text for most commands (three exceptions, below); mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
+| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                                                                |
+| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                                                              |
+| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                                                             |
 
 Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
 
@@ -778,6 +778,10 @@ stderr; stderr stays empty except for `--log-level` diagnostics, so
 deterministic, so two runs over the same state produce byte-identical
 output.
 
+**Three commands don't honor `--json` yet** and always print plain text
+regardless of the flag: `lmm profile list`, `lmm auth status`, and
+`lmm profile export` (#309).
+
 On failure the document is an envelope instead:
 
 ```json
@@ -786,7 +790,17 @@ On failure the document is an envelope instead:
 
 An error that carries structured data adds a `details` object beside it;
 plain errors have no `details` key at all. Either way, stdout still holds one
-document and the exit code is non-zero.
+document and the exit code is non-zero. Three shapes populate `details`
+today: a blocked `install`/`import <archive>` conflict names the colliding
+files as `details.conflicts` (`[]core.Conflict`); a `game detect --json` run
+that partially applied (some games saved, one failed) reports what it did
+save as `details.saved`/`details.profiles` alongside the failure; and a
+fatal error on `profile apply`/`switch`/`sync` after an already-printed
+`UpsertMod` lock-refusal warning (Ruling 5, below) carries those warnings as
+`details.warnings` since there is no result document left to carry them on.
+Every type that implements this extension point is pinned by a named test
+(`cmd/lmm/details_coverage_test.go`'s `TestDetailsTypesAreCovered`), so a
+new one can't go undocumented.
 
 Every document is a type from `internal/core`, `internal/domain` or
 `internal/app` — never a shape invented by the CLI — and each of those types
@@ -852,6 +866,51 @@ game with no configured sources is `{}`. Enum-valued fields (link method,
 deploy mode, update policy, update status, auth state) are their text names,
 not integers. Times are RFC 3339.
 
+**Behaviour deltas landed alongside the JSON contract.** A handful of
+plain-text and event changes shipped in the same phase as the `--json`
+switch, each pinned by a re-recorded capture and listed in the CHANGELOG
+under its issue number:
+
+- **#294 — lock refusals, one wording.** Every refusal of a locked mod
+  (`lmm update`, `lmm mod edit`, `lmm mod lock`/`unlock`) now prints the same
+  `core.LockedRefRefusalError` text, replacing four hand-worded messages. A
+  `UpsertMod` refusal swallowed by `lmm profile apply`/`sync` is no longer a
+  `--verbose`-only note — it prints unconditionally to stderr as
+  `Warning: …` and rides along on the command's `--json` document as
+  `warnings` (or `details.warnings` on the error envelope if the run then
+  fails with nothing left to carry them).
+- **#283 — a global update-check counter.** Checking updates across two or
+  more sources under `-v` used to restart its `n/total` counter per source
+  (`1/3 … 3/3`, then `1/2 … 2/2`); `UpdateCheckEvent` gained
+  `GlobalIndex`/`GlobalTotal` and the line now runs unbroken (`1/5 … 5/5`).
+  `--json` is unaffected — progress events are always suppressed there.
+- **Ruling 8 — dry-run merged-artifact modelling.** `lmm uninstall --dry-run`
+  and `lmm purge --dry-run` used to always print a merged-artifact line on a
+  compile-mode game; the plan now models the actual effect
+  (`merged_artifact: {action, path}` under `--json`, `null`/absent when
+  nothing would change), so a dry run that would leave the artifact alone
+  says nothing. `lmm import <archive> --json`'s `merged_pak_synced` is set
+  from whether the sync actually ran and succeeded, not from the game's
+  deploy mode alone.
+- **#296 — hooks survive export/import.** `lmm profile export` now writes a
+  `hooks:` block (including an explicitly-disabled override), so
+  `export` → `import` round-trips hook configuration byte-for-byte; an
+  export from before this change (no `hooks:` key) still imports.
+- **Ruling 16 — cancellation never splits DB and profile state.** Ctrl-C
+  (or any context cancellation) during a mutation that writes both the
+  database and a profile file — install, dependency install, archive
+  import, adopt, profile import/switch, uninstall, `purge --uninstall`, and
+  `mod edit`'s relink/version paths — now finishes that pairing before
+  stopping, so a run can no longer be cancelled between the two writes and
+  leave a mod in one store but not the other. A cancelled run prints
+  `Cancelled.` to stderr before exiting `2` in plain mode (`--json` stays
+  silent; it was already unaffected).
+- **A batch install aborts up front on an unloadable profile.** If the
+  target profile.yaml exists but fails to parse (or can't be read), a
+  multi-mod `install` now fails before installing anything, instead of
+  running to completion and reporting per-mod warnings as if it had
+  succeeded.
+
 > **v2 changed these shapes.** Before v2 each command projected its own
 > ad-hoc view struct, so the JSON was a parallel, undocumented contract that
 > could drift from what core actually knew. v2 emits core's own types
@@ -908,18 +967,23 @@ not integers. Times are RFC 3339.
 | `lmm game add`                                     | Interactively add a new game configuration                                                                                                           |
 | `lmm game list`                                    | List configured games (ID, name, paths, deploy mode, sources; marks the default)                                                                     |
 | `lmm game detect`                                  | Scan Steam libraries for known moddable games (extend the known-games list via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)) |
+| `lmm game detect --all`                            | Non-interactively select every not-yet-configured detected game (same set the "all" prompt answer picks); required under `--json`                    |
+| `lmm game detect --select <indices>`               | Non-interactively select detected games by their 1-based prompt index (e.g. `1,3`); required under `--json`                                          |
 | `lmm auth login [source]`                          | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live)                                                          |
 | `lmm auth logout [source]`                         | Remove stored credentials                                                                                                                            |
 | `lmm auth status`                                  | Show authentication status                                                                                                                           |
 | `lmm profile list`                                 | List profiles                                                                                                                                        |
 | `lmm profile create <name>`                        | Create a profile                                                                                                                                     |
 | `lmm profile switch <name>`                        | Switch to a profile (installs missing mods)                                                                                                          |
+| `lmm profile switch <name> -y`                     | Skip the confirmation prompt; required under `--json`                                                                                                |
 | `lmm profile delete <name>`                        | Delete a profile                                                                                                                                     |
 | `lmm profile export <name>`                        | Export profile to YAML                                                                                                                               |
 | `lmm profile import <file>`                        | Import profile from YAML                                                                                                                             |
 | `lmm profile import <file> --force`                | Import and overwrite existing                                                                                                                        |
+| `lmm profile import <file> -y`                     | Answer "Download and install mods?" without a prompt; required under `--json`                                                                        |
 | `lmm profile reorder [mod-id ...]`                 | Show or set load order                                                                                                                               |
 | `lmm profile sync`                                 | Update profile to match installed mods                                                                                                               |
+| `lmm profile sync -y`                              | Skip the confirmation prompt; required under `--json`                                                                                                |
 | `lmm profile apply`                                | Install/enable mods to match profile                                                                                                                 |
 | `lmm profile apply/switch/sync --dry-run`          | Preview what an apply/switch/sync would do, changing nothing                                                                                         |
 | `lmm deploy`                                       | Deploy all enabled mods from cache                                                                                                                   |
@@ -1056,7 +1120,7 @@ CONVERSION FAILED is read straight from the merged pak's stored fingerprint — 
 ## Architecture
 
 ```text
-cmd/lmm/                  # CLI entry point (Cobra)
+cmd/lmm/                  # CLI entry point (Cobra); imports exactly app/core/domain/source (enforced)
 internal/
 ├── app/                  # Composition root: app.Open resolves paths (XDG), prepares dirs, opens core, registers sources
 ├── domain/               # Core types (Mod, Profile, Game)
@@ -1071,12 +1135,57 @@ internal/
 │   ├── config/           # YAML configuration
 │   └── cache/            # Mod file cache
 ├── linker/               # Deployment strategies
-└── core/                 # Business logic
-    ├── service.go        # Main orchestrator
-    ├── installer.go      # Install/uninstall
-    ├── updater.go        # Update checking
-    ├── downloader.go     # HTTP downloads
-    └── extractor.go      # Archive extraction
+└── core/                 # Business logic orchestration (flat package, 49 files); frontends never reach past it
+    ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
+    ├── ops.go             # beginOp: the Service's single mutation-serialization slot
+    ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
+    ├── errors.go          # Typed errors a frontend branches on: ConflictError, ErrConfirmationRequired, ErrInteractiveOnly
+    ├── events.go          # EventSink wire envelope + the Op/EventType/FlowPhase vocabulary
+    ├── queries.go         # Read-only query types: ModList, StatusReport, SearchReport, GameListEntry, VerifyReport
+    ├── moddetail.go       # ModDetail: mod metadata + local install state for `lmm mod show` (#86)
+    ├── settings.go        # SettingsResult: `lmm game set-default`/`clear-default`'s --json document
+    ├── phases.go          # DeployPhase vocabulary shared by deploy/switch/apply progress events
+    ├── hooks.go           # HookContext/HookResult + hook script execution (runHook)
+    ├── hooks_resolve.go   # Resolves a flow's merged game/profile hook config into a HookRunner
+    ├── selection.go       # File-selection policy: filter/sort by category, primary-file pick, sameFileIDSet
+    ├── resolve.go         # ResolveVersionFiles: version -> file matching against a source's file list
+    ├── conflicts.go       # File-conflict detection: ConflictModRef/ConflictReport for `lmm conflicts`
+    ├── converge.go        # convergeDeployedFiles: remove-only reconciliation of deployed state (#168/#212)
+    ├── deployable.go      # deployableFiles: the deploy-direction file resolver (#210)
+    ├── overrides.go       # ApplyProfileOverrides: profile config-override files written to the game dir
+    ├── merged_pak.go      # DeployCompile merged-artifact sync (singleton synthetic mod per game/profile, #197)
+    ├── downloader.go      # HTTP downloads with retry/backoff + checksum verification
+    ├── extractor.go       # Archive extraction (.zip native, .7z/.rar via system tools)
+    ├── dependencies.go    # DependencyResolver: mod dependency ordering + cycle detection
+    ├── filename_parser.go # NexusMods-style filename parsing (name/mod ID/version)
+    ├── changelog.go       # CleanChangelog: strips HTML markup from changelog text for terminal display
+    ├── staging.go         # Staging directory resolution for in-flight downloads/extraction
+    ├── installer.go       # Installer: low-level cache/link/DB engine behind install & update flows
+    ├── importer.go        # Importer: low-level cache/extract engine behind the archive-import flow
+    ├── updater.go         # Updater: source-registry update-check primitives (CheckUpdates)
+    │
+    ├── install.go         # install flow: PlanInstall/ApplyInstall (`lmm install`)
+    ├── deploy.go          # deploy flow: DeployOptions/PlanDeploy/ApplyDeploy/DeployProfile (`lmm deploy`)
+    ├── uninstall.go       # uninstall flow: PlanUninstall/UninstallMod (`lmm uninstall`)
+    ├── purge.go           # purge flow: the shared purgeSpec/purgeMods loop + PurgeProfile (`lmm purge`)
+    ├── update.go          # update flow: PlanUpdate/ApplyUpdate (`lmm update`)
+    ├── rollback.go        # rollback flow: PlanRollback/ApplyRollback (`lmm update rollback`)
+    ├── switch.go          # profile-switch flow: PlanProfileSwitch/ApplyProfileSwitch (`lmm profile switch`)
+    ├── profile_apply.go   # profile-apply flow: PlanProfileApply/ApplyProfileApply (`lmm profile apply`)
+    ├── profile_sync.go    # profile-sync flow: PlanProfileSync/ApplyProfileSync (`lmm profile sync`)
+    ├── profile_import.go  # profile-import flow: ImportPlan/PlanImport/ApplyImport (`lmm profile import`)
+    ├── profile_reorder.go # profile-reorder flow: ReorderProfileMods/ResolveReorder (`lmm profile reorder`)
+    ├── profile.go         # ProfileManager: ctx-threaded profile CRUD (Ruling 11) + ProfileResult
+    ├── adopt.go           # adopt flow: ScanLocal/PlanAdopt/ApplyAdopt (`lmm import` scan mode)
+    ├── import_archive.go  # archive-import flow: ImportArchive (`lmm import <archive>`)
+    ├── game_detect.go     # game-detect flow: GameFromDetected/ApplyGameDetect (`lmm game detect`)
+    ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
+    ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)
+    ├── mod_settings.go    # mod lock/unlock/set-update/convert flows -> ModSettingResult
+    ├── mod_files.go       # `lmm mod files`: ModFileEntry/ModFilesReport
+    ├── verify.go          # verify engine: VerifyTier/VerifyResult (`lmm verify`)
+    ├── verify_helpers.go  # verify engine internals: retained-source / mismatch detection
+    └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
 ```
 
 ## File Locations
