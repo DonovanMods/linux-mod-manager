@@ -353,6 +353,21 @@ func TestSyncMergedPak_NeverMerged_ZeroSources(t *testing.T) {
 	require.Empty(t, warnings)
 }
 
+// purgeMergedPakOnly drives purgeMergedPak (unexported by Phase 3 Ruling 10)
+// through PurgeProfile with an empty mods list - the real path a `lmm purge`
+// on a DeployCompile game takes (purgeProfile calls purgeMergedPak
+// unconditionally after its per-mod loop) - without also purging any real
+// mod, isolating the merged-pak behavior exactly like the old direct
+// PurgeMergedPak call did. purgeMergedPak's own failure is non-fatal
+// (recorded in PurgeResult.Warnings, not returned as an error), so the
+// caller must check both.
+func purgeMergedPakOnly(t *testing.T, svc *core.Service, game *domain.Game, deleteCache bool) *core.PurgeResult {
+	t.Helper()
+	result, err := svc.PurgeProfile(context.Background(), game, "default", nil, core.PurgeOptions{Uninstall: deleteCache}, nil)
+	require.NoError(t, err)
+	return result
+}
+
 // TestPurgeMergedPak_AbsentCacheEntry (#260 repro shape 3): PurgeMergedPak
 // routes through the same Installer.Uninstall and must likewise tolerate an
 // absent merged-pak cache entry (e.g. purge --uninstall already deleted it,
@@ -360,7 +375,7 @@ func TestSyncMergedPak_NeverMerged_ZeroSources(t *testing.T) {
 func TestPurgeMergedPak_AbsentCacheEntry(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 
-	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+	require.Empty(t, purgeMergedPakOnly(t, svc, game, true).Warnings,
 		"purging a never-merged profile must be a no-op, not an error")
 
 	// And again after a full merge/purge cycle: --uninstall deletes the
@@ -368,8 +383,8 @@ func TestPurgeMergedPak_AbsentCacheEntry(t *testing.T) {
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
-	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true))
-	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+	require.Empty(t, purgeMergedPakOnly(t, svc, game, true).Warnings)
+	require.Empty(t, purgeMergedPakOnly(t, svc, game, true).Warnings,
 		"a repeat purge after --uninstall must tolerate the already-deleted entry")
 }
 
