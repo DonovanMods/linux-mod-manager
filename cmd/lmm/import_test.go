@@ -345,6 +345,47 @@ func TestDoImport_ArchiveDryRun_JSON_EmitsThePlan(t *testing.T) {
 	assert.Equal(t, "<empty>\n", dumpTree(t, svc.GetGameCachePath(game)), "no cache entry")
 }
 
+// TestDoImport_ConflictDecline_LeavesAPreExistingCacheEntryIntact pins what
+// the Plan/Apply shape buys beyond Ruling 18 (#314): the conflict question is
+// answered from the PLAN, before anything is ingested, so a declined import
+// never touches the cache. That closes #310's residue - under Ruling 7 the
+// archive was cached on the way to the question, so a re-import at a
+// REPRODUCIBLE identity (--source/--id, or a NexusMods filename) had already
+// overwritten the entry that was there, and declining did not restore it.
+func TestDoImport_ConflictDecline_LeavesAPreExistingCacheEntryIntact(t *testing.T) {
+	svc, game, archiveBPath := setupImportConflictTest(t)
+	importForce = false
+
+	// The archive's own filename carries the version, so the identity the
+	// ingest keys by is the SAME before and after enrichment - a
+	// reproducible identity, and the shape #310 is about (a minted or
+	// renamed one cannot collide with a pre-existing entry).
+	archiveBPath = filepath.Join(filepath.Dir(archiveBPath), "second-1.0.zip")
+	createTestArchive(t, archiveBPath, map[string]string{"shared.txt": "from-B"})
+
+	// An entry already lives at exactly that identity.
+	require.NoError(t, svc.GetGameCache(game).Store("g1", "acme-source", "B1", "1.0", "shared.txt", []byte("pre-existing")))
+	before := dumpTree(t, svc.GetGameCachePath(game))
+
+	var err error
+	withStdin(t, "n\n", func() {
+		_, _, err = captureStdoutAndStderr(t, func() error {
+			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archiveBPath})
+		})
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, "import cancelled", err.Error())
+	assert.Equal(t, before, dumpTree(t, svc.GetGameCachePath(game)),
+		"a declined conflict must leave the cache tree exactly as it found it")
+
+	entryDir := svc.GetGameCache(game).ModPath("g1", "acme-source", "B1", "1.0")
+	cached, rErr := os.ReadFile(filepath.Join(entryDir, "shared.txt"))
+	require.NoError(t, rErr)
+	assert.Equal(t, "pre-existing", string(cached),
+		"the pre-existing entry must not have been overwritten on the way to the question")
+}
+
 // TestDoImport_IDDefault_SoleConfiguredSource_AutoResolves guards
 // resolveSource's auto-select path reached through --id with no --source:
 // exactly one configured source resolves without prompting.

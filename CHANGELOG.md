@@ -199,20 +199,16 @@ profiles}`).
   but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
   after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
   cache already warm: `install` re-prints only "Extracting to cache…" (never a second
-  "Downloading …"/"Checksum: …" block), `import` re-prints its "Fetching metadata…" and
-  Mod/Source/ID/Version/Files readout, before "Deploying to game directory…". An accepted
+  "Downloading …"/"Checksum: …" block). An accepted
   conflict re-run does not re-download cached files (a same-version reinstall or a local
   directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
   with a failing `install.before_all`) now prints after the download lines rather than before
-  them. Declining an `import` now also discards the cache entry that import filled on its way to
-  the question, so a refusal removes the entry this call created and leaves managed state (DB,
-  profile, game tree) untouched; when an entry already existed at a reproducible identity
-  (`--source/--id`, or a NexusMods filename), the import had already overwritten it before the
-  refusal, and that prior entry is not restored (#310). Accepting leaves exactly one entry rather
-  than orphaning the refused pass's copy of the archive; an accepted
-  `import --id` re-run therefore also renames its cache entry onto the resolved version
-  successfully, where it previously reported `renamed: false` and (under `-v`) a "could not
-  rename cache entry" warning. `--force` still skips the conflict check entirely. (#303)
+  them. `--force` still skips the conflict check entirely. **`lmm import <archive>` does not
+  re-run at all** — Ruling 18 below supersedes this entry's import clauses: the conflict question
+  is answered from the plan, before anything is cached, so a declined import writes nothing (and
+  therefore never overwrites a pre-existing entry at a reproducible identity, the residue tracked
+  as #310), and an accepted one neither re-prints its readout nor re-renames its cache entry.
+  (#303)
 - Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
   prompt for confirmation now fails first with `confirmation required: ...` in the
   `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
