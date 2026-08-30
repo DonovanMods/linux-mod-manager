@@ -424,7 +424,12 @@ profiles}`).
   and profile-list gates that treat an unreadable profile
   as "no lock" / "no profiles" report a cancelled read rather than degrading open, and the lazy
   profile-existence check no longer reports "the profile is fine" for a read it could not answer.
-  No output changes on any non-cancelled path. (#305)
+  One non-cancelled-path exception: that same check now also catches a profile YAML that exists
+  but cannot be loaded (a parse error or a permissions error), so a batch install into such a
+  profile now aborts up front instead of running to completion and reporting success with per-mod
+  warnings, and the single-mod/import paths gain a `Warning: could not create profile: …` line
+  ahead of the pre-existing `could not update profile` warning. No other output changes on any
+  non-cancelled path. (#305)
 
 ## [1.30.1] - 2026-08-08
 
