@@ -288,8 +288,7 @@ func seedInstalledForUpdate(t *testing.T, svc *core.Service, game *domain.Game, 
 	}
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
+	deployInstalledMod(t, svc, game, &im.Mod, "default")
 
 	pm := svc.NewProfileManager()
 	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {

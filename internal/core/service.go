@@ -1336,13 +1336,16 @@ func (s *Service) GetEffectiveLinkMethod(ctx context.Context, game *domain.Game,
 	return s.getGameLinkMethod(game), nil
 }
 
-// GetInstaller returns an Installer configured for the given game.
+// getInstaller returns an Installer configured for the given game.
 //
-// It stays EXPORTED with no production cmd caller (every flow builds its own
-// installer internally): cmd/lmm's tests seed deployed-file fixtures by
-// installing through it, and core's export_test.go shims are invisible to
-// package main. Same reason DownloadMod and SaveFileChecksum stay exported.
-func (s *Service) GetInstaller(game *domain.Game) *Installer {
+// Unexported by Phase 3 Ruling 10: every production flow already builds its
+// own installer internally via newInstallerWithLinker, so the exported
+// GetInstaller wrapper had no caller besides test fixtures. Those fixtures
+// now deploy through PlanDeploy/ApplyDeploy (a genuine deploy round-trip
+// that also records Deployed/LinkMethod, which hand-driving an *Installer
+// never did); internal/core's own fixtures use the GetInstallerForTest
+// shim (export_test.go).
+func (s *Service) getInstaller(game *domain.Game) *Installer {
 	return s.newInstallerWithLinker(game, s.getLinker(s.getGameLinkMethod(game)))
 }
 

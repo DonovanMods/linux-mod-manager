@@ -723,7 +723,7 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 		Deployed:     true,
 		FileIDs:      []string{"10"},
 	}))
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
@@ -801,7 +801,7 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 		Deployed:     true,
 		FileIDs:      []string{"10"},
 	}))
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 

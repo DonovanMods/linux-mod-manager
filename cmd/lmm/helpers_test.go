@@ -18,6 +18,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// deployInstalledMod deploys sourceID/mod's already-cached content into
+// game's mod directory through the real PlanDeploy/ApplyDeploy flow,
+// replacing the old `installer := svc.GetInstaller(game); installer.Install(...)`
+// fixture pattern - getInstaller is unexported (Phase 3 Ruling 10) with no
+// export_test.go shim visible to this package, and ApplyDeploy is the
+// production deploy path anyway, so this seeds the exact same
+// Deployed/LinkMethod state a real deploy would.
+func deployInstalledMod(t *testing.T, svc *core.Service, game *domain.Game, mod *domain.Mod, profileName string) {
+	t.Helper()
+	opts := core.DeployOptions{ModID: mod.ID, SourceID: mod.SourceID}
+	plan, err := svc.PlanDeploy(context.Background(), game, profileName, opts)
+	require.NoError(t, err)
+	_, err = svc.ApplyDeploy(context.Background(), game, plan, opts, nil)
+	require.NoError(t, err)
+}
+
 // TestPromptForGameSource_RendersNameViaResolver pins the "Name (id)" format
 // (matching auth's promptForSource/doAuthStatus) driven by an injected
 // resolver func, per the design brief's "resolver func from callers that

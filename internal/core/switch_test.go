@@ -396,7 +396,7 @@ func TestService_ApplyProfileSwitch_ExecutesDisableThenEnableThenInstall_SetDefa
 	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	seedNamedInstalledMod(t, svc, game, "src", "disable-me", "Disable Me", "1.0", true, map[string][]byte{"disable.esp": []byte("d")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "disable-me", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "enable-me", "Enable Me", "1.0", false, map[string][]byte{"enable.esp": []byte("e")})
 
@@ -615,7 +615,7 @@ func TestService_ApplyProfileSwitch_DisableLoop_UndeployAndSetEnabledFailuresAre
 	require.NoError(t, err)
 
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// Corrupt the deployed symlink so Uninstall fails deterministically.
@@ -1484,7 +1484,7 @@ func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
 		Deployed:     true,
 		FileIDs:      []string{"10"},
 	}))
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
@@ -1733,7 +1733,7 @@ func TestService_ApplyProfileSwitch_NilProgressCallbackIsSafe(t *testing.T) {
 	require.NoError(t, err)
 
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	disableMod, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
@@ -1771,7 +1771,7 @@ func TestService_ApplyProfileSwitch_ContextCancelledBetweenDisableLoopMods_Retur
 
 	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true, map[string][]byte{"a.esp": []byte("a")})
 	seedNamedInstalledMod(t, svc, game, "src", "b", "Mod B", "1.0", true, map[string][]byte{"b.esp": []byte("b")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "a", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "b", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 

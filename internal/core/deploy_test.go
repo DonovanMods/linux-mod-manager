@@ -394,7 +394,7 @@ func TestService_DeployProfile_PurgeRemovesFilesFirstAndPreservesEnabledSet(t *t
 	seedProfileWithMod(t, svc, "g1", "default", "src", "kept-mod", "1.0")
 	seedProfileWithMod(t, svc, "g1", "default", "src", "purged-mod", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "purged-mod", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	purgedPath := filepath.Join(gameDir, "purged.esp")
@@ -889,7 +889,7 @@ func TestService_DeployProfile_FatalErrorAfterAccumulatedDiagnostic_ReturnsParti
 
 	seedInstalledMod(t, svc, game, "src", "1", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
@@ -1234,7 +1234,7 @@ func TestService_DeployProfile_UndeployFailureEmitsNoteEventBeforeSuccessEvent(t
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
@@ -1319,7 +1319,7 @@ func TestService_DeployProfile_PurgeUndeployFailureEmitsNoteEvent(t *testing.T) 
 	seedNamedInstalledMod(t, svc, game, "src", "1", "Test Mod", "1.0", true, map[string][]byte{"plugin.esp": []byte("data")})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	deployedPath := filepath.Join(gameDir, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))

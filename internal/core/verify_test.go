@@ -1104,7 +1104,7 @@ func newVersionRepairFixGame(t *testing.T, deployed bool) (*core.Service, *domai
 		require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "default", domain.LinkSymlink))
 		mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 		require.NoError(t, err)
-		require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &mod.Mod, "default"))
+		require.NoError(t, svc.GetInstallerForTest(game).Install(context.Background(), game, &mod.Mod, "default"))
 	}
 
 	return svc, game

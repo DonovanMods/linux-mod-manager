@@ -126,7 +126,7 @@ func TestService_DisableMod_UndeploysEnabledMod(t *testing.T) {
 	// install that happened earlier), and record the DB's deployed flag to
 	// match — seedInstalledMod doesn't set it, so this mirrors the real
 	// precondition DisableMod actually sees for a genuinely-deployed mod.
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true))
 
@@ -218,7 +218,7 @@ func TestService_DisableMod_UndeployFailureIsNonFatal(t *testing.T) {
 		"plugin.esp": []byte("data"),
 	})
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.SetModDeployed(context.Background(), "src", "1", "g1", "default", true),
 		"seed Deployed=true so the post-disable assertion below actually proves a transition")

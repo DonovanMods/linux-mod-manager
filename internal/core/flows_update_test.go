@@ -59,7 +59,7 @@ func seedUpdatableMod(t *testing.T, svc *core.Service, game *domain.Game, source
 	}
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
 
 	pm := svc.NewProfileManager()

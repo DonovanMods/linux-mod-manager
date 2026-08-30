@@ -246,8 +246,7 @@ func TestDoModDisable_Verbose_RestoresHistoricalUndeployWarningByteIdentically(t
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default")
 
 	// Corrupt the deployed file into a plain file (not a symlink) so the
 	// symlink linker's Undeploy fails deterministically ("not a symlink").
@@ -333,8 +332,7 @@ func TestDoModDisable_ErrorPath_PrintsAccumulatedNoteToStdout(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default")
 
 	// Corrupt the deployed file into a plain file (not a symlink) so the
 	// symlink linker's Undeploy fails deterministically ("not a symlink"),

@@ -81,7 +81,7 @@ func TestService_UninstallMod_FullUninstall(t *testing.T) {
 	})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
@@ -113,7 +113,7 @@ func TestService_UninstallMod_KeepCache(t *testing.T) {
 	})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{KeepCache: true})
@@ -151,7 +151,7 @@ func TestService_UninstallMod_HookOrder(t *testing.T) {
 	})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	deployedFile := filepath.Join(gameDir, "plugin.esp")
@@ -216,7 +216,7 @@ func TestService_UninstallMod_BeforeEachHookFails_AbortsUnlessForce(t *testing.T
 		"plugin.esp": []byte("data"),
 	})
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	failScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
@@ -268,7 +268,7 @@ func TestService_UninstallMod_BeforeAllHookFails_AbortsUnlessForce(t *testing.T)
 		"plugin.esp": []byte("data"),
 	})
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	failScript := createTestScript(t, scriptsDir, "before_all.sh", `#!/bin/bash
@@ -343,7 +343,7 @@ func TestService_UninstallMod_FatalErrorAfterAccumulatedDiagnostic_ReturnsPartia
 	})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	failScript := createTestScript(t, scriptsDir, "before_each.sh", `#!/bin/bash
@@ -501,7 +501,7 @@ func TestService_UninstallMod_AfterEachHookFailure_IsNonFatalWarning(t *testing.
 	})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	failScript := createTestScript(t, scriptsDir, "after_each.sh", `#!/bin/bash

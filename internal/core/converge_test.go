@@ -31,7 +31,7 @@ func TestConverge_RowDrivenStaleRemoved(t *testing.T) {
 		"a.esp":    []byte("a"),
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// gone.esp is no longer provided by m1: remove it from the cache so
@@ -72,7 +72,7 @@ func TestConverge_SharedPathProtectedByUnion(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "m2", "1.0", true, map[string][]byte{
 		"shared.esp": []byte("m2-copy"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// m1 no longer provides shared.esp itself (its cache copy is gone), but
@@ -164,7 +164,7 @@ func TestConverge_DryRunTouchesNothing(t *testing.T) {
 		"a.esp":    []byte("a"),
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, os.Remove(gameCache.GetFilePath("g1", "src", "m1", "1.0", "gone.esp")))
@@ -206,7 +206,7 @@ func TestConverge_RegularFileNeedsRow(t *testing.T) {
 		"a.esp":    []byte("a"),
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	gameCache := svc.GetGameCache(game)
@@ -250,7 +250,7 @@ func TestConverge_RowPass_UndeployFailureExcludedFromRemoved(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// gone.esp becomes stale: no longer provided by m1.
@@ -363,7 +363,7 @@ func TestConverge_AbsentCacheEntry_UnknownProvenanceRowSpared(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
 		"a.esp": []byte("a"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// The mod's ENTIRE cache entry disappears (unlike TestConverge_RowDrivenStaleRemoved,
@@ -452,7 +452,7 @@ func TestConverge_AbsentCacheEntry_SymlinkRowSweptByPhysicalEvidence(t *testing.
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
 		"gone.esp": []byte("g"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// The mod's ENTIRE cache entry disappears - deployableFiles now returns
@@ -513,7 +513,7 @@ func TestConverge_RowPass_RejectsUnsafeDeployedFileRecords(t *testing.T) {
 	seedInstalledMod(t, svc, game, "src", "m1", "1.0", true, map[string][]byte{
 		"a.esp": []byte("a"),
 	})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "m1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// A real, precious file genuinely outside game.ModPath at exactly the

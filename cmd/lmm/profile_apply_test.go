@@ -251,8 +251,7 @@ func TestDoProfileApply_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *tes
 	pm := getProfileManager(svc)
 
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default")
 	// Corrupt the deployed symlink so Uninstall fails deterministically.
 	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))

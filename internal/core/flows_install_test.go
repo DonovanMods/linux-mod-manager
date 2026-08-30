@@ -194,7 +194,7 @@ func TestService_PlanInstall_ConflictingFilesListsPathAndOwningMod(t *testing.T)
 
 	// "other" is installed and deployed, owning shared.esp.
 	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.esp": []byte("o")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// "newmod" is NOT installed, but its cache entry already exists (at the
@@ -497,7 +497,7 @@ func TestService_PlanInstall_PerformsZeroMutations(t *testing.T) {
 
 	// Unrelated pre-existing state to prove untouched.
 	seedInstalledMod(t, svc, game, "src", "existing", "1.0", true, map[string][]byte{"existing.esp": []byte("e")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "existing", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := newMockSourceWithDownloads("src") // no AddDownload: any download 404s
@@ -977,7 +977,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1005,7 +1005,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1042,7 +1042,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1099,7 +1099,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -2289,7 +2289,7 @@ func TestService_ApplyInstall_DependenciesPresent_ExistingPrimaryUsesUninstallNo
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "root", "1.0", true, map[string][]byte{"root-old.esp": []byte("old-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "root", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -2396,7 +2396,7 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -2469,7 +2469,7 @@ func applyInstallConflictFixture(t *testing.T) (svc *core.Service, game *domain.
 	game = &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.esp": []byte("original-other-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock = &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -2646,7 +2646,7 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeplo
 	// later Install of the same path below never collides with a live
 	// symlink mod1 already owns.
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.0", "shared.esp", []byte("mod1-shared-content")))
 
@@ -2705,7 +2705,7 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_AcceptRerun_Redownl
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.0", "shared.esp", []byte("mod1-shared-content")))
 
@@ -3200,7 +3200,7 @@ func TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLi
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}

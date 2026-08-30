@@ -333,17 +333,16 @@ func setupDoVerifyFixTest(t *testing.T, deployed bool) (*cobra.Command, *core.Se
 	})
 
 	if deployed {
-		// Targeted setters, not a full svc.SaveInstalledMod(context.Background(), mod) - the
-		// latter's full-row upsert would wipe the checksum
-		// setupDoVerifyVersionTest just seeded (the exact audit Finding 1
-		// bug pattern, here as a test-setup artifact rather than
-		// production code - fixed the same way).
-		require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "default", true))
-		require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "default", domain.LinkSymlink))
-
+		// ApplyDeploy (via deployInstalledMod) sets Deployed/LinkMethod
+		// through the same targeted per-field writes SetModDeployed/
+		// SetModLinkMethod use, not a full svc.SaveInstalledMod(...) upsert
+		// that would wipe the checksum setupDoVerifyVersionTest just seeded
+		// (the exact audit Finding 1 bug pattern, here as a test-setup
+		// artifact rather than production code - fixed the same way), while
+		// also deploying the real file a bare targeted-setter pair would not.
 		mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 		require.NoError(t, err)
-		require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &mod.Mod, "default"))
+		deployInstalledMod(t, svc, game, &mod.Mod, "default")
 	}
 
 	pm := getProfileManager(svc)
@@ -1530,17 +1529,14 @@ func TestDoVerify_Fix_VersionMismatch_PrimaryRelinkFails_SiblingRepaired_JSONNot
 	}
 	cmd, svc, game := setupDoVerifyFixSiblingTest(t)
 
-	// Targeted setters, not a mutate-then-svc.SaveInstalledMod - see
-	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks (this
-	// straggler wasn't in Copilot round 8's three cited sites, but matches
-	// the same pattern - caught by grepping the whole file per the
-	// coordinator's instruction).
-	require.NoError(t, svc.SetModDeployed(context.Background(), "test-src", "mod1", game.ID, "default", true))
-	require.NoError(t, svc.SetModLinkMethod(context.Background(), "test-src", "mod1", game.ID, "default", domain.LinkSymlink))
-
+	// deployInstalledMod (ApplyDeploy) sets Deployed/LinkMethod via the same
+	// targeted per-field writes as SetModDeployed/SetModLinkMethod, not a
+	// full svc.SaveInstalledMod(...) upsert - see
+	// TestDoVerify_Fix_VersionMismatch_SiblingProfile_Deployed_Relinks - and
+	// also deploys the real file this test needs.
 	primaryMod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &primaryMod.Mod, "default"))
+	deployInstalledMod(t, svc, game, &primaryMod.Mod, "default")
 
 	// Force the PRIMARY's own re-link to fail (same read-only-game-dir
 	// trick as TestDoVerify_Fix_VersionMismatch_Deployed_RelinkFails_ClearsDeployedFlag).

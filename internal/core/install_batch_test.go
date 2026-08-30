@@ -614,7 +614,7 @@ func TestService_PlanInstallMany_PerformsZeroMutations(t *testing.T) {
 
 	// Unrelated pre-existing state to prove untouched.
 	seedInstalledMod(t, svc, game, "test-src", "existing", "1.0", true, map[string][]byte{"existing.esp": []byte("e")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "existing", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
 
 	beforeMods, err := svc.GetInstalledMods(context.Background(), "g1", "default")

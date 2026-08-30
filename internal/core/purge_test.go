@@ -42,7 +42,7 @@ func installDeleteBlockingTrigger(t *testing.T, dbPath string) {
 // (cache + DB record + deployed files - the state `lmm purge` starts from).
 func installSeededMod(t *testing.T, svc *core.Service, game *domain.Game, modID string) {
 	t.Helper()
-	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game, &domain.Mod{ID: modID, SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	require.NoError(t, svc.GetInstallerForTest(game).Install(context.Background(), game, &domain.Mod{ID: modID, SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
 }
 
 func TestService_PurgeProfile_PurgesAll_MarksNotDeployed_EmitsPerModEvents(t *testing.T) {

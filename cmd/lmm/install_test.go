@@ -909,9 +909,8 @@ func TestDoInstall_DependencyPath_ReinstallPrintsRemovingPreviousInstallation(t 
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1-old.esp", []byte("old")))
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 
 	dep := &domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"}
 	root := &domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1",
@@ -997,8 +996,7 @@ func TestDoInstall_DependencyPath_ConflictsNeverBlockStdin(t *testing.T) {
 		Enabled:      true,
 	}))
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "other", "1.0", "mod1.esp", []byte("o")))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 
 	oldStdin := os.Stdin
 	stdinR, stdinW, perr := os.Pipe()
@@ -1058,8 +1056,7 @@ func seedConflictingMod(t *testing.T, svc *core.Service, game *domain.Game) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "shared.esp", []byte("n")))
 }
 
@@ -1184,8 +1181,7 @@ func TestDoInstall_ConflictPrompt_FreshUncachedInstall(t *testing.T) {
 			UpdatePolicy: domain.UpdateNotify,
 			Enabled:      true,
 		}))
-		installer := svc.GetInstaller(game)
-		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default"))
+		deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: "g1"}, "default")
 	}
 
 	t.Run("decline preserves the other mod's file untouched", func(t *testing.T) {

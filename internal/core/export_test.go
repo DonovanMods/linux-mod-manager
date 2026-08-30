@@ -26,6 +26,14 @@ func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game 
 	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
 }
 
+// GetInstallerForTest exposes getInstaller, unexported by Phase 3 Ruling 10:
+// every production flow builds its own installer internally, but core's own
+// fixtures hand-drive an *Installer to deploy a mod without going through a
+// full PlanDeploy/ApplyDeploy round-trip.
+func (s *Service) GetInstallerForTest(game *domain.Game) *Installer {
+	return s.getInstaller(game)
+}
+
 // EnabledMergeSourcesForTest exposes enabledMergeSources.
 func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
 	return s.enabledMergeSources(ctx, game, profileName)

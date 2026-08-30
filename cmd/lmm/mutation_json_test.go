@@ -772,8 +772,7 @@ func seedConflictingOwner(t *testing.T, svc *core.Service, game *domain.Game) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game,
-		&domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: game.ID}, "default")
 }
 
 func TestJSONGolden_Install(t *testing.T) {

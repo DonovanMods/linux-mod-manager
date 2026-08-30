@@ -416,8 +416,7 @@ func TestDoProfileSwitch_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *te
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 	// seedDeployableMod only seeds the cache/DB/profile - actually deploy the
 	// mod first so there is a real symlink to corrupt.
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default")
 	// Corrupt the deployed symlink so Uninstall fails deterministically.
 	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
@@ -947,8 +946,7 @@ func TestDoProfileApply_VersionDrift_ReplacesDeployedMod_EndToEnd(t *testing.T) 
 		Deployed:     true,
 		FileIDs:      []string{"new"},
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default")
 	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
 
@@ -1114,8 +1112,7 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 		Deployed:     true,
 		FileIDs:      []string{"new"},
 	}))
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: "test-src", Version: "1.5", GameID: game.ID}, "default")
 	_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
 
