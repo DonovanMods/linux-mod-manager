@@ -116,7 +116,8 @@ internal/
     ├── profile_reorder.go # profile-reorder flow: ReorderProfileMods/ResolveReorder (`lmm profile reorder`)
     ├── profile.go         # ProfileManager: ctx-threaded profile CRUD (Ruling 11) + ProfileResult
     ├── adopt.go           # adopt flow: ScanLocal/PlanAdopt/ApplyAdopt (`lmm import` scan mode)
-    ├── import_archive.go  # archive-import flow: ImportArchive (`lmm import <archive>`)
+    ├── import_archive.go  # archive-import flow: PlanImportArchive/ApplyImportArchive (`lmm import <archive>`)
+    ├── archive_listing.go # archive listing + the member normalisation the plan and the ingest share
     ├── game_detect.go     # game-detect flow: GameFromDetected/ApplyGameDetect (`lmm game detect`)
     ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
     ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)

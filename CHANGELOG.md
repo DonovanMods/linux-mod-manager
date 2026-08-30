@@ -34,8 +34,10 @@ restarting per source (#283); a profile export round-trips hook overrides
 through import (#296); dry-run merged-artifact lines only print when the
 artifact would actually change (Ruling 8); cancellation mid-mutation always
 finishes a database write's paired profile write rather than splitting the
-two (Ruling 16); and a declined import conflict on a reproducible identity
-does not restore the entry it overwrote (#310).
+two (Ruling 16); a declined import conflict on a reproducible identity
+does not restore the entry it overwrote (#310); and an accepted
+`import <archive>` conflict no longer reprints the import readout or mints a
+second mod ID (Ruling 18).
 
 Building lmm now requires Go 1.27. Config and data directories now honor
 `XDG_CONFIG_HOME`/`XDG_DATA_HOME` by default, falling back to the legacy
@@ -500,11 +502,21 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   a `PurgeResult`, matching `import`/`profile switch`/`profile apply`/`profile sync`'s identical
   dry-run/json ordering (phase-end review Important 1). Plain-text `--dry-run` on an empty profile
   is unchanged. (#306)
-- `lmm import <archive> --dry-run` no longer silently performs a real import. The archive form has
-  no plan to preview yet, so `--dry-run` is now rejected with an error (`--dry-run` is not
-  supported for archive imports yet ...) before any side effect — no DB row, no deployed files, no
-  cache entry — instead of ignoring the flag. Fixing this properly (an `ImportArchivePlan`) is
-  tracked as #314; scan-mode `--dry-run` is unaffected. (#314)
+- `lmm import <archive> --dry-run` previews the import instead of performing it. The archive form
+  now has a real Plan/Apply pair (`core.ImportArchivePlan`): the archive's table of contents is
+  READ — `archive/zip` natively, `7z l -slt` for `.7z`/`.rar` — never extracted, so a preview
+  names the mod, its resolved version, the files it would deploy, any file it would overwrite,
+  the merged-artifact effect on a compile game and the hooks that would run, while leaving no DB
+  row, no deployed file, no cache entry and nothing in the staging root. `--dry-run --json` emits
+  the plan document. Between the close wave and this change the flag was rejected outright with
+  an error; scan-mode `--dry-run` is unaffected throughout. (#314)
+- `lmm import <archive>`'s readout prints once per import, and the ID it prints is the ID saved
+  (**Ruling 18**). Accepting a file-conflict prompt used to re-run the whole import, reprinting
+  the `Fetching metadata…` / `Mod:` / `Source:` / `ID:` / `Version:` / `Files:` block between the
+  prompt and `Deploying to game directory…`; for an archive with no `--id`, that re-run also
+  minted a _second_ local mod ID, so the ID on screen was not the one written to the database.
+  The command now plans once, prompts from the plan, and applies once. No other line changes; a
+  forced or conflict-free import is byte-identical. (#314)
 
 ### Removed
 
