@@ -755,16 +755,16 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 ### Global Flags
 
-| Flag          | Short | Description                                                                                                                                                                                 |
-| ------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                                                                    |
-| `--verbose`   | `-v`  | Enable verbose output                                                                                                                                                                       |
-| `--config`    |       | Custom config directory                                                                                                                                                                     |
-| `--data`      |       | Custom data directory                                                                                                                                                                       |
-| `--json`      |       | Output JSON instead of text for most commands (three exceptions, below); mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
-| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                                                                |
-| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                                                              |
-| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                                                             |
+| Flag          | Short | Description                                                                                                                                                                                |
+| ------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                                                                   |
+| `--verbose`   | `-v`  | Enable verbose output                                                                                                                                                                      |
+| `--config`    |       | Custom config directory                                                                                                                                                                    |
+| `--data`      |       | Custom data directory                                                                                                                                                                      |
+| `--json`      |       | Output JSON instead of text for most commands (five exceptions, below); mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
+| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                                                               |
+| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                                                             |
+| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                                                            |
 
 Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
 
@@ -778,9 +778,12 @@ stderr; stderr stays empty except for `--log-level` diagnostics, so
 deterministic, so two runs over the same state produce byte-identical
 output.
 
-**Three commands don't honor `--json` yet** and always print plain text
-regardless of the flag: `lmm profile list`, `lmm auth status`, and
-`lmm profile export` (#309).
+**Five commands don't honor `--json` yet** and always print plain text
+regardless of the flag: `lmm profile list`, `lmm auth status`,
+`lmm profile export`, `lmm source validate` and `lmm game show-default`
+(#309). `lmm game show-default` is also the one place the "stderr stays
+empty" rule above doesn't hold: it writes its line to stderr rather than
+stdout, so `--json` on it yields an empty document.
 
 On failure the document is an envelope instead:
 
