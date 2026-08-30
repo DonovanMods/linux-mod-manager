@@ -193,7 +193,7 @@ Examples:
 		}
 
 		if !jsonOutput {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", args[0], def.Type, def.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s: valid (%s source %q)\n", report.Path, report.Type, report.ID)
 		}
 		if !sourceProbe {
 			if jsonOutput {
@@ -228,7 +228,7 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 	if jsonOutput {
 		return emitJSON(report)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "probe: %s\n", summary)
+	fmt.Fprintf(cmd.OutOrStdout(), "probe: %s\n", report.Probe.Summary)
 	return nil
 }
 
