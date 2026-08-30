@@ -11,6 +11,21 @@ import (
 // Test-only accessors for package core_test. This file is compiled only into
 // the test binary, so none of these are part of the production API.
 
+// DownloadModForTest exposes downloadMod behind the same beginOp gate the
+// exported DownloadMod that Phase 3 Ruling 10 removed used to take:
+// production reaches downloadMod directly through PlanInstall/ApplyInstall
+// and the other Apply* flows, but core's own fixtures need a genuine
+// download round-trip into the cache without the rest of an install's side
+// effects (deploy, DB writes, hooks).
+func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
+}
+
 // EnabledMergeSourcesForTest exposes enabledMergeSources.
 func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
 	return s.enabledMergeSources(ctx, game, profileName)

@@ -103,7 +103,7 @@ func TestAPISourceEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
-	result, err := svc.DownloadMod(ctx, "e2e-api", game, &mod, &files[0], nil)
+	result, err := svc.DownloadModForTest(ctx, "e2e-api", game, &mod, &files[0], nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	gameCache := svc.GetGameCache(game)

@@ -586,25 +586,18 @@ func (s *Service) SourceCapabilities(sourceID string) (source.Capabilities, erro
 	return source.CapabilitiesOf(src), nil
 }
 
-// DownloadMod downloads a mod file, extracts it, and stores it in the cache
+// downloadMod downloads a mod file, extracts it, and stores it in the cache.
 // Returns the download result including files extracted and checksum.
-// Multiple files from the same mod can be downloaded to the same cache location.
+// Multiple files from the same mod can be downloaded to the same cache
+// location.
 //
-// It stays EXPORTED with no production cmd caller (the install/update/deploy
-// flows all reach downloadMod internally): cmd/lmm/verify_test.go seeds its
-// fixtures by driving a real download round-trip through it, so unexporting
-// it would leave that test with no way to produce a genuine cache entry
-// plus checksum. Same reason SaveFileChecksum stays exported. Retire it only
-// together with a fixture that no longer needs a real download.
-func (s *Service) DownloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer release()
-	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
-}
-
+// Unexported by Phase 3 Ruling 10: every production caller (install, update,
+// deploy, profile apply/import, verify's redownload repair) already reached
+// this directly; the exported DownloadMod wrapper this replaced had no
+// caller of its own besides test fixtures. cmd/lmm's fixture
+// (verify_test.go) now seeds the same "cached, no checksum" state through
+// PlanInstall/ApplyInstall with InstallOptions.SkipVerify; internal/core's
+// own fixtures use the DownloadModForTest shim (export_test.go).
 func (s *Service) downloadMod(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (result *DownloadModResult, err error) {
 	return s.downloadModToCache(ctx, s.GetGameCache(game), sourceID, game, mod, file, sink)
 }

@@ -1866,16 +1866,20 @@ func setupDoVerifyDirectorySourceTest(t *testing.T, modDirName string, memberFil
 	mod, err := svc.GetMod(ctx, "my-mods", game.ID, modDirName)
 	require.NoError(t, err)
 
-	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
-		Mod: *mod, ProfileName: "default", Enabled: true, FileIDs: []string{"main"},
-	}))
-
 	if ingest {
-		files, err := svc.GetModFiles(ctx, "my-mods", mod)
+		// SkipVerify reproduces the exact "broken build" state: the real
+		// install path (PlanInstall/ApplyInstall) downloads and caches the
+		// mod's content but - matching downloadSelectedFiles' own
+		// "if !skipVerify && checksum != ..." gate - never calls
+		// SaveFileChecksum, leaving the NULL checksum this fixture needs.
+		plan, err := svc.PlanInstall(ctx, game, "default", "my-mods", modDirName, false)
 		require.NoError(t, err)
-		require.Len(t, files, 1)
-		_, err = svc.DownloadMod(ctx, "my-mods", game, mod, &files[0], nil)
+		_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{SkipVerify: true}, nil)
 		require.NoError(t, err)
+	} else {
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+			Mod: *mod, ProfileName: "default", Enabled: true, FileIDs: []string{"main"},
+		}))
 	}
 
 	verifyProfile = "default"

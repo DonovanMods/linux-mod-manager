@@ -155,7 +155,7 @@ func TestDownloadMod_DeployCompile_ValidatesAndRetainsNoPerModPak(t *testing.T) 
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "3.3"}
 	file := &domain.DownloadableFile{ID: "exmodz", FileName: "Bear_Mount.exmodz"}
 
-	result, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, src.validateCalls, "ingest must validate the .exmodz")
 	require.Equal(t, 0, src.compileCalls, "ingest must NOT compile a per-mod pak (#197: merged-only)")
@@ -199,7 +199,7 @@ func TestDownloadMod_DeployCompile_MalformedExmodz_FailsLoudAtIngest(t *testing.
 	mod := &domain.Mod{ID: "bad-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "exmodz", FileName: "Bad_Mount.exmodz"}
 
-	_, err = svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
 	require.Error(t, err)
 
 	gameCache := svc.GetGameCache(game)
@@ -300,7 +300,7 @@ func TestDownloadPakRetainsAndDeploysRaw(t *testing.T) {
 		mod := &domain.Mod{ID: "cool-mod", SourceID: "fake-compiler", GameID: "icarus", Version: "1.0"}
 		file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
 
-		result, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+		result, err := svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
 		require.NoError(t, err)
 		return svc, src, game, mod, file, result
 	}
@@ -386,7 +386,7 @@ func TestDownloadPak_NonMergeCompilerSource_FallsThroughToLegacyPath(t *testing.
 	mod := &domain.Mod{ID: "cool-mod", SourceID: "plain-source", GameID: "icarus", Version: "1.0"}
 	file := &domain.DownloadableFile{ID: "pak", FileName: "CoolMod.pak"}
 
-	result, err := svc.DownloadMod(context.Background(), "plain-source", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "plain-source", game, mod, file, nil)
 	require.NoError(t, err, "a pak from a non-MergeCompiler source must fall through to the legacy path, not hard-error")
 	require.Equal(t, 1, result.FilesExtracted)
 
@@ -446,7 +446,7 @@ func TestPakInstallThenSyncNeverDoubleApplies(t *testing.T) {
 	// and stages "CoolMod.pak" as the manifest's sole (raw-deploy default)
 	// member - see TestDownloadPakRetainsAndDeploysRaw for the same shape
 	// asserted directly.
-	downloadResult, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+	downloadResult, err := svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, downloadResult.FilesExtracted)
 
