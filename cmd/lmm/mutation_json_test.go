@@ -746,6 +746,54 @@ func TestJSONGolden_ImportArchive(t *testing.T) {
 	assertJSONCLIGolden(t, "import_archive_result", out)
 }
 
+// TestJSONGolden_ImportArchiveDryRun pins `import <archive> --dry-run --json`
+// (#314): the plan document, for the three shapes R-B5 names - a plain
+// archive, one whose deploy would overwrite another mod's file, and a
+// DeployCompile merge source whose import resyncs the merged artifact.
+func TestJSONGolden_ImportArchiveDryRun(t *testing.T) {
+	t.Run("plain", func(t *testing.T) {
+		svc, game := setupDoImportTest(t)
+		src := newFakeMatchSource("acme-source")
+		src.mods["999"] = &domain.Mod{ID: "999", SourceID: "acme-source", Name: "Acme Mod", Version: "2.0", GameID: game.ID}
+		svc.RegisterSource(src)
+		game.SourceIDs = map[string]string{"acme-source": game.ID}
+		importModID, importSource, importDryRun = "999", "acme-source", true
+
+		archiveDir := t.TempDir()
+		archivePath := filepath.Join(archiveDir, "mymod.zip")
+		createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
+
+		out := runJSONCommand(t, func() error {
+			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+		})
+		assertJSONCLIGolden(t, "import_archive_dry_run", out, archiveDir, "<ARCHIVE-DIR>")
+	})
+
+	t.Run("conflicting", func(t *testing.T) {
+		svc, game, archiveBPath := setupImportConflictTest(t)
+		importDryRun = true
+
+		out := runJSONCommand(t, func() error {
+			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archiveBPath})
+		})
+		assertJSONCLIGolden(t, "import_archive_dry_run_conflict", out, filepath.Dir(archiveBPath), "<ARCHIVE-DIR>")
+	})
+
+	t.Run("compile merge source", func(t *testing.T) {
+		svc, game, _ := setupDoImportCompileTest(t)
+		importDryRun = true
+
+		archiveDir := t.TempDir()
+		archivePath := filepath.Join(archiveDir, "Bear_Mount.exmodz")
+		require.NoError(t, os.WriteFile(archivePath, []byte("fake-exmodz-bytes"), 0o644))
+
+		out := runJSONCommand(t, func() error {
+			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
+		})
+		assertJSONCLIGolden(t, "import_archive_dry_run_compile", out, archiveDir, "<ARCHIVE-DIR>")
+	})
+}
+
 func TestJSONGolden_ImportScan(t *testing.T) {
 	t.Run("result", func(t *testing.T) {
 		svc, game := setupDoImportTest(t)

@@ -287,12 +287,11 @@ func setupDoImportTest(t *testing.T) (*core.Service, *domain.Game) {
 	return svc, game
 }
 
-// TestDoImport_ArchiveDryRun_RejectsWithNoSideEffects pins Important 2 of
-// the phase-end review: the archive form has no ImportArchivePlan yet
-// (#314), so --dry-run is rejected up front instead of silently performing
-// a real import - proven by checking every side effect ImportArchive would
-// have produced stays absent.
-func TestDoImport_ArchiveDryRun_RejectsWithNoSideEffects(t *testing.T) {
+// TestDoImport_ArchiveDryRun_PreviewsWithNoSideEffects replaces the Phase 3
+// close wave's rejection test: `import <archive> --dry-run` now renders
+// ImportArchivePlan (#314) instead of erroring, and it must still produce no
+// side effect at all - the same end-state assertions the rejection carried.
+func TestDoImport_ArchiveDryRun_PreviewsWithNoSideEffects(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
 	createTestArchive(t, archivePath, map[string]string{"mymod.esp": "data"})
@@ -303,10 +302,11 @@ func TestDoImport_ArchiveDryRun_RejectsWithNoSideEffects(t *testing.T) {
 		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
 	})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--dry-run is not supported for archive imports yet")
-	assert.Contains(t, err.Error(), "https://github.com/DonovanMods/linux-mod-manager/issues/314")
-	assert.Empty(t, out, "nothing prints ahead of the rejection")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Would import: mymod\n")
+	assert.Contains(t, out, "  Would deploy 1 file(s)\n")
+	assert.Contains(t, out, "  Would add to profile: default\n")
+	assert.Contains(t, out, "(dry run - no changes made)\n")
 
 	mods, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 	require.NoError(t, err)
@@ -316,11 +316,10 @@ func TestDoImport_ArchiveDryRun_RejectsWithNoSideEffects(t *testing.T) {
 	assert.Equal(t, "<empty>\n", dumpTree(t, svc.GetGameCachePath(game)), "no cache entry")
 }
 
-// TestDoImport_ArchiveDryRun_JSON_ReturnsTheSameBareError pins the --json
-// half: the rejection is a plain error (no Details() implementer), so
-// reportError renders it as the standard {"error": ...} envelope - the same
-// contract every other bare error gets under Ruling 15.
-func TestDoImport_ArchiveDryRun_JSON_ReturnsTheSameBareError(t *testing.T) {
+// TestDoImport_ArchiveDryRun_JSON_EmitsThePlan pins the --json half: Ruling
+// 15's one document on stdout is the plan, stderr stays empty, and nothing
+// is mutated.
+func TestDoImport_ArchiveDryRun_JSON_EmitsThePlan(t *testing.T) {
 	svc, game := setupDoImportTest(t)
 	withJSONOutput(t)
 	archivePath := filepath.Join(t.TempDir(), "mymod.zip")
@@ -332,10 +331,18 @@ func TestDoImport_ArchiveDryRun_JSON_ReturnsTheSameBareError(t *testing.T) {
 		return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
 	})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--dry-run is not supported for archive imports yet")
-	assert.Empty(t, out, "no document on stdout for a run that never mutated anything")
+	require.NoError(t, err)
 	assert.Empty(t, stderr)
+
+	var plan core.ImportArchivePlan
+	decodeSingleDoc(t, out, &plan)
+	assert.Equal(t, archivePath, plan.Archive)
+	assert.Equal(t, []string{"mymod.esp"}, plan.Files)
+
+	mods, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Empty(t, mods, "a dry run must not install anything")
+	assert.Equal(t, "<empty>\n", dumpTree(t, svc.GetGameCachePath(game)), "no cache entry")
 }
 
 // TestDoImport_IDDefault_SoleConfiguredSource_AutoResolves guards

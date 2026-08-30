@@ -373,19 +373,29 @@ func (s *Service) ImportArchive(ctx context.Context, game *domain.Game, profileN
 	if err != nil {
 		return &ImportArchiveResult{}, err
 	}
-	EmitImportArchiveReadout(game, plan, opts, sink)
+	if sink != nil && ImportEnrichmentRuns(game, opts) {
+		// The progress line for work PlanImportArchive already did. A
+		// frontend that renders a preview prints it AHEAD of the plan
+		// instead, where a progress line belongs.
+		sink(StepEvent{
+			Scope: Scope{Op: OpImport}, Phase: ImportArchiveFetching,
+			Detail: "Fetching metadata from " + opts.SourceID + "...",
+		})
+	}
+	EmitImportArchiveReadout(plan, sink)
 	return s.ApplyImportArchive(ctx, game, profileName, plan, opts, sink)
 }
 
 // EmitImportArchiveReadout emits the import readout a frontend renders from a
-// finished plan: the metadata-fetch progress line (only when the enrichment
-// actually ran - the same condition enrichImportedMod applies), the plan's
-// enrichment warnings, and the Mod/Source/ID/Version/Author/URL/Files block.
+// finished plan: the plan's enrichment warnings, then the
+// Mod/Source/ID/Version/Author/URL/Files block.
 //
-// It is the ONE place the readout is produced (Ruling 18: it prints once per
+// It is the ONE place that readout is produced (Ruling 18: it prints once per
 // user-level import, and the ID it prints is the ID the apply persists), so a
-// frontend never restates the vocabulary. sink may be nil.
-func EmitImportArchiveReadout(game *domain.Game, plan *ImportArchivePlan, opts ImportArchiveOptions, sink EventSink) {
+// frontend never restates the vocabulary. The metadata-fetch progress line is
+// deliberately NOT here: it announces work the plan does, so a caller emits it
+// before planning (see ImportEnrichmentRuns). sink may be nil.
+func EmitImportArchiveReadout(plan *ImportArchivePlan, sink EventSink) {
 	if sink == nil {
 		return
 	}
@@ -398,9 +408,6 @@ func EmitImportArchiveReadout(game *domain.Game, plan *ImportArchivePlan, opts I
 		sink(StepEvent{Scope: scope, Phase: phase, Detail: msg})
 	}
 
-	if importEnrichmentRuns(game, opts) {
-		step(ImportArchiveFetching, "Fetching metadata from "+opts.SourceID+"...")
-	}
 	for _, w := range plan.Warnings {
 		step(ImportArchiveWarning, w)
 	}
@@ -423,13 +430,13 @@ func EmitImportArchiveReadout(game *domain.Game, plan *ImportArchivePlan, opts I
 	step(ImportArchiveDetail, fmt.Sprintf("Files: %d", len(plan.Files)))
 }
 
-// importEnrichmentRuns reports whether PlanImportArchive would fetch source
+// ImportEnrichmentRuns reports whether PlanImportArchive would fetch source
 // metadata for this import - a real, non-local source that is mapped for the
-// game, plus a mod ID. It is the guard EmitImportArchiveReadout's "Fetching
-// metadata from..." line needs and the one a frontend printing that line
-// itself (ahead of the plan, where the progress line belongs) applies too, so
-// the three cannot disagree.
-func importEnrichmentRuns(game *domain.Game, opts ImportArchiveOptions) bool {
+// game, plus a mod ID. It is what gates the "Fetching metadata from <source>..."
+// progress line, which a frontend prints immediately BEFORE calling
+// PlanImportArchive (that is the work it announces); exported so cmd and the
+// ImportArchive convenience cannot disagree about when it applies.
+func ImportEnrichmentRuns(game *domain.Game, opts ImportArchiveOptions) bool {
 	if opts.ModID == "" || opts.SourceID == "" || opts.SourceID == domain.SourceLocal {
 		return false
 	}
