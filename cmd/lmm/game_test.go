@@ -249,6 +249,42 @@ func TestGameShowDefault_MalformedConfigYAML(t *testing.T) {
 	assert.NotContains(t, err.Error(), "initializing service:")
 }
 
+// TestGameShowDefault_NoDefault_NoSideEffects pins Important 2 (task A
+// review round 1): a read-only "no default" query must not create lmm.db or
+// cache/ under the data dir - proving Important 1's config-only-first fix
+// removes the side effect, for both plain and --json.
+func TestGameShowDefault_NoDefault_NoSideEffects(t *testing.T) {
+	assertNoSideEffects := func(t *testing.T) {
+		t.Helper()
+		assert.NoFileExists(t, filepath.Join(dataDir, "lmm.db"))
+		assert.NoDirExists(t, filepath.Join(dataDir, "cache"))
+	}
+
+	t.Run("plain", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configDir = tmpDir
+		dataDir = filepath.Join(tmpDir, "data")
+		cmd := &cobra.Command{}
+		cmd.SetOut(new(bytes.Buffer))
+		cmd.SetContext(context.Background())
+
+		require.NoError(t, runGameShowDefault(cmd, nil))
+		assertNoSideEffects(t)
+	})
+
+	t.Run("json", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configDir = tmpDir
+		dataDir = filepath.Join(tmpDir, "data")
+		withJSONOutput(t)
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+
+		_ = captureStdout(t, func() error { return runGameShowDefault(cmd, nil) })
+		assertNoSideEffects(t)
+	})
+}
+
 // TestDoGameShowDefault_JSON pins the DefaultGame document's framing (one
 // document, empty stderr) and its recorded golden (#309), for both the
 // "set, resolves" and "none set" shapes.
