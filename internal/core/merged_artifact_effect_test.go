@@ -199,6 +199,42 @@ func TestUninstallPlan_MergedArtifact_PredictsTheLiveUninstall(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr), "the live uninstall must remove what the plan said it would")
 }
 
+// TestUninstallPlan_MergedArtifact_PredictsTheLiveUninstall_ResyncOnStaleFingerprint
+// is the resync half of the prediction pair (Important #1): a stale STORED
+// fingerprint - a base-game patch since the last sync, #196's "Friday
+// recompile" - must be caught even when the uninstalled mod is not itself a
+// merge source, because syncMergedPak's own fast path compares the stored
+// fingerprint against the current one, not just "did this mod contribute".
+func TestUninstallPlan_MergedArtifact_PredictsTheLiveUninstall_ResyncOnStaleFingerprint(t *testing.T) {
+	svc, game, basePak := newMergedPakTestGame(t)
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear"))
+	seedPlainMod(t, svc, game, "plain", "plain.esp")
+	_, err := svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+	requireArtifactDeployed(t, game)
+
+	srcRaw, err := svc.GetSource("fake-compiler")
+	require.NoError(t, err)
+	src, ok := srcRaw.(*fakeCompilerSource)
+	require.True(t, ok)
+	require.Equal(t, 1, src.compileCalls, "fixture: the initial sync must have compiled once")
+
+	// Simulate a base-game patch since the last sync - the stored
+	// fingerprint is now stale, even though "plain" never contributed to
+	// the merge.
+	writeFakeBasePakWithTable(t, basePak, map[string][]byte{"AI/D_Other.json": []byte(`{"Rows":[{"Name":"x","V":1}]}`)})
+
+	opts := core.UninstallOptions{}
+	plan, err := svc.PlanUninstall(context.Background(), game, "default", "", "plain", opts)
+	require.NoError(t, err)
+	require.NotNil(t, plan.MergedArtifact, "a stale base pak must resync even though the uninstalled mod never merged")
+	require.Equal(t, core.MergedArtifactResync, plan.MergedArtifact.Action)
+
+	_, err = svc.ApplyUninstall(context.Background(), game, plan, opts)
+	require.NoError(t, err)
+	require.Equal(t, 2, src.compileCalls, "the live uninstall must really rebuild the artifact the plan said it would resync")
+}
+
 // TestPurgePlan_MergedArtifact_PredictsTheLivePurge is the purge half.
 func TestPurgePlan_MergedArtifact_PredictsTheLivePurge(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)

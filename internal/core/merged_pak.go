@@ -1123,10 +1123,15 @@ func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profile
 //     so a DEPLOYED artifact is a remove and an absent one is no change.
 //   - sources left, and the mod contributed one: the fingerprint moves, so
 //     the artifact is rebuilt (resync).
-//   - sources left, and the mod contributed none: the fingerprint is
-//     unchanged, so the sync fast-paths and nothing changes - UNLESS the
-//     artifact is missing from the game directory, which the fast path
-//     itself repairs by redeploying (#197 I5), also a resync.
+//   - sources left, and the mod contributed none: this uninstall leaves the
+//     merge INPUTS unaffected, but syncMergedPak's fast path also requires
+//     the STORED fingerprint to still match those inputs - so this compares
+//     the stored fingerprint against the current one (mergedFingerprintsEqual,
+//     the same comparison syncMergedPak makes). A stale stored fingerprint
+//     (e.g. a base-game patch since the last sync, #196) is a resync even
+//     though the mod itself changed nothing; only a genuine match, with the
+//     artifact present, is no change. An artifact missing from the game
+//     directory is always a resync (#197 I5), regardless of the fingerprint.
 //
 // Side-effect-free (reads only), like every other Plan input. It describes
 // the GAME DIRECTORY: a cache-entry deletion with no deployed artifact to
@@ -1168,6 +1173,25 @@ func (s *Service) mergedArtifactEffectForUninstall(ctx context.Context, game *do
 	case contributes, !deployed:
 		return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
 	default:
+		// The mod isn't itself a merge source, so removing it leaves the
+		// merge INPUTS unchanged - but syncMergedPak's fast path also needs
+		// the STORED fingerprint to still match those inputs. Consult the
+		// same comparison it makes (merged_pak.go:297-298) before claiming
+		// "nothing changes".
+		cachePath := s.GetGameCache(game).ModPath(game.ID, domain.SourceMerged, mergedPakModID, mergedPakVersion)
+		stored, ok := readMergedFingerprint(cachePath)
+		if !ok {
+			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+		}
+		current, _, cerr := s.currentMergedFingerprint(ctx, game, profileName)
+		if cerr != nil {
+			s.logger().Warn("computing current merge fingerprint failed while planning an uninstall",
+				"game_id", game.ID, "profile", profileName, "err", cerr)
+			return nil
+		}
+		if eq, eqErr := mergedFingerprintsEqual(current, stored, mc.ClassifyMergeSource); eqErr != nil || !eq {
+			return &MergedArtifactEffect{Action: MergedArtifactResync, Path: name}
+		}
 		return nil
 	}
 }
