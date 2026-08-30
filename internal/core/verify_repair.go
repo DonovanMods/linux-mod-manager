@@ -401,6 +401,7 @@ func fileIDsEqual(a, b []string) bool {
 // every inline fmt.Printf/fmt.Println (previously gated on !jsonOutput) is
 // now an unconditional VerifyEvRepairDetail emission, matching
 // repairModVersion's own port.
+//
 // cancelErr is non-nil only when the run was cancelled part-way through the
 // sibling sweep (v2 Phase 3 Ruling 16): a cancelled profile read or write
 // would otherwise repeat identically for every remaining sibling, turning one
