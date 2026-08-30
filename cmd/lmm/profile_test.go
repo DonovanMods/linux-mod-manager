@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -580,6 +581,90 @@ func TestDoProfileSwitch_LockedRefWarningSurvivesFatalSetDefaultError(t *testing
 	assert.Equal(t, switchLockRefusalWarning, stderr,
 		"Important 1: the accumulated #294 warning must survive the fatal path, not be silently dropped")
 	assert.Contains(t, out, "    ✓ Installed: Mod One\n", "the install itself succeeded before the later fatal SetDefault error")
+}
+
+// chmodDefaultProfileReadOnly makes doProfileSwitch's final SetDefault step
+// fail deterministically: SetDefault loads "target" (untouched, so an
+// install-loop lock refusal is unaffected) then saves the OLD default
+// profile to clear its flag, which an unwritable default.yaml refuses.
+func chmodDefaultProfileReadOnly(t *testing.T, game *domain.Game) {
+	t.Helper()
+	defaultPath := filepath.Join(configDir, "games", game.ID, "profiles", "default.yaml")
+	require.NoError(t, os.Chmod(defaultPath, 0o444))
+	t.Cleanup(func() { _ = os.Chmod(defaultPath, 0o644) })
+}
+
+// TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings pins the
+// unit Q review's M3 fix. The plain-text sibling above prints the
+// accumulated #294 warnings to stderr before returning the fatal error;
+// under --json that is forbidden (Ruling 15: one document on stdout, nothing
+// on stderr), so before this fix the warnings reached neither stream and the
+// silent DB-vs-profile divergence #294 exists to expose was silent again on
+// exactly this path. They now ride the error into the envelope's "details"
+// as {"warnings": [...]}, the core.ConflictError/gameDetectPartialError
+// convention.
+func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testing.T) {
+	svc, game := switchLockRefusalFixture(t)
+	chmodDefaultProfileReadOnly(t, game)
+	withJSONOutput(t)
+
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "setting default profile")
+	assert.Empty(t, stdout, "Ruling 15: the failing --json run emits no Result document of its own")
+	assert.Empty(t, stderr, "Ruling 15: nothing but the one document may reach the streams")
+
+	var warnErr *profileWarningsError
+	require.ErrorAs(t, err, &warnErr, "the fatal error must carry the accumulated warnings")
+	assert.Equal(t, []string{switchLockRefusalDetail}, warnErr.warnings)
+
+	envelope, envStderr, _ := captureStdoutStderrErr(t, func() error { reportError(err); return nil })
+	assert.Empty(t, envStderr)
+	assert.Contains(t, envelope, "\"details\": {\n    \"warnings\": [\n",
+		"M3: the envelope's details bucket is keyed \"warnings\"")
+	want := captureStdout(t, func() error {
+		return emitJSON(jsonErrorEnvelope{
+			Error:   err.Error(),
+			Details: profileWarningsDetails{Warnings: []string{switchLockRefusalDetail}},
+		})
+	})
+	assert.Equal(t, want, envelope, "M3: stdout is exactly the one error envelope")
+}
+
+// TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged is M3's
+// counterpart: with nothing accumulated, the same fatal path must still
+// produce the bare {"error": ...} envelope - no empty "details" bucket, no
+// new key - so the M3 wrapper is invisible to every run that has nothing to
+// report.
+func TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	_, err := getProfileManager(svc).Create(game.ID, "target")
+	require.NoError(t, err)
+	withProfileSwitchYes(t)
+	chmodDefaultProfileReadOnly(t, game)
+	withJSONOutput(t)
+
+	stdout, stderr, callErr := captureStdoutStderrErr(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.Error(t, callErr)
+	assert.Contains(t, callErr.Error(), "setting default profile")
+	assert.Empty(t, stdout)
+	assert.Empty(t, stderr)
+
+	var warnErr *profileWarningsError
+	assert.False(t, errors.As(callErr, &warnErr), "no warnings means no wrapper")
+
+	envelope := captureStdout(t, func() error { reportError(callErr); return nil })
+	assert.NotContains(t, envelope, "\"details\"", "an unwrapped fatal error carries no details bucket")
+	want := captureStdout(t, func() error {
+		return emitJSON(jsonErrorEnvelope{Error: callErr.Error()})
+	})
+	assert.Equal(t, want, envelope)
 }
 
 // seedApplyCandidateMod stores files (if any) in the game's cache and saves

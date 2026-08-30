@@ -267,9 +267,11 @@ edit` prints it as an error, so there it is prefixed with `Error: mod is locked:
   (the record in the database moves while the profile ref does not) but also any profile
   load/save failure (e.g. the profile going missing mid-run). The warning now prints
   unconditionally to stderr as `Warning: could not update …`, and is carried on the command's
-  `--json` document in `warnings` (stderr stays empty under `--json`). It was previously a
-  `--verbose`-only stdout note, so a default-verbosity run reported success with a silent
-  database-vs-profile divergence. (#294)
+  `--json` document in `warnings` (stderr stays empty under `--json`). If the run then fails
+  fatally, so that there is no result document to carry them, the `--json` error envelope
+  carries them instead as `details.warnings`. It was previously a `--verbose`-only stdout note,
+  so a default-verbosity run reported success with a silent database-vs-profile divergence.
+  (#294)
 - `lmm update --verbose`'s per-mod progress line (`n/total: <mod>`) now counts across every
   source's batch instead of restarting at 1 for each source. Checking mods from two sources used
   to print `1/3 … 3/3` then `1/2 … 2/2`; it now prints one unbroken `1/5 … 5/5`. Each source's own

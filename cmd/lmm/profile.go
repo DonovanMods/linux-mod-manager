@@ -470,9 +470,14 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		// error-path convention returns diagnostics accumulated before the
 		// failure alongside it, but the #294 install-loop warning below
 		// lives on result.Warnings, not on a live progress event - it was
-		// never printed above, so it must be printed here or it is silently
-		// dropped on the fatal path.
-		if !jsonOutput && result != nil {
+		// never printed above, so it must be surfaced here or it is
+		// silently dropped on the fatal path. Unit Q review M3: under
+		// --json stderr is off limits (Ruling 15), so the warnings ride the
+		// error into the envelope's "details" instead of vanishing.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &profileWarningsError{err: err, warnings: result.Warnings}
+			}
 			for _, w := range result.Warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 			}
@@ -809,10 +814,15 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 	if err != nil {
 		// Task 13 review round 1, Important 1: the #294 warning below lives
 		// on result.Warnings, not a live progress event, so it was never
-		// printed live - it must be printed here or it is silently dropped
+		// printed live - it must be surfaced here or it is silently dropped
 		// on the fatal path (ctx cancellation is the only reachable fatal
-		// error once a toUpdate entry has already warned).
-		if !jsonOutput && result != nil {
+		// error once a toUpdate entry has already warned). Unit Q review
+		// M3: under --json the envelope's "details" carries them, since
+		// Ruling 15 forbids the stderr line.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &profileWarningsError{err: err, warnings: result.Warnings}
+			}
 			for _, w := range result.Warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 			}
@@ -1069,10 +1079,15 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 	if err != nil {
 		// Task 13 review round 1, Important 1: the #294 warning above lives
 		// on result.Warnings, not a live progress event, so it was never
-		// printed live - it must be printed here or it is silently dropped
+		// printed live - it must be surfaced here or it is silently dropped
 		// on the fatal path (ctx cancellation is the only reachable fatal
-		// error once a ToInstall entry has already warned).
-		if !jsonOutput && result != nil {
+		// error once a ToInstall entry has already warned). Unit Q review
+		// M3: under --json the envelope's "details" carries them, since
+		// Ruling 15 forbids the stderr line.
+		if result != nil && len(result.Warnings) > 0 {
+			if jsonOutput {
+				return &profileWarningsError{err: err, warnings: result.Warnings}
+			}
 			for _, w := range result.Warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 			}
@@ -1111,4 +1126,41 @@ func profileApplyTarget(service *core.Service, game *domain.Game, args []string)
 		return "default"
 	}
 	return defaultProfile.Name
+}
+
+// profileWarningsError carries the diagnostics `lmm profile apply`/`sync`/
+// `switch` accumulated before a fatal error into the --json error envelope's
+// "details" field (unit Q review, M3). Plain text prints them to stderr, but
+// Ruling 15 keeps stderr empty under --json and reportError's envelope only
+// carries data for a typed error - so without this wrapper the #294 warnings
+// reached neither stream, leaving the DB-vs-profile divergence #294 exists
+// to expose silent on exactly this path.
+//
+// Only constructed when there is at least one warning, so a fatal run with
+// nothing to report still produces the bare {"error": ...} envelope.
+// Follows the core.ConflictError / gameDetectPartialError convention
+// (jsonout.go): Unwrap exposes err for errors.Is/As, Details() any is the
+// unnamed interface errorDetails picks up automatically.
+type profileWarningsError struct {
+	err      error
+	warnings []string
+}
+
+// Error returns the wrapped fatal failure's own message, so plain text and
+// the envelope's "error" field are unchanged by the wrapping.
+func (e *profileWarningsError) Error() string { return e.err.Error() }
+
+// Unwrap exposes the wrapped fatal error for errors.Is/As.
+func (e *profileWarningsError) Unwrap() error { return e.err }
+
+// Details returns the accumulated warnings for the --json error envelope's
+// "details" field.
+func (e *profileWarningsError) Details() any { return profileWarningsDetails{Warnings: e.warnings} }
+
+// profileWarningsDetails is profileWarningsError's wire shape: a named type
+// rather than a map so the "warnings" key is part of the JSON contract and
+// matches the same key on the ProfileApplyResult/ProfileSyncResult/
+// SwitchResult documents a SUCCESSFUL --json run emits.
+type profileWarningsDetails struct {
+	Warnings []string `json:"warnings"`
 }
