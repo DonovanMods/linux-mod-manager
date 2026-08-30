@@ -259,7 +259,7 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   2.0 → 1.0", "Recompile needed for `<mod>` (base pak updated).") followed by the refusal,
   whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
   Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
-edit` prints it as an error, so there it is prefixed with `Error: mod is locked: ` the way
+edit` prints it as an error, so there it is prefixed with `Error: mod is locked:` the way
   every failing command's message is. The same sentence is the `refusal` key on `lmm update
 --dry-run --json`'s plan document. (#294)
 - `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
