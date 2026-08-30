@@ -108,23 +108,16 @@ func init() {
 	rootCmd.AddCommand(authCmd)
 }
 
-// authCapableSources returns every registered source whose
-// CapabilitiesOf(src).Auth is true, sorted by ID. Built-ins are always
-// registered (app.Open registers them unconditionally), so they
-// always appear here alongside any auth-capable custom source - the
-// interactive picker and the "unsupported source" error hint derive their
-// source list from this single registry query (app.AuthCapableSources,
-// shared with `auth status`'s app.AuthStatus so the two can't disagree),
-// eliminating the old built-in-vs-custom special casing.
-func authCapableSources(service *core.Service) []source.ModSource {
-	return app.AuthCapableSources(service)
-}
-
 // authCapableSourceIDs returns the comma-joined, sorted IDs of every
 // registered auth-capable source, for the "unsupported source" error's hint
-// text.
+// text. Built-ins are always registered (app.Open registers them
+// unconditionally), so they always appear here alongside any auth-capable
+// custom source - this and promptForSource both draw from the same
+// registry query (app.AuthCapableSources, shared with `auth status`'s
+// app.AuthStatus so the two can't disagree), eliminating the old
+// built-in-vs-custom special casing.
 func authCapableSourceIDs(service *core.Service) string {
-	sources := authCapableSources(service)
+	sources := app.AuthCapableSources(service)
 	ids := make([]string, len(sources))
 	for i, src := range sources {
 		ids[i] = src.ID()
@@ -134,9 +127,9 @@ func authCapableSourceIDs(service *core.Service) string {
 
 // promptForSource displays an interactive menu listing every registered
 // auth-capable source (built-in and custom alike, sorted by ID - see
-// authCapableSources) and reads the user's numbered choice.
+// app.AuthCapableSources) and reads the user's numbered choice.
 func promptForSource(service *core.Service) (string, error) {
-	sources := authCapableSources(service)
+	sources := app.AuthCapableSources(service)
 	if len(sources) == 0 {
 		return "", fmt.Errorf("no auth-capable sources are registered")
 	}
