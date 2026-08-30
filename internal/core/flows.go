@@ -9,27 +9,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 )
 
-// sameFileIDSet reports whether selected is exactly the set of currentFileIDs
-// - the only provable "this update changes nothing" condition (see
-// guardNoOpUpdateSelection).
-func sameFileIDSet(selected []*domain.DownloadableFile, currentFileIDs []string) bool {
-	if len(currentFileIDs) == 0 {
-		return false
-	}
-	current := make(map[string]bool, len(currentFileIDs))
-	for _, id := range currentFileIDs {
-		current[id] = true
-	}
-	seen := make(map[string]bool, len(selected))
-	for _, f := range selected {
-		if !current[f.ID] {
-			return false
-		}
-		seen[f.ID] = true
-	}
-	return len(seen) == len(current)
-}
-
 // orderByProfile returns mods in a stable, deterministic order for
 // multi-mod operations (deploy, plan/apply): mods absent from profile.Mods
 // first - sorted by "SourceID:ID" key (domain.ModKey) for a reproducible
