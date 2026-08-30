@@ -441,7 +441,7 @@ func TestResolveLogoutSource(t *testing.T) {
 // package) and captures the menu text via captureStdout (defined in
 // auth_status_test.go) — both established patterns in this package for
 // exercising interactive prompts, so no extra seam-splitting was needed
-// beyond factoring the list-building itself into authCapableSources.
+// beyond factoring the list-building itself into app.AuthCapableSources.
 func TestPromptForSource_ListsAuthCapableRegistered(t *testing.T) {
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
@@ -606,7 +606,7 @@ func TestAuthLogin_StoredPath(t *testing.T) {
 }
 
 // TestAuthStatus_UniformIteration pins doAuthStatus's rewrite: a single pass
-// over authCapableSources instead of a hardcoded built-in tier plus a
+// over app.AuthCapableSources instead of a hardcoded built-in tier plus a
 // separate custom-source tier. Stock setup (both built-ins registered) plus
 // one custom auth source must all be listed exactly once, sorted by ID —
 // never double-listed by both tiers the way the old two-pass logic risked.
