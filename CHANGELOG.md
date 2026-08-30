@@ -487,6 +487,11 @@ verify` used to assemble inside the CLI now live in core, and their plain-text r
   a `PurgeResult`, matching `import`/`profile switch`/`profile apply`/`profile sync`'s identical
   dry-run/json ordering (phase-end review Important 1). Plain-text `--dry-run` on an empty profile
   is unchanged. (#306)
+- `lmm import <archive> --dry-run` no longer silently performs a real import. The archive form has
+  no plan to preview yet, so `--dry-run` is now rejected with an error (`--dry-run` is not
+  supported for archive imports yet ...) before any side effect — no DB row, no deployed files, no
+  cache entry — instead of ignoring the flag. Fixing this properly (an `ImportArchivePlan`) is
+  tracked as #314; scan-mode `--dry-run` is unaffected. (#314)
 
 ### Removed
 

@@ -31,7 +31,9 @@ Archive mode (an archive path given): imports that one specific mod file,
 deploying it and adding it to the profile. Pass --id (with --source, or
 it resolves automatically when the game has exactly one configured
 source, or prompts interactively when it has several) to fetch and
-attach source metadata as part of the import.
+attach source metadata as part of the import. --dry-run is rejected with
+an error here - there is no preview for this mode yet (see
+https://github.com/DonovanMods/linux-mod-manager/issues/314).
 
 .PP
 Either way, a mod that ends up unmatched to any remote source is
@@ -50,7 +52,7 @@ Examples:
 
 .SH OPTIONS
 \fB--dry-run\fP[=false]
-	preview what would be imported without making changes
+	preview what would be imported without making changes (scan mode only; rejected on an archive path, see --help)
 
 .PP
 \fB-f\fP, \fB--force\fP[=false]

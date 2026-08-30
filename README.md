@@ -829,25 +829,25 @@ shows up as a diff in review.
 Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
 that run would have applied:
 
-| Command                                  | Document                                                       |
-| ---------------------------------------- | -------------------------------------------------------------- |
-| `lmm install`                            | `core.InstallResult` — `{installed[], skipped[], failed[], …}` |
-| `lmm import <archive>`                   | `core.ImportArchiveResult` (conflicts need `--force`, above)   |
-| `lmm import` (scan)                      | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`  |
-| `lmm import --dry-run`                   | `core.AdoptPlan`                                               |
-| `lmm deploy`                             | `core.DeployResult` / `core.DeployPlan` under `--dry-run`      |
-| `lmm uninstall <mod-id>`                 | `core.UninstallResult` / `core.UninstallPlan`                  |
-| `lmm purge`                              | `core.PurgeResult` / `core.PurgePlan`                          |
-| `lmm profile apply`                      | `core.ProfileApplyResult` / `core.ProfileApplyPlan`            |
-| `lmm profile switch <name>`              | `core.SwitchResult` / `core.SwitchPlan`                        |
-| `lmm profile sync`                       | `core.ProfileSyncResult` / `core.ProfileSyncPlan`              |
-| `lmm profile import <file>`              | `core.ProfileImportResult`                                     |
-| `lmm profile create/delete/reorder`      | `core.ProfileResult` — `{profile{…}}`                          |
-| `lmm mod enable/disable`                 | `core.EnableResult` / `core.DisableResult` — `{changed, …}`    |
-| `lmm mod lock/unlock/set-update/convert` | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`  |
-| `lmm mod edit <mod-id>`                  | `core.RelinkResult` — `{mod{}, changes[], no_changes}`         |
-| `lmm game detect --all` / `--select`     | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`  |
-| `lmm game set-default` / `clear-default` | `core.SettingsResult` — `{default_game}`                       |
+| Command                                  | Document                                                                                                                                                    |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lmm install`                            | `core.InstallResult` — `{installed[], skipped[], failed[], …}`                                                                                              |
+| `lmm import <archive>`                   | `core.ImportArchiveResult` (conflicts need `--force`, above; `--dry-run` is rejected — [#314](https://github.com/DonovanMods/linux-mod-manager/issues/314)) |
+| `lmm import` (scan)                      | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`                                                                                               |
+| `lmm import --dry-run`                   | `core.AdoptPlan`                                                                                                                                            |
+| `lmm deploy`                             | `core.DeployResult` / `core.DeployPlan` under `--dry-run`                                                                                                   |
+| `lmm uninstall <mod-id>`                 | `core.UninstallResult` / `core.UninstallPlan`                                                                                                               |
+| `lmm purge`                              | `core.PurgeResult` / `core.PurgePlan`                                                                                                                       |
+| `lmm profile apply`                      | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                                                                         |
+| `lmm profile switch <name>`              | `core.SwitchResult` / `core.SwitchPlan`                                                                                                                     |
+| `lmm profile sync`                       | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                                                                           |
+| `lmm profile import <file>`              | `core.ProfileImportResult`                                                                                                                                  |
+| `lmm profile create/delete/reorder`      | `core.ProfileResult` — `{profile{…}}`                                                                                                                       |
+| `lmm mod enable/disable`                 | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                                                                                 |
+| `lmm mod lock/unlock/set-update/convert` | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                                                                               |
+| `lmm mod edit <mod-id>`                  | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                                                                      |
+| `lmm game detect --all` / `--select`     | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`                                                                                               |
+| `lmm game set-default` / `clear-default` | `core.SettingsResult` — `{default_game}`                                                                                                                    |
 
 **`--json` never prompts.** Every confirmation has a flag that decides it
 (`-y`/`--yes`, or `--force` where that is the existing meaning); without it
@@ -1024,7 +1024,7 @@ with `--json`, `--dry-run` emits the plan document itself rather than its render
 `lmm import` has two distinct modes, chosen by whether an archive path is given:
 
 - **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured — stopping at the first source that returns a result; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--dry-run` and `--skip-match` only apply to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
-- **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import.
+- **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import. `--dry-run` is rejected here with an error rather than silently ignored — there is no preview for this mode yet ([#314](https://github.com/DonovanMods/linux-mod-manager/issues/314)).
 
 Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it.
 
