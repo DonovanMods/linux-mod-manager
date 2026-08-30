@@ -116,3 +116,22 @@ func TestCheckPlanFresh_RemovedModIsStale(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrStalePlan))
 }
+
+// TestMergedArtifactAction_TextRoundTrip pins the typed enum's wire
+// behaviour: MarshalText/UnmarshalText round-trip both known values, and an
+// unknown value like a mistyped "resyncc" is rejected rather than silently
+// accepted (the defect a bare string const would allow).
+func TestMergedArtifactAction_TextRoundTrip(t *testing.T) {
+	for _, a := range []MergedArtifactAction{MergedArtifactResync, MergedArtifactRemove} {
+		b, err := a.MarshalText()
+		require.NoError(t, err)
+		assert.Equal(t, a.String(), string(b))
+
+		var back MergedArtifactAction
+		require.NoError(t, back.UnmarshalText(b))
+		assert.Equal(t, a, back)
+	}
+
+	var bad MergedArtifactAction
+	assert.Error(t, bad.UnmarshalText([]byte("resyncc")))
+}

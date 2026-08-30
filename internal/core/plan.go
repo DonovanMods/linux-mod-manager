@@ -105,7 +105,7 @@ func uninstallHookNames(hooks *ResolvedHooks, skipHooks bool) []string {
 // game, whether or not anything would actually change.
 type MergedArtifactEffect struct {
 	// Action is MergedArtifactResync or MergedArtifactRemove.
-	Action string `json:"action"`
+	Action MergedArtifactAction `json:"action"`
 
 	// Path is the artifact's game-dir-relative path - the compile source's
 	// own MergedArtifactName (#256), the same value DeployResult.
@@ -113,11 +113,34 @@ type MergedArtifactEffect struct {
 	Path string `json:"path"`
 }
 
-// MergedArtifactResync/MergedArtifactRemove are MergedArtifactEffect.Action's
-// two values: the artifact is rebuilt from the merge sources that remain
-// (which includes generating or redeploying a missing one), or it leaves the
-// game directory entirely.
+// MergedArtifactAction is MergedArtifactEffect.Action's type - a plain
+// string on the wire (json:"action"), but typed here so a stray literal like
+// "resyncc" cannot compile into the switch in cmd/lmm/uninstall.go, matching
+// the package's other typed-enum pattern (UpdateStatus).
+type MergedArtifactAction string
+
+// MergedArtifactResync/MergedArtifactRemove are MergedArtifactAction's two
+// values: the artifact is rebuilt from the merge sources that remain (which
+// includes generating or redeploying a missing one), or it leaves the game
+// directory entirely.
 const (
-	MergedArtifactResync = "resync"
-	MergedArtifactRemove = "remove"
+	MergedArtifactResync MergedArtifactAction = "resync"
+	MergedArtifactRemove MergedArtifactAction = "remove"
 )
+
+// String returns the action's wire name.
+func (a MergedArtifactAction) String() string { return string(a) }
+
+// MarshalText implements encoding.TextMarshaler.
+func (a MergedArtifactAction) MarshalText() ([]byte, error) { return []byte(a), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler.
+func (a *MergedArtifactAction) UnmarshalText(b []byte) error {
+	switch MergedArtifactAction(b) {
+	case MergedArtifactResync, MergedArtifactRemove:
+		*a = MergedArtifactAction(b)
+		return nil
+	default:
+		return fmt.Errorf("unknown merged artifact action %q", b)
+	}
+}
