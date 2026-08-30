@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
 // ModListing is one row of a ModList: the installed mod itself plus the
@@ -124,6 +125,77 @@ func (s *Service) ListProfileNames(ctx context.Context, gameID string) (*Profile
 		return nil, err
 	}
 	return &ProfileNames{GameID: gameID, Profiles: names}, nil
+}
+
+// ProfileListing is everything `lmm profile list` renders: one game's
+// profiles, in ProfileManager.List order, each carrying the same
+// ProfileSummary shape GameStatus.Profiles already uses (name, mod count,
+// default marker) - a query scoped to profiles alone rather than to one
+// game's whole status (#309).
+type ProfileListing struct {
+	GameID   string           `json:"game_id"`
+	Profiles []ProfileSummary `json:"profiles"`
+}
+
+// ListProfiles returns gameID's profiles as ProfileSummary rows, in
+// ProfileManager.List order - the document `lmm profile list --json`
+// emits; the plain NAME/MODS/DEFAULT table is rebuilt from it
+// byte-identically (#309).
+func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileListing, error) {
+	profiles, err := s.NewProfileManager().List(ctx, gameID)
+	if err != nil {
+		return nil, err
+	}
+	listing := &ProfileListing{GameID: gameID}
+	for _, p := range profiles {
+		listing.Profiles = append(listing.Profiles, ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault})
+	}
+	return listing, nil
+}
+
+// ExportProfile returns gameID/profileName's portable domain.ExportedProfile
+// value - the document `lmm profile export --json` emits; the plain path
+// keeps writing ProfileManager.Export's YAML bytes unchanged. Carries
+// exactly what the YAML export carries (config.ExportProfileValue is the
+// shared building block, including the installed-mods FileIDs backfill
+// (#309)).
+func (s *Service) ExportProfile(ctx context.Context, gameID, profileName string) (*domain.ExportedProfile, error) {
+	profile, err := s.NewProfileManager().loadForExport(ctx, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	return config.ExportProfileValue(profile), nil
+}
+
+// DefaultGame is `lmm game show-default --json`'s document (#309): Set is
+// false when no default game is configured, in which case ID/Name are both
+// empty. Name is empty when the configured ID no longer resolves via
+// GetGame (e.g. games.yaml was edited since) - matching the plain path's
+// own "Default game: <id>" (no name) fallback for that case.
+type DefaultGame struct {
+	Set  bool   `json:"set"`
+	ID   string `json:"id,omitzero"`
+	Name string `json:"name,omitzero"`
+}
+
+// DefaultGameInfo resolves the configured default game into the DefaultGame
+// report `lmm game show-default --json` emits: built on top of the
+// existing (*Service).DefaultGame (left unchanged - it has its own
+// internal callers and direct tests) rather than replacing it, with the
+// game's Name added when it still resolves (#309).
+func (s *Service) DefaultGameInfo(ctx context.Context) (*DefaultGame, error) {
+	id, err := s.DefaultGame(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if id == "" {
+		return &DefaultGame{}, nil
+	}
+	info := &DefaultGame{Set: true, ID: id}
+	if game, err := s.GetGame(id); err == nil {
+		info.Name = game.Name
+	}
+	return info, nil
 }
 
 // GameSummary is one row of a StatusReport: a configured game plus the

@@ -696,6 +696,26 @@ func TestJSONGoldens(t *testing.T) {
 			core.ProfileNames{GameID: "skyrim-se", Profiles: []string{"default", "survival"}},
 		},
 		{
+			// `lmm profile list --json`'s document (#309): the same
+			// ProfileSummary rows profile_summary/game_status pin, wrapped
+			// with the game_id stamp - two profiles so both the default
+			// marker and a non-default row are visible.
+			"profile_listing",
+			core.ProfileListing{GameID: "skyrim-se", Profiles: []core.ProfileSummary{
+				{Name: "default", ModCount: 3, IsDefault: true},
+				{Name: "survival", ModCount: 0, IsDefault: false},
+			}},
+		},
+		{
+			// Profiles deliberately left nil (no `omitempty` on the tag,
+			// task A review round 1, Minor 6) to pin that a game with no
+			// profiles marshals its listing as "[]", not "null" - the
+			// game_summary/mod_list precedent above, for the one new list
+			// document that lacked it.
+			"profile_listing_empty",
+			core.ProfileListing{GameID: "skyrim-se", Profiles: nil},
+		},
+		{
 			// Profiles is deliberately left nil (no `omitempty` on the tag) to
 			// pin that a game with no profiles marshals as "[]", not "null".
 			"game_summary",
@@ -720,6 +740,14 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			"profile_summary",
 			core.ProfileSummary{Name: "default", ModCount: 3, IsDefault: true},
+		},
+		{
+			// `lmm game show-default --json`'s document (#309): the fully
+			// populated shape - a game with no default set is the
+			// zero-value core.DefaultGame{}, already covered by every
+			// other golden's implicit "omitzero drops the key" pattern.
+			"default_game",
+			core.DefaultGame{Set: true, ID: "skyrim-se", Name: "Skyrim SE"},
 		},
 		{
 			// EffectiveLinkMethod deliberately differs from LinkMethod (the

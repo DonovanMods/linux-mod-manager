@@ -35,9 +35,11 @@ through import (#296); dry-run merged-artifact lines only print when the
 artifact would actually change (Ruling 8); cancellation mid-mutation always
 finishes a database write's paired profile write rather than splitting the
 two (Ruling 16); a declined import conflict on a reproducible identity
-does not restore the entry it overwrote (#310); and an accepted
-`import <archive>` conflict no longer reprints the import readout or mints a
-second mod ID (Ruling 18).
+does not restore the entry it overwrote (#310); `lmm game show-default`'s
+plain text moves from stderr to stdout, where every other command's plain
+text already lands (Ruling 17, #309); and an accepted `import <archive>`
+conflict no longer reprints the import readout or mints a second mod ID
+(Ruling 18).
 
 Building lmm now requires Go 1.27. Config and data directories now honor
 `XDG_CONFIG_HOME`/`XDG_DATA_HOME` by default, falling back to the legacy
@@ -98,6 +100,14 @@ phase's docs unit (#306).
   the same plan preview the live run shows, under a `<Verb> plan for profile "<name>" (dry run)`
   header, and change nothing — including the profile-creating and default-switching writes a
   no-changes run would otherwise still perform. (#303)
+- **`--json` on the five remaining commands.** `profile list`, `auth status`, `profile export`,
+  `source validate` and `game show-default` now honour `--json` too, closing the last gap left by
+  #303: `lmm profile list` emits `core.ProfileListing`; `lmm auth status` emits
+  `app.AuthStatusReport`; `lmm profile export` emits `domain.ExportedProfile` (the plain path keeps
+  writing the YAML document, unchanged); `lmm source validate` emits `app.SourceValidationReport`,
+  with an invalid definition (or a failed `--probe`) still exiting non-zero under an error envelope
+  whose `details` carries the report; `lmm game show-default` emits `core.DefaultGame` (see Ruling
+  17, above, for its plain-text stream move). (#309)
 
 ### Changed
 

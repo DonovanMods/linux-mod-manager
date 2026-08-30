@@ -1,0 +1,7 @@
+{
+  "id": "nexusmods",
+  "name": "NexusMods",
+  "authenticated": true,
+  "via": "stored",
+  "key_masked": "abc...xyz"
+}

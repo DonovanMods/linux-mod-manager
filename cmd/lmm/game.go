@@ -138,32 +138,65 @@ func doGameSetDefault(cmd *cobra.Command, service *core.Service, newDefault stri
 	return nil
 }
 
+// runGameShowDefault resolves the configured default game ID config-only
+// (getServiceConfig + ServiceConfig.DefaultGame, no DB open), matching the
+// pre-#309 behaviour: a malformed games.yaml or any other service-open
+// failure must not turn a successful "no default"/"bare ID" readout into a
+// hard error, and querying the default game must not create lmm.db/cache/
+// as a read-only side effect (task A review round 1, Important 1/2). A
+// service is opened only when a default IS set, and only best-effort, to
+// enrich the id with its game's Name - a lookup or open failure keeps the
+// bare-ID fallback doGameShowDefault already renders for an unresolvable
+// Name.
 func runGameShowDefault(cmd *cobra.Command, args []string) error {
 	svcCfg, err := getServiceConfig()
 	if err != nil {
 		return err
 	}
-	defaultGame, err := svcCfg.DefaultGame(cmd.Context())
+	id, err := svcCfg.DefaultGame(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	if defaultGame == "" {
-		cmd.Println("No default game set")
-		cmd.Println("Use 'lmm game set-default <game-id>' to set one")
-		return nil
-	}
-
-	// Try to get game name for display
-	if service, err := initService(cmd.Context()); err == nil {
-		defer closeService(service)
-		if game, err := service.GetGame(defaultGame); err == nil {
-			cmd.Printf("Default game: %s (%s)\n", game.Name, defaultGame)
-			return nil
+	info := &core.DefaultGame{}
+	if id != "" {
+		info.Set = true
+		info.ID = id
+		if service, err := initService(cmd.Context()); err == nil {
+			defer closeService(service)
+			if game, err := service.GetGame(id); err == nil {
+				info.Name = game.Name
+			}
 		}
 	}
 
-	cmd.Printf("Default game: %s\n", defaultGame)
+	return doGameShowDefault(cmd, info)
+}
+
+// doGameShowDefault renders an already-resolved DefaultGame query (#309).
+// Ruling 17 (recorded plain-text delta): the plain lines move from stderr -
+// an accident of cmd.Println/Printf, which write to Command.OutOrStderr() -
+// to stdout via cmd.OutOrStdout(); the bytes themselves are unchanged.
+func doGameShowDefault(cmd *cobra.Command, info *core.DefaultGame) error {
+	if jsonOutput {
+		return emitJSON(info)
+	}
+
+	out := cmd.OutOrStdout()
+	if !info.Set {
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(out, "No default game set")
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(out, "Use 'lmm game set-default <game-id>' to set one")
+		return nil
+	}
+	if info.Name != "" {
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintf(out, "Default game: %s (%s)\n", info.Name, info.ID)
+		return nil
+	}
+	//nolint:errcheck // best-effort console write
+	_, _ = fmt.Fprintf(out, "Default game: %s\n", info.ID)
 	return nil
 }
 

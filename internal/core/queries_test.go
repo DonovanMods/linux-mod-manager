@@ -8,6 +8,7 @@ package core_test
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"runtime"
@@ -18,6 +19,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -118,6 +120,168 @@ func TestListMods_EmptyProfileHasEmptyMods(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, list)
 	assert.Empty(t, list.Mods)
+}
+
+// --- ListProfiles ---
+
+// TestListProfiles_NamesModCountsAndDefault covers the document `lmm
+// profile list --json` renders: one ProfileSummary row per profile, in
+// ProfileManager.List order, each with its own mod count and default
+// marker - the same rows GameStatus.Profiles carries, for a query scoped to
+// profiles alone.
+func TestListProfiles_NamesModCountsAndDefault(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	seedProfileWithMod(t, svc, "g1", "default", "src", "b", "2.0")
+	_, err := svc.NewProfileManager().Create(ctx, "g1", "survival")
+	require.NoError(t, err)
+	require.NoError(t, svc.NewProfileManager().SetDefault(ctx, "g1", "default"))
+
+	listing, err := svc.ListProfiles(ctx, "g1")
+	require.NoError(t, err)
+	require.NotNil(t, listing)
+	assert.Equal(t, "g1", listing.GameID)
+	require.Len(t, listing.Profiles, 2)
+
+	byName := map[string]core.ProfileSummary{}
+	for _, p := range listing.Profiles {
+		byName[p.Name] = p
+	}
+	assert.Equal(t, 2, byName["default"].ModCount)
+	assert.True(t, byName["default"].IsDefault)
+	assert.Equal(t, 0, byName["survival"].ModCount)
+	assert.False(t, byName["survival"].IsDefault)
+}
+
+// TestListProfiles_NoProfilesIsEmptyNotNil pins the zero-profiles shape: the
+// listing itself is never nil, and its Profiles slice marshals as [] - not
+// merely assert.Empty (task A review round 1, Minor 6), which passes just
+// as well for nil as for "[]" and so never actually pinned the rendering.
+func TestListProfiles_NoProfilesIsEmptyNotNil(t *testing.T) {
+	listing, err := newFlowsTestService(t).ListProfiles(context.Background(), "g1")
+	require.NoError(t, err)
+	require.NotNil(t, listing)
+	assert.Equal(t, "g1", listing.GameID)
+	assert.Nil(t, listing.Profiles)
+
+	b, err := json.Marshal(listing)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"game_id":"g1","profiles":[]}`, string(b))
+}
+
+// --- ExportProfile ---
+
+// TestExportProfile_MatchesYAMLExportFields covers the document `lmm
+// profile export --json` renders: the same fields Export's YAML carries -
+// name, game, mods (with the installed-mod FileIDs backfill), the explicit
+// link method, hooks - reachable without decoding the YAML bytes.
+func TestExportProfile_MatchesYAMLExportFields(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: "g1"},
+		ProfileName: "default",
+		FileIDs:     []string{"111", "222"},
+	}))
+
+	exported, err := svc.ExportProfile(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, exported)
+	assert.Equal(t, "default", exported.Name)
+	assert.Equal(t, "g1", exported.GameID)
+	require.Len(t, exported.Mods, 1)
+	assert.Equal(t, []string{"111", "222"}, exported.Mods[0].FileIDs, "the DB-backed FileIDs backfill, same as the YAML export")
+	assert.Empty(t, exported.LinkMethod, "no explicit link method was set")
+
+	// Must match the YAML path's own field mapping exactly - never diverge.
+	yamlBytes, err := svc.NewProfileManager().Export(ctx, "g1", "default")
+	require.NoError(t, err)
+	assert.Contains(t, string(yamlBytes), "111")
+	assert.Contains(t, string(yamlBytes), "222")
+}
+
+// TestExportProfile_JSONMatchesYAMLRoundTrip is the round-trip guard the
+// R-A3 brief requires (task A review round 1, Important 3): decode the
+// plain YAML export back into a domain.ExportedProfile via the SAME
+// config.ExportProfileValue building block Service.ExportProfile itself
+// uses, and assert field equality against the --json document. Exercises
+// explicit hook overrides (writeProfileWithHooks, shared with
+// profile_export_hooks_test.go) since the hooks tri-state is the one place
+// the two encodings genuinely diverge in representation - YAML's
+// *string-pointer form (serializeProfileHooks/parseProfileHooks) vs the
+// JSON Hooks/HooksExplicit pair.
+func TestExportProfile_JSONMatchesYAMLRoundTrip(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	configDir := svc.ConfigDir()
+	writeProfileWithHooks(t, configDir, "g1", "modded", "/opt/lmm/cleanup.sh")
+
+	jsonExported, err := svc.ExportProfile(ctx, "g1", "modded")
+	require.NoError(t, err)
+
+	yamlBytes, err := svc.NewProfileManager().Export(ctx, "g1", "modded")
+	require.NoError(t, err)
+
+	roundTripped, err := config.ImportProfile(yamlBytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, jsonExported, config.ExportProfileValue(roundTripped), "the YAML export must decode back to the same fields the --json document carries")
+	assert.True(t, jsonExported.HooksExplicit.Install.AfterAll, "sanity: the hooks tri-state must actually be exercised")
+	assert.False(t, jsonExported.HooksExplicit.Install.BeforeAll)
+}
+
+// TestExportProfile_MissingProfile propagates the load error, matching the
+// YAML export path's own behaviour for a profile that doesn't exist.
+func TestExportProfile_MissingProfile(t *testing.T) {
+	svc := newFlowsTestService(t)
+	_, err := svc.ExportProfile(context.Background(), "g1", "nope")
+	assert.Error(t, err)
+}
+
+// --- DefaultGameInfo ---
+
+// TestDefaultGameInfo_NoneSet covers the "no default configured" shape:
+// Set false, ID/Name both empty.
+func TestDefaultGameInfo_NoneSet(t *testing.T) {
+	info, err := newFlowsTestService(t).DefaultGameInfo(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.False(t, info.Set)
+	assert.Empty(t, info.ID)
+	assert.Empty(t, info.Name)
+}
+
+// TestDefaultGameInfo_ResolvesName covers the common case: the configured
+// default game still resolves via GetGame, so Name is populated alongside
+// the ID.
+func TestDefaultGameInfo_ResolvesName(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	require.NoError(t, svc.SaveGame(ctx, &domain.Game{ID: "skyrim-se", Name: "Skyrim SE", ModPath: t.TempDir()}))
+	require.NoError(t, svc.SetDefaultGame(ctx, "skyrim-se"))
+
+	info, err := svc.DefaultGameInfo(ctx)
+	require.NoError(t, err)
+	assert.True(t, info.Set)
+	assert.Equal(t, "skyrim-se", info.ID)
+	assert.Equal(t, "Skyrim SE", info.Name)
+}
+
+// TestDefaultGameInfo_UnresolvableID matches the plain path's own
+// fallback: a configured default that no longer names a known game (e.g.
+// games.yaml was edited) still reports Set/ID, just with an empty Name.
+func TestDefaultGameInfo_UnresolvableID(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	require.NoError(t, svc.SetDefaultGame(ctx, "ghost-game"))
+
+	info, err := svc.DefaultGameInfo(ctx)
+	require.NoError(t, err)
+	assert.True(t, info.Set)
+	assert.Equal(t, "ghost-game", info.ID)
+	assert.Empty(t, info.Name)
 }
 
 // --- Status / GameStatus ---

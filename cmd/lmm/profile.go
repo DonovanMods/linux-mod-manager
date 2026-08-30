@@ -217,15 +217,21 @@ func runProfileList(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileList renders the ProfileListing query (#309): the plain
+// NAME/MODS/DEFAULT table (and "No profiles found." for an empty one) is
+// rebuilt from the same document --json emits, byte-identically to the
+// pre-#309 table that formatted straight from pm.List.
 func doProfileList(ctx context.Context, service *core.Service, game *domain.Game) error {
-	pm := getProfileManager(service)
-
-	profiles, err := pm.List(ctx, game.ID)
+	listing, err := service.ListProfiles(ctx, game.ID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
 
-	if len(profiles) == 0 {
+	if jsonOutput {
+		return emitJSON(listing)
+	}
+
+	if len(listing.Profiles) == 0 {
 		fmt.Println("No profiles found.")
 		return nil
 	}
@@ -238,12 +244,12 @@ func doProfileList(ctx context.Context, service *core.Service, game *domain.Game
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
-	for _, p := range profiles {
+	for _, p := range listing.Profiles {
 		defaultMark := ""
 		if p.IsDefault {
 			defaultMark = "*"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, len(p.Mods), defaultMark); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, p.ModCount, defaultMark); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
@@ -509,7 +515,18 @@ func runProfileExport(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileExport honours --json (#309) with the exported profile's JSON
+// form (core.Service.ExportProfile); the plain path is unchanged - it still
+// writes the YAML document ProfileManager.Export produces.
 func doProfileExport(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
+	if jsonOutput {
+		exported, err := service.ExportProfile(ctx, game.ID, name)
+		if err != nil {
+			return fmt.Errorf("exporting profile: %w", err)
+		}
+		return emitJSON(exported)
+	}
+
 	pm := getProfileManager(service)
 
 	data, err := pm.Export(ctx, game.ID, name)
