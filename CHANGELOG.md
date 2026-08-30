@@ -430,6 +430,14 @@ profiles}`).
   warnings, and the single-mod/import paths gain a `Warning: could not create profile: …` line
   ahead of the pre-existing `could not update profile` warning. No other output changes on any
   non-cancelled path. (#305)
+- `core.Service`'s fixture-only exports resolved (Ruling 10): `DownloadMod`, `GetInstaller`, and
+  `PurgeMergedPak` are unexported — production never called the exported forms, only test
+  fixtures did — with `cmd/lmm` tests re-seeded through the real `PlanInstall`/`ApplyInstall`,
+  `PlanDeploy`/`ApplyDeploy`, and `PurgeProfile` flows instead. `SaveInstalledMod`, `GetGameCache`,
+  `SyncMergedPak`, `SaveFileChecksum`, `AvailableModVersions`, `IsSourceAuthenticated`, `ScanLocal`,
+  `Logger`, `SetModLinkMethod`, `SetModDeployed`, and `DeleteInstalledMod` stay exported as
+  documented test-seed APIs or frontend-facing queries, each with a doc comment stating why. No
+  behavior change. (#305)
 
 ## [1.30.1] - 2026-08-08
 

@@ -139,6 +139,11 @@ func (s *Service) Close() error {
 
 // Logger returns the diagnostics logger this Service was constructed with
 // (ServiceConfig.Logger), or a discarding logger if none was given.
+//
+// No cmd caller today, but a long-running frontend needs its own access to
+// the configured logger - `lmm serve`'s intended consumer, same reasoning
+// as ScanLocal - so it is kept by ruling (Phase 3 Ruling 10) rather than
+// unexported (4 sites / 2 files as of Unit R).
 func (s *Service) Logger() *slog.Logger {
 	return s.logger()
 }
@@ -564,6 +569,11 @@ func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *d
 // reports, in first-seen order (#97).
 // Wraps source.ErrNotSupported (same format as ResolveVersionFiles) when
 // the file list carries no version info at all.
+//
+// No cmd caller today, but it is a non-mutating query a frontend can
+// legitimately need - `lmm serve`'s intended consumer, same reasoning as
+// ScanLocal - so it is kept by ruling (Phase 3 Ruling 10) rather than
+// unexported (2 sites / 1 file as of Unit R).
 func (s *Service) AvailableModVersions(ctx context.Context, sourceID string, mod *domain.Mod) ([]string, error) {
 	files, err := s.GetModFiles(ctx, sourceID, mod)
 	if err != nil {
@@ -1409,13 +1419,14 @@ func (s *Service) GlobalCacheDir() string {
 // GetGameCache returns a cache manager for the specified game.
 // Uses the game's cache_path if configured (game-scoped: paths omit gameID), otherwise the global cache.
 //
-// Exported for two reasons: dozens of core files call it internally (this
-// is the package's own cache accessor), and `mod files`'s last cmd caller
-// (v2 Phase 3 Task 10, #303) moved into ModFiles, leaving cmd/lmm test
-// fixtures across nearly every command area as the only EXTERNAL callers -
-// they seed cache files directly rather than running a full install. Kept
-// exported by the same SaveFileChecksum precedent (Ruling 10) rather than
-// rewriting that fixture surface.
+// Dozens of core files call it internally - this is the package's own
+// cache accessor - and `mod files`'s last cmd caller (v2 Phase 3 Task 10,
+// #303) moved into ModFiles, leaving cmd/lmm test fixtures as the only
+// EXTERNAL callers. Documented test-seed API kept by ruling (Phase 3
+// Ruling 10): no Plan/Apply substitute at fixture scale (69 sites / 28
+// files across cmd/lmm as of Unit R) - fixtures across nearly every
+// command area seed cache files directly rather than running a full
+// install. Not part of the frontend contract.
 func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {
 	if game.CachePath != "" {
 		gameCache := cache.NewGameScoped(game.CachePath)
@@ -1470,7 +1481,13 @@ func (s *Service) ListSourceTokens(ctx context.Context) ([]db.StoredToken, error
 	return s.db.ListTokens(ctx)
 }
 
-// IsSourceAuthenticated checks if a source has a stored API token
+// IsSourceAuthenticated checks if a source has a stored API token.
+//
+// No cmd caller today (`lmm auth status` reads via ListSourceTokens
+// instead), but it is a non-mutating query a frontend can legitimately
+// need - `lmm serve`'s intended consumer, same reasoning as ScanLocal - so
+// it is kept by ruling (Phase 3 Ruling 10) rather than unexported (5 sites
+// / 1 file as of Unit R).
 func (s *Service) IsSourceAuthenticated(ctx context.Context, sourceID string) bool {
 	has, err := s.db.HasToken(ctx, sourceID)
 	if err != nil {
@@ -1505,7 +1522,14 @@ func (s *Service) rollbackModVersion(ctx context.Context, sourceID, modID, gameI
 	return s.db.SwapModVersions(ctx, sourceID, modID, gameID, profileName)
 }
 
-// SetModLinkMethod sets the deployment method for an installed mod
+// SetModLinkMethod sets the deployment method for an installed mod.
+//
+// Documented test-seed API kept by ruling (Phase 3 Ruling 10): seeds DB
+// deploy state without touching disk so verify/repair tests can construct
+// DB-vs-disk divergence that no Plan/Apply produces (checked at Task 19:
+// ApplyDeploy would deploy the file for real, pre-empting the exact repair
+// behavior those tests exist to exercise); not part of the frontend
+// contract (6 sites / 2 files as of Unit R).
 func (s *Service) SetModLinkMethod(ctx context.Context, sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -1531,6 +1555,13 @@ func (s *Service) setModEnabled(ctx context.Context, sourceID, modID, gameID, pr
 }
 
 // SetModDeployed records whether a mod's files are currently deployed.
+//
+// Documented test-seed API kept by ruling (Phase 3 Ruling 10): seeds DB
+// deploy state without touching disk so verify/repair tests can construct
+// DB-vs-disk divergence that no Plan/Apply produces (checked at Task 19:
+// ApplyDeploy would deploy the file for real, pre-empting the exact repair
+// behavior those tests exist to exercise); not part of the frontend
+// contract (12 sites / 6 files as of Unit R).
 func (s *Service) SetModDeployed(ctx context.Context, sourceID, modID, gameID, profileName string, deployed bool) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -1546,14 +1577,14 @@ func (s *Service) setModDeployed(ctx context.Context, sourceID, modID, gameID, p
 
 // SaveInstalledMod persists an installed-mod record (insert or update).
 //
-// Exported only as a documented test-seed API (the SaveFileChecksum
-// precedent, Ruling 10): `mod edit`/`mod files` lost their own cmd callers
-// in v2 Phase 3 Task 10 (#303, replaced by ApplyRelinkMod/ModFiles), but
-// dozens of cmd/lmm test fixtures across nearly every command area (install,
-// deploy, uninstall, profile, update, verify...) call this directly to seed
-// an installed-mod DB row without running a full install - re-seeding all of
-// them through ApplyInstall was judged out of this task's scope (see the
-// task report). No production caller remains outside this package.
+// `mod edit`/`mod files` lost their own cmd callers in v2 Phase 3 Task 10
+// (#303, replaced by ApplyRelinkMod/ModFiles); no production caller remains
+// outside this package. Documented test-seed API kept by ruling (Phase 3
+// Ruling 10): no Plan/Apply substitute at fixture scale (68 sites / 30
+// files across cmd/lmm as of Unit R) - dozens of fixtures across nearly
+// every command area (install, deploy, uninstall, profile, update,
+// verify...) call this directly to seed an installed-mod DB row without
+// running a full install. Not part of the frontend contract.
 func (s *Service) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -1582,13 +1613,17 @@ func (s *Service) setModVersion(ctx context.Context, sourceID, modID, gameID, pr
 // DeleteInstalledMod removes the installed-mod record from the active
 // profile.
 //
-// Exported only as a documented test-seed API (the SaveFileChecksum
-// precedent, Ruling 10) - see SaveInstalledMod's doc comment. `mod edit`'s
-// re-link (ApplyRelinkMod) is its only production caller and reaches it
-// through the unexported deleteInstalledMod, already inside its own
-// beginOp; verify_convert_test.go seeds through this exported form to
-// simulate an uninstall without the full flow. No other production caller
-// remains outside this package.
+// `mod edit`'s re-link (ApplyRelinkMod) is its only production caller and
+// reaches it through the unexported deleteInstalledMod, already inside its
+// own beginOp; no other production caller remains outside this package.
+// Documented test-seed API kept by ruling (Phase 3 Ruling 10; see
+// SaveInstalledMod's doc comment) - checked at Task 19: both ApplyUninstall
+// and ApplyPurge additionally resync/purge the merged pak as part of
+// removing a mod, which is exactly what verify_convert_test.go's one
+// caller (TestVerifyReportsConversionFailed_UninstalledMod) must NOT
+// happen - it seeds a stale merged-pak fingerprint that outlives the mod it
+// names, so neither real flow is a substitute (3 sites / 3 files as of Unit
+// R). Not part of the frontend contract.
 func (s *Service) DeleteInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -1655,6 +1690,13 @@ func (s *Service) GetFilesWithChecksums(ctx context.Context, gameID, profileName
 }
 
 // SaveFileChecksum records the verified checksum for a downloaded mod file.
+//
+// No production caller remains outside this package (install/update record
+// a checksum through the unexported saveFileChecksum, inside their own
+// beginOp). Documented test-seed API kept by ruling (Phase 3 Ruling 10):
+// no Plan/Apply substitute - verify/repair fixtures need to seed a specific
+// checksum (present, stale, or absent) independently of any download; not
+// part of the frontend contract (35 sites / 5 files as of Unit R).
 func (s *Service) SaveFileChecksum(ctx context.Context, sourceID, modID, gameID, profileName, fileID, checksum string) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
