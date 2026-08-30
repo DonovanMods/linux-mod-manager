@@ -55,28 +55,28 @@ func (p *Profile) FindRef(sourceID, modID string) *ModReference {
 	return nil
 }
 
-// ExportedProfile is the portable format for sharing a profile: what
-// `lmm profile export` writes and `lmm profile import` reads back.
-//
-// The yaml tags describe the pre-#296 fields only. The hook pair below is
-// yaml:"-" because the exported file encodes hooks the same way a profile
-// file does - with *string pointers, so "unset (inherit from the game)" and
-// "explicitly disabled" stay distinguishable - which no tag on a
-// GameHooks/GameHooksExplicit pair can express. internal/storage/config owns
-// that encoding (parseProfileHooks/serializeProfileHooks) and marshals its
-// own YAML DTO around this type.
+// ExportedProfile is the JSON wire contract for a portable profile export -
+// what `lmm profile export --json` would emit. The YAML file `lmm profile
+// export` actually writes is a SEPARATE DTO, internal/storage/config's own
+// exportedProfileYAML, assembled directly from *Profile: the hook pair needs
+// the profile file's *string-pointer encoding to keep "unset (inherit from
+// the game)" and "explicitly disabled" distinguishable (#296), which no yaml
+// tag on a GameHooks/GameHooksExplicit pair can express, so this type carries
+// no yaml tags at all - internal/storage/config owns that encoding
+// (parseProfileHooks/serializeProfileHooks) instead of yaml-marshalling this
+// type.
 type ExportedProfile struct {
-	Name       string            `yaml:"name" json:"name"`
-	GameID     string            `yaml:"game_id" json:"game_id"`
-	Mods       []ModReference    `yaml:"mods" json:"mods"`
-	LinkMethod string            `yaml:"link_method,omitempty" json:"link_method,omitempty"`
-	Overrides  map[string]string `yaml:"overrides,omitempty" json:"overrides,omitempty"` // path (relative to game install) -> file content
+	Name       string            `json:"name"`
+	GameID     string            `json:"game_id"`
+	Mods       []ModReference    `json:"mods"`
+	LinkMethod string            `json:"link_method,omitempty"`
+	Overrides  map[string]string `json:"overrides,omitempty"` // path (relative to game install) -> file content
 
 	// Hooks/HooksExplicit carry the profile's own hook overrides through an
 	// export/import round trip (#296): before this they were silently
 	// dropped, so a shared profile lost every `hooks:` override it had.
 	// HooksExplicit is what distinguishes an explicitly-disabled hook (set,
 	// empty) from an unset one (inherit) - see Profile's own pair.
-	Hooks         GameHooks         `yaml:"-" json:"hooks"`
-	HooksExplicit GameHooksExplicit `yaml:"-" json:"hooks_explicit"`
+	Hooks         GameHooks         `json:"hooks"`
+	HooksExplicit GameHooksExplicit `json:"hooks_explicit"`
 }

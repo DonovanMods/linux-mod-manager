@@ -323,20 +323,15 @@ type exportedProfileYAML struct {
 
 // ExportProfile exports a profile to a portable format
 func ExportProfile(profile *domain.Profile) ([]byte, error) {
-	exported := domain.ExportedProfile{
-		Name:          profile.Name,
-		GameID:        profile.GameID,
-		Mods:          profile.Mods,
-		Hooks:         profile.Hooks,
-		HooksExplicit: profile.HooksExplicit,
-	}
+	var linkMethod string
 	if profile.LinkMethodExplicit {
-		exported.LinkMethod = profile.LinkMethod.String()
+		linkMethod = profile.LinkMethod.String()
 	}
+	var overrides map[string]string
 	if len(profile.Overrides) > 0 {
-		exported.Overrides = make(map[string]string)
+		overrides = make(map[string]string, len(profile.Overrides))
 		for path, content := range profile.Overrides {
-			exported.Overrides[path] = string(content)
+			overrides[path] = string(content)
 		}
 	}
 
@@ -344,12 +339,12 @@ func ExportProfile(profile *domain.Profile) ([]byte, error) {
 	// explicit override writes no hooks: key at all and its export stays
 	// byte-identical to every export made before #296.
 	data, err := yaml.Marshal(&exportedProfileYAML{
-		Name:       exported.Name,
-		GameID:     exported.GameID,
-		Mods:       exported.Mods,
-		LinkMethod: exported.LinkMethod,
-		Hooks:      serializeProfileHooks(exported.Hooks, exported.HooksExplicit),
-		Overrides:  exported.Overrides,
+		Name:       profile.Name,
+		GameID:     profile.GameID,
+		Mods:       profile.Mods,
+		LinkMethod: linkMethod,
+		Hooks:      serializeProfileHooks(profile.Hooks, profile.HooksExplicit),
+		Overrides:  overrides,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling exported profile: %w", err)
