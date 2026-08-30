@@ -218,3 +218,18 @@ func (s *Service) SearchAllSourcesForTest(ctx context.Context, gameID, query, ca
 func (s *Service) VerifyForTest(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
 	return s.verifyGated(ctx, game, profile, opts, sink)
 }
+
+// DataDirForTest exposes the Service's data dir (the DB and the download
+// staging root live under it), so a side-effect-free test can snapshot every
+// tree a flow is forbidden to touch.
+func (s *Service) DataDirForTest() string {
+	return s.dataDir
+}
+
+// DeployableFilesForTest exposes deployableFiles for mod's cache entry - the
+// exact list Installer.Install would link - so the archive-import plan's own
+// file list can be asserted equal to what the ingest actually cached (#314,
+// R-B5).
+func (s *Service) DeployableFilesForTest(game *domain.Game, mod *domain.Mod) ([]string, error) {
+	return deployableFiles(s.GetGameCache(game), game.ID, mod.SourceID, mod.ID, mod.Version)
+}

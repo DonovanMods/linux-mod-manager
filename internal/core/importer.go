@@ -127,8 +127,20 @@ func resolveImportIdentity(filename string, opts ImportOptions) importIdentity {
 	return importIdentity{sourceID: domain.SourceLocal, modID: uuid.New().String(), version: versionOrUnknown(), minted: true}
 }
 
-// Import imports a mod from a local archive file
-func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (result *ImportResult, err error) {
+// Import imports a mod from a local archive file, under the identity
+// resolveImportIdentity derives for it.
+func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (*ImportResult, error) {
+	return i.importWithIdentity(ctx, archivePath, game, opts, resolveImportIdentity(filepath.Base(archivePath), opts))
+}
+
+// importWithIdentity is Import under a CALLER-SUPPLIED identity - the one
+// PlanImportArchive already resolved (#314). It matters for an unlinked
+// archive, whose identity is a freshly minted uuid: letting the ingest mint
+// its own would give the apply a different ID from the one the plan printed
+// and the frontend prompted about (Ruling 18). For every other identity the
+// resolution is a pure function of filename and opts, so passing it in
+// changes nothing.
+func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions, ident importIdentity) (result *ImportResult, err error) {
 	// Validate archive exists
 	if _, err := os.Stat(archivePath); err != nil {
 		return nil, fmt.Errorf("archive not found: %w", err)
@@ -136,7 +148,6 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	filename := filepath.Base(archivePath)
 
-	ident := resolveImportIdentity(filename, opts)
 	sourceID, modID, version, autoDetected := ident.sourceID, ident.modID, ident.version, ident.autoDetected
 
 	var modName string
