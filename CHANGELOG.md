@@ -413,6 +413,16 @@ profiles}`).
 
 ### Internal
 
+- `internal/core/flows.go` and `flows_test.go` are gone, completing the series of moves CHANGELOG
+  entries for Units H, I, J, and M already recorded. The remaining flows move into subject-named
+  files: `EnableMod`/`DisableMod` (`mod_toggle.go`), `DeployPhase` and its
+  `String`/`MarshalText`/`UnmarshalText` (`phases.go`), `PlanProfileSwitch`/`ApplyProfileSwitch`
+  (`switch.go`), `PlanImport`/`ApplyImport` (`profile_import.go`), plus `runHook` (`hooks.go`),
+  `sameFileIDSet` (`selection.go`), and `orderByProfile` (`deploy.go`). The seven
+  `flows_*_test.go` files are renamed to match: `deploy_compile_readout_test.go`,
+  `deploy_selfheal_test.go`, `install_directory_test.go`, `install_test.go`, `rollback_test.go`,
+  `update_test.go`, `variant_exclusivity_test.go`. No user-visible change: CLI output is
+  byte-identical. (#305)
 - Cancellation mid-mutation can no longer leave a mod in the DB but absent from its profile (or
   vice-versa). Every profile-file write that completes an already-applied database mutation —
   install, dependency install, archive import, adopt, profile import, profile switch, uninstall,
@@ -428,8 +438,12 @@ profiles}`).
   but cannot be loaded (a parse error or a permissions error), so a batch install into such a
   profile now aborts up front instead of running to completion and reporting success with per-mod
   warnings, and the single-mod/import paths gain a `Warning: could not create profile: …` line
-  ahead of the pre-existing `could not update profile` warning. No other output changes on any
-  non-cancelled path. (#305)
+  ahead of the pre-existing `could not update profile` warning. A cancellation between that
+  profile-existence check and the DB row it completes is now reported (Skipped/Failed) instead of
+  silently dropped, so a first-ever install's dependency can no longer land in the database and
+  vanish from the result at once. A cancelled run also now prints `Cancelled.` to stderr in plain
+  mode before exiting 2 (`--json` stays silent, as `--json` output is otherwise unaffected). No
+  other output changes on any non-cancelled path. (#305)
 - `core.Service`'s fixture-only exports resolved (Ruling 10): `DownloadMod`, `GetInstaller`, and
   `PurgeMergedPak` are unexported — production never called the exported forms, only test
   fixtures did — with `cmd/lmm` tests re-seeded through the real `PlanInstall`/`ApplyInstall`,

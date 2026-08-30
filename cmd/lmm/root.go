@@ -315,11 +315,25 @@ func Execute() {
 	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {
 		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
+			printCancelledNotice(os.Stderr, jsonOutput)
 			os.Exit(2)
 		}
 		reportError(err)
 		os.Exit(1)
 	}
+}
+
+// printCancelledNotice names the cancellation on Execute's exit-2 path
+// (Ruling 16 addendum): plain mode alone gets "Cancelled." on stderr, since
+// exit 2 alone was otherwise silent even though `lmm --help` documents it as
+// "cancelled by the user" - Unit R final review Minor 3. --json emits
+// nothing extra here (Ruling 15): the JSON contract carries no envelope for
+// a cancellation exit.
+func printCancelledNotice(out io.Writer, jsonOutput bool) {
+	if jsonOutput {
+		return
+	}
+	fmt.Fprintln(out, "Cancelled.")
 }
 
 // reportError prints err in the active output format, unless the command
