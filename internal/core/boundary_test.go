@@ -1,7 +1,9 @@
 package core_test
 
 import (
+	"io/fs"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,7 +24,11 @@ import (
 //
 // internal/source itself and internal/source/httpclient are exempt: they
 // hold the interfaces/shared HTTP plumbing core is allowed to depend on, not
-// a concrete source.
+// a concrete source. The forbidden list itself is discovered by walking
+// internal/source (phase-end review Minor 3, Unit N M1 unfixed) rather than
+// hardcoded, so a future internal/source/gamebanana is picked up
+// automatically instead of silently unguarded by the very ratchet that
+// exists to catch it.
 func TestImportBoundary_NeverImportsConcreteSources(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", ".").Output()
 	require.NoError(t, err, "go list -deps ./internal/core")
@@ -33,9 +39,48 @@ func TestImportBoundary_NeverImportsConcreteSources(t *testing.T) {
 	}
 
 	const base = "github.com/DonovanMods/linux-mod-manager/internal/source/"
-	forbidden := []string{"nexusmods", "curseforge", "custom", "custom/metadata", "steam", "icarus"}
+	forbidden := concreteSourcePackages(t)
 	for _, pkg := range forbidden {
 		require.False(t, deps[base+pkg],
 			"internal/core must not import "+base+pkg+" - core consumes concrete sources only through internal/source's interfaces")
 	}
+}
+
+// concreteSourcePackages walks ../source and returns the import-path suffix
+// of every concrete source package found there (e.g. "nexusmods",
+// "custom/metadata"), excluding internal/source itself and
+// internal/source/httpclient - the interfaces and shared HTTP plumbing core
+// is allowed to depend on. A directory only counts as a package when it
+// holds at least one .go file (internal/source/steam/data is embedded YAML,
+// not a package).
+func concreteSourcePackages(t *testing.T) []string {
+	t.Helper()
+	root := filepath.Join("..", "source")
+
+	var pkgs []string
+	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." || rel == "httpclient" || strings.HasPrefix(rel, "httpclient"+string(filepath.Separator)) {
+			return nil
+		}
+		matches, err := filepath.Glob(filepath.Join(path, "*.go"))
+		if err != nil {
+			return err
+		}
+		if len(matches) > 0 {
+			pkgs = append(pkgs, filepath.ToSlash(rel))
+		}
+		return nil
+	}))
+	require.NotEmpty(t, pkgs, "expected to find concrete source packages under ../source")
+	return pkgs
 }
