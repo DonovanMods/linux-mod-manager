@@ -142,7 +142,7 @@ func runDeployDryRunGolden(t *testing.T, name string, setup func(t *testing.T) d
 	deployDryRun = true
 	t.Cleanup(func() { deployDryRun = false })
 
-	profileName, err := resolveProfile(fx.svc, fx.game.ID, deployProfile)
+	profileName, err := resolveProfile(context.Background(), fx.svc, fx.game.ID, deployProfile)
 	require.NoError(t, err)
 	before := snapshotDryRunState(t, fx.svc, fx.game, profileName)
 
@@ -292,12 +292,12 @@ func cacheMissingDryRunFixture(t *testing.T) deployDryRunFixture {
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "gone", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "gone", Version: "1.0"}))
 	return deployDryRunFixture{svc: svc, game: game}
 }
 
@@ -393,7 +393,7 @@ func noModsDryRunFixture(t *testing.T) deployDryRunFixture {
 	t.Helper()
 	svc, game := setupDoDeployTest(t)
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	return deployDryRunFixture{svc: svc, game: game}
 }

@@ -28,9 +28,9 @@ func newApplyTestService(t *testing.T) (*core.Service, *domain.Game) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 	return svc, game
 }
 
@@ -65,7 +65,7 @@ func TestPlanProfileApply_NoChanges(t *testing.T) {
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("x")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -88,8 +88,8 @@ func TestPlanProfileApply_ClassifiesDisableEnableInstall(t *testing.T) {
 
 	seedInstalledMod(t, svc, game, "src", "gone", "1.0", true, map[string][]byte{"gone.esp": []byte("x")})
 	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "new", Version: ""}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "new", Version: ""}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestPlanProfileApply_DisabledModCacheGone_SchedulesInstallWithDBFileIDs(t *
 		Enabled:      false,
 		FileIDs:      []string{"9"},
 	}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestPlanProfileApply_VersionDrift_RecordsReplaces(t *testing.T) {
 		Deployed:     true,
 		FileIDs:      []string{"10"},
 	}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestPlanProfileApply_MatchingVersion_IsNoop(t *testing.T) {
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.5", true, map[string][]byte{"mod1.esp": []byte("x")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestPlanProfileApply_ResolvesModAndCacheState(t *testing.T) {
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
 	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.5"), "10"))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -231,8 +231,8 @@ func TestPlanProfileApply_FetchFailure_RecordsEntryError(t *testing.T) {
 	mock.AddMod(game.ID, &domain.Mod{ID: "good", SourceID: "src", Name: "Good Mod", Version: "1.0", GameID: game.ID})
 	svc.RegisterSource(mock)
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ghost"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "good"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ghost"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "good"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err, "one unresolvable mod must not fail the whole plan")
@@ -263,7 +263,7 @@ func TestPlanProfileApply_OrdersBucketsByProfile(t *testing.T) {
 		seedInstalledMod(t, svc, game, "src", id, "1.0", false, map[string][]byte{id + ".esp": []byte("x")})
 	}
 	for _, id := range []string{"enC", "insB", "enA", "insC", "enB", "insA"} {
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: id, Version: "1.0"}))
 	}
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
@@ -293,7 +293,7 @@ func TestApplyProfileApply_DisableEnable_EndStateAndEvents(t *testing.T) {
 
 	seedInstalledMod(t, svc, game, "src", "gone", "1.0", true, map[string][]byte{"gone.esp": []byte("x")})
 	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
 
 	installer, err := svc.GetInstallerForProfileForTest(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -344,7 +344,7 @@ func TestApplyProfileApply_InstallLoop_DownloadsSavesAndUpserts(t *testing.T) {
 	mock.AddMod("external-id", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.5", GameID: "external-id"})
 	svc.RegisterSource(mock)
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -370,7 +370,7 @@ func TestApplyProfileApply_InstallLoop_DownloadsSavesAndUpserts(t *testing.T) {
 	assert.True(t, installed.Enabled)
 	assert.True(t, installed.Deployed)
 
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, []string{"9"}, profile.Mods[0].FileIDs, "the profile ref must record the downloaded FileIDs")
@@ -391,7 +391,7 @@ func TestApplyProfileApply_CachedEntry_SkipsDownload(t *testing.T) {
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
 	require.NoError(t, cache.MarkFileComplete(gameCache.ModPath(game.ID, "src", "mod1", "1.5"), "10"))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -430,7 +430,7 @@ func TestApplyProfileApply_VersionDrift_ReplacesLiveDeployment(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, installer.Install(context.Background(), game,
 		&domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -460,8 +460,8 @@ func TestApplyProfileApply_EntryError_ReportsAndContinues(t *testing.T) {
 	mock := newTwoVersionSource(t)
 	svc.RegisterSource(mock)
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ghost"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ghost"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -494,7 +494,7 @@ func TestApplyProfileApply_EnableLoop_InstallFailure_NotesAndSkipsEnable(t *test
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -544,8 +544,8 @@ func TestApplyProfileApply_InstallLoop_DownloadFailure_DownloadDoneFollowsFailur
 	registerDownloadableMod(t, mock, &domain.Mod{ID: "good", SourceID: "src", Name: "Good Mod", Version: "1.0", GameID: game.ID}, "good.esp", "plugin content")
 	svc.RegisterSource(mock)
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bad"}))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "good"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "bad"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "good"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -585,7 +585,7 @@ func TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
 	pm := svc.NewProfileManager()
 	svc.RegisterSource(newTwoVersionSource(t))
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Locked: true}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Locked: true}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -603,7 +603,7 @@ func TestApplyProfileApply_LockedRef_UpsertRefusalIsWarning(t *testing.T) {
 	assert.Contains(t, applyModPhases(*events), core.SwitchInstallWarning)
 	assert.NotContains(t, applyModPhases(*events), core.SwitchInstallNote)
 
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
 }
@@ -616,7 +616,7 @@ func TestApplyProfileApply_StalePlan(t *testing.T) {
 	pm := svc.NewProfileManager()
 
 	seedInstalledMod(t, svc, game, "src", "off", "1.0", false, map[string][]byte{"off.esp": []byte("x")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "off", Version: "1.0"}))
 
 	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
 	require.NoError(t, err)

@@ -2,7 +2,7 @@ package core_test
 
 // Tests for Service.PlanImport/ApplyImport - the behavior-preserving
 // extraction of cmd/lmm/profile.go's doProfileImport, per Phase 6b Task 8.
-// See internal/core/flows.go's PlanImport/ApplyImport/ImportPlan/
+// See internal/core/profile_import.go's PlanImport/ApplyImport/ImportPlan/
 // ProfileImportOptions/ProfileImportResult doc comments for the exact
 // behavior under test here (note: named ProfileImportOptions/
 // ProfileImportResult, not ImportOptions/ImportResult, to avoid colliding
@@ -43,7 +43,7 @@ func TestPlanImportCategorizes(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "other")
+	_, err := pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	// installed-mod: installed AND cached, but under "other" - only the
@@ -154,7 +154,7 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	assert.True(t, installed.Enabled)
 	assert.True(t, installed.Deployed, "installer.Install just succeeded, so the row must record Deployed")
 
-	savedProfile, err := svc.NewProfileManager().Get("g1", "target")
+	savedProfile, err := svc.NewProfileManager().Get(context.Background(), "g1", "target")
 	require.NoError(t, err)
 	require.Len(t, savedProfile.Mods, 1)
 	assert.Equal(t, []string{"1"}, savedProfile.Mods[0].FileIDs, "UpsertMod must record the downloaded FileIDs")
@@ -207,7 +207,7 @@ func TestApplyImportInstallFalse(t *testing.T) {
 	assert.Equal(t, 0, result.Installed)
 	assert.Equal(t, 0, result.Failed)
 
-	_, err = svc.NewProfileManager().Get("g1", "target")
+	_, err = svc.NewProfileManager().Get(context.Background(), "g1", "target")
 	require.NoError(t, err, "the profile must still be saved despite the decline")
 
 	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
@@ -253,9 +253,9 @@ func TestApplyImportForceOverwrite(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "src", ModID: "old-mod", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "src", ModID: "old-mod", Version: "1.0"}))
 
 	profile := &domain.Profile{Name: "target", GameID: "g1", Mods: []domain.ModReference{{SourceID: "src", ModID: "new-mod", Version: "1.0"}}}
 	data, err := config.ExportProfile(profile)
@@ -271,7 +271,7 @@ func TestApplyImportForceOverwrite(t *testing.T) {
 		assert.Contains(t, err.Error(), "profile already exists: target")
 		assert.NotNil(t, result, "partial-result convention: a non-nil result must accompany the error")
 
-		saved, gerr := pm.Get(game.ID, "target")
+		saved, gerr := pm.Get(context.Background(), game.ID, "target")
 		require.NoError(t, gerr)
 		require.Len(t, saved.Mods, 1)
 		assert.Equal(t, "old-mod", saved.Mods[0].ModID)
@@ -282,7 +282,7 @@ func TestApplyImportForceOverwrite(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "target", result.ProfileName)
 
-		saved, gerr := pm.Get(game.ID, "target")
+		saved, gerr := pm.Get(context.Background(), game.ID, "target")
 		require.NoError(t, gerr)
 		require.Len(t, saved.Mods, 1)
 		assert.Equal(t, "new-mod", saved.Mods[0].ModID)
@@ -442,7 +442,7 @@ func TestApplyImportRedownloadUsesStoredFileIDs(t *testing.T) {
 	mock.AddDownload("stored", storedContent)
 
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	// A prior install recorded FileIDs=["stored"], but its cache entry is
 	// gone - a cache-miss redownload.
@@ -511,7 +511,7 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 	mock.AddDownload("1", zipContent)
 
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	// A prior install recorded FileIDs=["1"], but its cache entry is gone -
 	// a cache-miss redownload, matching TestApplyImportRedownloadUsesStoredFileIDs's setup.
@@ -653,7 +653,7 @@ func TestPlanImport_VersionDrift_SchedulesReinstall(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "other")
+	_, err := pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	// All three installed AND cached at their recorded versions - pre-#138,
@@ -706,9 +706,9 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	mock := newTwoVersionSource(t)
 	svc.RegisterSource(mock)
@@ -723,11 +723,11 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 		Deployed:     true,
 		FileIDs:      []string{"10"},
 	}))
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
 	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	profile := &domain.Profile{
 		Name: "stable", GameID: "g1",
@@ -760,7 +760,7 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
 	assert.NoError(t, err, "the new 1.0 file must be deployed")
 
-	saved, err := pm.Get("g1", "stable")
+	saved, err := pm.Get(context.Background(), "g1", "stable")
 	require.NoError(t, err)
 	require.Len(t, saved.Mods, 1)
 	assert.True(t, saved.Mods[0].Locked, "the imported lock must survive the convergence UpsertMod")
@@ -779,9 +779,9 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 
 	mock := newTwoVersionSource(t)
 	svc.RegisterSource(mock)
@@ -801,9 +801,9 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 		Deployed:     true,
 		FileIDs:      []string{"10"},
 	}))
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
 
 	profile := &domain.Profile{
 		Name: "stable", GameID: "g1",

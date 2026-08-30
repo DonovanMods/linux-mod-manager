@@ -185,7 +185,7 @@ type ProfileApplyResult struct {
 func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profileName string) (*ProfileApplyPlan, error) {
 	pm := s.NewProfileManager()
 
-	profile, err := pm.Get(game.ID, profileName)
+	profile, err := pm.Get(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("profile not found: %s", profileName)
 	}
@@ -551,7 +551,16 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			}
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
-			if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
+			if err := pm.UpsertMod(ctx, game.ID, plan.Profile, modRef); err != nil {
+				// v2 Phase 3 Task 18: UpsertMod's own ctx.Err() guard can now
+				// be what makes this call fail, so a cancellation must stay
+				// fatal here exactly as it would at this loop's top-of-
+				// iteration check - not fall into the #294 warning path
+				// below, which is for a business refusal (a locked ref), or
+				// the run would report success despite never finishing.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return result, ctxErr
+				}
 				// #294 (Ruling 5), the Phase 3 behaviour fix ruling 9
 				// deferred: a refusal here (today, only a LOCKED ref, #143)
 				// leaves the profile ref unwritten while the DB row moved,

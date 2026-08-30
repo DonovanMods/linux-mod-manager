@@ -22,7 +22,18 @@ type ProfileResult struct {
 }
 
 // ProfileManager handles profile CRUD operations. Profile switching lives in
-// Service.PlanProfileSwitch/ApplyProfileSwitch (internal/core/flows.go).
+// Service.PlanProfileSwitch/ApplyProfileSwitch (internal/core/switch.go).
+//
+// Every I/O method takes ctx as its first parameter and returns ctx.Err()
+// before touching disk, so a cancelled ctx never reads or mutates a profile
+// file (v2 Phase 3 Ruling 11). ParseProfile is the exception: a pure
+// in-memory parse with no I/O, the same rule that keeps internal/storage/
+// config ctx-less.
+//
+// Callers must not absorb that error into a business-rule warning: a
+// mutator that COMPLETES a DB mutation the caller already applied runs
+// through core.completeProfileWrite instead, so the profile file and the
+// database cannot end a cancelled run disagreeing (Ruling 16).
 type ProfileManager struct {
 	configDir string
 	db        *db.DB
@@ -37,7 +48,11 @@ func NewProfileManager(configDir string, database *db.DB) *ProfileManager {
 }
 
 // Create creates a new profile for a game
-func (pm *ProfileManager) Create(gameID, name string) (*domain.Profile, error) {
+func (pm *ProfileManager) Create(ctx context.Context, gameID, name string) (*domain.Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Check if profile already exists
 	_, err := config.LoadProfile(pm.configDir, gameID, name)
 	if err == nil {
@@ -75,7 +90,11 @@ func (pm *ProfileManager) Create(gameID, name string) (*domain.Profile, error) {
 // existence check on purpose: Create's "profile already exists" error is
 // right for standalone profile creation, but wrong for a
 // create-or-repair call site.
-func (pm *ProfileManager) CreateOrResetDefault(gameID string) (*domain.Profile, error) {
+func (pm *ProfileManager) CreateOrResetDefault(ctx context.Context, gameID string) (*domain.Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	profile := &domain.Profile{
 		Name:      "default",
 		GameID:    gameID,
@@ -87,8 +106,37 @@ func (pm *ProfileManager) CreateOrResetDefault(gameID string) (*domain.Profile, 
 	return profile, nil
 }
 
+// CreateOrResetDefaultAfterGameSave behaves exactly like CreateOrResetDefault,
+// except the write always finishes even under an already-cancelled ctx:
+// 'lmm game add' and 'lmm game detect' both save the game's own config row
+// FIRST, so by the time this runs a committed write already exists with no
+// default profile behind it yet - the class-(A) shape Ruling 16 is built on.
+// Routing through completeProfileWrite keeps that pair from disagreeing
+// under a cancellation the way every other class-(A) site does: the profile
+// is still created, and the caller still ends the run with context.Canceled
+// (v2 Phase 3 Ruling 16, task 18 re-review round 2 NEW-4).
+func (pm *ProfileManager) CreateOrResetDefaultAfterGameSave(ctx context.Context, gameID string) (*domain.Profile, error) {
+	var profile *domain.Profile
+	err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		p, err := pm.CreateOrResetDefault(ctx, gameID)
+		profile = p
+		return err
+	})
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+		return nil, err
+	}
+	return profile, nil
+}
+
 // List returns all profiles for a game
-func (pm *ProfileManager) List(gameID string) ([]*domain.Profile, error) {
+func (pm *ProfileManager) List(ctx context.Context, gameID string) ([]*domain.Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	names, err := config.ListProfiles(pm.configDir, gameID)
 	if err != nil {
 		return nil, fmt.Errorf("listing profiles: %w", err)
@@ -109,7 +157,11 @@ func (pm *ProfileManager) List(gameID string) ([]*domain.Profile, error) {
 // ListNames returns every profile's bare name (the profiles directory's
 // filenames, minus ".yaml") without loading or validating each one -
 // tolerant of a profile file List/Get would refuse to parse.
-func (pm *ProfileManager) ListNames(gameID string) ([]string, error) {
+func (pm *ProfileManager) ListNames(ctx context.Context, gameID string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	return config.ListProfiles(pm.configDir, gameID)
 }
 
@@ -121,17 +173,29 @@ func (pm *ProfileManager) ListNames(gameID string) ([]string, error) {
 var loadProfile = config.LoadProfile
 
 // Get retrieves a specific profile
-func (pm *ProfileManager) Get(gameID, name string) (*domain.Profile, error) {
+func (pm *ProfileManager) Get(ctx context.Context, gameID, name string) (*domain.Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	return loadProfile(pm.configDir, gameID, name)
 }
 
 // Delete removes a profile
-func (pm *ProfileManager) Delete(gameID, name string) error {
+func (pm *ProfileManager) Delete(ctx context.Context, gameID, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	return config.DeleteProfile(pm.configDir, gameID, name)
 }
 
 // SetDefault sets a profile as the default for a game
-func (pm *ProfileManager) SetDefault(gameID, name string) error {
+func (pm *ProfileManager) SetDefault(ctx context.Context, gameID, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// Load the profile to verify it exists
 	profile, err := config.LoadProfile(pm.configDir, gameID, name)
 	if err != nil {
@@ -139,7 +203,7 @@ func (pm *ProfileManager) SetDefault(gameID, name string) error {
 	}
 
 	// Clear default flag on all other profiles
-	profiles, err := pm.List(gameID)
+	profiles, err := pm.List(ctx, gameID)
 	if err != nil {
 		return err
 	}
@@ -159,8 +223,12 @@ func (pm *ProfileManager) SetDefault(gameID, name string) error {
 }
 
 // GetDefault returns the default profile for a game
-func (pm *ProfileManager) GetDefault(gameID string) (*domain.Profile, error) {
-	profiles, err := pm.List(gameID)
+func (pm *ProfileManager) GetDefault(ctx context.Context, gameID string) (*domain.Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	profiles, err := pm.List(ctx, gameID)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +248,11 @@ func (pm *ProfileManager) GetDefault(gameID string) (*domain.Profile, error) {
 }
 
 // AddMod adds a mod reference to a profile
-func (pm *ProfileManager) AddMod(gameID, profileName string, mod domain.ModReference) error {
+func (pm *ProfileManager) AddMod(ctx context.Context, gameID, profileName string, mod domain.ModReference) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return err
@@ -208,7 +280,11 @@ func (pm *ProfileManager) AddMod(gameID, profileName string, mod domain.ModRefer
 // install/update-style upsert. The refusal wraps ErrModLocked and leaves the
 // profile unwritten. A same-version upsert (a FileIDs refresh / reinstall
 // repair) stays legitimate and preserves the marker as before.
-func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModReference) error {
+func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName string, mod domain.ModReference) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return err
@@ -241,7 +317,7 @@ func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModRe
 }
 
 // SetModLock marks the profile ref for sourceID/modID as locked (#97: the
-// mod refuses `lmm update` while this is set - see flows.go's ApplyUpdate
+// mod refuses `lmm update` while this is set - see update.go's ApplyUpdate
 // gate). A non-empty version also moves the lock's target - ref.Version, the
 // same field the installed-version record lives in (a lock has no separate
 // target field: the record IS the target while locked). version == ""
@@ -249,7 +325,11 @@ func (pm *ProfileManager) UpsertMod(gameID, profileName string, mod domain.ModRe
 // Mirrors UpsertMod's load->mutate-in-place->save shape. Returns an error
 // naming the mod when it is not already in the profile - a lock must target
 // a specific existing install, never create one.
-func (pm *ProfileManager) SetModLock(gameID, profileName, sourceID, modID, version string) error {
+func (pm *ProfileManager) SetModLock(ctx context.Context, gameID, profileName, sourceID, modID, version string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return err
@@ -272,7 +352,11 @@ func (pm *ProfileManager) SetModLock(gameID, profileName, sourceID, modID, versi
 // left exactly as it is - it is the installed-version record, not lock-only
 // data, and unlocking must not disturb it. Mirrors SetModLock's
 // load->mutate-in-place->save shape and not-found error.
-func (pm *ProfileManager) ClearModLock(gameID, profileName, sourceID, modID string) error {
+func (pm *ProfileManager) ClearModLock(ctx context.Context, gameID, profileName, sourceID, modID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return err
@@ -289,7 +373,11 @@ func (pm *ProfileManager) ClearModLock(gameID, profileName, sourceID, modID stri
 }
 
 // RemoveMod removes a mod reference from a profile
-func (pm *ProfileManager) RemoveMod(gameID, profileName, sourceID, modID string) error {
+func (pm *ProfileManager) RemoveMod(ctx context.Context, gameID, profileName, sourceID, modID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return err
@@ -314,7 +402,11 @@ func (pm *ProfileManager) RemoveMod(gameID, profileName, sourceID, modID string)
 }
 
 // ReorderMods updates the load order of mods in a profile
-func (pm *ProfileManager) ReorderMods(gameID, profileName string, mods []domain.ModReference) error {
+func (pm *ProfileManager) ReorderMods(ctx context.Context, gameID, profileName string, mods []domain.ModReference) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return err
@@ -325,16 +417,18 @@ func (pm *ProfileManager) ReorderMods(gameID, profileName string, mods []domain.
 }
 
 // Export exports a profile to a portable format
-func (pm *ProfileManager) Export(gameID, profileName string) ([]byte, error) {
+func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	profile, err := config.LoadProfile(pm.configDir, gameID, profileName)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get installed mods to populate FileIDs
-	// ProfileManager does not thread ctx in this phase (design decision) -
-	// see Service.GetInstalledMods for the ctx-aware equivalent.
-	installedMods, err := pm.db.GetInstalledMods(context.Background(), gameID, profileName) // ProfileManager gains ctx in Phase 2 (v2 plan Task 3 ruling)
+	// Get installed mods to populate FileIDs.
+	installedMods, err := pm.db.GetInstalledMods(ctx, gameID, profileName)
 	if err == nil {
 		// Build lookup map of installed mods by source:mod key
 		installedMap := make(map[string]*domain.InstalledMod)
@@ -355,12 +449,16 @@ func (pm *ProfileManager) Export(gameID, profileName string) ([]byte, error) {
 }
 
 // Import imports a profile from portable format
-func (pm *ProfileManager) Import(data []byte) (*domain.Profile, error) {
-	return pm.ImportWithOptions(data, false)
+func (pm *ProfileManager) Import(ctx context.Context, data []byte) (*domain.Profile, error) {
+	return pm.ImportWithOptions(ctx, data, false)
 }
 
 // ImportWithOptions imports a profile with optional force overwrite
-func (pm *ProfileManager) ImportWithOptions(data []byte, force bool) (*domain.Profile, error) {
+func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, force bool) (*domain.Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	profile, err := config.ImportProfile(data)
 	if err != nil {
 		return nil, err

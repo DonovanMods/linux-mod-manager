@@ -42,9 +42,9 @@ func setupDoDeployCompileTest(t *testing.T) (*core.Service, *domain.Game, *compi
 func ensureDefaultProfile(t *testing.T, svc *core.Service, game *domain.Game) {
 	t.Helper()
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
 }
@@ -64,7 +64,7 @@ func seedCompileExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, mo
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
 }
 
 // seedCompilePakMod installs an enabled convert-eligible pak mod in the
@@ -89,7 +89,7 @@ func seedCompilePakMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
 }
 
 // TestDoDeploy_Compile_LabelsMergedRawAndLooseAndPrintsFooter is #255's CLI

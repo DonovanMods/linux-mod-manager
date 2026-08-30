@@ -98,7 +98,7 @@ func TestImportArchive_LocalArchive_EmitsTheReadoutAndInstalls(t *testing.T) {
 	assert.True(t, mods[0].Deployed)
 	assert.Equal(t, domain.UpdateNotify, mods[0].UpdatePolicy)
 
-	prof, err := svc.NewProfileManager().Get("g1", "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, prof.Mods, 1)
 
@@ -155,7 +155,7 @@ func TestImportArchive_WithID_ResolvesFileIDAndStampsMarker(t *testing.T) {
 	assert.True(t, gameCache.HasFileIDs("g1", "acme-source", "999", "2.0", []string{"55"}),
 		"the import-written cache entry must carry the resolved file's completion marker")
 
-	prof, err := svc.NewProfileManager().Get("g1", "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, prof.Mods, 1)
 	assert.Equal(t, []string{"55"}, prof.Mods[0].FileIDs)
@@ -586,7 +586,7 @@ func TestImportArchive_DeployCompile_FoldsRetainedFileIDIntoFileIDs(t *testing.T
 	assert.Equal(t, []string{"Bear_Mount.exmodz"}, result.FileIDs)
 	assert.True(t, result.MergedPakSynced)
 
-	prof, pErr := svc.NewProfileManager().Get(game.ID, "default")
+	prof, pErr := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, pErr)
 	require.Len(t, prof.Mods, 1)
 	assert.Contains(t, prof.Mods[0].FileIDs, "Bear_Mount.exmodz")

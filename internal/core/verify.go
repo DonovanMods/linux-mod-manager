@@ -16,6 +16,9 @@ import (
 // checks). Later tasks gate the network-touching phases on this.
 type VerifyTier int
 
+// VerifyLocal and VerifyFull are VerifyTier's two values, in strictness
+// order: VerifyLocal is the default (offline) tier, VerifyFull the
+// network-touching one VerifyOptions.Tier opts into (`lmm verify --full`).
 const (
 	VerifyLocal VerifyTier = iota
 	VerifyFull
@@ -94,6 +97,12 @@ type VerifyResult struct {
 // VerifyEventKind identifies what a VerifyEvent carries.
 type VerifyEventKind int
 
+// The VerifyEventKind values, in emission order within a run: VerifyEvBegin
+// opens it, VerifyEvFinding/VerifyEvProgress are the per-mod/per-file ticks,
+// VerifyEvRepairDetail is a --fix sub-line under a finding,
+// VerifyEvSyncWarning/VerifyEvVerbose are diagnostics (stderr-bound and
+// -v-gated respectively). The trailing comment on each names which
+// VerifyEvent field the kind's extra data lives in.
 const (
 	VerifyEvBegin        VerifyEventKind = iota // HasFiles
 	VerifyEvFinding                             // Finding + extras; row was appended to Findings
@@ -774,7 +783,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 				if ref != nil && ref.Locked {
 					// #142 round 5: name the source/profile in both remedies -
 					// same "copy-paste acts on the wrong target" fix already
-					// applied to the core gates (internal/core/flows.go's
+					// applied to the core gates (internal/core/update.go's
 					// LockedRefRefusalError) and the sibling-repair warning
 					// below - a bare 'lmm mod lock <id> <version>' would
 					// resolve against the active profile/an ambiguous source
@@ -844,5 +853,13 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		r.result.Checked++
 	}
 
+	// The LAST mod's own iteration (its repair included) can cancel without
+	// ever reaching the head-of-loop check above - without this, that
+	// cancellation would render as an ordinary "repair failed: context
+	// canceled" finding and versionPass would still return nil (task 18
+	// re-review round 2, NEW-3).
+	if err := r.ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }

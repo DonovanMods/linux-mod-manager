@@ -41,7 +41,7 @@ func seedPlainMod(t *testing.T, svc *core.Service, game *domain.Game, modID, fil
 		Enabled:      true,
 		UpdatePolicy: domain.UpdateNotify,
 	}))
-	require.NoError(t, svc.NewProfileManager().UpsertMod(game.ID, "default",
+	require.NoError(t, svc.NewProfileManager().UpsertMod(context.Background(), game.ID, "default",
 		domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0"}))
 }
 

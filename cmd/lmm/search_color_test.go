@@ -71,9 +71,9 @@ func setupSearchColorTest(t *testing.T) (*core.Service, *domain.Game) {
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: spy.id, ModID: "m1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: spy.id, ModID: "m1", Version: "1.0"}))
 
 	withSearchFlags(t, spy.id, 10)
 	return svc, game

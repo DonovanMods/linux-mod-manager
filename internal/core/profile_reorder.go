@@ -53,7 +53,7 @@ func (s *Service) ReorderProfileMods(ctx context.Context, gameID, profileName st
 
 func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName string, mods []domain.ModReference) error {
 	pm := NewProfileManager(s.configDir, s.db)
-	if err := pm.ReorderMods(gameID, profileName, mods); err != nil {
+	if err := pm.ReorderMods(ctx, gameID, profileName, mods); err != nil {
 		return err
 	}
 	game, ok := s.game(gameID)
@@ -77,7 +77,7 @@ func (s *Service) reorderProfileMods(ctx context.Context, gameID, profileName st
 // ReorderProfileMods. It does not itself mutate anything - the caller still
 // calls ReorderProfileMods with the returned order.
 func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profileName string, ids []string) ([]domain.ModReference, error) {
-	profile, err := s.NewProfileManager().Get(game.ID, profileName)
+	profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("loading profile: %w", err)
 	}

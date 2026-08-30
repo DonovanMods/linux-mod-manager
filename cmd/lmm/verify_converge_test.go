@@ -58,14 +58,13 @@ func setupDoVerifyConvergeTest(t *testing.T) (*cobra.Command, *core.Service, *do
 	require.NoError(t, svc.SaveFileChecksum(context.Background(), domain.SourceLocal, "mod1", game.ID, "default", "a.esp", "deadbeef"))
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: domain.SourceLocal, ModID: "mod1", Version: "1.0", FileIDs: []string{"a.esp"},
 	}))
 
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: domain.SourceLocal, Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "mod1", SourceID: domain.SourceLocal, Version: "1.0", GameID: game.ID}, "default")
 
 	// gone.esp is now stale: its deployed_files row and game-dir symlink
 	// survive, but the file itself is gone from the cache, so no installed
@@ -230,7 +229,7 @@ func setupDoVerifyEmptyProfileConvergeTest(t *testing.T) (*cobra.Command, *core.
 	svc, game, _ := setupDoInstallTest(t)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	cacheRoot := svc.GetGameCachePath(game)

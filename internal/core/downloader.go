@@ -139,6 +139,9 @@ type httpStatusError struct {
 	msg  string
 }
 
+// Error implements the error interface, returning the message the HTTP
+// response produced (the status code itself is read via a type assertion,
+// not parsed back out of this string).
 func (e *httpStatusError) Error() string {
 	return e.msg
 }
@@ -284,6 +287,8 @@ type progressReader struct {
 	sink       EventSink
 }
 
+// Read implements io.Reader, forwarding to the wrapped reader and emitting
+// a DownloadEvent tick on every non-empty read.
 func (r *progressReader) Read(p []byte) (int, error) {
 	n, err := r.reader.Read(p)
 	if n > 0 {

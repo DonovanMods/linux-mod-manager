@@ -99,7 +99,7 @@ func TestApplyRollback_SyncsMergedPak(t *testing.T) {
 		UpdatePolicy:    domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "bear-mount", Version: "2.0", FileIDs: []string{"exmodz-v2"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "bear-mount", Version: "2.0", FileIDs: []string{"exmodz-v2"}}))
 
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -177,13 +177,13 @@ func TestPurgeProfile_Uninstall_DeletesMergedPakCacheToo(t *testing.T) {
 func TestApplyProfileSwitch_SyncsMergedPakForToProfile(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "other")
+	_, err := pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	// Move the mod's profile membership to "other" too, so switching there
 	// has something enabled to merge.
-	require.NoError(t, pm.UpsertMod(game.ID, "other", domain.ModReference{SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "fake-compiler", ModID: "bear-mount", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
 	mod, err := svc.GetInstalledMod(context.Background(), "fake-compiler", "bear-mount", game.ID, "default")
 	require.NoError(t, err)
 	mod.ProfileName = "other"

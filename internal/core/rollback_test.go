@@ -2,7 +2,7 @@ package core_test
 
 // Tests for Service.ApplyRollback - the behavior-preserving extraction of
 // cmd/lmm/update.go's doUpdateRollback, per Phase 6b Task 5. See
-// internal/core/flows.go's ApplyRollback/RollbackResult/RollbackOptions doc
+// internal/core/rollback.go's ApplyRollback/RollbackResult/RollbackOptions doc
 // comments for the exact behavior being tested here, and
 // .superpowers/sdd/task-5-report.md for the full mapping/decision log.
 //
@@ -58,20 +58,20 @@ func seedRollbackReadyMod(t *testing.T, svc *core.Service, game *domain.Game, so
 	}
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &oldMod, "default"))
 
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
-		_, cerr := pm.Create(game.ID, "default")
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
+		_, cerr := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, cerr)
 	}
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: oldVersion, FileIDs: oldFileIDs}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: oldVersion, FileIDs: oldFileIDs}))
 
 	newMod := domain.Mod{ID: modID, SourceID: sourceID, Name: name, Version: newVersion, GameID: game.ID}
 	require.NoError(t, installer.Replace(context.Background(), game, &oldMod, &newMod, "default"))
 	require.NoError(t, svc.ApplyModUpdateForTest(context.Background(), sourceID, modID, game.ID, "default", newVersion, newFileIDs))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: newVersion, FileIDs: newFileIDs}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: newVersion, FileIDs: newFileIDs}))
 
 	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestApplyRollbackSwapsVersions(t *testing.T) {
 	assert.Equal(t, domain.LinkSymlink, updated.LinkMethod)
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "1.0", profile.Mods[0].Version)
@@ -181,7 +181,7 @@ func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
 	require.Equal(t, "2.0", mod.Version)
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock("g1", "default", "src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), "g1", "default", "src", "mod1", ""))
 
 	plan, err := svc.PlanRollback(context.Background(), game, "default", mod.SourceID, mod.ID)
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestApplyRollback_LockedRefRefusesRollback(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated.Version, "the DB row must be unchanged")
 
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "2.0", profile.Mods[0].Version, "the profile ref must be unchanged")
@@ -473,15 +473,15 @@ func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *doma
 	}
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &oldMod, "default"))
 
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
-		_, cerr := pm.Create(game.ID, "default")
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
+		_, cerr := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, cerr)
 	}
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileA"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileA"}}))
 
 	// The same-version file-only update: fileB's member lands in the SAME
 	// version dir, superseding fileA's.
@@ -492,7 +492,7 @@ func seedSameVersionRollbackReadyMod(t *testing.T, svc *core.Service, game *doma
 	newMod := oldMod
 	require.NoError(t, installer.ReplaceForUpdate(context.Background(), game, &oldMod, &newMod, "default", []string{"fileA"}, []string{"fileB"}))
 	require.NoError(t, svc.ApplyModUpdateForTest(context.Background(), "src", "mod1", game.ID, "default", version, []string{"fileB"}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileB"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: version, FileIDs: []string{"fileB"}}))
 
 	updated, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
 	require.NoError(t, err)
@@ -543,7 +543,7 @@ func TestApplyRollback_SameVersionFileOnlyUpdate_UndeploysRolledBackFromMember(t
 	assert.Equal(t, []string{"fileA"}, updated.FileIDs)
 	assert.Equal(t, []string{"fileB"}, updated.PreviousFileIDs)
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, []string{"fileA"}, profile.Mods[0].FileIDs)

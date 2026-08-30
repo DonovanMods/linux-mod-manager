@@ -213,3 +213,22 @@ func ResolveHooks(game *domain.Game, profile *domain.Profile) *ResolvedHooks {
 
 	return resolved
 }
+
+// runHook runs command (a hook script path) via runner if both are set,
+// updating hookCtx.HookName first. No-op if skip is true, or runner is nil,
+// or command is empty (nil Hooks/HookRunner or SkipHooks, or that particular
+// hook isn't configured). Shared by UninstallMod and DeployProfile -
+// hookName ("install.before_all", "uninstall.after_each", ...) is just a
+// label passed through to the script environment, so one helper covers both
+// hook namespaces.
+func runHook(ctx context.Context, skip bool, runner *HookRunner, hookCtx *HookContext, hookName, command string) error {
+	if skip {
+		return nil
+	}
+	if runner == nil || command == "" {
+		return nil
+	}
+	hookCtx.HookName = hookName
+	_, err := runner.Run(ctx, command, *hookCtx)
+	return err
+}

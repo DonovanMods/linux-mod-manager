@@ -136,9 +136,9 @@ func setupDoUninstallTest(t *testing.T) (*core.Service, *domain.Game) {
 	// linker expects its own link.
 	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "plugin.esp"), []byte("not a symlink"), 0644))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create("g1", "default")
+	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
 
 	oldSource, oldProfile, oldKeep, oldForce, oldDryRun :=
 		uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, uninstallDryRun
@@ -326,9 +326,9 @@ func TestDoUninstall_ErrorPath_PrintsAccumulatedWarningsToStderr(t *testing.T) {
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create("g1", "default")
+	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
 
 	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
 	uninstallSource = ""
@@ -402,9 +402,9 @@ func TestDoUninstall_BeforeAllHookFails_AbortsWithoutForce(t *testing.T) {
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create("g1", "default")
+	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
 
 	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
 	uninstallSource = ""
@@ -456,9 +456,9 @@ func TestDoUninstall_NoHooks_SkipsConfiguredHook(t *testing.T) {
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create("g1", "default")
+	_, err = pm.Create(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod("g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), "g1", "default", domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}))
 
 	oldSource, oldProfile, oldKeep, oldForce, oldVerbose, oldNoHooks := uninstallSource, uninstallProfile, uninstallKeep, uninstallForce, verbose, noHooks
 	uninstallSource = ""

@@ -165,7 +165,7 @@ func TestApplyInstall_DirectorySource_ConflictAcceptRerun_AlwaysReingests(t *tes
 	})
 
 	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.txt": []byte("original-other-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
 
 	plan, err := svc.PlanInstall(context.Background(), game, "default", "my-mods", "newmod", false)

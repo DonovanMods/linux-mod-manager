@@ -239,3 +239,24 @@ func selectDeployFiles(files []domain.DownloadableFile, storedFileIDs []string, 
 	}
 	return []*domain.DownloadableFile{primaryFile(files)}, false, nil
 }
+
+// sameFileIDSet reports whether selected is exactly the set of currentFileIDs
+// - the only provable "this update changes nothing" condition (see
+// guardNoOpUpdateSelection).
+func sameFileIDSet(selected []*domain.DownloadableFile, currentFileIDs []string) bool {
+	if len(currentFileIDs) == 0 {
+		return false
+	}
+	current := make(map[string]bool, len(currentFileIDs))
+	for _, id := range currentFileIDs {
+		current[id] = true
+	}
+	seen := make(map[string]bool, len(selected))
+	for _, f := range selected {
+		if !current[f.ID] {
+			return false
+		}
+		seen[f.ID] = true
+	}
+	return len(seen) == len(current)
+}

@@ -11,6 +11,29 @@ import (
 // Test-only accessors for package core_test. This file is compiled only into
 // the test binary, so none of these are part of the production API.
 
+// DownloadModForTest exposes downloadMod behind the same beginOp gate the
+// exported DownloadMod that Phase 3 Ruling 10 removed used to take:
+// production reaches downloadMod directly through PlanInstall/ApplyInstall
+// and the other Apply* flows, but core's own fixtures need a genuine
+// download round-trip into the cache without the rest of an install's side
+// effects (deploy, DB writes, hooks).
+func (s *Service) DownloadModForTest(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, sink EventSink) (*DownloadModResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return s.downloadMod(ctx, sourceID, game, mod, file, sink)
+}
+
+// GetInstallerForTest exposes getInstaller, unexported by Phase 3 Ruling 10:
+// every production flow builds its own installer internally, but core's own
+// fixtures hand-drive an *Installer to deploy a mod without going through a
+// full PlanDeploy/ApplyDeploy round-trip.
+func (s *Service) GetInstallerForTest(game *domain.Game) *Installer {
+	return s.getInstaller(game)
+}
+
 // EnabledMergeSourcesForTest exposes enabledMergeSources.
 func (s *Service) EnabledMergeSourcesForTest(ctx context.Context, game *domain.Game, profileName string) ([]source.MergeSource, error) {
 	return s.enabledMergeSources(ctx, game, profileName)
@@ -31,6 +54,13 @@ func (s *Service) ClassifyCompileDeployModsForTest(ctx context.Context, game *do
 // after the deploy has already succeeded.
 func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
 	s.beforeSaveInstalled = fn
+}
+
+// SetAfterInstallSaveForTest arms the BATCH install engine's
+// post-SaveInstalledMod hook so a test can cancel the ctx after the DB row
+// lands but before ensureProfileExists's own read (the NEW-6 race).
+func (s *Service) SetAfterInstallSaveForTest(fn func()) {
+	s.afterInstallSave = fn
 }
 
 // SetDownloadClientForTest replaces the Service's download HTTP client. A

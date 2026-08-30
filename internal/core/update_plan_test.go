@@ -62,7 +62,7 @@ func newPlanUpdateRecompileTestGame(t *testing.T) (*core.Service, *domain.Game) 
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	return svc, game
@@ -129,7 +129,7 @@ func TestService_PlanUpdate_VersionBumpAvailable_Unlocked(t *testing.T) {
 func TestService_PlanUpdate_VersionBumpAvailable_Locked(t *testing.T) {
 	svc, game, src := planUpdateTestGame(t)
 	seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "mod1", "1.0"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "mod1", "1.0"))
 	src.currentMod = &domain.Mod{ID: "mod1", Version: "2.0"}
 
 	plan, err := svc.PlanUpdate(context.Background(), game, "default", "src", "mod1")
@@ -236,7 +236,7 @@ func TestService_PlanUpdateFrom_RefusesLocked(t *testing.T) {
 	assert.False(t, updates[0].Locked, "not yet locked at listing time")
 
 	// Locked after the listing, before the bulk loop's own PlanUpdateFrom call.
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "mod1", "1.0"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "mod1", "1.0"))
 
 	plan, err := svc.PlanUpdateFrom(context.Background(), game, "default", updates[0])
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestService_CheckGameUpdates_EntriesCarryLocked(t *testing.T) {
 	seedUpdatableMod(t, svc, game, "src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a.esp": []byte("a")})
 	installed, err := svc.GetInstalledMods(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "modA", "1.0"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "modA", "1.0"))
 	src.currentMod = &domain.Mod{ID: "modA", Version: "2.0"}
 
 	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", installed, nil)

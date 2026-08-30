@@ -131,7 +131,7 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 	// Load order: position in orderByProfile's ordering (unlisted providers
 	// first sorted by key, then profile.Mods order; last = winner). A
 	// load-failed profile degrades to nil, per the doc comment above.
-	profile, err := s.NewProfileManager().Get(game.ID, profileName)
+	profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
 	if err != nil {
 		profile = nil
 	}

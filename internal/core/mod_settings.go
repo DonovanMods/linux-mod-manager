@@ -79,7 +79,7 @@ func (s *Service) SetModLock(ctx context.Context, sourceID, modID, gameID, profi
 }
 
 func (s *Service) setModLock(ctx context.Context, sourceID, modID, gameID, profileName, version string) (*ModSettingResult, error) {
-	if err := s.NewProfileManager().SetModLock(gameID, profileName, sourceID, modID, version); err != nil {
+	if err := s.NewProfileManager().SetModLock(ctx, gameID, profileName, sourceID, modID, version); err != nil {
 		return nil, err
 	}
 	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
@@ -100,7 +100,7 @@ func (s *Service) ClearModLock(ctx context.Context, sourceID, modID, gameID, pro
 }
 
 func (s *Service) clearModLock(ctx context.Context, sourceID, modID, gameID, profileName string) (*ModSettingResult, error) {
-	if err := s.NewProfileManager().ClearModLock(gameID, profileName, sourceID, modID); err != nil {
+	if err := s.NewProfileManager().ClearModLock(ctx, gameID, profileName, sourceID, modID); err != nil {
 		return nil, err
 	}
 	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)

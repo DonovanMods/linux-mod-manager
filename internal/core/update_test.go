@@ -2,7 +2,7 @@ package core_test
 
 // Tests for Service.ApplyUpdate - the behavior-preserving extraction of
 // cmd/lmm/update.go's applyUpdate, per Phase 5b Task 3. See
-// internal/core/flows.go's ApplyUpdate/UpdateApplyResult/UpdateOptions doc
+// internal/core/update.go's ApplyUpdate/UpdateApplyResult/UpdateOptions doc
 // comments for the exact behavior being tested here, and
 // .superpowers/sdd/task-3-report.md for the full mapping/decision log.
 //
@@ -59,15 +59,15 @@ func seedUpdatableMod(t *testing.T, svc *core.Service, game *domain.Game, source
 	}
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), im))
 
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &im.Mod, "default"))
 
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
-		_, cerr := pm.Create(game.ID, "default")
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
+		_, cerr := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, cerr)
 	}
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs}))
 
 	updated, err := svc.GetInstalledMod(context.Background(), sourceID, modID, game.ID, "default")
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestService_ApplyUpdate_HappyPathEndToEnd(t *testing.T) {
 
 	// Profile YAML upserted.
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "2.0", profile.Mods[0].Version)
@@ -766,7 +766,7 @@ func TestService_ApplyUpdate_ContextCancelledBetweenDownloads(t *testing.T) {
 // GAME's own ID (game.ID) throughout, never a possibly-different GameID a
 // source's GetMod stamps onto the freshly-fetched newMod (mirroring how a
 // source like NexusMods may map/rewrite GameID for querying purposes - see
-// resolveInstallDependencies' gameID doc comment in flows.go). Traced:
+// resolveInstallDependencies' gameID doc comment in install.go). Traced:
 // unlike ApplyInstall's SaveInstalledMod (an INSERT that writes a mod's
 // GameID column and therefore needs explicit normalization),
 // ApplyModUpdate/SetModLinkMethod/UpsertMod are all UPDATES keyed by the
@@ -805,7 +805,7 @@ func TestService_ApplyUpdate_GameIDNormalization(t *testing.T) {
 	assert.Equal(t, "2.0", updated.Version)
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err, "the profile row must still be found under the real game ID")
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "2.0", profile.Mods[0].Version)
@@ -814,7 +814,7 @@ func TestService_ApplyUpdate_GameIDNormalization(t *testing.T) {
 // gameIDStampingSource wraps multiFileDownloadSource but stamps a
 // caller-chosen (mismatched) GameID onto every Mod GetMod returns, simulating
 // a source that maps/rewrites GameID for its own querying purposes (see
-// resolveInstallDependencies' gameID doc comment in flows.go).
+// resolveInstallDependencies' gameID doc comment in install.go).
 type gameIDStampingSource struct {
 	*multiFileDownloadSource
 	stampGameID string
@@ -1020,7 +1020,7 @@ func TestApplyUpdate_RecordsEffectiveFileVersion(t *testing.T) {
 	assert.False(t, gameCache.Exists("g1", "src", "mod1", "2.0"), "cache must not be keyed by the mod-level version")
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "2.0b", profile.Mods[0].Version, "the profile ref must record the effective file version")
@@ -1049,7 +1049,7 @@ func TestApplyUpdate_LockedRefRefusesUpdate(t *testing.T) {
 	mock.AddDownload("new-1", []byte("new-content"))
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock("g1", "default", "src", "mod1", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), "g1", "default", "src", "mod1", ""))
 
 	upd := domain.Update{InstalledMod: *old, NewVersion: "2.0"}
 	plan, err := svc.NewUpdatePlanForApplyTest(context.Background(), game.ID, "default", upd)
@@ -1069,7 +1069,7 @@ func TestApplyUpdate_LockedRefRefusesUpdate(t *testing.T) {
 	assert.Equal(t, "1.0", updated.Version, "the DB row must be unchanged")
 	assert.Equal(t, []string{"old-1"}, updated.FileIDs, "the DB row must be unchanged")
 
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "1.0", profile.Mods[0].Version, "the profile ref must be unchanged")
@@ -1174,7 +1174,7 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 	assert.Equal(t, "v103", string(newContent))
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "1.0.3", profile.Mods[0].Version, "the profile ref must advance too")

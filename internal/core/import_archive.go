@@ -346,13 +346,21 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		return result, fmt.Errorf("failed to save mod: %w", err)
 	}
 
+	// v2 Phase 3 Ruling 16 (B): the same lazy profile creation the install
+	// flows do, through the same helper - which compares with errors.Is
+	// (this site used ==, so a wrapped ErrProfileNotFound would have fallen
+	// through silently) and reports a read it could not answer instead of
+	// treating it as "the profile is fine".
 	pm := s.NewProfileManager()
-	if _, err := pm.Get(game.ID, profileName); err != nil {
-		if err == domain.ErrProfileNotFound {
-			if _, err := pm.Create(game.ID, profileName); err != nil {
-				note(ImportArchiveProfileNote, "Warning: could not create profile: %v", err)
-			}
+	if err := ensureProfileExists(ctx, pm, game.ID, profileName); err != nil {
+		// NEW-6 (v2 Phase 3 Ruling 16 (B) review): a cancellation here means
+		// the profile was never created, so the completeProfileWrite below
+		// is doomed to fail (UpsertMod's LoadProfile finds nothing) - report
+		// it now, ahead of that doomed write, rather than a Note.
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
 		}
+		note(ImportArchiveProfileNote, "Warning: could not create profile: %v", err)
 	}
 	modRef := domain.ModReference{
 		SourceID: result.Mod.SourceID,
@@ -360,7 +368,15 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		Version:  result.Mod.Version,
 		FileIDs:  result.FileIDs,
 	}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+	// Ruling 16 (A): the DB row is already saved, so the profile ref that
+	// completes it is written even under a cancelled ctx; the cancellation
+	// itself is then fatal rather than a Note.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, game.ID, profileName, modRef)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
+		}
 		// Non-fatal (ruling 9: today this can only be a LOCKED ref, #143).
 		note(ImportArchiveProfileNote, "Warning: could not update profile: %v", err)
 	}

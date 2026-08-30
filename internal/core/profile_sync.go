@@ -118,7 +118,7 @@ type ProfileSyncResult struct {
 func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profileName string) (*ProfileSyncPlan, error) {
 	pm := s.NewProfileManager()
 
-	profile, err := pm.Get(game.ID, profileName)
+	profile, err := pm.Get(ctx, game.ID, profileName)
 	missing := false
 	if err != nil {
 		if !errors.Is(err, domain.ErrProfileNotFound) {
@@ -242,7 +242,7 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 	pm := s.NewProfileManager()
 
 	if plan.Missing {
-		if _, err := pm.Create(plan.GameID, plan.Profile); err != nil {
+		if _, err := pm.Create(ctx, plan.GameID, plan.Profile); err != nil {
 			return result, fmt.Errorf("creating profile: %w", err)
 		}
 	}
@@ -260,7 +260,14 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		if err := pm.AddMod(plan.GameID, plan.Profile, ref); err != nil {
+		if err := pm.AddMod(ctx, plan.GameID, plan.Profile, ref); err != nil {
+			// v2 Phase 3 Task 18: AddMod's own ctx.Err() guard can now be
+			// what fails this call - a cancellation stays fatal here, same
+			// as this loop's top-of-iteration check, rather than the
+			// swallowed-note path below.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
 			note(ref, SyncAddNote, fmt.Sprintf("Warning: %v", err))
 		}
 		result.Added++
@@ -270,7 +277,12 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		if err := pm.RemoveMod(plan.GameID, plan.Profile, ref.SourceID, ref.ModID); err != nil {
+		if err := pm.RemoveMod(ctx, plan.GameID, plan.Profile, ref.SourceID, ref.ModID); err != nil {
+			// v2 Phase 3 Task 18: same cancellation-stays-fatal guard as
+			// the ToAdd loop above.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
 			note(ref, SyncRemoveNote, fmt.Sprintf("Warning: %v", err))
 		}
 		result.Removed++
@@ -280,7 +292,16 @@ func (s *Service) applyProfileSync(ctx context.Context, game *domain.Game, plan 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		if err := pm.UpsertMod(plan.GameID, plan.Profile, ref); err != nil {
+		if err := pm.UpsertMod(ctx, plan.GameID, plan.Profile, ref); err != nil {
+			// v2 Phase 3 Task 18: UpsertMod's own ctx.Err() guard can now be
+			// what fails this call, so a cancellation must stay fatal here
+			// exactly as it would at this loop's top-of-iteration check -
+			// not fall into the #294 warning path below, which is for a
+			// business refusal (a locked ref), or the run would report
+			// success despite never finishing.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
 			// #294 (Ruling 5), the Phase 3 behaviour fix ruling 9 deferred:
 			// a refusal here (today, only a LOCKED ref, #143) leaves the
 			// profile ref unwritten, so it is a Warning - unconditional -

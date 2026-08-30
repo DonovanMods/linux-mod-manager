@@ -2,7 +2,7 @@ package core_test
 
 // Tests for Service.PlanInstall - the pure, read-only half of the
 // pre-extraction CLI's doInstall (cmd/lmm/install.go), extracted per Phase
-// 5b Task 1. See internal/core/flows.go's InstallPlan/PlanInstall doc
+// 5b Task 1. See internal/core/install.go's InstallPlan/PlanInstall doc
 // comments for the exact behavior being tested here, and
 // docs/plans/.superpowers/sdd/task-1-report.md for the full mapping/decision
 // log.
@@ -194,7 +194,7 @@ func TestService_PlanInstall_ConflictingFilesListsPathAndOwningMod(t *testing.T)
 
 	// "other" is installed and deployed, owning shared.esp.
 	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.esp": []byte("o")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	// "newmod" is NOT installed, but its cache entry already exists (at the
@@ -492,12 +492,12 @@ func TestService_PlanInstall_PerformsZeroMutations(t *testing.T) {
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	// Unrelated pre-existing state to prove untouched.
 	seedInstalledMod(t, svc, game, "src", "existing", "1.0", true, map[string][]byte{"existing.esp": []byte("e")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "existing", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := newMockSourceWithDownloads("src") // no AddDownload: any download 404s
@@ -656,7 +656,7 @@ func TestService_ApplyInstall_FreshInstallEndToEnd(t *testing.T) {
 	assert.NotEmpty(t, files[0].Checksum, "the downloaded file's checksum must be saved")
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get("g1", "default")
+	profile, err := pm.Get(context.Background(), "g1", "default")
 	require.NoError(t, err, "the profile must have been created since it didn't exist yet")
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "mod1", profile.Mods[0].ModID)
@@ -977,7 +977,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1005,7 +1005,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1042,7 +1042,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1072,7 +1072,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 	})
 
 	// This subtest pins that prepareReinstallCacheTransaction's ephemeral
-	// snapshot/staged caches (flows.go) are wired to the service's own
+	// snapshot/staged caches (install.go) are wired to the service's own
 	// logger via SetLogger, not left on cache.New's silent-discard default
 	// (#284). Neither cache.Cache method the reinstall path actually calls
 	// logs anything on a clean run, so the only observable signal is
@@ -1099,7 +1099,7 @@ func TestService_ApplyInstall_ReplacePath(t *testing.T) {
 		game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 		seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("old-content")})
-		installer := svc.GetInstaller(game)
+		installer := svc.GetInstallerForTest(game)
 		require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 		mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -1610,7 +1610,7 @@ func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T
 
 // TestApplyInstall_ExplicitOldFile_BeforeEachHookSeesEffectiveVersion pins
 // the other observable consequence of the #94 stamp: fillPrimaryCache
-// sets hookCtx.ModVersion (flows.go, right after the stamp) from the SAME
+// sets hookCtx.ModVersion (install.go, right after the stamp) from the SAME
 // now-effective mod.Version, so install.before_each - and therefore the
 // LMM_MOD_VERSION env var a hook script sees (hooks.go's Run) - reports the
 // file actually being installed ("1.0"), not the mod's own latest version
@@ -1722,12 +1722,12 @@ func TestApplyInstall_ExplicitOldFile_BatchPath_RecordsFileVersion(t *testing.T)
 func lockProfileRef(t *testing.T, svc *core.Service, gameID, profileName, sourceID, modID, version string, fileIDs []string) {
 	t.Helper()
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(gameID, profileName)
+	_, err := pm.Create(context.Background(), gameID, profileName)
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(gameID, profileName, domain.ModReference{
+	require.NoError(t, pm.UpsertMod(context.Background(), gameID, profileName, domain.ModReference{
 		SourceID: sourceID, ModID: modID, Version: version, FileIDs: fileIDs,
 	}))
-	require.NoError(t, pm.SetModLock(gameID, profileName, sourceID, modID, ""))
+	require.NoError(t, pm.SetModLock(context.Background(), gameID, profileName, sourceID, modID, ""))
 }
 
 // TestService_ApplyInstall_LockedRefDifferentVersion_RefusedBeforeAnySideEffect
@@ -1780,7 +1780,7 @@ func TestService_ApplyInstall_LockedRefDifferentVersion_RefusedBeforeAnySideEffe
 	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "default")
 	assert.True(t, errors.Is(err, domain.ErrModNotFound), "no DB row may be written")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "mod1")
 	require.NotNil(t, ref)
@@ -1819,7 +1819,7 @@ func TestService_ApplyInstall_LockedRef_EmptyPlanFiles_NotRefusedAsLocked(t *tes
 		"an underivable target version (empty plan.Files) must not be refused as a lock conflict, got: %v", err)
 
 	// The backstop still holds: the locked ref is untouched either way.
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "mod1")
 	require.NotNil(t, ref)
@@ -1860,7 +1860,7 @@ func TestService_ApplyInstall_LockedRefExactVersion_Succeeds(t *testing.T) {
 	assert.Equal(t, []string{"Mod One"}, installedRefNames(result.Installed))
 	assert.Empty(t, result.Notes, "the profile upsert must succeed, not demote to a Note")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "mod1")
 	require.NotNil(t, ref)
@@ -1962,7 +1962,7 @@ func TestService_ApplyInstall_LockedDependency_BatchPath_SkippedNotMoved(t *test
 	_, err = os.Lstat(filepath.Join(gameDir, "dep1.esp"))
 	assert.True(t, os.IsNotExist(err), "the locked dependency must not be deployed")
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "dep1")
 	require.NotNil(t, ref)
@@ -2063,7 +2063,7 @@ func TestService_ApplyInstall_LockedPrimary_BatchPath_GuardFallthroughSkipsBefor
 	require.NoError(t, dbErr)
 	assert.Equal(t, "1.0", got.Version, "the DB row must stay at the locked version")
 
-	profile, pErr := svc.NewProfileManager().Get("g1", "default")
+	profile, pErr := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, pErr)
 	ref := profile.FindRef("src", "root")
 	require.NotNil(t, ref)
@@ -2289,7 +2289,7 @@ func TestService_ApplyInstall_DependenciesPresent_ExistingPrimaryUsesUninstallNo
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "root", "1.0", true, map[string][]byte{"root-old.esp": []byte("old-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "root", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -2396,7 +2396,7 @@ func TestService_ApplyInstall_ReplacePath_SaveInstalledModFailureRollsBackReinst
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -2469,7 +2469,7 @@ func applyInstallConflictFixture(t *testing.T) (svc *core.Service, game *domain.
 	game = &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.esp": []byte("original-other-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock = &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -2507,7 +2507,7 @@ func TestService_ApplyInstall_Conflicts_FreshInstall(t *testing.T) {
 		_, dbErr := svc.GetInstalledMod(context.Background(), "src", "newmod", "g1", "default")
 		assert.Error(t, dbErr, "an unaccepted conflict must leave zero DB mutations")
 
-		profile, perr := svc.NewProfileManager().Get("g1", "default")
+		profile, perr := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 		if perr == nil {
 			for _, ref := range profile.Mods {
 				assert.NotEqual(t, "newmod", ref.ModID, "an unaccepted conflict must leave zero profile mutations")
@@ -2646,7 +2646,7 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_LeavesOriginalDeplo
 	// later Install of the same path below never collides with a live
 	// symlink mod1 already owns.
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.0", "shared.esp", []byte("mod1-shared-content")))
 
@@ -2705,7 +2705,7 @@ func TestService_ApplyInstall_Conflicts_SameVersionReinstall_AcceptRerun_Redownl
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", "1.0", "shared.esp", []byte("mod1-shared-content")))
 
@@ -2829,7 +2829,7 @@ func TestService_ApplyInstall_BatchPath_TargetVersionWithFileIDs_HonorsFileForPr
 	assert.Equal(t, []string{"root-main-1"}, got.FileIDs, "the pinned --file must win over the version pool's auto-pick")
 	assert.Equal(t, "1.0", got.Version)
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "root")
 	require.NotNil(t, ref)
@@ -3052,7 +3052,7 @@ func TestService_ApplyInstall_StrictPath_TargetVersionConvergesToLock_Allowed(t 
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", got.Version)
 
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	ref := profile.FindRef("src", "root")
 	require.NotNil(t, ref)
@@ -3200,7 +3200,7 @@ func TestService_ApplyInstall_SameVersionReinstall_CancelledMidDeploy_RestoresLi
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
 
 	seedInstalledMod(t, svc, game, "src", "mod1", "1.0", true, map[string][]byte{"mod1.esp": []byte("original-content")})
-	installer := svc.GetInstaller(game)
+	installer := svc.GetInstallerForTest(game)
 	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.0", GameID: "g1"}, "default"))
 
 	mock := &perModFileSource{mockSourceWithDownloads: newMockSourceWithDownloads("src")}
@@ -3317,4 +3317,41 @@ func TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFail
 	require.NotNil(t, result)
 	assert.Contains(t, installedRefNames(result.Failed), "Root", "the cancelled primary must be recorded as failed, not silently dropped")
 	assert.NotContains(t, installedRefNames(result.Installed), "Root")
+}
+
+// TestService_ApplyInstall_CancelledEnsureProfileExists_RecordsFailureNotSilentDrop
+// is NEW-6 (v2 Phase 3 Ruling 16 (B) review): on a first-ever install (a
+// brand new "default" profile), a cancellation landing between the BATCH
+// engine's SaveInstalledMod and its own ensureProfileExists call left the
+// dependency recorded nowhere at all - the DB row landed (Deployed=true,
+// Ruling 16 (A)'s guarantee), but the mod appeared in neither
+// result.Installed nor result.Skipped/Failed, with only a "could not create
+// profile" Note as any trace, because the doomed completeProfileWrite that
+// followed then failed too and that second failure was swallowed silently
+// (ctx.Err() != nil => bare return nil). The fix reports the cancellation
+// immediately, ahead of that doomed write, so the dependency is recorded
+// Skipped/Failed like every other cancellation this engine handles.
+func TestService_ApplyInstall_CancelledEnsureProfileExists_RecordsFailureNotSilentDrop(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1, "root must take the BATCH path, dependency first")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.SetAfterInstallSaveForTest(cancel)
+
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+
+	installed, getErr := svc.GetInstalledMod(context.Background(), "src", "dep1", "g1", "default")
+	require.NoError(t, getErr, "the dependency's DB row must still be saved (Ruling 16 (A))")
+	assert.True(t, installed.Deployed)
+
+	assert.Contains(t, installedRefNames(result.Failed), "Dep One",
+		"the cancelled completing-write must be recorded as failed, not silently dropped")
+	assert.NotContains(t, installedRefNames(result.Installed), "Dep One")
 }

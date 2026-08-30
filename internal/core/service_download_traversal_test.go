@@ -43,7 +43,7 @@ func TestDownloadModToCache_TraversalFileName_SanitizedAgainstEscape(t *testing.
 	file := &domain.DownloadableFile{ID: "file1", Name: "Evil File", FileName: "../evil-traversal.zip"}
 	mock.AddDownload(file.ID, []byte("payload"))
 
-	result, err := svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.FilesExtracted)
 
@@ -96,7 +96,7 @@ func TestDownloadMod_DeployCompile_TraversalFileID_SanitizedAgainstEscape(t *tes
 	mod := &domain.Mod{ID: "bear-mount", SourceID: "fake-compiler", GameID: "icarus", Version: "3.3"}
 	file := &domain.DownloadableFile{ID: "../evil-traversal-id", FileName: "Bear_Mount.exmodz"}
 
-	result, err := svc.DownloadMod(context.Background(), "fake-compiler", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "fake-compiler", game, mod, file, nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, result.FilesExtracted, "#197: DeployCompile ingest retains only, no per-mod deployment member")
 

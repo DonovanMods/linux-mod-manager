@@ -28,7 +28,7 @@ func TestService_SetModLock_ReturnsModSettingResult(t *testing.T) {
 	assert.Equal(t, "2.0", result.LockedVersion)
 	assert.Equal(t, "a", result.Mod.ID)
 
-	prof, err := svc.NewProfileManager().Get(game.ID, "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	ref := prof.FindRef("src", "a")
 	require.NotNil(t, ref)
@@ -47,7 +47,7 @@ func TestService_SetModLock_NotInProfile_ReturnsRawError(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	_, err := svc.NewProfileManager().Create(game.ID, "default")
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	result, err := svc.SetModLock(context.Background(), "src", "a", game.ID, "default", "")
@@ -59,7 +59,7 @@ func TestService_SetModLock_NotInProfile_ReturnsRawError(t *testing.T) {
 func TestService_ClearModLock_ReturnsModSettingResult(t *testing.T) {
 	svc, game, _ := newModDetailTestService(t)
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", "2.0"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", "2.0"))
 
 	result, err := svc.ClearModLock(context.Background(), "src", "a", game.ID, "default")
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestService_ClearModLock_ReturnsModSettingResult(t *testing.T) {
 	assert.False(t, result.Locked)
 	assert.Empty(t, result.LockedVersion)
 
-	prof, err := svc.NewProfileManager().Get(game.ID, "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	ref := prof.FindRef("src", "a")
 	require.NotNil(t, ref)

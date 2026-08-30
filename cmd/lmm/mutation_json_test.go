@@ -241,7 +241,7 @@ func TestJSONGolden_ModSettings(t *testing.T) {
 	t.Run("unlock", func(t *testing.T) {
 		svc, game, _ := setupDoModLockTest(t)
 		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
-		require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", ""))
+		require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 
 		out := runJSONCommand(t, func() error {
 			return doModUnlock(context.Background(), svc, game, "a")
@@ -452,18 +452,18 @@ func TestJSONGolden_ProfileManagement(t *testing.T) {
 		svc, game := setupDoProfileSwitchTest(t)
 
 		out := runJSONCommand(t, func() error {
-			return doProfileCreate(svc, game, "survival")
+			return doProfileCreate(context.Background(), svc, game, "survival")
 		})
 		assertJSONCLIGolden(t, "profile_create_result", out)
 	})
 
 	t.Run("delete", func(t *testing.T) {
 		svc, game := setupDoProfileSwitchTest(t)
-		_, err := getProfileManager(svc).Create(game.ID, "survival")
+		_, err := getProfileManager(svc).Create(context.Background(), game.ID, "survival")
 		require.NoError(t, err)
 
 		out := runJSONCommand(t, func() error {
-			return doProfileDelete(svc, game, "survival")
+			return doProfileDelete(context.Background(), svc, game, "survival")
 		})
 		assertJSONCLIGolden(t, "profile_delete_result", out)
 	})
@@ -501,7 +501,7 @@ func TestJSONGolden_ProfileApply(t *testing.T) {
 		pm := getProfileManager(svc)
 		seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true, map[string][]byte{"dis1.esp": []byte("dis")})
 		seedApplyCandidateMod(t, svc, game, "src", "en1", "En One", "1.0", false, map[string][]byte{"en1.esp": []byte("en")})
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
 		applyYes(t)
 
 		out := runJSONCommand(t, func() error {
@@ -515,7 +515,7 @@ func TestJSONGolden_ProfileApply(t *testing.T) {
 		pm := getProfileManager(svc)
 		seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true, map[string][]byte{"dis1.esp": []byte("dis")})
 		seedApplyCandidateMod(t, svc, game, "src", "en1", "En One", "1.0", false, map[string][]byte{"en1.esp": []byte("en")})
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
 		withProfileDryRun(t, &profileApplyDryRun)
 
 		out := runJSONCommand(t, func() error {
@@ -529,7 +529,7 @@ func TestJSONGolden_ProfileSwitch(t *testing.T) {
 	t.Run("result", func(t *testing.T) {
 		svc, game := setupDoProfileSwitchTest(t)
 		pm := getProfileManager(svc)
-		_, err := pm.Create(game.ID, "other")
+		_, err := pm.Create(context.Background(), game.ID, "other")
 		require.NoError(t, err)
 		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 		withProfileSwitchYes(t)
@@ -543,7 +543,7 @@ func TestJSONGolden_ProfileSwitch(t *testing.T) {
 	t.Run("dry_run_plan", func(t *testing.T) {
 		svc, game := setupDoProfileSwitchTest(t)
 		pm := getProfileManager(svc)
-		_, err := pm.Create(game.ID, "other")
+		_, err := pm.Create(context.Background(), game.ID, "other")
 		require.NoError(t, err)
 		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 		withProfileDryRun(t, &profileSwitchDryRun)
@@ -617,7 +617,7 @@ func TestDoProfileApply_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
 func TestDoProfileSwitch_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
 	withProfileDryRun(t, &profileSwitchDryRun)
@@ -630,7 +630,7 @@ func TestDoProfileSwitch_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
 		"Will disable 1 mod(s):\n"+
 		"  - Disable Me (disable-me)\n", out)
 
-	active, err := pm.GetDefault(game.ID)
+	active, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "default", active.Name, "a dry run must not switch the active profile")
 }
@@ -648,7 +648,7 @@ func TestDoProfileSync_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
 		"Will add to profile:\n"+
 		"  + Add One (src:add1)\n", out)
 
-	profile, err := getProfileManager(svc).Get(game.ID, "default")
+	profile, err := getProfileManager(svc).Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "a dry run must not write the profile")
 }
@@ -664,11 +664,11 @@ func TestDoProfileSync_DryRun_PrintsPlanAndChangesNothing(t *testing.T) {
 func TestDoProfileSwitch_DryRun_NoChanges_DoesNotSwitchDefault(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "other")
+	_, err := pm.Create(context.Background(), game.ID, "other")
 	require.NoError(t, err)
 
 	seedDeployableMod(t, svc, game, "shared", "Shared Mod", "shared.esp")
-	require.NoError(t, pm.AddMod(game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "shared", Version: "1.0"}))
 	withProfileDryRun(t, &profileSwitchDryRun)
 
 	out := captureStdout(t, func() error {
@@ -677,7 +677,7 @@ func TestDoProfileSwitch_DryRun_NoChanges_DoesNotSwitchDefault(t *testing.T) {
 
 	assert.Equal(t, "Switch plan for profile \"other\" (dry run)\n\n", out)
 
-	active, err := pm.GetDefault(game.ID)
+	active, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "default", active.Name, "a dry run must not switch the active profile, even when the plan has no mod changes")
 }
@@ -695,7 +695,7 @@ func TestDoProfileSync_DryRun_MissingProfile_DoesNotCreateProfile(t *testing.T) 
 	withProfileDryRun(t, &profileSyncDryRun)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Get(game.ID, "newprof")
+	_, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.Error(t, err, "precondition: newprof must not exist yet")
 
 	out := captureStdout(t, func() error {
@@ -704,7 +704,7 @@ func TestDoProfileSync_DryRun_MissingProfile_DoesNotCreateProfile(t *testing.T) 
 
 	assert.Equal(t, "Profile newprof is already in sync.\n", out)
 
-	_, err = pm.Get(game.ID, "newprof")
+	_, err = pm.Get(context.Background(), game.ID, "newprof")
 	assert.Error(t, err, "a dry run must not create profile.yaml, even for a missing profile with nothing to sync into it")
 }
 
@@ -772,8 +772,7 @@ func seedConflictingOwner(t *testing.T, svc *core.Service, game *domain.Game) {
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.GetInstaller(game).Install(context.Background(), game,
-		&domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "other", SourceID: "test-src", Version: "1.0", GameID: game.ID}, "default")
 }
 
 func TestJSONGolden_Install(t *testing.T) {

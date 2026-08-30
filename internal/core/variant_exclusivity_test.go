@@ -175,7 +175,7 @@ func TestApplyInstall_StrictPath_CallerSuppliedMixedVariantFiles_Rejected(t *tes
 
 // TestApplyInstall_BatchPath_TargetFileIDs_MixedVariants_Rejected is the
 // BATCH-path seam: when plan.Dependencies is non-empty, the primary's
-// TargetFileIDs pins are resolved and validated up-front (flows.go, inside
+// TargetFileIDs pins are resolved and validated up-front (install.go, inside
 // ApplyInstall's BATCH branch) before any mod - dependency or primary - is
 // touched. This mirrors TestApplyInstall_StrictPath_TargetFileIDs_
 // MixedVariants_Rejected above but drives the one path neither existing seam

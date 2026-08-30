@@ -67,7 +67,7 @@ func TestDoProfileApply_DisableAndEnable_PrintsExactOutput(t *testing.T) {
 	seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true, map[string][]byte{"dis1.esp": []byte("dis")})
 	// Installed + disabled + cached, referenced by profile.Mods -> enable.
 	seedApplyCandidateMod(t, svc, game, "src", "en1", "En One", "1.0", false, map[string][]byte{"en1.esp": []byte("en")})
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "en1", Version: "1.0"}))
 
 	applyYes(t)
 
@@ -102,7 +102,7 @@ func TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
 
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
 
 	var out string
 	withStdin(t, "n\n", func() {
@@ -129,7 +129,7 @@ func TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 func TestDoProfileApply_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
 	withJSONOutput(t)
 
 	err := assertStdinNeverRead(t, func() error {
@@ -171,7 +171,7 @@ func TestDoProfileApply_DisabledModCacheGone_SchedulesRedownload(t *testing.T) {
 	}))
 	require.False(t, svc.GetGameCache(game).Exists(game.ID, "test-src", "mod1", "1.0"),
 		"precondition: the cache entry must be gone")
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: "mod1", Version: "1.0"}))
 
 	applyYes(t)
 
@@ -215,7 +215,7 @@ func TestDoProfileApply_InstallLoop_PerModErrorsContinue(t *testing.T) {
 	src.AddDownload("main", []byte("plugin content"))
 
 	for _, id := range []string{"ghost", "empty", "good"} {
-		require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: id, Version: "1.0"}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "test-src", ModID: id, Version: "1.0"}))
 	}
 
 	applyYes(t)
@@ -251,14 +251,13 @@ func TestDoProfileApply_VerboseNotePath_UndeployFailurePrintsUnderVerbose(t *tes
 	pm := getProfileManager(svc)
 
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
-	installer := svc.GetInstaller(game)
-	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: game.ID}, "default")
 	// Corrupt the deployed symlink so Uninstall fails deterministically.
 	deployedPath := filepath.Join(game.ModPath, "plugin.esp")
 	require.NoError(t, os.Remove(deployedPath))
 	require.NoError(t, os.WriteFile(deployedPath, []byte("not a symlink"), 0o644))
 	// Drop it from the profile so the apply classifies it as a disable.
-	require.NoError(t, pm.RemoveMod(game.ID, "default", "src", "1"))
+	require.NoError(t, pm.RemoveMod(context.Background(), game.ID, "default", "src", "1"))
 
 	applyYes(t)
 	applyVerbose(t, true)
@@ -290,7 +289,7 @@ func applyLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 		})
 	src.AddDownload("main", []byte("plugin content"))
 
-	require.NoError(t, getProfileManager(svc).AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, getProfileManager(svc).AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "test-src", ModID: "mod1", Locked: true,
 	}))
 
@@ -343,7 +342,7 @@ func TestDoProfileApply_LockedRef_UpsertRefusalWarnsUnconditionally(t *testing.T
 			require.NoError(t, err)
 			assert.Equal(t, "1.1", installed.Version)
 
-			profile, err := pm.Get(game.ID, "default")
+			profile, err := pm.Get(context.Background(), game.ID, "default")
 			require.NoError(t, err)
 			require.Len(t, profile.Mods, 1)
 			assert.Empty(t, profile.Mods[0].Version, "the locked ref must be left unwritten")
@@ -391,7 +390,7 @@ func applyTwoModCancelFixture(t *testing.T) (*core.Service, *domain.Game) {
 			{ID: "main", Name: "Main", FileName: "mod2.esp", IsPrimary: true, Category: "MAIN", Version: "1.0"},
 		})
 	src.AddDownload("main", []byte("plugin content"))
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "second-src", ModID: "mod2"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "second-src", ModID: "mod2"}))
 
 	return svc, game
 }
@@ -489,7 +488,14 @@ func TestDoProfileApply_LockedRefWarningSurvivesFatalContextCancellation(t *test
 
 	svc, game := applyTwoModCancelFixture(t)
 	inner, cancel := context.WithCancel(context.Background())
-	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 1}
+	// live is counter.calls-2, not -1: v2 Phase 3 Task 18 gave
+	// ProfileManager.UpsertMod its own ctx.Err() guard, so mod2's iteration
+	// now makes TWO core-originated checks (the loop-top check, then
+	// UpsertMod's internal one) rather than one - the LAST measured call is
+	// UpsertMod's, which runs after mod2 is already downloaded, deployed and
+	// DB-saved. Targeting one call earlier still lands on mod2's loop-top
+	// check, before any of that runs, preserving this test's original intent.
+	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 2}
 
 	out, stderr, err := captureStdoutStderrErr(t, func() error {
 		return doProfileApply(ctx, svc, game, nil)
@@ -504,4 +510,45 @@ func TestDoProfileApply_LockedRefWarningSurvivesFatalContextCancellation(t *test
 
 	_, err = svc.GetInstalledMod(context.Background(), "second-src", "mod2", game.ID, "default")
 	assert.Error(t, err, "the second mod must never have been installed")
+}
+
+// TestDoProfileApply_CancellationInsideUpsertMod_IsFatalNotWarned pins the
+// guard at internal/core/profile_apply.go's ToInstall loop, which the sibling
+// test above does NOT reach: that one targets mod2's loop-top check (one call
+// earlier), so removing the guard leaves it green.
+//
+// Here the cancellation lands on the LAST core-originated ctx.Err() call of a
+// full run - UpsertMod's own guard, which fires only after mod2 has already
+// been downloaded, deployed and written to the DB. The property is that the
+// run still ends fatally: without the guard, ApplyProfileApply absorbs the
+// cancellation into the #294 warning path (a business refusal), counts mod2
+// as installed and returns success. mod2 IS in the DB either way - the
+// cancellation arrives after that write, which is exactly why the warning
+// path is the wrong home for it.
+//
+// v2 Phase 3 Ruling 16 deliberately leaves this site as a re-check rather
+// than a completing write: the profile ref goes unwritten here, which is what
+// keeps the accumulated #294 warning on stderr.
+func TestDoProfileApply_CancellationInsideUpsertMod_IsFatalNotWarned(t *testing.T) {
+	countSvc, countGame := applyTwoModCancelFixture(t)
+	counter := &countingCoreContext{Context: context.Background()}
+	require.NoError(t, doProfileApply(counter, countSvc, countGame, nil),
+		"the measurement pass must install both mods uncancelled")
+	require.Positive(t, counter.calls, "the measurement pass must observe at least one core ctx.Err() check")
+
+	svc, game := applyTwoModCancelFixture(t)
+	inner, cancel := context.WithCancel(context.Background())
+	ctx := &cancelAfterNCalls{Context: inner, cancel: cancel, live: counter.calls - 1}
+
+	_, stderr, err := captureStdoutStderrErr(t, func() error {
+		return doProfileApply(ctx, svc, game, nil)
+	})
+
+	require.Error(t, err, "a cancellation inside UpsertMod must not be absorbed as a business refusal")
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, applyLockRefusalWarning, stderr,
+		"the accumulated #294 warning must still reach stderr on this fatal path")
+
+	_, err = svc.GetInstalledMod(context.Background(), "second-src", "mod2", game.ID, "default")
+	assert.NoError(t, err, "the cancellation lands AFTER mod2's DB write - that is the window this guard covers")
 }

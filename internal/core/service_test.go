@@ -483,13 +483,13 @@ func TestService_DownloadMod_MultipleFiles(t *testing.T) {
 	ctx := context.Background()
 
 	// Download first file
-	result1, err := svc.DownloadMod(ctx, "test", game, mod, file1, nil)
+	result1, err := svc.DownloadModForTest(ctx, "test", game, mod, file1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result1.FilesExtracted, "First download should extract 1 file")
 	assert.NotEmpty(t, result1.Checksum, "First download should have checksum")
 
 	// Download second file - previously bugged: returned early because cache dir existed
-	result2, err := svc.DownloadMod(ctx, "test", game, mod, file2, nil)
+	result2, err := svc.DownloadModForTest(ctx, "test", game, mod, file2, nil)
 	require.NoError(t, err)
 	// Returns total files in cache after extraction (1 from first + 1 from second = 2)
 	assert.Equal(t, 2, result2.FilesExtracted, "After second download, cache should have 2 files total")
@@ -559,11 +559,11 @@ func TestService_DownloadMod_RecordsMemberManifests(t *testing.T) {
 	mock.AddDownload("file3", []byte("loose plugin bytes"))
 
 	ctx := context.Background()
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
 	require.NoError(t, err)
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file2", FileName: "file2.zip"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file2", FileName: "file2.zip"}, nil)
 	require.NoError(t, err)
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file3", FileName: "loose.esp"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file3", FileName: "loose.esp"}, nil)
 	require.NoError(t, err)
 
 	manifests, err := svc.GetGameCache(game).FileManifests("testgame", "test", "123", "1.0.0")
@@ -629,7 +629,7 @@ func TestService_DownloadMod_PrunesUnclaimedStaleFiles(t *testing.T) {
 	mock.AddDownload("file1", zip1)
 
 	ctx := context.Background()
-	_, err = svc.DownloadMod(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
+	_, err = svc.DownloadModForTest(ctx, "test", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "file1.zip"}, nil)
 	require.NoError(t, err)
 
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -685,7 +685,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	// Generation 1: the honest pre-#197 shape - a real DownloadModToCache
 	// commit that claims a compiled pak for this file ID.
 	mock.AddDownload("file1", []byte("compiled pak bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -700,7 +700,7 @@ func TestService_DownloadMod_OrganicPrune_PreConvergencePakClaimedThenExmodzReta
 	// Generation 2: the SAME source and file ID now serve the
 	// validated/retained .exmodz - #197's shape.
 	mock.AddDownload("file1", []byte("fake-exmodz-bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod.exmodz"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "file1", FileName: "Mod.exmodz"}, nil)
 	require.NoError(t, err)
 
 	files, err = gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -748,7 +748,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	// a retained source plus a claimed deployable copy (#221's raw-deploy
 	// default state).
 	mock.AddDownload("pak", []byte("prebuilt-pak-bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "pak", FileName: "Mod_P.pak"}, nil)
 	require.NoError(t, err)
 
 	manifests, err := gameCache.FileManifests(game.ID, mod.SourceID, mod.ID, mod.Version)
@@ -764,7 +764,7 @@ func TestService_DownloadMod_SiblingReingestKeepsConvertedPakCopy(t *testing.T) 
 	// afterward (the issue's repro: an optional patch file, a verify --fix
 	// re-download, ...). This commit runs PruneUnclaimed with its gate open.
 	mock.AddDownload("exmodz", []byte("fake-exmodz-bytes"))
-	_, err = svc.DownloadMod(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "exmodz", FileName: "Mod.exmodz"}, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test-compiler", game, mod, &domain.DownloadableFile{ID: "exmodz", FileName: "Mod.exmodz"}, nil)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dir, "Mod_P.pak"))
@@ -812,7 +812,7 @@ func TestService_DownloadMod_ForgedCacheMarkerInArchiveIsRejected(t *testing.T) 
 	require.NoError(t, err)
 	mock.AddDownload(file1.ID, zipContent)
 
-	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file1, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file1, nil)
 	require.Error(t, err, "a forged cache marker must fail the download, not land in the cache")
 	assert.Contains(t, err.Error(), ".lmm-")
 
@@ -869,7 +869,7 @@ func TestService_DownloadMod_PathLikeFilename_ArchiveWithoutExtension(t *testing
 
 	mock.AddDownload(file.ID, zipContent)
 
-	result, err := svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	result, err := svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	assert.NotEmpty(t, result.Checksum)
@@ -915,7 +915,7 @@ func TestService_DownloadMod_RejectsFileURLFromNonDirectorySource(t *testing.T) 
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
 
-	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.Error(t, err)
 	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`,
 		"the refusal text is frozen regardless of how the gate itself is implemented (#300: source.LocalFileServer, not a *custom.Directory type assertion)")
@@ -956,7 +956,7 @@ func TestService_DownloadMod_RejectsFileURLFromSourceDenyingLocalFiles(t *testin
 	mod := &domain.Mod{ID: "123", SourceID: "test", Name: "Sneaky Mod", Version: "1.0.0", GameID: "testgame"}
 	file := &domain.DownloadableFile{ID: "file1", Name: "File", FileName: "file1.zip"}
 
-	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	require.Error(t, err)
 	assert.EqualError(t, err, `source "test" returned a local file:// URL but is not a directory source`)
 

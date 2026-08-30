@@ -194,7 +194,7 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	}
 
 	pm := r.svc.NewProfileManager()
-	if err := pm.UpsertMod(r.game.ID, r.profile, domain.ModReference{
+	if err := pm.UpsertMod(ctx, r.game.ID, r.profile, domain.ModReference{
 		SourceID: mod.SourceID,
 		ModID:    mod.ID,
 		Version:  effective,
@@ -246,8 +246,9 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 	// Sibling repair runs regardless of the primary re-link's own outcome
 	// (above) - a sibling row's orphaning is caused by the cache rename,
 	// not by anything that happens to the primary row's deployment.
+	var siblingCancelErr error
 	if renamed || (!oldExists && newExists && note == "") {
-		note, siblingFailures = r.repairSiblingProfiles(ctx, mod, recorded, effective)
+		note, siblingFailures, siblingCancelErr = r.repairSiblingProfiles(ctx, mod, recorded, effective)
 	}
 
 	if len(relinkNotes) > 0 {
@@ -257,6 +258,12 @@ func (r *verifyRun) repairModVersion(ctx context.Context, mod *domain.InstalledM
 		} else {
 			note = joined
 		}
+	}
+
+	// A cancellation outranks the re-link failure: the run is over either
+	// way, and only the cancellation tells the caller why.
+	if siblingCancelErr != nil {
+		return note, siblingFailures, siblingCancelErr
 	}
 
 	if relinkErr != nil {
@@ -394,13 +401,23 @@ func fileIDsEqual(a, b []string) bool {
 // every inline fmt.Printf/fmt.Println (previously gated on !jsonOutput) is
 // now an unconditional VerifyEvRepairDetail emission, matching
 // repairModVersion's own port.
-func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int) {
+//
+// cancelErr is non-nil only when the run was cancelled part-way through the
+// sibling sweep (v2 Phase 3 Ruling 16): a cancelled profile read or write
+// would otherwise repeat identically for every remaining sibling, turning one
+// Ctrl-C into N "could not repair profile X" warnings and a non-zero
+// failedCount. The note and count accumulated up to that point are still
+// returned, so the caller reports the work that really happened.
+func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.InstalledMod, recorded, effective string) (note string, failedCount int, cancelErr error) {
 	pm := r.svc.NewProfileManager()
-	profiles, err := pm.List(r.game.ID)
-	if err != nil {
-		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", err)
+	profiles, listErr := pm.List(ctx, r.game.ID)
+	if listErr != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", 0, cerr
+		}
+		msg := fmt.Sprintf("could not enumerate profiles to check for shared-cache siblings: %v", listErr)
 		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
-		return "sibling repair check FAILED: " + msg, 1
+		return "sibling repair check FAILED: " + msg, 1, nil
 	}
 
 	var repaired, failed, differs, locked, methodNotes, undeployWarns []string
@@ -439,7 +456,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 		// would silently move what the lock means, just as surely as
 		// rewriting the primary would. Loaded fresh per-sibling since the
 		// lock lives in that sibling's own profile YAML, not the primary's.
-		if siblingProfile, perr := pm.Get(r.game.ID, p.Name); perr == nil {
+		if siblingProfile, perr := pm.Get(ctx, r.game.ID, p.Name); perr == nil {
 			if ref := siblingProfile.FindRef(sibling.SourceID, sibling.ID); ref != nil && ref.Locked {
 				locked = append(locked, p.Name)
 				// #142 round 5: also name -s (in addition to the -p this
@@ -454,22 +471,45 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 				r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "Warning: " + msg})
 				continue
 			}
+		} else if cerr := ctx.Err(); cerr != nil {
+			// Ruling 16 (C): a lock gate that cannot read the profile
+			// reports "no lock" - correct for a missing or corrupt file,
+			// wrong for a cancellation, which would degrade this gate open
+			// for every remaining sibling.
+			cancelErr = cerr
+			break
 		}
 		// (A missing/unreadable sibling profile falls through - matches
 		// ApplyUpdate/ApplyRollback's own precedent: a lock cannot exist in
 		// an unloadable profile.)
 
-		if err := pm.UpsertMod(r.game.ID, p.Name, domain.ModReference{
+		if err := pm.UpsertMod(ctx, r.game.ID, p.Name, domain.ModReference{
 			SourceID: sibling.SourceID,
 			ModID:    sibling.ID,
 			Version:  effective,
 			FileIDs:  sibling.FileIDs,
 		}); err != nil {
+			// Ruling 16 (B): this write PRECEDES its DB half
+			// (setModVersion below), so UpsertMod itself failing or being
+			// cancelled HERE leaves nothing half-committed - unlike the
+			// completing writes, which finish under context.WithoutCancel.
+			if cerr := ctx.Err(); cerr != nil {
+				cancelErr = cerr
+				break
+			}
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
 			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
 			continue
 		}
 
+		// If UpsertMod above SUCCEEDED and the cancellation instead lands
+		// HERE, the sibling's profile ref is already on the new version
+		// while its DB row still holds the old one - the same drift
+		// completeDBWrite exists to prevent, on the (B) side of the pair.
+		// Pre-existing (UpsertMod was ctx-less and always ran at 1d68cd0,
+		// so this window is not new) and self-healing: `verify --fix` is
+		// convergent, so the next run repairs it (task 18 re-review round
+		// 2, NEW-3).
 		if err := r.svc.setModVersion(ctx, sibling.SourceID, sibling.ID, sibling.GameID, p.Name, effective); err != nil {
 			failed = append(failed, fmt.Sprintf("%s (%v)", p.Name, err))
 			r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Warning: could not repair profile %s: %v", p.Name, err)})
@@ -535,7 +575,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 	if len(undeployWarns) > 0 {
 		parts = append(parts, fmt.Sprintf("undeploy warning in profile(s): %s", strings.Join(undeployWarns, ", ")))
 	}
-	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked)
+	return strings.Join(parts, "; "), len(failed) + len(differs) + len(locked), cancelErr
 }
 
 // relinkDeployedRow re-runs the installer for a row recorded as a symlink
@@ -544,7 +584,7 @@ func (r *verifyRun) repairSiblingProfiles(ctx context.Context, mod *domain.Insta
 // not the game-level one (#152): a profile-level copy/hardlink override
 // would otherwise be "repaired" back to the game's method, re-introducing
 // exactly the drift verify exists to fix. The method is resolved once (the
-// same single-resolve shape as DeployProfile, internal/core/flows.go) and,
+// same single-resolve shape as DeployProfile, internal/core/deploy.go) and,
 // on a successful install, recorded on the row via SetModLinkMethod exactly
 // like DeployProfile records its own deploys - the row was just re-linked
 // with the effective method, and leaving it claiming the old one would be a
@@ -578,7 +618,7 @@ func (r *verifyRun) relinkDeployedRow(ctx context.Context, profileName string, m
 	}
 	installer := r.svc.newInstallerWithLinker(r.game, r.svc.getLinker(method))
 	// Undeploy-then-install, the same shape DeployProfile uses
-	// (internal/core/flows.go) and for the same reason: dst still holds
+	// (internal/core/deploy.go) and for the same reason: dst still holds
 	// whatever the previous deployment left behind (here, the dangling
 	// symlinks the cache re-key orphaned), and only the symlink and
 	// hardlink linkers' Deploy clear an existing dst themselves - the copy

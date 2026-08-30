@@ -32,15 +32,18 @@ func (s *Service) hookRunner(_ context.Context) (*HookRunner, error) {
 // mirrors the pre-lift CLI's getResolvedHooks (cmd/lmm/hooks.go) exactly,
 // including its swallow-on-failure behavior: an empty profileName, or ANY
 // profile-load error (not just domain.ErrProfileNotFound), resolves
-// game-level hooks only rather than failing the caller's flow. Returns
-// error for forward-compatibility with callers that resolve hooks before a
-// mutation and must propagate a real failure; today this always returns
-// nil.
-func (s *Service) resolvedHooks(_ context.Context, game *domain.Game, profileName string) (*ResolvedHooks, error) {
+// game-level hooks only rather than failing the caller's flow. The one
+// exception is a cancellation (v2 Phase 3 Ruling 16 (C)), which is returned
+// as the error this signature was already reserved for: every caller
+// resolves hooks before a mutation, and silently dropping a profile's hook
+// overrides because the run was cancelled would run the wrong hooks.
+func (s *Service) resolvedHooks(ctx context.Context, game *domain.Game, profileName string) (*ResolvedHooks, error) {
 	var profile *domain.Profile
 	if profileName != "" {
-		if p, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+		if p, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 			profile = p
+		} else if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
 		}
 	}
 	return ResolveHooks(game, profile), nil

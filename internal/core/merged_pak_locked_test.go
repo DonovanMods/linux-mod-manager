@@ -17,7 +17,7 @@ func TestLockedMod_DiffStillParticipatesInMerge(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "fake-compiler", "bear-mount", ""))
 
 	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err, "a locked mod must not block the merge")
@@ -36,7 +36,7 @@ func TestLockedMod_DoesNotBlockAnotherModsChangeFromReachingTheMerge(t *testing.
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "fake-compiler", "bear-mount", ""))
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
 
@@ -58,7 +58,7 @@ func TestLockedMod_CheckMergedPakStaleness_NotBlockedByLock(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "fake-compiler", "bear-mount", ""))
 
 	upd, err := svc.CheckMergedPakStaleness(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -81,7 +81,7 @@ func TestLockedMod_ApplyMergedPakRegen_NeverErrorsForALock(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "fake-compiler", "bear-mount", ""))
 
 	_, err := svc.ApplyMergedPakRegen(context.Background(), game, "default", nil)
 	require.NoError(t, err, "ApplyMergedPakRegen must never refuse due to a lock - #196's ErrModLocked gate does not apply here")

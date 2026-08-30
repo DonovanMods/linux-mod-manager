@@ -53,9 +53,9 @@ func seedModDetailInstalled(t *testing.T, svc *core.Service, game *domain.Game, 
 	}))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "src",
 		ModID:    modID,
 		Version:  version,
@@ -101,7 +101,7 @@ func TestModDetail_LockJoinedFromProfileYAML(t *testing.T) {
 	svc, game, src := newModDetailTestService(t)
 	src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
 	seedModDetailInstalled(t, svc, game, "a", "1.5")
-	require.NoError(t, svc.NewProfileManager().SetModLock(game.ID, "default", "src", "a", "1.2.3"))
+	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "a", "1.2.3"))
 
 	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
 	require.NoError(t, err)
@@ -137,9 +137,9 @@ func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Gam
 	require.NoError(t, settingErr23)
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{
 		SourceID: "src",
 		ModID:    modID,
 		Version:  version,

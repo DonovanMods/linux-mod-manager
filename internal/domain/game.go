@@ -5,12 +5,19 @@ import "fmt"
 // LinkMethod determines how mods are deployed to game directories
 type LinkMethod int
 
+// LinkSymlink, LinkHardlink, and LinkCopy are LinkMethod's three deploy
+// strategies, in the order ParseLinkMethod/ValidLinkMethods list them:
+// symlink is the default (space efficient), hardlink stays transparent to
+// games that stat their own files, copy is the maximum-compatibility
+// fallback for filesystems that support neither (e.g. across a bind mount).
 const (
 	LinkSymlink  LinkMethod = iota // Default: symlink (space efficient)
 	LinkHardlink                   // Hardlink (transparent to games)
 	LinkCopy                       // Copy (maximum compatibility)
 )
 
+// String returns the method's wire/config name ("symlink", "hardlink", or
+// "copy"; "unknown" for an out-of-range value).
 func (m LinkMethod) String() string {
 	switch m {
 	case LinkSymlink:
@@ -85,12 +92,21 @@ type Game struct {
 // DeployMode determines how downloaded mod archives are handled
 type DeployMode int
 
+// DeployExtract, DeployCopy, and DeployCompile are DeployMode's three
+// handling strategies for a downloaded file: extract is the default (unpack
+// an archive to the mod path), copy places the download as-is (for games
+// like Hytale where the .zip IS the mod), compile runs it through a
+// game-specific compiler into a new artifact before caching (Icarus
+// .exmodz -> .pak, #196/#221).
 const (
 	DeployExtract DeployMode = iota // Default: extract archives to mod path
 	DeployCopy                      // Copy files as-is (for games like Hytale where .zip IS the mod)
 	DeployCompile                   // Compile downloaded file into a new artifact before caching (Icarus .exmodz -> .pak)
 )
 
+// String returns the mode's wire/config name ("extract", "copy", or
+// "compile"). An out-of-range value also returns "extract" (the default),
+// not an error - MarshalText's doc comment explains why.
 func (m DeployMode) String() string {
 	switch m {
 	case DeployExtract:

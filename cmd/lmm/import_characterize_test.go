@@ -753,7 +753,7 @@ func TestDoImport_DeployCompile_ConvertiblePak_PrintsFilesDeployedLine(t *testin
 	assert.NotContains(t, out, "Installed (merged pak updated)",
 		"a convertible pak deploys a real file - it must not use the zero-file exmodz wording")
 
-	prof, pErr := svc.NewProfileManager().Get(game.ID, "default")
+	prof, pErr := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, pErr)
 	require.Len(t, prof.Mods, 1)
 	assert.Contains(t, prof.Mods[0].FileIDs, "Raw_Weapon.pak",

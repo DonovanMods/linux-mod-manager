@@ -72,7 +72,7 @@ func TestDoProfileSync_ToAdd_PrintsAndAddsMod(t *testing.T) {
 		"✓ Synced profile: default\n", out)
 
 	pm := getProfileManager(svc)
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "add1", profile.Mods[0].ModID)
@@ -85,7 +85,7 @@ func TestDoProfileSync_ToAdd_PrintsAndAddsMod(t *testing.T) {
 func TestDoProfileSync_ToRemove_PrintsAndRemovesRef(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "rem1", Version: "1.0"}))
 
 	out := captureStdout(t, func() error {
 		return doProfileSync(context.Background(), svc, game, nil)
@@ -97,7 +97,7 @@ func TestDoProfileSync_ToRemove_PrintsAndRemovesRef(t *testing.T) {
 		"\nProceed? [Y/n]: "+
 		"✓ Synced profile: default\n", out)
 
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods)
 }
@@ -109,7 +109,7 @@ func TestDoProfileSync_ToUpdate_PrintsAndBackfillsFileIDs(t *testing.T) {
 	svc, game := setupDoProfileSwitchTest(t)
 	seedSyncInstalledMod(t, svc, game, "src", "upd1", "Upd One", "1.0", "default", true, []string{"main"})
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "upd1", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "upd1", Version: "1.0"}))
 
 	out := captureStdout(t, func() error {
 		return doProfileSync(context.Background(), svc, game, nil)
@@ -121,7 +121,7 @@ func TestDoProfileSync_ToUpdate_PrintsAndBackfillsFileIDs(t *testing.T) {
 		"\nProceed? [Y/n]: "+
 		"✓ Synced profile: default\n", out)
 
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, []string{"main"}, profile.Mods[0].FileIDs)
@@ -135,7 +135,7 @@ func TestDoProfileSync_MissingProfile_AutoCreatesThenAdds(t *testing.T) {
 	seedSyncInstalledMod(t, svc, game, "src", "auto1", "New Auto", "1.0", "newprof", true, nil)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Get(game.ID, "newprof")
+	_, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.Error(t, err, "precondition: newprof must not exist yet")
 
 	out := captureStdout(t, func() error {
@@ -148,7 +148,7 @@ func TestDoProfileSync_MissingProfile_AutoCreatesThenAdds(t *testing.T) {
 		"\nProceed? [Y/n]: "+
 		"✓ Synced profile: newprof\n", out)
 
-	profile, err := pm.Get(game.ID, "newprof")
+	profile, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.NoError(t, err, "the profile must have been auto-created")
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "auto1", profile.Mods[0].ModID)
@@ -178,7 +178,7 @@ func TestDoProfileSync_MissingProfile_EmptyDiff_StillCreatesProfile(t *testing.T
 	svc, game := setupDoProfileSwitchTest(t)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Get(game.ID, "newprof")
+	_, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.Error(t, err, "precondition: newprof must not exist yet")
 
 	out := captureStdout(t, func() error {
@@ -187,7 +187,7 @@ func TestDoProfileSync_MissingProfile_EmptyDiff_StillCreatesProfile(t *testing.T
 
 	assert.Equal(t, "Profile newprof is already in sync.\n", out)
 
-	profile, err := pm.Get(game.ID, "newprof")
+	profile, err := pm.Get(context.Background(), game.ID, "newprof")
 	require.NoError(t, err, "a missing profile must still be created even with nothing to sync into it")
 	assert.Empty(t, profile.Mods)
 }
@@ -213,7 +213,7 @@ func TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 		"Cancelled.\n", out)
 
 	pm := getProfileManager(svc)
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "declining must not mutate the profile")
 }
@@ -234,7 +234,7 @@ func TestDoProfileSync_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 
 	require.ErrorIs(t, err, core.ErrConfirmationRequired)
 	pm := getProfileManager(svc)
-	profile, perr := pm.Get(game.ID, "default")
+	profile, perr := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, perr)
 	assert.Empty(t, profile.Mods, "must not mutate the profile")
 }
@@ -259,7 +259,7 @@ func TestDoProfileSync_YesFlagSkipsPromptEntirely(t *testing.T) {
 		"✓ Synced profile: default\n", out)
 
 	pm := getProfileManager(svc)
-	profile, perr := pm.Get(game.ID, "default")
+	profile, perr := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, perr)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "add1", profile.Mods[0].ModID)
@@ -294,7 +294,7 @@ func TestDoProfileSync_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T
 	decodeSingleDoc(t, out, &doc)
 	assert.Equal(t, 1, doc.Added)
 
-	profile, err := getProfileManager(svc).Get(game.ID, "default")
+	profile, err := getProfileManager(svc).Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, profile.Mods, 1)
 	assert.Equal(t, "add1", profile.Mods[0].ModID)
@@ -317,7 +317,7 @@ func syncLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc, game := setupDoProfileSwitchTest(t)
 	seedSyncInstalledMod(t, svc, game, "src", "lock1", "Locked One", "2.0", "default", true, []string{"main"})
-	require.NoError(t, getProfileManager(svc).AddMod(game.ID, "default",
+	require.NoError(t, getProfileManager(svc).AddMod(context.Background(), game.ID, "default",
 		domain.ModReference{SourceID: "src", ModID: "lock1", Version: "1.0", Locked: true}))
 	return svc, game
 }
@@ -350,7 +350,7 @@ func TestDoProfileSync_ToUpdate_LockedRefRefusalWarnsUnconditionally(t *testing.
 			assert.Equal(t, syncLockRefusalWarning, stderr,
 				"#294: the refusal is an unconditional stderr warning, identical at both verbosities")
 
-			profile, err := getProfileManager(svc).Get(game.ID, "default")
+			profile, err := getProfileManager(svc).Get(context.Background(), game.ID, "default")
 			require.NoError(t, err)
 			require.Len(t, profile.Mods, 1)
 			assert.Empty(t, profile.Mods[0].FileIDs, "the locked ref's FileIDs must NOT have been backfilled")
@@ -420,7 +420,7 @@ func syncTwoUpdateCancelFixture(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
 	svc, game := syncLockRefusalFixture(t)
 	seedSyncInstalledMod(t, svc, game, "src", "mod2", "Mod Two", "2.0", "default", true, []string{"main2"})
-	require.NoError(t, getProfileManager(svc).AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod2"}))
+	require.NoError(t, getProfileManager(svc).AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod2"}))
 	return svc, game
 }
 
@@ -461,7 +461,7 @@ func TestDoProfileSync_LockedRefWarningSurvivesFatalContextCancellation(t *testi
 		"Important 1: the accumulated #294 warning must survive the fatal path, not be silently dropped")
 	assert.NotContains(t, out, "✓ Synced profile", "the sync must not have completed")
 
-	profile, err := getProfileManager(svc).Get(game.ID, "default")
+	profile, err := getProfileManager(svc).Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	for _, mr := range profile.Mods {
 		if mr.ModID == "mod2" {

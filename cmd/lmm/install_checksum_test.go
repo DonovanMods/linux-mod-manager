@@ -20,7 +20,7 @@ import (
 // deterministically - mirroring internal/core's own
 // TestService_ApplyInstall_ChecksumSaveFailure_WarningNotDoublePrefixed.
 // InstallChecksumSaveFailed only fires from that shared engine (see its doc
-// comment in internal/core/flows.go), and both frontends that reach it -
+// comment in internal/core/install.go), and both frontends that reach it -
 // doInstallBatch (the dependency path) and installMultipleMods (the
 // multi-select path) - word the SAME event differently, which is what the
 // two tests below pin (review Minor M3: this phase had no test on either

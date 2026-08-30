@@ -86,7 +86,7 @@ func TestDoImport_DeployCompile_ImportedModParticipatesInMerge(t *testing.T) {
 	require.Contains(t, out, "Installed (merged pak updated)",
 		"#197 postsmoke UX fix: a zero-file exmodz import must say what happened, not print the misleading 'Files deployed: 0'")
 
-	prof, err := svc.NewProfileManager().Get(game.ID, "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	require.Len(t, prof.Mods, 1)
 	require.Contains(t, prof.Mods[0].FileIDs, "Bear_Mount.exmodz",

@@ -51,10 +51,10 @@ func runList(cmd *cobra.Command, args []string) error {
 
 func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game) error {
 	if listProfiles {
-		return runListProfiles(cmd, service, game.ID, game.Name)
+		return runListProfiles(ctx, cmd, service, game.ID, game.Name)
 	}
 
-	profileName, err := resolveProfile(service, game.ID, listProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, listProfile)
 	if err != nil {
 		return err
 	}
@@ -164,9 +164,13 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	return nil
 }
 
-func runListProfiles(cmd *cobra.Command, service *core.Service, gameID, gameName string) error {
+// runListProfiles takes the caller's ctx rather than reading cmd.Context():
+// cobra leaves that nil unless Execute/ExecuteC/SetContext has run, which is
+// a live trap for any test that builds a bare &cobra.Command{} (task-18
+// review, Minor 6). cmd stays for the flag/output plumbing only.
+func runListProfiles(ctx context.Context, cmd *cobra.Command, service *core.Service, gameID, gameName string) error {
 	pm := service.NewProfileManager()
-	profiles, err := service.ListProfileNames(gameID)
+	profiles, err := service.ListProfileNames(ctx, gameID)
 	if err != nil {
 		return fmt.Errorf("listing profiles: %w", err)
 	}
@@ -183,7 +187,7 @@ func runListProfiles(cmd *cobra.Command, service *core.Service, gameID, gameName
 
 	fmt.Printf("Profiles for %s (%s):\n", gameName, gameID)
 	for _, name := range names {
-		prof, err := pm.Get(gameID, name)
+		prof, err := pm.Get(ctx, gameID, name)
 		if err == nil && prof.IsDefault {
 			fmt.Printf("  %s (default)\n", name)
 		} else {

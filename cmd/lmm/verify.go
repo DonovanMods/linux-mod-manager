@@ -216,7 +216,7 @@ func runVerify(cmd *cobra.Command, args []string) error {
 // internal/core/verify.go, verify_repair.go, and verify_helpers.go
 // (#224 Tasks 2-6); this function owns none of it anymore.
 func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []string) error {
-	profile, err := resolveProfile(svc, game.ID, verifyProfile)
+	profile, err := resolveProfile(cmd.Context(), svc, game.ID, verifyProfile)
 	if err != nil {
 		return err
 	}

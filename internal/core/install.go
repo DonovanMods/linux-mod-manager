@@ -429,8 +429,13 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 	// A missing/unreadable profile simply holds no locks - PlanInstall's and
 	// lockedInstallRefusal's own tolerant convention.
 	var profile *domain.Profile
-	if p, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+	if p, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 		profile = p
+	} else if cerr := ctx.Err(); cerr != nil {
+		// Ruling 16 (C): "unreadable profile means no locks" is right for a
+		// missing or corrupt file and wrong for a cancellation, which would
+		// otherwise plan every locked mod as installable.
+		return nil, cerr
 	}
 	// Conflict detection is best-effort on exactly PlanInstall.Conflicts'
 	// terms (see InstallPlanEntry.Conflicts): a resolution failure here just
@@ -773,14 +778,19 @@ type InstallResult struct {
 // doInstall/batchInstallMods' lazy profile-creation convention ("Ensure
 // profile exists, create if needed") - failures are non-fatal (mirroring
 // doInstall's own "Log but don't fail - mod is installed" comment) and
-// reported by the caller via the returned error (nil on success or
-// already-exists).
-func ensureProfileExists(pm *ProfileManager, gameID, profileName string) error {
-	if _, err := pm.Get(gameID, profileName); err != nil {
-		if errors.Is(err, domain.ErrProfileNotFound) {
-			if _, err := pm.Create(gameID, profileName); err != nil {
-				return err
-			}
+// reported by the caller via the returned error. It returns nil only when
+// the profile is known to exist, either because it already did or because
+// this call created it (v2 Phase 3 Ruling 16 (B)): a read that could not
+// answer the question - a cancelled ctx, a YAML parse error, an EACCES -
+// is returned rather than mapped onto "the profile is fine", which is what
+// let a cancellation reach the caller's profile write as an ordinary note.
+func ensureProfileExists(ctx context.Context, pm *ProfileManager, gameID, profileName string) error {
+	if _, err := pm.Get(ctx, gameID, profileName); err != nil {
+		if !errors.Is(err, domain.ErrProfileNotFound) {
+			return err
+		}
+		if _, err := pm.Create(ctx, gameID, profileName); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -892,6 +902,9 @@ func (s *reinstallCacheTransaction) Rollback(ctx context.Context) error {
 	return errors.Join(restoreErr, rmErr)
 }
 
+// Commit discards the temp-dir snapshot RestoreLive would otherwise restore
+// from - called once the reinstall has fully succeeded and the snapshot is
+// no longer needed.
 func (s *reinstallCacheTransaction) Commit() error {
 	if s == nil {
 		return nil
@@ -910,8 +923,14 @@ func (s *reinstallCacheTransaction) Commit() error {
 // ErrModLocked guard as the final backstop). A missing/unreadable profile
 // cannot hold a lock - ApplyUpdate's tolerant precedent.
 func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, opts InstallOptions) error {
-	prof, err := s.NewProfileManager().Get(plan.GameID, plan.Profile)
+	prof, err := s.NewProfileManager().Get(ctx, plan.GameID, plan.Profile)
 	if err != nil {
+		// Ruling 16 (C): a cancelled read tells us nothing about the lock,
+		// so it must not read as "not locked" - and it is not the profile
+		// fault the log lines below describe.
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if errors.Is(err, domain.ErrProfileNotFound) {
 			// A profile that hasn't been materialized as a YAML file yet is
 			// the everyday case on a first-ever install, not a fault -
@@ -1459,7 +1478,7 @@ func (s *Service) syncMergedPakAfterInstall(ctx context.Context, game *domain.Ga
 // summary counts rather than an error is how this path reports trouble.
 func (s *Service) applyInstallBatch(ctx context.Context, game *domain.Game, plan *InstallPlan, opts InstallOptions, result *InstallResult, emit func(Event)) (*InstallResult, error) {
 	pm := s.NewProfileManager()
-	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
 		return result, fmt.Errorf("could not create profile: %w", err)
 	}
 
@@ -1672,7 +1691,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 	// only a ref without a DB row still resolves as a dependency - which
 	// would otherwise deploy and leave drift behind UpsertMod's refusal
 	// Note below.
-	if prof, err := pm.Get(game.ID, plan.Profile); err == nil {
+	if prof, err := pm.Get(ctx, game.ID, plan.Profile); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked && ref.Version != mod.Version {
 			// InstallLockRefusal, not the generic InstallDepSkipped: the
 			// event carries the refusal SENTENCE and the result carries the
@@ -1683,6 +1702,12 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			fail(LockedRefRefusalError(*mod, plan.Profile, ref).Error())
 			return nil
 		}
+	} else if cerr := ctx.Err(); cerr != nil {
+		// Ruling 16 (C): a cancelled read must not degrade this lock gate
+		// open. skip() (not a bare nil) for the same reason the file-loop
+		// check below does it - review finding I2.
+		skip("Error", fmt.Sprintf("cancelled: %v", cerr))
+		return nil
 	}
 
 	if existing, err := s.GetInstalledMod(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile); err == nil && existing != nil {
@@ -1786,13 +1811,37 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 	}
 
-	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+	if s.afterInstallSave != nil {
+		s.afterInstallSave()
+	}
+	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
+		// NEW-6 (v2 Phase 3 Ruling 16 (B) review): a cancellation here means
+		// the profile was never created, so the completeProfileWrite below
+		// is doomed to fail (UpsertMod's LoadProfile finds nothing) - report
+		// it now, ahead of that doomed write, rather than recording a Note
+		// and falling through to a failure that gets silently swallowed as
+		// "just a cancellation" once it happens.
+		if ctx.Err() != nil {
+			skip("Error", fmt.Sprintf("cancelled: %v", err))
+			return nil
+		}
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}
-	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
+	// Ruling 16 (A): the DB row and the deployment are already in place, so
+	// the profile ref that completes them is written even under a cancelled
+	// ctx. Returning here skips this mod's Installed entry and its
+	// after_each hook; both batch loops re-check ctx.Err() after the loop
+	// (review finding I2), which turns the cancellation into ApplyInstall's
+	// own fatal return.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+	}); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
@@ -1991,7 +2040,7 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
 	// DownloadModToCache itself gates on), re-derived here rather than read
-	// back from DownloadModToCache's result since flows.go already has
+	// back from DownloadModToCache's result since this file already has
 	// everything the condition needs. Drives the InstallCompiling
 	// announcement below in place of the generic InstallExtracting one.
 	// #221: convert-eligible .pak files are only included if the source
@@ -2234,13 +2283,29 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 		}
 	}
 
-	if err := ensureProfileExists(pm, game.ID, plan.Profile); err != nil {
+	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
+		// NEW-6 (v2 Phase 3 Ruling 16 (B) review): a cancellation here means
+		// the profile was never created, so the completeProfileWrite below
+		// is doomed to fail (UpsertMod's LoadProfile finds nothing) - report
+		// it now, ahead of that doomed write, rather than recording a Note
+		// on a result this return is about to discard anyway.
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-	if err := pm.UpsertMod(game.ID, plan.Profile, modRef); err != nil {
+	// Ruling 16 (A): the DB row and the deployment are already in place, so
+	// the profile ref that completes them is written even under a cancelled
+	// ctx; the cancellation is then fatal to ApplyInstall as a whole.
+	if err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, game.ID, plan.Profile, modRef)
+	}); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})

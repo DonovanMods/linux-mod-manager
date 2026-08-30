@@ -36,7 +36,7 @@ func downloadWithSHA256(t *testing.T, content []byte, expectedSHA string) (error
 
 	mock.AddDownload(file.ID, content)
 
-	_, err = svc.DownloadMod(context.Background(), "test", game, mod, file, nil)
+	_, err = svc.DownloadModForTest(context.Background(), "test", game, mod, file, nil)
 	gameCache := svc.GetGameCache(game)
 	cached := func() bool { return gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) }
 	return err, game, mod, cached

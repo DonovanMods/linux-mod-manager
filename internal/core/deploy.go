@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
@@ -921,4 +922,65 @@ func (s *Service) purgeForDeploy(ctx context.Context, game *domain.Game, profile
 		warnings:  &result.Warnings,
 		notes:     &result.Notes,
 	})
+}
+
+// orderByProfile returns mods in a stable, deterministic order for
+// multi-mod operations (deploy, plan/apply): mods absent from profile.Mods
+// first - sorted by "SourceID:ID" key (domain.ModKey) for a reproducible
+// tie-break - followed by mods present in profile.Mods, in profile.Mods
+// order. domain.Profile.Mods documents "first = lowest priority" (see its
+// doc comment), so later entries in that order deploy later and win file
+// conflicts; this function preserves that meaning end to end.
+//
+// profile may be nil - treated as an empty profile, so every mod is
+// "absent" and the whole result is simply sorted by key. Callers with a
+// profile that failed to load (e.g. an unreadable/missing YAML file) use
+// this to stay deterministic without aborting the caller's own operation.
+//
+// Keys are deduplicated: a mod repeated in profile.Mods (which shouldn't
+// normally happen - ReorderMods already dedupes on save) or in mods
+// contributes only its single occurrence to the result, at its first
+// resolved position.
+func orderByProfile(profile *domain.Profile, mods []domain.InstalledMod) []domain.InstalledMod {
+	byKey := make(map[string]domain.InstalledMod, len(mods))
+	for _, m := range mods {
+		byKey[domain.ModKey(m.SourceID, m.ID)] = m
+	}
+
+	var profileMods []domain.ModReference
+	if profile != nil {
+		profileMods = profile.Mods
+	}
+
+	inProfile := make(map[string]bool, len(profileMods))
+	for _, ref := range profileMods {
+		inProfile[domain.ModKey(ref.SourceID, ref.ModID)] = true
+	}
+
+	var unlisted []domain.InstalledMod
+	for key, m := range byKey {
+		if !inProfile[key] {
+			unlisted = append(unlisted, m)
+		}
+	}
+	sort.Slice(unlisted, func(i, j int) bool {
+		return domain.ModKey(unlisted[i].SourceID, unlisted[i].ID) < domain.ModKey(unlisted[j].SourceID, unlisted[j].ID)
+	})
+
+	ordered := make([]domain.InstalledMod, 0, len(mods))
+	ordered = append(ordered, unlisted...)
+
+	seen := make(map[string]bool, len(profileMods))
+	for _, ref := range profileMods {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if m, ok := byKey[key]; ok {
+			ordered = append(ordered, m)
+		}
+	}
+
+	return ordered
 }

@@ -34,9 +34,9 @@ func setupCompileReadoutGame(t *testing.T, svc *core.Service) *domain.Game {
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.SetDefault(game.ID, "default"))
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
 	return game
 }
 
@@ -54,7 +54,7 @@ func seedExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, modID, na
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0", FileIDs: []string{fileID}}))
 }
 
 // seedLooseMod installs an enabled ordinary loose-file mod (no retained
@@ -69,7 +69,7 @@ func seedLooseMod(t *testing.T, svc *core.Service, game *domain.Game, modID, nam
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: modID, Version: "1.0"}))
 }
 
 // deployRecordingProgress runs DeployProfile with a recorder and returns the
@@ -230,7 +230,7 @@ func TestDeployProfile_NonCompile_NoMergeReadout(t *testing.T) {
 	game := &domain.Game{ID: "plain", Name: "Plain", ModPath: t.TempDir(), LinkMethod: domain.LinkCopy}
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "a", "1.0", "a.esp", []byte("data")))
@@ -240,7 +240,7 @@ func TestDeployProfile_NonCompile_NoMergeReadout(t *testing.T) {
 		Enabled:      true,
 		UpdatePolicy: domain.UpdateNotify,
 	}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a", Version: "1.0"}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a", Version: "1.0"}))
 
 	var mergeEvents []core.Event
 	deployed := map[string]core.Event{}

@@ -48,12 +48,12 @@ func seedConflictMod(t *testing.T, svc *core.Service, game *domain.Game, modID, 
 		Enabled:      enabled,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
 }
 
 // seedTwinConflictFixture seeds two mods ("Mod A" first in profile order,
@@ -138,7 +138,7 @@ func TestDoConflicts_TwinConflict_Stale_Text(t *testing.T) {
 	svc, game := setupConflictsTest(t)
 	seedTwinConflictFixture(t, svc, game)
 
-	require.NoError(t, svc.NewProfileManager().ReorderMods(game.ID, "default", []domain.ModReference{
+	require.NoError(t, svc.NewProfileManager().ReorderMods(context.Background(), game.ID, "default", []domain.ModReference{
 		{SourceID: "src", ModID: "b", Version: "1.0"},
 		{SourceID: "src", ModID: "a", Version: "1.0"},
 	}))

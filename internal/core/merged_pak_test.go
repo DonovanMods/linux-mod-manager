@@ -61,14 +61,14 @@ func TestEnabledMergeSources_OrderMatchesProfileLoadOrderAndSkipsDisabled(t *tes
 	seedMod("icarus", "disabled-mod", "1.0", []string{"exmodz-file"}, false)
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	// Profile load order: first-mod, then second-mod (disabled-mod
 	// intentionally omitted - membership in Profile.Mods, not just an
 	// Enabled DB row, is what GetInstalledModsInProfileOrder requires).
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "first-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "second-mod", Version: "1.0", FileIDs: []string{"exmodz-file", "pak-file"}}))
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "disabled-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "first-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "second-mod", Version: "1.0", FileIDs: []string{"exmodz-file", "pak-file"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "disabled-mod", Version: "1.0", FileIDs: []string{"exmodz-file"}}))
 
 	sources, err := svc.EnabledMergeSourcesForTest(context.Background(), game, "default")
 	require.NoError(t, err)
@@ -117,9 +117,9 @@ func TestClassifyCompileDeployMods_UnreadableRetainedPathWarns(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
 
 	versionDir := gameCache.ModPath(game.ID, "icarus", "mod1", "1.0")
 	require.NoError(t, os.Chmod(versionDir, 0o000))
@@ -167,9 +167,9 @@ func TestClassifyCompileDeployMods_CompilerResolutionFailureWarns(t *testing.T) 
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "icarus", ModID: "mod1", Version: "1.0", FileIDs: []string{fileID}}))
 
 	mod, err := svc.GetInstalledMod(context.Background(), "icarus", "mod1", game.ID, "default")
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func newMergedPakTestGame(t *testing.T) (*core.Service, *domain.Game, string) {
 	require.NoError(t, svc.SaveGame(context.Background(), game))
 
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	return svc, game, basePak
@@ -227,7 +227,7 @@ func seedEnabledExmodzMod(t *testing.T, svc *core.Service, game *domain.Game, so
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{fileID}}))
 }
 
 // TestSyncMergedPak_GeneratesAndDeploys is the happy path: one enabled
@@ -353,6 +353,21 @@ func TestSyncMergedPak_NeverMerged_ZeroSources(t *testing.T) {
 	require.Empty(t, warnings)
 }
 
+// purgeMergedPakOnly drives purgeMergedPak (unexported by Phase 3 Ruling 10)
+// through PurgeProfile with an empty mods list - the real path a `lmm purge`
+// on a DeployCompile game takes (purgeProfile calls purgeMergedPak
+// unconditionally after its per-mod loop) - without also purging any real
+// mod, isolating the merged-pak behavior exactly like the old direct
+// PurgeMergedPak call did. purgeMergedPak's own failure is non-fatal
+// (recorded in PurgeResult.Warnings, not returned as an error), so the
+// caller must check both.
+func purgeMergedPakOnly(t *testing.T, svc *core.Service, game *domain.Game, deleteCache bool) *core.PurgeResult {
+	t.Helper()
+	result, err := svc.PurgeProfile(context.Background(), game, "default", nil, core.PurgeOptions{Uninstall: deleteCache}, nil)
+	require.NoError(t, err)
+	return result
+}
+
 // TestPurgeMergedPak_AbsentCacheEntry (#260 repro shape 3): PurgeMergedPak
 // routes through the same Installer.Uninstall and must likewise tolerate an
 // absent merged-pak cache entry (e.g. purge --uninstall already deleted it,
@@ -360,7 +375,7 @@ func TestSyncMergedPak_NeverMerged_ZeroSources(t *testing.T) {
 func TestPurgeMergedPak_AbsentCacheEntry(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 
-	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+	require.Empty(t, purgeMergedPakOnly(t, svc, game, true).Warnings,
 		"purging a never-merged profile must be a no-op, not an error")
 
 	// And again after a full merge/purge cycle: --uninstall deletes the
@@ -368,8 +383,8 @@ func TestPurgeMergedPak_AbsentCacheEntry(t *testing.T) {
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("bear-bytes"))
 	_, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)
-	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true))
-	require.NoError(t, svc.PurgeMergedPak(context.Background(), game, "default", true),
+	require.Empty(t, purgeMergedPakOnly(t, svc, game, true).Warnings)
+	require.Empty(t, purgeMergedPakOnly(t, svc, game, true).Warnings,
 		"a repeat purge after --uninstall must tolerate the already-deleted entry")
 }
 
@@ -546,7 +561,7 @@ func TestReconcilePakManifests_TwoPakFileIDs_EachClaimsOwnMember(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{mainFileID, liteFileID}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{mainFileID, liteFileID}}))
 
 	gc := svc.GetGameCache(game)
 	inst := core.NewInstaller(gc, linker.New(game.LinkMethod), nil)
@@ -657,7 +672,7 @@ func TestReconcilePakManifests_RawFallback_RestoresPrunedDeployableCopy(t *testi
 				UpdatePolicy: domain.UpdateNotify,
 			}))
 			pm := svc.NewProfileManager()
-			require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{tc.fileID}}))
+			require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{tc.fileID}}))
 
 			inst := core.NewInstaller(gameCache, linker.New(game.LinkMethod), nil)
 			_, err := svc.ReconcilePakManifestsForTest(context.Background(), game, "default", inst, nil)
@@ -728,7 +743,7 @@ func TestSyncMergedPak_OptOutAfterPrunedConvertedPak_RestoresRawDeploy(t *testin
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.UpsertMod(game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{"pak"}}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: sourceID, ModID: modID, Version: version, FileIDs: []string{"pak"}}))
 
 	warnings, err := svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

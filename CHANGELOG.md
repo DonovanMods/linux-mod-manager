@@ -411,6 +411,55 @@ profiles}`).
   returns no error. The plain-text path also drops one duplicated `listing profiles:` prefix
   (`ProfileManager.List` already wraps that error with it). (#301)
 
+### Internal
+
+- `internal/core/flows.go` and `flows_test.go` are gone, completing the series of moves CHANGELOG
+  entries for Units H, I, J, and M already recorded. The remaining flows move into subject-named
+  files: `EnableMod`/`DisableMod` (`mod_toggle.go`), `DeployPhase` and its
+  `String`/`MarshalText`/`UnmarshalText` (`phases.go`), `PlanProfileSwitch`/`ApplyProfileSwitch`
+  (`switch.go`), `PlanImport`/`ApplyImport` (`profile_import.go`), plus `runHook` (`hooks.go`),
+  `sameFileIDSet` (`selection.go`), and `orderByProfile` (`deploy.go`). The seven
+  `flows_*_test.go` files are renamed to match: `deploy_compile_readout_test.go`,
+  `deploy_selfheal_test.go`, `install_directory_test.go`, `install_test.go`, `rollback_test.go`,
+  `update_test.go`, `variant_exclusivity_test.go`. No user-visible change: CLI output is
+  byte-identical. (#305)
+- Cancellation mid-mutation can no longer leave a mod in the DB but absent from its profile (or
+  vice-versa). Every profile-file write that completes an already-applied database mutation —
+  install, dependency install, archive import, adopt, profile import, profile switch, uninstall,
+  `purge --uninstall`, and `mod edit`'s relink/version paths — now finishes even when the run is
+  cancelled, and the run then stops with the cancellation instead of absorbing it into a per-mod
+  warning and reporting success, with no exception among the flows above: `adopt`'s own last-match
+  case initially missed this (the completing write finished, but the caller still counted the
+  cancellation as a per-mod failure and reported success), closed in the same fix wave. The lock
+  and profile-list gates that treat an unreadable profile
+  as "no lock" / "no profiles" report a cancelled read rather than degrading open, and the lazy
+  profile-existence check no longer reports "the profile is fine" for a read it could not answer.
+  One non-cancelled-path exception: that same check now also catches a profile YAML that exists
+  but cannot be loaded (a parse error or a permissions error), so a batch install into such a
+  profile now aborts up front instead of running to completion and reporting success with per-mod
+  warnings, and the single-mod/import paths gain a `Warning: could not create profile: …` line
+  ahead of the pre-existing `could not update profile` warning. A cancellation between that
+  profile-existence check and the DB row it completes is now reported (Skipped/Failed) instead of
+  silently dropped, so a first-ever install's dependency can no longer land in the database and
+  vanish from the result at once. A cancelled run also now prints `Cancelled.` to stderr in plain
+  mode before exiting 2 (`--json` stays silent, as `--json` output is otherwise unaffected). No
+  other output changes on any non-cancelled path. (#305)
+- `core.Service`'s fixture-only exports resolved (Ruling 10): `DownloadMod`, `GetInstaller`, and
+  `PurgeMergedPak` are unexported — production never called the exported forms, only test
+  fixtures did — with `cmd/lmm` tests re-seeded through the real `PlanInstall`/`ApplyInstall`,
+  `PlanDeploy`/`ApplyDeploy`, and `PurgeProfile` flows instead. `SaveInstalledMod`, `GetGameCache`,
+  `SyncMergedPak`, `SaveFileChecksum`, `AvailableModVersions`, `IsSourceAuthenticated`, `ScanLocal`,
+  `Logger`, `SetModLinkMethod`, `SetModDeployed`, and `DeleteInstalledMod` stay exported as
+  documented test-seed APIs or frontend-facing queries, each with a doc comment stating why. No
+  behavior change. (#305)
+- Every exported identifier in `internal/core`, `internal/domain`, and `internal/app` now carries
+  a doc comment, enforced by a `go/ast` test in each package
+  (`TestExportedIdentifiersHaveDocComments`) rather than tracked as a one-time count.
+  `cmd/lmm`'s import-boundary test drops its allow-list mechanism (empty since Task 1) in favor of
+  asserting the hard rule directly; a new `TestDetailsTypesAreCovered` (Unit P review finding M7)
+  requires every type implementing the `--json` error envelope's `Details() any` extension point
+  to have a named test pinning its wire shape. No behavior change. (#305)
+
 ## [1.30.1] - 2026-08-08
 
 ### Changed

@@ -400,11 +400,11 @@ func (s *Service) syncMergedPak(ctx context.Context, game *domain.Game, profileN
 //
 // `mod edit`'s last cmd caller (v2 Phase 3 Task 10, #303) moved into
 // ApplyRelinkMod (which calls the unexported syncMergedPak directly, already
-// inside its own beginOp); this exported wrapper's remaining callers are
-// cmd/lmm test fixtures across several command areas that need to force a
-// merged-pak resync as test setup. Kept exported by the same
-// SaveFileChecksum precedent (Ruling 10) rather than rewriting that fixture
-// surface.
+// inside its own beginOp). Documented test-seed API kept by ruling (Phase 3
+// Ruling 10): no Plan/Apply substitute at fixture scale (11 sites / 8 files
+// across cmd/lmm as of Unit R) - cmd/lmm test fixtures across several
+// command areas need to force a merged-pak resync as test setup. Not part
+// of the frontend contract.
 func (s *Service) SyncMergedPak(ctx context.Context, game *domain.Game, profileName string) ([]string, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -1061,7 +1061,7 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 	return result, nil
 }
 
-// PurgeMergedPak explicitly undeploys game+profileName's merged pak (#197
+// purgeMergedPak explicitly undeploys game+profileName's merged pak (#197
 // I2 fix). `lmm purge`'s own contract is "remove ALL deployed mod files...
 // resetting the game directory back to its pre-modded state" - but exmodz
 // mods deploy EXCLUSIVELY through this one shared artifact, never their
@@ -1080,15 +1080,12 @@ func (s *Service) applyMergedPakRegen(ctx context.Context, game *domain.Game, pr
 // confirming the deployed artifact still exists - #197 I5's fix); true
 // (--uninstall) also clears the cache entry, matching every real mod's
 // full removal.
-func (s *Service) PurgeMergedPak(ctx context.Context, game *domain.Game, profileName string, deleteCache bool) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.purgeMergedPak(ctx, game, profileName, deleteCache)
-}
-
+//
+// Unexported by Phase 3 Ruling 10: purgeProfile (PurgeProfile/ApplyPurge)
+// is its only caller in production or test - the exported PurgeMergedPak
+// wrapper this replaced had no caller that didn't already go through a
+// full purge. core's own fixture (merged_pak_test.go's purgeMergedPakOnly)
+// drives it via PurgeProfile with an empty mods list instead.
 func (s *Service) purgeMergedPak(ctx context.Context, game *domain.Game, profileName string, deleteCache bool) error {
 	if game.DeployMode != domain.DeployCompile {
 		return nil

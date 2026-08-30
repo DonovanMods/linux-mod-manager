@@ -89,6 +89,28 @@ func TestRunRoot_PropagatesContextCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestPrintCancelledNotice_PlainVsJSON pins Minor 3 of the Unit R final
+// review (Ruling 16 addendum): Execute's context.Canceled/ErrCancelled exit
+// path used to print nothing at all - exit code 2 with no line on stdout or
+// stderr naming the cancellation, even though `lmm --help` documents 2 as
+// "cancelled by the user". Plain mode now prints "Cancelled." to stderr;
+// --json stays silent here, matching Ruling 15's "no extra text alongside a
+// JSON contract" convention (the JSON contract itself carries no envelope
+// for a cancellation exit, so --json emits nothing at all).
+func TestPrintCancelledNotice_PlainVsJSON(t *testing.T) {
+	t.Run("plain", func(t *testing.T) {
+		var buf bytes.Buffer
+		printCancelledNotice(&buf, false)
+		assert.Equal(t, "Cancelled.\n", buf.String())
+	})
+
+	t.Run("json", func(t *testing.T) {
+		var buf bytes.Buffer
+		printCancelledNotice(&buf, true)
+		assert.Empty(t, buf.String(), "--json must emit nothing extra on a cancellation exit")
+	})
+}
+
 // TestRoot_LogLevel_InvalidErrorTextIsExactEverywhere pins Important #1 of
 // the Task 1 review: an invalid --log-level must produce exactly
 // newCLILogger's error text - no pflag *InvalidValueError wrapper prefix

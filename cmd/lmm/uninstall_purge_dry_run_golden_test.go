@@ -148,7 +148,7 @@ func seedSecondSourceMod(t *testing.T, svc *core.Service, game *domain.Game, sou
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 	}))
-	require.NoError(t, svc.NewProfileManager().AddMod(game.ID, "default",
+	require.NoError(t, svc.NewProfileManager().AddMod(context.Background(), game.ID, "default",
 		domain.ModReference{SourceID: sourceID, ModID: modID, Version: "1.0"}))
 }
 
@@ -299,7 +299,7 @@ func TestPurgeDryRunGoldens(t *testing.T) {
 		{"no_mods", func(t *testing.T) dryRunGoldenFixture {
 			svc, game := setupDoPurgeTest(t)
 			purgeDryRun = true
-			_, err := svc.NewProfileManager().Create(game.ID, "default")
+			_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
 			require.NoError(t, err)
 			return dryRunGoldenFixture{svc: svc, game: game, run: doPurge}
 		}},

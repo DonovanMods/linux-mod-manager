@@ -95,7 +95,7 @@ mods:
 	require.Len(t, files, 1)
 	assert.Equal(t, archiveSHA, files[0].SHA256)
 
-	result, err := svc.DownloadMod(ctx, "e2e-repo", game, &mod, &files[0], nil)
+	result, err := svc.DownloadModForTest(ctx, "e2e-repo", game, &mod, &files[0], nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.FilesExtracted)
 	gameCache := svc.GetGameCache(game)
@@ -154,7 +154,7 @@ mods:
 	files, err := src.GetModFiles(ctx, mod)
 	require.NoError(t, err)
 
-	_, err = svc.DownloadMod(ctx, "bad-repo", game, mod, &files[0], nil)
+	_, err = svc.DownloadModForTest(ctx, "bad-repo", game, mod, &files[0], nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "sha256 mismatch")
 	gameCache := svc.GetGameCache(game)

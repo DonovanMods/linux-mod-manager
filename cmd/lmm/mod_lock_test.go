@@ -66,12 +66,12 @@ func seedLockableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, 
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: version}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: version}))
 }
 
 // noVersionsCapSource is a real, registered ModSource that explicitly
@@ -241,9 +241,9 @@ func TestDoModLock_VersionlessSource_NamesPin(t *testing.T) {
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "novers", ModID: "a", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "novers", ModID: "a", Version: "1.0"}))
 
 	modSource = "novers"
 
@@ -262,7 +262,7 @@ func TestDoModUnlock_ClearsMarkerLeavesVersionIntact(t *testing.T) {
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "src", "a", "2.0"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", "2.0"))
 
 	out := captureStdout(t, func() error {
 		return doModUnlock(context.Background(), svc, game, "a")
@@ -316,7 +316,7 @@ func TestDoModLock_NoVersion_MissingFromProfile_Errors(t *testing.T) {
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	err = doModLock(context.Background(), svc, game, "a", "")

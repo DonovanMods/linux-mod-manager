@@ -77,7 +77,7 @@ mods:
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
-	_, err = svc.DownloadMod(ctx, "staging-repo", game, &mod, &files[0], nil)
+	_, err = svc.DownloadModForTest(ctx, "staging-repo", game, &mod, &files[0], nil)
 	require.NoError(t, err)
 
 	downloads := filepath.Join(dataDir, "downloads")

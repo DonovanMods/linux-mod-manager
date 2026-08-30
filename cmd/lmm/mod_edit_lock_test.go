@@ -44,7 +44,7 @@ func TestDoModEdit_ReLink_LockedRef_Refuses(t *testing.T) {
 	svc, game, src := setupDoModEditTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "src", "a", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 	src.AddMod(&domain.Mod{ID: "b", SourceID: "src", Name: "Mod B", Version: "2.0", GameID: game.ID}, nil)
 
 	editID = "b"
@@ -83,7 +83,7 @@ func TestDoModEdit_Version_LockedRef_RefusesBeforeDBWrite(t *testing.T) {
 	svc, game, _ := setupDoModEditTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "src", "a", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 
 	editVersion = "2.0"
 	err := doModEdit(context.Background(), svc, game, "a")
@@ -115,7 +115,7 @@ func TestDoModEdit_Version_MatchingLock_Allowed(t *testing.T) {
 	svc, game, _ := setupDoModEditTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "2.0")
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "src", "a", "1.0"))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", "1.0"))
 
 	editVersion = "1.0"
 	var err error
@@ -144,7 +144,7 @@ func TestDoModEdit_MetadataOnly_LockedRef_Allowed(t *testing.T) {
 	svc, game, _ := setupDoModEditTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "src", "a", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 
 	editName = "Renamed Mod A"
 	var err error

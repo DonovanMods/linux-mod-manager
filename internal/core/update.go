@@ -520,6 +520,14 @@ type UpdateOptions struct {
 // whose Name is still empty - see UpdateApplyResult's doc comment.
 type UpdateStatus int
 
+// The UpdateStatus values classify what an update operation did or would
+// do: UpdateUpdated is a completed normal version-bump update,
+// UpdateUpToDate found nothing newer, UpdateSkipped covers a locked/refused
+// mod (Reason names why), UpdateRecompiled/UpdateRecompileAvailable are the
+// applied/dry-run outcomes of a base-pak recompile (#196 - no version
+// change, only the compiled artifact is rebuilt), UpdateAvailable is a
+// normal update's `--dry-run` outcome, and UpdateRolledBack marks a
+// completed ApplyRollback.
 const (
 	UpdateUpdated UpdateStatus = iota
 	UpdateUpToDate
@@ -805,10 +813,15 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 
 	// #97: a locked ref refuses update-apply entirely - the lock's whole
 	// contract. Checked before any network or hook side effect.
-	if prof, err := s.NewProfileManager().Get(game.ID, profileName); err == nil {
+	if prof, err := s.NewProfileManager().Get(ctx, game.ID, profileName); err == nil {
 		if ref := prof.FindRef(mod.SourceID, mod.ID); ref != nil && ref.Locked {
 			return result, LockedRefUnlockOnlyRefusalError(mod.Mod, profileName, ref)
 		}
+	} else if cerr := ctx.Err(); cerr != nil {
+		// Ruling 16 (C): the fall-through below is for a profile that
+		// cannot hold a lock; a cancelled read is a profile we never got to
+		// ask, and letting it through would update a locked mod.
+		return result, cerr
 	}
 	// (A missing/unreadable profile falls through - matches
 	// PlanProfileSwitch's ignore-errors precedent for profile loads: a lock
@@ -960,7 +973,7 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 
 	pm := s.NewProfileManager()
 	modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: effectiveVersion, FileIDs: downloadedFileIDs}
-	if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
+	if err := pm.UpsertMod(ctx, game.ID, profileName, modRef); err != nil {
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if rerr := s.rollbackModVersion(rctx, mod.SourceID, mod.ID, game.ID, profileName); rerr != nil {

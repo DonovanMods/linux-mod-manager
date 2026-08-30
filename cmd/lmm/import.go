@@ -82,7 +82,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 // from the event stream and the returned result. The engine itself lives in
 // internal/core/import_archive.go.
 func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, game *domain.Game, args []string) error {
-	profileName, err := resolveProfile(service, game.ID, importProfile)
+	profileName, err := resolveProfile(ctx, service, game.ID, importProfile)
 	if err != nil {
 		return err
 	}

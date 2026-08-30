@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+// Sentinel errors identified via errors.Is by callers across storage, core,
+// and the CLI - wrapped with %w to add context (which mod, which field)
+// without losing identity. A rule with its own validation logic (rather
+// than a plain "not found"/"not allowed" fact) carries its own comment
+// below explaining that rule.
 var (
 	ErrModNotFound     = errors.New("mod not found")
 	ErrGameNotFound    = errors.New("game not found")
@@ -53,6 +58,8 @@ type DeployError struct {
 	Rollback error
 }
 
+// Error renders the Op prefix (if set), the Primary cause, and any
+// Cleanup/Rollback failures as one line.
 func (e *DeployError) Error() string {
 	var b strings.Builder
 	if e.Op != "" {

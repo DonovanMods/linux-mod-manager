@@ -78,12 +78,12 @@ func seedConvertableModWithFileIDs(t *testing.T, svc *core.Service, game *domain
 		FileIDs:      fileIDs,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: version}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: version}))
 }
 
 // TestModConvertCommand guards the convert on|off mutation: toggle ConvertPaks

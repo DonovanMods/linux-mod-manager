@@ -342,7 +342,7 @@ func TestDoInstallBatch_DeployCompile_SyncFailure_LinesDontClaimSuccess(t *testi
 
 // TestDoDeploy_DeployCompile_ConversionFailureSurfaces is the #221 deploy-
 // flow pin: a pak-conversion failure (source.MergeFailure) discovered by
-// DeployProfile's own end-of-loop SyncMergedPak call (internal/core/flows.go)
+// DeployProfile's own end-of-loop SyncMergedPak call (internal/core/deploy.go)
 // must reach the user, not get swallowed by any phase in between. Drives the
 // REAL doDeploy CLI seam with a MergeCompiler that fails one enabled pak
 // mod's conversion, and proves the resulting "... pak conversion failed:

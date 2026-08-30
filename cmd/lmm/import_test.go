@@ -6,6 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/core"
@@ -171,6 +174,69 @@ func TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices(t *testing.T) {
 		"\n" +
 		"Scanning " + game.ModPath + " for untracked mods...\n"
 	assert.Equal(t, expected, out)
+}
+
+// errCallerIsCompletingProfileWrite reports whether the caller of the
+// current Err() method (one frame further up, i.e. two frames from HERE) is
+// core's completing profile write, core.completeProfileWrite - mirrors
+// internal/core/cancellation_ruling16_test.go's identically-named helper,
+// duplicated here because that one is unexported to a test-only file in a
+// different package.
+func errCallerIsCompletingProfileWrite() bool {
+	pc, _, _, ok := runtime.Caller(2)
+	if !ok {
+		return false
+	}
+	name := runtime.FuncForPC(pc).Name()
+	return strings.HasSuffix(name, "core.completeProfileWrite")
+}
+
+// cancelAtCompletingProfileWrite cancels itself the moment core reaches its
+// first completing profile write - see errCallerIsCompletingProfileWrite and
+// internal/core/cancellation_ruling16_test.go's identical harness.
+type cancelAtCompletingProfileWrite struct {
+	context.Context
+	cancel context.CancelFunc
+	fired  atomic.Bool
+}
+
+func (c *cancelAtCompletingProfileWrite) Err() error {
+	if errCallerIsCompletingProfileWrite() && c.fired.CompareAndSwap(false, true) {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+// TestRunImportScan_CancellationAtCompletingProfileWrite_EndsFatallyNoSuccessSummary
+// pins re-review round 2 NEW-1 at the cmd boundary: a Ctrl-C landing on
+// adopt's completing profile write must reach the user as a non-zero exit
+// (runImportScan returning a non-nil error propagates straight to
+// Execute()'s os.Exit(1)) with no "Imported: N, Skipped: N, Failed: N"
+// success line - the CHANGELOG bullet's own promise for every class-(A)
+// site.
+func TestRunImportScan_CancellationAtCompletingProfileWrite_EndsFatallyNoSuccessSummary(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	game.DeployMode = domain.DeployCopy
+	require.NoError(t, os.WriteFile(filepath.Join(game.ModPath, "LooseMod-1.0.zip"), []byte("loose-payload"), 0644))
+
+	importSkipMatch = true
+	importForce = true
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(ctx)
+
+	out, err := captureStdoutErr(t, func() error {
+		return runImportScan(cmd, game, svc, "default")
+	})
+
+	require.Error(t, err, "the run must end fatally, not exit 0")
+	assert.ErrorIs(t, err, context.Canceled)
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on a completing profile write")
+	assert.NotContains(t, out, "Imported:", "a cancelled run must not print the success summary")
 }
 
 // --- import --id default resolution (Task 3 of #76's PR2 plan) ---
@@ -349,7 +415,7 @@ func TestDoImport_ArchiveWithID_ResolvesFileIDAndStampsMarker(t *testing.T) {
 	assert.True(t, manifests["55"].Recorded, "the marker must carry a recorded member manifest")
 	assert.Equal(t, []string{"mymod.esp"}, manifests["55"].Members)
 
-	prof, err := svc.NewProfileManager().Get("g1", "default")
+	prof, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	require.Len(t, prof.Mods, 1)
 	assert.Equal(t, []string{"55"}, prof.Mods[0].FileIDs,

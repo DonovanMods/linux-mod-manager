@@ -101,7 +101,7 @@ func dumpInstallBatchState(t *testing.T, svc *core.Service, gameID, profileName 
 	}
 
 	pm := getProfileManager(svc)
-	profile, err := pm.Get(gameID, profileName)
+	profile, err := pm.Get(context.Background(), gameID, profileName)
 	require.NoError(t, err)
 	refs := make([]installBatchStateRef, 0, len(profile.Mods))
 	for _, r := range profile.Mods {
@@ -285,7 +285,7 @@ func lockedRefDifferentVersionFixture(t *testing.T) installBatchFixture {
 	require.NoError(t, installMultipleMods(context.Background(), svc, game, []*domain.Mod{mod}, "default"))
 
 	pm := getProfileManager(svc)
-	require.NoError(t, pm.SetModLock(game.ID, "default", "test-src", "mod-a", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "test-src", "mod-a", ""))
 
 	latest := &domain.Mod{ID: "mod-a", SourceID: "test-src", Name: "Mod A", Version: "2.0", Author: "Alice", GameID: "g1"}
 	src.AddMod(latest, []domain.DownloadableFile{{ID: "f2", Name: "Main", FileName: "modA.esp", IsPrimary: true, Category: "MAIN", Version: "2.0"}})

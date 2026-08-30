@@ -166,12 +166,18 @@ func setupDoPurgeTest(t *testing.T) (*core.Service, *domain.Game) {
 }
 
 // seedPurgeableMod seeds modID/name as installed AND deploys its file into
-// the game dir - the state `lmm purge` operates on.
+// the game dir - the state `lmm purge` operates on. The installed_mods row's
+// Deployed flag is reset to false afterwards: the historical fixture (a bare
+// Installer.Install, which never touched that column) left it at
+// SaveInstalledMod's zero value despite the file being genuinely on disk,
+// and TestJSONGolden_Purge/dry_run_plan pins that exact "deployed": false in
+// the recorded plan document, so deployInstalledMod's own Deployed:true
+// write (Ruling 10) is reverted here rather than re-recording the golden.
 func seedPurgeableMod(t *testing.T, svc *core.Service, game *domain.Game, modID, name, fileName string) {
 	t.Helper()
 	seedDeployableMod(t, svc, game, modID, name, fileName)
-	require.NoError(t, svc.GetInstaller(game).Install(context.Background(),
-		game, &domain.Mod{ID: modID, SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	deployInstalledMod(t, svc, game, &domain.Mod{ID: modID, SourceID: "src", Version: "1.0", GameID: game.ID}, "default")
+	require.NoError(t, svc.SetModDeployed(context.Background(), "src", modID, game.ID, "default", false))
 }
 
 func TestDoPurge_HappyPath_ByteExactOutput(t *testing.T) {
@@ -262,7 +268,7 @@ func TestDoPurge_Uninstall_OmitsPreservedTrailer_RemovesRecords(t *testing.T) {
 
 	_, err := svc.GetInstalledMod(context.Background(), "src", "1", "g1", "default")
 	assert.ErrorIs(t, err, domain.ErrModNotFound, "--uninstall must delete the DB record")
-	profile, err := svc.NewProfileManager().Get("g1", "default")
+	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
 	assert.Empty(t, profile.Mods, "--uninstall must remove the profile YAML entry")
 }

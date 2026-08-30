@@ -315,11 +315,25 @@ func Execute() {
 	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {
 		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
+			printCancelledNotice(os.Stderr, jsonOutput)
 			os.Exit(2)
 		}
 		reportError(err)
 		os.Exit(1)
 	}
+}
+
+// printCancelledNotice names the cancellation on Execute's exit-2 path
+// (Ruling 16 addendum): plain mode alone gets "Cancelled." on stderr, since
+// exit 2 alone was otherwise silent even though `lmm --help` documents it as
+// "cancelled by the user" - Unit R final review Minor 3. --json emits
+// nothing extra here (Ruling 15): the JSON contract carries no envelope for
+// a cancellation exit.
+func printCancelledNotice(out io.Writer, jsonOutput bool) {
+	if jsonOutput {
+		return
+	}
+	_, _ = fmt.Fprintln(out, "Cancelled.") //nolint:errcheck // best-effort notice write
 }
 
 // reportError prints err in the active output format, unless the command
@@ -400,11 +414,11 @@ func requireGame(cmd *cobra.Command) error {
 // resolved by ProfileManager.GetDefault (the IsDefault profile set by
 // `lmm profile switch`, else the first profile). Falls back to "default" when
 // no profiles exist yet so a fresh setup still works.
-func resolveProfile(svc *core.Service, gameID, flagValue string) (string, error) {
+func resolveProfile(ctx context.Context, svc *core.Service, gameID, flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
-	profile, err := svc.NewProfileManager().GetDefault(gameID)
+	profile, err := svc.NewProfileManager().GetDefault(ctx, gameID)
 	if err != nil {
 		if errors.Is(err, domain.ErrProfileNotFound) {
 			return "default", nil

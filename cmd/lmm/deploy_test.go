@@ -135,12 +135,12 @@ func seedDeployableMod(t *testing.T, svc *core.Service, game *domain.Game, modID
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	if _, err := pm.Get(game.ID, "default"); err != nil {
+	if _, err := pm.Get(context.Background(), game.ID, "default"); err != nil {
 		require.ErrorIs(t, err, domain.ErrProfileNotFound)
-		_, err := pm.Create(game.ID, "default")
+		_, err := pm.Create(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 	}
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: modID, Version: "1.0"}))
 }
 
 // TestDoDeploy_Verbose_HappyPath_PrintsExpectedOutput guards doDeploy's
@@ -432,7 +432,7 @@ func TestDoDeploy_OverridesWarning_PrintsBeforeAfterEachAfterAllHookWarnings(t *
 	seedDeployableMod(t, svc, game, "1", "Test Mod", "plugin.esp")
 
 	pm := svc.NewProfileManager()
-	profile, err := pm.Get(game.ID, "default")
+	profile, err := pm.Get(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	// An absolute override path is rejected by ApplyProfileOverrides
 	// deterministically - no filesystem trickery required.
@@ -512,7 +512,7 @@ func TestDoDeploy_Verbose_PurgeBlankLine_AppearsAfterInlineDiagnosticsNotImmedia
 // a cache-miss mod's redownload loop, on the success path (git show
 // b2ad559:cmd/lmm/deploy.go) - a blank line between "cache missing,
 // re-downloading..." and the mod's own "✓" success line. The extracted
-// flow (internal/core/flows.go's redeployFromSource) emits no event for
+// flow (internal/core/deploy.go's redeployFromSource) emits no event for
 // this on success, so doDeploy has nothing to print it from. A real custom
 // manifest source served over httptest provides a working redownload
 // (mockSourceWithDownloads/createTestZip are internal/core-only test
@@ -561,9 +561,9 @@ mods:
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "e2e-repo", ModID: "redl", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "e2e-repo", ModID: "redl", Version: "1.0"}))
 
 	oldVerbose := verbose
 	verbose = false
@@ -650,9 +650,9 @@ mods:
 		Enabled:      true,
 	}))
 	pm := svc.NewProfileManager()
-	_, err = pm.Create(game.ID, "default")
+	_, err = pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "e2e-repo-fail", ModID: "redlfail", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "e2e-repo-fail", ModID: "redlfail", Version: "1.0"}))
 
 	oldVerbose := verbose
 	verbose = false

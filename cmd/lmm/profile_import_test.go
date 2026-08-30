@@ -108,7 +108,7 @@ func TestDoProfileImport_AllInstalled_PrintsSummaryAndSkipsInstallStep(t *testin
 	// on disk for an installed-under-"default" mod to be found while
 	// importing into a different profile ("target").
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("cached")))
@@ -146,7 +146,7 @@ func TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs(t *testing
 	src.AddDownload("extra", []byte("extra content"))
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "default")
+	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
 	// DB record exists (with FileIDs ["extra"], NOT the primary) but nothing
@@ -262,7 +262,7 @@ func TestDoProfileImport_PromptDeclined_NoInstallHappens(t *testing.T) {
 	assert.Error(t, err, "declining must leave zero install mutations")
 
 	pm := getProfileManager(svc)
-	saved, err := pm.Get("g1", "target")
+	saved, err := pm.Get(context.Background(), "g1", "target")
 	require.NoError(t, err, "declining the install must still save the profile itself")
 	assert.Len(t, saved.Mods, 1)
 }
@@ -353,7 +353,7 @@ func TestDoProfileImport_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	_, instErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, instErr, "must leave zero install mutations")
 	pm := getProfileManager(svc)
-	_, profErr := pm.Get("g1", "target")
+	_, profErr := pm.Get(context.Background(), "g1", "target")
 	assert.Error(t, profErr, "must not even save the profile - the prompt precedes the save (Ruling 7)")
 }
 
@@ -434,9 +434,9 @@ func TestDoProfileImport_ForceOverwritesExistingProfile(t *testing.T) {
 	profileImportForce = true
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "test-src", ModID: "old-mod", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "test-src", ModID: "old-mod", Version: "1.0"}))
 
 	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "new-mod", Version: "1.0"}})
 
@@ -454,7 +454,7 @@ func TestDoProfileImport_ForceOverwritesExistingProfile(t *testing.T) {
 		"\n"+
 		"Skipped installing 1 mod(s). Use 'lmm profile apply target' to install them later.\n", out)
 
-	saved, err := pm.Get(game.ID, "target")
+	saved, err := pm.Get(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, "new-mod", saved.Mods[0].ModID, "--force must overwrite the existing profile's mod list")
@@ -501,7 +501,7 @@ func TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary(t *test
 	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err, "no install may happen after a failed prompt read")
 
-	_, err = getProfileManager(svc).Get("g1", "target")
+	_, err = getProfileManager(svc).Get(context.Background(), "g1", "target")
 	assert.Error(t, err, "Ruling 7 delta: the prompt precedes ApplyImport, so a failed read now leaves the profile unsaved too")
 }
 
@@ -514,9 +514,9 @@ func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) 
 	svc, game, _ := setupDoProfileImportTest(t)
 
 	pm := getProfileManager(svc)
-	_, err := pm.Create(game.ID, "target")
+	_, err := pm.Create(context.Background(), game.ID, "target")
 	require.NoError(t, err)
-	require.NoError(t, pm.AddMod(game.ID, "target", domain.ModReference{SourceID: "test-src", ModID: "old-mod", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "target", domain.ModReference{SourceID: "test-src", ModID: "old-mod", Version: "1.0"}))
 
 	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "new-mod", Version: "1.0"}})
 
@@ -540,7 +540,7 @@ func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) 
 		"Download and install mods? [Y/n]: ", out,
 		"a failed save must print the preview and the (now-preceding) prompt only - never the success line or anything after it")
 
-	saved, err := pm.Get(game.ID, "target")
+	saved, err := pm.Get(context.Background(), game.ID, "target")
 	require.NoError(t, err)
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, "old-mod", saved.Mods[0].ModID, "a rejected import must leave the existing profile untouched")

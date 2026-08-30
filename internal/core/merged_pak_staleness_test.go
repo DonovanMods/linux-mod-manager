@@ -81,7 +81,7 @@ func TestApplyMergedPakRegen_LockedModDiffStillParticipates(t *testing.T) {
 	svc, game, _ := newMergedPakTestGame(t)
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "bear-mount", "1.0", "exmodz-file", []byte("locked-bear-bytes"))
 	pm := svc.NewProfileManager()
-	require.NoError(t, pm.SetModLock(game.ID, "default", "fake-compiler", "bear-mount", ""))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "fake-compiler", "bear-mount", ""))
 
 	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolf-mount", "1.0", "exmodz-file", []byte("wolf-bytes"))
 
