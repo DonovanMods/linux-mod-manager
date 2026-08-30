@@ -102,7 +102,7 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 		}
 		result.Saved = append(result.Saved, game.ID)
 
-		if _, err := pm.CreateOrResetDefault(ctx, game.ID); err != nil {
+		if _, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID); err != nil {
 			return result, fmt.Errorf("creating default profile for %s: %w", game.ID, err)
 		}
 		result.Profiles = append(result.Profiles, game.ID+"/default")

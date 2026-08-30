@@ -353,3 +353,40 @@ func TestApplyGameDetect_StopsAtFirstConversionFailure(t *testing.T) {
 	_, err = svc.GetGame("bad-game")
 	assert.Error(t, err, "a game that failed conversion must not be persisted")
 }
+
+// TestApplyGameDetect_CancellationBetweenGameSaveAndDefaultProfileCreate is
+// the class-(A) shape test for the task 18 re-review round-2 NEW-4 finding:
+// ApplyGameDetect saves the game to games.yaml (a committed write) BEFORE
+// creating its default profile, so a cancellation landing in that window is
+// a class-(A) completing write like every other Ruling 16 (A) site - the
+// profile creation must still finish, not be refused by
+// CreateOrResetDefault's own ctx.Err() guard, leaving a configured game with
+// no default profile.
+//
+// Against a version of CreateOrResetDefaultAfterGameSave that just calls
+// CreateOrResetDefault directly (no completeProfileWrite), this fails at the
+// profile existence check below: the guard fires before config.SaveProfile
+// ever runs, so "skyrim-se"'s default profile is never written.
+func TestApplyGameDetect_CancellationBetweenGameSaveAndDefaultProfileCreate(t *testing.T) {
+	svc := newGameDetectTestService(t)
+	game := domain.DetectedGame{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data", NexusID: "skyrimspecialedition"}
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+
+	result, err := svc.ApplyGameDetect(ctx, []domain.DetectedGame{game})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the run must end with the cancellation, not absorb it")
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on the completing profile write")
+	assert.Equal(t, []string{"skyrim-se"}, result.Saved)
+	assert.Empty(t, result.Profiles, "the profile step must not be recorded past the cancellation")
+
+	saved, err := svc.GetGame("skyrim-se")
+	require.NoError(t, err, "the game save committed before the cancellation")
+	assert.Equal(t, "Skyrim Special Edition", saved.Name)
+
+	profile, err := svc.NewProfileManager().Get(context.Background(), "skyrim-se", "default")
+	require.NoError(t, err, "Ruling 16 (A): the default profile must exist even though the run was cancelled")
+	assert.True(t, profile.IsDefault)
+}

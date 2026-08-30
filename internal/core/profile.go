@@ -106,6 +106,31 @@ func (pm *ProfileManager) CreateOrResetDefault(ctx context.Context, gameID strin
 	return profile, nil
 }
 
+// CreateOrResetDefaultAfterGameSave behaves exactly like CreateOrResetDefault,
+// except the write always finishes even under an already-cancelled ctx:
+// 'lmm game add' and 'lmm game detect' both save the game's own config row
+// FIRST, so by the time this runs a committed write already exists with no
+// default profile behind it yet - the class-(A) shape Ruling 16 is built on.
+// Routing through completeProfileWrite keeps that pair from disagreeing
+// under a cancellation the way every other class-(A) site does: the profile
+// is still created, and the caller still ends the run with context.Canceled
+// (v2 Phase 3 Ruling 16, task 18 re-review round 2 NEW-4).
+func (pm *ProfileManager) CreateOrResetDefaultAfterGameSave(ctx context.Context, gameID string) (*domain.Profile, error) {
+	var profile *domain.Profile
+	err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		p, err := pm.CreateOrResetDefault(ctx, gameID)
+		profile = p
+		return err
+	})
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
+		return nil, err
+	}
+	return profile, nil
+}
+
 // List returns all profiles for a game
 func (pm *ProfileManager) List(ctx context.Context, gameID string) ([]*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
