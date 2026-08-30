@@ -38,11 +38,11 @@ any field you didn't explicitly override with --name/--author/--version.
 Re-linking moves the mod to its new source:id in the database and
 profile - it is not merely a display change.
 
-A locked mod (see 'lmm mod lock') refuses --version (other than the
-locked version itself) and re-linking: move the lock to the desired
-version first, or unlock (re-linking always requires an unlock, since
-it would replace the locked profile entry). Metadata-only edits
-(--name/--author) are always allowed.
+A locked mod (see 'lmm mod lock') refuses --version other than the
+locked version itself: move the lock to the desired version, or unlock.
+It refuses re-linking outright: unlock is the only remedy, since
+re-linking would replace the locked profile entry and moving the lock
+does not help. Metadata-only edits (--name/--author) are always allowed.
 
 Examples:
   lmm mod edit abc123 --name "Better Mod Name" --version 1.2.3

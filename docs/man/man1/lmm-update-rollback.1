@@ -20,7 +20,8 @@ mod ID is installed from more than one source in the profile, use
 .PP
 --json prints the rollback document (see 'lmm update --help') with status
 "rolled_back", or status "skipped" with reason "locked" when the mod is
-locked (unlock or move the lock to roll back).
+locked (unlock to roll back; moving the lock does not help, since this
+gate refuses whatever version is locked).
 
 .PP
 Examples:

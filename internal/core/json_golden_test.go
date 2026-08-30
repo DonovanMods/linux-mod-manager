@@ -899,11 +899,12 @@ func TestJSONGoldens(t *testing.T) {
 				TargetInstalled: true,
 				Locked:          true,
 				LockedVersion:   "1.2.3",
-				// #294 (Ruling 5): LockedRefRefusalError's canonical
-				// wording, SENTENCE ONLY - RelinkPlan.Refusal omits the
-				// "mod is locked: " sentinel prefix that update_plan's and
-				// rollback_plan's Refusal carry, because doModEdit re-wraps
-				// it. This is exactly what PlanRelinkMod produces.
+				// #294 (Ruling 5, M1): lockedRefUnlockOnlyMessage's
+				// canonical wording, SENTENCE ONLY - none of update_plan's,
+				// rollback_plan's, or this Refusal carries the "mod is
+				// locked: " sentinel prefix; that prefix comes only from
+				// the wrapping error's Error(), which cobra prints for a
+				// failing command. This is exactly what PlanRelinkMod produces.
 				Refusal:           "Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
 				MergedPakAffected: true,
 				Profile:           "default",

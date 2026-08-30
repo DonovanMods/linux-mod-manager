@@ -128,7 +128,8 @@ mod ID is installed from more than one source in the profile, use
 
 --json prints the rollback document (see 'lmm update --help') with status
 "rolled_back", or status "skipped" with reason "locked" when the mod is
-locked (unlock or move the lock to roll back).
+locked (unlock to roll back; moving the lock does not help, since this
+gate refuses whatever version is locked).
 
 Examples:
   lmm update rollback 12345 --game skyrim-se
@@ -494,8 +495,12 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// after both application sections (so it "covers" whichever ran), but
 	// fires on its own whenever lockedAuto > 0 even if neither section had
 	// anything else to apply.
+	//
+	// Unit Q re-review N2: ApplyUpdate refuses on ref.Locked alone (see
+	// applySingleUpdate's identical remedy below), so "move the lock" is a
+	// no-op here too - unlock is the only remedy, matching the per-mod path.
 	if lockedAuto > 0 {
-		fmt.Printf("\n%d locked mod(s) not applied: %s — move the lock or unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
+		fmt.Printf("\n%d locked mod(s) not applied: %s — unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
 	}
 
 	return finish()

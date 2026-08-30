@@ -249,6 +249,10 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   now print the canonical text the core lock gates return. Those four gates refuse whatever
   version you name, so their remedy is "`<mod>` is locked at v`<version>` in profile
   `<profile>` - unlock with 'lmm mod unlock …' first" — moving the lock would not have helped.
+  `lmm update --all`'s combined locked-skip summary reports the same `ApplyUpdate` gate for
+  multiple mods at once, so it names no single mod's version and isn't this canonical sentence —
+  but it dropped the same no-op "move the lock" clause, down to "`N` locked mod(s) not applied:
+  `<mod>`[, `<mod>`...] - unlock to update."
   The gates that _would_ proceed at the locked version (installing, and `lmm mod edit
 --version`) keep the two-remedy "move the lock with 'lmm mod lock …' or unlock with 'lmm mod
   unlock …'" wording. Where that "move the lock" remedy survives, its version argument is the
@@ -260,8 +264,10 @@ not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all
   whose own inline remedy (carrying `-s`/`-p`) supersedes the separate "Move the lock: … |
   Unlock: …" line. Those three print the refusal sentence exactly as quoted above; `lmm mod
 edit` prints it as an error, so there it is prefixed with `Error: mod is locked:` the way
-  every failing command's message is. The same sentence is the `refusal` key on `lmm update
---dry-run --json`'s plan document. (#294)
+  every failing command's message is. The same sentence is also the `refusal` field
+  (`json:"refusal,omitempty"`) on `core.UpdatePlan`/`RollbackPlan`/`RelinkPlan`, though no command
+  emits those documents directly today — `lmm update --dry-run --json` on a locked mod emits its
+  own hand-built result document instead, which carries no `refusal` key. (#294)
 - `lmm profile apply`, `lmm profile sync`, and `lmm profile switch` no longer hide a refused or
   failed post-install/`toUpdate` profile write behind `--verbose` — today, a LOCKED profile ref
   (the record in the database moves while the profile ref does not) but also any profile

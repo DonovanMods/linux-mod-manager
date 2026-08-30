@@ -131,8 +131,8 @@ func (s *Service) PlanRelinkMod(ctx context.Context, game *domain.Game, profileN
 		plan.Locked = true
 		plan.LockedVersion = lockedVersion
 		if relink {
-			// #294 (Ruling 5): LockedRefRefusalError's sentence half - see
-			// RelinkPlan.Refusal for why the sentinel prefix is left off.
+			// #294 (Ruling 5): lockedRefUnlockOnlyMessage's sentence half -
+			// see RelinkPlan.Refusal for why the sentinel prefix is left off.
 			plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, &domain.ModReference{Version: lockedVersion})
 		}
 	}
