@@ -826,8 +826,10 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		return emitJSON(result)
 	}
 
-	// #197: unconditional stderr, unlike the --verbose-gated warnings above -
-	// today, only the merged-pak sync's own diagnostics.
+	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
+	// stderr, unlike the --verbose-gated warnings above) - the toUpdate
+	// loop's refused UpsertMod (a LOCKED profile ref, #143), then a
+	// merged-pak sync failure for the profile.
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
@@ -1084,8 +1086,10 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		return emitJSON(result)
 	}
 
-	// #197: unconditional stderr, unlike the --verbose-gated Notes above -
-	// today, only the merged-pak sync's own diagnostics.
+	// #197 postsmoke fix / #294 (Ruling 5): result.Warnings (unconditional
+	// stderr, unlike the --verbose-gated Notes above) - the install loop's
+	// refused UpsertMod (a LOCKED profile ref, #143), then a merged-pak sync
+	// failure for the profile.
 	for _, w := range result.Warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
