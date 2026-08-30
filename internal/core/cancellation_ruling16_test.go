@@ -152,6 +152,47 @@ func TestService_ApplyRelinkMod_CancellationBetweenDBDeleteAndProfileMove(t *tes
 	require.NotNil(t, prof.FindRef("src", "b"), "the new profile ref must exist, agreeing with the DB")
 }
 
+// TestService_ApplyAdopt_CancellationAtCompletingProfileWrite_EndsFatallyAndCountsAdopted
+// is the class-(A) shape test for the task 18 re-review round-2 NEW-1
+// finding: adoptScannedMod's completing profile write (adopt.go) is the one
+// class-(A) site whose CALLER (ApplyAdopt's loop) renders the completing
+// re-check's own cancellation as a per-mod failure and keeps looping,
+// instead of ending the run fatally with the just-completed mod counted as
+// adopted - the DB row and the profile ref are both fully committed by the
+// time completeProfileWrite reports the cancellation.
+//
+// Against 57dfcfa this fails on both counter assertions: ApplyAdopt returns
+// (result, nil) with Adopted:0, Failed:1, even though the mod is fully
+// registered in both the DB and the profile.
+func TestService_ApplyAdopt_CancellationAtCompletingProfileWrite_EndsFatallyAndCountsAdopted(t *testing.T) {
+	svc, game := newAdoptTestService(t)
+	writeLooseMod(t, game, "LooseMod-1.0.zip", "loose-payload")
+
+	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{SkipMatch: true})
+	require.NoError(t, err)
+
+	inner, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	ctx := &cancelAtCompletingProfileWrite{Context: inner, cancel: cancel}
+
+	result, err := svc.ApplyAdopt(ctx, game, plan, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the run must end with the cancellation, not absorb it as a per-mod failure")
+	require.True(t, ctx.fired.Load(), "the cancellation must have landed on a completing profile write")
+	require.NotNil(t, result)
+
+	assert.Equal(t, 1, result.Adopted, "the just-completed mod's DB row and profile ref are both written - it counts as adopted")
+	assert.Equal(t, 0, result.Failed, "the completing re-check's own cancellation is not a per-mod failure")
+
+	mods, mErr := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, mErr)
+	require.Len(t, mods, 1, "the DB row must be committed")
+
+	profile, pErr := svc.NewProfileManager().Get(context.Background(), game.ID, "default")
+	require.NoError(t, pErr)
+	require.Len(t, profile.Mods, 1, "the profile ref must be committed")
+}
+
 // TestService_ApplyRelinkMod_CancelledBeforeApply_LeavesEverythingUntouched
 // is the bracketing counterpart: a cancellation that lands before the run
 // ever starts (beginOp's own guard) must not touch the old DB row, the new

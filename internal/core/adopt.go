@@ -512,6 +512,17 @@ func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 		}
 
 		if err := s.adoptScannedMod(ctx, game, r, plan.Profile, linkMethod, result, step); err != nil {
+			// Ruling 16 (A): adoptScannedMod's own completing profile write
+			// already finished under context.WithoutCancel before returning
+			// this error, so a cancellation here means the mod's DB row AND
+			// profile ref are BOTH committed - it is not a per-mod failure.
+			// Count it adopted and end the run fatally instead of rendering
+			// it as AdoptFailed and looping past it (re-review round 2,
+			// NEW-1).
+			if cerr := ctx.Err(); cerr != nil {
+				result.Adopted++
+				return result, cerr
+			}
 			step(r, AdoptFailed, fmt.Sprintf("✗ %s: %v", r.FileName, err))
 			result.Failed++
 			continue
@@ -520,6 +531,14 @@ func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 		step(r, AdoptAdopted, fmt.Sprintf("✓ %s", r.Mod.Name))
 		result.Adopted++
 		currentMods = append(currentMods, domain.InstalledMod{Mod: *r.Mod})
+	}
+
+	// A cancellation landing on the LAST match's own iteration never reaches
+	// another loop-top ctx.Err() check above - without this, ApplyAdopt
+	// would return (result, nil) (mirrors install.go's batch-loop post-loop
+	// checks, review finding I2; re-review round 2, NEW-1).
+	if err := ctx.Err(); err != nil {
+		return result, err
 	}
 
 	return result, nil
