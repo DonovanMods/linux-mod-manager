@@ -1291,6 +1291,10 @@ func (s *Service) GetInstalledMods(ctx context.Context, gameID, profileName stri
 
 // GetInstalledModsInProfileOrder returns installed mods in profile load order (first = lowest priority).
 // Mods not present in the profile are omitted. Use this for deploy/switch so deployment order matches load order.
+//
+// No cmd/app caller today (deploy/merged-pak call it internally); kept
+// exported as a serve-facing query (Phase 3 Ruling 10) - a frontend
+// rendering load order needs the same ordering deploy/merged-pak use.
 func (s *Service) GetInstalledModsInProfileOrder(ctx context.Context, gameID, profileName string) ([]domain.InstalledMod, error) {
 	profile, err := config.LoadProfile(s.configDir, gameID, profileName)
 	if err != nil {
@@ -1401,12 +1405,20 @@ func (s *Service) NewProfileManager() *ProfileManager {
 }
 
 // NewUpdater returns an Updater wired to this service's source registry.
+//
+// No cmd/app caller today (Service.CheckUpdates calls it internally); kept
+// exported as a serve-facing query (Phase 3 Ruling 10) - a frontend running
+// its own update check needs the same wiring.
 func (s *Service) NewUpdater() *Updater {
 	return NewUpdater(s.registry)
 }
 
 // GetGameCachePath returns the effective cache path for a game.
 // Uses the game's cache_path if configured, otherwise falls back to global cache.
+//
+// No cmd/app caller today (StatusReport's ResolvedCachePath calls it
+// internally); kept exported as a serve-facing query (Phase 3 Ruling 10) -
+// a frontend resolving a game's effective cache path needs the same lookup.
 func (s *Service) GetGameCachePath(game *domain.Game) string {
 	if game.CachePath != "" {
 		return game.CachePath
@@ -1422,6 +1434,10 @@ func (s *Service) GetGameCachePath(game *domain.Game) string {
 // root), so callers that need to recognize BOTH cache roots for a game -
 // not just the single one GetGameCachePath resolves to - use this alongside
 // game.CachePath.
+//
+// No cmd/app caller today (converge calls it internally); kept exported as
+// a serve-facing query (Phase 3 Ruling 10) alongside GetGameCachePath - a
+// frontend needing both cache roots for a game has the same need.
 func (s *Service) GlobalCacheDir() string {
 	return s.cacheDir
 }
@@ -1649,6 +1665,10 @@ func (s *Service) deleteInstalledMod(ctx context.Context, sourceID, modID, gameI
 
 // GetDeployedFilesForMod returns the relative paths the given mod has deployed
 // in the named profile.
+//
+// No cmd/app caller today (converge/deploy/ModFiles call it internally);
+// kept exported as a serve-facing query (Phase 3 Ruling 10) - a frontend
+// inspecting one mod's deployed files needs the same lookup.
 func (s *Service) GetDeployedFilesForMod(ctx context.Context, gameID, profileName, sourceID, modID string) ([]string, error) {
 	return s.db.GetDeployedFilesForMod(ctx, gameID, profileName, sourceID, modID)
 }
@@ -1666,6 +1686,10 @@ func (s *Service) getLastDeployTime(ctx context.Context, gameID, profileName str
 
 // GetFileOwner reports which mod currently owns a deployed file. The bool is
 // false when no record exists; err is non-nil only on storage errors.
+//
+// No cmd/app caller today (Conflicts calls it internally); kept exported as
+// a serve-facing query (Phase 3 Ruling 10) - a frontend resolving one file's
+// ownership needs the same lookup.
 func (s *Service) GetFileOwner(ctx context.Context, gameID, profileName, relativePath string) (sourceID, modID string, found bool, err error) {
 	owner, err := s.db.GetFileOwner(ctx, gameID, profileName, relativePath)
 	if err != nil {
@@ -1687,6 +1711,10 @@ type DeployedFile struct {
 
 // GetFilesWithChecksums returns every tracked file in the profile with its
 // recorded checksum (empty when none has been computed yet).
+//
+// No cmd/app caller today (Verify calls it internally); kept exported as a
+// serve-facing query (Phase 3 Ruling 10) - a frontend rendering per-file
+// checksum state needs the same lookup.
 func (s *Service) GetFilesWithChecksums(ctx context.Context, gameID, profileName string) ([]DeployedFile, error) {
 	rows, err := s.db.GetFilesWithChecksums(ctx, gameID, profileName)
 	if err != nil {
@@ -1726,6 +1754,10 @@ func (s *Service) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, 
 }
 
 // GetDependencies returns dependencies for a mod from the specified source
+//
+// No cmd/app caller today (ApplyInstall calls it internally); kept exported
+// as a serve-facing query (Phase 3 Ruling 10) - a frontend previewing a
+// mod's dependency tree ahead of an install needs the same lookup.
 func (s *Service) GetDependencies(ctx context.Context, sourceID string, mod *domain.Mod) ([]domain.ModReference, error) {
 	src, err := s.registry.Get(sourceID)
 	if err != nil {
