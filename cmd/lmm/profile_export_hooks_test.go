@@ -19,6 +19,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestDoProfileExport_JSON pins the domain.ExportedProfile document's
+// framing (one document decoding into the declared type with no unknown
+// members, empty stderr) and its recorded golden (#309); the plain path's
+// unchanged YAML bytes stay pinned by the two tests above.
+func TestDoProfileExport_JSON(t *testing.T) {
+	svc, game, _ := newProfileExportTestService(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "modded")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "modded", domain.ModReference{SourceID: "src", ModID: "a", Version: "1.0"}))
+
+	out := runJSONCommand(t, func() error {
+		return doProfileExport(context.Background(), svc, game, "modded")
+	})
+	var got domain.ExportedProfile
+	decodeStrict(t, out, &got)
+	assertJSONCLIGolden(t, "profile_export", out)
+}
+
 func newProfileExportTestService(t *testing.T) (*core.Service, *domain.Game, string) {
 	t.Helper()
 	configDir := t.TempDir()

@@ -55,17 +55,18 @@ func (p *Profile) FindRef(sourceID, modID string) *ModReference {
 	return nil
 }
 
-// ExportedProfile is the JSON shape a frontend would emit for a portable
-// profile export. NO COMMAND EMITS IT TODAY - `lmm profile export --json`
-// still writes the YAML document, unchanged - and its only production role
-// is as the decode intermediate inside config.ImportProfile, so a reader
-// should not go looking for the emitter (unit Q review, M5). The YAML file
-// `lmm profile export` actually writes is a SEPARATE DTO, internal/storage/config's own
-// exportedProfileYAML, assembled directly from *Profile: the hook pair needs
-// the profile file's *string-pointer encoding to keep "unset (inherit from
-// the game)" and "explicitly disabled" distinguishable (#296), which no yaml
-// tag on a GameHooks/GameHooksExplicit pair can express, so this type carries
-// no yaml tags at all - internal/storage/config owns that encoding
+// ExportedProfile is the JSON shape emitted by `lmm profile export --json`
+// (core.Service.ExportProfile, #309); the plain path still writes the YAML
+// document. Before #309 nothing emitted this type - its only production
+// role was as the decode intermediate inside config.ImportProfile - so a
+// reader looking for the emitter before this addendum would have found
+// none (unit Q review, M5). The YAML file `lmm profile export` writes is a
+// SEPARATE DTO, internal/storage/config's own exportedProfileYAML,
+// assembled from *Profile via config.ExportProfileValue: the hook pair
+// needs the profile file's *string-pointer encoding to keep "unset (inherit
+// from the game)" and "explicitly disabled" distinguishable (#296), which no
+// yaml tag on a GameHooks/GameHooksExplicit pair can express, so this type
+// carries no yaml tags at all - internal/storage/config owns that encoding
 // (parseProfileHooks/serializeProfileHooks) instead of yaml-marshalling this
 // type.
 type ExportedProfile struct {

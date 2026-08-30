@@ -515,7 +515,18 @@ func runProfileExport(cmd *cobra.Command, args []string) error {
 	})
 }
 
+// doProfileExport honours --json (#309) with the exported profile's JSON
+// form (core.Service.ExportProfile); the plain path is unchanged - it still
+// writes the YAML document ProfileManager.Export produces.
 func doProfileExport(ctx context.Context, service *core.Service, game *domain.Game, name string) error {
+	if jsonOutput {
+		exported, err := service.ExportProfile(ctx, game.ID, name)
+		if err != nil {
+			return fmt.Errorf("exporting profile: %w", err)
+		}
+		return emitJSON(exported)
+	}
+
 	pm := getProfileManager(service)
 
 	data, err := pm.Export(ctx, game.ID, name)

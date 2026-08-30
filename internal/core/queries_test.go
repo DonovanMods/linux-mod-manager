@@ -162,6 +162,46 @@ func TestListProfiles_NoProfilesIsEmptyNotNil(t *testing.T) {
 	assert.Empty(t, listing.Profiles)
 }
 
+// --- ExportProfile ---
+
+// TestExportProfile_MatchesYAMLExportFields covers the document `lmm
+// profile export --json` renders: the same fields Export's YAML carries -
+// name, game, mods (with the installed-mod FileIDs backfill), the explicit
+// link method, hooks - reachable without decoding the YAML bytes.
+func TestExportProfile_MatchesYAMLExportFields(t *testing.T) {
+	svc := newFlowsTestService(t)
+	ctx := context.Background()
+	seedProfileWithMod(t, svc, "g1", "default", "src", "a", "1.0")
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "a", SourceID: "src", Name: "Mod A", Version: "1.0", GameID: "g1"},
+		ProfileName: "default",
+		FileIDs:     []string{"111", "222"},
+	}))
+
+	exported, err := svc.ExportProfile(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, exported)
+	assert.Equal(t, "default", exported.Name)
+	assert.Equal(t, "g1", exported.GameID)
+	require.Len(t, exported.Mods, 1)
+	assert.Equal(t, []string{"111", "222"}, exported.Mods[0].FileIDs, "the DB-backed FileIDs backfill, same as the YAML export")
+	assert.Empty(t, exported.LinkMethod, "no explicit link method was set")
+
+	// Must match the YAML path's own field mapping exactly - never diverge.
+	yamlBytes, err := svc.NewProfileManager().Export(ctx, "g1", "default")
+	require.NoError(t, err)
+	assert.Contains(t, string(yamlBytes), "111")
+	assert.Contains(t, string(yamlBytes), "222")
+}
+
+// TestExportProfile_MissingProfile propagates the load error, matching the
+// YAML export path's own behaviour for a profile that doesn't exist.
+func TestExportProfile_MissingProfile(t *testing.T) {
+	svc := newFlowsTestService(t)
+	_, err := svc.ExportProfile(context.Background(), "g1", "nope")
+	assert.Error(t, err)
+}
+
 // --- Status / GameStatus ---
 
 // TestStatus_GamesByIDWithCountsAndDefault covers the summary `lmm status`

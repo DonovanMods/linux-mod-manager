@@ -279,6 +279,42 @@ func TestExportProfile_WritesExplicitLinkMethod(t *testing.T) {
 	assert.Contains(t, string(data), "link_method: hardlink")
 }
 
+// TestExportProfileValue_MatchesExportProfileFields pins that
+// ExportProfileValue (the shared building block for `lmm profile export
+// --json`'s core.Service.ExportProfile) carries the exact fields
+// ExportProfile marshals to YAML, unwrapped from the pointer-hook encoding
+// (#309): LinkMethod only when explicit, Overrides as strings, Mods/Hooks/
+// HooksExplicit copied straight from the domain.Profile.
+func TestExportProfileValue_MatchesExportProfileFields(t *testing.T) {
+	profile := &domain.Profile{
+		Name: "default", GameID: "skyrim-se",
+		Mods:               []domain.ModReference{{SourceID: "src", ModID: "a", Version: "1.0"}},
+		LinkMethod:         domain.LinkHardlink,
+		LinkMethodExplicit: true,
+		Overrides:          map[string][]byte{"config/game.ini": []byte("[General]\n")},
+		Hooks:              domain.GameHooks{Install: domain.HookConfig{AfterAll: "scripts/after_all.sh"}},
+		HooksExplicit:      domain.GameHooksExplicit{Install: domain.HookExplicitFlags{AfterAll: true}},
+	}
+
+	got := ExportProfileValue(profile)
+	require.NotNil(t, got)
+	assert.Equal(t, "default", got.Name)
+	assert.Equal(t, "skyrim-se", got.GameID)
+	assert.Equal(t, profile.Mods, got.Mods)
+	assert.Equal(t, "hardlink", got.LinkMethod)
+	assert.Equal(t, map[string]string{"config/game.ini": "[General]\n"}, got.Overrides)
+	assert.Equal(t, profile.Hooks, got.Hooks)
+	assert.Equal(t, profile.HooksExplicit, got.HooksExplicit)
+}
+
+// TestExportProfileValue_OmitsLinkMethodWhenNotExplicit mirrors
+// TestExportProfile_OmitsLinkMethodWhenNotExplicit: the JSON path must not
+// claim a link method the user never set either.
+func TestExportProfileValue_OmitsLinkMethodWhenNotExplicit(t *testing.T) {
+	got := ExportProfileValue(&domain.Profile{Name: "default", GameID: "skyrim-se"})
+	assert.Empty(t, got.LinkMethod)
+}
+
 func TestListProfiles_MissingDir(t *testing.T) {
 	tempDir := t.TempDir()
 

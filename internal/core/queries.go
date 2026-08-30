@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
 )
 
 // ModListing is one row of a ModList: the installed mod itself plus the
@@ -150,6 +151,20 @@ func (s *Service) ListProfiles(ctx context.Context, gameID string) (*ProfileList
 		listing.Profiles = append(listing.Profiles, ProfileSummary{Name: p.Name, ModCount: len(p.Mods), IsDefault: p.IsDefault})
 	}
 	return listing, nil
+}
+
+// ExportProfile returns gameID/profileName's portable domain.ExportedProfile
+// value - the document `lmm profile export --json` emits; the plain path
+// keeps writing ProfileManager.Export's YAML bytes unchanged. Carries
+// exactly what the YAML export carries (config.ExportProfileValue is the
+// shared building block, including the installed-mods FileIDs backfill
+// (#309)).
+func (s *Service) ExportProfile(ctx context.Context, gameID, profileName string) (*domain.ExportedProfile, error) {
+	profile, err := s.NewProfileManager().loadForExport(ctx, gameID, profileName)
+	if err != nil {
+		return nil, err
+	}
+	return config.ExportProfileValue(profile), nil
 }
 
 // GameSummary is one row of a StatusReport: a configured game plus the
