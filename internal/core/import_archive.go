@@ -353,6 +353,13 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	// treating it as "the profile is fine".
 	pm := s.NewProfileManager()
 	if err := ensureProfileExists(ctx, pm, game.ID, profileName); err != nil {
+		// NEW-6 (v2 Phase 3 Ruling 16 (B) review): a cancellation here means
+		// the profile was never created, so the completeProfileWrite below
+		// is doomed to fail (UpsertMod's LoadProfile finds nothing) - report
+		// it now, ahead of that doomed write, rather than a Note.
+		if cerr := ctx.Err(); cerr != nil {
+			return result, cerr
+		}
 		note(ImportArchiveProfileNote, "Warning: could not create profile: %v", err)
 	}
 	modRef := domain.ModReference{

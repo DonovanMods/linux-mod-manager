@@ -1811,7 +1811,20 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		}
 	}
 
+	if s.afterInstallSave != nil {
+		s.afterInstallSave()
+	}
 	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
+		// NEW-6 (v2 Phase 3 Ruling 16 (B) review): a cancellation here means
+		// the profile was never created, so the completeProfileWrite below
+		// is doomed to fail (UpsertMod's LoadProfile finds nothing) - report
+		// it now, ahead of that doomed write, rather than recording a Note
+		// and falling through to a failure that gets silently swallowed as
+		// "just a cancellation" once it happens.
+		if ctx.Err() != nil {
+			skip("Error", fmt.Sprintf("cancelled: %v", err))
+			return nil
+		}
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
@@ -2271,6 +2284,14 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 	}
 
 	if err := ensureProfileExists(ctx, pm, game.ID, plan.Profile); err != nil {
+		// NEW-6 (v2 Phase 3 Ruling 16 (B) review): a cancellation here means
+		// the profile was never created, so the completeProfileWrite below
+		// is doomed to fail (UpsertMod's LoadProfile finds nothing) - report
+		// it now, ahead of that doomed write, rather than recording a Note
+		// on a result this return is about to discard anyway.
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})

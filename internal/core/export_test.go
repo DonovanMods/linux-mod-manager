@@ -56,6 +56,13 @@ func (s *Service) SetBeforeSaveInstalledForTest(fn func()) {
 	s.beforeSaveInstalled = fn
 }
 
+// SetAfterInstallSaveForTest arms the BATCH install engine's
+// post-SaveInstalledMod hook so a test can cancel the ctx after the DB row
+// lands but before ensureProfileExists's own read (the NEW-6 race).
+func (s *Service) SetAfterInstallSaveForTest(fn func()) {
+	s.afterInstallSave = fn
+}
+
 // SetDownloadClientForTest replaces the Service's download HTTP client. A
 // cancellation test uses it to install a transport that IGNORES ctx, so the
 // only thing that can stop a per-file download loop is the loop's own guard

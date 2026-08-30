@@ -3318,3 +3318,40 @@ func TestService_ApplyInstall_BatchPath_CancelledBetweenPrimaryFiles_RecordsFail
 	assert.Contains(t, installedRefNames(result.Failed), "Root", "the cancelled primary must be recorded as failed, not silently dropped")
 	assert.NotContains(t, installedRefNames(result.Installed), "Root")
 }
+
+// TestService_ApplyInstall_CancelledEnsureProfileExists_RecordsFailureNotSilentDrop
+// is NEW-6 (v2 Phase 3 Ruling 16 (B) review): on a first-ever install (a
+// brand new "default" profile), a cancellation landing between the BATCH
+// engine's SaveInstalledMod and its own ensureProfileExists call left the
+// dependency recorded nowhere at all - the DB row landed (Deployed=true,
+// Ruling 16 (A)'s guarantee), but the mod appeared in neither
+// result.Installed nor result.Skipped/Failed, with only a "could not create
+// profile" Note as any trace, because the doomed completeProfileWrite that
+// followed then failed too and that second failure was swallowed silently
+// (ctx.Err() != nil => bare return nil). The fix reports the cancellation
+// immediately, ahead of that doomed write, so the dependency is recorded
+// Skipped/Failed like every other cancellation this engine handles.
+func TestService_ApplyInstall_CancelledEnsureProfileExists_RecordsFailureNotSilentDrop(t *testing.T) {
+	svc, game, _ := setupInterplayService(t, true)
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "root", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1, "root must take the BATCH path, dependency first")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.SetAfterInstallSaveForTest(cancel)
+
+	result, err := svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+
+	installed, getErr := svc.GetInstalledMod(context.Background(), "src", "dep1", "g1", "default")
+	require.NoError(t, getErr, "the dependency's DB row must still be saved (Ruling 16 (A))")
+	assert.True(t, installed.Deployed)
+
+	assert.Contains(t, installedRefNames(result.Failed), "Dep One",
+		"the cancelled completing-write must be recorded as failed, not silently dropped")
+	assert.NotContains(t, installedRefNames(result.Installed), "Dep One")
+}

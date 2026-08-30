@@ -77,6 +77,16 @@ type Service struct {
 	// (export_test.go's SetBeforeSaveInstalledForTest); always nil in
 	// production.
 	beforeSaveInstalled func()
+
+	// afterInstallSave, when non-nil, runs immediately after a successful
+	// SaveInstalledMod call in the BATCH install engine (applyInstallBatchMod)
+	// - the only point between the DB row landing and ensureProfileExists's
+	// own read, and therefore the only place a test can arm the NEW-6 race
+	// (v2 Phase 3 Ruling 16 (B) review): a cancellation landing exactly here
+	// must not vanish silently past ensureProfileExists's Note into a doomed
+	// completeProfileWrite. Test-only seam (export_test.go's
+	// SetAfterInstallSaveForTest); always nil in production.
+	afterInstallSave func()
 }
 
 // NewService creates a new core service instance
