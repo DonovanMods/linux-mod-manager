@@ -38,10 +38,10 @@ type jsonErrorEnvelope struct {
 // "details" field, or nil for an error that carries none - e.g.
 // core.ErrStalePlan, a plain sentinel with no data of its own.
 //
-// Extension point: a future typed error that DOES carry data (e.g.
-// *core.ConflictError, landing in Unit P with its own []core.Conflict) needs
-// no change here - it just implements the unnamed `Details() any` interface
-// below and errors.As picks it up.
+// Extension point: a typed error that DOES carry data (today
+// *core.ConflictError, with its own []core.Conflict) needs no change here -
+// it just implements the unnamed `Details() any` interface below and
+// errors.As picks it up.
 func errorDetails(err error) any {
 	switch {
 	case errors.Is(err, core.ErrStalePlan):
@@ -53,4 +53,17 @@ func errorDetails(err error) any {
 		}
 		return nil
 	}
+}
+
+// quietSink is what a mutating command passes core in place of its console
+// event closure: sink for an ordinary run, nil under --json. Ruling 15
+// suppresses events under --json - the run emits exactly one document on
+// stdout and nothing else - and a nil sink is how core is told there is
+// nothing to report to, so the closure is never even installed rather than
+// installed and then ignored line by line.
+func quietSink(sink core.EventSink) core.EventSink {
+	if jsonOutput {
+		return nil
+	}
+	return sink
 }

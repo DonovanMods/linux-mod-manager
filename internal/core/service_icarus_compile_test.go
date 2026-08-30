@@ -550,7 +550,8 @@ func TestSyncMergedPakReconcilesPakManifests(t *testing.T) {
 	// Toggle goodmod's per-mod opt-out: it must drop out of the merge
 	// (membership change -> the fingerprint regenerates and omits it) and
 	// its manifest must flip back to raw deploy.
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "goodmod", game.ID, "default", false))
+	_, settingErr26 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "goodmod", game.ID, "default", false)
+	require.NoError(t, settingErr26)
 
 	_, err = svc.SyncMergedPak(context.Background(), game, "default")
 	require.NoError(t, err)

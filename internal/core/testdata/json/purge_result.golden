@@ -1,7 +1,13 @@
 {
   "purged": 2,
   "skipped": [
-    "LockedMod: locked"
+    {
+      "source_id": "nexusmods",
+      "mod_id": "9",
+      "name": "LockedMod",
+      "version": "1.0",
+      "reason": "locked"
+    }
   ],
   "warnings": [
     "could not remove cache directory"

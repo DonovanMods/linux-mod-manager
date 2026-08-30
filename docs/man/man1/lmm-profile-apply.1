@@ -25,6 +25,10 @@ Examples:
 
 
 .SH OPTIONS
+\fB--dry-run\fP[=false]
+	print what the apply would do without changing anything
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for apply
 
@@ -47,7 +51,7 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
+	output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts
 
 .PP
 \fB--log-level\fP="off"

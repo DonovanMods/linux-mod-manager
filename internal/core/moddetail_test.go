@@ -133,7 +133,8 @@ func seedModDetailInstalledPak(t *testing.T, svc *core.Service, game *domain.Gam
 		Enabled:      true,
 		FileIDs:      fileIDs,
 	}))
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "src", modID, game.ID, "default", convertPaks))
+	_, settingErr23 := svc.SetModConvertPaks(context.Background(), "src", modID, game.ID, "default", convertPaks)
+	require.NoError(t, settingErr23)
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(game.ID, "default")

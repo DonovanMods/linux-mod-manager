@@ -130,7 +130,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&gameID, "game", "g", "", "game ID to operate on")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&noHooks, "no-hooks", false, "disable all hooks")
-	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable colored output (NO_COLOR env is also honored)")
 	logLevel = "off"
 	rootCmd.PersistentFlags().Var(logLevelFlag{&logLevel}, logLevelFlagName, "diagnostic log level written to stderr (off, error, warn, info, debug)")

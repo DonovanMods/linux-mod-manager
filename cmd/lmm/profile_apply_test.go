@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/internal/domain"
 
 	"github.com/stretchr/testify/assert"
@@ -116,6 +117,26 @@ func TestDoProfileApply_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 
 	_, err := svc.GetInstalledMod(context.Background(), "src", "ins1", game.ID, "default")
 	assert.Error(t, err, "declining must not install anything")
+}
+
+// TestDoProfileApply_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileApply's "Proceed?"
+// prompt: under --json with no -y, the apply must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and nothing gets
+// installed.
+func TestDoProfileApply_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(game.ID, "default", domain.ModReference{SourceID: "src", ModID: "ins1", Version: "1.0"}))
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doProfileApply(context.Background(), svc, game, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "ins1", game.ID, "default")
+	assert.Error(t, dbErr, "must not install anything")
 }
 
 // TestDoProfileApply_DisabledModCacheGone_SchedulesRedownload pins the

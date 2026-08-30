@@ -1412,6 +1412,14 @@ func (s *Service) GlobalCacheDir() string {
 
 // GetGameCache returns a cache manager for the specified game.
 // Uses the game's cache_path if configured (game-scoped: paths omit gameID), otherwise the global cache.
+//
+// Exported for two reasons: dozens of core files call it internally (this
+// is the package's own cache accessor), and `mod files`'s last cmd caller
+// (v2 Phase 3 Task 10, #303) moved into ModFiles, leaving cmd/lmm test
+// fixtures across nearly every command area as the only EXTERNAL callers -
+// they seed cache files directly rather than running a full install. Kept
+// exported by the same SaveFileChecksum precedent (Ruling 10) rather than
+// rewriting that fixture surface.
 func (s *Service) GetGameCache(game *domain.Game) *cache.Cache {
 	if game.CachePath != "" {
 		gameCache := cache.NewGameScoped(game.CachePath)
@@ -1501,20 +1509,6 @@ func (s *Service) rollbackModVersion(ctx context.Context, sourceID, modID, gameI
 	return s.db.SwapModVersions(ctx, sourceID, modID, gameID, profileName)
 }
 
-// SetModUpdatePolicy sets the update policy for an installed mod
-func (s *Service) SetModUpdatePolicy(ctx context.Context, sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.setModUpdatePolicy(ctx, sourceID, modID, gameID, profileName, policy)
-}
-
-func (s *Service) setModUpdatePolicy(ctx context.Context, sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
-	return s.db.UpdateModPolicy(ctx, sourceID, modID, gameID, profileName, policy)
-}
-
 // SetModLinkMethod sets the deployment method for an installed mod
 func (s *Service) SetModLinkMethod(ctx context.Context, sourceID, modID, gameID, profileName string, linkMethod domain.LinkMethod) error {
 	release, err := s.beginOp(ctx)
@@ -1554,22 +1548,16 @@ func (s *Service) setModDeployed(ctx context.Context, sourceID, modID, gameID, p
 	return s.db.SetModDeployed(ctx, sourceID, modID, gameID, profileName, deployed)
 }
 
-// SetModConvertPaks toggles per-mod pak-to-exmod conversion (#221). A local
-// DB write; the caller re-syncs the merged pak to apply the change.
-func (s *Service) SetModConvertPaks(ctx context.Context, sourceID, modID, gameID, profileName string, convert bool) error {
-	release, err := s.beginOp(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return s.setModConvertPaks(ctx, sourceID, modID, gameID, profileName, convert)
-}
-
-func (s *Service) setModConvertPaks(ctx context.Context, sourceID, modID, gameID, profileName string, convert bool) error {
-	return s.db.SetModConvertPaks(ctx, sourceID, modID, gameID, profileName, convert)
-}
-
 // SaveInstalledMod persists an installed-mod record (insert or update).
+//
+// Exported only as a documented test-seed API (the SaveFileChecksum
+// precedent, Ruling 10): `mod edit`/`mod files` lost their own cmd callers
+// in v2 Phase 3 Task 10 (#303, replaced by ApplyRelinkMod/ModFiles), but
+// dozens of cmd/lmm test fixtures across nearly every command area (install,
+// deploy, uninstall, profile, update, verify...) call this directly to seed
+// an installed-mod DB row without running a full install - re-seeding all of
+// them through ApplyInstall was judged out of this task's scope (see the
+// task report). No production caller remains outside this package.
 func (s *Service) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -1595,7 +1583,16 @@ func (s *Service) setModVersion(ctx context.Context, sourceID, modID, gameID, pr
 	return s.db.SetModVersion(ctx, sourceID, modID, gameID, profileName, version)
 }
 
-// DeleteInstalledMod removes the installed-mod record from the active profile.
+// DeleteInstalledMod removes the installed-mod record from the active
+// profile.
+//
+// Exported only as a documented test-seed API (the SaveFileChecksum
+// precedent, Ruling 10) - see SaveInstalledMod's doc comment. `mod edit`'s
+// re-link (ApplyRelinkMod) is its only production caller and reaches it
+// through the unexported deleteInstalledMod, already inside its own
+// beginOp; verify_convert_test.go seeds through this exported form to
+// simulate an uninstall without the full flow. No other production caller
+// remains outside this package.
 func (s *Service) DeleteInstalledMod(ctx context.Context, sourceID, modID, gameID, profileName string) error {
 	release, err := s.beginOp(ctx)
 	if err != nil {

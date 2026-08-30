@@ -10,6 +10,17 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
 )
 
+// ProfileResult reports the profile a profile-management mutation acted on:
+// the profile as it stands AFTER the mutation for `lmm profile create` and
+// `lmm profile reorder`, and as it stood immediately BEFORE it for `lmm
+// profile delete` (there is nothing left to report afterwards). It is the
+// document those three commands emit under --json (v2 Phase 3 Ruling 15);
+// domain.Profile already carries the name, the game and the ordered mod
+// refs, which is everything their plain-text output states.
+type ProfileResult struct {
+	Profile domain.Profile `json:"profile"`
+}
+
 // ProfileManager handles profile CRUD operations. Profile switching lives in
 // Service.PlanProfileSwitch/ApplyProfileSwitch (internal/core/flows.go).
 type ProfileManager struct {

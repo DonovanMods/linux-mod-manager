@@ -51,7 +51,8 @@ func TestDoModShow_ColorPath_PinnedPolicyAccented(t *testing.T) {
 	svc, game, src := setupDoModLockTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
 	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"}, nil)
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "src", "a", game.ID, "default", domain.UpdatePinned))
+	_, settingErr12 := svc.SetModUpdatePolicy(context.Background(), "src", "a", game.ID, "default", domain.UpdatePinned)
+	require.NoError(t, settingErr12)
 
 	resetColorFlags(t)
 	withColorCapableStdout(t, true)
@@ -69,7 +70,8 @@ func TestDoModShow_ColorPath_AutoPolicyAccented(t *testing.T) {
 	svc, game, src := setupDoModLockTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
 	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"}, nil)
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "src", "a", game.ID, "default", domain.UpdateAuto))
+	_, settingErr13 := svc.SetModUpdatePolicy(context.Background(), "src", "a", game.ID, "default", domain.UpdateAuto)
+	require.NoError(t, settingErr13)
 
 	resetColorFlags(t)
 	withColorCapableStdout(t, true)

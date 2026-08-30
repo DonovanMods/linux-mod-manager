@@ -252,16 +252,29 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	if deployDryRun {
+		// Ruling 15: --dry-run --json emits the Plan itself, not a
+		// rendering of it - renderDeployPlan's synthesized events would
+		// print console lines beside the document.
+		if jsonOutput {
+			return emitJSON(plan)
+		}
 		renderDeployPlan(plan, progress, printDeployHeaderOnce, &mergeFooterPrinted)
 		return nil
 	}
 
-	result, err := service.ApplyDeploy(ctx, game, plan, opts, progress)
+	result, err := service.ApplyDeploy(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error (ApplyDeploy's
 		// error-path convention returns them alongside it) were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
+	}
+
+	// Ruling 15: the applying run's document is the Result. Emitted ahead
+	// of the readouts below - all of them are console renderings of the
+	// same data the document already carries.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	if !deployHeaderPrinted {

@@ -4,7 +4,12 @@
   "installed": 1,
   "replaced": 1,
   "failed": [
-    "nexusmods:8: failed to fetch mod: rate limited"
+    {
+      "source_id": "nexusmods",
+      "mod_id": "8",
+      "name": "",
+      "reason": "failed to fetch mod: rate limited"
+    }
   ],
   "notes": [
     "Warning: could not update profile: mod is locked"

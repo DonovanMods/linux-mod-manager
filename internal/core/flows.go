@@ -733,8 +733,8 @@ const (
 	// "\n✓ Imported profile: %s\n". ModName carries the saved profile's name.
 	ImportSaved
 	// ImportInstalling fires once, only when the install loop is actually
-	// about to run (downloads pending, NoInstall unset, and ConfirmInstall -
-	// if any - accepted), mirroring "\nDownloading and installing mods...\n".
+	// about to run (downloads pending, NoInstall unset and Install set),
+	// mirroring "\nDownloading and installing mods...\n".
 	// Total is the number of mods about to be attempted (len(toDownload)).
 	ImportInstalling
 	// ImportModInstalling fires once per mod in the combined
@@ -964,6 +964,30 @@ const (
 	// the pre-lift CLI printed indented under the mod. Detail likewise
 	// carries its own "Warning: " prefix; also mirrored on Notes.
 	ImportArchiveProfileNote
+
+	// --- ApplyRelinkMod progress events (v2 Phase 3 Task 10, #303):
+	// `mod edit`'s re-link fetches metadata from the target source and
+	// leaves a couple of non-fatal profile-write diagnostics, mirroring
+	// import_archive.go's step/warn/note closures. ---
+
+	// RelinkFetching fires once, before ApplyRelinkMod fetches metadata from
+	// a re-link's non-local target source - unconditional stdout, mirroring
+	// doModEdit's pre-extraction "Fetching metadata from %s...\n". Detail is
+	// the full line ("Fetching metadata from <source>...").
+	RelinkFetching
+	// RelinkProfileNote is ApplyRelinkMod's --verbose-gated profile-write
+	// diagnostic, reused across its three sites (a failed RemoveMod of the
+	// old ref, a failed UpsertMod after a re-link, a failed UpsertMod after
+	// a version-only edit) - Detail carries its own "Warning: " prefix
+	// baked in already, matching doModEdit's own historical text exactly. A
+	// caller wanting byte-identical output prints
+	// `if verbose { fmt.Printf("%s\n", p.Detail) }`.
+	RelinkProfileNote
+	// RelinkWarning is ApplyRelinkMod's unconditional stderr diagnostic - a
+	// failed metadata fetch, or a merged-pak sync failure/warning - Detail
+	// is the raw text (no prefix); a caller wanting byte-identical output
+	// prints `fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)`.
+	RelinkWarning
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -999,6 +1023,7 @@ var deployPhaseNames = [...]string{
 	ImportArchiveDetail: "import_archive_detail", ImportArchiveDeploying: "import_archive_deploying",
 	ImportArchiveWarning: "import_archive_warning", ImportArchiveNote: "import_archive_note",
 	ImportArchiveProfileNote: "import_archive_profile_note",
+	RelinkFetching:           "relink_fetching", RelinkProfileNote: "relink_profile_note", RelinkWarning: "relink_warning",
 }
 
 // String returns the phase's wire name.
@@ -1769,21 +1794,22 @@ type ProfileImportOptions struct {
 	// ProfileManager.ImportWithOptions, allowing the save to overwrite an
 	// already-saved profile of the same name instead of failing.
 	Force bool
-	// NoInstall mirrors --no-install: the install loop never runs at all
-	// (ConfirmInstall is never even consulted - see its own doc comment),
-	// and every pending mod is counted in ProfileImportResult.Skipped instead.
+	// NoInstall mirrors --no-install: a hard override that skips the install
+	// loop even when Install is set, counting every pending mod in
+	// ProfileImportResult.Skipped instead.
 	NoInstall bool
 
-	// ConfirmInstall, when non-nil and downloads are pending (and NoInstall
-	// is unset), is called AFTER the profile is saved - mirroring the CLI's
-	// own prompt position (doProfileImport's "\nDownload and install mods?
-	// [Y/n]: " sits right after "\n✓ Imported profile: %s\n") - with the
-	// full combined [NeedsRedownload..., Missing...] list. Returning false
-	// skips the install loop entirely (every pending mod is counted in
-	// Skipped, matching a declined prompt's zero-mutations outcome); nil
-	// means proceed unconditionally, matching InstallOptions.ConfirmConflicts'
-	// own "nil = proceed" convention.
-	ConfirmInstall func(toDownload []domain.ModReference) bool
+	// Install is the caller's decision to actually download and install the
+	// plan's pending mods ([NeedsRedownload..., Missing...]). v2 Phase 3
+	// Ruling 1: the decision is fully derivable from the plan
+	// (ImportPlan.NeedsRedownload/Missing) BEFORE Apply runs, so it is an
+	// option the frontend sets rather than a callback core reaches back
+	// through - the CLI asks "Download and install mods? [Y/n]" before
+	// calling ApplyImport.
+	//
+	// Left false, the profile is still saved and every pending mod is
+	// counted in Skipped - the same outcome a declined prompt produced.
+	Install bool
 }
 
 // ProfileImportResult reports the outcome of ApplyImport. As with every other
@@ -1822,7 +1848,7 @@ type ProfileImportResult struct {
 
 // ApplyImport executes a plan produced by PlanImport: saves the profile
 // (ProfileManager.ImportWithOptions), then - unless there is nothing to
-// download, NoInstall is set, or ConfirmInstall declines - downloads and
+// download, NoInstall is set, or opts.Install is false - downloads and
 // installs every NeedsRedownload/Missing mod, in that order, matching
 // doProfileImport exactly (:481-633). Since #138 the install loop also
 // carries ApplyProfileSwitch's convergence machinery: a fully-cached target
@@ -1876,11 +1902,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	if len(toDownload) == 0 {
 		return result, nil
 	}
-	if opts.NoInstall {
-		result.Skipped = len(toDownload)
-		return result, nil
-	}
-	if opts.ConfirmInstall != nil && !opts.ConfirmInstall(toDownload) {
+	if opts.NoInstall || !opts.Install {
 		result.Skipped = len(toDownload)
 		return result, nil
 	}

@@ -174,9 +174,9 @@ func TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs(t *testing
 		"  ⚠ 1 cache missing, need re-download:\n"+
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
+		"Download and install mods? [Y/n]: \n"+
 		"✓ Imported profile: target\n"+
 		"\n"+
-		"Download and install mods? [Y/n]: \n"+
 		"Downloading and installing mods...\n"+
 		"  Installing test-src:mod1...\n"+
 		"\n"+
@@ -214,9 +214,9 @@ func TestDoProfileImport_MissingWithInstall_AcceptedInstallsMod(t *testing.T) {
 		"  ↓ 1 need to be downloaded:\n"+
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
+		"Download and install mods? [Y/n]: \n"+
 		"✓ Imported profile: target\n"+
 		"\n"+
-		"Download and install mods? [Y/n]: \n"+
 		"Downloading and installing mods...\n"+
 		"  Installing test-src:mod1...\n"+
 		"\n"+
@@ -231,7 +231,9 @@ func TestDoProfileImport_MissingWithInstall_AcceptedInstallsMod(t *testing.T) {
 
 // TestDoProfileImport_PromptDeclined_NoInstallHappens pins the decline path:
 // answering "n" prints the short (count-less) "Skipped." message and leaves
-// zero install mutations, even though the profile itself was already saved.
+// zero install mutations, while the profile itself is still saved. Ruling 7:
+// the prompt (and its "Skipped." answer) now precede "✓ Imported profile"
+// - the profile is no longer saved before the question is asked.
 func TestDoProfileImport_PromptDeclined_NoInstallHappens(t *testing.T) {
 	svc, game, src := setupDoProfileImportTest(t)
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
@@ -252,16 +254,16 @@ func TestDoProfileImport_PromptDeclined_NoInstallHappens(t *testing.T) {
 		"  ↓ 1 need to be downloaded:\n"+
 		"    - test-src:mod1 v1.0\n"+
 		"\n"+
-		"✓ Imported profile: target\n"+
+		"Download and install mods? [Y/n]: Skipped. Use 'lmm profile apply target' to install them later.\n"+
 		"\n"+
-		"Download and install mods? [Y/n]: Skipped. Use 'lmm profile apply target' to install them later.\n", out)
+		"✓ Imported profile: target\n", out)
 
 	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err, "declining must leave zero install mutations")
 
 	pm := getProfileManager(svc)
 	saved, err := pm.Get("g1", "target")
-	require.NoError(t, err, "the profile itself must still be saved before the prompt")
+	require.NoError(t, err, "declining the install must still save the profile itself")
 	assert.Len(t, saved.Mods, 1)
 }
 
@@ -328,6 +330,101 @@ func TestDoProfileImport_NoInstallFlag_SkipsPromptEntirely(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestDoProfileImport_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileImport's "Download
+// and install mods?" prompt: under --json with no -y, the import must fail
+// with core.ErrConfirmationRequired before ever reading stdin. Since Ruling
+// 7 moved the prompt before the save, this leaves the profile itself
+// unsaved too - a genuine zero-mutation failure, not merely a skipped
+// install.
+func TestDoProfileImport_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	withJSONOutput(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	err := assertStdinNeverRead(t, func() error {
+		return doProfileImport(context.Background(), svc, game, data)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	_, instErr := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
+	assert.Error(t, instErr, "must leave zero install mutations")
+	pm := getProfileManager(svc)
+	_, profErr := pm.Get("g1", "target")
+	assert.Error(t, profErr, "must not even save the profile - the prompt precedes the save (Ruling 7)")
+}
+
+// TestDoProfileImport_YesFlagSkipsPromptEntirely pins -y: the prompt text
+// never prints and the download/install proceeds without reading stdin,
+// matching the accepted-prompt path byte-for-byte minus the prompt line
+// itself.
+func TestDoProfileImport_YesFlagSkipsPromptEntirely(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	profileImportYes = true
+	t.Cleanup(func() { profileImportYes = false })
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	out := captureStdout(t, func() error {
+		return doProfileImport(context.Background(), svc, game, data)
+	})
+
+	assert.NotContains(t, out, "Download and install mods?")
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 1 mod(s) in profile.\n"+
+		"  ↓ 1 need to be downloaded:\n"+
+		"    - test-src:mod1 v1.0\n"+
+		"\n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Downloading and installing mods...\n"+
+		"  Installing test-src:mod1...\n"+
+		"\n"+
+		"    ✓ Installed: Mod One\n"+
+		"\n"+
+		"--- Summary ---\n"+
+		"Installed: 1\n", stripDownloadProgress(out))
+
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
+	require.NoError(t, err)
+}
+
+// TestDoProfileImport_YesFlagUnderJSON_ProceedsWithoutReadingStdin guards
+// the combination the Task 9 review flagged as untested: -y under --json
+// together completes the import rather than hitting the --json/stdin guard.
+func TestDoProfileImport_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	withJSONOutput(t)
+	profileImportYes = true
+	t.Cleanup(func() { profileImportYes = false })
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	var importErr error
+	out := captureStdout(t, func() error {
+		importErr = assertStdinNeverRead(t, func() error {
+			return doProfileImport(context.Background(), svc, game, data)
+		})
+		return nil
+	})
+
+	require.NoError(t, importErr)
+	assert.NotContains(t, out, "Download and install mods?")
+
+	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
+	require.NoError(t, err)
+}
+
 // TestDoProfileImport_ForceOverwritesExistingProfile pins --force: importing
 // over an already-saved profile of the same name succeeds and replaces its
 // mod list.
@@ -368,9 +465,11 @@ func TestDoProfileImport_ForceOverwritesExistingProfile(t *testing.T) {
 // readPromptLine fails with a non-EOF error, doProfileImport must propagate
 // that error - the pre-extraction CLI's own `if err != nil { return err }`
 // right after the prompt - and must NOT print the "--- Summary ---" block
-// (the regression: ConfirmInstall returning false made ApplyImport treat
-// the failure as an ordinary decline, so the error was swallowed and a
-// spurious "Installed: 0" summary printed). The failure is simulated by
+// (the original regression: the prompt's callback signalled the failure by
+// declining, so ApplyImport treated it as an ordinary decline, swallowed
+// the error and a spurious "Installed: 0" summary printed). Ruling 7 moved
+// the prompt ahead of ApplyImport, so the profile is not saved either - a
+// recorded delta. The failure is simulated by
 // swapping os.Stdin for an already-CLOSED pipe read end: reading a closed
 // *os.File returns os.ErrClosed (non-EOF), which readPromptLineFrom wraps
 // as "reading input: ...".
@@ -401,11 +500,16 @@ func TestDoProfileImport_PromptReadFailure_PropagatesErrorWithoutSummary(t *test
 
 	_, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
 	assert.Error(t, err, "no install may happen after a failed prompt read")
+
+	_, err = getProfileManager(svc).Get("g1", "target")
+	assert.Error(t, err, "Ruling 7 delta: the prompt precedes ApplyImport, so a failed read now leaves the profile unsaved too")
 }
 
 // TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError pins the
 // error path: importing over an existing profile without --force must fail
 // with pm.ImportWithOptions' own message, and must not overwrite anything.
+// Ruling 7 delta: the prompt now precedes the save, so it is printed before
+// the failure - the answer is simply thrown away with the failed import.
 func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) {
 	svc, game, _ := setupDoProfileImportTest(t)
 
@@ -416,8 +520,12 @@ func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) 
 
 	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "new-mod", Version: "1.0"}})
 
-	out, doErr := captureStdoutErr(t, func() error {
-		return doProfileImport(context.Background(), svc, game, data)
+	var out string
+	var doErr error
+	withStdin(t, "y\n", func() {
+		out, doErr = captureStdoutErr(t, func() error {
+			return doProfileImport(context.Background(), svc, game, data)
+		})
 	})
 
 	require.Error(t, doErr)
@@ -427,8 +535,10 @@ func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) 
 		"\n"+
 		"Found 1 mod(s) in profile.\n"+
 		"  ↓ 1 need to be downloaded:\n"+
-		"    - test-src:new-mod v1.0\n", out,
-		"a failed save must print the preview only - never the success line or anything after it")
+		"    - test-src:new-mod v1.0\n"+
+		"\n"+
+		"Download and install mods? [Y/n]: ", out,
+		"a failed save must print the preview and the (now-preceding) prompt only - never the success line or anything after it")
 
 	saved, err := pm.Get(game.ID, "target")
 	require.NoError(t, err)

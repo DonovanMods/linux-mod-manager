@@ -45,7 +45,14 @@ func init() {
 	gameCmd.AddCommand(gameAddCmd)
 }
 
+// runGameAdd is interactive-only in Phase 3 (v2 Phase 3 Ruling 2 - a
+// flag-driven form is a follow-up issue): under --json it rejects up front
+// with core.ErrInteractiveOnly, before opening a service or printing any of
+// doGameAdd's seven prompts.
 func runGameAdd(cmd *cobra.Command, args []string) error {
+	if jsonOutput {
+		return core.ErrInteractiveOnly
+	}
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
 		reader := bufio.NewReader(os.Stdin)
 		return doGameAdd(ctx, cmd, reader, service)

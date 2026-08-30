@@ -33,6 +33,9 @@ const (
 	OpVerify      Op = "verify"
 	OpUpdateCheck Op = "update_check"
 	OpDownload    Op = "download"
+	// OpModEdit is `lmm mod edit` - ApplyRelinkMod's metadata-only and
+	// re-link edits (v2 Phase 3 Task 10, #303).
+	OpModEdit Op = "mod_edit"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),

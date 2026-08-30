@@ -1,0 +1,19 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "to_add": [
+    {
+      "source_id": "src",
+      "mod_id": "a",
+      "version": "1.0",
+      "locked": false
+    }
+  ],
+  "to_remove": [],
+  "to_update": [],
+  "no_changes": false,
+  "missing": false,
+  "names": {
+    "src:a": "Mod A"
+  }
+}

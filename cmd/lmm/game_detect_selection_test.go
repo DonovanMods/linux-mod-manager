@@ -122,7 +122,7 @@ func TestDoGameDetect_MarksConfiguredGamesAndExcludesFromAll(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.NoError(t, err)
 
 	out := buf.String()
@@ -153,7 +153,7 @@ func TestDoGameDetect_ExplicitSelectionRepairsConfiguredGame(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("1\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
 
@@ -180,7 +180,7 @@ func TestDoGameDetect_AllExcludedPrintsFriendlyMessage(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "already configured")
 }
@@ -194,7 +194,7 @@ func TestDoGameDetect_NoGamesFound(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader(""))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, nil)
+	err := doGameDetect(context.Background(), cmd, reader, svc, nil, nil)
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "No moddable Steam games found.")
 }
@@ -222,7 +222,7 @@ func TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted(t *testi
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("1,2\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "converting detected game bad-game")
 
@@ -238,6 +238,194 @@ func TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted(t *testi
 	profile, err := config.LoadProfile(configDir, "skyrim-se", "default")
 	require.NoError(t, err)
 	assert.True(t, profile.IsDefault)
+}
+
+// TestDoGameDetect_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doGameDetect's "Add games to
+// config?" prompt: under --json with neither --all nor --select, the
+// command must fail with core.ErrConfirmationRequired before ever reading
+// stdin, and games.yaml is left untouched.
+func TestDoGameDetect_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	configDir = t.TempDir()
+	withJSONOutput(t)
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.NotContains(t, saved, "skyrim-se")
+}
+
+// TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll pins --all:
+// non-interactive end state (which games get saved) must match typing "all"
+// at the prompt, with no prompt printed and no stdin read.
+func TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition"}))
+	oldAll := gameDetectAll
+	gameDetectAll = true
+	t.Cleanup(func() { gameDetectAll = oldAll })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+	})
+
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "Add games to config?")
+	assert.Contains(t, buf.String(), "Added: Star Rupture (starrupture)")
+	assert.NotContains(t, buf.String(), "Added: Skyrim Special Edition", "already-configured must stay excluded from --all, matching interactive \"all\"")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Contains(t, saved, "starrupture")
+}
+
+// TestDoGameDetect_AllFlagUnderJSON_ProceedsWithoutReadingStdin guards the
+// combination the Task 9 review flagged as untested: --all under --json
+// together completes the detect rather than hitting the --json/stdin guard.
+func TestDoGameDetect_AllFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition"}))
+	withJSONOutput(t)
+	oldAll := gameDetectAll
+	gameDetectAll = true
+	t.Cleanup(func() { gameDetectAll = oldAll })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	// v2 Phase 3 Ruling 15: under --json the run's whole output is the
+	// GameDetectResult document on stdout - the "Added:" console lines the
+	// plain path prints are suppressed, so the saved game is asserted from
+	// the document (and from games.yaml) instead.
+	var doc core.GameDetectResult
+	stdout := captureStdout(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+		})
+	})
+	decodeSingleDoc(t, stdout, &doc)
+
+	assert.Empty(t, buf.String(), "no console text may sit beside the document")
+	assert.Equal(t, []string{"starrupture"}, doc.Saved)
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Contains(t, saved, "starrupture")
+}
+
+// TestDoGameDetect_SelectFlagSelectsExplicitIndices pins --select: naming an
+// already-configured game's index still repairs it, matching the
+// interactive explicit-selection path (#205 item 2), with no prompt and no
+// stdin read.
+func TestDoGameDetect_SelectFlagSelectsExplicitIndices(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Stale Name"}))
+	oldSelect := gameDetectSelect
+	gameDetectSelect = "1"
+	t.Cleanup(func() { gameDetectSelect = oldSelect })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+	})
+
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "Add games to config?")
+	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "skyrim-se")
+	assert.Equal(t, "Skyrim Special Edition", saved["skyrim-se"].Name)
+}
+
+// TestDoGameDetect_SelectFlagUnderJSON_ProceedsWithoutReadingStdin guards
+// the combination the Task 9 review flagged as untested: --select under
+// --json together completes the detect rather than hitting the
+// --json/stdin guard.
+func TestDoGameDetect_SelectFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	configDir = t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Stale Name"}))
+	withJSONOutput(t)
+	oldSelect := gameDetectSelect
+	gameDetectSelect = "1"
+	t.Cleanup(func() { gameDetectSelect = oldSelect })
+
+	games := []steam.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+	}
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	// v2 Phase 3 Ruling 15: see the --all twin above - the document
+	// replaces the "Added:" console line under --json.
+	var doc core.GameDetectResult
+	stdout := captureStdout(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+		})
+	})
+	decodeSingleDoc(t, stdout, &doc)
+
+	assert.Empty(t, buf.String(), "no console text may sit beside the document")
+	assert.Equal(t, []string{"skyrim-se"}, doc.Saved)
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "skyrim-se")
+	assert.Equal(t, "Skyrim Special Edition", saved["skyrim-se"].Name)
+}
+
+// TestGameDetectCmd_AllAndSelectAreMutuallyExclusive pins the flag
+// definition: passing both --all and --select is a cobra flag-parse error,
+// not a runtime one.
+func TestGameDetectCmd_AllAndSelectAreMutuallyExclusive(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(gameCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(gameCmd); rootCmd.AddCommand(gameCmd) })
+	cmd.SetArgs([]string{"game", "detect", "--all", "--select", "1"})
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "if any flags in the group [all select] are set none of the others can be")
 }
 
 // TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames pins Task
@@ -267,7 +455,7 @@ func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("all\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loading games:")
 }

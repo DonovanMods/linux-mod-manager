@@ -109,14 +109,14 @@ func TestApplyImport_StalePlan_ReturnsErrStalePlan(t *testing.T) {
 	seedInstalledModUnderProfile(t, svc, game, "target", "src", "mod1", "Mod One", "1.0", false,
 		map[string][]byte{"mod1.esp": []byte("m")})
 
-	_, err = svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	_, err = svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.ErrorIs(t, err, core.ErrStalePlan)
 }
 
 // TestApplyImportSavesAndInstalls covers ApplyImport's base case end to end:
 // the profile is saved, a Missing mod is fetched/downloaded/deployed/saved
-// with a nil ConfirmInstall ("nil = proceed"), and the profile is upserted
-// with the actually-downloaded FileIDs.
+// under opts.Install (the frontend already decided), and the profile is
+// upserted with the actually-downloaded FileIDs.
 func TestApplyImportSavesAndInstalls(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -140,7 +140,7 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	require.Len(t, plan.Missing, 1)
 
 	sink, seen := core.RecordEvents()
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, sink)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, sink)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "target", result.ProfileName)
@@ -176,11 +176,12 @@ func TestApplyImportSavesAndInstalls(t *testing.T) {
 	assert.NoError(t, err, "the mod's file must be deployed")
 }
 
-// TestApplyImportConfirmInstallDeclined covers the decline path: the profile
-// is still saved, but ConfirmInstall returning false must skip the install
-// loop entirely - Skipped records the pending count, Installed stays zero,
-// and nothing is fetched/downloaded/saved.
-func TestApplyImportConfirmInstallDeclined(t *testing.T) {
+// TestApplyImportInstallFalse covers the not-installing path (Ruling 1: the
+// frontend decides from the plan BEFORE Apply, so there is no callback):
+// the profile is still saved, but opts.Install left false must skip the
+// install loop entirely - Skipped records the pending count, Installed stays
+// zero, and nothing is fetched/downloaded/saved.
+func TestApplyImportInstallFalse(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
@@ -197,16 +198,11 @@ func TestApplyImportConfirmInstallDeclined(t *testing.T) {
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 
-	called := false
-	opts := core.ProfileImportOptions{ConfirmInstall: func(toDownload []domain.ModReference) bool {
-		called = true
-		require.Len(t, toDownload, 1)
-		return false
-	}}
-	result, err := svc.ApplyImport(context.Background(), game, plan, opts, nil)
+	require.Len(t, plan.Missing, 1, "sanity: the frontend's decision is decidable from the plan alone")
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.True(t, called, "ConfirmInstall must be called when downloads are pending")
 	assert.Equal(t, 1, result.Skipped)
 	assert.Equal(t, 0, result.Installed)
 	assert.Equal(t, 0, result.Failed)
@@ -215,13 +211,13 @@ func TestApplyImportConfirmInstallDeclined(t *testing.T) {
 	require.NoError(t, err, "the profile must still be saved despite the decline")
 
 	_, err = svc.GetInstalledMod(context.Background(), "src", "mod1", "g1", "target")
-	assert.Error(t, err, "declining must leave zero install mutations")
+	assert.Error(t, err, "not installing must leave zero install mutations")
 }
 
-// TestApplyImportNoInstall covers opts.NoInstall: the install loop is
-// skipped unconditionally, and - unlike the decline path - ConfirmInstall
-// must never even be consulted (matching doProfileImport's `if len(toDownload)
-// == 0 || profileImportNoInstall` early-out, which never reaches the prompt).
+// TestApplyImportNoInstall covers opts.NoInstall (the CLI's --no-install):
+// it skips the install loop even when the caller set Install - the flag is
+// a hard override, matching doProfileImport's `if len(toDownload) == 0 ||
+// profileImportNoInstall` early-out, which never reaches the prompt.
 func TestApplyImportNoInstall(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -239,16 +235,11 @@ func TestApplyImportNoInstall(t *testing.T) {
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 
-	called := false
-	opts := core.ProfileImportOptions{NoInstall: true, ConfirmInstall: func([]domain.ModReference) bool {
-		called = true
-		return true
-	}}
+	opts := core.ProfileImportOptions{NoInstall: true, Install: true}
 	result, err := svc.ApplyImport(context.Background(), game, plan, opts, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.False(t, called, "NoInstall must skip the install loop without ever consulting ConfirmInstall")
-	assert.Equal(t, 1, result.Skipped)
+	assert.Equal(t, 1, result.Skipped, "NoInstall must skip the install loop even against Install")
 	assert.Equal(t, 0, result.Installed)
 }
 
@@ -332,7 +323,7 @@ func TestApplyImportPartialFailure(t *testing.T) {
 	require.Len(t, plan.Missing, 2)
 
 	var failedEvt core.ModEvent
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, func(e core.Event) {
 		if m, ok := e.(core.ModEvent); ok && m.Phase == core.ImportModFailed {
 			failedEvt = m
 		}
@@ -396,7 +387,7 @@ func TestApplyImport_StoredFileIDsGone_FailsModWithoutSubstitution(t *testing.T)
 	require.Len(t, plan.Missing, 2)
 
 	var failedEvt core.ModEvent
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, func(e core.Event) {
 		if m, ok := e.(core.ModEvent); ok && m.Phase == core.ImportModFailed {
 			failedEvt = m
 		}
@@ -473,7 +464,7 @@ func TestApplyImportRedownloadUsesStoredFileIDs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 
@@ -540,7 +531,7 @@ func TestApplyImport_InstallLoop_RecordsFileVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Installed)
 
@@ -582,7 +573,7 @@ func TestApplyImport_StoredIDsGone_HealsToRecordedVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Missing, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed, "must heal to the recorded version, not hard-fail")
@@ -632,7 +623,7 @@ func TestApplyImport_VersionlessSource_KeepsLegacyBehavior(t *testing.T) {
 	require.Len(t, plan.Missing, 1)
 
 	var failedEvt core.ModEvent
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, func(e core.Event) {
 		if m, ok := e.(core.ModEvent); ok && m.Phase == core.ImportModFailed {
 			failedEvt = m
 		}
@@ -750,7 +741,7 @@ func TestApplyImport_Downgrade_EndToEnd(t *testing.T) {
 	require.Len(t, plan.NeedsRedownload, 1, "the version-drifted mod must be scheduled for reinstall")
 	assert.Empty(t, plan.Installed, "a drifted mod must not be classified as already-installed")
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
@@ -825,7 +816,7 @@ func TestApplyImport_FullyMarkedCache_SkipsDownload(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.NeedsRedownload, 1)
 
-	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{}, nil)
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, 1, result.Installed)
@@ -878,7 +869,7 @@ func TestApplyImportCtxCancelled(t *testing.T) {
 	require.Len(t, plan.Missing, 2)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	result, err := svc.ApplyImport(ctx, game, plan, core.ProfileImportOptions{}, func(e core.Event) {
+	result, err := svc.ApplyImport(ctx, game, plan, core.ProfileImportOptions{Install: true}, func(e core.Event) {
 		if fe, ok := e.(core.FlowEvent); ok && fe.FlowPhase() == core.ImportModInstalled {
 			cancel() // cancel right after the first mod finishes, before the second's iteration starts
 		}

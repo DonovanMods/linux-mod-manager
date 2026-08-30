@@ -206,7 +206,8 @@ func TestListShowsConvert(t *testing.T) {
 	seedConvertableMod(t, svc, game, "a", "Mod A", "1.0")
 
 	// Set one to off, leave the other on
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "src", "a", game.ID, "default", false))
+	_, settingErr10 := svc.SetModConvertPaks(context.Background(), "src", "a", game.ID, "default", false)
+	require.NoError(t, settingErr10)
 
 	// Seed another mod with convert on (default)
 	seedConvertableMod(t, svc, game, "b", "Mod B", "1.0")
@@ -286,7 +287,8 @@ func TestModShowIncludesConvert(t *testing.T) {
 	src.AddMod(&domain.Mod{ID: "a", SourceID: "src", GameID: game.ID}, []domain.DownloadableFile{
 		{ID: "f1", Version: "1.0", Category: "MAIN"},
 	})
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "src", "a", game.ID, "default", false))
+	_, settingErr11 := svc.SetModConvertPaks(context.Background(), "src", "a", game.ID, "default", false)
+	require.NoError(t, settingErr11)
 
 	// Test JSON output
 	out := captureStdout(t, func() error {

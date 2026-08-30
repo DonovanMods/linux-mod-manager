@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -112,27 +113,20 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 
 	// This announcement precedes the core call, as it always has: a
 	// nonexistent/unreadable archive fails inside ImportArchive, and the
-	// pre-lift engine had already printed the line by then.
-	fmt.Printf("Importing: %s\n", archivePath)
+	// pre-lift engine had already printed the line by then. Not under
+	// --json: the document is the run's whole output (Ruling 15).
+	if !jsonOutput {
+		fmt.Printf("Importing: %s\n", archivePath)
+	}
 
-	// promptErr distinguishes a genuine stdin read failure inside the
-	// conflict prompt from an ordinary decline - see confirmInstallConflicts'
-	// doc comment; core collapses both into "import cancelled", so the real
-	// error is propagated from here instead.
-	var promptErr error
 	opts := core.ImportArchiveOptions{
 		SourceID:  importSource,
 		ModID:     importModID,
 		Force:     importForce,
 		SkipHooks: noHooks,
-		ConfirmConflicts: func(conflicts []core.Conflict) bool {
-			proceed, err := confirmInstallConflicts(ctx, service, game, profileName, conflicts)
-			if err != nil {
-				promptErr = err
-				return false
-			}
-			return proceed
-		},
+		// AcceptConflicts is deliberately left false: the conflict prompt
+		// below answers it. --force implies it in core, so a forced import
+		// never reaches the prompt at all.
 	}
 
 	// progress prints every diagnostic and readout line at its exact point
@@ -164,12 +158,47 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 		}
 	}
 
-	result, err := service.ImportArchive(ctx, game, profileName, archivePath, opts, progress)
-	if err != nil {
-		if promptErr != nil {
-			return promptErr
+	result, err := service.ImportArchive(ctx, game, profileName, archivePath, opts, quietSink(progress))
+
+	// Ruling 1: an unaccepted file conflict comes back as a typed error, not
+	// a callback into this prompt. ImportArchive stopped before it deployed,
+	// saved or added anything to the profile (the archive is cached), so
+	// accepting is simply a re-run of the same call with AcceptConflicts set
+	// - see confirmInstallConflicts' doc comment for the Ruling 7 output
+	// delta that re-run carries.
+	//
+	// Ruling 15/2: under --json the prompt is unanswerable, so the
+	// *core.ConflictError is returned untouched and reportError renders it
+	// as the envelope with details.conflicts - the same contract doInstall's
+	// identical guard gives `install --json` (unit P review, Important 1;
+	// without the guard this caller printed the plain-text conflict block
+	// onto stdout and then collapsed the typed error into
+	// ErrConfirmationRequired at the refused stdin read). --force is how a
+	// non-interactive caller accepts them; core reads it as AcceptConflicts,
+	// so a forced import never gets here at all.
+	var conflictErr *core.ConflictError
+	if errors.As(err, &conflictErr) && !jsonOutput {
+		proceed, readErr := confirmInstallConflicts(ctx, service, game, profileName, conflictErr.Conflicts)
+		if readErr != nil {
+			// A genuine stdin read failure, not an ordinary decline - see
+			// confirmInstallConflicts' doc comment.
+			return readErr
 		}
+		if !proceed {
+			return fmt.Errorf("import cancelled")
+		}
+		opts.AcceptConflicts = true
+		result, err = service.ImportArchive(ctx, game, profileName, archivePath, opts, quietSink(progress))
+	}
+	if err != nil {
 		return err
+	}
+
+	// Ruling 15: the ImportArchiveResult document, which carries
+	// HookWarnings, the deployed-file count and the linked source itself -
+	// everything the readout below renders.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	// The accumulated, non-fatal after_each/after_all failures, printed
@@ -222,12 +251,17 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	// frontend that renders a finished plan instead of a live stream; it is
 	// deliberately not read here, since it exists only after the scan has
 	// already succeeded.
-	if game.DeployMode != domain.DeployCopy {
-		fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
-		fmt.Println("      Uninstall will only remove the database entry, not the files.")
-		fmt.Println()
+	// Not under --json: the document is the run's whole output (Ruling 15),
+	// and core.LocalScan.ExtractModeWarning carries the same caveat for a
+	// caller rendering the plan instead.
+	if !jsonOutput {
+		if game.DeployMode != domain.DeployCopy {
+			fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
+			fmt.Println("      Uninstall will only remove the database entry, not the files.")
+			fmt.Println()
+		}
+		fmt.Printf("Scanning %s for untracked mods...\n", game.ModPath)
 	}
-	fmt.Printf("Scanning %s for untracked mods...\n", game.ModPath)
 
 	plan, err := service.PlanAdopt(ctx, game, profileName, core.AdoptOptions{
 		SkipMatch: importSkipMatch,
@@ -237,7 +271,9 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 		return err
 	}
 
-	fmt.Printf("Found %d files, %d untracked\n\n", len(plan.Scan.Tracked)+len(plan.Scan.Untracked), len(plan.Scan.Untracked))
+	if !jsonOutput {
+		fmt.Printf("Found %d files, %d untracked\n\n", len(plan.Scan.Tracked)+len(plan.Scan.Untracked), len(plan.Scan.Untracked))
+	}
 
 	// progress renders both applies' events at their point of occurrence.
 	// AdoptSyncWarning is the only stderr line (and the reason
@@ -267,25 +303,36 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	// Backfill metadata for already-tracked mods missing metadata. The plan
 	// carries no candidates at all under --skip-match, so this whole block
 	// stays silent there, as it always has.
-	if len(plan.Scan.Backfill) > 0 {
+	if !jsonOutput && len(plan.Scan.Backfill) > 0 {
 		fmt.Printf("Backfilling metadata for %d mod(s)...\n", len(plan.Scan.Backfill))
 	}
-	backfill, err := service.ApplyAdoptBackfill(ctx, game, plan, progress)
+	backfill, err := service.ApplyAdoptBackfill(ctx, game, plan, quietSink(progress))
 	if err != nil {
 		return err
 	}
-	if backfill.Backfilled > 0 {
-		fmt.Printf("Updated metadata for %d existing mod(s)\n\n", backfill.Backfilled)
-	} else if len(plan.Scan.Backfill) > 0 {
-		fmt.Println("No metadata updates needed")
+	if !jsonOutput {
+		if backfill.Backfilled > 0 {
+			fmt.Printf("Updated metadata for %d existing mod(s)\n\n", backfill.Backfilled)
+		} else if len(plan.Scan.Backfill) > 0 {
+			fmt.Println("No metadata updates needed")
+		}
 	}
 
 	if len(plan.Scan.Untracked) == 0 {
+		// Nothing to adopt still owes a --json caller a document: the Plan
+		// under --dry-run, otherwise the AdoptResult an empty adopt
+		// produces (Ruling 15).
+		if jsonOutput {
+			if importDryRun {
+				return emitJSON(plan)
+			}
+			return emitJSON(&core.AdoptResult{})
+		}
 		fmt.Println("All mods are already tracked!")
 		return nil
 	}
 
-	if !plan.SkipMatch {
+	if !jsonOutput && !plan.SkipMatch {
 		fmt.Println("Looking up mods on configured sources...")
 		for _, m := range plan.Matches {
 			if m.Untracked.Mod == nil {
@@ -311,27 +358,37 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	}
 
 	// Show summary and confirm
-	fmt.Printf("Ready to import %d mod(s):\n", len(plan.Scan.Untracked))
-	for _, r := range plan.Scan.Untracked {
-		if r.Mod != nil {
-			sourceTag := "local"
-			if r.MatchedSource != "" && r.MatchedSource != domain.SourceLocal {
-				sourceTag = fmt.Sprintf("%s #%s", r.MatchedSource, r.Mod.ID)
+	if !jsonOutput {
+		fmt.Printf("Ready to import %d mod(s):\n", len(plan.Scan.Untracked))
+		for _, r := range plan.Scan.Untracked {
+			if r.Mod != nil {
+				sourceTag := "local"
+				if r.MatchedSource != "" && r.MatchedSource != domain.SourceLocal {
+					sourceTag = fmt.Sprintf("%s #%s", r.MatchedSource, r.Mod.ID)
+				}
+				fmt.Printf("  - %s (%s, v%s)\n", r.Mod.Name, sourceTag, r.Mod.Version)
+			} else {
+				fmt.Printf("  - %s (unknown)\n", r.FileName)
 			}
-			fmt.Printf("  - %s (%s, v%s)\n", r.Mod.Name, sourceTag, r.Mod.Version)
-		} else {
-			fmt.Printf("  - %s (unknown)\n", r.FileName)
 		}
 	}
 
 	if importDryRun {
+		// Ruling 15: --dry-run --json is the Plan document. Emitted here,
+		// not straight after PlanAdopt, so the backfill apply a plain dry
+		// run performs still runs on this path too.
+		if jsonOutput {
+			return emitJSON(plan)
+		}
 		fmt.Println("\n(dry run - no changes made)")
 		return nil
 	}
 
 	// Confirm unless --force
 	if !importForce {
-		fmt.Printf("\nImport these mods? [y/N]: ")
+		if !jsonOutput {
+			fmt.Printf("\nImport these mods? [y/N]: ")
+		}
 		input, err := readPromptLine()
 		if err != nil {
 			return err
@@ -341,9 +398,15 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 		}
 	}
 
-	result, err := service.ApplyAdopt(ctx, game, plan, progress)
+	result, err := service.ApplyAdopt(ctx, game, plan, quietSink(progress))
 	if err != nil {
 		return err
+	}
+
+	// Ruling 15: the AdoptResult document - the three counters below plus
+	// the warnings the event stream carried.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	fmt.Printf("\nImported: %d, Skipped: %d, Failed: %d\n", result.Adopted, result.Skipped, result.Failed)

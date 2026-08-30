@@ -43,6 +43,11 @@ var recordJSONLegacy = flag.Bool("record-json-legacy", false, "record cmd/lmm/te
 // KEY pinned - what a golden is actually for - while dropping the value.
 var volatileTime = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})`)
 
+// volatileUUID matches a v4 UUID anywhere in a document. `lmm import`
+// mints one per unlinked local mod, so - exactly like volatileTime - the
+// KEY stays pinned while the value, which changes every run, does not.
+var volatileUUID = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+
 // zeroTime is Go's zero time.Time on the wire. It is NOT volatile - it is
 // exactly what a never-set timestamp field must serialize as - so it is
 // parked before the volatileTime pass and restored afterwards, keeping the
@@ -62,6 +67,7 @@ func scrubJSON(actual string, subs ...string) string {
 	}
 	actual = strings.ReplaceAll(actual, zeroTime, "<ZERO-TIME>")
 	actual = volatileTime.ReplaceAllString(actual, "<TIME>")
+	actual = volatileUUID.ReplaceAllString(actual, "<UUID>")
 	return strings.ReplaceAll(actual, "<ZERO-TIME>", zeroTime)
 }
 

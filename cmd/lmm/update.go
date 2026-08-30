@@ -265,7 +265,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	}
 
 	var sink core.EventSink
-	if verbose {
+	if verbose && !jsonOutput {
 		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
 		sink = func(e core.Event) {
 			if uc, ok := e.(core.UpdateCheckEvent); ok {
@@ -282,8 +282,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)
 		}
-		// Surface warning but continue to show partial updates
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
+		// Surface warning but continue to show partial updates - under
+		// --json the same message already reaches the document via
+		// bulkCheckReport's ErrorMessage field, so printing it here too
+		// would both leak onto stderr and duplicate it (Ruling 15).
+		if !jsonOutput {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", checkErr)
+		}
 	}
 
 	// finish is returned at every exit below rather than bailing out early: a
@@ -726,7 +731,7 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		}
 	}
 
-	return service.ApplyUpdate(ctx, game, plan, opts, progress)
+	return service.ApplyUpdate(ctx, game, plan, opts, quietSink(progress))
 }
 
 // applyRecompile applies a #197 merged-pak staleness row via
@@ -748,8 +753,12 @@ func applyRecompile(ctx context.Context, service *core.Service, game *domain.Gam
 		// identity onto it must never have to nil-check.
 		result = &core.UpdateApplyResult{}
 	}
-	for _, w := range result.Warnings {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	// Under --json, printing here would both leak onto stderr and duplicate
+	// the warnings the caller re-attaches to the document below (Ruling 15).
+	if !jsonOutput {
+		for _, w := range result.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
 	}
 	return result, err
 }
@@ -854,7 +863,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		}
 	}
 
-	result, err := service.ApplyRollback(ctx, game, plan, opts, progress)
+	result, err := service.ApplyRollback(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		return err
 	}

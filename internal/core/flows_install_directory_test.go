@@ -145,3 +145,41 @@ func TestApplyInstall_DirectorySource_InstallOverStaleCacheEntry_DropsRemovedMem
 	assert.True(t, os.IsNotExist(lstatErr), "the removed member must not be deployed to the game directory")
 	assert.FileExists(t, filepath.Join(game.ModPath, "ModInfo.xml"))
 }
+
+// TestApplyInstall_DirectorySource_ConflictAcceptRerun_AlwaysReingests pins
+// the second recorded warm-cache carve-out (task-8 review, Important 1): a
+// directory source is deliberately excluded from fillPrimaryCache's
+// cache-first guard, so a conflict accept re-run always re-ingests rather
+// than reusing what the refused run cached - #166 needs exactly that (the
+// source directory can change between the decline and the accept, and only a
+// real re-ingest picks up the change; it also costs no network, so skipping
+// it would save nothing). Proven the same way #166's own end-to-end tests
+// are: change the source's member content BETWEEN the refused run and the
+// accept, then assert the DEPLOYED content is the CHANGED one, not the
+// refusal's cached snapshot - unlike the fresh/upgrade-install leg
+// (DeclineThenAccept_DownloadsExactlyOnce), which would deploy the stale
+// snapshot if a source could even change under it the same way.
+func TestApplyInstall_DirectorySource_ConflictAcceptRerun_AlwaysReingests(t *testing.T) {
+	svc, game, modDir := setupDirectorySourceInstall(t, "newmod", map[string]string{
+		"shared.txt": "v1-content",
+	})
+
+	seedInstalledMod(t, svc, game, "src", "other", "1.0", true, map[string][]byte{"shared.txt": []byte("original-other-content")})
+	installer := svc.GetInstaller(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "other", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "my-mods", "newmod", false)
+	require.NoError(t, err)
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{}, nil)
+	require.ErrorAs(t, err, new(*core.ConflictError), "sanity: the fresh ingest is what makes the conflict computable")
+
+	require.NoError(t, os.WriteFile(filepath.Join(modDir, "shared.txt"), []byte("v2-content"), 0644), "simulates the source directory changing between the decline and the accept")
+
+	_, err = svc.ApplyInstall(context.Background(), game, plan, core.InstallOptions{AcceptConflicts: true}, nil)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(game.ModPath, "shared.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "v2-content", string(content), "the accept re-run must re-ingest - a directory source is never skipped by the cache-first guard")
+}

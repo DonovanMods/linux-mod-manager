@@ -44,7 +44,7 @@ func TestDoGameDetect_RepairWipesExistingDefaultProfileMods(t *testing.T) {
 	cmd.SetOut(&buf)
 	reader := bufio.NewReader(strings.NewReader("1\n"))
 
-	err := doGameDetect(context.Background(), cmd, reader, svc, games)
+	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.NoError(t, err)
 
 	profile, err := config.LoadProfile(configDir, "skyrim-se", "default")

@@ -7,14 +7,14 @@
 // Shape note (why there is no Plan here). Ruling 6 and the spec's
 // "Plan/Apply is the shape of every mutation" both hold for flows whose
 // decision can be previewed WITHOUT mutating. Archive import cannot: the
-// only decision point is the file-conflict overwrite prompt, and conflicts
+// only decision point is the file-conflict overwrite question, and conflicts
 // are computed from the mod's CACHE ENTRY, which does not exist until the
-// archive has been extracted into it - the same reason ApplyInstall keeps
-// InstallOptions.ConfirmConflicts rather than pre-computing conflicts in
-// PlanInstall (see that field's doc comment and InstallPlan.Conflicts').
-// So the cache write and the install are one mutation, and the prompt stays
-// a callback for Phase 2. Phase 3 removes the callback along with
-// ConfirmInstall/ConfirmConflicts everywhere.
+// archive has been extracted into it - the same reason ApplyInstall computes
+// its own conflicts mid-Apply rather than in PlanInstall (see
+// InstallOptions.AcceptConflicts' doc comment and InstallPlan.Conflicts').
+// So the cache write and the install are one mutation; v2 Phase 3 Ruling 1
+// makes the decision point a typed error (*ConflictError) the frontend
+// answers with opts.AcceptConflicts, so core never calls back into it.
 package core
 
 import (
@@ -40,26 +40,30 @@ type ImportArchiveOptions struct {
 	ModID    string
 
 	// Force is `--force`: it skips the conflict CHECK entirely (not merely
-	// the prompt - ConfirmConflicts is never called), and it downgrades a
+	// the refusal - GetConflicts is never called), and it downgrades a
 	// failed install.before_all/before_each hook from fatal to a warning.
 	Force bool
 	// SkipHooks runs no hooks at all (the CLI's --no-hooks).
 	SkipHooks bool
 
-	// ConfirmConflicts gates the deploy step when the archive's files would
-	// overwrite another mod's deployed files. Ruling 6: the prompt stays a
-	// callback for Phase 2 (removed in Phase 3) because the conflict list
-	// cannot be computed before the archive is cached - see this file's
-	// package comment.
+	// AcceptConflicts answers the deploy-step conflict gate up front: the
+	// caller has already decided that overwriting another mod's deployed
+	// files is fine. Force implies it.
 	//
-	// Called with the freshly-computed, NON-EMPTY conflict list only when
-	// !Force and ConfirmConflicts is non-nil; Force skips the check
-	// entirely, and a nil callback likewise proceeds silently (a caller that
-	// does not want blocking behaviour). Returning false aborts with the
-	// pre-lift CLI's own error text, "import cancelled", leaving exactly the
-	// state a decline left there: the archive is already in the cache and
-	// nothing is deployed, saved or added to the profile.
-	ConfirmConflicts func(conflicts []Conflict) bool
+	// Left false (the default), a non-empty conflict list makes
+	// ImportArchive return *ConflictError carrying it, before the hooks,
+	// the deploy, the DB row and the profile ref - and the cache entry the
+	// call created is removed again (discardImportedCacheEntry), so a
+	// refusal leaves managed state (DB, profile, game tree) untouched. That
+	// removal only undoes what this call created: when an entry already
+	// existed at a reproducible identity (--source/--id, or a NexusMods
+	// filename), the import has already overwritten it before the conflict
+	// gate runs, and a refusal does not restore it (#310). A frontend that
+	// prompts re-runs ImportArchive with this set, and the re-run re-caches
+	// the archive from disk; the conflict list cannot be computed before
+	// the archive is cached, which is why it is a mid-Apply typed error
+	// rather than a Plan field - see this file's package comment.
+	AcceptConflicts bool
 }
 
 // ImportArchiveResult reports ImportArchive's outcome. As with every other
@@ -142,8 +146,9 @@ type ImportArchiveResult struct {
 // sink may be nil.
 //
 // It is ONE mutation and runs under beginOp: the cache write and the install
-// are the same operation, and the only decision point in between is
-// opts.ConfirmConflicts (see this file's package comment).
+// are the same operation, and the only decision point in between is the
+// conflict gate opts.AcceptConflicts answers (see this file's package
+// comment).
 func (s *Service) ImportArchive(ctx context.Context, game *domain.Game, profileName, archivePath string, opts ImportArchiveOptions, sink EventSink) (*ImportArchiveResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -183,11 +188,24 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		step(phase, msg)
 	}
 
-	imported, err := s.newImporter(game).Import(ctx, archivePath, game, ImportOptions{
+	importOpts := ImportOptions{
 		SourceID:    opts.SourceID,
 		ModID:       opts.ModID,
 		ProfileName: profileName,
-	})
+	}
+
+	// Whether the entry Import is about to (re)create was already in the
+	// cache before this call, so a conflict refusal below can remove what
+	// this call created without touching what it found (unit P review,
+	// Important 3). A MINTED identity is a fresh uuid: it cannot name a
+	// pre-existing entry, and asking would be meaningless since the uuid
+	// resolveImportIdentity hands back here is not the one Import will use.
+	gameCache := s.GetGameCache(game)
+	ident := resolveImportIdentity(filepath.Base(archivePath), importOpts)
+	entryPreExisted := !ident.minted &&
+		gameCache.Exists(game.ID, ident.sourceID, ident.modID, ident.version)
+
+	imported, err := s.newImporter(game).Import(ctx, archivePath, game, importOpts)
 	if err != nil {
 		return result, fmt.Errorf("import failed: %w", err)
 	}
@@ -203,7 +221,6 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	resolvedFile := s.enrichImportedMod(ctx, game, archivePath, result, opts, step, warn)
 
 	if preEnrichID != result.Mod.ID || preEnrichVersion != result.Mod.Version {
-		gameCache := s.GetGameCache(game)
 		oldPath := gameCache.ModPath(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion)
 		newPath := gameCache.ModPath(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
 		// A failed MkdirAll is silent, exactly as it was pre-lift: the
@@ -273,8 +290,9 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 		switch {
 		case cerr != nil:
 			note(ImportArchiveNote, "Warning: could not check conflicts: %v", cerr)
-		case len(conflicts) > 0 && opts.ConfirmConflicts != nil && !opts.ConfirmConflicts(conflicts):
-			return result, fmt.Errorf("import cancelled")
+		case len(conflicts) > 0 && !opts.AcceptConflicts:
+			s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)
+			return result, &ConflictError{Conflicts: conflicts}
 		}
 	}
 
@@ -370,6 +388,45 @@ func (s *Service) importArchive(ctx context.Context, game *domain.Game, profileN
 	}
 
 	return result, nil
+}
+
+// discardImportedCacheEntry removes the cache entry THIS ImportArchive call
+// created, leaving one it merely found alone (unit P review, Important 3).
+//
+// It runs on the conflict refusal, whose whole promise is that nothing
+// happened: the decision may never come back, and for an unlinked archive
+// (domain.SourceLocal, a freshly minted uuid per Import call) the accept
+// re-run mints a DIFFERENT identity, so the refused pass's entry would be a
+// full copy of the archive's contents referenced by nothing, forever, once
+// per refusal. Removing it also restores the property the accept re-run
+// wants for its own sake: the enrichment rename can no longer collide with
+// a populated destination (task-8 review Minor 4's `Renamed: false`).
+//
+// The conflict list cannot be computed before the cache write - it comes
+// from the entry's own deployable file listing, which only exists once the
+// archive has been extracted, converted and marker-stamped (see this file's
+// package comment) - so removing after the fact is the way the refusal
+// stays free.
+//
+// preEnrichID/preEnrichVersion name where Import put the content; a
+// successful enrichment rename moved it to result.Mod's identity and left
+// nothing behind, and a FAILED one left it exactly where Import put it with
+// the destination still holding whatever made the rename fail - which this
+// call did not create and must not remove.
+func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion string, entryPreExisted bool) {
+	if entryPreExisted || result.Mod == nil {
+		return
+	}
+	gameCache := s.GetGameCache(game)
+	if err := gameCache.Delete(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion); err != nil {
+		s.logger().Debug("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
+	}
+	if !result.Renamed {
+		return
+	}
+	if err := gameCache.Delete(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version); err != nil {
+		s.logger().Debug("removing refused import's renamed cache entry", "mod", result.Mod.ID, "version", result.Mod.Version, "err", err)
+	}
 }
 
 // enrichImportedMod folds the source's metadata into result.Mod when the

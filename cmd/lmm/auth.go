@@ -149,6 +149,15 @@ func promptForSource(service *core.Service) (string, error) {
 		return "", fmt.Errorf("no auth-capable sources are registered")
 	}
 
+	// Non-interactive rule (Ruling 2): 'auth login' never reaches this (it
+	// rejects --json outright in runAuthLogin, since readAPIKey has no
+	// non-interactive form either) - only 'auth logout' with no positional
+	// source argument can land here under --json, and its way out is to
+	// name the source directly instead.
+	if jsonOutput {
+		return "", confirmationRequiredVia("pass the source ID as a positional argument (e.g. lmm auth logout <source>)")
+	}
+
 	fmt.Println("Select a source to authenticate with:")
 	// Name (id) like auth status: names aren't uniqueness-validated across
 	// definitions, and the id is what `lmm auth login <id>` takes.
@@ -171,7 +180,16 @@ func promptForSource(service *core.Service) (string, error) {
 	return sources[choice-1].ID(), nil
 }
 
+// runAuthLogin is interactive-only in Phase 3 (v2 Phase 3 Ruling 2 - a
+// flag-driven form is a follow-up issue): even with a source named
+// positionally, doAuthLogin still has to read the API key from the
+// terminal (readAPIKey), so --json rejects up front with
+// core.ErrInteractiveOnly before opening a service or prompting for
+// anything.
 func runAuthLogin(cmd *cobra.Command, args []string) error {
+	if jsonOutput {
+		return core.ErrInteractiveOnly
+	}
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
 		sourceID, err := selectAuthSource(service, args)
 		if err != nil {

@@ -103,7 +103,8 @@ func TestDoDeploy_Compile_LabelsMergedRawAndLooseAndPrintsFooter(t *testing.T) {
 	svc, game, _ := setupDoDeployCompileTest(t)
 	seedCompileExmodzMod(t, svc, game, "bear-mount", "Bear Mount", "exmodz-file")
 	seedCompilePakMod(t, svc, game, "raw-pak", "Raw Pak Mod", "raw.pak")
-	require.NoError(t, svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false))
+	_, settingErr2 := svc.SetModConvertPaks(context.Background(), "fake-compiler", "raw-pak", game.ID, "default", false)
+	require.NoError(t, settingErr2)
 	seedDeployableMod(t, svc, game, "loose", "Loose Mod", "loose.esp")
 
 	out := captureStdout(t, func() error {

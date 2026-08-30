@@ -91,172 +91,62 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 		return fmt.Errorf("mod %s not found in profile %s", currentID, profileName)
 	}
 
-	// #146: a LOCKED profile ref converges only via explicit lock/unlock, so
-	// refuse any edit that would move its Version or re-link its identity
-	// BEFORE any state moves. Without this gate, the re-link path dropped the
-	// Locked marker (RemoveMod deletes the locked ref, then UpsertMod appends
-	// a fresh ref with zero-value Locked), and the --version path wrote the
-	// DB row first and only then hit UpsertMod's ErrModLocked guard - demoted
-	// to a verbose-only warning, i.e. success output plus silent
-	// DB-vs-profile divergence. Mirrors the install/update gates
-	// (internal/core/flows.go LockedRefRefusalError / lockedInstallRefusal):
-	// a --version equal to the locked version is a realign, not a move, and
-	// stays allowed - the same allowance UpsertMod itself grants. A
-	// missing/unreadable profile cannot hold a lock (the gates' tolerant
-	// precedent). Metadata-only edits (--name/--author) touch neither
-	// Version nor identity and pass through.
-	relink := editSource != "" || editID != ""
-	if relink || editVersion != "" {
-		if prof, err := getProfileManager(service).Get(game.ID, profileName); err == nil {
-			if ref := prof.FindRef(installedMod.SourceID, installedMod.ID); ref != nil && ref.Locked {
-				if relink {
-					return fmt.Errorf("%w: %s is locked at v%s in profile %s - re-linking would replace the locked ref; unlock with 'lmm mod unlock -s %s -p %s %s' first",
-						core.ErrModLocked, installedMod.Name, ref.Version, profileName,
-						installedMod.SourceID, profileName, installedMod.ID)
-				}
-				if editVersion != ref.Version {
-					return core.LockedRefRefusalError(installedMod.Mod, profileName, ref)
-				}
-			}
-		}
+	plan, err := service.PlanRelinkMod(ctx, game, profileName, installedMod.SourceID, installedMod.ID, editSource, editID)
+	if err != nil {
+		return err
 	}
 
-	// Track what changed
-	var changes []string
-
-	if editName != "" {
-		installedMod.Name = editName
-		changes = append(changes, fmt.Sprintf("name -> %s", editName))
-	}
-	if editVersion != "" {
-		installedMod.Version = editVersion
-		changes = append(changes, fmt.Sprintf("version -> %s", editVersion))
-	}
-	if editAuthor != "" {
-		installedMod.Author = editAuthor
-		changes = append(changes, fmt.Sprintf("author -> %s", editAuthor))
+	// #146: a LOCKED profile ref converges only via explicit lock/unlock -
+	// PlanRelinkMod.Refusal is populated whenever a re-link would replace
+	// one. Without this gate, the re-link path dropped the Locked marker
+	// (RemoveMod deletes the locked ref, then UpsertMod appends a fresh ref
+	// with zero-value Locked), and the --version path wrote the DB row
+	// first and only then hit UpsertMod's ErrModLocked guard - demoted to a
+	// verbose-only warning, i.e. success output plus silent DB-vs-profile
+	// divergence. ApplyRelinkMod re-checks both guards itself (a plan is a
+	// snapshot); this early return only avoids computing changes/printing
+	// anything for a re-link request already known to fail.
+	if plan.Refusal != "" {
+		return fmt.Errorf("%w: %s", core.ErrModLocked, plan.Refusal)
 	}
 
-	// Handle re-linking to a new source
-	newSourceID := editSource
-	newModID := editID
+	opts := core.RelinkOptions{Name: editName, Version: editVersion, Author: editAuthor}
 
-	if newSourceID != "" || newModID != "" {
-		if newSourceID == "" {
-			newSourceID = installedMod.SourceID
+	sink := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
 		}
-		if newModID == "" {
-			newModID = installedMod.ID
-		}
-
-		// If re-linking to a non-local source, try to fetch metadata
-		if newSourceID != domain.SourceLocal {
-			cfGameID, ok := game.SourceIDs[newSourceID]
-			if !ok {
-				return fmt.Errorf("source %q is not configured for %s", newSourceID, game.Name)
-			}
-
-			fmt.Printf("Fetching metadata from %s...\n", newSourceID)
-			mod, err := service.GetMod(ctx, newSourceID, cfGameID, newModID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not fetch metadata: %v\n", err)
-			} else {
-				// Apply fetched metadata (only if not explicitly overridden)
-				if editName == "" {
-					installedMod.Name = mod.Name
-					changes = append(changes, fmt.Sprintf("name -> %s (from %s)", mod.Name, newSourceID))
-				}
-				if editAuthor == "" && mod.Author != "" {
-					installedMod.Author = mod.Author
-					changes = append(changes, fmt.Sprintf("author -> %s (from %s)", mod.Author, newSourceID))
-				}
-				if editVersion == "" && mod.Version != "" {
-					installedMod.Version = mod.Version
-					changes = append(changes, fmt.Sprintf("version -> %s (from %s)", mod.Version, newSourceID))
-				}
-				installedMod.Summary = mod.Summary
-				installedMod.SourceURL = mod.SourceURL
-				installedMod.PictureURL = mod.PictureURL
-				installedMod.ManualDownload = false // Now linked, updates may work
-			}
-		}
-
-		// Re-linking requires deleting old record and creating new one
-		oldSourceID := installedMod.SourceID
-		oldModID := installedMod.ID
-
-		installedMod.SourceID = newSourceID
-		installedMod.ID = newModID
-
-		changes = append(changes, fmt.Sprintf("source -> %s (was %s)", newSourceID, oldSourceID))
-		if newModID != oldModID {
-			changes = append(changes, fmt.Sprintf("id -> %s (was %s)", newModID, oldModID))
-		}
-
-		// Delete old record
-		if err := service.DeleteInstalledMod(ctx, oldSourceID, oldModID, game.ID, profileName); err != nil {
-			return fmt.Errorf("removing old record: %w", err)
-		}
-
-		// Update profile reference
-		pm := getProfileManager(service)
-		if err := pm.RemoveMod(game.ID, profileName, oldSourceID, oldModID); err != nil {
+		switch p.Phase {
+		case core.RelinkFetching:
+			fmt.Printf("%s\n", p.Detail)
+		case core.RelinkProfileNote:
 			if verbose {
-				fmt.Printf("Warning: could not remove old profile entry: %v\n", err)
+				fmt.Printf("%s\n", p.Detail)
 			}
-		}
-		modRef := domain.ModReference{
-			SourceID: newSourceID,
-			ModID:    newModID,
-			Version:  installedMod.Version,
-		}
-		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-			if verbose {
-				fmt.Printf("Warning: could not update profile: %v\n", err)
-			}
+		case core.RelinkWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		}
 	}
 
-	if len(changes) == 0 {
+	result, err := service.ApplyRelinkMod(ctx, game, plan, opts, quietSink(sink))
+	if err != nil {
+		return err
+	}
+
+	// Ruling 15: the RelinkResult document - NoChanges and Changes below
+	// are both fields of it.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	if result.NoChanges {
 		fmt.Println("No changes specified. Use --name, --version, --author, --source, or --source-id.")
 		return nil
 	}
 
-	// Save updated mod
-	if err := service.SaveInstalledMod(ctx, installedMod); err != nil {
-		return fmt.Errorf("saving changes: %w", err)
-	}
-
-	// Update profile version if changed (and not already handled by re-link)
-	if editVersion != "" && newSourceID == "" && newModID == "" {
-		pm := getProfileManager(service)
-		modRef := domain.ModReference{
-			SourceID: installedMod.SourceID,
-			ModID:    installedMod.ID,
-			Version:  installedMod.Version,
-		}
-		if err := pm.UpsertMod(game.ID, profileName, modRef); err != nil {
-			if verbose {
-				fmt.Printf("Warning: could not update profile version: %v\n", err)
-			}
-		}
-	}
-
-	// #197 postsmoke seam-audit fix: a --version edit is a direct
-	// regeneration trigger; a --source/--source-id relink changes the
-	// identity enabledMergeSources keys off (mod.SourceID + ":" +
-	// mod.ID). Sync unconditionally now that changes is non-empty - cheap
-	// no-op if nothing merge-relevant actually moved.
-	if syncWarnings, syncErr := service.SyncMergedPak(ctx, game, profileName); syncErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync merged pak: %v\n", syncErr)
-	} else {
-		for _, w := range syncWarnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
-		}
-	}
-
-	fmt.Printf("Updated %s:\n", installedMod.Name)
-	for _, change := range changes {
+	fmt.Printf("Updated %s:\n", result.Mod.Name)
+	for _, change := range result.Changes {
 		fmt.Printf("  %s\n", change)
 	}
 

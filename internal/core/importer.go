@@ -82,6 +82,51 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	return imp
 }
 
+// importIdentity is the cache identity Import keys an archive's entry by,
+// derived from the archive's filename and the caller's explicit linking.
+type importIdentity struct {
+	sourceID     string
+	modID        string
+	version      string
+	autoDetected bool
+	// minted reports that modID is a freshly generated uuid rather than a
+	// value derived from the filename or the options - so the identity is
+	// NOT reproducible across calls, and by construction cannot name a
+	// cache entry that already existed (see ImportArchive's refusal
+	// cleanup, which is the only caller that asks).
+	minted bool
+}
+
+// resolveImportIdentity derives the identity Import will cache filename
+// under: the caller's explicit --source/--id pair, else a NexusMods
+// filename pattern, else a pure-local mod under a freshly minted uuid.
+// Extracted from Import so ImportArchive can ask - BEFORE Import runs -
+// whether the entry Import is about to (re)create already existed.
+//
+// Every branch but the minted one is a pure function of filename and opts;
+// calling this twice for the same archive therefore reproduces the same
+// identity except where minted is true.
+func resolveImportIdentity(filename string, opts ImportOptions) importIdentity {
+	nameNoExt := strings.TrimSuffix(filename, filepath.Ext(filename))
+	versionOrUnknown := func() string {
+		if v := domain.ExtractVersionFromName(nameNoExt); v != "" {
+			return v
+		}
+		return "unknown"
+	}
+
+	if opts.SourceID != "" && opts.ModID != "" {
+		// Explicit linking provided
+		return importIdentity{sourceID: opts.SourceID, modID: opts.ModID, version: versionOrUnknown()}
+	}
+	if parsed := ParseNexusModsFilename(filename); parsed != nil {
+		// Auto-detected from filename. Still local until verified via API.
+		return importIdentity{sourceID: domain.SourceLocal, modID: parsed.ModID, version: parsed.Version, autoDetected: true}
+	}
+	// No pattern - pure local mod
+	return importIdentity{sourceID: domain.SourceLocal, modID: uuid.New().String(), version: versionOrUnknown(), minted: true}
+}
+
 // Import imports a mod from a local archive file
 func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (result *ImportResult, err error) {
 	// Validate archive exists
@@ -91,33 +136,8 @@ func (i *Importer) Import(ctx context.Context, archivePath string, game *domain.
 
 	filename := filepath.Base(archivePath)
 
-	// Try to parse NexusMods filename pattern
-	var sourceID, modID, version string
-	var autoDetected bool
-
-	if opts.SourceID != "" && opts.ModID != "" {
-		// Explicit linking provided
-		sourceID = opts.SourceID
-		modID = opts.ModID
-		version = domain.ExtractVersionFromName(strings.TrimSuffix(filename, filepath.Ext(filename)))
-		if version == "" {
-			version = "unknown"
-		}
-	} else if parsed := ParseNexusModsFilename(filename); parsed != nil {
-		// Auto-detected from filename
-		sourceID = domain.SourceLocal // Still local until verified via API
-		modID = parsed.ModID
-		version = parsed.Version
-		autoDetected = true
-	} else {
-		// No pattern - pure local mod
-		sourceID = domain.SourceLocal
-		modID = uuid.New().String()
-		version = domain.ExtractVersionFromName(strings.TrimSuffix(filename, filepath.Ext(filename)))
-		if version == "" {
-			version = "unknown"
-		}
-	}
+	ident := resolveImportIdentity(filename, opts)
+	sourceID, modID, version, autoDetected := ident.sourceID, ident.modID, ident.version, ident.autoDetected
 
 	var modName string
 	var fileCount int

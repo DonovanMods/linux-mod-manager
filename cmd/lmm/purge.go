@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -85,6 +84,12 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	mods := plan.Mods
 
 	if len(mods) == 0 {
+		// Ruling 15: nothing to purge is not an error, and a --json caller
+		// is still owed a document - the Result a purge of nothing
+		// produces, rather than the console sentence.
+		if jsonOutput {
+			return emitJSON(&core.PurgeResult{})
+		}
 		fmt.Printf("No mods installed for %s (profile: %s)\n", game.Name, profileName)
 		return nil
 	}
@@ -118,35 +123,47 @@ func doPurge(ctx context.Context, service *core.Service, game *domain.Game) erro
 	}
 
 	if purgeDryRun {
+		// Ruling 15: the plan document itself, never its rendering.
+		if jsonOutput {
+			return emitJSON(plan)
+		}
 		renderPurgePlan(plan, game, progress)
 		return nil
 	}
 
-	// Confirmation prompt
+	// Confirmation prompt. Under --json the prompt is unanswerable (Ruling
+	// 2: readPromptLine refuses to read stdin and returns
+	// core.ErrConfirmationRequired), so the preamble is not printed either -
+	// it would be console text beside an error envelope.
 	if !purgeYes {
-		fmt.Printf("This will undeploy %d mod(s) from %s (profile: %s)\n", len(mods), game.Name, profileName)
-		if purgeUninstall {
-			fmt.Println("Mod records will also be removed from the database.")
-		} else {
-			fmt.Println("Mod records will be preserved. Use 'lmm deploy' to restore.")
+		if !jsonOutput {
+			fmt.Printf("This will undeploy %d mod(s) from %s (profile: %s)\n", len(mods), game.Name, profileName)
+			if purgeUninstall {
+				fmt.Println("Mod records will also be removed from the database.")
+			} else {
+				fmt.Println("Mod records will be preserved. Use 'lmm deploy' to restore.")
+			}
+			fmt.Print("\nContinue? [y/N] ")
 		}
-		fmt.Print("\nContinue? [y/N] ")
-		reader := bufio.NewReader(os.Stdin)
-		line, err := reader.ReadString('\n')
+		response, err := readPromptLine()
 		if err != nil {
-			return fmt.Errorf("reading input: %w", err)
+			return err
 		}
-		response := strings.TrimSpace(strings.ToLower(line))
 		if response != "y" && response != "yes" {
 			return ErrCancelled
 		}
 	}
 
-	result, err := service.ApplyPurge(ctx, game, plan, opts, progress)
+	result, err := service.ApplyPurge(ctx, game, plan, opts, quietSink(progress))
 	if err != nil {
 		// Diagnostics accumulated before a fatal error were already
 		// printed above, live, via progress - nothing left to print here.
 		return err
+	}
+
+	// Ruling 15: the applying run's document is the Result.
+	if jsonOutput {
+		return emitJSON(result)
 	}
 
 	fmt.Printf("\nPurged: %d mod(s)", result.Purged)

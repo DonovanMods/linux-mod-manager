@@ -522,6 +522,77 @@ func TestPromptForSource_ListsAuthCapableRegistered(t *testing.T) {
 	assert.Contains(t, out, "[3] Nexus Mods (nexusmods)")
 }
 
+// TestRunAuthLogin_JSONOutputReturnsInteractiveOnly pins the non-interactive
+// rule (v2 Phase 3 Ruling 2): 'auth login' stays interactive-only in Phase
+// 3 (readAPIKey has no non-interactive form), so --json must reject with
+// core.ErrInteractiveOnly before opening a service or reading anything -
+// even with a source named positionally.
+func TestRunAuthLogin_JSONOutputReturnsInteractiveOnly(t *testing.T) {
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		return runAuthLogin(&cobra.Command{}, []string{"nexusmods"})
+	})
+
+	require.ErrorIs(t, err, core.ErrInteractiveOnly)
+}
+
+// TestPromptForSource_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule at promptForSource, the site 'auth logout' with no
+// positional source argument reaches under --json: it must fail with
+// core.ErrConfirmationRequired, naming the positional argument as the way
+// out, without ever reading stdin.
+func TestPromptForSource_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(&mockAuthSource{id: "acme-mods", name: "Acme Mods"})
+	withJSONOutput(t)
+
+	promptErr := assertStdinNeverRead(t, func() error {
+		_, err := promptForSource(svc)
+		return err
+	})
+
+	require.ErrorIs(t, promptErr, core.ErrConfirmationRequired)
+	assert.Contains(t, promptErr.Error(), "positional argument")
+}
+
+// TestAuthLogoutCmd_PositionalArgWorksUnderJSON pins that 'auth logout
+// <source>' never hits the interactive picker - and so works fine under
+// --json - since resolveLogoutSource only calls promptForSource when no
+// positional argument is given.
+func TestAuthLogoutCmd_PositionalArgWorksUnderJSON(t *testing.T) {
+	configDir = t.TempDir()
+	dataDir = t.TempDir()
+
+	svc, err := initService(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "stored-test-key-12345"))
+	require.NoError(t, svc.Close())
+
+	withJSONOutput(t)
+	cmd := &cobra.Command{Use: "test"}
+	cmd.AddCommand(authCmd)
+	t.Cleanup(func() { rootCmd.RemoveCommand(authCmd); rootCmd.AddCommand(authCmd) })
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"auth", "logout", "nexusmods"})
+
+	err = assertStdinNeverRead(t, cmd.Execute)
+	require.NoError(t, err)
+
+	svc2, err := initService(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc2.Close()) })
+	token, err := svc2.GetSourceToken(context.Background(), "nexusmods")
+	require.NoError(t, err)
+	assert.Nil(t, token)
+}
+
 // TestAuthLogin_ValidatorPath pins the login flow for a source implementing
 // source.KeyValidator: the key is validated live ("Validating... done") and
 // the success message claims "Successfully authenticated".

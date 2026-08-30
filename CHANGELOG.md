@@ -25,6 +25,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompting. On a compile-mode game it also states that the profile's merged artifact would be
   removed too; that line is unconditional on compile games, not gated on whether anything would
   actually be removed. (#293)
+- `lmm profile switch` and `lmm profile sync` gain `-y`/`--yes` to skip their confirmation
+  prompt; `lmm profile import` gains `-y`/`--yes` to answer its "Download and install mods?"
+  prompt without a stdin read. `lmm game detect` gains `--all` (select every not-yet-configured
+  detected game — the same set the interactive "all" answer selects) and `--select <indices>`
+  (the same 1-based indices the prompt accepts, including an already-configured game's index for
+  a repair); the two are mutually exclusive and both skip the prompt entirely. (#303)
+- **`--json` on every mutating command.** `install`, `import` (archive and scan), `deploy`,
+  `uninstall`, `purge`, `profile apply/switch/sync/import/create/delete/reorder`,
+  `mod enable/disable/lock/unlock/set-update/convert/edit` and
+  `game detect/set-default/clear-default` now emit their core result document; with `--dry-run`
+  they emit the plan document instead of its rendering. Progress and per-mod status lines are
+  suppressed under `--json`, so stdout holds exactly one document and stderr stays empty apart
+  from `--log-level` diagnostics. Two new core documents back this: `core.ProfileResult`
+  (`{profile}`) for the profile-management commands and `core.SettingsResult` (`{default_game}`)
+  for `game set-default`/`clear-default`. `--json` never prompts: a confirmation with no deciding
+  flag fails before mutating anything with the error envelope, and an `install --json` or
+  `import <archive> --json` blocked by file conflicts reports them as `details.conflicts` (pass
+  `--force` to accept). `lmm mod files` honours `--json` too, emitting `core.ModFilesReport`.
+  `install`'s `files_deployed` (and plain-text `Files deployed: N`) now counts the cache entry's
+  files once instead of accumulating a per-archive count, which previously over-counted mods
+  installed from two or more extracted archives (e.g. 3 → 2). (#303)
+- `lmm profile apply`, `lmm profile switch` and `lmm profile sync` gain `--dry-run`: they print
+  the same plan preview the live run shows, under a `<Verb> plan for profile "<name>" (dry run)`
+  header, and change nothing — including the profile-creating and default-switching writes a
+  no-changes run would otherwise still perform. (#303)
 
 ### Removed
 
@@ -172,6 +197,52 @@ list` is only visible to app). Each carries snake_case json tags and a recorded 
   joins `lmm list`, `lmm status`, `lmm search`, `lmm game list`, `lmm source list` and `lmm
 verify` used to assemble inside the CLI now live in core, and their plain-text renderers read
   the query types; CLI output — text and JSON — is unchanged. (#301)
+- `lmm profile import` now asks "Download and install mods?" **before** it saves the profile,
+  not after: the prompt (and, on a decline, its "Skipped." line) precede the
+  `✓ Imported profile: <name>` line. A save that fails (importing over an existing profile without `--force`) therefore
+  prints the prompt first, and a prompt read failure now leaves the profile unsaved. (#303)
+- `lmm install` and `lmm import` still ask before overwriting another mod's deployed files, and
+  the question still comes after the download/extract step that makes the conflict detectable —
+  but it now comes **before** the `install.before_all`/`install.before_each` hooks instead of
+  after them, so declining costs no hook run at all. Answering "y" re-runs the operation with the
+  cache already warm: `install` re-prints only "Extracting to cache…" (never a second
+  "Downloading …"/"Checksum: …" block), `import` re-prints its "Fetching metadata…" and
+  Mod/Source/ID/Version/Files readout, before "Deploying to game directory…". An accepted
+  conflict re-run does not re-download cached files (a same-version reinstall or a local
+  directory source still refreshes its files); hooks run once. A forced hook warning (`--force`
+  with a failing `install.before_all`) now prints after the download lines rather than before
+  them. Declining an `import` now also discards the cache entry that import filled on its way to
+  the question, so a refusal removes the entry this call created and leaves managed state (DB,
+  profile, game tree) untouched; when an entry already existed at a reproducible identity
+  (`--source/--id`, or a NexusMods filename), the import had already overwritten it before the
+  refusal, and that prior entry is not restored (#310). Accepting leaves exactly one entry rather
+  than orphaning the refused pass's copy of the archive; an accepted
+  `import --id` re-run therefore also renames its cache entry onto the resolved version
+  successfully, where it previously reported `renamed: false` and (under `-v`) a "could not
+  rename cache entry" warning. `--force` still skips the conflict check entirely. (#303)
+- Internal: the last three frontend callbacks leave `core` (spec §4 "no callbacks into the
+  frontend from Apply"). `InstallOptions.ConfirmConflicts` and
+  `ImportArchiveOptions.ConfirmConflicts` are replaced by `AcceptConflicts bool` (implied by
+  `Force`): an unaccepted file conflict is now the typed `*core.ConflictError` (wrapping
+  `domain.ErrFileConflict`, carrying `[]core.Conflict`), returned before any deploy, DB write or
+  profile write, and the frontend prompts and re-runs Apply. `ProfileImportOptions.ConfirmInstall`
+  becomes `Install bool`, decided from `ImportPlan.NeedsRedownload`/`Missing`. New
+  `internal/core/errors.go` also adds `ErrConfirmationRequired` and `ErrInteractiveOnly`. (#303)
+- Under `--json` the CLI never reads stdin (spec §4 / Ruling 2): any command that would otherwise
+  prompt for confirmation now fails first with `confirmation required: ...` in the
+  `{"error":...}` envelope, naming the flag (`-y`/`--yes`, `--force`, `-s`/`--source`) or
+  positional argument that decides it non-interactively instead — never a blocking read. `lmm
+game add` and `lmm auth login` have no non-interactive form yet (a flag-driven one is a
+  follow-up issue) and reject `--json` outright with `this command is interactive-only and does
+not support --json`; `lmm auth logout` and `lmm game detect` (via the new `--all`/`--select`)
+  both already have one. (#303)
+- Internal: `lmm mod edit`, `lmm mod files`, and `lmm mod lock`/`unlock`/`set-update`/`convert`
+  get core flows instead of driving `ProfileManager`/DB writes directly from `cmd/lmm`.
+  `core.PlanRelinkMod`/`ApplyRelinkMod` back `mod edit` (a metadata-only edit or a re-link to a
+  different source/mod ID); `core.ModFiles` backs `mod files`; `core.Service.SetModLock`/
+  `ClearModLock`/`SetModUpdatePolicy`/`SetModConvertPaks` all return a `*core.ModSettingResult`
+  (the mod's full post-write lock/policy/pak-conversion snapshot). No user-visible change: CLI
+  output is byte-identical. (#303)
 
 ### Changed — JSON output (v2)
 
@@ -242,6 +313,11 @@ profiles}`).
   `{source_id, mod_id, version, locked}`, so a document names its source;
   rollback's `name` → `mod_name`; `to_version` is always present; `warnings`
   and `notes` appear when the operation produced any.
+- `core.DeployResult.Skipped`, `core.PurgeResult.Skipped` and
+  `core.ProfileApplyResult.Failed` are arrays of objects
+  (`{source_id, mod_id, name, version, reason}`) instead of pre-formatted
+  `"<name>: <reason>"` strings — JSON carries data, never rendered text. The
+  plain-text output is unchanged. (#303)
 - `core.RollbackResult` gains `Mod` (a `domain.ModReference`), matching
   `UpdateApplyResult` — without it the rollback document had no way to say
   which mod, from which source, it was reporting on. (#302)

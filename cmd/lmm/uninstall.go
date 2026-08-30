@@ -69,7 +69,7 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 		return err
 	}
 
-	if verbose {
+	if verbose && !jsonOutput {
 		fmt.Printf("Uninstalling mod %s from %s (profile: %s)...\n", modID, game.Name, profileName)
 	}
 
@@ -98,6 +98,10 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	if uninstallDryRun {
+		// Ruling 15: the plan document itself, never its rendering.
+		if jsonOutput {
+			return emitJSON(plan)
+		}
 		renderUninstallPlan(plan, game, profileName)
 		return nil
 	}
@@ -113,6 +117,12 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 	}
 
 	printUninstallDiagnostics(result)
+
+	// Ruling 15: the Result document, in place of the console readout
+	// below - which only restates data the document already carries.
+	if jsonOutput {
+		return emitJSON(result)
+	}
 
 	fmt.Printf("✓ Uninstalled: %s\n", plan.Mod.Name)
 	fmt.Printf("  Removed from profile: %s\n", profileName)
@@ -178,7 +188,12 @@ func renderUninstallPlan(plan *core.UninstallPlan, game *domain.Game, profileNam
 // nil result (nothing to print) - result is nil only when ApplyUninstall
 // failed before it could allocate the result struct.
 func printUninstallDiagnostics(result *core.UninstallResult) {
-	if result == nil {
+	// Ruling 15: under --json the run emits one document and nothing else,
+	// so neither the --verbose notes nor the unconditional stderr warnings
+	// are printed - the Result document carries both slices verbatim. The
+	// guard lives here, not at the call sites, because the error path calls
+	// this too (and reportError, not this function, owns that document).
+	if result == nil || jsonOutput {
 		return
 	}
 

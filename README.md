@@ -755,26 +755,28 @@ A `directory` source now shows up with real capabilities in `lmm source list` (`
 
 ### Global Flags
 
-| Flag          | Short | Description                                                                                                                          |
-| ------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                             |
-| `--verbose`   | `-v`  | Enable verbose output                                                                                                                |
-| `--config`    |       | Custom config directory                                                                                                              |
-| `--data`      |       | Custom data directory                                                                                                                |
-| `--json`      |       | Output in JSON (list, status, search, update, conflicts, verify, mod show, source list, game list) — see [JSON output](#json-output) |
-| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                         |
-| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                       |
-| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                      |
+| Flag          | Short | Description                                                                                                                                     |
+| ------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--game`      | `-g`  | Game ID (optional if default set via `game set-default`)                                                                                        |
+| `--verbose`   | `-v`  | Enable verbose output                                                                                                                           |
+| `--config`    |       | Custom config directory                                                                                                                         |
+| `--data`      |       | Custom data directory                                                                                                                           |
+| `--json`      |       | Output JSON instead of text; mutating commands print their result, `--dry-run` prints the plan; never prompts — see [JSON output](#json-output) |
+| `--no-hooks`  |       | Disable all hooks at runtime                                                                                                                    |
+| `--no-color`  |       | Disable colored output (respects NO_COLOR env)                                                                                                  |
+| `--log-level` |       | Diagnostic log level written to stderr: `off`, `error`, `warn`, `info`, `debug` (default `off`)                                                 |
 
 Output is colorized by default whenever stdout is a terminal (headers, status accents like enabled/disabled/pinned, success/warning/error markers); piped or redirected output stays plain automatically, and `--json` output is never colored. Disable explicitly with `--no-color` or the `NO_COLOR` environment variable.
 
 ### JSON output
 
 `--json` prints **exactly one JSON document to stdout**, 2-space indented,
-with a single trailing newline and nothing else. Warnings, progress and
-human notices go to stderr, so `lmm ... --json | jq` is always safe. Map keys
-and list order are deterministic, so two runs over the same state produce
-byte-identical output.
+with a single trailing newline and nothing else. Warnings and human notices
+travel inside the document itself (its `warnings`/`notes` fields), not
+stderr; stderr stays empty except for `--log-level` diagnostics, so
+`lmm ... --json | jq` is always safe. Map keys and list order are
+deterministic, so two runs over the same state produce byte-identical
+output.
 
 On failure the document is an envelope instead:
 
@@ -803,11 +805,47 @@ shows up as a diff in review.
 | `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`          |
 | `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                    |
 | `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                 |
+| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                 |
 | `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                       |
 | `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                   |
 | `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                |
 | `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`              |
 | `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`             |
+
+Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
+that run would have applied:
+
+| Command                                  | Document                                                       |
+| ---------------------------------------- | -------------------------------------------------------------- |
+| `lmm install`                            | `core.InstallResult` — `{installed[], skipped[], failed[], …}` |
+| `lmm import <archive>`                   | `core.ImportArchiveResult` (conflicts need `--force`, above)   |
+| `lmm import` (scan)                      | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`  |
+| `lmm import --dry-run`                   | `core.AdoptPlan`                                               |
+| `lmm deploy`                             | `core.DeployResult` / `core.DeployPlan` under `--dry-run`      |
+| `lmm uninstall <mod-id>`                 | `core.UninstallResult` / `core.UninstallPlan`                  |
+| `lmm purge`                              | `core.PurgeResult` / `core.PurgePlan`                          |
+| `lmm profile apply`                      | `core.ProfileApplyResult` / `core.ProfileApplyPlan`            |
+| `lmm profile switch <name>`              | `core.SwitchResult` / `core.SwitchPlan`                        |
+| `lmm profile sync`                       | `core.ProfileSyncResult` / `core.ProfileSyncPlan`              |
+| `lmm profile import <file>`              | `core.ProfileImportResult`                                     |
+| `lmm profile create/delete/reorder`      | `core.ProfileResult` — `{profile{…}}`                          |
+| `lmm mod enable/disable`                 | `core.EnableResult` / `core.DisableResult` — `{changed, …}`    |
+| `lmm mod lock/unlock/set-update/convert` | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`  |
+| `lmm mod edit <mod-id>`                  | `core.RelinkResult` — `{mod{}, changes[], no_changes}`         |
+| `lmm game detect --all` / `--select`     | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`  |
+| `lmm game set-default` / `clear-default` | `core.SettingsResult` — `{default_game}`                       |
+
+**`--json` never prompts.** Every confirmation has a flag that decides it
+(`-y`/`--yes`, or `--force` where that is the existing meaning); without it
+the run fails **before mutating anything** with the error envelope
+(`"confirmation required: …"`, exit `1`). `lmm game detect --json` therefore
+needs `--all` or `--select`; an `lmm install --json` or
+`lmm import <archive> --json` that hits file conflicts needs `--force`, and
+without it the envelope's `details.conflicts` names every conflicting file.
+`lmm game add` and `lmm auth login` are interactive-only and reject `--json`
+outright. Progress and per-mod status lines are suppressed under `--json`, so
+stdout holds the document and nothing else and stderr stays empty (except for
+`--log-level` diagnostics, which are always stderr).
 
 List fields are always arrays, never `null`: an empty listing is `[]` and a
 game with no configured sources is `{}`. Enum-valued fields (link method,
@@ -883,6 +921,7 @@ not integers. Times are RFC 3339.
 | `lmm profile reorder [mod-id ...]`                 | Show or set load order                                                                                                                               |
 | `lmm profile sync`                                 | Update profile to match installed mods                                                                                                               |
 | `lmm profile apply`                                | Install/enable mods to match profile                                                                                                                 |
+| `lmm profile apply/switch/sync --dry-run`          | Preview what an apply/switch/sync would do, changing nothing                                                                                         |
 | `lmm deploy`                                       | Deploy all enabled mods from cache                                                                                                                   |
 | `lmm deploy <mod-id>`                              | Deploy specific mod from cache                                                                                                                       |
 | `lmm deploy --method hardlink`                     | Deploy using different link method                                                                                                                   |
@@ -912,8 +951,9 @@ not integers. Times are RFC 3339.
 selection that is certain to fail once applied (e.g. an unknown or disabled mod ID) — a plan is
 data, not an attempt. `lmm deploy <id> --dry-run` therefore exits `0` for a mod ID the live
 `lmm deploy <id>` would reject with exit `1`. A scripted pre-flight check cannot rely on
-`--dry-run`'s exit code alone to detect a doomed deploy/uninstall/purge ahead of time; `--dry-run`
-does not currently support `--json`.
+`--dry-run`'s exit code alone to detect a doomed deploy/uninstall/purge ahead of time. Combined
+with `--json`, `--dry-run` emits the plan document itself rather than its rendering — see
+[JSON output](#json-output).
 
 ### Import
 

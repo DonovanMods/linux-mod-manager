@@ -1,0 +1,24 @@
+{
+  "mod": {
+    "id": "999",
+    "source_id": "acme-source",
+    "name": "Acme Mod",
+    "version": "2.0",
+    "author": "",
+    "summary": "",
+    "description": "",
+    "game_id": "g1",
+    "category": "",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "0001-01-01T00:00:00Z"
+  },
+  "linked_source": "acme-source",
+  "auto_detected": false,
+  "renamed": true,
+  "deployed": 1,
+  "merged_pak_synced": false
+}

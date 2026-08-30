@@ -109,7 +109,7 @@ func TestJSONGoldens(t *testing.T) {
 			"deploy_result",
 			core.DeployResult{
 				Deployed:       5,
-				Skipped:        []string{"OptionalAddon: no files selected"},
+				Skipped:        []core.InstalledRef{{SourceID: "nexusmods", ModID: "7", Name: "OptionalAddon", Version: "0.9", Reason: "no files selected"}},
 				Warnings:       []string{"merge sync produced 1 raw fallback"},
 				Notes:          []string{"redeployed after cache miss"},
 				MergedArtifact: "merged.pak",
@@ -170,7 +170,7 @@ func TestJSONGoldens(t *testing.T) {
 			"purge_result",
 			core.PurgeResult{
 				Purged:   2,
-				Skipped:  []string{"LockedMod: locked"},
+				Skipped:  []core.InstalledRef{{SourceID: "nexusmods", ModID: "9", Name: "LockedMod", Version: "1.0", Reason: "locked"}},
 				Warnings: []string{"could not remove cache directory"},
 				Notes:    []string{"purged orphaned cache entry"},
 			},
@@ -331,13 +331,39 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// v2 Phase 3 Ruling 15: the document `lmm profile
+			// create/delete/reorder` emit. The nested domain.Profile is
+			// pinned in full by domain's own golden, so this one only has
+			// to pin the single-key wrapper around it.
+			"profile_result",
+			core.ProfileResult{
+				Profile: domain.Profile{
+					Name:   "default",
+					GameID: "skyrim-se",
+					Mods: []domain.ModReference{
+						{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+					},
+					LinkMethod: domain.LinkSymlink,
+					IsDefault:  true,
+				},
+			},
+		},
+		{
+			// v2 Phase 3 Ruling 15: the document `lmm game
+			// set-default`/`clear-default` emit. A cleared default is the
+			// empty string, which is why the field carries no omitempty -
+			// "cleared" must be visible on the wire, not absent.
+			"settings_result",
+			core.SettingsResult{DefaultGame: "skyrim-se"},
+		},
+		{
 			"profile_apply_result",
 			core.ProfileApplyResult{
 				Disabled:  1,
 				Enabled:   2,
 				Installed: 1,
 				Replaced:  1,
-				Failed:    []string{"nexusmods:8: failed to fetch mod: rate limited"},
+				Failed:    []core.InstalledRef{{SourceID: "nexusmods", ModID: "8", Reason: "failed to fetch mod: rate limited"}},
 				Notes:     []string{"Warning: could not update profile: mod is locked"},
 				Warnings:  []string{"could not sync merged pak: base pak missing"},
 			},
@@ -818,6 +844,83 @@ func TestJSONGoldens(t *testing.T) {
 				Status:   core.UpdateRolledBack,
 				Warnings: []string{"could not sync merged pak"},
 				Notes:    []string{"rolled back Sample Mod"},
+			},
+		},
+		{
+			// Every optional key populated at once (Locked/LockedVersion/
+			// Refusal, TargetInstalled) - on a real plan a locked re-link
+			// and an already-occupied target can co-occur, but the golden's
+			// job is to pin each key's wire shape, not to be a plausible
+			// plan (same convention as update_plan/rollback_plan below).
+			"relink_plan",
+			core.RelinkPlan{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				From:            domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+				To:              domain.ModReference{SourceID: "curseforge", ModID: "99"},
+				Relink:          true,
+				TargetInstalled: true,
+				Locked:          true,
+				LockedVersion:   "1.2.3",
+				// Literal, not core.LockedRefRefusalError(...).Error(): that
+				// constructor's wording is the *target* convention
+				// (Ruling 5) that Unit Q (#294) will unify
+				// relinkLockRefusalMessage onto. Until then this must equal
+				// exactly what PlanRelinkMod (mod_edit.go) produces today via
+				// relinkLockRefusalMessage - Unit Q re-records this golden
+				// when it changes that function.
+				Refusal:           "Sample Mod is locked at v1.2.3 in profile default - re-linking would replace the locked ref; unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
+				MergedPakAffected: true,
+				Profile:           "default",
+			},
+		},
+		{
+			// Notes/Warnings both populated at once (a real edit rarely
+			// produces both), same convention as install_plan above.
+			"relink_result",
+			core.RelinkResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "99", SourceID: "curseforge", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				Changes:  []string{"source -> curseforge (was nexusmods)"},
+				Notes:    []string{"Warning: could not update profile: mod is locked"},
+				Warnings: []string{"could not sync merged pak: base pak missing"},
+			},
+		},
+		{
+			"mod_setting_result",
+			core.ModSettingResult{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateAuto,
+				},
+				Locked:        true,
+				LockedVersion: "1.2.3",
+				UpdatePolicy:  domain.UpdateAuto,
+				ConvertPaks:   boolPtr(true),
+			},
+		},
+		{
+			"mod_file_entry",
+			core.ModFileEntry{Path: "Data/Sample.esp", Size: 1234, Deployed: true},
+		},
+		{
+			// Files is deliberately non-empty (MergedPakOnly and a non-empty
+			// Files never co-occur on a real report) to pin ModFileEntry's
+			// wire shape nested inside - same convention as install_plan
+			// above.
+			"mod_files_report",
+			core.ModFilesReport{
+				Mod: domain.InstalledMod{
+					Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+					ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+				},
+				Files: []core.ModFileEntry{
+					{Path: "Data/Sample.esp", Size: 1234, Deployed: true},
+				},
 			},
 		},
 		{

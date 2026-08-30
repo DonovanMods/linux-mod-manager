@@ -214,6 +214,100 @@ func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *tes
 	assert.True(t, mod.Enabled, "declining must not disable any mod")
 }
 
+// TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileSwitch's "Proceed?"
+// prompt: under --json with no -y, the switch must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and neither the
+// default profile nor any mod's enabled state changes.
+func TestDoProfileSwitch_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	withJSONOutput(t)
+
+	err = assertStdinNeverRead(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	def, derr := pm.GetDefault(game.ID)
+	require.NoError(t, derr)
+	assert.Equal(t, "default", def.Name, "must not switch the default profile")
+	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, merr)
+	assert.True(t, mod.Enabled, "must not disable any mod")
+}
+
+// TestDoProfileSwitch_YesFlagSkipsPromptEntirely pins -y: the prompt text
+// never prints at all (not merely auto-answered) and the switch proceeds
+// without reading stdin, matching every other -y-gated prompt in this
+// package.
+func TestDoProfileSwitch_YesFlagSkipsPromptEntirely(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	oldYes := profileSwitchYes
+	profileSwitchYes = true
+	t.Cleanup(func() { profileSwitchYes = oldYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileSwitch(context.Background(), svc, game, "target")
+	})
+
+	assert.NotContains(t, out, "Proceed?")
+	assert.Contains(t, out, "\n✓ Switched to profile: target\n")
+
+	def, derr := pm.GetDefault(game.ID)
+	require.NoError(t, derr)
+	assert.Equal(t, "target", def.Name)
+	mod, merr := svc.GetInstalledMod(context.Background(), "src", "disable-me", "g1", "default")
+	require.NoError(t, merr)
+	assert.False(t, mod.Enabled)
+}
+
+// TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin guards
+// the combination the Task 9 review flagged as untested: -y under --json
+// together. The --json guard only fires inside the prompt's own read path,
+// which -y's `if !profileSwitchYes { ... }` branch never reaches at all -
+// this test proves that structural safety holds by actually driving both
+// flags at once, rather than relying on code-shape inspection.
+func TestDoProfileSwitch_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	withJSONOutput(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(game.ID, "target")
+	require.NoError(t, err)
+	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
+	oldYes := profileSwitchYes
+	profileSwitchYes = true
+	t.Cleanup(func() { profileSwitchYes = oldYes })
+
+	var switchErr error
+	out := captureStdout(t, func() error {
+		switchErr = assertStdinNeverRead(t, func() error {
+			return doProfileSwitch(context.Background(), svc, game, "target")
+		})
+		return nil
+	})
+
+	require.NoError(t, switchErr)
+	assert.NotContains(t, out, "Proceed?")
+	// v2 Phase 3 Ruling 15: under --json the run's whole output is the
+	// SwitchResult document; the "✓ Switched" line is suppressed, so the
+	// switch is asserted from the document and from the active profile.
+	var doc core.SwitchResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, 1, doc.Disabled)
+
+	active, err := pm.GetDefault(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "target", active.Name)
+}
+
 // TestDoProfileSwitch_ProceedAccepted_HappyPath_PrintsExpectedOutput guards
 // doProfileSwitch's full apply path end to end (disable, enable, install,
 // SetDefault) byte-identically to the pre-extraction CLI, across all three

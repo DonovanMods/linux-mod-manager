@@ -111,6 +111,19 @@ type ProfileApplyInstall struct {
 	Error string `json:"error,omitempty"`
 }
 
+// profileApplyFailure builds the InstalledRef ApplyProfileApply records for
+// an entry it could not install. Identity comes from the plan entry's Ref
+// (always present); Name/Version come from the resolved mod when there is
+// one - a plan-time resolution failure has no mod to name.
+func profileApplyFailure(entry *ProfileApplyInstall, reason string) InstalledRef {
+	ref := InstalledRef{SourceID: entry.Ref.SourceID, ModID: entry.Ref.ModID, Reason: reason}
+	if entry.Mod != nil {
+		ref.Name = entry.Mod.Name
+		ref.Version = entry.Version
+	}
+	return ref
+}
+
 // ProfileApplyOptions is ApplyProfileApply's option set. It is deliberately
 // EMPTY today: `lmm profile apply` takes no flag the engine reads (--yes
 // gates the frontend's own prompt, never core), and unlike
@@ -138,16 +151,20 @@ type ProfileApplyOptions struct{}
 //     unconditionally (#197): the end-of-apply merged-pak sync's warnings,
 //     or "could not sync merged pak: <err>" when the sync itself failed. A
 //     caller prints each to stderr as `Warning: %s`.
-//   - Failed holds one "<source>:<mod>: <reason>" entry per mod the apply
-//     could not install, mirroring the events the loop emitted.
+//   - Failed holds one InstalledRef per mod the apply could not install,
+//     mirroring the events the loop emitted: the ref's identity plus the
+//     reason as data, rather than the pre-formatted
+//     "<source>:<mod>: <reason>" line it used to be (spec §4). Name is
+//     empty for an entry that failed to resolve at plan time - there is no
+//     mod to name yet.
 type ProfileApplyResult struct {
-	Disabled  int      `json:"disabled"`
-	Enabled   int      `json:"enabled"`
-	Installed int      `json:"installed"`
-	Replaced  int      `json:"replaced"`
-	Failed    []string `json:"failed,omitempty"`
-	Notes     []string `json:"notes,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
+	Disabled  int            `json:"disabled"`
+	Enabled   int            `json:"enabled"`
+	Installed int            `json:"installed"`
+	Replaced  int            `json:"replaced"`
+	Failed    []InstalledRef `json:"failed,omitempty"`
+	Notes     []string       `json:"notes,omitempty"`
+	Warnings  []string       `json:"warnings,omitempty"`
 }
 
 // PlanProfileApply computes what it would take to make the mods installed
@@ -446,8 +463,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			emit(ModEvent{Scope: scope, Phase: SwitchInstallingMod})
 
 			fail := func(reason string) {
-				result.Failed = append(result.Failed,
-					fmt.Sprintf("%s: %s", domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID), reason))
+				result.Failed = append(result.Failed, profileApplyFailure(entry, reason))
 				emit(ModEvent{Scope: scope, Phase: SwitchInstallError, Detail: reason})
 			}
 
@@ -479,7 +495,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 						// renders this mod's Error line; fail() would emit a
 						// second SwitchInstallError and print a duplicate one.
 						result.Failed = append(result.Failed,
-							fmt.Sprintf("%s: download failed: %v", domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID), err))
+							profileApplyFailure(entry, fmt.Sprintf("download failed: %v", err)))
 						downloadFailed = true
 						break
 					}

@@ -1,0 +1,5 @@
+{
+  "notes": [
+    "Warning: failed to undeploy some files: undeploying plugin.esp: not a symlink: <GAME-DIR>/plugin.esp"
+  ]
+}

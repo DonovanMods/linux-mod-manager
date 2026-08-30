@@ -397,7 +397,7 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	// Change policy to auto
-	err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdateAuto)
+	_, err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdateAuto)
 	require.NoError(t, err)
 
 	// Verify
@@ -406,7 +406,7 @@ func TestService_SetModUpdatePolicy(t *testing.T) {
 	assert.Equal(t, domain.UpdateAuto, updated.UpdatePolicy)
 
 	// Change policy to pinned
-	err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdatePinned)
+	_, err = svc.SetModUpdatePolicy(context.Background(), "test", "123", "skyrim-se", "default", domain.UpdatePinned)
 	require.NoError(t, err)
 
 	updated, err = svc.GetInstalledMod(context.Background(), "test", "123", "skyrim-se", "default")

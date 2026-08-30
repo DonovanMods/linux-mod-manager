@@ -25,13 +25,30 @@ games.yaml afterwards for anything more specific, including the
 NexusMods slug if none was detected.
 
 .PP
+Use --all or --select to decide non-interactively (required under
+--json, which never reads stdin): --all selects every not-yet-configured
+game, the same set the interactive "all" answer selects; --select takes
+the same 1-based indices the prompt accepts (e.g. "1,2"), including
+already-configured games' numbers for a repair.
+
+.PP
 Examples:
   lmm game detect
+  lmm game detect --all
+  lmm game detect --select 1,3
 
 
 .SH OPTIONS
+\fB--all\fP[=false]
+	select every not-yet-configured detected game without prompting
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for detect
+
+.PP
+\fB--select\fP=""
+	comma-separated 1-based indices to add/repair without prompting (see the printed listing)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -48,7 +65,7 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
+	output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts
 
 .PP
 \fB--log-level\fP="off"

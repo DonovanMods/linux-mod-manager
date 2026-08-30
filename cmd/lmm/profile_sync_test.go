@@ -218,6 +218,88 @@ func TestDoProfileSync_DeclinedPrompt_PrintsPromptAndCancels(t *testing.T) {
 	assert.Empty(t, profile.Mods, "declining must not mutate the profile")
 }
 
+// TestDoProfileSync_JSONOutputReturnsConfirmationRequired pins the
+// non-interactive rule (v2 Phase 3 Ruling 2) at doProfileSync's "Proceed?"
+// prompt: under --json with no -y, the sync must fail with
+// core.ErrConfirmationRequired before ever reading stdin, and the profile
+// must not be mutated.
+func TestDoProfileSync_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	pm := getProfileManager(svc)
+	profile, perr := pm.Get(game.ID, "default")
+	require.NoError(t, perr)
+	assert.Empty(t, profile.Mods, "must not mutate the profile")
+}
+
+// TestDoProfileSync_YesFlagSkipsPromptEntirely pins -y: the prompt text
+// never prints and the sync proceeds without reading stdin.
+func TestDoProfileSync_YesFlagSkipsPromptEntirely(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
+	oldYes := profileSyncYes
+	profileSyncYes = true
+	t.Cleanup(func() { profileSyncYes = oldYes })
+
+	out := captureStdout(t, func() error {
+		return doProfileSync(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "Proceed?")
+	assert.Equal(t, "Syncing profile: default\n\n"+
+		"Will add to profile:\n"+
+		"  + Add One (src:add1)\n"+
+		"✓ Synced profile: default\n", out)
+
+	pm := getProfileManager(svc)
+	profile, perr := pm.Get(game.ID, "default")
+	require.NoError(t, perr)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "add1", profile.Mods[0].ModID)
+}
+
+// TestDoProfileSync_YesFlagUnderJSON_ProceedsWithoutReadingStdin guards the
+// combination the Task 9 review flagged as untested: -y under --json
+// together completes the sync rather than hitting the --json/stdin guard.
+func TestDoProfileSync_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	withJSONOutput(t)
+	seedSyncInstalledMod(t, svc, game, "src", "add1", "Add One", "1.0", "default", true, nil)
+	oldYes := profileSyncYes
+	profileSyncYes = true
+	t.Cleanup(func() { profileSyncYes = oldYes })
+
+	var syncErr error
+	out := captureStdout(t, func() error {
+		syncErr = assertStdinNeverRead(t, func() error {
+			return doProfileSync(context.Background(), svc, game, nil)
+		})
+		return nil
+	})
+
+	require.NoError(t, syncErr)
+	assert.NotContains(t, out, "Proceed?")
+	// v2 Phase 3 Ruling 15: under --json the run's whole output is the
+	// ProfileSyncResult document - the preview and the "✓ Synced" line the
+	// plain path prints are suppressed, so the sync is asserted from the
+	// document (and from the profile itself).
+	var doc core.ProfileSyncResult
+	decodeSingleDoc(t, out, &doc)
+	assert.Equal(t, 1, doc.Added)
+
+	profile, err := getProfileManager(svc).Get(game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.Equal(t, "add1", profile.Mods[0].ModID)
+}
+
 // TestDoProfileSync_ToUpdate_LockedRefRefusalIsVerboseOnly pins Ruling 9:
 // a LOCKED profile ref makes the toUpdate loop's UpsertMod refuse (the ref
 // IS the lock's target, and the DB's version differs), and doProfileSync

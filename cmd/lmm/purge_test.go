@@ -198,6 +198,31 @@ func TestDoPurge_HappyPath_ByteExactOutput(t *testing.T) {
 	assert.False(t, mod.Deployed)
 }
 
+// TestDoPurge_JSONOutputReturnsConfirmationRequired pins the non-interactive
+// rule (v2 Phase 3 Ruling 2) at doPurge's "Continue?" prompt: under --json
+// with no -y, the purge must fail with core.ErrConfirmationRequired before
+// ever reading stdin, and nothing gets undeployed.
+func TestDoPurge_JSONOutputReturnsConfirmationRequired(t *testing.T) {
+	svc, game := setupDoPurgeTest(t)
+	purgeYes = false
+	withJSONOutput(t)
+	seedPurgeableMod(t, svc, game, "a", "Mod A", "a.esp")
+
+	stdout, stderr, err := captureStdoutStderrErr(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doPurge(context.Background(), svc, game)
+		})
+	})
+
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Empty(t, stdout, "a refused prompt emits no result document")
+	assert.Empty(t, stderr)
+	_, err = os.Lstat(filepath.Join(game.ModPath, "a.esp"))
+	assert.NoError(t, err, "must not undeploy anything")
+	_, dbErr := svc.GetInstalledMod(context.Background(), "src", "a", "g1", "default")
+	assert.NoError(t, dbErr, "the record must still exist, untouched")
+}
+
 func TestDoPurge_BeforeEachSkip_PrintsSkippedLineAndFailedCount(t *testing.T) {
 	svc, game := setupDoPurgeTest(t)
 	seedPurgeableMod(t, svc, game, "bad", "Bad Mod", "bad.esp")

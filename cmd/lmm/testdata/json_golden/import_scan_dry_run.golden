@@ -1,0 +1,63 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "scan": {
+    "tracked": [],
+    "untracked": [
+      {
+        "file_path": "<GAME-DIR>/LooseMod-1.0.zip",
+        "file_name": "LooseMod-1.0.zip",
+        "mod": {
+          "id": "<UUID>",
+          "source_id": "local",
+          "name": "LooseMod",
+          "version": "1.0",
+          "author": "",
+          "summary": "",
+          "description": "",
+          "game_id": "g1",
+          "category": "",
+          "downloads": 0,
+          "picture_url": "",
+          "source_url": "",
+          "files": [],
+          "dependencies": [],
+          "updated_at": "0001-01-01T00:00:00Z"
+        },
+        "matched_source": "local",
+        "already_tracked": false
+      }
+    ],
+    "backfill": [],
+    "extract_mode_warning": false
+  },
+  "matches": [
+    {
+      "untracked": {
+        "file_path": "<GAME-DIR>/LooseMod-1.0.zip",
+        "file_name": "LooseMod-1.0.zip",
+        "mod": {
+          "id": "<UUID>",
+          "source_id": "local",
+          "name": "LooseMod",
+          "version": "1.0",
+          "author": "",
+          "summary": "",
+          "description": "",
+          "game_id": "g1",
+          "category": "",
+          "downloads": 0,
+          "picture_url": "",
+          "source_url": "",
+          "files": [],
+          "dependencies": [],
+          "updated_at": "0001-01-01T00:00:00Z"
+        },
+        "matched_source": "local",
+        "already_tracked": false
+      }
+    }
+  ],
+  "duplicates": [],
+  "skip_match": true
+}

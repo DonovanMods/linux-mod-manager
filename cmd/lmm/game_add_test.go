@@ -124,6 +124,20 @@ func TestDoGameAdd_MenuListsRegisteredSourcesSortedByID(t *testing.T) {
 	assert.Contains(t, out, "[3] Nexus Mods (nexusmods)")
 }
 
+// TestRunGameAdd_JSONOutputReturnsInteractiveOnly pins the non-interactive
+// rule (v2 Phase 3 Ruling 2): `game add` stays interactive-only in Phase 3,
+// so --json must reject with core.ErrInteractiveOnly before opening a
+// service or printing/reading any of doGameAdd's seven prompts.
+func TestRunGameAdd_JSONOutputReturnsInteractiveOnly(t *testing.T) {
+	withJSONOutput(t)
+
+	err := assertStdinNeverRead(t, func() error {
+		return runGameAdd(&cobra.Command{}, nil)
+	})
+
+	require.ErrorIs(t, err, core.ErrInteractiveOnly)
+}
+
 // TestDoGameAdd_NoRegisteredSources guards the degenerate case a bare
 // registry (e.g. a test double set) can reach: an empty menu must error
 // instead of prompting over zero options.

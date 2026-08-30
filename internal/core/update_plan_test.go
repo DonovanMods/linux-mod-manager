@@ -98,7 +98,8 @@ func TestService_PlanUpdate_UpToDate(t *testing.T) {
 func TestService_PlanUpdate_Pinned(t *testing.T) {
 	svc, game, src := planUpdateTestGame(t)
 	seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "src", "mod1", "g1", "default", domain.UpdatePinned))
+	_, settingErr27 := svc.SetModUpdatePolicy(context.Background(), "src", "mod1", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, settingErr27)
 	src.currentMod = &domain.Mod{ID: "mod1", Version: "2.0"} // a real update exists, but pinned mods are never queried
 
 	plan, err := svc.PlanUpdate(context.Background(), game, "default", "src", "mod1")

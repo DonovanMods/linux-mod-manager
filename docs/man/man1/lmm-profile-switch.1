@@ -14,15 +14,25 @@ Switch to a different profile, deploying its mods to the game directory.
 
 .PP
 This will undeploy mods from the current profile and deploy mods from the new profile.
+Prompts for confirmation before making any changes; pass -y/--yes to skip the prompt.
 
 .PP
 Examples:
   lmm profile switch survival --game skyrim-se
+  lmm profile switch survival --game skyrim-se --yes
 
 
 .SH OPTIONS
+\fB--dry-run\fP[=false]
+	print what the switch would do without changing anything
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for switch
+
+.PP
+\fB-y\fP, \fB--yes\fP[=false]
+	auto-confirm the switch
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -39,7 +49,7 @@ Examples:
 
 .PP
 \fB--json\fP[=false]
-	output in JSON format (list, status, search, update, conflicts, verify, mod show, source list, game list)
+	output JSON instead of text; mutating commands print their result, --dry-run prints the plan; never prompts
 
 .PP
 \fB--log-level\fP="off"

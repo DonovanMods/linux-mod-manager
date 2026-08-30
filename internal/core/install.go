@@ -639,39 +639,36 @@ type InstallOptions struct {
 	Force     bool
 	SkipHooks bool // run no hooks even when hooks are configured (the CLI's --no-hooks)
 
-	// ConfirmConflicts gates the STRICT (no-deps) path's deploy step
-	// (applyInstallPrimary), restoring the pre-extraction CLI's blocking
-	// conflict prompt at its ORIGINAL position: AFTER the primary is
-	// downloaded and extracted to cache and BEFORE it is deployed - the
-	// exact point confirmInstallConflicts occupied in doInstall
-	// (cmd/lmm/install.go), since installer.GetConflicts can only inspect a
-	// mod's cache once something has actually been downloaded into it (see
+	// AcceptConflicts answers the STRICT (no-deps) path's conflict gate in
+	// fillPrimaryCache up front: the caller has already decided that
+	// overwriting another mod's deployed files is fine, so ApplyInstall
+	// neither computes nor refuses on conflicts. Force implies it.
+	//
+	// The gate sits immediately AFTER the primary is downloaded and
+	// extracted to cache - installer.GetConflicts can only inspect a mod's
+	// cache once something has actually been downloaded into it (see
 	// InstallPlan.Conflicts' doc comment for why a pre-download PlanInstall
-	// call can't do this for a mod that has never been cached before - the
-	// C1 review finding this field fixes: conflicts had regressed into
-	// PlanInstall alone, which silently missed every uncached mod's
-	// conflicts and, for an already-cached one, prompted at the wrong
-	// position).
+	// call can't do this for a mod that has never been cached before) - and
+	// BEFORE install.before_all/before_each and the deploy (the 2026-08-29
+	// Apply-order ruling; the pre-extraction CLI's confirmInstallConflicts
+	// prompt sat after the hooks, which made a refusal cost a hook run).
 	//
-	// Called with the freshly-computed, non-empty conflict list ONLY when
-	// !Force and ConfirmConflicts is non-nil - Force skips the check
-	// entirely without ever calling it (matching doInstall's own "if
-	// !installForce" gate), and a nil ConfirmConflicts likewise skips it
-	// (proceeds silently), for a caller that doesn't want the STRICT path's
-	// blocking behavior at all (the BATCH path - applyInstallBatchMod - has
-	// its own separate, always-non-blocking inline warning and never
-	// consults this field).
+	// Left false (the default), a non-empty conflict list makes ApplyInstall
+	// return *ConflictError carrying it - no callback into the frontend
+	// (v2 Phase 3 Ruling 1). The refusal state is a warm cache and nothing
+	// else: NO hook has run, nothing is deployed, and nothing is saved to
+	// the DB or the profile (a fresh/upgrade install's cache entry is left
+	// in place; a same-version reinstall's staged reinstall-cache
+	// transaction is rolled back via the caller's deferred
+	// primaryStage.rollback, restoring the live cache/deployed files exactly
+	// as they were). A frontend that prompts re-runs ApplyInstall with this
+	// set, and that re-run finds the cache warm: it downloads nothing and
+	// runs each hook exactly once for the one user-level install.
 	//
-	// Returning false aborts the install with the exact error
-	// confirmInstallConflicts' decline produced ("installation cancelled"),
-	// leaving the same state a decline left in doInstall: before_all/
-	// before_each hooks already ran, the download is already cached (a
-	// fresh/upgrade install's cache entry is left in place; a same-version
-	// reinstall's staged reinstall-cache-transaction is rolled back via its
-	// existing deferred Rollback, restoring the live cache/deployed files
-	// exactly as they were), and nothing is deployed or saved to the DB/
-	// profile.
-	ConfirmConflicts func(conflicts []Conflict) bool
+	// The BATCH path (applyInstallBatchMod) never consults it: it has its
+	// own separate, always-non-blocking inline conflict warning - and it
+	// already computed its conflicts after its own download.
+	AcceptConflicts bool
 }
 
 // InstalledRef identifies one mod on an InstallResult.Installed/Skipped/
@@ -685,6 +682,14 @@ type InstalledRef struct {
 	Name     string `json:"name"`
 	Version  string `json:"version,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+}
+
+// skippedRef builds the InstalledRef a flow records when a mod is not
+// processed: the mod's identity plus the reason, as data. Shared by
+// DeployResult.Skipped and PurgeResult.Skipped so the two can never drift
+// in which identity fields they populate.
+func skippedRef(mod *domain.InstalledMod, reason string) InstalledRef {
+	return InstalledRef{SourceID: mod.SourceID, ModID: mod.ID, Name: mod.Name, Version: mod.Version, Reason: reason}
 }
 
 // InstallResult reports the outcome of ApplyInstall. As with DeployResult/
@@ -936,13 +941,13 @@ func (s *Service) lockedInstallRefusal(ctx context.Context, plan *InstallPlan, o
 // flow proceed to its own authoritative handling of that failure rather than
 // refusing on a version this couldn't determine.
 //
-//   - STRICT (no dependencies): applyInstallPrimary installs exactly
+//   - STRICT (no dependencies): the primary path installs exactly
 //     plan.Files - by the time lockedInstallRefusal runs, ApplyInstall's own
 //     resolveStrictInstallFiles call has already folded opts.TargetVersion/
 //     TargetFileIDs into plan.Files (#140; the CLI's interactive/--file
 //     sub-selection was applied to the plan even earlier) - so the would-be
 //     version is plan.Files' effective version, the same
-//     domain.EffectiveInstalledVersion stamp (#94) applyInstallPrimary
+//     domain.EffectiveInstalledVersion stamp (#94) fillPrimaryCache
 //     itself performs.
 //   - BATCH: applyInstallBatchMod never consults plan.Files - the primary's
 //     selection is re-derived here exactly as ApplyInstall's own #96/#140
@@ -1121,18 +1126,18 @@ func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPl
 // (dep-path fidelity)" entry for the review trace that drove it:
 //
 //   - Empty: the STRICT (no-deps) path - only plan.Mod installs, via
-//     applyInstallPrimary's doInstall-derived single-mod mechanics
-//     (Force-gated hooks, Install-or-Replace, SaveFileChecksum;
+//     fillPrimaryCache + deployPrimary's doInstall-derived single-mod
+//     mechanics (Force-gated hooks, Install-or-Replace, SaveFileChecksum;
 //     INTERACTIVE selection is the CALLER's job, applied to plan.Files
 //     before this is ever called, while opts.TargetVersion/TargetFileIDs
 //     pins are folded into plan.Files HERE, up front, when the caller's
 //     selection doesn't already satisfy them (#140 - see
-//     resolveStrictInstallFiles) - but the blocking conflict prompt is NOT:
-//     it fires INSIDE applyInstallPrimary itself, post-download/pre-deploy,
-//     via opts.ConfirmConflicts - see that field's doc comment for why a
-//     caller-side, plan.Conflicts-driven prompt can never detect an
-//     uncached mod's conflicts, the C1 review finding this restores
-//     fidelity for).
+//     resolveStrictInstallFiles) - but the conflict gate is NOT: it fires
+//     INSIDE fillPrimaryCache, post-download and BEFORE any hook, and an
+//     unaccepted conflict returns *ConflictError - see
+//     opts.AcceptConflicts' doc comment for why a caller-side,
+//     plan.Conflicts-driven prompt can never detect an uncached mod's
+//     conflicts, the C1 review finding this restores fidelity for).
 //   - Non-empty: the BATCH path - plan.Dependencies (in plan order) THEN
 //     plan.Mod all install via applyInstallBatchMod, IDENTICALLY, matching
 //     batchInstallMods' own "every mod in the list is treated the same"
@@ -1224,7 +1229,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		// resolveStrictInstallFiles: that helper has no other caller (see its
 		// doc comment), so validating its result immediately after this fold
 		// is equivalent to validating inside it, and plan.Files is the only
-		// value that matters to applyInstallPrimary either way.
+		// value that matters to fillPrimaryCache either way.
 		if err := s.ValidateInstallFileSelection(plan.SourceID, plan.Files); err != nil {
 			return result, err
 		}
@@ -1282,6 +1287,9 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		return result, err
 	}
 
+	// Hook RESOLUTION (a read) stays here, ahead of the cache fill, so an
+	// unresolvable hook config still fails with zero side effects; hook
+	// EXECUTION moved below the cache fill - see the ruled order there.
 	hooks, err := s.resolvedHooks(ctx, game, plan.Profile)
 	if err != nil {
 		return result, err
@@ -1291,6 +1299,39 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		return result, err
 	}
 	hookCtx := hookContextFor(game)
+
+	// Read-only (the profile file plus the game's own default), so resolving
+	// it here rather than after install.before_all only moves a possible
+	// failure EARLIER, to a point with nothing to undo. The STRICT cache
+	// fill below needs it to bind its installer for the conflict check.
+	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, plan.Profile)
+	if err != nil {
+		return result, err
+	}
+	pm := s.NewProfileManager()
+
+	// RULED ORDER (2026-08-29): on the STRICT path the cache fill and the
+	// conflict computation both precede install.before_all/before_each. The
+	// conflict list cannot be computed before the mod is in the cache (see
+	// InstallOptions.AcceptConflicts), so putting the gate after the hooks
+	// made a REFUSED conflict cost a hook run - and its accept re-run a
+	// second one. A cache fill is not a mutation of managed state (Ruling
+	// 1), so a refusal here leaves nothing behind but a warm cache, which is
+	// exactly what lets the re-run skip the download.
+	var stage *primaryStage
+	if len(plan.Dependencies) == 0 {
+		stage, err = s.fillPrimaryCache(ctx, game, plan, linkMethod, opts, result, emit)
+		// The reinstall-cache transaction (when one was opened) outlives
+		// this call now that the two halves are separate functions: every
+		// path that returns before deployPrimary commits it - the conflict
+		// refusal, a failing install.before_all, a deploy or save failure -
+		// must restore the live cache exactly as it was.
+		defer func() { stage.rollback(ctx) }()
+		if err != nil {
+			return result, err
+		}
+	}
+
 	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_all", hooks.GetInstallBeforeAll()); err != nil {
 		if !opts.Force {
 			return result, fmt.Errorf("install.before_all hook failed: %w", err)
@@ -1299,12 +1340,6 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		result.Warnings = append(result.Warnings, msg)
 		emit(HookEvent{Scope: Scope{Op: OpInstall}, Phase: InstallBeforeAllForced, Stage: "install.before_all", Detail: msg})
 	}
-
-	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, plan.Profile)
-	if err != nil {
-		return result, err
-	}
-	pm := s.NewProfileManager()
 
 	// deferredWarnings holds every install.after_each (BATCH path: every mod
 	// in loop order, primary included; STRICT path: the primary's own) and
@@ -1353,7 +1388,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 		}
 	} else {
 		// --- STRICT path: only the primary, doInstall's own mechanics. ---
-		afterEachWarning, err := s.applyInstallPrimary(ctx, game, plan, linkMethod, pm, opts, hooks, runner, result, emit)
+		afterEachWarning, err := s.deployPrimary(ctx, game, plan, stage, pm, opts, hooks, runner, result, emit)
 		if err != nil {
 			return result, err
 		}
@@ -1530,7 +1565,7 @@ type batchTarget struct {
 // COMPLETELY identically - matching cmd/lmm/install.go's pre-extraction
 // batchInstallMods per-mod loop byte-for-byte (Fix wave 1 restored the
 // primary's participation in this exact mechanism; Task 2's original design
-// special-cased the primary onto applyInstallPrimary's strict mechanics even
+// special-cased the primary onto fillPrimaryCache/deployPrimary's strict mechanics even
 // when Dependencies was non-empty - see task-2-report.md's "Fix wave 1"
 // entry for the review trace this fixes). Any failure (hook, fetch, files,
 // download, conflict aside, deploy, or save) skips this mod and continues -
@@ -1715,7 +1750,9 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 
 	if !opts.Force {
 		if conflicts, err := installer.GetConflicts(ctx, game, mod, plan.Profile); err == nil && len(conflicts) > 0 {
-			emit(WarningEvent{Scope: scope, Phase: InstallDepConflictWarning, Message: fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))})
+			msg := fmt.Sprintf("%d file conflict(s) - will overwrite", len(conflicts))
+			result.Warnings = append(result.Warnings, msg)
+			emit(WarningEvent{Scope: scope, Phase: InstallDepConflictWarning, Message: msg})
 		}
 	}
 
@@ -1734,7 +1771,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 		FileIDs:      fileIDs,
 	}
 	// Normalize GameID to the lmm game: sources stamp their own domain id
-	// onto the mods they return (see applyInstallPrimary's identical save site).
+	// onto the mods they return (see deployPrimary's identical save site).
 	installedMod.GameID = game.ID
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 		skip("Error", fmt.Sprintf("failed to save mod: %v", err))
@@ -1774,7 +1811,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 
 // fileChecksum pairs a downloaded file's ID with its computed checksum, in
 // download order - an ordered alternative to a map so
-// applyInstallPrimary's later SaveFileChecksum loop is deterministic (the
+// deployPrimary's later SaveFileChecksum loop is deterministic (the
 // pre-extraction CLI's own map-based fileChecksums had no ordering
 // guarantee across multiple files, so this is a harmless, if anything more
 // correct, deviation - see the task report).
@@ -1782,21 +1819,110 @@ type fileChecksum struct {
 	fileID, checksum string
 }
 
-// applyInstallPrimary installs plan.Mod - doInstall's OWN single-mod
-// mechanics (Force-gated before_each, Install-or-Replace incl. the
-// reinstall-cache-transaction for a same-version reinstall,
-// SaveFileChecksum, --skip-verify). ONLY ever called from ApplyInstall's
-// STRICT (no-deps) path - see ApplyInstall's doc comment - matching
-// doInstall's own early return: whenever Dependencies was non-empty,
-// pre-extraction doInstall delegated the WHOLE list, target included, to
-// batchInstallMods instead (applyInstallBatchMod, in the BATCH path), and
-// this function never ran at all for that mod (Fix wave 1 - see
-// task-2-report.md's "Fix wave 1" entry - restored this; Task 2's original
-// design incorrectly ran this unconditionally, primary included, even when
-// Dependencies was non-empty). Returns the install.after_each warning event
-// to defer (nil if none). A non-nil error is always fatal to ApplyInstall
-// as a whole, matching doInstall's own early returns.
-func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event)) (*WarningEvent, error) {
+// checksumFromCache computes a checksum for fileID's ALREADY-CACHED content
+// when fillPrimaryCache's cache-first guard (2026-08-29 ruling) skips the
+// download entirely (task-8 review, Important 2) - the warm-cache
+// counterpart to downloadModToCache's own DownloadModResult.Checksum, so a
+// cached install still has something for deployPrimary's SaveFileChecksum
+// loop to save instead of leaving the row NO CHECKSUM until the next
+// `verify --fix` re-ingests.
+//
+// A retained compile source (cache.RetainedSourceName - the validate+retain
+// model, #210/#221) is hashed directly when present: it is an untouched copy
+// of the ORIGINAL downloaded bytes, so this reproduces the exact value a
+// fresh download would have computed. Everything else has no retained
+// original to re-hash - a plain DeployExtract archive's cache entry holds
+// only its EXTRACTED members, never the archive itself - so its checksum is
+// computed from what IS on disk instead, via the same digestDirectoryMembers
+// fold ingestLocalToCache's directory branch already uses for #164: a real,
+// stable fingerprint of the cache's current content that a later read
+// reproduces bit for bit, even though it cannot equal the archive-level hash
+// a fresh download once produced. A fileID with no recorded members (a
+// legacy pre-manifest entry) returns "" - honest emptiness, the same
+// convention ingestLocalToCache's own empty-directory case uses.
+func checksumFromCache(gameCache *cache.Cache, gameID, sourceID, modID, version, fileID string) (string, error) {
+	retainedPath := gameCache.GetFilePath(gameID, sourceID, modID, version, cache.RetainedSourceName(fileID))
+	if _, err := os.Stat(retainedPath); err == nil {
+		return md5File(retainedPath)
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	manifests, err := gameCache.FileManifests(gameID, sourceID, modID, version)
+	if err != nil {
+		return "", err
+	}
+	members := manifests[fileID].Members
+	if len(members) == 0 {
+		return "", nil
+	}
+	return digestDirectoryMembers(gameCache.ModPath(gameID, sourceID, modID, version), members)
+}
+
+// primaryStage is the STRICT path's cache fill handed to its deploy half.
+// The two halves are separate functions because the ruled Apply order
+// (2026-08-29) puts install.before_all BETWEEN them: the cache fill and the
+// conflict computation run first, so a REFUSED conflict costs no hook run,
+// and the accept re-run finds the cache warm and pays for no download.
+type primaryStage struct {
+	// mod is plan.Mod's local, addressable copy carrying the #94 effective
+	// version - the value the DB row, the profile ref and the cache key all
+	// agree on. Distinct from plan.Mod, which a caller may re-inspect.
+	mod domain.Mod
+	// scope carries the download/checksum events; modScope the mod-lifecycle
+	// ones. Both settled during the cache fill and replayed by the deploy.
+	scope, modScope Scope
+	// installer is bound to linkMethod - the SAME instance that computed the
+	// conflict list, so the deploy cannot disagree with what was gated on.
+	installer  *Installer
+	linkMethod domain.LinkMethod
+	// reinstallTxn is the same-version reinstall's staged cache, nil
+	// otherwise. Its rollback is deferred by the CALLER now that its
+	// lifetime spans both halves - see rollback.
+	reinstallTxn *reinstallCacheTransaction
+	// downloadedFileIDs is the selection actually recorded (every entry of
+	// plan.Files, in order), and checksums the ones the fill computed - a
+	// warm-cache fill recomputes none, exactly as the other cache-first
+	// guards (#96/#138) already behave.
+	downloadedFileIDs []string
+	checksums         []fileChecksum
+}
+
+// rollback restores the live cache when a reinstall transaction is still
+// pending - every path that returns before deployPrimary commits it: the
+// conflict refusal, a failing install.before_all, a deploy or save failure.
+// A no-op once Commit (or the recovery path) has cleared it, and on the
+// nil stage the BATCH path leaves behind.
+func (st *primaryStage) rollback(ctx context.Context) {
+	if st == nil || st.reinstallTxn == nil {
+		return
+	}
+	// WithoutCancel: this cleanup fires precisely when the caller's ctx may
+	// already be dead, and its restore must not be interrupted halfway
+	// (review finding C1).
+	_ = st.reinstallTxn.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // best-effort cleanup on an already-erroring path
+}
+
+// fillPrimaryCache is the first half of installing plan.Mod on the STRICT
+// (no-dependencies) path: it downloads and extracts every selected file into
+// the cache, then computes the conflict list and refuses with *ConflictError
+// unless the caller has already accepted it. NOTHING it does mutates managed
+// state - no hook, no deploy, no DB row, no profile ref - which is what makes
+// a refusal free to re-run (Ruling 1, and the 2026-08-29 order ruling that
+// moved it ahead of install.before_all).
+//
+// ONLY ever called from ApplyInstall's STRICT (no-deps) path - see
+// ApplyInstall's doc comment - matching doInstall's own early return:
+// whenever Dependencies was non-empty, pre-extraction doInstall delegated the
+// WHOLE list, target included, to batchInstallMods instead
+// (applyInstallBatchMod, in the BATCH path), and this machinery never ran at
+// all for that mod (Fix wave 1 - see task-2-report.md's "Fix wave 1" entry -
+// restored this; Task 2's original design incorrectly ran it unconditionally,
+// primary included, even when Dependencies was non-empty).
+//
+// A non-nil stage is returned even alongside an error whenever a reinstall
+// transaction was opened, so the caller's deferred rollback can still fire.
+func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan *InstallPlan, linkMethod domain.LinkMethod, opts InstallOptions, result *InstallResult, emit func(Event)) (*primaryStage, error) {
 	mod := plan.Mod // local, addressable copy - distinct from plan.Mod
 
 	// #94: record what is actually being installed. plan.Files is the final
@@ -1815,47 +1941,52 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	scope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 	modScope := Scope{Op: OpInstall, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}}
 
-	hookCtx := hookContextFor(game)
-	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
-	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
-		if !opts.Force {
-			return nil, fmt.Errorf("install.before_each hook failed: %w", err)
-		}
-		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
-		result.Warnings = append(result.Warnings, msg)
-		emit(HookEvent{Scope: scope, Phase: InstallBeforeEachForced, Stage: "install.before_each", Detail: msg})
-	}
-
-	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
+	st := &primaryStage{mod: mod, scope: scope, modScope: modScope, linkMethod: linkMethod}
+	st.installer = s.newInstallerWithLinker(game, s.getLinker(linkMethod))
 	downloadCache := s.GetGameCache(game)
 
-	var reinstallTxn *reinstallCacheTransaction
 	if plan.Replaces != nil && plan.Replaces.Version == mod.Version {
-		var txnErr error
-		reinstallTxn, txnErr = prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version, s.logger())
+		txn, txnErr := prepareReinstallCacheTransaction(ctx, s.GetGameCache(game), game.ID, plan.Replaces.SourceID, plan.Replaces.ID, plan.Replaces.Version, s.logger())
 		if txnErr != nil {
-			return nil, fmt.Errorf("preparing reinstall cache: %w", txnErr)
+			return st, fmt.Errorf("preparing reinstall cache: %w", txnErr)
 		}
-		downloadCache = reinstallTxn.staged
-		defer func() {
-			if reinstallTxn != nil {
-				// WithoutCancel: this deferred cleanup fires precisely when the
-				// caller's ctx is already dead, and its restore must not be
-				// interrupted halfway (review finding C1).
-				_ = reinstallTxn.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // best-effort cleanup on an already-erroring path
-			}
-		}()
+		st.reinstallTxn = txn
+		downloadCache = txn.staged
 	}
-
-	var downloadedFileIDs []string
-	var checksums []fileChecksum
 
 	// Resolve the source to check MergeCompiler capability for .pak gating (#221)
 	src, err := s.GetSource(plan.SourceID)
 	if err != nil {
-		return nil, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
+		return st, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
 	}
 	mc, isMergeCompiler := src.(source.MergeCompiler)
+
+	// Cache-first guard (2026-08-29 ruling), the same one ApplyProfileSwitch
+	// and ApplyProfileImport already use (#96/#138): HasFileIDs - the
+	// per-file completion markers - never bare Exists (a version directory
+	// can exist yet be only PARTIALLY populated by a run that broke off
+	// mid-download) and never FileName (an extracted archive's cache entry
+	// holds member names that match no DownloadableFile). It is the CACHE
+	// that decides, not opts.AcceptConflicts: a refused conflict leaves a
+	// complete entry behind, so the accept re-run reads warm and downloads
+	// nothing. A same-version reinstall routes into the transaction's EMPTY
+	// staged cache, so it never reads warm and always re-downloads.
+	plannedFileIDs := make([]string, 0, len(plan.Files))
+	for i := range plan.Files {
+		plannedFileIDs = append(plannedFileIDs, plan.Files[i].ID)
+	}
+	//
+	// A LOCAL-serving source (a directory source) is deliberately never
+	// skipped: its cache entry MIRRORS a directory on disk that can change
+	// between runs, and the re-ingest is exactly what drops members the
+	// source removed (#166). It also costs no network, so a cache-first
+	// guard would save nothing there in the first place. Same predicate
+	// downloadModToCache gates its own file:// ingest branch on.
+	lfs, servesLocal := src.(source.LocalFileServer)
+	servesLocalFiles := servesLocal && lfs.ServesLocalFiles()
+	cacheWarm := !servesLocalFiles &&
+		len(plannedFileIDs) > 0 &&
+		downloadCache.HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, plannedFileIDs)
 
 	// compiledFiles accumulates every file this loop actually compiled (game
 	// DeployCompile + a ".exmodz" file - the same condition
@@ -1869,46 +2000,61 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 	filesTotal := len(plan.Files)
 	for i := range plan.Files {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return st, err
 		}
 		file := &plan.Files[i]
 
-		fileScope := scope
-		fileScope.Index, fileScope.Total = i+1, filesTotal
+		if !cacheWarm {
+			fileScope := scope
+			fileScope.Index, fileScope.Total = i+1, filesTotal
 
-		emit(StepEvent{Scope: fileScope, Phase: InstallDownloadStarted, File: file})
+			emit(StepEvent{Scope: fileScope, Phase: InstallDownloadStarted, File: file})
 
-		progressFn := func(e Event) {
-			d, ok := e.(DownloadEvent)
-			if !ok {
-				return
+			progressFn := func(e Event) {
+				d, ok := e.(DownloadEvent)
+				if !ok {
+					return
+				}
+				emit(DownloadEvent{
+					Scope: fileScope, Phase: InstallDownloading, File: file,
+					Percent: d.Percent, Downloaded: d.Downloaded, TotalBytes: d.TotalBytes,
+				})
 			}
-			emit(DownloadEvent{
-				Scope: fileScope, Phase: InstallDownloading, File: file,
-				Percent: d.Percent, Downloaded: d.Downloaded, TotalBytes: d.TotalBytes,
-			})
-		}
 
-		downloadResult, dlErr := s.downloadModToCache(ctx, downloadCache, plan.SourceID, game, &mod, file, progressFn)
+			downloadResult, dlErr := s.downloadModToCache(ctx, downloadCache, plan.SourceID, game, &mod, file, progressFn)
 
-		emit(StepEvent{Scope: fileScope, Phase: InstallDownloadDone, File: file})
+			emit(StepEvent{Scope: fileScope, Phase: InstallDownloadDone, File: file})
 
-		if dlErr != nil {
-			reason := fmt.Sprintf("download failed: %v", dlErr)
-			emit(ModEvent{Scope: fileScope, Phase: InstallDownloadFailed, Detail: reason})
-			if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
-				return nil, fmt.Errorf("download unavailable via API")
+			if dlErr != nil {
+				reason := fmt.Sprintf("download failed: %v", dlErr)
+				emit(ModEvent{Scope: fileScope, Phase: InstallDownloadFailed, Detail: reason})
+				if strings.Contains(dlErr.Error(), "third-party downloads") && mod.SourceURL != "" {
+					return st, fmt.Errorf("download unavailable via API")
+				}
+				return st, fmt.Errorf("download failed: %w", dlErr)
 			}
-			return nil, fmt.Errorf("download failed: %w", dlErr)
+
+			if !opts.SkipVerify && downloadResult.Checksum != "" {
+				emit(StepEvent{Scope: fileScope, Phase: InstallChecksumComputed, File: file, Detail: downloadResult.Checksum})
+				st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
+			}
+
+		} else if !opts.SkipVerify {
+			// Ruling 2 (task-8 review, Important 2): the cache-first guard
+			// skips the download for ANY install, not only the accept
+			// re-run - so this is the only place left that can still save a
+			// checksum for it. No InstallChecksumComputed event: emitting
+			// one would print a "Checksum: ..." line the warm path never
+			// printed before (Important 1's recorded exceptions aside, a
+			// warm fill prints nothing at all - see the CHANGELOG's #303
+			// bullet), and this is a silent DB-only repair of that gap, not
+			// a new user-visible step.
+			if checksum, csErr := checksumFromCache(downloadCache, game.ID, mod.SourceID, mod.ID, mod.Version, file.ID); csErr == nil && checksum != "" {
+				st.checksums = append(st.checksums, fileChecksum{fileID: file.ID, checksum: checksum})
+			}
 		}
 
-		if !opts.SkipVerify && downloadResult.Checksum != "" {
-			emit(StepEvent{Scope: fileScope, Phase: InstallChecksumComputed, File: file, Detail: downloadResult.Checksum})
-			checksums = append(checksums, fileChecksum{fileID: file.ID, checksum: downloadResult.Checksum})
-		}
-
-		result.FilesDeployed += downloadResult.FilesExtracted
-		downloadedFileIDs = append(downloadedFileIDs, file.ID)
+		st.downloadedFileIDs = append(st.downloadedFileIDs, file.ID)
 
 		// Copilot round 1 (PR #222): compiledFiles collects BOTH kinds -
 		// .exmodz files and convert-eligible raw files alike - so the
@@ -1924,6 +2070,21 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, file.FileName) || (isMergeCompiler && isConvertEligibleArtifact(game, mc, file.FileName))) {
 			compiledFiles = append(compiledFiles, file)
 		}
+	}
+
+	// The count the frontend prints ("Files deployed: N") describes the
+	// CACHE ENTRY, not the transfer - so it is read back ONCE, here, the
+	// same way downloadModToCache's own extract branch counts it, for a warm
+	// fill (which transferred nothing) and a cold one alike.
+	//
+	// task-8 review Minor 3 / unit P review Minor 6: the cold path used to
+	// accumulate downloadResult.FilesExtracted per file instead, and on the
+	// extract branch that value is ALREADY the whole entry's listing
+	// (service.go's "Count extracted files") - so a 2-file mod reported
+	// a + (a+b). files_deployed is a json-tagged contract field; both fills
+	// now report the same, correct number.
+	if files, lerr := downloadCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version); lerr == nil {
+		result.FilesDeployed += len(files)
 	}
 
 	// A retained-for-merge file was never "extracted" - announce the step
@@ -1943,43 +2104,73 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		emit(StepEvent{Scope: modScope, Phase: InstallExtracting})
 	}
 
-	// Conflict confirmation restored to doInstall's ORIGINAL position (C1
+	// The conflict gate sits at doInstall's ORIGINAL prompt position (C1
 	// review finding): AFTER the primary is downloaded/extracted to cache,
 	// BEFORE it is deployed - installer.GetConflicts can only see what's
 	// actually in the cache at this point, so this is the earliest point a
 	// fresh (never-before-cached) mod's conflicts can be detected at all.
-	// See InstallOptions.ConfirmConflicts' doc comment for the exact
-	// Force/nil-callback gating and decline-state fidelity this reproduces.
-	if !opts.Force && opts.ConfirmConflicts != nil {
-		if conflicts, err := installer.GetConflicts(ctx, game, &mod, plan.Profile); err == nil && len(conflicts) > 0 {
-			if !opts.ConfirmConflicts(conflicts) {
-				return nil, fmt.Errorf("installation cancelled")
-			}
+	// Ruling 1: an unaccepted conflict is a typed error the frontend
+	// answers by re-running with AcceptConflicts, never a callback. It now
+	// also precedes install.before_all/before_each (2026-08-29), so the
+	// refusal costs no hook run. See InstallOptions.AcceptConflicts' doc
+	// comment for the exact gating and the refusal state this leaves behind.
+	if !opts.Force && !opts.AcceptConflicts {
+		if conflicts, err := st.installer.GetConflicts(ctx, game, &st.mod, plan.Profile); err == nil && len(conflicts) > 0 {
+			return st, &ConflictError{Conflicts: conflicts}
 		}
+	}
+
+	return st, nil
+}
+
+// deployPrimary is the second half of the STRICT path: doInstall's OWN
+// single-mod mechanics from install.before_each onward (Force-gated
+// before_each, Install-or-Replace incl. the reinstall-cache transaction for a
+// same-version reinstall, SaveFileChecksum, --skip-verify). It runs only
+// after fillPrimaryCache has filled the cache and cleared the conflict gate,
+// and after ApplyInstall has run install.before_all - the ruled order. Returns
+// the install.after_each warning event to defer (nil if none). A non-nil error
+// is always fatal to ApplyInstall as a whole, matching doInstall's own early
+// returns; the caller's deferred stage.rollback undoes the reinstall
+// transaction on every such path.
+func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *InstallPlan, st *primaryStage, pm *ProfileManager, opts InstallOptions, hooks *ResolvedHooks, runner *HookRunner, result *InstallResult, emit func(Event)) (*WarningEvent, error) {
+	mod, scope, modScope := st.mod, st.scope, st.modScope
+	installer := st.installer
+	downloadedFileIDs := st.downloadedFileIDs
+
+	hookCtx := hookContextFor(game)
+	hookCtx.ModID, hookCtx.ModName, hookCtx.ModVersion = mod.ID, mod.Name, mod.Version
+	if err := runHook(ctx, opts.SkipHooks, runner, &hookCtx, "install.before_each", hooks.GetInstallBeforeEach()); err != nil {
+		if !opts.Force {
+			return nil, fmt.Errorf("install.before_each hook failed: %w", err)
+		}
+		msg := fmt.Sprintf("install.before_each hook failed (forced): %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(HookEvent{Scope: scope, Phase: InstallBeforeEachForced, Stage: "install.before_each", Detail: msg})
 	}
 
 	emit(StepEvent{Scope: modScope, Phase: InstallDeploying})
 
 	if plan.Replaces != nil {
-		if reinstallTxn != nil {
-			if err := reinstallTxn.Activate(ctx); err != nil {
+		if st.reinstallTxn != nil {
+			if err := st.reinstallTxn.Activate(ctx); err != nil {
 				return nil, fmt.Errorf("activating reinstall cache: %w", err)
 			}
 		}
 		var replaceErr error
-		if reinstallTxn != nil {
-			replaceErr = installer.ReplaceWithOldCache(ctx, game, reinstallTxn.snapshot, &plan.Replaces.Mod, &mod, plan.Profile)
+		if st.reinstallTxn != nil {
+			replaceErr = installer.ReplaceWithOldCache(ctx, game, st.reinstallTxn.snapshot, &plan.Replaces.Mod, &mod, plan.Profile)
 		} else {
 			replaceErr = installer.Replace(ctx, game, &plan.Replaces.Mod, &mod, plan.Profile)
 		}
 		if replaceErr != nil {
-			if reinstallTxn != nil {
+			if st.reinstallTxn != nil {
 				// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 				rctx := context.WithoutCancel(ctx)
-				if err := reinstallTxn.RestoreLive(rctx); err != nil {
+				if err := st.reinstallTxn.RestoreLive(rctx); err != nil {
 					s.logger().Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
 				}
-				if err := installer.ReplaceWithCaches(rctx, game, reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile); err != nil {
+				if err := installer.ReplaceWithCaches(rctx, game, st.reinstallTxn.snapshot, s.GetGameCache(game), &plan.Replaces.Mod, &plan.Replaces.Mod, plan.Profile); err != nil {
 					s.logger().Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
 				}
 			}
@@ -1995,7 +2186,7 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		UpdatePolicy: domain.UpdateNotify,
 		Enabled:      true,
 		Deployed:     true,
-		LinkMethod:   linkMethod,
+		LinkMethod:   st.linkMethod,
 		FileIDs:      downloadedFileIDs,
 	}
 	installedMod.GameID = game.ID
@@ -2007,11 +2198,11 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		// recovery must not inherit the caller's cancellation (v2 Phase 1 Task 3 C1 class)
 		rctx := context.WithoutCancel(ctx)
 		if plan.Replaces != nil {
-			if reinstallTxn != nil {
-				if err := reinstallTxn.RestoreLive(rctx); err != nil {
+			if st.reinstallTxn != nil {
+				if err := st.reinstallTxn.RestoreLive(rctx); err != nil {
 					s.logger().Warn("rollback after failed install also failed", "step", "restore_live", "err", err)
 				}
-				if err := installer.ReplaceWithCaches(rctx, game, reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
+				if err := installer.ReplaceWithCaches(rctx, game, st.reinstallTxn.staged, s.GetGameCache(game), &mod, &plan.Replaces.Mod, plan.Profile); err != nil {
 					s.logger().Warn("rollback after failed install also failed", "step", "replace_with_caches", "err", err)
 				}
 			} else {
@@ -2026,16 +2217,16 @@ func (s *Service) applyInstallPrimary(ctx context.Context, game *domain.Game, pl
 		}
 		return nil, fmt.Errorf("failed to save mod: %w", err)
 	}
-	if reinstallTxn != nil {
-		if err := reinstallTxn.Commit(); err != nil {
+	if st.reinstallTxn != nil {
+		if err := st.reinstallTxn.Commit(); err != nil {
 			msg := fmt.Sprintf("Warning: could not finalize reinstall cache transaction: %v", err)
 			result.Notes = append(result.Notes, msg)
 			emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 		}
-		reinstallTxn = nil
+		st.reinstallTxn = nil
 	}
 
-	for _, fc := range checksums {
+	for _, fc := range st.checksums {
 		if err := s.saveFileChecksum(ctx, plan.SourceID, mod.ID, game.ID, plan.Profile, fc.fileID, fc.checksum); err != nil {
 			msg := fmt.Sprintf("failed to save checksum for file %s: %v", fc.fileID, err)
 			result.Warnings = append(result.Warnings, msg)

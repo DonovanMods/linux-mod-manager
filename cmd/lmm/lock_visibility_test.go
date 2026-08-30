@@ -80,7 +80,8 @@ func TestApplySingleUpdate_Locked_RefusesUpdate_JSON(t *testing.T) {
 func TestApplySingleUpdate_LockedAndPinned_MessageSaysBoth(t *testing.T) {
 	svc, game, _ := setupDoUpdateTest(t)
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned))
+	_, settingErr3 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, settingErr3)
 	setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
 
 	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
@@ -105,7 +106,8 @@ func TestApplySingleUpdate_LockedAndPinned_JSON(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = false })
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned))
+	_, settingErr4 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, settingErr4)
 	setLockedForUpdate(t, svc, game, "test-src", "mod1", "1.0")
 
 	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
@@ -149,7 +151,8 @@ func TestApplySingleUpdate_LockedUpToDate_MessageUnchanged(t *testing.T) {
 func TestApplySingleUpdate_UnlockedPinned_MessageUnchanged(t *testing.T) {
 	svc, game, _ := setupDoUpdateTest(t)
 	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1-old.esp": []byte("old-content")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned))
+	_, settingErr5 := svc.SetModUpdatePolicy(context.Background(), "test-src", "mod1", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, settingErr5)
 
 	mod, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
 	require.NoError(t, err)
@@ -197,14 +200,16 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto))
+	_, settingErr6 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr6)
 	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
 	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
 	src.AddDownload("a-new", []byte("new"))
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "modB", "g1", "default", domain.UpdateAuto))
+	_, settingErr7 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modB", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr7)
 	src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
 	src.AddDownload("b-new", []byte("new"))
@@ -255,7 +260,8 @@ func TestDoUpdate_BulkJSON_MarksLockedEntries(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto))
+	_, settingErr8 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr8)
 	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
 	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
@@ -295,7 +301,8 @@ func TestDoUpdate_NoAutoUpdates_StillReportsLockedSkip(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 
 	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
-	require.NoError(t, svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto))
+	_, settingErr9 := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, settingErr9)
 	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
 	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
