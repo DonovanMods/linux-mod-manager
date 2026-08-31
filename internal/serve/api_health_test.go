@@ -46,6 +46,11 @@ func twinConflictFixture(t *testing.T) (*core.Service, *domain.Game) {
 // rejected AND byte-match core.EncodeJSON of the same live VerifyReport
 // call - exact `lmm verify --json` parity, no serve-local composite
 // merging in the conflicts data (that lives at /api/v1/conflicts instead).
+// The "want" call uses VerifyFull, matching handleAPIHealth's own tier
+// (task-5 gate review Important 1) - twinConflictFixture's mods carry no
+// FileIDs, so the version pass is a no-op either way and this test alone
+// cannot distinguish the two tiers; TestServer_APIHealth_MatchesCLIVerifyTier
+// below is the one that does.
 func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 	svc, game := twinConflictFixture(t)
 
@@ -60,7 +65,62 @@ func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 	var report core.VerifyReport
 	decodeStrict(t, rec.Body.Bytes(), &report)
 
-	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	require.NoError(t, err)
+	requireEncodesLike(t, rec.Body.Bytes(), want)
+}
+
+// TestServer_APIHealth_MatchesCLIVerifyTier is the task-5 gate review's
+// Important 1 RED test: it reproduces the review's live repro directly
+// (API "issues": 0 vs `lmm verify --json`'s "issues": 1, a version_mismatch
+// the offline VerifyLocal tier cannot see). A source-backed mod is
+// installed recording version 1.0 while its matched file now reports 2.0 -
+// exactly the BetterBoots 1.0-recorded/2.0-effective scenario from the
+// review. Before the fix (handleAPIHealth pinned to VerifyLocal) this is
+// RED: the API answers 0 issues while the CLI's VerifyFull tier would
+// report 1. After the fix both agree.
+func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID,
+		},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var report core.VerifyReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	require.Equal(t, 1, report.Result.Issues, "API must report the same issue count `lmm verify --json` (VerifyFull) reports on this state")
+
+	var mismatch *core.VerifyFinding
+	for i := range report.Result.Findings {
+		if report.Result.Findings[i].Status == "version_mismatch" {
+			mismatch = &report.Result.Findings[i]
+		}
+	}
+	require.NotNil(t, mismatch, "expected a version_mismatch finding - the CLI's version pass would find it too")
+	assert.Equal(t, "1.0", mismatch.Recorded)
+	assert.Equal(t, "2.0", mismatch.Effective)
+
+	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
 	requireEncodesLike(t, rec.Body.Bytes(), want)
 }

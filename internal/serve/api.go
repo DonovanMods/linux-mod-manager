@@ -253,23 +253,32 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAPIHealth answers GET /api/v1/health with exactly the
-// core.VerifyReport document `lmm verify --json` emits, pinned to
-// VerifyLocal so an API read stays cheap and offline like its page
-// (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/health" ->
-// Verify). Ruled deviation from the design doc's original api-route list
-// (coordinator ruling, Task 5): this endpoint answers with the bare
-// VerifyReport document - exact CLI-document parity, no serve-local
-// composite type - and the conflicts half of the page's pairing gets its
-// own additive GET /api/v1/conflicts route (handleAPIConflicts) instead of
-// being folded into this one's shape. The design doc's HTTP-surface table
-// gets a one-line amendment for this in Unit 6's docs task.
+// core.VerifyReport document `lmm verify --json` emits (docs/plans/2026-08-30
+// -serve-design.md §HTTP surface: "/health" -> Verify). Ruled deviation from
+// the design doc's original api-route list (coordinator ruling, Task 5):
+// this endpoint answers with the bare VerifyReport document - exact
+// CLI-document parity, no serve-local composite type - and the conflicts
+// half of the page's pairing gets its own additive GET /api/v1/conflicts
+// route (handleAPIConflicts) instead of being folded into this one's shape.
+// The design doc's HTTP-surface table gets a one-line amendment for this in
+// Unit 6's docs task.
+//
+// Tier is VerifyFull, matching the CLI's own hardcoded tier (cmd/lmm/verify.go
+// has no tier flag) - task-5 gate review Important 1: an earlier version
+// pinned VerifyLocal to keep the endpoint cheap and offline like the /health
+// PAGE (pages_health.go, which stays VerifyLocal on purpose - a page render
+// must not hit the network), but core.VerifyReport carries no tier field, so
+// the API and the CLI's --json document were silently disagreeing on the
+// same state with no way for a consumer to tell. An additive `?tier=` query
+// param (default full) to let an API caller opt back into the cheap offline
+// check is a possible later addition - not added here.
 func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
 		return
 	}
 
-	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile, core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile, core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
