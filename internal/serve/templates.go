@@ -33,3 +33,7 @@ var modDetailTemplate = parsePage("mod_detail")
 // searchTemplate renders "/search" - the search form and results
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var searchTemplate = parsePage("search")
+
+// updatesTemplate renders "/updates" - the update-selection table
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var updatesTemplate = parsePage("updates")
