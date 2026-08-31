@@ -6,10 +6,19 @@ import (
 )
 
 // render executes tmpl's "layout" template with data and writes it as the
-// response body. Every page shares this one entry point so the
-// Content-Type header and error handling stay in one place.
+// response body with a 200 status. Every page that has no reason to answer
+// with a different status (almost all of them) uses this entry point.
 func (s *Server) render(w http.ResponseWriter, tmpl *template.Template, data any) {
+	s.renderStatus(w, http.StatusOK, tmpl, data)
+}
+
+// renderStatus is render with an explicit status code, for the pages that
+// need one - e.g. a mod-detail lookup that found nothing answers 404 while
+// still rendering a normal HTML page (WEBUI.md: no bare error text where a
+// real page belongs).
+func (s *Server) renderStatus(w http.ResponseWriter, status int, tmpl *template.Template, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		s.log.Error("rendering template", "err", err)
 	}

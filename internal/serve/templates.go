@@ -25,3 +25,7 @@ var statusTemplate = parsePage("status")
 // modsTemplate renders "/mods" - the installed mods list
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var modsTemplate = parsePage("mods")
+
+// modDetailTemplate renders "/mods/{source}/{id}" - a mod's full detail
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var modDetailTemplate = parsePage("mod_detail")

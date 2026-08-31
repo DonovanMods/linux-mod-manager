@@ -11,5 +11,6 @@ import "net/http"
 func (s *Server) routes() {
 	s.mux.Handle("GET /{$}", s.wrap(s.handleStatus))
 	s.mux.Handle("GET /mods", s.wrap(s.handleMods))
+	s.mux.Handle("GET /mods/{source}/{id}", s.wrap(s.handleModDetail))
 	s.mux.Handle("/static/", http.StripPrefix("/static/", staticHandler()))
 }
