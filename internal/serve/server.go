@@ -95,7 +95,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		allowedHosts:  allowedHostsFor(opts.Addr),
 		shutdownGrace: grace,
 		csrf:          newCSRFGuard(),
-		plans:         newPlanStore(defaultPlanTTL, time.Now),
+		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
 		jobs:          newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
 	}
 	s.httpServer = &http.Server{

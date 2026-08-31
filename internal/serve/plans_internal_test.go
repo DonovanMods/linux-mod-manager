@@ -46,7 +46,7 @@ func (c *fakeClock) advance(d time.Duration) {
 
 func TestPlanStore_TakeReturnsTheStoredObjectItself(t *testing.T) {
 	clk := newFakeClock()
-	store := newPlanStore(defaultPlanTTL, clk.Now)
+	store := newPlanStore(defaultPlanTTL, 0, clk.Now)
 
 	// A real core plan: what matters is that the value Apply receives is
 	// this exact pointer, since its freshness snapshot is unexported and
@@ -64,7 +64,7 @@ func TestPlanStore_TakeReturnsTheStoredObjectItself(t *testing.T) {
 }
 
 func TestPlanStore_TakeIsSingleUseUnderConcurrentRacers(t *testing.T) {
-	store := newPlanStore(defaultPlanTTL, newFakeClock().Now)
+	store := newPlanStore(defaultPlanTTL, 0, newFakeClock().Now)
 	plan := &core.InstallPlan{GameID: "g1"}
 	id := store.Put(plan, "install")
 
@@ -103,7 +103,7 @@ func TestPlanStore_TakeIsSingleUseUnderConcurrentRacers(t *testing.T) {
 
 func TestPlanStore_ExpiredPlanIsUnavailable(t *testing.T) {
 	clk := newFakeClock()
-	store := newPlanStore(10*time.Minute, clk.Now)
+	store := newPlanStore(10*time.Minute, 0, clk.Now)
 	id := store.Put(&core.InstallPlan{GameID: "g1"}, "install")
 
 	clk.advance(10*time.Minute - time.Nanosecond)
@@ -118,14 +118,14 @@ func TestPlanStore_ExpiredPlanIsUnavailable(t *testing.T) {
 }
 
 func TestPlanStore_UnknownIDIsUnavailable(t *testing.T) {
-	store := newPlanStore(defaultPlanTTL, newFakeClock().Now)
+	store := newPlanStore(defaultPlanTTL, 0, newFakeClock().Now)
 	_, err := store.Take("nope")
 	assert.ErrorIs(t, err, errPlanUnavailable)
 }
 
 func TestPlanStore_PutSweepsExpiredPlans(t *testing.T) {
 	clk := newFakeClock()
-	store := newPlanStore(10*time.Minute, clk.Now)
+	store := newPlanStore(10*time.Minute, 0, clk.Now)
 
 	store.Put(&core.InstallPlan{GameID: "g1"}, "install")
 	store.Put(&core.InstallPlan{GameID: "g2"}, "install")
@@ -140,8 +140,36 @@ func TestPlanStore_PutSweepsExpiredPlans(t *testing.T) {
 	assert.Equal(t, "uninstall", stored.Kind)
 }
 
+// TestPlanStore_PutEvictsOldestPlanOnceOverCap pins task-6-review.md Minor 4:
+// a cap bounds the store even when nothing has expired yet, so a burst of
+// confirm pages within the TTL window can't grow it without bound. The TTL
+// here is long enough that eviction, not sweeping, is what's under test.
+func TestPlanStore_PutEvictsOldestPlanOnceOverCap(t *testing.T) {
+	clk := newFakeClock()
+	store := newPlanStore(defaultPlanTTL, 3, clk.Now)
+
+	oldest := store.Put(&core.InstallPlan{GameID: "g1"}, "install")
+	clk.advance(time.Second)
+	middle := store.Put(&core.InstallPlan{GameID: "g2"}, "install")
+	clk.advance(time.Second)
+	newest := store.Put(&core.InstallPlan{GameID: "g3"}, "install")
+	require.Equal(t, 3, store.len(), "the cap is not exceeded yet")
+
+	clk.advance(time.Second)
+	fourth := store.Put(&core.InstallPlan{GameID: "g4"}, "install")
+
+	assert.Equal(t, 3, store.len(), "Put evicts to make room rather than growing past cap")
+	_, err := store.Take(oldest)
+	assert.ErrorIs(t, err, errPlanUnavailable, "the oldest entry is the one evicted")
+
+	for _, id := range []planID{middle, newest, fourth} {
+		_, err := store.Take(id)
+		assert.NoError(t, err, "every entry newer than the evicted one survives")
+	}
+}
+
 func TestPlanStore_IDsAreUnique(t *testing.T) {
-	store := newPlanStore(defaultPlanTTL, newFakeClock().Now)
+	store := newPlanStore(defaultPlanTTL, 0, newFakeClock().Now)
 	seen := map[planID]bool{}
 	for range 64 {
 		id := store.Put(&core.InstallPlan{}, "install")
@@ -154,7 +182,7 @@ func TestPlanStore_IDsAreUnique(t *testing.T) {
 // whole surface: concurrent Puts, Takes of live ids, and Takes of ids that
 // were already taken.
 func TestPlanStore_ConcurrentPutAndTake(t *testing.T) {
-	store := newPlanStore(defaultPlanTTL, newFakeClock().Now)
+	store := newPlanStore(defaultPlanTTL, 0, newFakeClock().Now)
 
 	var wg sync.WaitGroup
 	for range 8 {

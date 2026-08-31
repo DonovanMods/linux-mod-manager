@@ -29,6 +29,14 @@ import (
 // the process.
 const defaultPlanTTL = 10 * time.Minute
 
+// defaultPlanStoreCap bounds how many live plans the store holds at once.
+// The TTL alone only reclaims a plan once it has sat unswept for up to ten
+// minutes; a user (or a script hitting the plan endpoints) who opens confirm
+// pages faster than that can grow the store without bound in the meantime.
+// 128 is generous for this tool's single-user, local use and cheap to hold
+// entirely in memory (task-6-review.md Minor 4).
+const defaultPlanStoreCap = 128
+
 // errPlanUnavailable is the single sentinel every failed Take reports: the
 // id was never issued, its plan was already applied (Take is single-use), or
 // its TTL elapsed. The three are deliberately indistinguishable - a used
@@ -64,6 +72,11 @@ type storedPlan struct {
 // receive a given plan.
 type planStore struct {
 	ttl time.Duration
+	// cap is the most live entries the store holds at once; Put evicts the
+	// oldest surviving entries (by StoredAt) once sweeping still leaves it
+	// over cap. A non-positive cap passed to newPlanStore falls back to
+	// defaultPlanStoreCap.
+	cap int
 	// now is the clock seam - time.Now in production, a hand-advanced fake
 	// in the TTL tests.
 	now func() time.Time
@@ -73,16 +86,23 @@ type planStore struct {
 }
 
 // newPlanStore builds an empty store whose entries expire ttl after they
-// were Put, measured by now.
-func newPlanStore(ttl time.Duration, now func() time.Time) *planStore {
-	return &planStore{ttl: ttl, now: now, plans: map[planID]*storedPlan{}}
+// were Put, measured by now, and holds at most cap of them at once (a
+// non-positive cap takes defaultPlanStoreCap).
+func newPlanStore(ttl time.Duration, cap int, now func() time.Time) *planStore {
+	if cap < 1 {
+		cap = defaultPlanStoreCap
+	}
+	return &planStore{ttl: ttl, cap: cap, now: now, plans: map[planID]*storedPlan{}}
 }
 
 // Put stores plan under kind and returns the id a later Take redeems it
 // with. It also sweeps every already-expired entry, which is what keeps the
 // store bounded without a background goroutine: entries only ever arrive
 // through Put, so sweeping here means an abandoned confirm page's plan is
-// reclaimed by the next mutation anyone starts.
+// reclaimed by the next mutation anyone starts. If the store is still at or
+// over cap after sweeping, Put evicts the oldest surviving entries until it
+// is not - the TTL alone only reclaims a plan once it has sat unswept for up
+// to ten minutes, and this bounds the store against churn faster than that.
 func (s *planStore) Put(plan any, kind string) planID {
 	now := s.now()
 	entry := &storedPlan{ID: newPlanID(), Kind: kind, Plan: plan, StoredAt: now}
@@ -90,8 +110,27 @@ func (s *planStore) Put(plan any, kind string) planID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sweepLocked(now)
+	s.evictOldestLocked()
 	s.plans[entry.ID] = entry
 	return entry.ID
+}
+
+// evictOldestLocked drops the oldest-stored entries, by StoredAt, until the
+// store holds fewer than cap - leaving room for the one Put is about to
+// insert. The caller must hold mu.
+func (s *planStore) evictOldestLocked() {
+	for len(s.plans) >= s.cap {
+		var oldestID planID
+		var oldest time.Time
+		first := true
+		for id, entry := range s.plans {
+			if first || entry.StoredAt.Before(oldest) {
+				oldestID, oldest = id, entry.StoredAt
+				first = false
+			}
+		}
+		delete(s.plans, oldestID)
+	}
 }
 
 // Take removes and returns the plan stored under id. It is single-use: the
