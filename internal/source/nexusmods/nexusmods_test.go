@@ -285,7 +285,10 @@ func TestNexusMods_Changelog_MatchesVersion(t *testing.T) {
 // TestNexusMods_Changelog_FallsBackToPrimaryFile: no file matches the
 // requested version (e.g. it was requested before ModDetail's fresh GetMod
 // call resolved a slightly different string) - fall back to the primary
-// file's changelog, mirroring CheckUpdatesWithProgress's own selection.
+// file's changelog. Narrower than CheckUpdatesWithProgress's own fallback
+// (any file's non-empty changelog) - see
+// TestNexusMods_Changelog_NonPrimaryFileNeverFallsBack for the case where
+// that narrower scope actually bites.
 func TestNexusMods_Changelog_FallsBackToPrimaryFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -337,6 +340,63 @@ func TestNexusMods_Changelog_InvalidModID(t *testing.T) {
 	_, err := nm.Changelog(context.Background(), "skyrimspecialedition", "not-a-number", "1.0.0")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid mod ID")
+}
+
+// TestNexusMods_Changelog_NonPrimaryFileNeverFallsBack (task-2 review,
+// Important #2): the ONLY file with a changelog is non-primary and doesn't
+// match the requested version - Changelog must return "" rather than
+// falling back to it. CheckUpdatesWithProgress would return that file's
+// changelog in this exact shape (it falls back to any file's non-empty
+// changelog, not just the primary's); Changelog's narrower, primary-only
+// fallback fails safe instead: a changelog that exists gets silently
+// omitted, not a wrong changelog surfaced.
+func TestNexusMods_Changelog_NonPrimaryFileNeverFallsBack(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/games/skyrimspecialedition/mods/12345/files.json" {
+			writeJSON(t, w, ModFileList{
+				Files: []FileData{
+					{FileID: 101, IsPrimary: false, Version: "1.0", Changelog: "notes"},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	cl, err := nm.Changelog(context.Background(), "skyrimspecialedition", "12345", "9.9.9")
+	require.NoError(t, err)
+	assert.Empty(t, cl, "a non-primary file's changelog must never be used as a fallback")
+}
+
+// TestNexusMods_Changelog_StripsHTML (task-2 review item 4): changelog_html
+// is exactly that - HTML - so Changelog must never hand raw markup to
+// ModDetail.Changelog. Unlike Mod.Description (which stays raw all the way
+// to `--json` by existing precedent, #86), Changelog has no such precedent
+// and is plain text from the source adapter onward.
+func TestNexusMods_Changelog_StripsHTML(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/games/skyrimspecialedition/mods/12345/files.json" {
+			writeJSON(t, w, ModFileList{
+				Files: []FileData{
+					{FileID: 100, IsPrimary: true, Version: "2.0.0", Changelog: "<p>Fixed a crash.</p><br/>Also &amp; other stuff."},
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	nm := New(nil, "testapikey")
+	nm.client.SetBaseURL(server.URL)
+
+	cl, err := nm.Changelog(context.Background(), "skyrimspecialedition", "12345", "2.0.0")
+	require.NoError(t, err)
+	assert.NotContains(t, cl, "<p>", "raw HTML tags must not reach ModDetail.Changelog")
+	assert.NotContains(t, cl, "&amp;", "HTML entities must be decoded")
+	assert.Equal(t, "Fixed a crash.\n\nAlso & other stuff.", cl)
 }
 
 func TestNexusMods_CheckUpdates_FindsUpdate(t *testing.T) {
