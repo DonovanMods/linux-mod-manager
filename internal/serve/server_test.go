@@ -1,11 +1,13 @@
 package serve_test
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,6 +210,53 @@ func TestServer_Close_NoopWhenNeverListened(t *testing.T) {
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
 
 	require.NoError(t, srv.Close())
+}
+
+// TestServer_RejectedAndUnroutedRequests_AreLogged proves task-3 re-review
+// New finding 2's fix: a Host rejected by hostCheck and a path the mux
+// itself answers with 404 must still produce a Debug log line - a
+// regression the Minor-4 hoist introduced by moving hostCheck above
+// requestLogging without anything replacing the coverage that lost.
+func TestServer_RejectedAndUnroutedRequests_AreLogged(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	svc := newFixtureService(t)
+	srv := serve.New(t.Context(), svc, logger, serve.Options{Addr: testAddr})
+	handler := srv.Handler()
+
+	wrongHost := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/", nil)
+	wrongHost.Host = "evil.example:7420"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, wrongHost)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	unrouted := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/nope", nil)
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, unrouted)
+	require.Equal(t, http.StatusNotFound, rec2.Code)
+
+	logged := buf.String()
+	assert.Contains(t, logged, "status=403")
+	assert.Contains(t, logged, "status=404")
+	assert.Contains(t, logged, "path=/nope")
+}
+
+// TestServer_OrdinaryRoute_LoggedOnce proves rootLogging's marker skip: a
+// normal request, which requestLogging inside wrap already logs, must not
+// also be logged by rootLogging - otherwise every ordinary page view would
+// produce two log lines instead of one.
+func TestServer_OrdinaryRoute_LoggedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	svc := newFixtureService(t)
+	srv := serve.New(t.Context(), svc, logger, serve.Options{Addr: testAddr})
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	assert.Equal(t, 1, strings.Count(buf.String(), "http request"))
 }
 
 // TestServer_StaticAsset_WrongHost_403 proves the same fix for static

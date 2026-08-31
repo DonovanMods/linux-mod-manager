@@ -161,7 +161,7 @@ func TestAllowedHostsFor(t *testing.T) {
 	}
 	for _, tt := range concrete {
 		t.Run(tt.name, func(t *testing.T) {
-			got := allowedHostsFor(tt.hostPort)
+			got, wildcardPort := allowedHostsFor(tt.hostPort)
 			_, ok := got[tt.hostPort]
 			assert.True(t, ok, "expected %q in allow-list, got %v", tt.hostPort, got)
 			for _, alias := range tt.wantAliases {
@@ -169,13 +169,29 @@ func TestAllowedHostsFor(t *testing.T) {
 				assert.True(t, ok, "expected alias %q in allow-list, got %v", alias, got)
 			}
 			assert.Len(t, got, 1+len(tt.wantAliases))
+			assert.Empty(t, wildcardPort, "a concrete bind's allow-list already pins the port")
 		})
 	}
 
-	wildcards := []string{"0.0.0.0:7420", "[::]:7420", ":7420", "0.0.0.0:0", "[::]:44957"}
-	for _, addr := range wildcards {
-		t.Run(addr, func(t *testing.T) {
-			assert.Nil(t, allowedHostsFor(addr))
+	wildcards := []struct {
+		addr     string
+		wantPort string
+	}{
+		{"0.0.0.0:7420", "7420"},
+		{"[::]:7420", "7420"},
+		{":7420", "7420"},
+		// A literal "0" isn't a port any real request could arrive on - it
+		// means "the OS will pick one", normally overwritten by Listen's
+		// own allowedHostsFor call once that happens - so it normalises to
+		// "" (no port check) rather than the number 0.
+		{"0.0.0.0:0", ""},
+		{"[::]:44957", "44957"},
+	}
+	for _, tt := range wildcards {
+		t.Run(tt.addr, func(t *testing.T) {
+			hosts, wildcardPort := allowedHostsFor(tt.addr)
+			assert.Nil(t, hosts)
+			assert.Equal(t, tt.wantPort, wildcardPort)
 		})
 	}
 }
@@ -233,21 +249,36 @@ func TestMiddleware_HostCheck_AcceptsLocalhostAliasOnLoopbackBind(t *testing.T) 
 // TestHostIsSafeForWildcardBind covers the IP-literal-or-localhost split a
 // wildcard bind falls back to (a security-review finding on the Important
 // 1 fix: comparing Origin to an unpinned r.Host is only safe once r.Host
-// itself can't be a DNS-rebound name).
+// itself can't be a DNS-rebound name), plus the boundPort check (task-3
+// re-review New finding 4): a Host that DOES name a port must name the
+// bound one.
 func TestHostIsSafeForWildcardBind(t *testing.T) {
 	safe := []string{"127.0.0.1:7420", "[::1]:7420", "192.168.1.9:7420", "localhost:7420", "localhost"}
 	for _, host := range safe {
 		t.Run(host, func(t *testing.T) {
-			assert.True(t, hostIsSafeForWildcardBind(host))
+			assert.True(t, hostIsSafeForWildcardBind(host, "7420"))
 		})
 	}
 
 	unsafeHosts := []string{"attacker.example:7420", "attacker.example", "lmm.local:7420"}
 	for _, host := range unsafeHosts {
 		t.Run(host, func(t *testing.T) {
-			assert.False(t, hostIsSafeForWildcardBind(host))
+			assert.False(t, hostIsSafeForWildcardBind(host, "7420"))
 		})
 	}
+}
+
+// TestHostIsSafeForWildcardBind_WrongPortRejected is the New finding 4
+// fix's own test: an IP literal or "localhost" naming the WRONG port on a
+// wildcard bind must still be rejected - only the DNS-name-vs-IP-literal
+// split was checked before, so "10.10.10.110:9999" was wrongly admitted on
+// a ":17421" bind. A Host with no port at all is unaffected (it never
+// claimed to name the bound port).
+func TestHostIsSafeForWildcardBind_WrongPortRejected(t *testing.T) {
+	assert.False(t, hostIsSafeForWildcardBind("10.10.10.110:9999", "17421"))
+	assert.False(t, hostIsSafeForWildcardBind("localhost:9999", "17421"))
+	assert.True(t, hostIsSafeForWildcardBind("10.10.10.110:17421", "17421"))
+	assert.True(t, hostIsSafeForWildcardBind("localhost", "17421"), "a portless Host never claimed to name the bound port")
 }
 
 // TestMiddleware_WildcardBind_RejectsDNSRebindingHost proves the fix for
@@ -280,5 +311,36 @@ func TestMiddleware_WildcardBind_RejectsDNSRebindingHost(t *testing.T) {
 	ipLiteral := httptest.NewRequest(http.MethodGet, "http://192.168.1.9:7420/__test/echo", nil)
 	rec2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec2, ipLiteral)
+	require.Equal(t, http.StatusOK, rec2.Code)
+}
+
+// TestMiddleware_WildcardBind_RejectsWrongPort is
+// TestMiddleware_WildcardBind_RejectsDNSRebindingHost's sibling for task-3
+// re-review New finding 4: an IP-literal Host naming a port other than the
+// one this wildcard bind is listening on must still be rejected, not
+// admitted just because the host half looks safe.
+func TestMiddleware_WildcardBind_RejectsWrongPort(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	srv := New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: "0.0.0.0:7420"})
+	srv.mux.Handle("/__test/echo", srv.wrap(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	wrongPort := httptest.NewRequest(http.MethodGet, "http://192.168.1.9:9999/__test/echo", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, wrongPort)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	rightPort := httptest.NewRequest(http.MethodGet, "http://192.168.1.9:7420/__test/echo", nil)
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, rightPort)
 	require.Equal(t, http.StatusOK, rec2.Code)
 }
