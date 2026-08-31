@@ -9,7 +9,8 @@
 // Plan and Apply, how its Apply runs, and how its result reads on the job
 // page. Task 7 registers exactly one kind ("deploy", kind_deploy.go);
 // docs/plans/2026-08-30-serve-impl.md Tasks 8 and 9 register the rest
-// against this same surface.
+// against this same surface - install, uninstall, updates, switch,
+// profile_apply and verify_fix - without changing it.
 package serve
 
 import (
@@ -79,17 +80,22 @@ type planKind struct {
 	// Task 8). It is nil for a kind only /api/v1 can reach - a page route
 	// that finds nil refuses rather than dereferencing it, which is what
 	// keeps "registered as a plan kind" and "reachable from a form" two
-	// separate decisions. Task 8 fills it in for install and uninstall;
-	// deploy's lands with Task 9's deploy page.
+	// separate decisions. Every kind registered today has one; the nil case
+	// remains the supported way to add a JSON-only mutation later without
+	// also having to design a page for it.
 	Form *kindForm
 }
 
 // kindForm is one kind's browser-facing half. The two decoders take the
-// whole request rather than a parsed form because a mutation's target lives
-// in the PATH (/mods/{source}/{id}/install), not in the body: the path is
-// what the read pages' form actions already encode, and taking it from
-// there means a submitted body can never name a different mod than the URL
-// the user acted on.
+// whole request rather than a parsed form because a mutation's target
+// generally lives in the PATH (/mods/{source}/{id}/install,
+// /profiles/{name}/switch), not in the body: the path is what the read
+// pages' form actions already encode, and taking it from there means a
+// submitted body can never name a different target than the URL the user
+// acted on. The flows whose target is not a single named thing - the
+// updates batch, deploy, the health repair - take it from the ticked set or
+// from the resolved game+profile selection instead, and never from a body
+// field a page did not render.
 type kindForm struct {
 	// PlanOptions builds this kind's plan-time options from the request -
 	// the same value type PlanOptions' JSON decoder produces.
