@@ -43,7 +43,8 @@ conflicts}` - each answering exactly the document `lmm <cmd> --json`
   at `/jobs/{id}`. Install's confirmation page offers a version picker
   (from the versions the source reports) and a file picker whenever the
   mod actually has more than one candidate file (#225); uninstall's offers
-  keep-the-download, skip-hooks and force (#226). When installing would
+  keep-the-download, skip-hooks and force (#226). Changing an option and
+  pressing "Update plan" shows what it would do before anything runs. When installing would
   overwrite files another installed mod owns, nothing is changed: the job
   reports the conflicting files and offers Overwrite, which installs
   anyway without downloading a second time. If the profile changes while a
