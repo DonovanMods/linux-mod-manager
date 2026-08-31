@@ -145,24 +145,32 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter 
 // allowedHostsFor derives the Host allow-list hostCheck enforces from a
 // "host:port" string - either Options.Addr as given, or the address Listen
 // actually bound. A concrete bind (a specific IP or name) is pinned to
-// that exact value. A wildcard bind (0.0.0.0, [::], or an empty host as in
-// ":7420") returns nil: a wildcard has no single correct Host by
-// definition (measured directly - a wildcard Listen resolves to an
-// address like "[::]:44957" that no real client ever sends as its Host),
-// so hostCheck must accept any Host it sees there instead of rejecting
-// every request (task-3 review Important 1).
+// that exact value, plus "localhost:<port>" when the bind is loopback:
+// users habitually type localhost, and it can't be used to rebind past the
+// guard the way an arbitrary DNS name could (task-3 review Minor 8). A
+// wildcard bind (0.0.0.0, [::], or an empty host as in ":7420") returns
+// nil: a wildcard has no single correct Host by definition (measured
+// directly - a wildcard Listen resolves to an address like "[::]:44957"
+// that no real client ever sends as its Host), so hostCheck must accept
+// any Host it sees there instead of rejecting every request (task-3 review
+// Important 1).
 func allowedHostsFor(hostPort string) map[string]struct{} {
-	host, _, err := net.SplitHostPort(hostPort)
+	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
 		return map[string]struct{}{hostPort: {}}
 	}
 	if host == "" {
 		return nil
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsUnspecified() {
 		return nil
 	}
-	return map[string]struct{}{hostPort: {}}
+	hosts := map[string]struct{}{hostPort: {}}
+	if ip != nil && ip.IsLoopback() {
+		hosts["localhost:"+port] = struct{}{}
+	}
+	return hosts
 }
 
 // hostIsSafeForWildcardBind reports whether host (a Host header, with or

@@ -27,11 +27,13 @@ type Options struct {
 	// "127.0.0.1:7420". Until Listen resolves the actually-bound address, it
 	// also seeds the Host allow-list hostCheck enforces (the DNS-rebinding
 	// guard in docs/plans/2026-08-30-serve-design.md §Security): a concrete
-	// bind pins that exact value, while a wildcard bind (0.0.0.0, [::], or a
-	// bare ":port") has no single correct Host by definition, so hostCheck
-	// accepts any Host it sees and leaves the Origin and CSRF checks as the
-	// defense on an exposed bind (task-3 review Important 1; see
-	// allowedHostsFor in middleware.go).
+	// bind pins that exact value (plus "localhost:<port>" when the bind is
+	// loopback, since users habitually type localhost - task-3 review Minor
+	// 8), while a wildcard bind (0.0.0.0, [::], or a bare ":port") has no
+	// single correct Host by definition, so hostCheck accepts any IP-literal
+	// or localhost Host it sees there and leaves the Origin and CSRF checks
+	// as the rest of the defense on an exposed bind (task-3 review Important
+	// 1; see allowedHostsFor in middleware.go).
 	Addr string
 
 	// ShutdownGrace bounds how long a cancelled Serve waits for in-flight

@@ -150,20 +150,25 @@ func TestMiddleware_ResponseController_FlushWorksThroughWrap(t *testing.T) {
 // - yields nil, hostCheck's "accept any Host" signal.
 func TestAllowedHostsFor(t *testing.T) {
 	concrete := []struct {
-		name     string
-		hostPort string
+		name        string
+		hostPort    string
+		wantAliases []string // beyond hostPort itself
 	}{
-		{"loopback IPv4", "127.0.0.1:7420"},
-		{"loopback IPv6", "[::1]:7420"},
-		{"private LAN IP", "192.168.1.5:7420"},
-		{"hostname", "example.com:7420"},
+		{"loopback IPv4", "127.0.0.1:7420", []string{"localhost:7420"}},
+		{"loopback IPv6", "[::1]:7420", []string{"localhost:7420"}},
+		{"private LAN IP", "192.168.1.5:7420", nil},
+		{"hostname", "example.com:7420", nil},
 	}
 	for _, tt := range concrete {
 		t.Run(tt.name, func(t *testing.T) {
 			got := allowedHostsFor(tt.hostPort)
 			_, ok := got[tt.hostPort]
 			assert.True(t, ok, "expected %q in allow-list, got %v", tt.hostPort, got)
-			assert.Len(t, got, 1)
+			for _, alias := range tt.wantAliases {
+				_, ok := got[alias]
+				assert.True(t, ok, "expected alias %q in allow-list, got %v", alias, got)
+			}
+			assert.Len(t, got, 1+len(tt.wantAliases))
 		})
 	}
 
@@ -208,6 +213,21 @@ func TestMiddleware_HostCheck_RejectsIPLiteralMismatch(t *testing.T) {
 			require.Equal(t, http.StatusForbidden, rec.Code)
 		})
 	}
+}
+
+// TestMiddleware_HostCheck_AcceptsLocalhostAliasOnLoopbackBind proves
+// task-3 review Minor 8's fix: users habitually type localhost, and on a
+// loopback bind (the default) that alias is now accepted alongside the
+// exact bound address.
+func TestMiddleware_HostCheck_AcceptsLocalhostAliasOnLoopbackBind(t *testing.T) {
+	srv := newMiddlewareTestServer(t) // bound to middlewareTestAddr = "127.0.0.1:7420"
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+middlewareTestAddr+"/__test/echo", nil)
+	req.Host = "localhost:7420"
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
 }
 
 // TestHostIsSafeForWildcardBind covers the IP-literal-or-localhost split a
