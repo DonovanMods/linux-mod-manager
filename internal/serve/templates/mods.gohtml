@@ -21,6 +21,7 @@
 <th scope="col" class="py-2 pr-4">Version</th>
 <th scope="col" class="py-2 pr-4">Enabled</th>
 <th scope="col" class="py-2 pr-4">Update policy</th>
+<th scope="col" class="py-2 pr-4">Locked</th>
 <th scope="col" class="py-2 pr-4">Actions</th>
 </tr>
 </thead>
@@ -31,6 +32,7 @@
 <td class="py-2 pr-4">{{.Version}}</td>
 <td class="py-2 pr-4">{{if .Enabled}}yes{{else}}no{{end}}</td>
 <td class="py-2 pr-4">{{.UpdatePolicy}}</td>
+<td class="py-2 pr-4">{{if .Locked}}yes ({{.LockedVersion}}){{else}}no{{end}}</td>
 <td class="py-2 pr-4">
 <div class="flex flex-wrap gap-2">
 {{if .Enabled}}
