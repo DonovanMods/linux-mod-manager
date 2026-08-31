@@ -143,6 +143,14 @@ func applyVerifyFixKind(ctx context.Context, s *Server, pending, _ any, sink cor
 // A repaired row rewrites its own status to a fixed_* form (or resolves to
 // "ok") and backs its count out, so the counts below are what REMAINS
 // outstanding after the repair - which is the number a user actually wants.
+//
+// "ok" is perFileWalk's baseline for every healthy checksummed file
+// (internal/core/verify.go:624), not an outcome a repair produced - a repair
+// that resolved a row TO "ok" (a successful redownload, a backfilled
+// checksum) is indistinguishable in the final VerifyResult from a file that
+// was never broken, so there is no reliable way to single the former out.
+// An "ok" row is therefore never listed one-per-file here; it is folded into
+// the "Healthy files" count instead (gate review Important 1).
 func summarizeVerifyFixResult(result any) []resultFact {
 	report, ok := result.(*core.VerifyReport)
 	if !ok || report.Result == nil {
@@ -155,18 +163,27 @@ func summarizeVerifyFixResult(result any) []resultFact {
 		{Label: "Issues remaining", Value: strconv.Itoa(res.Issues)},
 		{Label: "Warnings remaining", Value: strconv.Itoa(res.Warnings)},
 	}
+	var healthy int
 	for _, finding := range res.Findings {
+		if finding.Status == "ok" {
+			healthy++
+			continue
+		}
 		facts = append(facts, resultFact{Label: findingLabel(finding.Status), Value: verifyFindingText(finding)})
+	}
+	if healthy > 0 {
+		facts = append(facts, resultFact{Label: "Healthy files", Value: strconv.Itoa(healthy)})
 	}
 	return facts
 }
 
 // findingLabel splits repaired rows from the ones still outstanding, so a
 // result readout does not list a fixed row and an unfixed one under the
-// same word.
+// same word. "ok" is not among these: summarizeVerifyFixResult never calls
+// this for an "ok" finding (see its own doc comment).
 func findingLabel(status string) string {
 	switch status {
-	case "ok", "fixed_stale_deployment", "fixed_needs_reingest":
+	case "fixed_stale_deployment", "fixed_needs_reingest":
 		return "Repaired"
 	default:
 		return "Still reported"
@@ -239,6 +256,13 @@ func confirmVerifyFixPlan(pending, _ any) confirmView {
 		fixableKeys[finding.ModID+"/"+finding.FileID+"/"+finding.Status] = true
 	}
 	for _, finding := range report.Result.Findings {
+		// A healthy "ok" row is not something a repair "cannot act on and
+		// would report again" - it is not a finding a repair would ever act
+		// on in the first place (gate review Important 1; same reasoning as
+		// summarizeVerifyFixResult).
+		if finding.Status == "ok" {
+			continue
+		}
 		if !fixableKeys[finding.ModID+"/"+finding.FileID+"/"+finding.Status] {
 			reported = append(reported, verifyFindingText(finding))
 		}

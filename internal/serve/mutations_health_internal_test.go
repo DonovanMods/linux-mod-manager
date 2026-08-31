@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -141,4 +142,55 @@ func TestServer_HealthFix_WithoutCSRF_IsRefused(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, rec.Code)
 	_, err := os.Lstat(stray)
 	require.NoError(t, err, "a refused request must repair nothing")
+}
+
+// TestServer_HealthFix_HealthyFilesAreNotClaimedAsRepaired is Important 1
+// from the Unit 5 gate review: core appends an "ok" finding for every
+// healthy checksummed file - that is perFileWalk's baseline, not a repair
+// outcome (internal/core/verify.go:624). Neither the confirm page nor the
+// result page may claim a repair touched a file it never acted on, and
+// neither may grow one row per healthy file in the profile.
+func TestServer_HealthFix_HealthyFilesAreNotClaimedAsRepaired(t *testing.T) {
+	s, svc, game := newMutationFixtureServer(t)
+	stray := strayDeployment(t, s, game, "stray.pak")
+
+	healthyFiles := []string{"Mods/two.pak", "Mods/three.pak", "Mods/four.pak"}
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: fixtureSourceID, Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      healthyFiles,
+	}))
+	for _, file := range healthyFiles {
+		require.NoError(t, svc.SaveFileChecksum(t.Context(), fixtureSourceID, "m1", game.ID, "default", file, "deadbeef"))
+	}
+
+	entry := postForm(s, "/health/fix", formValues{"game": game.ID, "profile": "default"})
+	require.Equal(t, http.StatusOK, entry.Code, entry.Body.String())
+	confirmBody := entry.Body.String()
+	for _, file := range healthyFiles {
+		assert.NotContains(t, confirmBody, file,
+			"a healthy file must not be listed among findings a repair cannot act on")
+	}
+
+	rec := postForm(s, "/health/fix", formValues{
+		"game": game.ID, "profile": "default", "confirm": "1",
+		"plan_id": hiddenField(t, confirmBody, "plan_id"),
+	})
+	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	j := awaitRedirectedJob(t, s, rec)
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	_, err := os.Lstat(stray)
+	require.True(t, os.IsNotExist(err), "the repair must remove the dangling deployment")
+
+	page := getPage(s, "/jobs/"+string(j.status().ID))
+	require.Equal(t, http.StatusOK, page.Code)
+	body := page.Body.String()
+	assert.Equal(t, 1, strings.Count(body, ">Repaired<"),
+		"exactly the stray's fix should be labeled Repaired, not one row per healthy file")
+	for _, file := range healthyFiles {
+		assert.NotContains(t, body, file, "a healthy file must not appear as a per-file result row")
+	}
 }
