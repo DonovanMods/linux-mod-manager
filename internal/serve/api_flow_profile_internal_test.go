@@ -11,6 +11,7 @@ package serve
 // warning) is in the plan document these tests now read directly.
 
 import (
+	"encoding/json/v2"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -19,8 +20,12 @@ import (
 )
 
 // TestFlowSwitch_PlanSurfacesTheDiffAndSwitchesNothing is the plan half:
-// the diff is on the wire, including the locked ref that will refuse its
-// profile write, and nothing has moved.
+// the diff is on the wire - p3 to disable, p2 to install marked Locked
+// (the ref that will refuse its profile write, #294's warning case) - and
+// nothing has moved. The locked ref is p2's core.SwitchPlan.ToInstall
+// entry (a domain.ModReference, which carries Locked), not the ToDisable
+// side (a domain.InstalledMod, which carries no lock state of its own) -
+// task-2-review.md Minor 5.
 func TestFlowSwitch_PlanSurfacesTheDiffAndSwitchesNothing(t *testing.T) {
 	s, svc, game := newProfilesFixtureServer(t)
 
@@ -28,6 +33,15 @@ func TestFlowSwitch_PlanSurfacesTheDiffAndSwitchesNothing(t *testing.T) {
 	body := string(raw)
 	assert.Contains(t, body, "p3", "the mod the switch would disable must be named")
 	assert.Contains(t, body, "p2", "the mod the switch would install must be named")
+
+	var resp struct {
+		Plan core.SwitchPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.Len(t, resp.Plan.ToInstall, 1)
+	assert.Equal(t, "p2", resp.Plan.ToInstall[0].ModID)
+	assert.True(t, resp.Plan.ToInstall[0].Locked,
+		"the ref that will refuse its profile write must be marked locked on the wire")
 
 	active, err := svc.NewProfileManager().GetDefault(t.Context(), game.ID)
 	require.NoError(t, err)
