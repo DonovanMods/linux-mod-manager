@@ -16,7 +16,7 @@ import (
 // (docs/plans/2026-08-30-serve-impl.md Task 4, #74): an installed mod whose
 // source reports a newer version must render its current/new versions, a
 // per-row selection checkbox, the CSRF token, and the batch-apply form's
-// target route Task 9 (#322) will wire.
+// target route - live since Task 9 (#322) wired POST /updates/apply.
 func TestServer_Updates_RendersAvailableUpdate(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Better Boots", Version: "2.0"}})
@@ -35,7 +35,7 @@ func TestServer_Updates_RendersAvailableUpdate(t *testing.T) {
 	assert.Contains(t, body, "2.0")
 	assert.Contains(t, body, `value="fake:1"`)
 	assert.Contains(t, body, `action="/updates/apply"`)
-	assert.Contains(t, body, "coming in this release")
+	assert.NotContains(t, body, "disabled", "the batch form went live with Task 9")
 	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
 }
 

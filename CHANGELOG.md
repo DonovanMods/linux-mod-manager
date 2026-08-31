@@ -34,6 +34,43 @@ conflicts}` - each answering exactly the document `lmm <cmd> --json`
   context, never the request's, so closing the tab that started an
   operation never interrupts it. `deploy` is the first plan kind wired
   end-to-end; the remaining mutations follow in #322 (epic #276).
+- `lmm serve` wires its single-mod mutations. Every `/mods` row's
+  Enable/Disable/Uninstall buttons and the Install button on a mod's detail
+  page and on `/search` now work. Uninstall and install first show a
+  confirmation page rendered from the real plan - the exact files that
+  would be removed, the hooks that would run, what would be downloaded -
+  and confirming runs the operation as a background job with live progress
+  at `/jobs/{id}`. Install's confirmation page offers a version picker
+  (from the versions the source reports) and a file picker whenever the
+  mod actually has more than one candidate file (#225); uninstall's offers
+  keep-the-download, skip-hooks and force (#226). Changing an option and
+  pressing "Update plan" shows what it would do before anything runs. When installing would
+  overwrite files another installed mod owns, nothing is changed: the job
+  reports the conflicting files and offers Overwrite, which installs
+  anyway without downloading a second time. If the profile changes while a
+  confirmation page is open, the operation is refused and a freshly
+  computed plan is shown instead of applying a stale one. Every action
+  works with JavaScript disabled, and a `?sync=1` form target runs the
+  operation inline and returns its result for callers that would rather
+  wait than watch (#322, epic #276).
+- `lmm serve` wires the rest of its mutations, so no form shell is left
+  disabled. `/updates`' checkboxes now apply as one batch: tick the mods
+  you want, review a single confirmation page naming every version move
+  (and anything a lock would refuse), and confirm to run them all as one
+  job - the mods you did not tick are not touched, and submitting with
+  nothing ticked simply says so. `/profiles` gains working Switch, Apply
+  and Deploy: each shows its full plan first - which mods would be
+  enabled, disabled, downloaded or removed, which files a deploy would
+  link, what a purge pass would clear - and switch and apply call out the
+  problems they already know about, a locked profile entry whose record
+  cannot be updated or an entry no source can resolve, both before you
+  commit and again in the finished job's report. A deploy's progress
+  streams live at `/jobs/{id}` (#257). `/health` gains a repair action that
+  appears only when the report actually holds something `lmm verify --fix`
+  can act on, and its confirmation page shows exactly which findings would
+  be repaired and which would only be reported again. As with every other
+  mutation, all of it works with JavaScript disabled and each action has a
+  `?sync=1` run-and-wait form target (#74/#257/#226, #322, epic #276).
 - `mod show` displays a mod's changelog when its source can supply one
   (`--json`: `changelog`, additive) - NexusMods now implements the new
   `source.ChangelogProvider` optional capability via its files endpoint's

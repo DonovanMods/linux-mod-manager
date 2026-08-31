@@ -1,0 +1,10 @@
+{
+  "version": "2.0",
+  "file_ids": [
+    "f1",
+    "f2"
+  ],
+  "accept_conflicts": true,
+  "force": true,
+  "skip_hooks": true
+}

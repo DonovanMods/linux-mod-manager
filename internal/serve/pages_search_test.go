@@ -32,7 +32,9 @@ func TestServer_Search_RendersHits(t *testing.T) {
 	assert.Contains(t, body, "Better Boots")
 	assert.NotContains(t, body, "Worse Hats")
 	assert.Contains(t, body, `action="/mods/fake/1/install"`)
-	assert.Contains(t, body, "coming in this release")
+	// Task 8 (#322) wired the route: the button submits rather than
+	// rendering as Task 4's disabled shell.
+	assert.NotContains(t, body, "disabled")
 	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
 }
 

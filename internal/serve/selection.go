@@ -41,12 +41,19 @@ func (sel selection) ready() bool {
 	return sel.Game != nil && sel.Profile != ""
 }
 
-// resolveSelection implements the shared "game"/"profile" query-param
+// resolveSelection implements the shared "game"/"profile" parameter
 // resolution (docs/plans/2026-08-30-serve-impl.md Task 4 ruling): "game"
 // defaults to the configured default game (Service.DefaultGameInfo) when
 // absent from the request, "profile" to that game's default profile
-// (ProfileManager.GetDefault) when absent; either query param overrides its
-// default when present. An unresolvable game or profile - an unknown value,
+// (ProfileManager.GetDefault) when absent; either parameter overrides its
+// default when present.
+//
+// Both are read with http.Request.FormValue, so a GET page reads them from
+// the query string and a POSTed mutation form reads them from its own
+// hidden fields (Task 8) - one resolution for both, rather than a second,
+// drifting copy for the mutation routes. FormValue prefers the body over
+// the query string for a POST, which is the right precedence: the hidden
+// field a page rendered is what the user was actually looking at. An unresolvable game or profile - an unknown value,
 // no configured default, no games at all - degrades the result rather than
 // failing the request: only a genuine core failure (e.g. ListGameEntries)
 // returns a non-nil error.
@@ -63,7 +70,7 @@ func (s *Server) resolveSelection(r *http.Request) (selection, error) {
 		return sel, nil
 	}
 
-	gameID := r.URL.Query().Get(gameParam)
+	gameID := r.FormValue(gameParam)
 	if gameID == "" {
 		def, err := s.svc.DefaultGameInfo(ctx)
 		if err != nil {
@@ -91,7 +98,7 @@ func (s *Server) resolveSelection(r *http.Request) (selection, error) {
 		sel.Profiles = append(sel.Profiles, p.Name)
 	}
 
-	profileName := r.URL.Query().Get(profileParam)
+	profileName := r.FormValue(profileParam)
 	if profileName == "" {
 		active, err := s.svc.NewProfileManager().GetDefault(ctx, game.ID)
 		if err != nil {
@@ -174,11 +181,18 @@ func extraQueryParams(r *http.Request) []queryParam {
 			params = append(params, queryParam{Key: key, Value: v})
 		}
 	}
+	sortQueryParams(params)
+	return params
+}
+
+// sortQueryParams orders params by key then value, so any rendered set of
+// hidden fields is stable across requests. Shared by the nav switcher and
+// the mutation recovery forms (mutations.go).
+func sortQueryParams(params []queryParam) {
 	sort.Slice(params, func(i, j int) bool {
 		if params[i].Key != params[j].Key {
 			return params[i].Key < params[j].Key
 		}
 		return params[i].Value < params[j].Value
 	})
-	return params
 }

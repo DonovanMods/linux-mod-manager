@@ -55,7 +55,7 @@
 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 <input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
 <input type="hidden" name="profile" value="{{$.Nav.Profile}}">
-<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Install</button>
+<button type="submit" class="rounded border border-gray-300 px-2 py-1 text-xs font-medium">Install</button>
 </form>
 </td>
 </tr>
@@ -63,6 +63,6 @@
 </tbody>
 </table>
 </div>
-<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+<p class="mt-1 text-xs text-gray-500">Installing shows a confirmation page first.</p>
 {{end}}
 {{- end}}

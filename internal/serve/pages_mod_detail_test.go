@@ -47,7 +47,9 @@ func TestServer_ModDetail_RendersProseFilesVersions(t *testing.T) {
 	assert.Contains(t, body, "1.0.0")
 	assert.Contains(t, body, "1.2.0")
 	assert.Contains(t, body, `action="/mods/fake/42/install"`)
-	assert.Contains(t, body, "coming in this release")
+	// Task 8 (#322) wired the route, so #225's version select and the
+	// submit button are both live rather than Task 4's disabled shells.
+	assert.NotContains(t, body, "disabled")
 	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
 }
 

@@ -1,5 +1,11 @@
 {
   "supported_kinds": [
-    "deploy"
+    "deploy",
+    "install",
+    "profile_apply",
+    "switch",
+    "uninstall",
+    "updates",
+    "verify_fix"
   ]
 }

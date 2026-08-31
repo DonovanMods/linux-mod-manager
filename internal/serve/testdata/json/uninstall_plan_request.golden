@@ -1,0 +1,6 @@
+{
+  "mod_id": "m1",
+  "source_id": "fake",
+  "keep_cache": true,
+  "skip_hooks": true
+}

@@ -11,12 +11,20 @@
 
 <section aria-label="Verify findings" class="mb-6">
 <h2 class="mb-2 text-lg font-semibold">Verify findings</h2>
-{{if not .Verify.Result.HasFiles}}
-<p class="text-sm text-gray-600">No files found for this profile - nothing to verify yet.</p>
-{{else if not .Verify.Result.Findings}}
+{{if not .Verify.Result.Findings}}
+{{if .Verify.Result.HasFiles}}
 <p class="text-sm text-gray-600">No issues found ({{.Verify.Result.Checked}} file(s) checked).</p>
 {{else}}
+<p class="text-sm text-gray-600">No files found for this profile - nothing to verify yet.</p>
+{{end}}
+{{else}}
+<!-- Findings are rendered whenever there ARE any, even with no checksummed
+     files to walk: the convergence pass runs on that path too (#217), so a
+     profile with nothing to verify can still have a stale deployment to
+     report - and a repair offered against findings the page never showed
+     would be an action with no explanation. -->
 <p class="mb-2 text-sm text-gray-600">{{.Verify.Result.Issues}} issue(s), {{.Verify.Result.Warnings}} warning(s), {{.Verify.Result.Checked}} file(s) checked.</p>
+{{if not .Verify.Result.HasFiles}}<p class="mb-2 text-sm text-gray-600">This profile has no files with recorded checksums, so only the deployment sweep ran.</p>{{end}}
 <!-- Renders every finding unbounded for v2.1.0 - no pagination. -->
 <div class="overflow-x-auto">
 <table class="w-full text-left text-sm">
@@ -41,13 +49,15 @@
 </table>
 </div>
 {{end}}
+{{if .Fixable}}
 <form method="post" action="/health/fix">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <input type="hidden" name="game" value="{{.Nav.Game.ID}}">
 <input type="hidden" name="profile" value="{{.Nav.Profile}}">
-<button type="submit" disabled class="mt-3 rounded border border-gray-300 px-3 py-1 text-sm text-gray-400">Fix issues</button>
-<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+<button type="submit" class="mt-3 rounded border border-gray-300 bg-gray-900 px-3 py-1 text-sm font-medium text-white">Fix {{.Fixable}} issue(s)</button>
+<p class="mt-1 text-xs text-gray-500">You will see exactly what would be repaired before anything changes.</p>
 </form>
+{{end}}
 </section>
 
 <section aria-label="File conflicts">

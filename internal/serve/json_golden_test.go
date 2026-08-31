@@ -152,6 +152,103 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #225's install options, both halves: what the PLAN previews
+			// (which version's files the candidate pool is drawn from) and
+			// what the confirm page finally applies - including the
+			// conflict answer v2 Phase 3 Ruling 1 says a caller re-runs
+			// Apply with.
+			"install_plan_request",
+			installPlanRequest{
+				SourceID:     "fake",
+				ModID:        "m2",
+				Version:      "2.0",
+				ShowArchived: true,
+			},
+		},
+		{
+			"install_apply_request",
+			installApplyRequest{
+				Version:         "2.0",
+				FileIDs:         []string{"f1", "f2"},
+				AcceptConflicts: true,
+				Force:           true,
+				SkipHooks:       true,
+			},
+		},
+		{
+			// #226's uninstall options, both halves: what the PLAN is
+			// computed with, and what the confirm page's checkboxes finally
+			// apply.
+			"uninstall_plan_request",
+			uninstallPlanRequest{
+				ModID:     "m1",
+				SourceID:  "fake",
+				KeepCache: true,
+				SkipHooks: true,
+			},
+		},
+		{
+			"uninstall_apply_request",
+			uninstallApplyRequest{KeepCache: true, Force: true, SkipHooks: true},
+		},
+		{
+			// #74's batch, both halves of its options plus the two
+			// documents it owns: there is no core batch flow (`lmm update`
+			// loops over one-mod plans), so the SELECTION and the
+			// per-mod report are serve's own wire surface.
+			"updates_plan_request",
+			updatesPlanRequest{Mods: []string{"fake:m1", "fake:m2"}},
+		},
+		{
+			"updates_apply_request",
+			updatesApplyRequest{Force: true, SkipHooks: true},
+		},
+		{
+			"updates_batch_plan",
+			updatesBatchPlan{
+				GameID:  "g1",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "m1", SourceID: "fake", Name: "Mod One", Version: "1.0", GameID: "g1"},
+						ProfileName: "default",
+						Enabled:     true,
+					},
+					NewVersion: "2.0",
+				}},
+				NotFound: []string{"fake:m9"},
+			},
+		},
+		{
+			"updates_batch_result",
+			updatesBatchResult{
+				Applied: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "fake", ModID: "m1"},
+					Name:        "Mod One",
+					FromVersion: "1.0",
+					ToVersion:   "2.0",
+					Status:      core.UpdateUpdated,
+				}},
+				Failed: []updateBatchFailure{{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"}},
+			},
+		},
+		{
+			"update_batch_failure",
+			updateBatchFailure{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"},
+		},
+		{
+			// The two profile flows' plan requests. Neither has an apply
+			// request with anything in it - ApplyProfileSwitch and
+			// ProfileApplyOptions both take no options - so their empty
+			// structs carry no json tags and pin nothing.
+			"switch_plan_request",
+			switchPlanRequest{Profile: "modded"},
+		},
+		{
+			"profile_apply_plan_request",
+			profileApplyPlanRequest{Profile: "modded"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",

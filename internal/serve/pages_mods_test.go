@@ -40,17 +40,16 @@ func TestServer_Mods_RendersInstalledMod(t *testing.T) {
 	// render (mirroring the real toggle: an enabled mod has no "enable"
 	// action) - Task 8 (#322) wires these same two routes, plus the
 	// symmetric /enable route a disabled mod's row targets instead (see
-	// TestServer_Mods_MutationForms_AreDisabled).
+	// TestServer_Mods_ToggleForms_AreLive).
 	assert.Contains(t, body, `action="/mods/fake/42/disable"`)
 	assert.Contains(t, body, `action="/mods/fake/42/uninstall"`)
-	assert.Contains(t, body, "coming in this release")
 	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
 }
 
-// TestServer_Mods_MutationForms_AreDisabled proves Task 4's "shells, not
-// live mutations" rule: the enable/disable/uninstall buttons render but
-// carry the disabled attribute until Task 8 wires them.
-func TestServer_Mods_MutationForms_AreDisabled(t *testing.T) {
+// TestServer_Mods_ToggleForms_AreLive proves Task 8 (#322) wired the two
+// toggle routes: a disabled mod's row renders a submittable Enable button,
+// not the Task 4 shell that carried the disabled attribute.
+func TestServer_Mods_ToggleForms_AreLive(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, game := newFixtureServiceWithSource(t, src)
 	seedInstalledMod(t, svc, game, domain.Mod{ID: "1", SourceID: "fake", Name: "Mod", Version: "1.0", GameID: game.ID}, false, nil)
@@ -61,7 +60,10 @@ func TestServer_Mods_MutationForms_AreDisabled(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Regexp(t, `<button type="submit" disabled[^>]*>Enable</button>`, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, `action="/mods/fake/1/enable"`)
+	assert.Regexp(t, `<button type="submit"(?:\s+class="[^"]*")?>Enable</button>`, body)
+	assert.NotRegexp(t, `<button type="submit" disabled[^>]*>Enable</button>`, body)
 }
 
 // TestServer_Mods_NoModsInstalled_RendersEmptyState covers the
