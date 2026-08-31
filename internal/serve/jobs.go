@@ -37,9 +37,10 @@ const (
 	// "the last ~50 jobs, in memory only").
 	defaultJobRetention = 50
 
-	// defaultSubscriberBuffer is the per-subscriber channel depth. A
-	// subscriber that falls this far behind is disconnected rather than
-	// allowed to stall the Apply - see job.emit.
+	// defaultSubscriberBuffer is the per-subscriber channel depth
+	// job.subscribe uses when a caller doesn't pick one. A subscriber that
+	// falls this far behind is disconnected rather than allowed to stall
+	// the Apply - see job.emit.
 	defaultSubscriberBuffer = 64
 
 	// jobCancelGrace bounds how long shutdown waits AFTER cancelling the
@@ -240,10 +241,10 @@ func (j *job) replayLocked() []core.Event {
 // already-finished job returns its history and an already-closed channel.
 // cancel is idempotent and must be called when the subscriber goes away
 // (an SSE client disconnecting), or the job holds the channel until it
-// finishes.
+// finishes. A non-positive buf takes defaultSubscriberBuffer.
 func (j *job) subscribe(buf int) (replay []core.Event, live <-chan core.Event, cancel func()) {
 	if buf < 1 {
-		buf = 1
+		buf = defaultSubscriberBuffer
 	}
 
 	j.mu.Lock()

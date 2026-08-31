@@ -64,11 +64,26 @@ func newTestRegistry(t *testing.T, ctx context.Context, ring, retain int) *jobRe
 	return r
 }
 
+// sandboxEnv points HOME and every XDG_* path this project reads at throwaway
+// directories, so nothing a test drives can reach (or write to) the developer's
+// real config, data, or cache - the sandboxing rule every test layer in this
+// repo follows (docs/plans/2026-08-30-serve-impl.md §Global Constraints).
+// Every Service these tests build is given explicit temp dirs already; this is
+// the belt to that's braces, for any path a core flow resolves from the
+// environment instead.
+func sandboxEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+		t.Setenv(key, t.TempDir())
+	}
+}
+
 // newJobsService builds a bare *core.Service over temp dirs - the internal
 // (package serve) twin of testhelpers_test.go's newFixtureService, which
 // lives in package serve_test and isn't visible here.
 func newJobsService(t *testing.T) *core.Service {
 	t.Helper()
+	sandboxEnv(t)
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(),
 		DataDir:   t.TempDir(),

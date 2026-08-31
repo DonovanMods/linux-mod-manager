@@ -22,6 +22,7 @@ import (
 // its drain and the channel Serve's return lands on.
 func newDrainServer(t *testing.T, grace time.Duration) (*Server, context.CancelFunc, <-chan error) {
 	t.Helper()
+	sandboxEnv(t)
 
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(),
@@ -51,6 +52,7 @@ func TestServer_NewWiresThePlanStoreAndJobRegistry(t *testing.T) {
 	type ctxKey string
 	const key ctxKey = "server-root-marker"
 
+	sandboxEnv(t)
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(),
 		DataDir:   t.TempDir(),
