@@ -577,6 +577,53 @@ select {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/*
+ * Progressive columns (owner demo 1). Seven columns on a 2560px display
+ * wastes most of it, and the four extra facts below are already in the
+ * /api/v1/mods document every row is built from - nothing new is fetched
+ * to fill them.
+ *
+ *   >= 1440px   author + install date
+ *   >= 1920px   source + link method
+ *
+ * Hidden by default and revealed upward, rather than the reverse: the
+ * unqualified rule is the one a browser with no media-query support (or a
+ * print stylesheet) falls back to, and the narrow table is the safe
+ * fallback. Note the baseline for this application is 1080p (§Settled
+ * decisions), so the 1440 step is the first one a supported display can
+ * actually sit below.
+ */
+.library__table .col--author,
+.library__table .col--installed,
+.library__table .col--source,
+.library__table .col--method {
+  display: none;
+}
+
+@media (min-width: 1440px) {
+  .library__table .col--author,
+  .library__table .col--installed {
+    display: table-cell;
+  }
+}
+
+@media (min-width: 1920px) {
+  .library__table .col--source,
+  .library__table .col--method {
+    display: table-cell;
+  }
+}
+
+/* The two leading checkbox columns are DIFFERENT things - select-for-batch
+ * and the mod's own enabled state - so both carry a real heading rather
+ * than the blank cells that made them ambiguous (owner demo 1). They are
+ * narrow, so the heading text is the smallest the header scale goes. */
+.library__table th.col--select,
+.library__table th.col--enabled {
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
 .mod-row:hover {
   background: var(--surface-sunken);
 }

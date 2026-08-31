@@ -12,6 +12,7 @@ import {
   buildRows,
   filterRows,
   sortRows,
+  formatDate,
   FILTER_NAMES,
   SORT_NAMES,
 } from "../modrows.js";
@@ -162,13 +163,17 @@ export function Library({
               <table class="library__table">
                 <thead>
                   <tr>
-                    <th class="library__table-select"></th>
-                    <th class="library__table-enabled"></th>
+                    <th class="col--select">Select</th>
+                    <th class="col--enabled">Enabled</th>
                     <th>Name</th>
                     <th>Version</th>
+                    <th class="col--author">Author</th>
+                    <th class="col--source">Source</th>
                     <th>Badges</th>
                     <th>Load order</th>
-                    <th class="library__table-menu"></th>
+                    <th class="col--method">Method</th>
+                    <th class="col--installed">Installed</th>
+                    <th class="col--menu"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -178,17 +183,19 @@ export function Library({
                         key=${row.key}
                         class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""}"
                       >
-                        <td>
+                        <td class="col--select">
                           <input
                             type="checkbox"
+                            aria-label=${`Select ${row.name} for batch actions`}
                             checked=${selected.has(row.key)}
                             onClick=${(e) => e.stopPropagation()}
                             onChange=${() => toggleSelect(row.key)}
                           />
                         </td>
-                        <td>
+                        <td class="col--enabled">
                           <input
                             type="checkbox"
+                            aria-label=${`Enable ${row.name}`}
                             checked=${row.enabled}
                             disabled
                             title=${NOT_YET}
@@ -206,6 +213,8 @@ export function Library({
                         <td class="mono">
                           ${row.version}${row.hasUpdate && html` → ${row.updateTarget}`}
                         </td>
+                        <td class="col--author">${row.author || "—"}</td>
+                        <td class="col--source mono">${row.source_id}</td>
                         <td class="mod-row__badges">
                           ${
                             row.hasUpdate &&
@@ -244,7 +253,11 @@ export function Library({
                           >
                         </td>
                         <td class="mono">${row.loadOrder}</td>
-                        <td>
+                        <td class="col--method mono">${row.link_method}</td>
+                        <td class="col--installed">
+                          ${formatDate(row.installed_at)}
+                        </td>
+                        <td class="col--menu">
                           <button
                             type="button"
                             class="button button--small"

@@ -598,3 +598,99 @@ func TestE2E_AttentionCardsRenderFromSeededFixture(t *testing.T) {
 		"the spec's Missing 2: a conflict must name the winning rule, not just the contenders (Mod Y was added to the load order last)")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_LibraryCheckboxColumnsAreLabelled answers the owner demo's own
+// finding: the library's two leading checkbox columns are DIFFERENT things -
+// the first selects a row for the batch bar, the second is the mod's own
+// enabled state - and both shipped as blank headings, which is exactly the
+// ambiguity that was called out (docs/plans/unit3-carry.md, OWNER DEMO 1).
+func TestE2E_LibraryCheckboxColumnsAreLabelled(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var selectHead, enabledHead, selectBox, enabledBox string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		textContent(`.library__table th.col--select`, &selectHead),
+		textContent(`.library__table th.col--enabled`, &enabledHead),
+		chromedp.AttributeValue(`.mod-row td.col--select input`, "aria-label", &selectBox, nil, chromedp.ByQuery),
+		chromedp.AttributeValue(`.mod-row td.col--enabled input`, "aria-label", &enabledBox, nil, chromedp.ByQuery),
+	)
+
+	assert.Equal(t, "Select", selectHead)
+	assert.Equal(t, "Enabled", enabledHead)
+	assert.Contains(t, selectBox, "batch",
+		"the select checkbox must name what it selects FOR, not just repeat the heading")
+	assert.Contains(t, enabledBox, "Enable")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens covers the other
+// half of OWNER DEMO 1: a 1080p-minimum tool that renders the same seven
+// columns on a 2560px display is wasting most of it. Author and the install
+// date arrive at >= 1440px, the source and link method at >= 1920px - all
+// four already carried by the /api/v1/mods document, so nothing new is
+// fetched to fill them.
+//
+// The assertion is on the COMPUTED display of the real cells at four real
+// viewport widths, which is the only way to prove a media query actually
+// fires; a class-name assertion would pass against a stylesheet that
+// defines nothing.
+func TestE2E_LibraryColumnsProgressivelyRevealOnWideScreens(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	shown := func(width int, wide, xwide *bool) chromedp.Tasks {
+		return chromedp.Tasks{
+			chromedp.EmulateViewport(int64(width), 1080),
+			chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--author")).display !== "none"`, wide),
+			chromedp.Evaluate(`getComputedStyle(document.querySelector(".library__table th.col--source")).display !== "none"`, xwide),
+		}
+	}
+
+	var wide1280, xwide1280, wide1600, xwide1600, wide1920, xwide1920, wide2560, xwide2560 bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		shown(1280, &wide1280, &xwide1280),
+		shown(1600, &wide1600, &xwide1600),
+		shown(1920, &wide1920, &xwide1920),
+		shown(2560, &wide2560, &xwide2560),
+	)
+
+	assert.False(t, wide1280, "author must be hidden below the first breakpoint")
+	assert.False(t, xwide1280, "source must be hidden below the first breakpoint")
+	assert.True(t, wide1600, "author arrives at >= 1440px")
+	assert.False(t, xwide1600, "source must still be hidden at 1600px")
+	assert.True(t, wide1920, "author stays once revealed")
+	assert.True(t, xwide1920, "source arrives at >= 1920px")
+	assert.True(t, wide2560)
+	assert.True(t, xwide2560)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_WideColumnsCarryTheDocumentsOwnData is the value half of the
+// scenario above: a revealed column that renders nothing is worse than no
+// column at all. At 1920px every one of the four carries the fact its
+// heading promises, read from the seeded fixture's own mods.
+func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var author, source, method, installed string
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1920, 1080),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		textContent(`.mod-row td.col--author`, &author),
+		textContent(`.mod-row td.col--source`, &source),
+		textContent(`.mod-row td.col--method`, &method),
+		textContent(`.mod-row td.col--installed`, &installed),
+	)
+
+	assert.Equal(t, "Ada Lovelace", author)
+	assert.Equal(t, "fake", source)
+	assert.Equal(t, "symlink", method)
+	assert.NotEmpty(t, installed)
+	assert.NotEqual(t, "—", installed, "the seeded mods all carry an installed_at")
+	assert.Empty(t, f.BrowserErrors())
+}

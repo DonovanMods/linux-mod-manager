@@ -120,3 +120,20 @@ export function countUndeployed(mods) {
     0,
   );
 }
+
+/**
+ * Renders an ISO timestamp as a short local date for the library's
+ * "Installed" column, or an em dash when there is nothing parsable to
+ * render. The dash matters: a blank cell under a heading reads as a
+ * rendering bug, while "—" says the document carries no date - which is a
+ * real state (an adopted mod whose installed_at was never recorded).
+ */
+export function formatDate(value) {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return "—";
+  return new Date(ms).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}

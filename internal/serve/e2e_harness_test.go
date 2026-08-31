@@ -151,12 +151,16 @@ func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixture(t)
 
+	// Every one carries the same author, so an assertion about the wide
+	// columns' CONTENT (TestE2E_WideColumnsCarryTheDocumentsOwnData) does
+	// not also depend on which of the three the library happens to render
+	// first - which the filter and sort scenarios deliberately vary.
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, nil)
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, nil)
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", GameID: f.Game.ID}, false, nil)
+		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, false, nil)
 
 	return f
 }
