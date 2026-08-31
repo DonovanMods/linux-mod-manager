@@ -66,6 +66,12 @@ type Server struct {
 	// happened.
 	plans *planStore
 	jobs  *jobRegistry
+
+	// heartbeat is the clock seam every SSE stream's comment heartbeat
+	// runs on (see sse.go). Production is realHeartbeatTicker; an internal
+	// test swaps in a channel it sends on by hand so a heartbeat assertion
+	// never waits a real sseHeartbeatInterval.
+	heartbeat heartbeatTicker
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
@@ -97,6 +103,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		csrf:          newCSRFGuard(),
 		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
 		jobs:          newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
+		heartbeat:     realHeartbeatTicker,
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,
