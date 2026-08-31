@@ -1,4 +1,4 @@
-.PHONY: all build run install test test-race test-verbose coverage fmt vet lint clean help man
+.PHONY: all build run install test test-race test-verbose coverage fmt vet lint clean help man css
 
 # Build variables
 BINARY_NAME := lmm
@@ -80,6 +80,20 @@ update:
 ## man: Regenerate man pages from the command tree
 man:
 	@GOCACHE=$(GOCACHE_LOCAL) go run $(MAIN_PATH) gen-man docs/man/man1
+
+## css: Rebuild internal/serve/static/app.css from the Tailwind utility
+## classes referenced in internal/serve/templates/*.gohtml and static/app.js.
+## DEV-TIME ONLY: uses the standalone tailwindcss CLI
+## (https://github.com/tailwindlabs/tailwindcss/releases) - never fetched or
+## vendored by this build, so install it once yourself and re-run this
+## target whenever a template's class names change. The output is committed,
+## so `lmm serve` never depends on Node or this CLI at build or runtime. If
+## the CLI is not on PATH, internal/serve/static/app.css stays a hand-written
+## stopgap covering only the classes currently in use (see that file's own
+## header comment).
+css:
+	@command -v tailwindcss >/dev/null 2>&1 || { echo "tailwindcss (standalone CLI) not found on PATH; install it from https://github.com/tailwindlabs/tailwindcss/releases and re-run 'make css'" >&2; exit 1; }
+	@tailwindcss -c internal/serve/tailwind.config.js -i internal/serve/static/app.src.css -o internal/serve/static/app.css --minify
 
 ## clean: Remove build artifacts
 clean:

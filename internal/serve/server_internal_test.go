@@ -20,7 +20,8 @@ import (
 
 // TestServeGraceful_InFlightRequestCompletesAfterCancel proves that
 // cancelling ctx mid-request does not abort a handler already running: the
-// handler blocks until told to proceed, ctx is cancelled while it is still
+// handler blocks until told to proceed, Shutdown is confirmed to have
+// actually started (via RegisterOnShutdown, not a sleep) while it is still
 // blocked, and the client must still observe the full 200 response.
 func TestServeGraceful_InFlightRequestCompletesAfterCancel(t *testing.T) {
 	started := make(chan struct{})
@@ -34,6 +35,8 @@ func TestServeGraceful_InFlightRequestCompletesAfterCancel(t *testing.T) {
 			_, _ = w.Write([]byte("done"))
 		}),
 	}
+	shutdownStarted := make(chan struct{})
+	httpSrv.RegisterOnShutdown(func() { close(shutdownStarted) })
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -58,7 +61,7 @@ func TestServeGraceful_InFlightRequestCompletesAfterCancel(t *testing.T) {
 			respErr = err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		status = resp.StatusCode
 	}()
 
@@ -68,10 +71,17 @@ func TestServeGraceful_InFlightRequestCompletesAfterCancel(t *testing.T) {
 		t.Fatal("handler never started")
 	}
 
-	// Cancel while the handler is still blocked in-flight, then let it
-	// finish shortly after - the request must still complete successfully.
+	// Cancel, then wait for Shutdown to actually begin (RegisterOnShutdown
+	// fires synchronously as part of Shutdown, before it waits for active
+	// connections to drain) before releasing the handler - otherwise this
+	// test could pass vacuously without ever exercising Shutdown blocked on
+	// a live request.
 	cancel()
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-shutdownStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown never started")
+	}
 	close(proceed)
 
 	select {
@@ -91,11 +101,13 @@ func TestServeGraceful_InFlightRequestCompletesAfterCancel(t *testing.T) {
 // is bounded: a handler that never finishes does not hang serveGraceful
 // forever - Shutdown's deadline forces it to return.
 func TestServeGraceful_ExpiredGracePeriodStillReturns(t *testing.T) {
+	started := make(chan struct{})
 	block := make(chan struct{})
 	t.Cleanup(func() { close(block) })
 
 	httpSrv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
 			<-block
 		}),
 	}
@@ -111,10 +123,15 @@ func TestServeGraceful_ExpiredGracePeriodStillReturns(t *testing.T) {
 	go func() {
 		resp, err := http.Get("http://" + ln.Addr().String() + "/")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 	}()
-	time.Sleep(10 * time.Millisecond)
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never started")
+	}
 	cancel()
 
 	select {
