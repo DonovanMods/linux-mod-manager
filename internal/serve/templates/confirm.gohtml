@@ -49,7 +49,7 @@
 </section>
 {{end}}
 
-<form method="post" action="{{.Action}}" class="rounded border border-gray-200 bg-white p-4">
+<form method="post" action="{{.Action}}" data-js-enhance="confirm" class="rounded border border-gray-200 bg-white p-4">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <input type="hidden" name="plan_id" value="{{.PlanID}}">
 {{with .Nav}}

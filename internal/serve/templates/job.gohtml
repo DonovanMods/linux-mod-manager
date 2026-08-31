@@ -5,6 +5,7 @@
 <p class="mt-2 text-sm text-gray-600">Job history is forgotten when <code>lmm serve</code> restarts - the database remains the record of what actually happened.</p>
 <p class="mt-4"><a class="underline" href="/">Back to the dashboard</a></p>
 {{else}}
+<div data-job-id="{{.Status.ID}}" data-job-state="{{.Status.State}}"{{if .Running}} aria-busy="true"{{end}}>
 <h1 class="mb-1 text-2xl font-bold">{{.Kind}}</h1>
 <p class="mb-4 text-sm text-gray-600">
 Job <code>{{.Status.ID}}</code> - <strong>{{.Status.State}}</strong>
@@ -15,6 +16,10 @@ Job <code>{{.Status.ID}}</code> - <strong>{{.Status.State}}</strong>
 <p class="mb-6 rounded border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-800">
 This operation is still running. The page refreshes itself every {{.Refresh}} seconds; use the Refresh link above at any time.
 </p>
+<!-- Populated by app.js from the job's SSE stream (Task 10); empty and
+     harmless with JavaScript off. aria-live announces each update to
+     assistive tech without moving focus. -->
+<p data-job-live aria-live="polite" class="mb-6 text-sm text-gray-600"></p>
 {{end}}
 
 {{if .Facts}}
@@ -107,5 +112,6 @@ This operation is still running. The page refreshes itself every {{.Refresh}} se
 </div>
 {{end}}
 </section>
+</div>
 {{end}}
 {{- end}}

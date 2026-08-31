@@ -111,6 +111,23 @@ func TestServer_StaticAsset_Served(t *testing.T) {
 	assert.NotEmpty(t, rec.Body.String())
 }
 
+// TestServer_StaticAsset_AppJS_ServedUnderBudget is TestServer_StaticAsset_Served
+// for app.js (Task 10's one enhancement file), plus the size budget Task 10
+// set: docs/plans/2026-08-30-serve-impl.md Task 10 caps it at ~10KB
+// unminified so it stays the "one small file", never the start of a bundle.
+func TestServer_StaticAsset_AppJS_ServedUnderBudget(t *testing.T) {
+	_, handler := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/static/app.js", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Header().Get("Content-Type"), "javascript")
+	assert.NotEmpty(t, rec.Body.String())
+	assert.LessOrEqual(t, rec.Body.Len(), 10*1024, "app.js must stay within Task 10's ~10KB unminified budget")
+}
+
 // TestServer_NotFound_Is404 is a baseline sanity check for the mux itself.
 func TestServer_NotFound_Is404(t *testing.T) {
 	_, handler := newTestServer(t)

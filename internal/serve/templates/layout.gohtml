@@ -7,8 +7,10 @@
 <title>{{.Title}} - lmm</title>
 {{if .Refresh}}<noscript><meta http-equiv="refresh" content="{{.Refresh}}"></noscript>{{end}}
 <link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
+<a class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-white focus:p-2 focus:text-sm focus:font-medium focus:shadow-sm" href="#main-content">Skip to main content</a>
 <header class="border-b border-gray-200 bg-white">
 <nav class="mx-auto flex max-w-3xl flex-wrap items-center gap-4 p-4" aria-label="Primary">
 <a class="text-lg font-bold" href="/">lmm</a>
@@ -39,7 +41,7 @@
 {{end}}
 </nav>
 </header>
-<main class="mx-auto max-w-3xl p-4">
+<main id="main-content" class="mx-auto max-w-3xl p-4">
 {{with .Nav}}{{with .Warning}}<p class="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{{.}}</p>{{end}}{{end}}
 {{template "content" .}}
 </main>
