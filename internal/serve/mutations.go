@@ -164,6 +164,44 @@ func (req mutationRequest) actionPath() string {
 	return "/mods/" + url.PathEscape(req.SourceID) + "/" + url.PathEscape(req.ModID) + "/" + req.Kind
 }
 
+// recoveryFields renders the original submission as the hidden fields a
+// recovery form re-sends, with overrides replacing (not appending to) any
+// field of the same name - so "the same request, but with
+// accept_conflicts" is expressible without the browser submitting that
+// field twice. An override mapped to nil DROPS the field, which is how the
+// re-plan action strips the lifecycle flags off a submission it wants
+// treated as a fresh entry. The result is sorted for deterministic
+// rendering.
+func (req mutationRequest) recoveryFields(overrides url.Values) []queryParam {
+	merged := url.Values{}
+	for key, values := range req.Form {
+		if _, replaced := overrides[key]; replaced {
+			continue
+		}
+		merged[key] = values
+	}
+	for key, values := range overrides {
+		merged[key] = values
+	}
+	// planIDField is never re-sent: the plan it named is gone by definition
+	// on every path that renders a recovery action.
+	merged.Del(planIDField)
+	return sortedParams(merged)
+}
+
+// sortedParams flattens values into queryParam rows, sorted by key then
+// value, so a rendered form's hidden fields are stable across requests.
+func sortedParams(values url.Values) []queryParam {
+	params := make([]queryParam, 0, len(values))
+	for key, vs := range values {
+		for _, v := range vs {
+			params = append(params, queryParam{Key: key, Value: v})
+		}
+	}
+	sortQueryParams(params)
+	return params
+}
+
 // handleModEnable and handleModDisable answer the two plan-free toggle
 // routes (kind_toggle.go).
 func (s *Server) handleModEnable(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +246,7 @@ func (s *Server) handleToggleMutation(w http.ResponseWriter, r *http.Request, ki
 			s.renderMutationFailure(w, r, http.StatusInternalServerError, kind.Title, err)
 			return
 		}
-		s.renderMutationResult(w, r, kind.Title, jobKindFacts(kind.Name, result))
+		s.renderMutationResult(w, r, sel, kind.Title, jobKindFacts(kind.Name, result))
 		return
 	}
 	s.startMutationJob(w, r, kind.Name, kind.Title, req, run)
@@ -301,7 +339,7 @@ func (s *Server) applyPlannedInline(w http.ResponseWriter, r *http.Request, kind
 	var conflictErr *core.ConflictError
 	switch {
 	case err == nil:
-		s.renderMutationResult(w, r, kind.Title, jobKindFacts(kind.Name, result))
+		s.renderMutationResult(w, r, sel, kind.Title, jobKindFacts(kind.Name, result))
 	case errors.As(err, &conflictErr):
 		s.planAndConfirm(w, r, kind, sel, req, confirmContext{
 			Notice:    noticeConflicts,
@@ -429,13 +467,11 @@ type resultPageData struct {
 	Facts []resultFact
 }
 
-// renderMutationResult renders a successful inline Apply.
-func (s *Server) renderMutationResult(w http.ResponseWriter, r *http.Request, title string, facts []resultFact) {
-	sel, err := s.resolveSelection(r)
-	if err != nil {
-		s.renderError(w, err)
-		return
-	}
+// renderMutationResult renders a successful inline Apply. It takes the
+// selection the handler already resolved rather than resolving it again:
+// the mutation has COMMITTED by this point, so a second resolution failing
+// must never turn a successful mutation into an error page.
+func (s *Server) renderMutationResult(w http.ResponseWriter, r *http.Request, sel selection, title string, facts []resultFact) {
 	s.render(w, resultTemplate, resultPageData{
 		pageChrome: s.chrome(r, title, &sel),
 		KindTitle:  title,

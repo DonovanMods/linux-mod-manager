@@ -81,12 +81,12 @@
 <input type="hidden" name="profile" value="{{.Nav.Profile}}">
 {{if .Versions}}
 <label class="mb-1 block text-sm font-medium text-gray-700" for="install-version">Version</label>
-<select id="install-version" name="version" disabled class="mb-2 rounded border-gray-300 text-sm">
+<select id="install-version" name="version" class="mb-2 rounded border-gray-300 text-sm">
 {{range .Versions}}<option value="{{.}}">{{.}}</option>{{end}}
 </select>
 {{end}}
-<button type="submit" disabled class="rounded border border-gray-300 px-3 py-1 text-sm text-gray-400">Install</button>
-<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+<button type="submit" class="rounded border border-gray-300 px-3 py-1 text-sm font-medium">Install</button>
+<p class="mt-1 text-xs text-gray-500">Installing shows a confirmation page first.</p>
 </form>
 </section>
 {{end}}

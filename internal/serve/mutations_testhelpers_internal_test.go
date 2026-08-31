@@ -114,16 +114,48 @@ var planIDPattern = regexp.MustCompile(`name="plan_id" value="([0-9a-f]{32})"`)
 // confirmPlanID drives one flow's ENTRY submission and returns the plan_id
 // its confirm page was rendered with - the handle a test's confirm
 // submission then redeems, exactly as a browser would.
-func confirmPlanID(t *testing.T, s *Server, game *domain.Game, kind string, extra formValues) string {
+func confirmPlanID(t *testing.T, s *Server, game *domain.Game, kind, modID string, extra formValues) string {
 	t.Helper()
 	values := formValues{"game": game.ID, "profile": "default"}
 	for k, v := range extra {
 		values[k] = v
 	}
-	rec := postForm(s, "/mods/fake/m1/"+kind, values)
+	rec := postForm(s, "/mods/fake/"+modID+"/"+kind, values)
 	require.Equal(t, http.StatusOK, rec.Code, "entry submission did not render a confirm page: %s", rec.Body.String())
 
 	match := planIDPattern.FindStringSubmatch(rec.Body.String())
 	require.Len(t, match, 2, "confirm page carried no plan_id")
 	return match[1]
+}
+
+// postFormMulti is postForm for a form carrying REPEATED fields - the file
+// checkboxes #225's install confirm page renders, which a browser submits
+// as one "file" field per ticked box.
+func postFormMulti(s *Server, target string, values url.Values) *httptest.ResponseRecorder {
+	values.Set(csrfFormField, s.csrf.token)
+	req := httptest.NewRequest(http.MethodPost, "http://"+internalTestAddr+target, strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// hiddenFieldPattern extracts one hidden input's value from a rendered
+// form, so a test can submit exactly what the page offered rather than a
+// hand-built approximation of it.
+func hiddenField(t *testing.T, body, name string) string {
+	t.Helper()
+	re := regexp.MustCompile(`name="` + regexp.QuoteMeta(name) + `" value="([^"]*)"`)
+	match := re.FindStringSubmatch(body)
+	require.Len(t, match, 2, "no hidden %q field in the rendered page", name)
+	return match[1]
+}
+
+// getPage runs one GET against the server's full handler chain - what a
+// browser does after following a mutation's redirect.
+func getPage(s *Server, target string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "http://"+internalTestAddr+target, nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	return rec
 }

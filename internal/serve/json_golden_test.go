@@ -152,6 +152,30 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #225's install options, both halves: what the PLAN previews
+			// (which version's files the candidate pool is drawn from) and
+			// what the confirm page finally applies - including the
+			// conflict answer v2 Phase 3 Ruling 1 says a caller re-runs
+			// Apply with.
+			"install_plan_request",
+			installPlanRequest{
+				SourceID:     "fake",
+				ModID:        "m2",
+				Version:      "2.0",
+				ShowArchived: true,
+			},
+		},
+		{
+			"install_apply_request",
+			installApplyRequest{
+				Version:         "2.0",
+				FileIDs:         []string{"f1", "f2"},
+				AcceptConflicts: true,
+				Force:           true,
+				SkipHooks:       true,
+			},
+		},
+		{
 			// #226's uninstall options, both halves: what the PLAN is
 			// computed with, and what the confirm page's checkboxes finally
 			// apply.

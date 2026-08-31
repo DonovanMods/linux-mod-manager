@@ -45,7 +45,7 @@ func TestServer_ModUninstall_EntryPostRendersTheConfirmPage(t *testing.T) {
 func TestServer_ModUninstall_ConfirmRunsTheJobAndRemovesEverything(t *testing.T) {
 	s, svc, game := newMutationFixtureServer(t)
 	deployFixtureProfile(t, s, game)
-	pid := confirmPlanID(t, s, game, "uninstall", nil)
+	pid := confirmPlanID(t, s, game, "uninstall", "m1", nil)
 
 	rec := postForm(s, "/mods/fake/m1/uninstall", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1", "plan_id": pid,
@@ -73,7 +73,7 @@ func TestServer_ModUninstall_ConfirmRunsTheJobAndRemovesEverything(t *testing.T)
 func TestServer_ModUninstall_KeepCacheOptionIsHonoured(t *testing.T) {
 	s, svc, game := newMutationFixtureServer(t)
 	deployFixtureProfile(t, s, game)
-	pid := confirmPlanID(t, s, game, "uninstall", nil)
+	pid := confirmPlanID(t, s, game, "uninstall", "m1", nil)
 
 	rec := postForm(s, "/mods/fake/m1/uninstall", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1", "plan_id": pid, "keep_cache": "1",
@@ -94,7 +94,7 @@ func TestServer_ModUninstall_KeepCacheOptionIsHonoured(t *testing.T) {
 func TestServer_ModUninstall_SyncFallback_MutatesIdentically(t *testing.T) {
 	s, svc, game := newMutationFixtureServer(t)
 	deployFixtureProfile(t, s, game)
-	pid := confirmPlanID(t, s, game, "uninstall", nil)
+	pid := confirmPlanID(t, s, game, "uninstall", "m1", nil)
 
 	rec := postForm(s, "/mods/fake/m1/uninstall?sync=1", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1", "plan_id": pid,
@@ -114,7 +114,7 @@ func TestServer_ModUninstall_SyncFallback_MutatesIdentically(t *testing.T) {
 func TestServer_ModUninstall_UsedPlan_RendersAFreshConfirmPage(t *testing.T) {
 	s, svc, game := newMutationFixtureServer(t)
 	deployFixtureProfile(t, s, game)
-	pid := confirmPlanID(t, s, game, "uninstall", nil)
+	pid := confirmPlanID(t, s, game, "uninstall", "m1", nil)
 
 	// Consume the plan without applying it, so the second submission finds
 	// exactly the state a re-submitted form finds.

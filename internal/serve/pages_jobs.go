@@ -2,8 +2,10 @@ package serve
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
@@ -52,6 +54,35 @@ type jobPageData struct {
 	// Events is the job's retained event history as display lines - what a
 	// user with JavaScript off sees in place of the live stream.
 	Events []jobEventLine
+
+	// Conflicts is a failed install's conflict list, read back off the
+	// STORED job's typed error (*core.ConflictError). Rendering it as a
+	// table rather than leaving it inside the JSON details blob is what
+	// makes "which files would this overwrite" answerable without reading
+	// JSON - and what the Overwrite action below acts on.
+	Conflicts []core.Conflict
+
+	// Recovery is the one-click answer to a failure the user can actually
+	// answer: overwrite a refused conflict, or re-plan against a world that
+	// moved (docs/plans/2026-08-30-serve-impl.md Task 8). It is nil for
+	// every other failure - and for every job started through /api/v1,
+	// which carries no request to re-offer.
+	Recovery *jobRecovery
+}
+
+// jobRecovery is the form a failed job's page renders to re-run the same
+// mutation with one thing changed. Action is the mutation's own route, and
+// Fields are the original submission's values plus that one change - so the
+// user's version pick and file selection survive the round trip.
+type jobRecovery struct {
+	// Label is the button's text ("Overwrite and install", "Re-plan").
+	Label string
+	// Help explains what the button will do, since both recoveries are
+	// consequential.
+	Help string
+	// Action is where the form posts; Fields are its hidden inputs.
+	Action string
+	Fields []queryParam
 }
 
 // jobEventLine is one row of the job page's event log: the event's own
@@ -95,8 +126,64 @@ func (s *Server) handleJobPage(w http.ResponseWriter, r *http.Request) {
 	if status.Error != nil && status.Error.Details != nil {
 		data.ErrorDetails = s.renderJobErrorDetails(status.Error.Details)
 	}
+	if status.State == jobFailed {
+		data.Conflicts, data.Recovery = jobFailureRecovery(j)
+	}
 
 	s.render(w, jobTemplate, data)
+}
+
+// jobFailureRecovery reads a failed job's RAW error (jobs.go keeps it
+// alongside the wire envelope precisely so a handler can branch on it) and
+// returns what the page should offer: the conflict list plus an Overwrite
+// action for *core.ConflictError, a Re-plan action for core.ErrStalePlan,
+// and nothing for any other failure - a failure the user cannot answer
+// should not be dressed up as one they can.
+//
+// Both recoveries need the request that started the job (job.redo), so a
+// job started through /api/v1 - which has no browser form behind it -
+// offers no action. That is correct rather than a gap: an API client
+// answers a conflict by POSTing /api/v1/jobs again with
+// {"accept_conflicts": true}, which is the same decision expressed in its
+// own idiom.
+func jobFailureRecovery(j *job) ([]core.Conflict, *jobRecovery) {
+	req, ok := j.redoRequest().(mutationRequest)
+	if !ok {
+		return nil, nil
+	}
+	err := j.failure()
+
+	var conflictErr *core.ConflictError
+	switch {
+	case errors.As(err, &conflictErr):
+		return conflictErr.Conflicts, &jobRecovery{
+			Label:  "Overwrite and install",
+			Help:   "installs anyway, replacing the files above. Nothing was downloaded twice - the refused attempt already filled the cache.",
+			Action: req.actionPath(),
+			Fields: req.recoveryFields(url.Values{
+				confirmField:         {"1"},
+				replanField:          {"1"},
+				acceptConflictsField: {"1"},
+			}),
+		}
+	case errors.Is(err, core.ErrStalePlan):
+		return nil, &jobRecovery{
+			Label:  "Re-plan",
+			Help:   "computes a fresh plan against the profile as it is now, and shows it for confirmation.",
+			Action: req.actionPath(),
+			// Every lifecycle flag is stripped, so this submits as a fresh
+			// ENTRY and deliberately lands on a confirm page rather than
+			// applying: what changed underneath the plan is exactly what
+			// the user has not seen yet. The kind's own options - the
+			// version and files they picked - are carried through.
+			Fields: req.recoveryFields(url.Values{
+				confirmField:         nil,
+				replanField:          nil,
+				acceptConflictsField: nil,
+			}),
+		}
+	}
+	return nil, nil
 }
 
 // renderJobErrorDetails encodes a failure envelope's typed details for

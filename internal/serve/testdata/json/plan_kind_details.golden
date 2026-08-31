@@ -1,6 +1,7 @@
 {
   "supported_kinds": [
     "deploy",
+    "install",
     "uninstall"
   ]
 }
