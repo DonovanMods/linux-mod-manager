@@ -181,6 +181,41 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
+// handleAPIUpdates answers GET /api/v1/updates with exactly the
+// core.UpdateCheckReport document a bulk `lmm update --json` (no mod ID)
+// emits (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/updates" ->
+// CheckGameUpdates), built the same way cmd/lmm/update.go's own
+// bulkCheckReport does. A partial CheckGameUpdates failure (e.g. one
+// source down) still answers 200 with the one document ErrorMessage names -
+// the CLI's own --json contract for this call keeps the partial results on
+// stdout rather than discarding them - never the generic error envelope,
+// which is reserved for a failure that leaves no usable document at all.
+func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	installed, err := s.svc.GetInstalledMods(ctx, sel.Game.ID, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	updates, checkErr := s.svc.CheckGameUpdates(ctx, sel.Game, sel.Profile, installed, nil)
+	report := &core.UpdateCheckReport{
+		GameID:  sel.Game.ID,
+		Profile: sel.Profile,
+		Updates: updates,
+		Skipped: core.CountUpdateSkips(installed),
+	}
+	if checkErr != nil {
+		report.ErrorMessage = checkErr.Error()
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 // handleAPIStatus answers GET /api/v1/status with exactly the
 // core.StatusReport document `lmm status --json` emits with no --game flag
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/" -> Status).
