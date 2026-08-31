@@ -16,11 +16,20 @@ export function initialState() {
   return {
     route: { view: "chooser", game: "", profile: "" },
     status: null,
+    // games is every configured game (core.StatusReport's own "games"),
+    // refetched unscoped alongside every route - the game chooser's cards
+    // and the top bar's game picker both need the full list, not just the
+    // one status is currently scoped to.
+    games: null,
     mods: null,
     updates: null,
     health: null,
     conflicts: null,
     profiles: null,
+    // jobsIndex is GET /api/v1/jobs's own "jobs" array (newest first) - the
+    // activity bell's read-only tray. Distinct from `jobs` below: that slice
+    // is reserved for a later unit's per-job SSE-tracked state, keyed by id.
+    jobsIndex: null,
     jobs: {},
     error: null,
   };

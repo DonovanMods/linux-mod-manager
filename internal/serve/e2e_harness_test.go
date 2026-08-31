@@ -96,6 +96,11 @@ type e2eFixture struct {
 	Ctx context.Context
 	// BaseURL is the running server's origin, e.g. "http://127.0.0.1:41234".
 	BaseURL string
+	// Svc is the Service backing BaseURL - exposed so a scenario can seed
+	// further state (installed mods, deploys) before it starts driving the
+	// browser, the same Service every /api/v1 request the browser makes
+	// reads from.
+	Svc *core.Service
 	// Game is the seeded game the SPA routes are scoped to.
 	Game *domain.Game
 	// Profile is the seeded game's profile name.
@@ -123,10 +128,136 @@ func newE2EFixture(t *testing.T) e2eFixture {
 	return e2eFixture{
 		Ctx:           ctx,
 		BaseURL:       startE2EServer(t, svc),
+		Svc:           svc,
 		Game:          game,
 		Profile:       "default",
 		BrowserErrors: browserErrors,
 	}
+}
+
+// newE2EFixtureWithLibrarySample is newE2EFixture plus three installed mods
+// with distinguishable names and enabled states - enough to prove the
+// library's filter and sort controls actually narrow/reorder the DOM,
+// without needing the fuller health/conflict machinery
+// newE2EFixtureWithAttention sets up. Seeded with no cache files (nil), so
+// none of the three trips a verify finding of its own.
+func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", GameID: f.Game.ID}, false, nil)
+
+	return f
+}
+
+// newE2EFixtureWithAttention seeds a state where all three attention cards
+// have something to say: Better Boots is installed recording version 1.0
+// while its matched file now reports 2.0 (Updates, and - since the
+// recorded/effective versions disagree - Health too), and Mod X/Mod Y both
+// provide the same deployed path (Conflicts). It is
+// api_health_test.go's TestServer_APIHealth_MatchesCLIVerifyTier fixture and
+// its twinConflictFixture, combined into one browser scenario, so the
+// library and the cards both have real, non-trivial documents to render.
+func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "x", SourceID: "fake", Name: "Mod X", Version: "1.0", GameID: game.ID}, true,
+		map[string][]byte{"shared.esp": []byte("X-content")})
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "y", SourceID: "fake", Name: "Mod Y", Version: "1.0", GameID: game.ID}, true,
+		map[string][]byte{"shared.esp": []byte("Y-content")})
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(t.Context(), game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "x", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(t.Context(), game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "y", Version: "1.0"}))
+	_, err := svc.DeployProfile(t.Context(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx:           ctx,
+		BaseURL:       startE2EServer(t, svc),
+		Svc:           svc,
+		Game:          game,
+		Profile:       "default",
+		BrowserErrors: browserErrors,
+	}
+}
+
+// e2eMultiGameFixture is a browser test's world with more than one
+// configured game and no default among them - the state where "/" has a
+// real choice to render rather than something to auto-redirect through
+// (docs/plans/2026-08-31-serve-spa-design.md §Information architecture: "/
+// -> game chooser (or redirect to the single/default game)" - this is the
+// chooser's own branch).
+type e2eMultiGameFixture struct {
+	Ctx           context.Context
+	BaseURL       string
+	GameA, GameB  *domain.Game
+	BrowserErrors func() []string
+}
+
+func newE2EMultiGameFixture(t *testing.T) e2eMultiGameFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameA := &domain.Game{ID: "game-a", Name: "Game Alpha", InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	gameB := &domain.Game{ID: "game-b", Name: "Game Beta", InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	require.NoError(t, svc.SaveGame(t.Context(), gameA))
+	require.NoError(t, svc.SaveGame(t.Context(), gameB))
+	_, err = svc.NewProfileManager().Create(t.Context(), gameA.ID, "default")
+	require.NoError(t, err)
+	_, err = svc.NewProfileManager().Create(t.Context(), gameB.ID, "default")
+	require.NoError(t, err)
+
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eMultiGameFixture{
+		Ctx:           ctx,
+		BaseURL:       startE2EServer(t, svc),
+		GameA:         gameA,
+		GameB:         gameB,
+		BrowserErrors: browserErrors,
+	}
+}
+
+func (f e2eMultiGameFixture) runInBrowser(t *testing.T, actions ...chromedp.Action) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(f.Ctx, e2eTimeout)
+	defer cancel()
+	require.NoError(t, chromedp.Run(ctx, actions...))
 }
 
 // startE2EServer binds a loopback listener, serves svc on it, and returns

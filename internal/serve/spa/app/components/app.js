@@ -1,40 +1,36 @@
-// components/app.js - the root component.
-//
-// A skeleton: Unit 1 builds the shell, the router, the store and the theme,
-// and proves the whole loop works end to end. Mission Control, the library,
-// the slide-over and every modal land in the units after it
-// (docs/plans/2026-08-31-webui-impl.md §Units).
+// components/app.js - the root component: routes to the game chooser or
+// Mission Control, and carries the one thing every route needs before
+// either has anything to say - the theme toggle.
 
 import { html } from "../render.js";
 import { currentTheme, cycleTheme } from "../theme.js";
+import { GameChooser } from "./gamechooser.js";
+import { MissionControl } from "./missioncontrol.js";
 
-/**
- * The one fact Unit 1 renders FROM the hydrated document, so that "the
- * store fetched /api/v1/status" is observable in the DOM and not only in
- * the network tab. It is what the browser E2E asserts on (e2e_test.go): the
- * URL carries the game's ID, this line carries its NAME, which nothing but
- * the fetched document knows. Mission Control replaces the whole component
- * in Unit 2.
- *
- * A scoped route answers core.GameStatus, which embeds the game (so it has
- * a name); the chooser route answers core.StatusReport, which is a list of
- * games and has no name of its own.
- */
-function hydratedSummary(status) {
-  if (status.name) {
-    return `${status.name}: ready.`;
-  }
-  const games = status.games?.length ?? 0;
-  return `${games} game${games === 1 ? "" : "s"} configured.`;
+/** ComingSoon answers the two routes this unit's screens don't render yet -
+ * the full mod page and the search page (Units 4 and 5) - so a direct link
+ * into either is a real page rather than a blank one. */
+function ComingSoon({ route }) {
+  const label = route.view === "search" ? "Search" : "The full mod page";
+  return html`<p class="app-booting">${label} lands in a later unit.</p>`;
 }
 
-/** The application root: reads the route and the hydrated status document. */
+/** The application root: reads the route and dispatches to its screen. The
+ * chooser owns its own minimal header (no game/profile context exists yet);
+ * Mission Control's top bar carries the theme toggle for every other route. */
 export function App({ state, onThemeChange }) {
-  const { route, status, error } = state;
+  const { route, error } = state;
+
+  if (route.view === "home") {
+    return html`<${MissionControl}
+      state=${state}
+      onThemeChange=${onThemeChange}
+    />`;
+  }
 
   return html`
-    <header class="app-bar">
-      <h1 class="app-title">lmm</h1>
+    <header class="app-bar app-bar--minimal">
+      <span class="app-bar__brand">LMM</span>
       <button
         type="button"
         class="theme-toggle"
@@ -47,15 +43,8 @@ export function App({ state, onThemeChange }) {
       ${error && html`<p class="app-error">${error}</p>`}
       ${
         route.view === "chooser"
-          ? html`<p class="section-header">Choose a game</p>`
-          : html`<p class="section-header">${route.game} / ${route.profile}</p>`
-      }
-      ${
-        status === null
-          ? html`<p class="app-booting">Loading&#8230;</p>`
-          : html`<p class="app-ready" data-hydrated="true">
-              ${hydratedSummary(status)}
-            </p>`
+          ? html`<${GameChooser} games=${state.games} />`
+          : html`<${ComingSoon} route=${route} />`
       }
     </main>
   `;

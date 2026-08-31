@@ -1,0 +1,109 @@
+// modrows.js - pure library-table logic: joining the four /api/v1 documents
+// Mission Control's library reads into one row per mod, plus the filtering,
+// sorting and undeployed-change counting the top bar and library controls
+// need (docs/plans/2026-08-31-serve-spa-design.md §Mission Control:
+// "Library"). Extracted from the rendering component so it has no DOM to
+// drive - the SPA has no JS test runner (no Node anywhere), so this is
+// exercised through the library component's chromedp scenarios, but keeping
+// the join and the predicates pure is what makes that coverage mean
+// anything: a rendering bug and a join bug cannot hide behind each other.
+
+/** The wire key a mod is addressed by everywhere but the URL (domain.ModKey:
+ * "sourceID:modID") - core.ConflictModRef.Key and every /api/v1/updates row
+ * key off it the same way. */
+export function modKey(mod) {
+  return `${mod.source_id}:${mod.id}`;
+}
+
+/**
+ * Builds one library row per installed mod (mods: core.ModList's own "mods"
+ * array, already in the profile's load order): the ModListing fields
+ * verbatim, plus the derived badges no single document carries alone,
+ * cross-referenced by the same keys their owning documents use.
+ *
+ *   - updates: core.UpdateCheckReport's "updates" array (domain.Update),
+ *     keyed by its embedded installed_mod.
+ *   - findings: core.VerifyResult's "findings" array (core.VerifyFinding),
+ *     matched by mod_id - the wire format carries no source, so within one
+ *     profile this assumes mod IDs don't collide across sources, the same
+ *     assumption the finding itself already makes.
+ *   - conflicts: core.ConflictReport's "conflicts" array (core.
+ *     ProfileConflict), matched by the owner/also_in ConflictModRef keys.
+ */
+export function buildRows(mods, updates, findings, conflicts) {
+  const updateByKey = new Map(
+    (updates ?? []).map((u) => [modKey(u.installed_mod), u]),
+  );
+  const unhealthyIDs = new Set(
+    (findings ?? []).filter((f) => f.status !== "ok").map((f) => f.mod_id),
+  );
+  const conflictKeys = new Set();
+  for (const c of conflicts ?? []) {
+    conflictKeys.add(c.owner.key);
+    for (const also of c.also_in) conflictKeys.add(also.key);
+  }
+
+  return (mods ?? []).map((mod, index) => {
+    const key = modKey(mod);
+    const update = updateByKey.get(key);
+    return {
+      ...mod,
+      key,
+      loadOrder: index + 1,
+      hasUpdate: Boolean(update),
+      updateTarget: update?.new_version ?? "",
+      hasHealthIssue: unhealthyIDs.has(mod.id),
+      hasConflict: conflictKeys.has(key),
+    };
+  });
+}
+
+// filterPredicates backs the library's filter control. "load-order" has no
+// entry in SORT_PREDICATES below for the identical reason: it is the input
+// order, not a comparator.
+const filterPredicates = {
+  all: () => true,
+  enabled: (row) => row.enabled,
+  updatable: (row) => row.hasUpdate,
+  unhealthy: (row) => row.hasHealthIssue,
+};
+
+/** The filter control's options, in display order. */
+export const FILTER_NAMES = Object.keys(filterPredicates);
+
+/** Applies the named filter (an unknown name behaves as "all"). */
+export function filterRows(rows, filter) {
+  return rows.filter(filterPredicates[filter] ?? filterPredicates.all);
+}
+
+// sortComparators backs the library's sort control. "recent" orders by
+// InstalledAt descending - the wire's own name for the moment a mod joined
+// the library - matching the design doc's "recently-updated" name for what
+// this control moves in a local install's own timeline.
+const sortComparators = {
+  name: (a, b) => a.name.localeCompare(b.name),
+  recent: (a, b) => new Date(b.installed_at) - new Date(a.installed_at),
+};
+
+/** The sort control's options, in display order. */
+export const SORT_NAMES = ["load-order", ...Object.keys(sortComparators)];
+
+/** Applies the named sort; "load-order" (and any unknown name) is a no-op -
+ * the rows already arrived in load order. */
+export function sortRows(rows, sort) {
+  const cmp = sortComparators[sort];
+  return cmp ? [...rows].sort(cmp) : rows;
+}
+
+/**
+ * Counts installed mods whose desired state (Enabled) disagrees with what is
+ * actually on disk (Deployed) - the top bar's undeployed-changes indicator.
+ * Both fields live on every ModListing already; nothing else needs fetching
+ * to answer this.
+ */
+export function countUndeployed(mods) {
+  return (mods ?? []).reduce(
+    (n, m) => n + (m.enabled !== m.deployed ? 1 : 0),
+    0,
+  );
+}
