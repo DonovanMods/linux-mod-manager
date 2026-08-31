@@ -1,27 +1,27 @@
-// mutations.go wires the single-mod mutation flows
-// (docs/plans/2026-08-30-serve-impl.md Task 8, #322) onto the form shells
-// Task 4 rendered: enable, disable, uninstall and install.
+// mutations.go wires every browser mutation flow onto the form shells Task
+// 4 rendered: enable, disable, uninstall and install
+// (docs/plans/2026-08-30-serve-impl.md Task 8, #322), then the updates
+// batch, profile switch/apply, deploy and health repair (Task 9, #322).
 //
 // The shape every flow follows is the design's
 // (docs/plans/2026-08-30-serve-design.md §"Mutations: Plan -> confirm ->
-// Apply"):
+// Apply"), where {route} is the flow's own POST route:
 //
-//	POST /mods/{source}/{id}/{kind}                 -> compute the Plan,
-//	                                                   store it, render the
-//	                                                   confirm page
-//	POST /mods/{source}/{id}/{kind}  (confirm=1)    -> redeem the plan_id,
-//	                                                   start the Apply as a
-//	                                                   job, 303 to /jobs/{id}
-//	POST /mods/{source}/{id}/{kind}?sync=1 (confirm=1) -> run the Apply
-//	                                                   inline and render the
-//	                                                   result (the no-JS
-//	                                                   fallback; identical
-//	                                                   end state)
+//	POST {route}                     -> compute the Plan, store it, render
+//	                                    the confirm page
+//	POST {route}  (confirm=1)        -> redeem the plan_id, start the Apply
+//	                                    as a job, 303 to /jobs/{id}
+//	POST {route}?sync=1 (confirm=1)  -> run the Apply inline and render the
+//	                                    result (the no-JS fallback;
+//	                                    identical end state)
 //
-// One route per flow, not a plan route plus a separate confirm route: the
-// target lives in the PATH, so a confirm submission can never name a
-// different mod than the page it was rendered from, and the confirm form's
-// action is simply the URL it came from.
+// One route per flow, not a plan route plus a separate confirm route: a
+// confirm page posts back to the very URL it was rendered from, so a
+// submission can never name a different target than the page it came from.
+// What identifies that target differs per flow and is never in the body -
+// the path for a mod (/mods/{source}/{id}/install) or a profile
+// (/profiles/{name}/switch), and the resolved game+profile selection for
+// the batch and health flows.
 //
 // Two recoveries are first-class rather than dead ends, because both are
 // states an ordinary user reaches by doing nothing wrong:
@@ -92,9 +92,20 @@ const (
 // (kindForm) - but the raw submitted form is carried so a failed job's page
 // can re-offer the identical request as one click.
 type mutationRequest struct {
-	// Kind is the flow: "enable", "disable", "install", "uninstall".
+	// Kind is the flow: "enable", "disable", "install", "uninstall",
+	// "updates", "switch", "profile_apply", "deploy", "verify_fix".
 	Kind string
-	// SourceID and ModID are the target, taken from the path.
+	// Action is the route this submission arrived at - where its confirm
+	// page and any recovery action post back to. It is taken from the
+	// request's own escaped path rather than rebuilt from the target,
+	// because Task 9's flows are not mod-scoped: /updates/apply and
+	// /profiles/{name}/switch have no {source}/{id} to rebuild from, and a
+	// second path-shaped convention per flow is exactly the drift the
+	// one-route-per-flow rule exists to avoid.
+	Action string
+	// SourceID and ModID are the target of a mod-scoped flow, taken from
+	// the path. Both are empty for the batch, profile and health flows,
+	// whose target is the selection (or the path's {name}) instead.
 	SourceID string
 	ModID    string
 	// Game and Profile are the resolved selection's values, carried as
@@ -134,6 +145,7 @@ func parseMutationRequest(r *http.Request, kind string) mutationRequest {
 
 	return mutationRequest{
 		Kind:     kind,
+		Action:   r.URL.EscapedPath(),
 		SourceID: r.PathValue("source"),
 		ModID:    r.PathValue("id"),
 		Game:     r.FormValue(gameParam),
@@ -161,7 +173,7 @@ func formFlag(r *http.Request, name string) bool {
 // actionPath is the route this request was submitted to - also where its
 // confirm page and any recovery action post back to.
 func (req mutationRequest) actionPath() string {
-	return "/mods/" + url.PathEscape(req.SourceID) + "/" + url.PathEscape(req.ModID) + "/" + req.Kind
+	return req.Action
 }
 
 // recoveryFields renders the original submission as the hidden fields a
@@ -210,6 +222,29 @@ func (s *Server) handleModEnable(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleModDisable(w http.ResponseWriter, r *http.Request) {
 	s.handleToggleMutation(w, r, "disable")
+}
+
+// handleUpdatesApply answers POST /updates/apply - #74's batch: the
+// /updates checkbox set becomes ONE plan, ONE confirm page and ONE job
+// (kind_updates.go).
+//
+// The empty selection is answered HERE rather than inside the kind because
+// it is not a failure and not a plan: submitting the table with nothing
+// ticked is an ordinary slip, and the honest response is a page saying so.
+// Planning a batch of nothing would instead hand the user a confirm page
+// offering to do nothing, and refusing it would dress a slip up as an
+// error.
+func (s *Server) handleUpdatesApply(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	if len(r.Form[updateModField]) == 0 {
+		sel, ok := s.resolveReadyPageSelection(w, r)
+		if !ok {
+			return
+		}
+		s.renderMutationNotice(w, r, sel, "Update", "No mods were selected, so nothing was updated. Tick the mods you want and submit again.")
+		return
+	}
+	s.handlePlannedMutation(w, r, "updates")
 }
 
 // handleModInstall and handleModUninstall answer the two planned routes.
@@ -491,6 +526,11 @@ type resultPageData struct {
 	Failed  bool
 	Message string
 	Details string
+	// Notice replaces the "Done." banner on a successful page that did
+	// nothing on purpose - a submission with nothing selected. It is not a
+	// failure (nothing went wrong) and not a success (nothing happened), and
+	// saying "Done." to either would be a lie.
+	Notice string
 	// Facts is a successful Apply's readout (the kind's Summarize).
 	Facts []resultFact
 }
@@ -504,6 +544,17 @@ func (s *Server) renderMutationResult(w http.ResponseWriter, r *http.Request, se
 		pageChrome: s.chrome(r, title, &sel),
 		KindTitle:  title,
 		Facts:      facts,
+	})
+}
+
+// renderMutationNotice renders a mutation that deliberately did nothing -
+// see resultPageData.Notice. It is a 200: the request was understood and
+// answered, it simply asked for no work.
+func (s *Server) renderMutationNotice(w http.ResponseWriter, r *http.Request, sel selection, title, notice string) {
+	s.render(w, resultTemplate, resultPageData{
+		pageChrome: s.chrome(r, title, &sel),
+		KindTitle:  title,
+		Notice:     notice,
 	})
 }
 

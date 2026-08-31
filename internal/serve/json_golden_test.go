@@ -192,6 +192,51 @@ func TestServeJSONGoldens(t *testing.T) {
 			uninstallApplyRequest{KeepCache: true, Force: true, SkipHooks: true},
 		},
 		{
+			// #74's batch, both halves of its options plus the two
+			// documents it owns: there is no core batch flow (`lmm update`
+			// loops over one-mod plans), so the SELECTION and the
+			// per-mod report are serve's own wire surface.
+			"updates_plan_request",
+			updatesPlanRequest{Mods: []string{"fake:m1", "fake:m2"}},
+		},
+		{
+			"updates_apply_request",
+			updatesApplyRequest{Force: true, SkipHooks: true},
+		},
+		{
+			"updates_batch_plan",
+			updatesBatchPlan{
+				GameID:  "g1",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "m1", SourceID: "fake", Name: "Mod One", Version: "1.0", GameID: "g1"},
+						ProfileName: "default",
+						Enabled:     true,
+					},
+					NewVersion: "2.0",
+				}},
+				NotFound: []string{"fake:m9"},
+			},
+		},
+		{
+			"updates_batch_result",
+			updatesBatchResult{
+				Applied: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "fake", ModID: "m1"},
+					Name:        "Mod One",
+					FromVersion: "1.0",
+					ToVersion:   "2.0",
+					Status:      core.UpdateUpdated,
+				}},
+				Failed: []updateBatchFailure{{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"}},
+			},
+		},
+		{
+			"update_batch_failure",
+			updateBatchFailure{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",

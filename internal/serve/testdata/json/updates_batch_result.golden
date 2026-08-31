@@ -1,0 +1,22 @@
+{
+  "applied": [
+    {
+      "mod": {
+        "source_id": "fake",
+        "mod_id": "m1",
+        "locked": false
+      },
+      "name": "Mod One",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "updated"
+    }
+  ],
+  "failed": [
+    {
+      "mod": "fake:m2",
+      "name": "Mod Two",
+      "error": "mod is locked"
+    }
+  ]
+}

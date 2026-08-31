@@ -1,0 +1,5 @@
+{
+  "mod": "fake:m2",
+  "name": "Mod Two",
+  "error": "mod is locked"
+}

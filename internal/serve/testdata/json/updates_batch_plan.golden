@@ -1,0 +1,38 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "updates": [
+    {
+      "installed_mod": {
+        "id": "m1",
+        "source_id": "fake",
+        "name": "Mod One",
+        "version": "1.0",
+        "author": "",
+        "summary": "",
+        "description": "",
+        "game_id": "g1",
+        "category": "",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "",
+        "files": [],
+        "dependencies": [],
+        "profile_name": "default",
+        "update_policy": "notify",
+        "installed_at": "0001-01-01T00:00:00Z",
+        "enabled": true,
+        "deployed": false,
+        "link_method": "symlink",
+        "manual_download": false,
+        "convert_paks": false
+      },
+      "new_version": "2.0",
+      "recompile_needed": false,
+      "locked": false
+    }
+  ],
+  "not_found": [
+    "fake:m9"
+  ]
+}

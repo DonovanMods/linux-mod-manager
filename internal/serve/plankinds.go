@@ -144,6 +144,15 @@ type confirmView struct {
 	// Submit is the primary button's label ("Install", "Uninstall").
 	Submit string
 
+	// Hidden are extra fields the confirm form must carry back verbatim -
+	// the part of a submission that is neither an option the page offers
+	// nor something the route's own path already says. #74's batch needs
+	// it: the ticked mod set arrived as repeated form fields, so without
+	// carrying them the "Update plan" button would re-plan an empty
+	// selection. A mod-scoped flow leaves it nil, since its target is in
+	// the path.
+	Hidden []queryParam
+
 	// AcceptConflicts reports that this kind's apply options ALREADY carry
 	// the overwrite decision - i.e. the user has been through a conflict
 	// refusal once. It is what keeps that decision sticky across a re-plan

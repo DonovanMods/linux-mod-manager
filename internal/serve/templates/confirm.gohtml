@@ -57,6 +57,7 @@
 {{if .Profile}}<input type="hidden" name="profile" value="{{.Profile}}">{{end}}
 {{end}}
 {{if .Overwrite}}<input type="hidden" name="accept_conflicts" value="1">{{end}}
+{{range .View.Hidden}}<input type="hidden" name="{{.Key}}" value="{{.Value}}">{{end}}
 
 {{if .View.Versions}}
 <div class="mb-3">

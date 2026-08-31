@@ -27,6 +27,10 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /mods/{source}/{id}/disable", s.wrap(s.handleModDisable))
 	s.mux.Handle("POST /mods/{source}/{id}/install", s.wrap(s.handleModInstall))
 	s.mux.Handle("POST /mods/{source}/{id}/uninstall", s.wrap(s.handleModUninstall))
+	// Task 9's batch, profile and health mutations. Same shape, different
+	// targets: the selection (updates), the path's {name} (profiles), or the
+	// resolved game+profile itself (health).
+	s.mux.Handle("POST /updates/apply", s.wrap(s.handleUpdatesApply))
 	s.mux.Handle("GET /api/v1/status", s.wrap(s.handleAPIStatus))
 	s.mux.Handle("GET /api/v1/mods", s.wrap(s.handleAPIMods))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))
