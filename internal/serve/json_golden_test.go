@@ -152,6 +152,22 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #226's uninstall options, both halves: what the PLAN is
+			// computed with, and what the confirm page's checkboxes finally
+			// apply.
+			"uninstall_plan_request",
+			uninstallPlanRequest{
+				ModID:     "m1",
+				SourceID:  "fake",
+				KeepCache: true,
+				SkipHooks: true,
+			},
+		},
+		{
+			"uninstall_apply_request",
+			uninstallApplyRequest{KeepCache: true, Force: true, SkipHooks: true},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",

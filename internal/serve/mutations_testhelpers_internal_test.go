@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -91,4 +92,38 @@ func awaitRedirectedJob(t *testing.T, s *Server, rec *httptest.ResponseRecorder)
 		t.Fatal("job did not finish")
 	}
 	return j
+}
+
+// deployFixtureProfile runs a REAL deploy of the fixture profile, so the
+// deployed_files rows a conflict check reads and the game-dir file an
+// uninstall removes both genuinely exist. It goes through the plan/apply
+// pair (never DeployProfile, the Ruling-10 convenience wrapper) for the same
+// reason serve itself does.
+func deployFixtureProfile(t *testing.T, s *Server, game *domain.Game) {
+	t.Helper()
+	plan, err := s.svc.PlanDeploy(t.Context(), game, "default", core.DeployOptions{})
+	require.NoError(t, err)
+	_, err = s.svc.ApplyDeploy(t.Context(), game, plan, core.DeployOptions{}, nil)
+	require.NoError(t, err)
+}
+
+// planIDPattern matches the confirm page's hidden plan_id field, whose value
+// is newPlanID's 16 random bytes in hex.
+var planIDPattern = regexp.MustCompile(`name="plan_id" value="([0-9a-f]{32})"`)
+
+// confirmPlanID drives one flow's ENTRY submission and returns the plan_id
+// its confirm page was rendered with - the handle a test's confirm
+// submission then redeems, exactly as a browser would.
+func confirmPlanID(t *testing.T, s *Server, game *domain.Game, kind string, extra formValues) string {
+	t.Helper()
+	values := formValues{"game": game.ID, "profile": "default"}
+	for k, v := range extra {
+		values[k] = v
+	}
+	rec := postForm(s, "/mods/fake/m1/"+kind, values)
+	require.Equal(t, http.StatusOK, rec.Code, "entry submission did not render a confirm page: %s", rec.Body.String())
+
+	match := planIDPattern.FindStringSubmatch(rec.Body.String())
+	require.Len(t, match, 2, "confirm page carried no plan_id")
+	return match[1]
 }
