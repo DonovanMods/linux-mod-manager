@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -61,6 +63,27 @@ func tokenFrom(r *http.Request) string {
 	}
 	_ = r.ParseForm()
 	return r.PostForm.Get(csrfFormField)
+}
+
+// isAPIPath reports whether path is under the /api/v1 subtree.
+func isAPIPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/")
+}
+
+// forbidden answers a 403 the same envelope every other /api/v1 failure
+// uses when r's path is under the API tree (epic live review M1: a CSRF or
+// Origin rejection on /api/v1 previously answered a bare text/plain
+// http.Error, the one failure shape the README's unconditional "the CLI's
+// {"error","details"} envelope on failure" claim didn't actually hold for -
+// every other API failure already goes through writeAPIError). A page
+// route's rejection keeps the plain-text http.Error a browser's own error
+// page (or a no-JS form submission) is equipped to show.
+func (s *Server) forbidden(w http.ResponseWriter, r *http.Request, msg string) {
+	if isAPIPath(r.URL.Path) {
+		s.writeAPIError(w, http.StatusForbidden, errors.New(msg))
+		return
+	}
+	http.Error(w, msg, http.StatusForbidden)
 }
 
 // unsafeMethod reports whether m is a state-changing HTTP method - the
@@ -314,7 +337,7 @@ func (s *Server) originCheck(next http.Handler) http.Handler {
 			if origin := r.Header.Get("Origin"); origin != "" {
 				expected := "http://" + r.Host
 				if origin != expected {
-					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+					s.forbidden(w, r, "cross-origin request rejected")
 					return
 				}
 			}
@@ -329,7 +352,7 @@ func (s *Server) originCheck(next http.Handler) http.Handler {
 func (s *Server) csrfCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if unsafeMethod(r.Method) && !s.csrf.valid(tokenFrom(r)) {
-			http.Error(w, "missing or invalid CSRF token", http.StatusForbidden)
+			s.forbidden(w, r, "missing or invalid CSRF token")
 			return
 		}
 		next.ServeHTTP(w, r)
