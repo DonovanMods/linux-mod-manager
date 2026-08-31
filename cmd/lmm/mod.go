@@ -646,6 +646,11 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	}
 	mod := detail.Mod
 
+	// #87/#318: Notes carries best-effort degradations (e.g. a failed
+	// changelog fetch) - printModNotes' own --verbose gate applies here too,
+	// same as every other Notes-bearing command.
+	printModNotes(detail.Notes)
+
 	// #86: the raw source description survives onto the wire (--json is a
 	// machine contract); only the human rendering below cleans it.
 	if jsonOutput {

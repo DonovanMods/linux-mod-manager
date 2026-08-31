@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -170,6 +171,40 @@ func TestDoModShow_ChangelogSection(t *testing.T) {
 			return doModShow(context.Background(), svc, game, "a")
 		})
 		assert.NotContains(t, out, "Changelog:")
+	})
+}
+
+// TestDoModShow_NotesRenderUnderVerbose (#87/#318, task-2 review Important
+// #1): ModDetail.Notes carries best-effort degradations (a failed changelog
+// fetch, today) - doModShow renders them through printModNotes, so they
+// follow that helper's established --verbose gate (deploy_test.go, mod
+// enable/disable) rather than appearing unconditionally or not at all.
+func TestDoModShow_NotesRenderUnderVerbose(t *testing.T) {
+	oldVerbose := verbose
+	t.Cleanup(func() { verbose = oldVerbose })
+
+	t.Run("without --verbose: note is suppressed", func(t *testing.T) {
+		verbose = false
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+		src.changelogErr = errors.New("upstream timeout")
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assert.NotContains(t, out, "changelog unavailable")
+	})
+
+	t.Run("with --verbose: note renders", func(t *testing.T) {
+		verbose = true
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+		src.changelogErr = errors.New("upstream timeout")
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assert.Contains(t, out, "changelog unavailable: upstream timeout")
 	})
 }
 
