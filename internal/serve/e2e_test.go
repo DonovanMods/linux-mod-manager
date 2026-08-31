@@ -236,6 +236,7 @@ func TestE2E_LibraryFilterNarrowsRows(t *testing.T) {
 
 	var names []string
 	var afterCount int
+	var header string
 	f.runInBrowser(t,
 		chromedp.SetValue(`select[name="filter"]`, "enabled", chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelectorAll(".mod-row").length`, &afterCount),
@@ -243,10 +244,41 @@ func TestE2E_LibraryFilterNarrowsRows(t *testing.T) {
 			`Array.from(document.querySelectorAll(".mod-row__name")).map(e => e.textContent)`,
 			&names,
 		),
+		textContent(`.library .section-header`, &header),
 	)
 
 	assert.Equal(t, 2, afterCount, "only the two enabled mods must remain")
 	assert.ElementsMatch(t, []string{"Alpha Mod", "Zebra Mod"}, names)
+	assert.Equal(t, "Library (2)", header,
+		"M3: the header must count the FILTERED rows, not every installed mod")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_OmnibarNarrowsAndRelabelsLibraryHeader covers the design doc's
+// third "Missing" item: the omnibar's live filter already narrowed the
+// table, but the header stayed "LIBRARY (3)" instead of the design's own
+// "In your library (n)" (§Search).
+func TestE2E_OmnibarNarrowsAndRelabelsLibraryHeader(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var before string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		textContent(`.library .section-header`, &before),
+	)
+	require.Equal(t, "Library (3)", before)
+
+	var after string
+	var rowCount int
+	f.runInBrowser(t,
+		chromedp.SendKeys(`.omnibar`, "alpha", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".mod-row").length`, &rowCount),
+		textContent(`.library .section-header`, &after),
+	)
+
+	require.Equal(t, 1, rowCount)
+	assert.Equal(t, "In your library (1)", after)
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -444,5 +476,7 @@ func TestE2E_AttentionCardsRenderFromSeededFixture(t *testing.T) {
 	assert.Contains(t, updates, "2.0", "the update target version must be named")
 	assert.Contains(t, health, "Better Boots", "the version-mismatch finding must name the mod")
 	assert.Contains(t, conflicts, "shared.esp", "the conflicting path must be named")
+	assert.Contains(t, conflicts, "wins: Mod Y",
+		"the spec's Missing 2: a conflict must name the winning rule, not just the contenders (Mod Y was added to the load order last)")
 	assert.Empty(t, f.BrowserErrors())
 }

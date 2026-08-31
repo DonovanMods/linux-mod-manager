@@ -109,6 +109,13 @@ function UpdatesCard({ rows, error, onRetry }) {
   `;
 }
 
+// HealthCard carries the design doc's "re-run" (onReverify, a plain
+// re-fetch of /api/v1/health - it also doubles as the I3 CardError retry
+// above). Its sibling "last-verify timestamp" is NOT implemented:
+// core.VerifyResult carries no timestamp field, and adding one is a wire
+// change (core/testdata JSON goldens, the serve JSON-contract ratchet) this
+// unit's gate explicitly keeps frozen - filed as a follow-up core change
+// rather than silently dropped.
 function HealthCard({ findings, result, error, onReverify }) {
   return html`
     <div class="card card--health">
@@ -185,6 +192,18 @@ function healthLabel(f) {
   return f.note || f.status.replaceAll("_", " ");
 }
 
+/** conflictLabel names the contenders AND the winning rule (design doc:
+ * "each conflict names the contenders and the winning rule") - built as one
+ * plain string rather than split across template-literal lines, which
+ * htm's JSX-style whitespace collapsing would otherwise eat between two
+ * adjacent interpolations (a real trap: a `trunk fmt` reflow silently
+ * dropped the space that used to separate "wins:" from the name here). */
+function conflictLabel(c) {
+  const also = c.also_in.map((m) => m.name).join(", ");
+  const label = `${c.owner.name} ↔ ${also} · wins: ${c.load_order_winner.name}`;
+  return c.stale ? `${label} (stale)` : label;
+}
+
 function ConflictsCard({ rows, error, onRetry }) {
   return html`
     <div class="card card--conflicts">
@@ -201,9 +220,10 @@ function ConflictsCard({ rows, error, onRetry }) {
                 ${rows.map(
                   (c) => html`
                     <li key=${c.path} class="card__row">
-                      <span class="card__row-name"
-                        >${c.owner.name} ↔
-                        ${c.also_in.map((m) => m.name).join(", ")}</span
+                      <span
+                        class="card__row-name"
+                        title=${c.stale ? "A redeploy would change which file wins" : undefined}
+                        >${conflictLabel(c)}</span
                       >
                       <span class="mono card__row-detail">${c.path}</span>
                       <button

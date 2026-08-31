@@ -120,10 +120,19 @@ export function Library({
     `;
   }
 
+  // The design's own name for this count while the omnibar is narrowing the
+  // table ("In your library (n)" - §Search); the plain filter/sort controls
+  // keep the section's usual "Library (n)" heading. Either way it counts
+  // `visible`, not `rows` - M3: the header used to ignore the Filter
+  // dropdown entirely, staying "Library (3)" under a filtered-to-one table.
+  const libraryLabel = (query ?? "").trim()
+    ? `In your library (${visible.length})`
+    : `Library (${visible.length})`;
+
   return html`
     <section class="library">
       <div class="library__toolbar">
-        <p class="section-header">Library (${rows.length})</p>
+        <p class="section-header">${libraryLabel}</p>
         <label class="library__control">
           Filter
           <select
