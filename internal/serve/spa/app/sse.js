@@ -41,8 +41,18 @@ export function followJob(id, { onEvent, onDone, onError } = {}) {
   // A typed core event always arrives under its OWN `event:` name (sse.go
   // sets it from Event.EventType()), never the default "message", and
   // EventSource has no wildcard - so each type is attached by name.
+  //
+  // The data line is core.MarshalEvent's FIXED ENVELOPE - {"type": …,
+  // "data": …} - not the event payload on its own, so the type is carried
+  // twice (once as the frame name, once inside) and the payload is one
+  // level down. Unwrapping here is what lets a caller receive {type, data}
+  // with data being the event's own members: a caller handed the raw
+  // envelope as `data` finds no phase, no mod and no position on it, and
+  // renders every event as its bare type - which is exactly what the first
+  // consumer of this function saw.
   const forward = (frame) => {
-    onEvent?.({ type: frame.type, data: JSON.parse(frame.data) });
+    const envelope = JSON.parse(frame.data);
+    onEvent?.({ type: envelope.type ?? frame.type, data: envelope.data });
   };
   for (const type of jobEventTypes) {
     source.addEventListener(type, forward);

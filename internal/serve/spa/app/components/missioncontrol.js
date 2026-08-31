@@ -3,6 +3,7 @@
 // (docs/plans/2026-08-31-serve-spa-design.md §Mission Control).
 
 import { html, useState } from "../render.js";
+import { progressText } from "../progress.js";
 import { navigate, contextPath } from "../router.js";
 import { TopBar } from "./topbar.js";
 import { AttentionCards } from "./cards.js";
@@ -51,6 +52,16 @@ export function MissionControl({ state, onThemeChange, actions }) {
     return html`<p class="app-booting">Loading&#8230;</p>`;
   }
 
+  // The live line the library's own header carries while ANY job is
+  // running - the design's "cards show live counts" (§Jobs), applied to the
+  // surface this unit actually has a running job over. It reads the same
+  // frame the morphing control does, so the two can never disagree about
+  // where a deploy has got to.
+  const runningJob = (state.jobsIndex ?? []).find((j) => j.state === "running");
+  const liveActivity = runningJob
+    ? progressText(state.jobProgress?.[runningJob.id])
+    : "";
+
   return html`
     <div class="mission-control" data-hydrated="true">
       <${TopBar}
@@ -77,6 +88,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
           updates=${updates}
           health=${health}
           conflicts=${conflicts}
+          liveActivity=${liveActivity}
           query=${query}
           error=${fetchErrors?.mods}
           onRetry=${actions.reloadMods}

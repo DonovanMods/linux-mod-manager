@@ -36,6 +36,7 @@ export function Library({
   updates,
   health,
   conflicts,
+  liveActivity,
   query,
   error,
   onRetry,
@@ -134,6 +135,10 @@ export function Library({
     <section class="library">
       <div class="library__toolbar">
         <p class="section-header">${libraryLabel}</p>
+        ${
+          liveActivity &&
+          html`<span class="library__live" role="status">${liveActivity}</span>`
+        }
         <label class="library__control">
           Filter
           <select

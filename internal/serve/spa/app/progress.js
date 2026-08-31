@@ -137,15 +137,54 @@ function clamp(value) {
  *
  * "Queued" is not a registry state - core's beginOp serialises mutations by
  * BLOCKING, so a job waiting for the mutation slot is in state running
- * while doing nothing (activity.go's jobSummary doc comment). The only
- * signal available is EventCount: a running job that has emitted nothing
- * has not started working yet. It is a heuristic, it is named as one there,
- * and this is the single place the UI applies it.
+ * while doing nothing (activity.go's jobSummary doc comment). The signals
+ * available are EventCount and, once one arrives, a progress frame: either
+ * says the job has started working. Both are needed, because a SUMMARY is
+ * only refreshed at the job's start and end - its event_count stays at the
+ * value it had when the job was admitted (0) for the job's whole life, so
+ * the count alone would label every running job "queued" from the moment it
+ * began until the moment it ended.
+ *
+ * It is a heuristic, it is named as one in activity.go, and this is the
+ * single place the UI applies it.
  */
-export function jobStateLabel(summary) {
+export function jobStateLabel(summary, frame) {
   if (!summary) return "";
   if (summary.state === "running") {
-    return (summary.event_count ?? 0) === 0 ? "queued" : "running";
+    const working = (summary.event_count ?? 0) > 0 || Boolean(frame);
+    return working ? "running" : "queued";
   }
   return summary.state;
+}
+
+/**
+ * Normalizes one RAW core event from the per-job stream into the same flat
+ * shape a jobProgressFrame has, so both streams render through the one
+ * vocabulary above.
+ *
+ * The two streams carry the same facts in two envelopes on purpose: the
+ * multiplexed stream summarises (activity.go's jobProgressFrame), the
+ * per-job stream carries core.MarshalEvent's {"type","data"} verbatim for
+ * whoever opened a job. Flattening here - rather than teaching every
+ * renderer both shapes - is what keeps the second copy of core's event
+ * vocabulary out of this application.
+ *
+ * data's members are the event struct's own json tags: Scope is embedded,
+ * so op/mod_name/index/total are flat on it, and the human line is `detail`
+ * on most types but `message` on a WarningEvent.
+ */
+export function frameFromEvent({ type, data } = {}) {
+  const event = data ?? {};
+  return {
+    type,
+    phase: event.phase,
+    op: event.op,
+    mod_name: event.mod_name,
+    index: event.index,
+    total: event.total,
+    detail: event.detail ?? event.message,
+    percent: event.percent,
+    downloaded: event.downloaded,
+    total_bytes: event.total_bytes,
+  };
 }

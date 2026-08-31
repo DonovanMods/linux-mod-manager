@@ -930,6 +930,7 @@ func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
 				progressText({ type: "download", phase: "deploy_downloading", mod_name: "Alpha Mod", percent: 42.7, total_bytes: 1048576 }),
 				progressText({ type: "download", phase: "deploy_downloading", downloaded: 3145728 }),
 				jobStateLabel({ state: "running", event_count: 0 }),
+				jobStateLabel({ state: "running", event_count: 0 }, { phase: "deploy_deployed" }),
 				jobStateLabel({ state: "running", event_count: 3 }),
 				jobStateLabel({ state: "failed" }),
 				formatBytes(0),
@@ -939,7 +940,7 @@ func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
 		}),
 	)
 
-	require.Len(t, got, 13)
+	require.Len(t, got, 14)
 	assert.Equal(t, "Deployed", got[0])
 	assert.Equal(t, "Merge synced", got[1])
 	assert.Equal(t, "Dependency installing", got[2],
@@ -954,8 +955,198 @@ func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
 		"a Content-Length-less download has no percent to show, only bytes")
 	assert.Equal(t, "queued", got[9],
 		"a running job that has emitted nothing has not started working (activity.go's heuristic)")
-	assert.Equal(t, "running", got[10])
-	assert.Equal(t, "failed", got[11])
-	assert.Empty(t, got[12])
+	assert.Equal(t, "running", got[10],
+		"a frame proves the job is working even though its summary's event_count is frozen at 0")
+	assert.Equal(t, "running", got[11])
+	assert.Equal(t, "failed", got[12])
+	assert.Empty(t, got[13])
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_TrayShowsARunningJobWithProgress opens the activity tray DURING a
+// job, which is the state it exists for: the bell badge counts what is
+// happening, the tray groups it under Running, and the row carries the same
+// humanized phase the morphing control does - from the multiplexed session
+// stream, which is open whether the tray is or not.
+//
+// The library's own header carries the live line too (the design's "cards
+// show live counts"), asserted here because the two read the same frame and
+// a divergence between them is the bug worth catching.
+func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
+	f := newE2EFixtureWithSlowDeploy(t)
+
+	var badge, kind, detail, live string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
+		textContent(`.activity-bell__count`, &badge),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row[data-state="running"]`, chromedp.ByQuery),
+		textContent(`.tray__row[data-state="running"] .tray__kind`, &kind),
+		textContent(`.tray__row[data-state="running"] .tray__detail`, &detail),
+		textContent(`.library__live`, &live),
+	)
+
+	assert.Equal(t, "1", badge, "the bell counts what is happening")
+	assert.Equal(t, "deploy", kind)
+	assert.Contains(t, detail, "of 2", "a running row carries its progress, not just its state")
+	assert.Contains(t, live, "of 2", "the library's live line reads the same frame")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_TrayEntryExpandsToTheEventStream is the "full path one click
+// away" half: an entry opens onto that job's own phase-by-phase events,
+// which is a SECOND stream (GET /api/v1/jobs/{id}/events) opened only for
+// the entry that was opened. A finished job replays its retained ring, so
+// this is history as much as it is live progress.
+func TestE2E_TrayEntryExpandsToTheEventStream(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var events []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row[data-state="succeeded"] .tray__summary`, chromedp.ByQuery),
+		chromedp.Click(`.tray__row[data-state="succeeded"] .tray__summary`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__event:not(.tray__event--empty)`, chromedp.ByQuery),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll(".tray__event")).map(e => e.textContent.trim())`, &events),
+	)
+
+	require.NotEmpty(t, events)
+	joined := strings.Join(events, "\n")
+	assert.Contains(t, joined, "Alpha Mod")
+	assert.Contains(t, joined, "Deployed")
+	assert.NotContains(t, joined, "deploy_deployed", "the wire phase name must not reach the screen")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_TrayDeepLinkOpensOnTheNamedJob closes the carry-in loop: the
+// deleted /jobs/{id} page's 301 now lands on the home URL annotated with
+// ?job=, and that annotation opens the tray with that entry already
+// expanded. The redirect is followed by the browser here, so this proves
+// the Go half and the SPA half agree on the annotation's name.
+func TestE2E_TrayDeepLinkOpensOnTheNamedJob(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	jobID := startDeployFromAnotherClient(t, f)
+
+	var url, expanded string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/jobs/"+jobID),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__events[data-job="`+jobID+`"]`, chromedp.ByQuery),
+		chromedp.Location(&url),
+		chromedp.AttributeValue(`.tray__row .tray__summary`, "aria-expanded", &expanded, nil, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, url, "?job="+jobID, "the 301 must carry the id into the SPA's own scheme")
+	assert.Equal(t, "true", expanded)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_TrayDeepLinkToAForgottenJobSaysSo is the honest-failure half of
+// the deep link. The registry retains a bounded number of jobs and evicts
+// silently by design (activity.go: "EVICTION HAS NO FRAME OF ITS OWN"), so
+// a bookmarked ?job= will eventually name a job nobody has any more. An
+// empty tray would read as "nothing ever happened".
+func TestE2E_TrayDeepLinkToAForgottenJobSaysSo(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var message string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"?job=deadbeefdeadbeefdeadbeefdeadbeef"),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__error`, chromedp.ByQuery),
+		textContent(`.tray__error`, &message),
+	)
+
+	assert.Contains(t, message, "no longer retained")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FailedJobSurfacesInPlaceAndInTheTray covers the failure half of
+// the morph and of the tray at once: a deploy that core refuses to run (a
+// before_all hook exits non-zero, and without --force that is a hard stop)
+// resurfaces on the control that started it AND is listed under the tray's
+// Failed section with the envelope's own message - never as a silent
+// non-event, and never as a success.
+func TestE2E_FailedJobSurfacesInPlaceAndInTheTray(t *testing.T) {
+	f := newE2EFixtureWithFailingDeploy(t)
+
+	var inline, trayMessage, badge string
+	var overwrites int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="failed"]`, chromedp.ByQuery),
+		textContent(`.job-progress__text`, &inline),
+		textContent(`.activity-bell__count`, &badge),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row[data-state="failed"]`, chromedp.ByQuery),
+		textContent(`.tray__failure-message`, &trayMessage),
+		chromedp.Evaluate(`document.querySelectorAll('[data-action="overwrite"]').length`, &overwrites),
+	)
+
+	assert.Contains(t, inline, "Failed")
+	assert.Contains(t, inline, "before_all", "the inline readout carries the envelope's own message")
+	assert.Contains(t, trayMessage, "before_all")
+	assert.Equal(t, "1", badge, "with nothing running, the bell counts the failure nobody has seen")
+	assert.Zero(t, overwrites,
+		"this failure's details name no action, so no affordance may be invented for it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FailureNextStepIsDecidedByTypedDetails pins failures.js directly.
+// A conflict's next step must come from the envelope's typed `details` -
+// core's own Details() extension point - and never from matching on the
+// message text, which is prose and changes. The envelope below is the exact
+// shape testdata/json/job_summary.golden pins for a failed install.
+func TestE2E_FailureNextStepIsDecidedByTypedDetails(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var got []any
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { nextStepFor } = await import("/static/app/failures.js");
+			const conflict = nextStepFor({
+				error: "file conflicts detected",
+				details: { conflicts: [
+					{ relative_path: "Mods/a.pak", current_source_id: "fake", current_mod_id: "m9" },
+				] },
+			});
+			return [
+				conflict.action,
+				conflict.label,
+				Boolean(conflict.pending),
+				nextStepFor({ error: "install.before_all hook failed" }),
+				nextStepFor({ error: "x", details: { conflicts: [] } }),
+				nextStepFor(undefined),
+			];
+		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, got, 6)
+	assert.Equal(t, "overwrite", got[0])
+	assert.Equal(t, "Overwrite 1 file?", got[1])
+	assert.Equal(t, true, got[2], "the action is present but not live until install lands")
+	assert.Nil(t, got[3], "a failure whose details name no action gets no invented affordance")
+	assert.Nil(t, got[4], "an empty conflict list is not a conflict")
+	assert.Nil(t, got[5])
 	assert.Empty(t, f.BrowserErrors())
 }

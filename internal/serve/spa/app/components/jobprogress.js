@@ -60,7 +60,7 @@ export function JobProgress({ jobID, summary, frame, onDismiss }) {
       <div
         class="job-progress"
         data-job=${jobID}
-        data-state=${jobStateLabel(summary) || "running"}
+        data-state=${jobStateLabel(summary, frame) || "running"}
         role="status"
       >
         <div

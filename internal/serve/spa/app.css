@@ -1091,3 +1091,125 @@ select {
   color: var(--text-muted);
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------------- */
+/* The activity tray.                                                      */
+/* ---------------------------------------------------------------------- */
+
+.tray {
+  min-width: 26rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.activity-bell__count--failed {
+  background: var(--danger);
+  color: var(--text-inverted);
+}
+
+.tray__section {
+  padding: var(--space-1) 0;
+}
+
+.tray__section-title {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tray__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tray__row {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tray__row:last-child {
+  border-bottom: none;
+}
+
+.tray__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tray__kind {
+  flex: 1;
+  font-weight: 700;
+}
+
+.tray__caret {
+  color: var(--text-muted);
+}
+
+.tray__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.tray__detail {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray__failure {
+  padding: var(--space-1) 0;
+}
+
+.tray__failure-message {
+  margin: 0 0 var(--space-1);
+  color: var(--danger);
+  font-size: 0.9em;
+}
+
+.tray__events {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  max-height: 14rem;
+  overflow-y: auto;
+  border-left: 2px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  list-style: none;
+}
+
+.tray__event--empty {
+  color: var(--text-muted);
+}
+
+.tray__error {
+  padding: var(--space-2);
+  color: var(--danger);
+  font-size: 0.9em;
+}
+
+/* The library header's live line while a job runs. */
+.library__live {
+  color: var(--accent);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
