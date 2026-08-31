@@ -20,5 +20,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /profiles", s.wrap(s.handleProfiles))
 	s.mux.Handle("GET /health", s.wrap(s.handleHealth))
 	s.mux.Handle("GET /api/v1/status", s.wrap(s.handleAPIStatus))
+	s.mux.Handle("GET /api/v1/mods", s.wrap(s.handleAPIMods))
+	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))
 	s.mux.Handle("/static/", http.StripPrefix("/static/", staticHandler()))
 }

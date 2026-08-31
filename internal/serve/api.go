@@ -113,6 +113,46 @@ func (s *Server) resolveReadyAPISelection(w http.ResponseWriter, r *http.Request
 	return sel, true
 }
 
+// handleAPIMods answers GET /api/v1/mods with exactly the core.ModList
+// document `lmm list --json` emits for the resolved game/profile
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/mods" -> ListMods).
+func (s *Server) handleAPIMods(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	list, err := s.svc.ListMods(r.Context(), sel.Game, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// handleAPIModDetail answers GET /api/v1/mods/{source}/{id} with exactly
+// the core.ModDetail document `lmm mod show --json` emits
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface). Any ModDetail
+// failure renders as 404: it mirrors pages_mods.go's handleModDetail,
+// which has no way to tell a genuinely unknown mod ID apart from a
+// transient source failure either, and treats both the same way.
+func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
+	sourceID := r.PathValue("source")
+	modID := r.PathValue("id")
+
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	detail, err := s.svc.ModDetail(r.Context(), sel.Game, sel.Profile, sourceID, modID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
 // handleAPIStatus answers GET /api/v1/status with exactly the
 // core.StatusReport document `lmm status --json` emits with no --game flag
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/" -> Status).
