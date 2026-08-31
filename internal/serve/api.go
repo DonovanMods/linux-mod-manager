@@ -216,6 +216,42 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, report)
 }
 
+// resolveGameAPISelection is resolveReadyAPISelection for /api/v1/profiles,
+// which - like its page (pages_profiles.go) - only needs the game half of
+// the selection to resolve: it lists every profile a game has, active one
+// or not, so an unresolvable ?profile= is irrelevant to it.
+func (s *Server) resolveGameAPISelection(w http.ResponseWriter, r *http.Request) (selection, bool) {
+	sel, err := s.resolveSelection(r)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return sel, false
+	}
+	if sel.Game == nil {
+		s.writeSelectionError(w, sel)
+		return sel, false
+	}
+	return sel, true
+}
+
+// handleAPIProfiles answers GET /api/v1/profiles with exactly the
+// core.ProfileListing document `lmm profile list --json` emits
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/profiles" ->
+// ListProfiles). Only the game half of the selection needs to resolve,
+// like its page.
+func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveGameAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	listing, err := s.svc.ListProfiles(r.Context(), sel.Game.ID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, listing)
+}
+
 // handleAPIStatus answers GET /api/v1/status with exactly the
 // core.StatusReport document `lmm status --json` emits with no --game flag
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/" -> Status).
