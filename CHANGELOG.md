@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`lmm serve` is now a single-page application.** The page-per-command web
+  UI described by the unreleased entries below never shipped: it converted
+  the TUI too literally — six pages mapped to CLI verbs, context
+  re-established on every one of them, actions far from the data they act
+  on. It is replaced by the SPA in
+  `docs/plans/2026-08-31-serve-spa-design.md`: vendored Preact + htm (no
+  Node, no npm, no bundler — `go build` is still the entire build and users
+  install nothing), the game and profile in the URL path
+  (`/g/{game}/{profile}`), a light/dark theme following the system with a
+  persisted override, and the same `/api/v1` + jobs + SSE backend
+  underneath, unchanged. The old page URLs permanently redirect into the new
+  scheme. The `?sync=1` no-JavaScript form fallback is gone with the forms;
+  the CLI is the fallback. Enable/disable gain their own endpoints
+  (`POST /api/v1/mods/{source}/{id}/enable`, `.../disable`), which is where
+  the deleted form routes' one non-plan job path went (#327, epic #326).
+  The `lmm serve` entries below will be consolidated into a single accurate
+  entry before the first release that ships any of it.
+
 ### Added
 
 - `lmm serve` starts a local web UI (127.0.0.1:7420 by default, `--addr`
