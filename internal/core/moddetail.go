@@ -18,12 +18,20 @@ import (
 // eligibility) - and frontends are thin adapters over core, so no frontend
 // re-derives that join for itself (#86).
 type ModDetail struct {
+	// Mod.Description carries a source's raw markup (e.g. NexusMods HTML)
+	// all the way through, including on the wire (`--json`) - existing,
+	// accepted precedent (#86). A future HTML renderer (e.g. `lmm serve`)
+	// MUST sanitize it before ever trusting it as safe markup
+	// (`html/template.HTML`); Go's default auto-escaping neutralizes it as
+	// plain text, which is safe but drops the mod's formatting.
 	Mod       *domain.Mod      `json:"mod,omitempty"`
 	Installed *InstalledDetail `json:"installed,omitempty"`
 	// Changelog is populated best-effort from the source's optional
 	// source.ChangelogProvider capability (#87) - absent when the source
 	// does not implement it, or when it has nothing to report. A provider
-	// error never fails ModDetail; it lands in Notes instead.
+	// error never fails ModDetail; it lands in Notes instead. Unlike
+	// Mod.Description above, source.ChangelogProvider's contract requires
+	// plain text, so this field never needs its own sanitization pass.
 	Changelog string `json:"changelog,omitzero"`
 	// Notes carries non-fatal degradations (currently: a failed changelog
 	// fetch) - populated only when something best-effort didn't work, never

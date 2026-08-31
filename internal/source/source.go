@@ -72,7 +72,11 @@ type UpdateProgressReporter interface {
 // changelog text for a specific version - the same optional-capability
 // pattern as UpdateProgressReporter (#87). Core calls it when present and
 // leaves ModDetail.Changelog empty otherwise; a call error degrades to a
-// Note rather than failing the caller.
+// Note rather than failing the caller. Unlike Mod.Description (which stays
+// raw source markup all the way to `--json` by existing precedent, #86),
+// an implementation MUST return plain text - strip any markup itself (see
+// nexusmods.stripChangelogHTML) - so ModDetail.Changelog never needs
+// sanitizing by a downstream HTML renderer (e.g. a future `lmm serve` page).
 type ChangelogProvider interface {
 	Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error)
 }
