@@ -196,3 +196,25 @@ separate decision.
 Admin operations (game add/detect, auth login, custom sources, archive import/adopt,
 hooks, profile export/import, settings mutation); remote access and authentication;
 the cross-process advisory lock (#317); #307.
+
+## Addendum (2026-08-31, Unit 6 polish — docs/plans/unit6-carry-list.md)
+
+Amendments to "HTTP surface" and "Jobs and SSE" above, recorded here rather than
+edited in place; the sections above stay as originally approved.
+
+- **`/api/v1` list.** `GET /api/v1/conflicts` — the `Conflicts` core query (same
+  document `lmm conflicts --json` emits) — was ruled in during Task 5 alongside
+  `/health`, which surfaces the same findings inline. It was omitted from the
+  original `/api/v1` bullet list above; the implementation (`internal/serve/routes.go`)
+  is authoritative.
+- **SSE terminal frame.** The stream does not simply close when a job finishes: it
+  sends one last `event: done` frame first, whose `data:` is the job's status
+  document (the same shape `GET /api/v1/jobs/{id}` returns). This was ruled during
+  Task 7 so a client never has to race "stream closed" against "GET the final
+  status" — the terminal state arrives on the stream itself.
+- **Job registry notes** (`internal/serve/jobs.go`, not previously spelled out):
+  a subscriber that falls too far behind the event ring (buffer depth 64) is
+  disconnected rather than allowed to stall the Apply goroutine — a slow SSE
+  client can never block a deploy. On shutdown, running jobs are given a bounded
+  grace period (~5s) to finish before the process exits; a wedged Apply cannot
+  hold `lmm serve` open indefinitely.

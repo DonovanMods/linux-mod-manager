@@ -1,6 +1,6 @@
 # lmm - Linux Mod Manager
 
-A terminal-based mod manager for Linux that provides a CLI interface for searching, installing, updating, and managing game mods from various sources.
+A mod manager for Linux for searching, installing, updating, and managing game mods from various sources — a CLI for scripting and daily driving, plus a local browser-based UI (`lmm serve`) for the same workflow.
 
 ## Features
 
@@ -12,6 +12,7 @@ A terminal-based mod manager for Linux that provides a CLI interface for searchi
 - **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
 - **Dependency Resolution**: Automatically fetches and installs mod dependencies
 - **Infinite-Scroll Search**: Browse a continuously loading result list with clean cancel support
+- **Local Web UI**: `lmm serve` — a server-rendered browser UI over the same database and profiles, with a JSON API and live progress via SSE — see [Web UI](#web-ui-lmm-serve)
 - **Pure Go**: No CGO required, easy cross-compilation
 
 ## Installation
@@ -754,6 +755,135 @@ Error: probe: this definition has no search endpoint; provide a known mod id wit
 
 A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates,versions` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). An `api` source shows only the capabilities its defined endpoints provide — `updates` alone for a `get_mod`-only definition, `search,updates` once a `search` endpoint is added, plus `auth` if the definition declares one, plus `versions` once a `mod_files` endpoint is defined — and never `deps` (dependency resolution isn't supported for `api` sources). Any type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
 
+## Web UI (`lmm serve`)
+
+`lmm serve` starts a local, browser-based UI over the same database and
+profiles the CLI uses — no separate install, no separate config, and (by
+default) nothing reachable beyond your own machine:
+
+```bash
+lmm serve
+# lmm serve listening on http://127.0.0.1:7420/
+```
+
+It opens your default browser automatically; add `--no-open` to skip that
+and open the printed URL yourself, or `--addr` to bind somewhere other than
+the default `127.0.0.1:7420`:
+
+```bash
+lmm serve --addr 127.0.0.1:8080
+lmm serve --no-open
+```
+
+Every page is server-rendered HTML and works with JavaScript disabled — a
+small hand-written enhancement script upgrades a mutation's confirmation to
+submit in place and streams a running job's progress live, but nothing on
+the site depends on it.
+
+### What it covers
+
+- **`/`** — status dashboard for the active game/profile
+- **`/mods`** — installed mods, with enable/disable/uninstall
+- **`/mods/{source}/{id}`** — full mod details: description, changelog, files, versions
+- **`/search`** — search a source and install, with version and file
+  selection whenever a mod offers more than one
+- **`/updates`** — check for updates and apply a chosen subset
+- **`/profiles`** — list profiles, switch the active one, apply pending
+  changes, deploy
+- **`/health`** — verify findings and file conflicts, with a repair action
+- **`/jobs/{id}`** — a running or finished mutation's live progress and result
+
+This is "CLI parity for the daily workflow," not full parity. **Stays
+CLI-only for now:** `lmm game add`/`game detect`, `lmm auth login`,
+custom-source management, archive import/adopt (`lmm import <archive>`),
+hooks configuration, `lmm profile export`/`import`, and settings mutation.
+Where the UI would otherwise link to one of these, it says so explicitly
+rather than silently leaving the option out.
+
+### Choosing a game and profile
+
+Every page scoped to a game and profile reads `?game=` and `?profile=` from
+the URL (a mutation form carries the same two as hidden fields, so a
+resubmission stays scoped to what you were looking at). Leave either off
+and it falls back to your configured default game, and that game's active
+profile — the same defaults the CLI itself uses. An unknown value, or no
+configured default, renders a "pick one" page instead of failing.
+
+### `/api/v1` and Server-Sent Events
+
+A JSON API sits alongside the pages, returning exactly the documents
+`lmm <command> --json` does, with the CLI's `{"error", "details"}` envelope
+on failure:
+
+```text
+GET  /api/v1/status
+GET  /api/v1/mods
+GET  /api/v1/mods/{source}/{id}
+GET  /api/v1/search?q=
+GET  /api/v1/updates
+GET  /api/v1/profiles
+GET  /api/v1/health
+GET  /api/v1/conflicts
+```
+
+Most mutations run as a Plan, then a background job:
+
+```text
+POST /api/v1/plans/{kind}       -> the plan, plus a single-use plan_id
+POST /api/v1/jobs               -> {plan_id, options} -> {job_id}
+GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
+GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
+```
+
+(Enable/disable are the one exception: with no options and nothing to
+preview, they skip straight to a job with no plan step.)
+
+The events stream sends one JSON frame per typed core progress event
+(`event:` names the event type), a comment heartbeat roughly every 15
+seconds while a job is otherwise quiet, and a final `event: done` frame
+carrying the same job status document `GET /api/v1/jobs/{id}` returns — so
+a client never has to race "the stream closed" against "go fetch the final
+status" separately.
+
+### `?sync=1`: the no-JavaScript mutation fallback
+
+Every mutation's submit target also accepts `?sync=1`: instead of starting
+a background job and redirecting to `/jobs/{id}`, the server runs the
+operation inline and renders the result directly. This is what a plain
+HTML form gets with JavaScript disabled, and it's available to any caller —
+curl included — that would rather wait for the result than watch it stream
+in.
+
+### Security posture
+
+There is **no authentication** in this release. `lmm serve` is meant for a
+single trusted user on their own machine:
+
+- Binds to `127.0.0.1:7420` by default. Binding a non-loopback address (a
+  LAN IP, `0.0.0.0`) prints a loud warning on every startup: anyone who can
+  reach that address can drive `lmm` exactly as you can.
+- Every request's `Host` header is checked against an allow-list built from
+  the bind address (plus `localhost`, for a loopback bind) — a
+  DNS-rebinding guard. A **wildcard bind** (`0.0.0.0`, `[::]`, or a bare
+  `:port`) has no single correct `Host` to pin, so rather than accept any
+  `Host` unconditionally it accepts only a `Host` that is an **IP literal**
+  or the name `localhost` — and, when that `Host` names a port, only if it
+  matches the port actually bound. An IP literal or `localhost` can't be
+  "rebound" by attacker-controlled DNS the way an arbitrary name could,
+  which is what real LAN traffic to a wildcard bind normally uses anyway.
+- `Origin` is checked against `Host` on every state-changing request, and a
+  CSRF token — one per server process, carried in every rendered form and
+  accepted as an `X-CSRF-Token` header for scripts — is required for every
+  state-changing request, page or API alike.
+- Every response, page or static asset, carries conservative headers
+  (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a
+  same-origin `Referrer-Policy`, and a `default-src 'self'`
+  Content-Security-Policy).
+- **Cross-process note:** a CLI mutation and a `serve` mutation running at
+  the same time are guarded only by SQLite's own locking, not a shared
+  lock across processes — avoid running CLI mutations while a `serve`
+  operation is in flight.
+
 ## CLI Reference
 
 ### Global Flags
@@ -1132,7 +1262,7 @@ CONVERSION FAILED is read straight from the merged pak's stored fingerprint — 
 ## Architecture
 
 ```text
-cmd/lmm/                  # CLI entry point (Cobra); imports exactly app/core/domain/source (enforced)
+cmd/lmm/                  # CLI entry point (Cobra); imports exactly app/core/domain/source/serve (enforced)
 internal/
 ├── app/                  # Composition root: app.Open resolves paths (XDG), prepares dirs, opens core, registers sources
 ├── domain/               # Core types (Mod, Profile, Game)
@@ -1147,6 +1277,7 @@ internal/
 │   ├── config/           # YAML configuration
 │   └── cache/            # Mod file cache
 ├── linker/               # Deployment strategies
+├── serve/                # `lmm serve`: HTTP pages + /api/v1 JSON + SSE over core.Service (imports only app/core/domain; see Web UI above)
 └── core/                 # Business logic orchestration (flat package, 49 files); frontends never reach past it
     ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
     ├── ops.go             # beginOp: the Service's single mutation-serialization slot

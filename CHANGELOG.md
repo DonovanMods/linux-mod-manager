@@ -71,11 +71,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be repaired and which would only be reported again. As with every other
   mutation, all of it works with JavaScript disabled and each action has a
   `?sync=1` run-and-wait form target (#74/#257/#226, #322, epic #276).
+- `lmm serve`'s pages gain their JavaScript enhancement and an
+  accessibility pass, with every page still fully functional with
+  JavaScript disabled. A running job's page and every mutation's confirm
+  page now subscribe to the SSE stream and show live progress in place,
+  swapping to the finished result the moment the job's terminal
+  `event: done` frame arrives - no manual reload needed (a dropped
+  connection still leaves the always-present Refresh link and, with
+  JavaScript off entirely, an automatic page refresh). Every template also
+  gets an accessibility pass: form labels, a sensible focus order, `aria`
+  attributes only where semantics fall short, full keyboard navigation, and
+  screen-reader-only captions on the four data tables that were missing one
+  (#323, epic #276).
 - `mod show` displays a mod's changelog when its source can supply one
   (`--json`: `changelog`, additive) - NexusMods now implements the new
   `source.ChangelogProvider` optional capability via its files endpoint's
   changelog field; a source without it, or a failed live fetch, simply
   omits the section rather than failing the command (#87).
+- `lmm serve` closes out epic #276's carried TUI intents for v2.1.0:
+  per-item update selection (#74), install version/file selection (#225),
+  uninstall options - keep-cache/skip-hooks/force (#226), full mod-detail
+  prose (#232), live deploy progress (#257), and mod changelog (#87). The
+  admin-only surface staying CLI-only for this release - game add/detect,
+  auth login, custom-source management, archive import/adopt, hooks
+  editing, profile export/import, settings mutation - is documented in the
+  README's Web UI section (epic #276).
 
 ## [2.0.0] - 2026-08-30
 
