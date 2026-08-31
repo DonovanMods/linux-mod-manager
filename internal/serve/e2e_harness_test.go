@@ -24,14 +24,19 @@ package serve_test
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -48,6 +53,52 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
 )
+
+// e2eShutdownGrace is how long a browser fixture's server waits for
+// in-flight requests when the test tears it down. Slightly under
+// production's own default (10s): the SPA holds a session-long EventSource
+// on GET /api/v1/events (activity.js), and Shutdown has to outlast it
+// actually closing.
+//
+// It used to be 20s, to absorb a browser re-establishing that EventSource
+// once or twice while it was torn down - each reconnect making the
+// connection active again just as Shutdown was about to finish. That
+// symptom is I1's finding: newE2EBrowser's chromedp.Cancel call, meant to
+// wait for the whole browser PROCESS to exit before this grace window even
+// starts, was silently falling back to a non-waiting cancel on every run
+// (a context-derivation bug, fixed at newE2EBrowser). With the real wait
+// restored, the reconnect this grace existed to absorb no longer happens:
+// 5s held green over 3 consecutive full `-race` E2E runs (unit3 fix wave,
+// #329) with room to spare (~37-38s total each), so it came back down.
+//
+// It is a TEST allowance and nothing else: Shutdown still returns the
+// instant the connection really closes (microseconds, in the ordinary
+// case), so this costs no wall clock on a healthy teardown, and the
+// server's real shutdown semantics are pinned by their own tests
+// (TestServer_ServeCancelsJobsOnceTheGraceExpires and friends), not here.
+const e2eShutdownGrace = 5 * time.Second
+
+// e2eShutdownCleanupGuard bounds how long a fixture's own t.Cleanup waits
+// for Serve to return, once cancel() has told it to. It MUST exceed
+// e2eShutdownGrace: Serve itself can legitimately take up to that long
+// (a genuine grace exhaustion), and a guard shorter than the thing it is
+// guarding fires first - reporting "the E2E server did not shut down" and
+// never reaching the require.NoError(t, err) on Serve's own real error,
+// which is the diagnostic this exists to surface. The +5s is slack for the
+// goroutine scheduling and channel send between Serve returning and the
+// cleanup's select observing it, not a second grace period.
+const e2eShutdownCleanupGuard = e2eShutdownGrace + 5*time.Second
+
+// TestE2EShutdownCleanupGuardExceedsGrace pins M1's invariant directly,
+// without needing an actual 20+-second shutdown to observe it: a guard that
+// does not outlast the grace it is guarding fires first on a genuine grace
+// exhaustion, misreporting it as "the E2E server did not shut down" instead
+// of reaching Serve's own real error. Before the fix this was a bare
+// `15 * time.Second` literal, unrelated to e2eShutdownGrace's 20s - this
+// test is what would have caught that drift.
+func TestE2EShutdownCleanupGuardExceedsGrace(t *testing.T) {
+	require.Greater(t, e2eShutdownCleanupGuard, e2eShutdownGrace)
+}
 
 // e2eTimeout bounds one chromedp.Run. Generous, because a cold browser
 // start is the slowest thing in this package by an order of magnitude, and
@@ -130,10 +181,13 @@ func newE2EFixture(t *testing.T) e2eFixture {
 	sandboxE2EEnv(t)
 
 	svc, game := newFixtureServiceWithSource(t, newFakeSource("fake"))
+	// The server is started BEFORE the browser deliberately: see
+	// startE2EServer's doc comment on cleanup order.
+	baseURL := startE2EServer(t, svc)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eFixture{
 		Ctx:           ctx,
-		BaseURL:       startE2EServer(t, svc),
+		BaseURL:       baseURL,
 		Svc:           svc,
 		Game:          game,
 		Profile:       "default",
@@ -151,12 +205,16 @@ func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixture(t)
 
+	// Every one carries the same author, so an assertion about the wide
+	// columns' CONTENT (TestE2E_WideColumnsCarryTheDocumentsOwnData) does
+	// not also depend on which of the three the library happens to render
+	// first - which the filter and sort scenarios deliberately vary.
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, nil)
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, true, nil)
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", GameID: f.Game.ID}, false, nil)
+		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID}, false, nil)
 
 	return f
 }
@@ -203,10 +261,11 @@ func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
 	_, err := svc.DeployProfile(t.Context(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 
+	baseURL := startE2EServer(t, svc)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eFixture{
 		Ctx:           ctx,
-		BaseURL:       startE2EServer(t, svc),
+		BaseURL:       baseURL,
 		Svc:           svc,
 		Game:          game,
 		Profile:       "default",
@@ -249,10 +308,11 @@ func newE2EMultiGameFixture(t *testing.T) e2eMultiGameFixture {
 	_, err = svc.NewProfileManager().Create(t.Context(), gameB.ID, "default")
 	require.NoError(t, err)
 
+	baseURL := startE2EServer(t, svc)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eMultiGameFixture{
 		Ctx:           ctx,
-		BaseURL:       startE2EServer(t, svc),
+		BaseURL:       baseURL,
 		GameA:         gameA,
 		GameB:         gameB,
 		BrowserErrors: browserErrors,
@@ -270,15 +330,35 @@ func (f e2eMultiGameFixture) runInBrowser(t *testing.T, actions ...chromedp.Acti
 // the origin. Serve is stopped and its error checked at test end - a
 // browser test that left the server running would leak a goroutine into
 // every test after it.
+//
+// CLEANUP ORDER. Every fixture calls this BEFORE newE2EBrowser, and must
+// keep doing so. t.Cleanup runs last-registered-first, so starting the
+// server first means the BROWSER is torn down first - which is the order
+// that matters, because a page still open is a page still holding requests
+// against this server. The SPA keeps a session-long EventSource on
+// GET /api/v1/events (activity.js), and http.Server.Shutdown waits for
+// active requests: shut the server down first and that stream is still
+// live, so the wait runs out and Serve returns "shutting down: context
+// deadline exceeded". That was a real, intermittent failure across the
+// proxy-backed fixtures before this ordering was made explicit.
 func startE2EServer(t *testing.T, svc *core.Service) string {
 	t.Helper()
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler),
-		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: 5 * time.Second})
+		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace})
 	addr, err := srv.Listen()
 	require.NoError(t, err)
 
-	serveCtx, cancel := context.WithCancel(t.Context())
+	// WithoutCancel, then our own cancel: t.Context() is cancelled when the
+	// test FUNCTION returns, which is BEFORE any t.Cleanup runs. Deriving the
+	// serve context from it directly therefore starts the graceful shutdown
+	// while the browser is still open and still holding its session-long
+	// EventSource on GET /api/v1/events - so Shutdown waits out its whole
+	// grace and Serve returns "shutting down: context deadline exceeded".
+	// That was an intermittent failure across the browser fixtures; the
+	// server must be stopped by the cleanup below, in order, not by the test
+	// function's own return.
+	serveCtx, cancel := context.WithCancel(context.WithoutCancel(t.Context()))
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(serveCtx) }()
 	t.Cleanup(func() {
@@ -286,7 +366,7 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 		select {
 		case err := <-served:
 			require.NoError(t, err)
-		case <-time.After(15 * time.Second):
+		case <-time.After(e2eShutdownCleanupGuard):
 			t.Error("the E2E server did not shut down")
 		}
 	})
@@ -362,8 +442,8 @@ func newE2EFixtureWithFailingPath(t *testing.T, failPath string) (e2eFixture, fu
 	seedInstalledMod(t, svc, game,
 		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: game.ID}, true, nil)
 
-	ctx, browserErrors := newE2EBrowser(t)
 	baseURL, setFailing := startE2EServerWithFailingPath(t, svc, failPath)
+	ctx, browserErrors := newE2EBrowser(t)
 	return e2eFixture{
 		Ctx:           ctx,
 		BaseURL:       baseURL,
@@ -387,11 +467,34 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 
 	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
 		chromedp.ExecPath(binary))
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(t.Context(), opts...)
+	// WithoutCancel, same reasoning as startE2EServer:331. t.Context() is
+	// cancelled when the test FUNCTION returns, which is BEFORE t.Cleanup
+	// runs - so deriving the allocator from it directly cancels ctx (below)
+	// before the cleanup's chromedp.Cancel(ctx) call ever runs. chromedp
+	// v0.16.0's Cancel takes its graceful path only when ctx is still live;
+	// on an already-cancelled ctx its first act (closing the browser)
+	// returns context.Canceled immediately, BEFORE the wait for the process
+	// to actually exit that is the entire reason to call Cancel instead of
+	// the bare context cancel - silently falling back to the non-waiting
+	// path it was meant to replace.
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.WithoutCancel(t.Context()), opts...)
 	t.Cleanup(cancelAlloc)
 
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
-	t.Cleanup(cancelCtx)
+	t.Cleanup(func() {
+		// chromedp.Cancel, not the bare context cancel: it closes the
+		// browser AND WAITS for the process to exit. Neither cancelCtx nor
+		// cancelAlloc waits (both return in microseconds), which leaves
+		// Chrome alive while the cleanups below shut the server down - and
+		// a live Chrome re-establishes the SPA's session-long EventSource
+		// (activity.js) every few seconds, so http.Server.Shutdown keeps
+		// finding an active request and eventually runs out its grace. That
+		// was the cause of an intermittent "shutting down: context deadline
+		// exceeded" across the browser fixtures.
+		if err := chromedp.Cancel(ctx); err != nil {
+			cancelCtx()
+		}
+	})
 
 	var (
 		mu     sync.Mutex
@@ -466,4 +569,192 @@ func textContent(sel string, out *string) chromedp.Action {
 		*out = strings.Join(strings.Fields(raw), " ")
 		return nil
 	})
+}
+
+// newE2EFixtureWithDeployableMods seeds two enabled mods whose files are
+// already in the cache and which have never been deployed - the state a
+// real deploy acts on, and the one the top bar's undeployed indicator
+// counts. Everything the deploy needs is local, so no source round trip
+// (and no network) is involved in applying it.
+func newE2EFixtureWithDeployableMods(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f
+}
+
+// newE2EFixtureWithSlowDeploy is newE2EFixtureWithDeployableMods plus an
+// install.after_each hook that sleeps, which is what gives the browser a
+// deterministic window in which a deploy job is genuinely IN FLIGHT.
+//
+// Without it every scenario about a running job would be a race against a
+// deploy of two local files, which finishes in milliseconds: "open the tray
+// during a job" would pass or fail on machine speed. A hook is the honest
+// lever for this - it is a real, supported way for a deploy to take time -
+// and it runs AFTER the first mod's DeployDeployed event, so the job is not
+// merely running but running WITH PROGRESS already reported.
+func newE2EFixtureWithSlowDeploy(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	script := filepath.Join(t.TempDir(), "slow-after-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
+	f.Game.Hooks.Install.AfterEach = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f
+}
+
+// newE2EFixtureWithQueuedToggle is newE2EFixtureWithSlowDeploy plus a third,
+// disabled mod ("Gamma Mod") that is never added to the profile - it exists
+// only so a concurrently-started enable job (startEnableFromAnotherClient)
+// has something valid to act on, entirely independent of what the slow
+// deploy is doing to Alpha/Beta.
+//
+// The slow deploy's AfterEach hook holds core's one mutation slot for the
+// whole time it sleeps, so an enable job started while it runs sits blocked
+// in beginOp: registered, state "running", zero events, no frame - exactly
+// jobStateLabel's "queued" heuristic (progress.js) - for a window a browser
+// can actually be driven through, rather than a race against a toggle that
+// would otherwise complete in microseconds.
+func newE2EFixtureWithQueuedToggle(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithSlowDeploy(t)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "c", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: f.Game.ID},
+		false, nil)
+	return f
+}
+
+// seedDeployableMods installs two enabled mods with one cached file each
+// AND puts both in the profile's load order.
+//
+// The load order is not decoration here: PlanDeploy's full-profile branch
+// reads GetInstalledModsInProfileOrder, which deliberately omits a mod that
+// is installed but absent from the profile (unlike the library's own
+// ListMods, which lists it first). A fixture that skipped AddMod would
+// therefore plan a deploy of nothing at all while the library rendered two
+// rows - which is exactly what the first run of these scenarios showed.
+func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", GameID: game.ID},
+		true, map[string][]byte{"alpha.pak": []byte("alpha")})
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", Author: "Ada Lovelace", GameID: game.ID},
+		true, map[string][]byte{"beta.pak": []byte("beta")})
+
+	pm := svc.NewProfileManager()
+	for _, id := range []string{"a", "b"} {
+		require.NoError(t, pm.AddMod(t.Context(), game.ID, "default",
+			domain.ModReference{SourceID: "fake", ModID: id, Version: "1.0"}))
+	}
+}
+
+// csrfMetaPattern lifts the shell's CSRF token out of the served document -
+// the same place the SPA reads it from (spa/index.html's meta tag).
+var csrfMetaPattern = regexp.MustCompile(`name="csrf-token" content="([^"]+)"`)
+
+// postAsAnotherClient returns a POST closure that goes through the real
+// security middleware - the shell's own CSRF token as X-CSRF-Token, and an
+// Origin naming the server itself - so a scenario can drive /api/v1 the way
+// a SECOND client would (another browser tab, or a script) rather than
+// through a privileged back door. Shared by startDeployFromAnotherClient and
+// startEnableFromAnotherClient.
+func postAsAnotherClient(t *testing.T, f e2eFixture) func(path, payload string) map[string]any {
+	t.Helper()
+
+	shell, err := http.Get(f.BaseURL + "/")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, shell.Body.Close()) }()
+	body, err := io.ReadAll(shell.Body)
+	require.NoError(t, err)
+	match := csrfMetaPattern.FindSubmatch(body)
+	require.Len(t, match, 2, "the shell must carry a CSRF token")
+	token := string(match[1])
+
+	return func(path, payload string) map[string]any {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.BaseURL+path, strings.NewReader(payload))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", token)
+		req.Header.Set("Origin", f.BaseURL)
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, resp.Body.Close()) }()
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Less(t, resp.StatusCode, 300, "POST %s: %s", path, raw)
+
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(raw, &decoded))
+		return decoded
+	}
+}
+
+// startDeployFromAnotherClient runs a deploy through /api/v1 the way a
+// SECOND client would - another browser tab, or a script - without the page
+// under test having clicked anything.
+//
+// It is how a scenario produces a job with no origin on screen, which is
+// the exact condition the design's toast rule turns on ("job completion/
+// failure when its origin isn't on-screen"). Faking it by navigating away
+// mid-job would be a race against a deploy that takes milliseconds; this is
+// not a race at all, because no control in the page ever claimed this job.
+func startDeployFromAnotherClient(t *testing.T, f e2eFixture) string {
+	t.Helper()
+	post := postAsAnotherClient(t, f)
+
+	plan := post("/api/v1/plans/deploy?game="+url.QueryEscape(f.Game.ID)+"&profile="+url.QueryEscape(f.Profile), "{}")
+	planID, ok := plan["plan_id"].(string)
+	require.True(t, ok, "the plan response must carry a plan_id: %v", plan)
+
+	job := post("/api/v1/jobs", `{"plan_id":"`+planID+`"}`)
+	jobID, ok := job["job_id"].(string)
+	require.True(t, ok, "the job response must carry a job_id: %v", job)
+	return jobID
+}
+
+// startEnableFromAnotherClient starts an enable job through /api/v1's one
+// sanctioned plan-free mutation path (kind_toggle.go), the way a second
+// client would. EnableMod takes no core.EventSink (kind_toggle.go's own doc
+// comment), so a job it starts NEVER gets a progress frame for its whole
+// life - which is what makes it the deterministic way to hold a job in
+// jobStateLabel's "queued" state (progress.js) for as long as core's single
+// mutation slot (beginOp) is held by something else.
+func startEnableFromAnotherClient(t *testing.T, f e2eFixture, sourceID, modID string) string {
+	t.Helper()
+	post := postAsAnotherClient(t, f)
+
+	path := "/api/v1/mods/" + url.PathEscape(sourceID) + "/" + url.PathEscape(modID) + "/enable" +
+		"?game=" + url.QueryEscape(f.Game.ID) + "&profile=" + url.QueryEscape(f.Profile)
+	job := post(path, "")
+	jobID, ok := job["job_id"].(string)
+	require.True(t, ok, "the job response must carry a job_id: %v", job)
+	return jobID
+}
+
+// newE2EFixtureWithFailingDeploy seeds a deployable profile whose
+// install.before_all hook exits non-zero, which is a real, supported way
+// for a deploy to fail: without --force, core refuses to continue past a
+// failed before_all (internal/core/deploy.go), so ApplyDeploy returns an
+// error and the job lands in state failed with that error's envelope.
+//
+// It is how the browser gets a genuinely failed job to render without
+// faking a registry state that could never occur.
+func newE2EFixtureWithFailingDeploy(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	script := filepath.Join(t.TempDir(), "failing-before-all")
+	require.NoError(t, os.WriteFile(script,
+		[]byte("#!/bin/sh\necho 'the mod directory is not writable' >&2\nexit 1\n"), 0o755))
+	f.Game.Hooks.Install.BeforeAll = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f
 }

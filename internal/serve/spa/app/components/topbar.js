@@ -4,26 +4,39 @@
 // read-only tray, and the theme toggle
 // (docs/plans/2026-08-31-serve-spa-design.md §Mission Control: "Top bar").
 //
-// Every mutation affordance here - Deploy, "Manage profiles…" - is present
-// and disabled: Unit 3 lands the confirm-modal framework they submit
-// through, and the pre-flight forbids forking it early.
+// The activity bell and its tray live in tray.js: they are the top bar's
+// biggest region by far, and the only one with two live streams behind it.
+//
+// Deploy is this unit's one WIRED mutation, and it is wired through the
+// framework every later one uses: it opens the confirm-plan modal, and the
+// button itself morphs into the job's progress once confirmed (InlineJob).
+// "Manage profiles…" is still present and disabled - it is Unit 6's, and
+// the pre-flight forbids forking the framework early to land it sooner.
 
 import { html, useEffect, useRef, useState } from "../render.js";
 import { navigate, contextPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { resolveGamePath } from "../navigation.js";
 import { countUndeployed } from "../modrows.js";
+import { InlineJob } from "./jobprogress.js";
+import { ActivityBell } from "./tray.js";
 import { NOT_YET } from "../ui.js";
 
+// DEPLOY_ORIGIN is the key the top bar's Deploy control morphs on. Origins
+// are stable strings, one per control (jobprogress.js) - a later unit's
+// per-mod controls use "install:fake/123" and friends.
+const DEPLOY_ORIGIN = "deploy";
+
 export function TopBar({
+  state,
   status,
   games,
   route,
   mods,
-  jobsIndex,
   query,
   onQueryChange,
   onThemeChange,
+  actions,
 }) {
   const undeployed = countUndeployed(mods);
 
@@ -33,6 +46,16 @@ export function TopBar({
   // listener needs one source of truth to close instead of three.
   const [openPicker, setOpenPicker] = useState(null);
   const barRef = useRef(null);
+
+  // ?job={id} opens the tray on that entry - the annotation the deleted
+  // /jobs/{id} page's 301 now points at (spa.go). It is an effect rather
+  // than an initial state so that arriving at such a URL from INSIDE the
+  // application (a toast's "Show in activity") opens the tray too, not just
+  // a cold load.
+  const deepLinkJob = route.job ?? "";
+  useEffect(() => {
+    if (deepLinkJob) setOpenPicker("activity");
+  }, [deepLinkJob]);
 
   useEffect(() => {
     if (openPicker === null) return;
@@ -78,14 +101,23 @@ export function TopBar({
             : "Deployed"
         }
       </span>
-      <button
-        type="button"
-        class="button button--primary"
-        disabled
-        title=${NOT_YET}
-      >
-        Deploy
-      </button>
+      <${InlineJob} origin=${DEPLOY_ORIGIN} state=${state} actions=${actions}>
+        <button
+          type="button"
+          class="button button--primary"
+          data-action="deploy"
+          onClick=${() =>
+            actions.openPlan({
+              kind: "deploy",
+              origin: DEPLOY_ORIGIN,
+              title: "Deploy this profile",
+              confirmLabel: "Deploy",
+              options: {},
+            })}
+        >
+          Deploy
+        </button>
+      <//>
       <input
         type="search"
         class="omnibar"
@@ -95,7 +127,8 @@ export function TopBar({
         onInput=${(e) => onQueryChange(e.currentTarget.value)}
       />
       <${ActivityBell}
-        jobsIndex=${jobsIndex}
+        state=${state}
+        deepLinkJob=${deepLinkJob}
         open=${openPicker === "activity"}
         onOpen=${() => setOpenPicker("activity")}
         onClose=${() => setOpenPicker(null)}
@@ -206,47 +239,6 @@ function ProfilePicker({ status, route, open, onOpen, onClose }) {
                 Manage profiles…
               </button>
             </li>
-          </ul>
-        `
-      }
-    </div>
-  `;
-}
-
-/** ActivityBell reads GET /api/v1/jobs's retained jobs; the tray it opens is
- * read-only in this unit - Unit 3 wires the live SSE stream and the tray's
- * own next-step affordances (e.g. a failed install's "Overwrite?"). */
-function ActivityBell({ jobsIndex, open, onOpen, onClose }) {
-  const jobs = jobsIndex ?? [];
-  const running = jobs.filter((j) => j.state === "running").length;
-
-  return html`
-    <div class="picker activity-bell">
-      <button
-        type="button"
-        class="picker__trigger activity-bell__trigger"
-        onClick=${() => (open ? onClose() : onOpen())}
-      >
-        🔔${running > 0 && html`<span class="activity-bell__count">${running}</span>`}
-      </button>
-      ${
-        open &&
-        html`
-          <ul class="picker__menu tray">
-            ${
-              jobs.length === 0
-                ? html`<li class="tray__empty">No activity yet.</li>`
-                : jobs.map(
-                    (j) => html`
-                      <li key=${j.id} class="tray__row">
-                        <span class="tray__kind">${j.kind}</span>
-                        <span class="tray__state tray__state--${j.state}"
-                          >${j.state}</span
-                        >
-                      </li>
-                    `,
-                  )
-            }
           </ul>
         `
       }

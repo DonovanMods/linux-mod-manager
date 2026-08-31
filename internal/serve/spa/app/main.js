@@ -9,8 +9,15 @@ import { App } from "./components/app.js";
 import { createStore } from "./store.js";
 import { parseLocation, onRouteChange, navigate } from "./router.js";
 import { currentTheme, setTheme } from "./theme.js";
-import { get, scoped, ApiError } from "./api.js";
+import {
+  get,
+  scoped,
+  plan as planMutation,
+  startJob,
+  ApiError,
+} from "./api.js";
 import { resolveGamePath } from "./navigation.js";
+import { connectActivity, isOriginMounted } from "./activity.js";
 
 const store = createStore();
 const root = document.getElementById("app");
@@ -101,28 +108,47 @@ async function hydrate(route) {
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    store.set({ status, games: allStatus.games, error: null });
+    store.set({
+      status,
+      games: allStatus.games,
+      error: null,
+      fetchErrors: { ...store.get().fetchErrors, status: null },
+    });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
+    // A RE-hydrate (main.js's onJobDone runs this on every job completion,
+    // not just a route change) that fails must not blank a page that
+    // already has a status - that would take the inline outcome and the
+    // tray down with it over a fetch that has nothing to do with either.
+    // The fatal `error` slice is reserved for the FIRST load, where there
+    // is nothing on screen yet to protect (the I3 rule, applied here).
+    if (store.get().status) {
+      store.set({
+        fetchErrors: { ...store.get().fetchErrors, status: message },
+      });
+      return;
+    }
     store.set({ status: null, games: null, error: message });
     return;
   }
 
   if (route.view !== "home") return;
 
-  const [mods, updates, health, conflicts, jobs] = await Promise.allSettled([
+  // The jobs index is NOT fetched here: GET /api/v1/events opens with a
+  // snapshot of every retained job and maintains it from there
+  // (activity.js), so a per-route poll could only ever disagree with the
+  // live stream about what the machine is doing.
+  const [mods, updates, health, conflicts] = await Promise.allSettled([
     get(scoped("/api/v1/mods", context)),
     get(scoped("/api/v1/updates", context)),
     get(scoped("/api/v1/health", context)),
     get(scoped("/api/v1/conflicts", context)),
-    get("/api/v1/jobs"),
   ]);
   store.set({
     mods: settled(mods),
     updates: settled(updates),
     health: settled(health),
     conflicts: settled(conflicts),
-    jobsIndex: settled(jobs)?.jobs ?? null,
     fetchErrors: {
       mods: failureMessage(mods),
       updates: failureMessage(updates),
@@ -159,13 +185,190 @@ async function reload(key, path) {
   }
 }
 
-/** The retry/re-run actions threaded down to the components that render
- * each of the four supplementary documents. */
+// modalSeq fences a slow plan against a modal that is no longer open. Each
+// openPlan takes the next number; the response only writes itself into the
+// store if that number is still current, so a plan that arrives after the
+// user pressed Cancel (or opened a different one) is dropped rather than
+// re-opening a modal nobody asked for.
+let modalSeq = 0;
+
+/**
+ * Opens the confirm-plan modal for one mutation: computes the plan
+ * (POST /api/v1/plans/{kind}) and puts the document on screen.
+ *
+ * Nothing has mutated when this resolves - that is the whole point of the
+ * Plan/Apply split (docs/plans/2026-08-30-serve-design.md). origin is the
+ * key the initiating control morphs on once the job starts; title and
+ * confirmLabel are that control's own words for what it is about to do.
+ */
+async function openPlan({ kind, origin, title, confirmLabel, options }) {
+  modalSeq += 1;
+  const seq = modalSeq;
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  const base = { kind, origin, title, confirmLabel, seq };
+
+  store.set({ modal: { ...base, status: "planning" } });
+  try {
+    const response = await planMutation(kind, options, context);
+    if (modalSeq !== seq) return;
+    store.set({
+      modal: {
+        ...base,
+        status: "ready",
+        planID: response.plan_id,
+        plan: response.plan,
+      },
+    });
+  } catch (err) {
+    if (modalSeq !== seq) return;
+    store.set({ modal: { ...base, status: "error", ...describe(err) } });
+  }
+}
+
+// bindingJob is the in-flight POST /api/v1/jobs, if any. It resolves only
+// AFTER the origin binding has been written to the store, which is what
+// onJobDone waits on: a job can finish before the response that names it
+// has even been read (a deploy whose before_all hook exits immediately does
+// exactly that), and a completion looked up before its binding lands finds
+// no origin and toasts a control that is right there on screen. Observed,
+// not hypothetical - it is what the failing-deploy scenario now asserts
+// against.
+let bindingJob = null;
+
+/** Redeems the open modal's plan handle, starting its Apply as a job
+ * (POST /api/v1/jobs) and binding it to the control that opened the modal.
+ *
+ * The store learns about the job from TWO directions: the job id lands here
+ * immediately, so the control can morph on the very next render, while the
+ * job's own summary and progress arrive on the activity stream. That is why
+ * origins is written here and jobsIndex is not - one writer each. */
+async function confirmPlan() {
+  const modal = store.get().modal;
+  if (!modal || modal.status !== "ready") return;
+
+  store.set({ modal: { ...modal, status: "starting" } });
+  bindingJob = (async () => {
+    try {
+      const { job_id: jobID } = await startJob(modal.planID);
+      if (store.get().modal?.seq !== modal.seq) return;
+      store.set({
+        modal: null,
+        origins: { ...store.get().origins, [modal.origin]: jobID },
+      });
+    } catch (err) {
+      if (store.get().modal?.seq !== modal.seq) return;
+      store.set({ modal: { ...modal, status: "error", ...describe(err) } });
+    }
+  })();
+
+  try {
+    await bindingJob;
+  } finally {
+    bindingJob = null;
+  }
+}
+
+/** describe unwraps a rejection into the modal's error/details pair. An
+ * ApiError carries the /api/v1 envelope's typed details, which are rendered
+ * rather than dropped - they are often the whole answer (which file
+ * conflicts, which plan went stale). */
+function describe(err) {
+  if (err instanceof ApiError)
+    return { error: err.message, details: err.details };
+  return { error: String(err), details: null };
+}
+
+/** Detaches a finished job from its control, returning it to its idle
+ * state. Only ever called for a job that has ENDED - a running job's
+ * progress is not dismissible, because hiding a mutation in flight is how a
+ * user comes to believe it never happened. */
+function clearOrigin(origin) {
+  const origins = { ...store.get().origins };
+  delete origins[origin];
+  store.set({ origins });
+}
+
+let toastSeq = 0;
+const toastDismissMillis = 8000;
+
+/** Pushes a toast. Successes clear themselves after a while; failures do
+ * not - a failure nobody saw is the case toasts exist for. */
+function pushToast(toast) {
+  const id = `t${++toastSeq}`;
+  store.set({ toasts: [...store.get().toasts, { ...toast, id }] });
+  if (toast.tone !== "failure") {
+    setTimeout(() => dismissToast(id), toastDismissMillis);
+  }
+}
+
+function dismissToast(id) {
+  store.set({ toasts: store.get().toasts.filter((t) => t.id !== id) });
+}
+
+/**
+ * Handles a job reaching a terminal state, wherever it was started from.
+ *
+ * Two things follow from any completed mutation. The documents on screen
+ * are now stale - a deploy just changed every mod's deployed flag - so the
+ * route re-hydrates. And if the control that started it is NOT on screen,
+ * the outcome would otherwise be invisible, so it becomes a toast; if it IS
+ * on screen it resurfaces there and toasting it too would be telling the
+ * user something they are already looking at (design doc §Jobs).
+ */
+async function onJobDone(summary) {
+  hydrate(store.get().route);
+
+  // Wait for an in-flight start to bind its origin before deciding: see
+  // bindingJob. Captured first, because confirmPlan clears it as soon as it
+  // settles.
+  const pending = bindingJob;
+  if (pending) await pending;
+
+  const origin = originOf(summary.id);
+  if (origin && isOriginMounted(origin)) return;
+
+  pushToast(
+    summary.state === "failed"
+      ? {
+          tone: "failure",
+          title: `${summary.kind} failed`,
+          detail: summary.error?.error ?? "",
+          jobID: summary.id,
+        }
+      : {
+          tone: "success",
+          title: `${summary.kind} finished`,
+          jobID: summary.id,
+        },
+  );
+}
+
+/** originOf finds which control (if any) started jobID. */
+function originOf(jobID) {
+  return Object.keys(store.get().origins).find(
+    (origin) => store.get().origins[origin] === jobID,
+  );
+}
+
+/** The actions threaded down to the components: the four supplementary
+ * documents' retry/re-run, and the mutation pipeline every mutation in this
+ * application goes through (openPlan -> confirmPlan -> a job). */
 const actions = {
   reloadMods: () => reload("mods", "/api/v1/mods"),
   reloadUpdates: () => reload("updates", "/api/v1/updates"),
   reloadHealth: () => reload("health", "/api/v1/health"),
   reloadConflicts: () => reload("conflicts", "/api/v1/conflicts"),
+  openPlan,
+  closePlan: () => {
+    modalSeq += 1;
+    store.set({ modal: null });
+  },
+  confirmPlan,
+  clearOrigin,
+  dismissToast,
 };
 
 // contextKey identifies the data a route needs, not the route itself: the
@@ -199,3 +402,8 @@ setTheme(currentTheme());
 store.subscribe(draw);
 onRouteChange(go);
 go(parseLocation());
+
+// One session-long connection, opened after the first route is on screen:
+// every job this process runs - started here, in another tab, or before
+// this page loaded - arrives on it (activity.js).
+connectActivity(store, { onJobDone });

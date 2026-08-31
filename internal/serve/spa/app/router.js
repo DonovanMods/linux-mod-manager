@@ -13,7 +13,10 @@
 // or silently defaulted between views, which is what makes the audit's
 // wrong-game bug class structurally impossible rather than merely fixed.
 // The slide-over annotates the URL with ?mod=source/id instead of routing,
-// so Back closes it.
+// so Back closes it. ?job={id} annotates it the same way for the activity
+// tray - a job is not a place of its own, it is the tray opened on that
+// entry, which is what the deleted /jobs/{id} page's 301 now points at
+// (spa.go).
 
 /** The parsed shape of one URL. view is one of the four names above. */
 export function parseLocation(url = window.location) {
@@ -31,6 +34,7 @@ export function parseLocation(url = window.location) {
   const rest = segments.slice(3);
   if (rest.length === 0) {
     route.mod = params.get("mod") || "";
+    route.job = params.get("job") || "";
     return route;
   }
   if (rest[0] === "search") {

@@ -174,15 +174,24 @@ func (s *Server) spaRoutes() {
 
 	// The six page routes, plus the job page. /mods, /updates, /profiles
 	// and /health were separate pages of the same context and are now
-	// regions of Mission Control, so all four land on it; /jobs/{id} is
-	// there too, because a job's live state is the activity tray rather
-	// than a page of its own.
+	// regions of Mission Control, so all four land on it.
 	missionControl := func(base string, _ *http.Request) string { return base }
 	s.mux.Handle("GET /mods", s.wrap(s.legacyRedirect(missionControl)))
 	s.mux.Handle("GET /updates", s.wrap(s.legacyRedirect(missionControl)))
 	s.mux.Handle("GET /profiles", s.wrap(s.legacyRedirect(missionControl)))
 	s.mux.Handle("GET /health", s.wrap(s.legacyRedirect(missionControl)))
-	s.mux.Handle("GET /jobs/{id}", s.wrap(s.legacyRedirect(missionControl)))
+
+	// The job page's own redirect. Unit 2 landed it on bare Mission
+	// Control because the SPA had nothing to deep-link INTO yet; Unit 3
+	// gives it one, so the id comes along as ?job= rather than being
+	// dropped (docs/plans/unit3-carry.md, carry-in 1). ?job= annotates the
+	// home URL exactly the way ?mod= annotates it for the slide-over: a
+	// job is not a place of its own - it is the activity tray, opened on
+	// that entry - so it earns an annotation, not a route.
+	s.mux.Handle("GET /jobs/{id}", s.wrap(s.legacyRedirect(
+		func(base string, r *http.Request) string {
+			return base + "?job=" + url.QueryEscape(r.PathValue("id"))
+		})))
 
 	s.mux.Handle("GET /mods/{source}/{id}", s.wrap(s.legacyRedirect(
 		func(base string, r *http.Request) string {

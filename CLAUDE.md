@@ -131,7 +131,7 @@ internal/
     ├── middleware.go      # Host allow-list (DNS-rebinding guard), Origin/CSRF checks, security headers, request logging
     ├── routes.go          # Registers the SPA routes (spa.go) and every /api/v1 route on the mux
     ├── spa.go             # The SPA shell (a template: it carries the CSRF token), its embedded asset trees, the CSP hash, the legacy 301s
-    ├── spa/               # index.html shell + app.css (Launcher tokens, dark+light) + app/*.js (ES modules: render/router/store/api/sse/theme/main + components/)
+    ├── spa/               # index.html shell + app.css (Launcher tokens, dark+light) + app/*.js (ES modules: render/router/store/api/sse/theme/main, activity+progress+failures for the job layer, modrows/navigation/ui, + components/: app, missioncontrol, topbar, cards, library, gamechooser, modpanel, tray, modal, confirmplan, planrenderers, plan_deploy, documentview, jobprogress, toasts)
     ├── vendor/            # preact.module.js, hooks.module.js, htm.module.js - pinned, doc-commented, NEVER fetched by any build
     ├── selection.go       # ?game/?profile resolution shared by every scoped /api/v1 endpoint and the 301s
     ├── api.go             # GET /api/v1/{status,mods,updates,profiles,health,conflicts,search,mods/{source}/{id}}

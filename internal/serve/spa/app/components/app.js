@@ -1,11 +1,19 @@
 // components/app.js - the root component: routes to the game chooser or
-// Mission Control, and carries the one thing every route needs before
-// either has anything to say - the theme toggle.
+// Mission Control, and carries the three things every route needs before
+// any of them has anything to say - the theme toggle, the one modal, and
+// the toasts.
+//
+// The modal and the toasts are mounted HERE rather than inside Mission
+// Control on purpose. A job outlives the screen that started it: navigate
+// to a mod page mid-deploy and the completion still has to find you, which
+// it cannot do from a component that just unmounted.
 
 import { html } from "../render.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { GameChooser } from "./gamechooser.js";
 import { MissionControl } from "./missioncontrol.js";
+import { ConfirmPlanModal } from "./confirmplan.js";
+import { Toasts } from "./toasts.js";
 
 /** ComingSoon answers the two routes this unit's screens don't render yet -
  * the full mod page and the search page (Units 4 and 5) - so a direct link
@@ -21,12 +29,27 @@ function ComingSoon({ route }) {
 export function App({ state, onThemeChange, actions }) {
   const { route, error } = state;
 
+  // The overlays every route carries. Rendered as a Fragment beside the
+  // screen rather than inside it, so switching screens cannot take a
+  // running job's modal or a pending toast down with it.
+  const overlays = html`
+    <${ConfirmPlanModal} modal=${state.modal} actions=${actions} />
+    <${Toasts}
+      toasts=${state.toasts}
+      route=${route}
+      onDismiss=${actions.dismissToast}
+    />
+  `;
+
   if (route.view === "home") {
-    return html`<${MissionControl}
-      state=${state}
-      onThemeChange=${onThemeChange}
-      actions=${actions}
-    />`;
+    return html`
+      <${MissionControl}
+        state=${state}
+        onThemeChange=${onThemeChange}
+        actions=${actions}
+      />
+      ${overlays}
+    `;
   }
 
   return html`
@@ -48,5 +71,6 @@ export function App({ state, onThemeChange, actions }) {
           : html`<${ComingSoon} route=${route} />`
       }
     </main>
+    ${overlays}
   `;
 }

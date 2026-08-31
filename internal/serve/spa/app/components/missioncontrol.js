@@ -3,6 +3,7 @@
 // (docs/plans/2026-08-31-serve-spa-design.md §Mission Control).
 
 import { html, useState } from "../render.js";
+import { progressText } from "../progress.js";
 import { navigate, contextPath } from "../router.js";
 import { TopBar } from "./topbar.js";
 import { AttentionCards } from "./cards.js";
@@ -31,7 +32,6 @@ export function MissionControl({ state, onThemeChange, actions }) {
     updates,
     health,
     conflicts,
-    jobsIndex,
     error,
     fetchErrors,
   } = state;
@@ -52,18 +52,39 @@ export function MissionControl({ state, onThemeChange, actions }) {
     return html`<p class="app-booting">Loading&#8230;</p>`;
   }
 
+  // The live line the library's own header carries while ANY job is
+  // running - the design's "cards show live counts" (§Jobs), applied to the
+  // surface this unit actually has a running job over. It reads the same
+  // frame the morphing control does, so the two can never disagree about
+  // where a deploy has got to.
+  const runningJob = (state.jobsIndex ?? []).find((j) => j.state === "running");
+  const liveActivity = runningJob
+    ? progressText(state.jobProgress?.[runningJob.id])
+    : "";
+
   return html`
     <div class="mission-control" data-hydrated="true">
       <${TopBar}
+        state=${state}
         status=${status}
         games=${games}
         route=${route}
         mods=${mods?.mods}
-        jobsIndex=${jobsIndex}
         query=${query}
         onQueryChange=${setQuery}
         onThemeChange=${onThemeChange}
+        actions=${actions}
       />
+      ${
+        // A re-hydrate failure (main.js's I3-style handling of onJobDone)
+        // that happened after this page already loaded - reported here
+        // rather than blanking the page, the same rule the four
+        // supplementary reads below already follow.
+        fetchErrors?.status &&
+        html`<p class="app-error">
+          ${fetchErrors.status} — showing the last loaded data.
+        </p>`
+      }
       <main class="mission-control__body">
         <${AttentionCards}
           updates=${updates}
@@ -77,6 +98,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
           updates=${updates}
           health=${health}
           conflicts=${conflicts}
+          liveActivity=${liveActivity}
           query=${query}
           error=${fetchErrors?.mods}
           onRetry=${actions.reloadMods}

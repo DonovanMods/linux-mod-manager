@@ -176,11 +176,26 @@ func (j *job) status() jobStatus {
 	}
 }
 
-// failure returns the raw error a failed Apply returned, so a handler can
-// branch on it with errors.As/errors.Is (Task 8 offers "overwrite" for
-// *core.ConflictError and a fresh plan for core.ErrStalePlan). The stored
-// envelope carries the same failure as wire data; this is the same failure
-// as a Go value. Nil unless the job failed.
+// failure returns the raw error a failed Apply returned, so a caller can
+// branch on it with errors.As/errors.Is. The stored envelope carries the
+// same failure as WIRE data; this is the same failure as a Go value. Nil
+// unless the job failed.
+//
+// It has no production caller, and after Unit 3 it is not expected to gain
+// one. The carry-in it was left open for (docs/plans/unit3-carry.md) was
+// the SPA's failure handling - a conflict answered by re-running Apply -
+// and that landed on the other side of the wire: the browser branches on
+// the ENVELOPE's typed details (spa/app/failures.js), because a frontend
+// on the far end of an HTTP response has no Go value to branch on in the
+// first place.
+//
+// It stays because it is what three tests use to prove the typed error
+// SURVIVES the job registry unflattened - that a *core.ConflictError is
+// still a *core.ConflictError, and core.ErrStalePlan still matches
+// errors.Is, after a round trip through a goroutine and a mutex. Deleting
+// it would delete that proof, and the envelope those tests would have to
+// assert on instead cannot distinguish a typed error from a well-worded
+// string.
 func (j *job) failure() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
