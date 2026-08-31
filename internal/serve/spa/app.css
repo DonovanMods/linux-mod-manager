@@ -309,6 +309,13 @@ select {
   padding: var(--space-6);
 }
 
+/* Mission Control's own main landmark - missing entirely was I1: the
+ * attention cards and the library ran flat against both viewport edges and
+ * the top bar's bottom edge, with no gutter at all. */
+.mission-control__body {
+  padding: var(--space-6);
+}
+
 /* The game/profile pickers and the activity bell share one dropdown shape:
  * a trigger button and an absolutely-positioned menu beneath it. */
 .picker {

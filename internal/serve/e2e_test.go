@@ -182,6 +182,28 @@ func TestE2E_ChooserRendersGameCardsAndNavigatesOnClick(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_MissionControlBodyHasGutterPadding guards the unit 2 gate's I1
+// finding: `.mission-control__body` had no CSS rule at all, so the
+// attention cards and the library ran flat against both viewport edges and
+// the top bar's bottom edge (measured live: `padding: "0px"`, `cardsLeft:
+// 0`). getComputedStyle is the same instrument the review used to catch it.
+func TestE2E_MissionControlBodyHasGutterPadding(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var padding string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(
+			`getComputedStyle(document.querySelector(".mission-control__body")).paddingLeft`,
+			&padding,
+		),
+	)
+
+	assert.NotEqual(t, "0px", padding, "the body must carry a real gutter, not run flat against the viewport edge")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_EmptyLibraryShowsInlineHint covers the other empty state: a
 // resolvable game/profile with nothing installed in it yet.
 func TestE2E_EmptyLibraryShowsInlineHint(t *testing.T) {
