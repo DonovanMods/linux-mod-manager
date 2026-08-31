@@ -18,13 +18,14 @@ function ComingSoon({ route }) {
 /** The application root: reads the route and dispatches to its screen. The
  * chooser owns its own minimal header (no game/profile context exists yet);
  * Mission Control's top bar carries the theme toggle for every other route. */
-export function App({ state, onThemeChange }) {
+export function App({ state, onThemeChange, actions }) {
   const { route, error } = state;
 
   if (route.view === "home") {
     return html`<${MissionControl}
       state=${state}
       onThemeChange=${onThemeChange}
+      actions=${actions}
     />`;
   }
 

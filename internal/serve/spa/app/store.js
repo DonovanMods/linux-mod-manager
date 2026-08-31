@@ -32,6 +32,12 @@ export function initialState() {
     jobsIndex: null,
     jobs: {},
     error: null,
+    // fetchErrors carries the rejection message for each of Mission
+    // Control's four supplementary reads (mods/updates/health/conflicts),
+    // independently of the null the failed slice itself gets set to - so a
+    // component can tell "nothing to report" from "couldn't check" and
+    // render an explicit error state instead of the all-clear empty one.
+    fetchErrors: { mods: null, updates: null, health: null, conflicts: null },
   };
 }
 

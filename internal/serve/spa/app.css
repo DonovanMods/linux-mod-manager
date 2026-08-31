@@ -492,6 +492,19 @@ select {
   color: var(--text-secondary);
 }
 
+/* A card whose own fetch failed - I3: never rendered as the all-clear
+ * empty state. */
+.card__error {
+  margin: 0 0 var(--space-3);
+  color: var(--danger);
+  font-size: 0.9em;
+}
+
+.card__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 /* ---------------------------------------------------------------------- */
 /* Badges - the library's ⬆⚠⇄🔒 + policy column.                          */
 /* ---------------------------------------------------------------------- */
@@ -608,6 +621,14 @@ select {
 .empty-state__hint {
   color: var(--text-muted);
   font-size: 0.9em;
+}
+
+/* The library's own I3 error state - a failed mods fetch, never rendered as
+ * "No mods installed yet". */
+.empty-state--error {
+  border-style: solid;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 /* ---------------------------------------------------------------------- */

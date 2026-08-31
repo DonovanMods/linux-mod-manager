@@ -313,6 +313,118 @@ func TestE2E_OpeningSlideOverDoesNotRehydrate(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// assertNoUncaughtErrors is BrowserErrors() filtered for the I3 failure
+// scenarios: they deliberately provoke a real network 500, which Chrome
+// itself logs as an error-level "network:" entry independently of whether
+// the SPA handled it - that entry is the fixture working as intended, not a
+// bug. An uncaught JS exception is not, and still fails the test.
+func assertNoUncaughtErrors(t *testing.T, errs []string) {
+	t.Helper()
+	for _, e := range errs {
+		assert.NotContains(t, e, "uncaught:", "the failure must be caught, not thrown: %s", e)
+	}
+}
+
+// TestE2E_FailedMods_RendersErrorStateNotEmpty guards the unit 2 gate's I3
+// finding for the library: mods === null used to render the same "Loading
+// library…" it shows while a fetch is still in flight, forever, with no
+// visible distinction from a genuine failure. It must instead say what
+// failed and offer a retry that recovers once the fault clears.
+func TestE2E_FailedMods_RendersErrorStateNotEmpty(t *testing.T) {
+	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/mods")
+
+	var errorText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.empty-state--error`, chromedp.ByQuery),
+		textContent(`.empty-state--error`, &errorText),
+	)
+	assert.Contains(t, errorText, "Couldn't load your library")
+	assert.NotContains(t, errorText, "No mods installed yet",
+		"a failed fetch must never render as the empty-library all-clear")
+
+	setFailing(false)
+	var rowCount string
+	f.runInBrowser(t,
+		chromedp.Click(`.empty-state--error .button`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".mod-row").length + ""`, &rowCount),
+	)
+	assert.Equal(t, "1", rowCount, "the retry must recover once the fault clears")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_FailedUpdates_RendersErrorStateNotAbsent guards the same I3
+// finding for the Updates attention card: a failed fetch and "nothing to
+// report" both leave `updates` null, and AttentionCards must tell them
+// apart rather than rendering neither card nor section. No update is
+// seeded, so a successful retry finds nothing to report either - the card
+// (correctly) disappears again, same as the design's own all-clear rule;
+// the assertion is that the ERROR half clears, not that a card stays.
+func TestE2E_FailedUpdates_RendersErrorStateNotAbsent(t *testing.T) {
+	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/updates")
+
+	var errorText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates .card__error`, chromedp.ByQuery),
+		textContent(`.card--updates .card__error`, &errorText),
+	)
+	assert.Contains(t, errorText, "Couldn't check for updates")
+
+	setFailing(false)
+	f.runInBrowser(t,
+		chromedp.Click(`.card--updates .card__error + .button`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.card--updates`, chromedp.ByQuery),
+	)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_FailedHealth_RendersErrorStateNotHealthy guards I3's most
+// consequential case: /api/v1/health is the network-heavy full-tier verify
+// and the endpoint most likely to fail in the field, and a swallowed
+// failure used to read as "healthy" - the exact opposite of the truth.
+func TestE2E_FailedHealth_RendersErrorStateNotHealthy(t *testing.T) {
+	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/health")
+
+	var errorText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health .card__error`, chromedp.ByQuery),
+		textContent(`.card--health .card__error`, &errorText),
+	)
+	assert.Contains(t, errorText, "Couldn't check health")
+
+	setFailing(false)
+	f.runInBrowser(t,
+		chromedp.Click(`.card--health .card__error + .button`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.card--health`, chromedp.ByQuery),
+	)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_FailedConflicts_RendersErrorStateNotAbsent is I3's fourth
+// scenario: the Conflicts card. No conflict is seeded, so - like Updates -
+// a successful retry makes the card disappear rather than repopulate.
+func TestE2E_FailedConflicts_RendersErrorStateNotAbsent(t *testing.T) {
+	f, setFailing := newE2EFixtureWithFailingPath(t, "/api/v1/conflicts")
+
+	var errorText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts .card__error`, chromedp.ByQuery),
+		textContent(`.card--conflicts .card__error`, &errorText),
+	)
+	assert.Contains(t, errorText, "Couldn't check for conflicts")
+
+	setFailing(false)
+	f.runInBrowser(t,
+		chromedp.Click(`.card--conflicts .card__error + .button`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.card--conflicts`, chromedp.ByQuery),
+	)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
 // TestE2E_AttentionCardsRenderFromSeededFixture is the "card presence"
 // scenario: on a fixture where all three cards have something to say, all
 // three actually render, each naming what it found.

@@ -10,85 +10,170 @@ import { NOT_YET } from "../ui.js";
 
 /** AttentionCards reads the three already-fetched report documents (core.
  * UpdateCheckReport, core.VerifyReport, core.ConflictReport) and renders
- * nothing at all - not even the section - when none has anything to show. */
-export function AttentionCards({ updates, health, conflicts }) {
+ * nothing at all - not even the section - when none has anything to show
+ * AND none of the three fetches failed. A failed fetch is never swallowed
+ * into that same "nothing needs you here" silence (design doc §Search:
+ * "Source failures surface as a warning row, never swallowed") - its card
+ * renders with an explicit error and a retry, even though the document
+ * behind it is null. */
+export function AttentionCards({
+  updates,
+  health,
+  conflicts,
+  errors = {},
+  actions,
+}) {
   const updateRows = updates?.updates ?? [];
   const findings = (health?.result?.findings ?? []).filter(
     (f) => f.status !== "ok",
   );
   const conflictRows = conflicts?.conflicts ?? [];
+  const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
 
   if (
     updateRows.length === 0 &&
     findings.length === 0 &&
-    conflictRows.length === 0
+    conflictRows.length === 0 &&
+    !hasError
   ) {
     return null;
   }
 
   return html`
     <section class="attention-cards">
-      ${updateRows.length > 0 && html`<${UpdatesCard} rows=${updateRows} />`}
       ${
-        findings.length > 0 &&
-        html`<${HealthCard} findings=${findings} result=${health.result} />`
+        (updateRows.length > 0 || errors.updates) &&
+        html`<${UpdatesCard}
+          rows=${updateRows}
+          error=${errors.updates}
+          onRetry=${actions.reloadUpdates}
+        />`
       }
-      ${conflictRows.length > 0 && html`<${ConflictsCard} rows=${conflictRows} />`}
+      ${
+        (findings.length > 0 || errors.health) &&
+        html`<${HealthCard}
+          findings=${findings}
+          result=${health?.result}
+          error=${errors.health}
+          onReverify=${actions.reloadHealth}
+        />`
+      }
+      ${
+        (conflictRows.length > 0 || errors.conflicts) &&
+        html`<${ConflictsCard}
+          rows=${conflictRows}
+          error=${errors.conflicts}
+          onRetry=${actions.reloadConflicts}
+        />`
+      }
     </section>
   `;
 }
 
-function UpdatesCard({ rows }) {
+function UpdatesCard({ rows, error, onRetry }) {
   return html`
     <div class="card card--updates">
       <p class="card__title">⬆ Updates (${rows.length})</p>
-      <ul class="card__list">
-        ${rows.map(
-          (u) => html`
-            <li
-              key=${u.installed_mod.source_id + "/" + u.installed_mod.id}
-              class="card__row"
-            >
-              <input type="checkbox" disabled title=${NOT_YET} />
-              <span class="card__row-name">${u.installed_mod.name}</span>
-              <span class="mono card__row-detail"
-                >${u.installed_mod.version} → ${u.new_version}</span
-              >
-            </li>
-          `,
-        )}
-      </ul>
-      <button type="button" class="button" disabled title=${NOT_YET}>
-        Update selected
-      </button>
+      ${
+        error
+          ? html`<${CardError}
+              message="Couldn't check for updates"
+              detail=${error}
+              onRetry=${onRetry}
+            />`
+          : html`
+              <ul class="card__list">
+                ${rows.map(
+                  (u) => html`
+                    <li
+                      key=${u.installed_mod.source_id + "/" + u.installed_mod.id}
+                      class="card__row"
+                    >
+                      <input type="checkbox" disabled title=${NOT_YET} />
+                      <span class="card__row-name"
+                        >${u.installed_mod.name}</span
+                      >
+                      <span class="mono card__row-detail"
+                        >${u.installed_mod.version} → ${u.new_version}</span
+                      >
+                    </li>
+                  `,
+                )}
+              </ul>
+              <button type="button" class="button" disabled title=${NOT_YET}>
+                Update selected
+              </button>
+            `
+      }
     </div>
   `;
 }
 
-function HealthCard({ findings, result }) {
+function HealthCard({ findings, result, error, onReverify }) {
   return html`
     <div class="card card--health">
-      <p class="card__title">⚠ Health (${result.issues + result.warnings})</p>
-      <ul class="card__list">
-        ${findings.map(
-          (f, i) => html`
-            <li key=${f.mod_id + "/" + (f.file_id || i)} class="card__row">
-              <span class="card__row-name">${f.mod_name || f.mod_id}</span>
-              <span class="card__row-detail">${healthLabel(f)}</span>
-              <button
-                type="button"
-                class="button button--small"
-                disabled
-                title=${NOT_YET}
-              >
-                Repair
-              </button>
-            </li>
-          `,
-        )}
-      </ul>
-      <button type="button" class="button" disabled title=${NOT_YET}>
-        Repair all
+      <p class="card__title">
+        ⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}
+      </p>
+      ${
+        error
+          ? html`<${CardError}
+              message="Couldn't check health"
+              detail=${error}
+              onRetry=${onReverify}
+            />`
+          : html`
+              <ul class="card__list">
+                ${findings.map(
+                  (f, i) => html`
+                    <li
+                      key=${f.mod_id + "/" + (f.file_id || i)}
+                      class="card__row"
+                    >
+                      <span class="card__row-name"
+                        >${f.mod_name || f.mod_id}</span
+                      >
+                      <span class="card__row-detail">${healthLabel(f)}</span>
+                      <button
+                        type="button"
+                        class="button button--small"
+                        disabled
+                        title=${NOT_YET}
+                      >
+                        Repair
+                      </button>
+                    </li>
+                  `,
+                )}
+              </ul>
+              <div class="card__actions">
+                <button
+                  type="button"
+                  class="button button--small"
+                  onClick=${onReverify}
+                >
+                  Re-verify
+                </button>
+                <button type="button" class="button" disabled title=${NOT_YET}>
+                  Repair all
+                </button>
+              </div>
+            `
+      }
+    </div>
+  `;
+}
+
+/** The per-card explicit error state: what failed, and a retry that
+ * re-fetches just this card's document (main.js's reload actions) - never
+ * the whole-page hydrate, so a retry after a slow health check doesn't cost
+ * the mods/updates/conflicts reads that already succeeded. */
+function CardError({ message, detail, onRetry }) {
+  return html`
+    <div>
+      <p class="card__error">${message}: ${detail}</p>
+      <button type="button" class="button button--small" onClick=${onRetry}>
+        Retry
       </button>
     </div>
   `;
@@ -100,31 +185,41 @@ function healthLabel(f) {
   return f.note || f.status.replaceAll("_", " ");
 }
 
-function ConflictsCard({ rows }) {
+function ConflictsCard({ rows, error, onRetry }) {
   return html`
     <div class="card card--conflicts">
       <p class="card__title">⇄ Conflicts (${rows.length})</p>
-      <ul class="card__list">
-        ${rows.map(
-          (c) => html`
-            <li key=${c.path} class="card__row">
-              <span class="card__row-name"
-                >${c.owner.name} ↔
-                ${c.also_in.map((m) => m.name).join(", ")}</span
-              >
-              <span class="mono card__row-detail">${c.path}</span>
-              <button
-                type="button"
-                class="button button--small"
-                disabled
-                title=${NOT_YET}
-              >
-                Resolve…
-              </button>
-            </li>
-          `,
-        )}
-      </ul>
+      ${
+        error
+          ? html`<${CardError}
+              message="Couldn't check for conflicts"
+              detail=${error}
+              onRetry=${onRetry}
+            />`
+          : html`
+              <ul class="card__list">
+                ${rows.map(
+                  (c) => html`
+                    <li key=${c.path} class="card__row">
+                      <span class="card__row-name"
+                        >${c.owner.name} ↔
+                        ${c.also_in.map((m) => m.name).join(", ")}</span
+                      >
+                      <span class="mono card__row-detail">${c.path}</span>
+                      <button
+                        type="button"
+                        class="button button--small"
+                        disabled
+                        title=${NOT_YET}
+                      >
+                        Resolve…
+                      </button>
+                    </li>
+                  `,
+                )}
+              </ul>
+            `
+      }
     </div>
   `;
 }

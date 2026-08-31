@@ -30,7 +30,15 @@ const SORT_LABELS = {
   recent: "Recently installed",
 };
 
-export function Library({ mods, updates, health, conflicts, query }) {
+export function Library({
+  mods,
+  updates,
+  health,
+  conflicts,
+  query,
+  error,
+  onRetry,
+}) {
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("load-order");
   const [selected, setSelected] = useState(() => new Set());
@@ -73,6 +81,23 @@ export function Library({ mods, updates, health, conflicts, query }) {
   }
 
   if (mods === null) {
+    if (error) {
+      return html`
+        <section class="library">
+          <p class="section-header">Library</p>
+          <div class="empty-state empty-state--error">
+            <p>Couldn't load your library: ${error}</p>
+            <button
+              type="button"
+              class="button button--small"
+              onClick=${onRetry}
+            >
+              Retry
+            </button>
+          </div>
+        </section>
+      `;
+    }
     return html`
       <section class="library">
         <p class="app-booting">Loading library&#8230;</p>

@@ -27,7 +27,11 @@ root.replaceChildren();
 
 function draw() {
   render(
-    html`<${App} state=${store.get()} onThemeChange=${() => draw()} />`,
+    html`<${App}
+      state=${store.get()}
+      onThemeChange=${() => draw()}
+      actions=${actions}
+    />`,
     root,
   );
 }
@@ -37,6 +41,15 @@ function draw() {
  * not blank the three that loaded fine. */
 function settled(result) {
   return result.status === "fulfilled" ? result.value : null;
+}
+
+/** The message half of a settled() null - undefined for a fulfilled result,
+ * so a component can tell "loaded, nothing to report" from "the fetch
+ * failed" without inspecting the raw PromiseSettledResult itself. */
+function failureMessage(result) {
+  if (result.status === "fulfilled") return null;
+  const err = result.reason;
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -110,8 +123,50 @@ async function hydrate(route) {
     health: settled(health),
     conflicts: settled(conflicts),
     jobsIndex: settled(jobs)?.jobs ?? null,
+    fetchErrors: {
+      mods: failureMessage(mods),
+      updates: failureMessage(updates),
+      health: failureMessage(health),
+      conflicts: failureMessage(conflicts),
+    },
   });
 }
+
+/**
+ * Re-fetches one of Mission Control's four supplementary documents in
+ * isolation - the retry affordance a failed card/library offers, and (for
+ * health) the spec's "re-run" control on a card that loaded fine. Scoped to
+ * the CURRENT route at call time, not the route hydrate() was originally
+ * called for, so a retry clicked after a game/profile switch can't write a
+ * stale document into the new context.
+ */
+async function reload(key, path) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  try {
+    const value = await get(scoped(path, context));
+    store.set({
+      [key]: value,
+      fetchErrors: { ...store.get().fetchErrors, [key]: null },
+    });
+  } catch (err) {
+    const message = err instanceof ApiError ? err.message : String(err);
+    store.set({
+      fetchErrors: { ...store.get().fetchErrors, [key]: message },
+    });
+  }
+}
+
+/** The retry/re-run actions threaded down to the components that render
+ * each of the four supplementary documents. */
+const actions = {
+  reloadMods: () => reload("mods", "/api/v1/mods"),
+  reloadUpdates: () => reload("updates", "/api/v1/updates"),
+  reloadHealth: () => reload("health", "/api/v1/health"),
+  reloadConflicts: () => reload("conflicts", "/api/v1/conflicts"),
+};
 
 // contextKey identifies the data a route needs, not the route itself: the
 // ?mod= slide-over annotation (route.mod) and a search's ?q= (route.q) are

@@ -16,7 +16,7 @@ function goToChooser(e) {
   navigate("/");
 }
 
-export function MissionControl({ state, onThemeChange }) {
+export function MissionControl({ state, onThemeChange, actions }) {
   // Hooks run unconditionally, before either early return below - the
   // query the omnibar edits lives here, one level above the top bar (which
   // renders the input) and the library (which filters by it), rather than
@@ -33,6 +33,7 @@ export function MissionControl({ state, onThemeChange }) {
     conflicts,
     jobsIndex,
     error,
+    fetchErrors,
   } = state;
 
   if (error) {
@@ -68,6 +69,8 @@ export function MissionControl({ state, onThemeChange }) {
           updates=${updates}
           health=${health}
           conflicts=${conflicts}
+          errors=${fetchErrors}
+          actions=${actions}
         />
         <${Library}
           mods=${mods}
@@ -75,6 +78,8 @@ export function MissionControl({ state, onThemeChange }) {
           health=${health}
           conflicts=${conflicts}
           query=${query}
+          error=${fetchErrors?.mods}
+          onRetry=${actions.reloadMods}
         />
       </main>
       ${

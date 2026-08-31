@@ -26,10 +26,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os/exec"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -286,6 +291,80 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 	})
 
 	return "http://" + addr.String()
+}
+
+// startE2EServerWithFailingPath is startE2EServer plus a reverse proxy in
+// front of the real server that can answer one exact request path with a
+// 500 JSON error envelope instead of forwarding it - simulating an upstream
+// failure (offline, rate limit, source outage) for exactly one of Mission
+// Control's supplementary reads (the I3 scenarios), without touching
+// production code or the other three, which still reach the real server.
+// The returned setFailing toggles the fault on and off, so a scenario can
+// also prove the retry affordance recovers once the fault clears.
+//
+// The Director rewrites the forwarded request's Host to the backend's own
+// bound address: hostCheck (middleware.go) pins the allow-list to whatever
+// Listen() actually bound, and the browser's Host header names the PROXY's
+// address instead, which the backend would otherwise reject.
+func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath string) (baseURL string, setFailing func(bool)) {
+	t.Helper()
+	backend := startE2EServer(t, svc)
+
+	backendURL, err := url.Parse(backend)
+	require.NoError(t, err)
+
+	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	baseDirector := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		baseDirector(r)
+		r.Host = backendURL.Host
+	}
+
+	var failing atomic.Bool
+	failing.Store(true)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(failPath, func(w http.ResponseWriter, r *http.Request) {
+		if !failing.Load() {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"simulated upstream failure"}`))
+	})
+	mux.Handle("/", proxy)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyServer := &http.Server{Handler: mux}
+	go proxyServer.Serve(ln)
+	t.Cleanup(func() { _ = proxyServer.Close() })
+
+	return "http://" + ln.Addr().String(), failing.Store
+}
+
+// newE2EFixtureWithFailingPath is newE2EFixture, plus one seeded mod (so the
+// three OTHER supplementary reads have something non-trivial to answer),
+// served through startE2EServerWithFailingPath's proxy instead of directly.
+func newE2EFixtureWithFailingPath(t *testing.T, failPath string) (e2eFixture, func(bool)) {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	svc, game := newFixtureServiceWithSource(t, newFakeSource("fake"))
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: game.ID}, true, nil)
+
+	ctx, browserErrors := newE2EBrowser(t)
+	baseURL, setFailing := startE2EServerWithFailingPath(t, svc, failPath)
+	return e2eFixture{
+		Ctx:           ctx,
+		BaseURL:       baseURL,
+		Svc:           svc,
+		Game:          game,
+		Profile:       "default",
+		BrowserErrors: browserErrors,
+	}, setFailing
 }
 
 // newE2EBrowser starts a headless browser and returns its chromedp context
