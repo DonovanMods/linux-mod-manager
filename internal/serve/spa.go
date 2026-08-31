@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -113,9 +114,14 @@ func assetHandler(embedded fs.FS, dir string) http.Handler {
 	files := http.FileServerFS(sub)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The shell is a template with a per-process token in it, so it is
-		// served by handleShell and nowhere else. Handing out a static copy
-		// would be a cacheable, token-free duplicate of the application.
-		if strings.TrimPrefix(r.URL.Path, "/") == "index.html" {
+		// served by handleShell and nowhere else. A directory request would
+		// otherwise resolve to that directory's index.html (a cacheable,
+		// token-free duplicate of the shell) or, absent one, a listing of
+		// the directory's contents - so both directory-index resolution and
+		// bare directory listing are refused here, not just the literal
+		// "index.html" path.
+		p := strings.TrimPrefix(r.URL.Path, "/")
+		if p == "" || strings.HasSuffix(p, "/") || path.Base(p) == "index.html" {
 			http.NotFound(w, r)
 			return
 		}

@@ -8,6 +8,7 @@ package serve
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"io/fs"
 	"net/http"
 	"path"
 	"regexp"
@@ -164,13 +165,57 @@ func TestSPAAssets_VendorIsServedVerbatim(t *testing.T) {
 
 // TestSPAAssets_ShellIsNotServedAsAnAsset keeps the shell to its one entry
 // point: it is a TEMPLATE (it carries the CSRF token), so a copy handed out
-// as a static file would be a token-free, cacheable duplicate of it.
+// as a static file would be a token-free, cacheable duplicate of it. This
+// covers not just the literal "index.html" path but every way
+// http.FileServerFS would otherwise resolve a directory: the directory
+// index (/static/ itself) and a bare directory listing when there is no
+// index (/static/app/, /vendor/) - both would leak either the shell or the
+// asset inventory.
 func TestSPAAssets_ShellIsNotServedAsAnAsset(t *testing.T) {
 	s, _, _ := newFlowFixtureServer(t)
 
-	rec := doAPI(s, http.MethodGet, "/static/index.html", "")
+	for _, path := range []string{"/static/index.html", "/static/", "/static/app/", "/vendor/"} {
+		t.Run(path, func(t *testing.T) {
+			rec := doAPI(s, http.MethodGet, path, "")
+			assert.Equal(t, http.StatusNotFound, rec.Code)
+		})
+	}
+}
 
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+// TestSPAAssets_RawShellTemplateIsUnreachable walks the whole embedded SPA
+// tree looking for the raw "{{.CSRFToken}}" template placeholder - the
+// literal string a browser would boot the SPA with if it ever reached the
+// unrendered template instead of handleShell's output. It must not be
+// reachable at any route this server registers, not just the ones this
+// package's other tests happen to probe.
+func TestSPAAssets_RawShellTemplateIsUnreachable(t *testing.T) {
+	s, _, _ := newFlowFixtureServer(t)
+
+	err := fs.WalkDir(spaFS, ".", func(p string, d fs.DirEntry, err error) error {
+		require.NoError(t, err)
+		if d.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(p, "spa/")
+		rec := doAPI(s, http.MethodGet, "/static/"+rel, "")
+		if rec.Code == http.StatusOK {
+			assert.NotContains(t, rec.Body.String(), "{{.CSRFToken}}",
+				"the raw shell template must never be reachable as a static asset (%s)", p)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+
+	// And the rendered shell itself, at every route it is actually served
+	// on, must carry a real token rather than the placeholder.
+	for _, route := range []string{"/", "/g/g1/default"} {
+		rec := doAPI(s, http.MethodGet, route, "")
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.NotContains(t, rec.Body.String(), "{{.CSRFToken}}")
+		assert.Contains(t, rec.Body.String(), s.csrf.token)
+		assert.Contains(t, rec.Header().Get("Cache-Control"), "no-store",
+			"the rendered shell carries this process's token, so it must never be cached")
+	}
 }
 
 // TestLegacyPageRoutes_301IntoTheSPAScheme covers the deleted page layer's
