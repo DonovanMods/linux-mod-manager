@@ -66,6 +66,15 @@ func init() {
 // the honest failure mode of the data the report actually carries: better
 // than hiding the action from every profile because one mod in it might be
 // local.
+//
+// KNOWN DRIFT RISK (task-9 review Minor 2, accepted for v2.1.0, not fixed
+// here): this duplicates core's status vocabulary by string literal. Core
+// exports no constants for these either (they're literals in
+// internal/core/verify.go's repair branches), so a new repairable status
+// added there silently stops being offered here, with no test or ratchet
+// to catch the drift. The real fix - core.VerifyFindingIsRepairable or
+// exported status constants both sides read - touches core's public
+// surface and belongs in a follow-up issue, not this polish pass.
 var verifyFixRepairableStatuses = map[string]bool{
 	"missing":          true,
 	"no_checksum":      true,

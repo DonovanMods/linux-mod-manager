@@ -124,7 +124,16 @@ type kindForm struct {
 	//
 	// Nil means "this kind's options are apply-time", which is the common
 	// case (install, uninstall, updates): the confirm form's own values are
-	// what applies, so there is nothing to disagree with.
+	// what applies, so there is nothing to disagree with - Apply always
+	// receives exactly the options the submission carries, regardless of
+	// what PlanIsCurrent would have said. That does NOT mean an apply-time
+	// option can never appear in the plan text: uninstall's KeepCache and
+	// SkipHooks are apply-time (unlock only, per this doc), yet the stored
+	// plan document echoes them (kind_uninstall.go), so ticking one and
+	// pressing the primary button applies the tick correctly even though
+	// the confirm page's plan-derived summary above it can lag one step
+	// behind until "Update plan" is pressed (task-9 review Minor 3) - a
+	// display staleness, never a mismatch in what actually happens.
 	PlanIsCurrent func(pending any, r *http.Request) bool
 }
 

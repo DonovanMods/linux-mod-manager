@@ -53,10 +53,12 @@ func (sel selection) ready() bool {
 // hidden fields (Task 8) - one resolution for both, rather than a second,
 // drifting copy for the mutation routes. FormValue prefers the body over
 // the query string for a POST, which is the right precedence: the hidden
-// field a page rendered is what the user was actually looking at. An unresolvable game or profile - an unknown value,
-// no configured default, no games at all - degrades the result rather than
-// failing the request: only a genuine core failure (e.g. ListGameEntries)
-// returns a non-nil error.
+// field a page rendered is what the user was actually looking at.
+//
+// An unresolvable game or profile - an unknown value, no configured
+// default, no games at all - degrades the result rather than failing the
+// request: only a genuine core failure (e.g. ListGameEntries) returns a
+// non-nil error.
 func (s *Server) resolveSelection(r *http.Request) (selection, error) {
 	ctx := r.Context()
 	var sel selection
