@@ -37,3 +37,7 @@ var searchTemplate = parsePage("search")
 // updatesTemplate renders "/updates" - the update-selection table
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var updatesTemplate = parsePage("updates")
+
+// profilesTemplate renders "/profiles" - the profile list
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var profilesTemplate = parsePage("profiles")

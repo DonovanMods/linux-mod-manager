@@ -1,0 +1,56 @@
+{{define "content" -}}
+<h1 class="mb-4 text-2xl font-bold">Profiles</h1>
+{{if not .Listing}}
+{{if not .Nav.Games}}
+<p class="text-gray-600">No games configured.</p>
+<p class="mt-2 text-sm text-gray-600">Add one from the command line with <code>lmm game add</code>.</p>
+{{else}}
+<p class="text-gray-600">Select a game above to see its profiles.</p>
+{{end}}
+{{else if not .Listing.Profiles}}
+<p class="text-gray-600">This game has no profiles yet.</p>
+{{else}}
+<!-- Renders every profile unbounded for v2.1.0 - no pagination. -->
+<div class="overflow-x-auto">
+<table class="w-full text-left text-sm">
+<thead>
+<tr class="border-b border-gray-200 text-gray-500">
+<th scope="col" class="py-2 pr-4">Name</th>
+<th scope="col" class="py-2 pr-4">Mods</th>
+<th scope="col" class="py-2 pr-4">Default</th>
+<th scope="col" class="py-2 pr-4">Actions</th>
+</tr>
+</thead>
+<tbody>
+{{range .Listing.Profiles}}
+<tr class="border-b border-gray-100">
+<td class="py-2 pr-4 font-medium">{{.Name}}</td>
+<td class="py-2 pr-4">{{.ModCount}}</td>
+<td class="py-2 pr-4">{{if .IsDefault}}yes{{else}}no{{end}}</td>
+<td class="py-2 pr-4">
+<div class="flex flex-wrap gap-2">
+<form method="post" action="/profiles/{{.Name}}/switch">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Switch</button>
+</form>
+<form method="post" action="/profiles/{{.Name}}/apply">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Apply</button>
+</form>
+<form method="post" action="/profiles/{{.Name}}/deploy">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Deploy</button>
+</form>
+</div>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+{{end}}
+{{- end}}
