@@ -55,20 +55,50 @@ import (
 )
 
 // e2eShutdownGrace is how long a browser fixture's server waits for
-// in-flight requests when the test tears it down. It is generous compared
-// with production's own default (10s) for one reason, measured rather than
-// guessed: the SPA holds a session-long EventSource on GET /api/v1/events
-// (activity.js), and a browser being torn down can re-establish it once or
-// twice before its process is actually gone - each reconnect making the
-// connection active again just as http.Server.Shutdown was about to finish.
-// Observed waits were 2-6 seconds under a loaded full-suite run.
+// in-flight requests when the test tears it down. Slightly under
+// production's own default (10s): the SPA holds a session-long EventSource
+// on GET /api/v1/events (activity.js), and Shutdown has to outlast it
+// actually closing.
+//
+// It used to be 20s, to absorb a browser re-establishing that EventSource
+// once or twice while it was torn down - each reconnect making the
+// connection active again just as Shutdown was about to finish. That
+// symptom is I1's finding: newE2EBrowser's chromedp.Cancel call, meant to
+// wait for the whole browser PROCESS to exit before this grace window even
+// starts, was silently falling back to a non-waiting cancel on every run
+// (a context-derivation bug, fixed at newE2EBrowser). With the real wait
+// restored, the reconnect this grace existed to absorb no longer happens:
+// 5s held green over 3 consecutive full `-race` E2E runs (unit3 fix wave,
+// #329) with room to spare (~37-38s total each), so it came back down.
 //
 // It is a TEST allowance and nothing else: Shutdown still returns the
 // instant the connection really closes (microseconds, in the ordinary
 // case), so this costs no wall clock on a healthy teardown, and the
 // server's real shutdown semantics are pinned by their own tests
 // (TestServer_ServeCancelsJobsOnceTheGraceExpires and friends), not here.
-const e2eShutdownGrace = 20 * time.Second
+const e2eShutdownGrace = 5 * time.Second
+
+// e2eShutdownCleanupGuard bounds how long a fixture's own t.Cleanup waits
+// for Serve to return, once cancel() has told it to. It MUST exceed
+// e2eShutdownGrace: Serve itself can legitimately take up to that long
+// (a genuine grace exhaustion), and a guard shorter than the thing it is
+// guarding fires first - reporting "the E2E server did not shut down" and
+// never reaching the require.NoError(t, err) on Serve's own real error,
+// which is the diagnostic this exists to surface. The +5s is slack for the
+// goroutine scheduling and channel send between Serve returning and the
+// cleanup's select observing it, not a second grace period.
+const e2eShutdownCleanupGuard = e2eShutdownGrace + 5*time.Second
+
+// TestE2EShutdownCleanupGuardExceedsGrace pins M1's invariant directly,
+// without needing an actual 20+-second shutdown to observe it: a guard that
+// does not outlast the grace it is guarding fires first on a genuine grace
+// exhaustion, misreporting it as "the E2E server did not shut down" instead
+// of reaching Serve's own real error. Before the fix this was a bare
+// `15 * time.Second` literal, unrelated to e2eShutdownGrace's 20s - this
+// test is what would have caught that drift.
+func TestE2EShutdownCleanupGuardExceedsGrace(t *testing.T) {
+	require.Greater(t, e2eShutdownCleanupGuard, e2eShutdownGrace)
+}
 
 // e2eTimeout bounds one chromedp.Run. Generous, because a cold browser
 // start is the slowest thing in this package by an order of magnitude, and
@@ -336,7 +366,7 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 		select {
 		case err := <-served:
 			require.NoError(t, err)
-		case <-time.After(15 * time.Second):
+		case <-time.After(e2eShutdownCleanupGuard):
 			t.Error("the E2E server did not shut down")
 		}
 	})
@@ -437,7 +467,17 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 
 	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
 		chromedp.ExecPath(binary))
-	allocCtx, cancelAlloc := chromedp.NewExecAllocator(t.Context(), opts...)
+	// WithoutCancel, same reasoning as startE2EServer:331. t.Context() is
+	// cancelled when the test FUNCTION returns, which is BEFORE t.Cleanup
+	// runs - so deriving the allocator from it directly cancels ctx (below)
+	// before the cleanup's chromedp.Cancel(ctx) call ever runs. chromedp
+	// v0.16.0's Cancel takes its graceful path only when ctx is still live;
+	// on an already-cancelled ctx its first act (closing the browser)
+	// returns context.Canceled immediately, BEFORE the wait for the process
+	// to actually exit that is the entire reason to call Cancel instead of
+	// the bare context cancel - silently falling back to the non-waiting
+	// path it was meant to replace.
+	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.WithoutCancel(t.Context()), opts...)
 	t.Cleanup(cancelAlloc)
 
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
