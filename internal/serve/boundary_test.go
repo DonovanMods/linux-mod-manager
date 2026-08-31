@@ -1,4 +1,4 @@
-package main
+package serve_test
 
 import (
 	"fmt"
@@ -14,18 +14,16 @@ import (
 // modulePrefix is the import-path prefix of every package in this module.
 const modulePrefix = "github.com/DonovanMods/linux-mod-manager/v2/"
 
-// allowedImports are the intra-module packages a frontend may depend on.
-// Anything else means logic that belongs in internal/core has leaked into a
-// command. See docs/plans/2026-08-27-v2-core-refactor-design.md §1. This is
-// the hard rule (v2 Phase 3 Task 20, #305): there is no allow-list escape
-// hatch, so a new dependency either belongs on this list (with a
-// design-doc reference) or the logic it needs moves into internal/core.
+// allowedImports are the intra-module packages internal/serve may depend on.
+// Anything else means logic that belongs closer to core (or a layering
+// violation) has leaked into the HTTP frontend - mirrors cmd/lmm's own
+// allow-list ratchet (cmd/lmm/boundary_test.go), extended to this package
+// per docs/plans/2026-08-30-serve-design.md §Architecture: "internal/serve
+// imports only app/core/domain".
 var allowedImports = []string{
 	"internal/app",
 	"internal/core",
 	"internal/domain",
-	"internal/serve",  // lmm serve (docs/plans/2026-08-30-serve-design.md §Architecture)
-	"internal/source", // the interface package only; its subpackages are not allowed
 }
 
 // checkBoundary returns one message per intra-module import that is not in
@@ -41,7 +39,7 @@ func checkBoundary(imports []string, allowed []string) []string {
 			continue
 		}
 		problems = append(problems, fmt.Sprintf(
-			"cmd/lmm imports %s, which is not a frontend-facing package: move the logic into internal/core", rel))
+			"internal/serve imports %s, which is outside its allowed dependency set", rel))
 	}
 	slices.Sort(problems)
 	return problems
@@ -56,12 +54,16 @@ func TestCheckBoundary(t *testing.T) {
 	}{
 		{
 			name:    "allowed and third-party imports pass",
-			imports: []string{modulePrefix + "internal/core", modulePrefix + "internal/domain", "fmt", "github.com/spf13/cobra"},
+			imports: []string{modulePrefix + "internal/core", modulePrefix + "internal/domain", "context", "net/http"},
 		},
 		{
+			// The seeded violation: a source package is never allowed inside
+			// internal/serve (it must go through internal/core's ModSource
+			// abstraction), so this reproduces the exact shape a future
+			// accidental import would take.
 			name:    "a disallowed intra-module import fails",
-			imports: []string{modulePrefix + "internal/core", modulePrefix + "internal/storage/db"},
-			want:    []string{"imports internal/storage/db"},
+			imports: []string{modulePrefix + "internal/core", modulePrefix + "internal/source/nexusmods"},
+			want:    []string{"imports internal/source/nexusmods"},
 		},
 	}
 	for _, tt := range tests {
@@ -76,8 +78,8 @@ func TestCheckBoundary(t *testing.T) {
 }
 
 // goBinary locates the go tool for the live check. The test binary was built
-// by a go toolchain, and `go test` puts that toolchain's bin dir on PATH, so a
-// missing tool means an unusual invocation worth failing loudly on.
+// by a go toolchain, and `go test` puts that toolchain's bin dir on PATH, so
+// a missing tool means an unusual invocation worth failing loudly on.
 func goBinary(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("go")
@@ -87,11 +89,11 @@ func goBinary(t *testing.T) string {
 	return p
 }
 
-// TestImportBoundary is the ratchet: cmd/lmm's non-test imports must stay
-// within allowedImports.
+// TestImportBoundary is the ratchet: internal/serve's non-test imports must
+// stay within allowedImports.
 func TestImportBoundary(t *testing.T) {
 	out, err := exec.Command(goBinary(t), "list", "-f", `{{join .Imports "\n"}}`, ".").Output()
-	require.NoError(t, err, "go list ./cmd/lmm")
+	require.NoError(t, err, "go list ./internal/serve")
 	imports := strings.Split(strings.TrimSpace(string(out)), "\n")
 
 	problems := checkBoundary(imports, allowedImports)

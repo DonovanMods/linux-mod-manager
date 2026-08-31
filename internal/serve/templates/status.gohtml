@@ -1,0 +1,27 @@
+{{define "content" -}}
+<h1 class="mb-4 text-2xl font-bold">Status</h1>
+{{if not .Games}}
+<p class="text-gray-600">No games configured.</p>
+<p class="mt-2 text-sm text-gray-600">Add one from the command line with <code>lmm game add</code>.</p>
+{{else}}
+<section aria-label="Configured games" class="grid gap-4 sm:grid-cols-2">
+{{range .Games}}
+<article class="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+<h2 class="text-lg font-semibold">
+{{.Summary.Name}}
+{{if .Summary.IsDefault}}<span class="ml-2 inline-block rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">default</span>{{end}}
+</h2>
+<dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm text-gray-700">
+<dt class="font-medium text-gray-500">Install path</dt><dd>{{.Summary.InstallPath}}</dd>
+<dt class="font-medium text-gray-500">Link method</dt><dd>{{.Summary.LinkMethod}}</dd>
+<dt class="font-medium text-gray-500">Mods (active profile)</dt><dd>{{.Summary.ModCount}}</dd>
+{{with .Detail}}
+<dt class="font-medium text-gray-500">Active profile</dt><dd>{{if .ActiveProfile}}{{.ActiveProfile}}{{else}}none{{end}}</dd>
+<dt class="font-medium text-gray-500">Enabled / installed</dt><dd>{{.EnabledModCount}} / {{.InstalledModCount}}</dd>
+{{end}}
+</dl>
+</article>
+{{end}}
+</section>
+{{end}}
+{{- end}}

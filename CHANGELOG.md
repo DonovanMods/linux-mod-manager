@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `lmm serve` starts a local web UI (127.0.0.1:7420 by default, `--addr`
+  to change it, `--no-open` to skip auto-opening a browser): a
+  server-rendered status dashboard for now, with the read pages, JSON API,
+  and mutations landing in follow-up units of this epic (#319, epic #276).
 - `mod show` displays a mod's changelog when its source can supply one
   (`--json`: `changelog`, additive) - NexusMods now implements the new
   `source.ChangelogProvider` optional capability via its files endpoint's

@@ -40,8 +40,16 @@ func TestDetailsTypesAreCovered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing cmd/lmm: %v", err)
 	}
+	// internal/serve introduces no Details() types yet (Task 3 is the
+	// skeleton; the JSON error envelope lands with api.go), but the ratchet
+	// covers it from here on per docs/plans/2026-08-30-serve-impl.md §Global
+	// Constraints, same as the doc-comment and boundary ratchets.
+	serveTypes, err := detailsTypes("../../internal/serve", "serve")
+	if err != nil {
+		t.Fatalf("parsing internal/serve: %v", err)
+	}
 	found := map[string]bool{}
-	for _, name := range append(coreTypes, cliTypes...) {
+	for _, name := range append(append(coreTypes, cliTypes...), serveTypes...) {
 		found[name] = true
 	}
 
