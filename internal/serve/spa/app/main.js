@@ -57,4 +57,3 @@ setTheme(currentTheme());
 store.subscribe(draw);
 onRouteChange(go);
 go(parseLocation());
-draw();
