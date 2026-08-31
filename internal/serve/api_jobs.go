@@ -12,10 +12,15 @@
 package serve
 
 import (
+	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
 
 // maxAPIRequestBytes bounds how much of a request body /api/v1 will read.
@@ -23,6 +28,21 @@ import (
 // options, a job request is an id plus options - so a generous megabyte
 // still refuses a client (or a bug) that tries to stream into memory.
 const maxAPIRequestBytes = 1 << 20
+
+// maxQueuedJobs is the ruled backpressure threshold: once more than this
+// many jobs are in state running, POST /api/v1/jobs refuses new ones with
+// a 409 instead of admitting them.
+//
+// It exists because "running" over-reports. core's beginOp (internal/core/
+// ops.go) serialises mutations to one in flight at a time by BLOCKING, not
+// by rejecting, so a second mutation job sits in state running while doing
+// nothing at all, indistinguishable from the one actually working. Without
+// a cap, a stuck deploy plus an impatient client (or a script in a loop)
+// piles up an unbounded queue of jobs that each hold their plan, their ring
+// buffer and their goroutine while achieving nothing. Eight is generous for
+// a single-user local tool - reaching it means something is wrong, and the
+// honest answer is to say so.
+const maxQueuedJobs = 8
 
 // planResponse is POST /api/v1/plans/{kind}'s success document: the plan
 // itself, exactly the frozen core plan type the CLI's --dry-run --json
@@ -40,6 +60,20 @@ type planResponse struct {
 // without anyone remembering to update a message.
 type planKindDetails struct {
 	SupportedKinds []string `json:"supported_kinds"`
+}
+
+// jobStartRequest is POST /api/v1/jobs's request body: the handle a plan
+// response issued, plus that kind's apply-time options left as raw JSON so
+// the kind's own decoder - not this generic one - defines their shape.
+type jobStartRequest struct {
+	PlanID  planID         `json:"plan_id"`
+	Options jsontext.Value `json:"options,omitzero"`
+}
+
+// jobStartResponse is POST /api/v1/jobs's success document: the handle
+// GET /api/v1/jobs/{id} and its SSE stream are addressed by.
+type jobStartResponse struct {
+	JobID jobID `json:"job_id"`
 }
 
 // readAPIBody reads r's body under maxAPIRequestBytes. An over-long body
@@ -110,4 +144,79 @@ func decodeAPIRequest(body []byte, v any) error {
 		return fmt.Errorf("decoding request body: %w", err)
 	}
 	return nil
+}
+
+// handleAPIStartJob answers POST /api/v1/jobs: it redeems a plan_id and
+// starts that plan's Apply as a background job, answering 202 Accepted with
+// the job's id. 202 rather than 200 is the literal truth - the mutation has
+// been accepted and is running, and nothing about its outcome is known yet.
+//
+// The refusal order is deliberate, and is about not burning a single-use
+// plan for a request that was never going to run: the queue check and the
+// options decode both happen while the plan is still merely peeked at
+// (planStore.Kind), so a client that gets a 409 or a 400 here can retry the
+// SAME plan_id once it has fixed the problem. Only two paths consume a plan
+// without running it, and both are terminal for that plan by nature: losing
+// a race to another Take, and a registry that began draining between the
+// peek and the Start (the server is going away, so a re-plan against this
+// process could not help anyway).
+func (s *Server) handleAPIStartJob(w http.ResponseWriter, r *http.Request) {
+	body, err := readAPIBody(w, r)
+	if err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	var req jobStartRequest
+	if err := decodeAPIRequest(body, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.PlanID == "" {
+		s.writeAPIError(w, http.StatusBadRequest, errors.New(`missing required member "plan_id"`))
+		return
+	}
+
+	if depth := s.jobs.QueueDepth(); depth > maxQueuedJobs {
+		s.log.Warn("serve: refusing a job, queue depth exceeded", "depth", depth, "max", maxQueuedJobs)
+		s.writeAPIError(w, http.StatusConflict,
+			fmt.Errorf("%d operations are already running; wait for one to finish and try again", depth))
+		return
+	}
+
+	kindName, ok := s.plans.Kind(req.PlanID)
+	if !ok {
+		s.writeAPIError(w, http.StatusConflict, errPlanUnavailable)
+		return
+	}
+	kind, ok := lookupPlanKind(kindName)
+	if !ok {
+		s.writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("stored plan names unregistered kind %q", kindName))
+		return
+	}
+	opts, err := kind.ApplyOptions(req.Options)
+	if err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	stored, err := s.plans.Take(req.PlanID)
+	if err != nil {
+		s.writeAPIError(w, http.StatusConflict, err)
+		return
+	}
+
+	pending := stored.Plan
+	id, err := s.jobs.Start(kind.Name, func(ctx context.Context, sink core.EventSink) (any, error) {
+		return kind.Apply(ctx, s, pending, opts, sink)
+	})
+	if errors.Is(err, errRegistryClosing) {
+		s.writeAPIError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusAccepted, jobStartResponse{JobID: id})
 }

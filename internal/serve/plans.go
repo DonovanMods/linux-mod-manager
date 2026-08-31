@@ -155,6 +155,27 @@ func (s *planStore) Take(id planID) (*storedPlan, error) {
 	return entry, nil
 }
 
+// Kind reports the kind stored under id without consuming it - the peek
+// the job endpoint needs to find the right planKind (and therefore the
+// right options decoder) BEFORE it takes the plan. Without it, a request
+// carrying options the kind refuses would have to burn its single-use plan
+// just to discover that, forcing a re-plan for what is purely a bad
+// request. An expired entry answers false, exactly as Take would; the
+// entry is left for the next Put's sweep rather than deleted here, so a
+// peek never has a side effect.
+func (s *planStore) Kind(id planID) (string, bool) {
+	now := s.now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entry, ok := s.plans[id]
+	if !ok || s.expired(entry, now) {
+		return "", false
+	}
+	return entry.Kind, true
+}
+
 // len reports how many live entries the store holds. Test-facing: nothing
 // in the request path needs it.
 func (s *planStore) len() int {
