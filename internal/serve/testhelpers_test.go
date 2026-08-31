@@ -1,7 +1,9 @@
 package serve_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json/v2"
 	"log/slog"
 	"sort"
 	"strings"
@@ -12,6 +14,36 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/require"
 )
+
+// decodeStrict unmarshals raw into out via encoding/json/v2 with
+// RejectUnknownMembers, so a stray key api.go's writer might introduce -
+// rather than exactly the declared core/app type - fails the test instead
+// of silently round-tripping through an untyped shape. The httptest
+// analogue of cmd/lmm's own decodeStrict (json_strict_test.go), duplicated
+// here since cmd/lmm is not importable from serve_test (boundary rule).
+func decodeStrict(t *testing.T, raw []byte, out any) {
+	t.Helper()
+	require.NoError(t, json.Unmarshal(raw, out, json.RejectUnknownMembers(true)),
+		"/api/v1 document must decode into the declared type with no unknown members")
+}
+
+// requireEncodesLike asserts got byte-matches core.EncodeJSON(want) exactly
+// - the Task 5 ruling that every /api/v1 response carries no second
+// encoder: the same framing (2-space indent, deterministic key order, one
+// trailing newline) the CLI's --json emits for the identical value.
+func requireEncodesLike(t *testing.T, got []byte, want any) {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, core.EncodeJSON(&buf, want))
+	require.Equal(t, buf.String(), string(got), "response body must byte-match core.EncodeJSON of the equivalent core call")
+}
+
+// apiErrorEnvelope mirrors cmd/lmm's own jsonErrorEnvelope for strict
+// decoding /api/v1's {"error","details"} failures in tests.
+type apiErrorEnvelope struct {
+	Error   string `json:"error"`
+	Details any    `json:"details,omitempty"`
+}
 
 // newFixtureService returns a *core.Service backed by fresh temp dirs, with
 // one game (ID "g1", name "Fixture Game") registered - the seeded fixture
