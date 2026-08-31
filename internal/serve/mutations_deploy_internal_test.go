@@ -29,7 +29,7 @@ func TestServer_ProfileDeploy_ConfirmIsThePlanPage(t *testing.T) {
 	s, _, game := newMutationFixtureServer(t)
 	require.NoFileExists(t, deployedFixturePath(game))
 
-	rec := postForm(s, "/profiles/default/deploy", formValues{"game": game.ID, "profile": "default"})
+	rec := postForm(s, "/deploy", formValues{"game": game.ID, "profile": "default"})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	body := rec.Body.String()
@@ -44,10 +44,10 @@ func TestServer_ProfileDeploy_ConfirmIsThePlanPage(t *testing.T) {
 // TestServer_ProfileDeploy_ConfirmRunsTheJobAndDeploys is the apply half.
 func TestServer_ProfileDeploy_ConfirmRunsTheJobAndDeploys(t *testing.T) {
 	s, _, game := newMutationFixtureServer(t)
-	entry := postForm(s, "/profiles/default/deploy", formValues{"game": game.ID, "profile": "default"})
+	entry := postForm(s, "/deploy", formValues{"game": game.ID, "profile": "default"})
 	require.Equal(t, http.StatusOK, entry.Code)
 
-	rec := postForm(s, "/profiles/default/deploy", formValues{
+	rec := postForm(s, "/deploy", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1",
 		"plan_id": hiddenField(t, entry.Body.String(), "plan_id"),
 	})
@@ -62,10 +62,10 @@ func TestServer_ProfileDeploy_ConfirmRunsTheJobAndDeploys(t *testing.T) {
 // path.
 func TestServer_ProfileDeploy_SyncFallback_MutatesIdentically(t *testing.T) {
 	s, _, game := newMutationFixtureServer(t)
-	entry := postForm(s, "/profiles/default/deploy", formValues{"game": game.ID, "profile": "default"})
+	entry := postForm(s, "/deploy", formValues{"game": game.ID, "profile": "default"})
 	require.Equal(t, http.StatusOK, entry.Code)
 
-	rec := postForm(s, "/profiles/default/deploy?sync=1", formValues{
+	rec := postForm(s, "/deploy?sync=1", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1",
 		"plan_id": hiddenField(t, entry.Body.String(), "plan_id"),
 	})
@@ -82,11 +82,11 @@ func TestServer_ProfileDeploy_SyncFallback_MutatesIdentically(t *testing.T) {
 // previewed.
 func TestServer_ProfileDeploy_ChangedOptionRePlansInsteadOfApplying(t *testing.T) {
 	s, _, game := newMutationFixtureServer(t)
-	entry := postForm(s, "/profiles/default/deploy", formValues{"game": game.ID, "profile": "default"})
+	entry := postForm(s, "/deploy", formValues{"game": game.ID, "profile": "default"})
 	require.Equal(t, http.StatusOK, entry.Code)
 	firstPlanID := hiddenField(t, entry.Body.String(), "plan_id")
 
-	rec := postForm(s, "/profiles/default/deploy", formValues{
+	rec := postForm(s, "/deploy", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1",
 		"plan_id": firstPlanID, "purge": "1",
 	})
@@ -103,7 +103,7 @@ func TestServer_ProfileDeploy_ChangedOptionRePlansInsteadOfApplying(t *testing.T
 func TestServer_ProfileDeploy_WithoutCSRF_IsRefused(t *testing.T) {
 	s, _, game := newMutationFixtureServer(t)
 
-	rec := postFormWithoutCSRF(s, "/profiles/default/deploy", formValues{
+	rec := postFormWithoutCSRF(s, "/deploy", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1",
 	})
 
@@ -120,9 +120,9 @@ func TestServer_ProfileDeploy_JobStreamsLivePhases(t *testing.T) {
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 
-	entry := postForm(s, "/profiles/default/deploy", formValues{"game": game.ID, "profile": "default"})
+	entry := postForm(s, "/deploy", formValues{"game": game.ID, "profile": "default"})
 	require.Equal(t, http.StatusOK, entry.Code)
-	rec := postForm(s, "/profiles/default/deploy", formValues{
+	rec := postForm(s, "/deploy", formValues{
 		"game": game.ID, "profile": "default", "confirm": "1",
 		"plan_id": hiddenField(t, entry.Body.String(), "plan_id"),
 	})

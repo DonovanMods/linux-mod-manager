@@ -210,7 +210,10 @@ func TestServer_Profiles_PageOffersTheSwitchAndApplyForms(t *testing.T) {
 	body := rec.Body.String()
 	assert.Contains(t, body, `action="/profiles/`+switchTargetProfile+`/switch"`)
 	assert.Contains(t, body, `action="/profiles/`+applyTargetProfile+`/apply"`)
-	assert.Contains(t, body, `action="/profiles/`+activeProfile+`/deploy"`)
+	// Deploy carries no decorative {name} - the row scopes it with a hidden
+	// "profile" field instead (gate review Minor 1).
+	assert.Contains(t, body, `action="/deploy"`)
+	assert.Contains(t, body, `name="profile" value="`+activeProfile+`"`)
 	assert.NotContains(t, body, "disabled")
 	assert.NotContains(t, body, "coming in this release")
 }

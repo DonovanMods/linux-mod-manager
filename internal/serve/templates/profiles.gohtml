@@ -39,7 +39,7 @@
 <input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
 <button type="submit" class="rounded border border-gray-300 px-2 py-1 text-xs font-medium">Apply</button>
 </form>
-<form method="post" action="/profiles/{{.Name}}/deploy">
+<form method="post" action="/deploy">
 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 <input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
 <!-- The deploy kind is scoped by the resolved game+profile, not by a

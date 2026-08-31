@@ -21,7 +21,7 @@
 // What identifies that target differs per flow and is never in the body -
 // the path for a mod (/mods/{source}/{id}/install) or a profile
 // (/profiles/{name}/switch), and the resolved game+profile selection for
-// the batch and health flows.
+// the batch, deploy and health flows.
 //
 // Two recoveries are first-class rather than dead ends, because both are
 // states an ordinary user reaches by doing nothing wrong:
@@ -259,11 +259,13 @@ func (s *Server) handleProfileApply(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "profile_apply")
 }
 
-// handleProfileDeploy answers POST /profiles/{name}/deploy. Unlike its two
-// neighbours the target profile is NOT read from the path: the deploy kind
-// is scoped by the resolved game+profile selection (it is the same kind
-// /api/v1 has driven since Task 7), so the profiles page sends the row's
-// profile as the hidden field every other scoped page uses.
+// handleProfileDeploy answers POST /deploy. Unlike its two neighbours the
+// target profile is NOT read from a path segment: the deploy kind is scoped
+// by the resolved game+profile selection (it is the same kind /api/v1 has
+// driven since Task 7), so the profiles page sends the row's profile as the
+// hidden field every other scoped page uses, and the route carries no
+// decorative {name} that submission could disagree with (gate review Minor
+// 1).
 func (s *Server) handleProfileDeploy(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "deploy")
 }
