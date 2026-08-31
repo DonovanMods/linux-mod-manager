@@ -435,6 +435,7 @@ func (s *Server) planAndConfirm(w http.ResponseWriter, r *http.Request, kind pla
 		return
 	}
 
+	view := kind.Form.Confirm(pending, applyOpts)
 	action := req.actionPath()
 	data := confirmPageData{
 		pageChrome: s.chrome(r, kind.Title, &sel),
@@ -444,8 +445,11 @@ func (s *Server) planAndConfirm(w http.ResponseWriter, r *http.Request, kind pla
 		PlanID:     s.plans.Put(pending, kind.Name),
 		Notice:     cc.Notice,
 		Conflicts:  cc.Conflicts,
-		Overwrite:  cc.Overwrite,
-		View:       kind.Form.Confirm(pending, applyOpts),
+		// Either the failure that produced this page said so, or the
+		// submission that produced it already carried the decision (see
+		// confirmView.AcceptConflicts).
+		Overwrite: cc.Overwrite || view.AcceptConflicts,
+		View:      view,
 	}
 	s.render(w, confirmTemplate, data)
 }

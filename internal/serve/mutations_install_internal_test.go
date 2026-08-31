@@ -281,3 +281,77 @@ func TestServer_ModInstall_WithoutCSRF_IsRefused(t *testing.T) {
 	_, err := svc.GetInstalledMod(t.Context(), "fake", installModID, game.ID, "default")
 	require.ErrorIs(t, err, domain.ErrModNotFound)
 }
+
+// TestServer_ModInstall_VersionSelectDefaultsToThePlansOwnPick pins the
+// version select to what the plan actually previews (#225): a select whose
+// visible value differed from the plan above it would pin a version the user
+// never chose the moment they pressed the button.
+func TestServer_ModInstall_VersionSelectDefaultsToThePlansOwnPick(t *testing.T) {
+	s, _, game, _ := newInstallFixtureServer(t)
+
+	rec := postForm(s, "/mods/fake/"+installModID+"/install", formValues{"game": game.ID, "profile": "default"})
+	require.Equal(t, http.StatusOK, rec.Code)
+	// The primary file is 2.0, so that is what the plan would install.
+	assert.Contains(t, rec.Body.String(), `<option value="2.0" selected>`)
+
+	// An explicit pick wins over the default, and the preview follows it.
+	picked := postForm(s, "/mods/fake/"+installModID+"/install", formValues{
+		"game": game.ID, "profile": "default", "version": "1.0",
+	})
+	require.Equal(t, http.StatusOK, picked.Code)
+	body := picked.Body.String()
+	assert.Contains(t, body, `<option value="1.0" selected>`)
+	assert.NotContains(t, body, `name="file" value="f2"`,
+		"a pinned version narrows the candidate pool to that version's files")
+}
+
+// TestServer_ModInstall_UpdatePlanRePlansWithTheNewOptions covers the
+// confirm page's third button - the no-JS way to see what a changed option
+// would do before committing to it. It submits the same form WITHOUT the
+// confirm flag (which is why "confirm" rides on the submit buttons rather
+// than on a hidden field), so the page re-plans instead of applying.
+func TestServer_ModInstall_UpdatePlanRePlansWithTheNewOptions(t *testing.T) {
+	s, svc, game, _ := newInstallFixtureServer(t)
+	first := postForm(s, "/mods/fake/"+installModID+"/install", formValues{"game": game.ID, "profile": "default"})
+	require.Equal(t, http.StatusOK, first.Code)
+	firstPlanID := hiddenField(t, first.Body.String(), "plan_id")
+
+	// The version select moved; the stale file checkbox from the old pool
+	// comes along, exactly as a browser would send it.
+	updated := postFormMulti(s, "/mods/fake/"+installModID+"/install", url.Values{
+		"game": {game.ID}, "profile": {"default"},
+		"plan_id": {firstPlanID}, "version": {"1.0"}, "file": {"f2"},
+	})
+
+	require.Equal(t, http.StatusOK, updated.Code, "no confirm flag means re-plan, not apply")
+	body := updated.Body.String()
+	assert.Contains(t, body, `<option value="1.0" selected>`)
+	assert.NotEqual(t, firstPlanID, hiddenField(t, body, "plan_id"), "a re-plan issues a fresh handle")
+
+	_, err := svc.GetInstalledMod(t.Context(), "fake", installModID, game.ID, "default")
+	require.ErrorIs(t, err, domain.ErrModNotFound, "Update plan must apply nothing")
+}
+
+// TestServer_ModInstall_OverwriteDecisionSurvivesAnUpdatePlan pins the
+// sticky half of the same button: once a conflict has been answered,
+// re-planning must not silently drop the answer and walk the user back into
+// the same refusal.
+func TestServer_ModInstall_OverwriteDecisionSurvivesAnUpdatePlan(t *testing.T) {
+	s, _, game, _ := newInstallFixtureServer(t)
+	deployFixtureProfile(t, s, game)
+	pid := confirmPlanID(t, s, game, "install", conflictModID, nil)
+
+	conflicted := postForm(s, "/mods/fake/"+conflictModID+"/install?sync=1", formValues{
+		"game": game.ID, "profile": "default", "confirm": "1", "plan_id": pid,
+	})
+	require.Equal(t, http.StatusOK, conflicted.Code)
+	require.Contains(t, conflicted.Body.String(), `name="accept_conflicts" value="1"`)
+
+	updated := postForm(s, "/mods/fake/"+conflictModID+"/install", formValues{
+		"game": game.ID, "profile": "default",
+		"plan_id": hiddenField(t, conflicted.Body.String(), "plan_id"), "accept_conflicts": "1",
+	})
+	require.Equal(t, http.StatusOK, updated.Code)
+	assert.Contains(t, updated.Body.String(), `name="accept_conflicts" value="1"`)
+	assert.Contains(t, updated.Body.String(), "Overwrite and Install")
+}

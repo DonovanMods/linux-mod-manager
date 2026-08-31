@@ -143,6 +143,23 @@ type confirmView struct {
 
 	// Submit is the primary button's label ("Install", "Uninstall").
 	Submit string
+
+	// AcceptConflicts reports that this kind's apply options ALREADY carry
+	// the overwrite decision - i.e. the user has been through a conflict
+	// refusal once. It is what keeps that decision sticky across a re-plan
+	// ("Update plan"), where the page is rendered from the form rather than
+	// from the failure that prompted it.
+	AcceptConflicts bool
+}
+
+// HasOptions reports whether this view offers anything the user can change
+// - which is what makes the confirm page's "Update plan" button worth
+// rendering. Changing an option can change the plan itself (a pinned
+// version narrows the file pool; skipping hooks empties the hook list), so
+// a page that offers options must also offer a way to see them applied
+// before committing.
+func (v confirmView) HasOptions() bool {
+	return len(v.Versions) > 0 || len(v.Files) > 0 || len(v.Toggles) > 0
 }
 
 // confirmList is one named enumeration on a confirm page.

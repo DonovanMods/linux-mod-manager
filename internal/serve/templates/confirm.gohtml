@@ -51,7 +51,6 @@
 
 <form method="post" action="{{.Action}}" class="rounded border border-gray-200 bg-white p-4">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-<input type="hidden" name="confirm" value="1">
 <input type="hidden" name="plan_id" value="{{.PlanID}}">
 {{with .Nav}}
 {{if .Game}}<input type="hidden" name="game" value="{{.Game.ID}}">{{end}}
@@ -93,11 +92,16 @@
 </fieldset>
 {{end}}
 
+<!-- "confirm" rides on the SUBMIT BUTTONS, not on a hidden field, so the
+     third button below can submit the very same form WITHOUT it and be
+     treated as a fresh plan request. A hidden field would always win the
+     r.Form ordering and make that impossible with JavaScript off. -->
 <div class="flex flex-wrap items-center gap-3">
-<button type="submit" class="rounded border border-gray-300 bg-gray-900 px-3 py-1 text-sm font-medium text-white">{{if .Overwrite}}Overwrite and {{end}}{{.View.Submit}}</button>
-<button type="submit" formaction="{{.SyncAction}}" class="rounded border border-gray-300 px-3 py-1 text-sm font-medium">Run and wait</button>
+<button type="submit" name="confirm" value="1" class="rounded border border-gray-300 bg-gray-900 px-3 py-1 text-sm font-medium text-white">{{if .Overwrite}}Overwrite and {{end}}{{.View.Submit}}</button>
+{{if .View.HasOptions}}<button type="submit" class="rounded border border-gray-300 px-3 py-1 text-sm font-medium">Update plan</button>{{end}}
+<button type="submit" name="confirm" value="1" formaction="{{.SyncAction}}" class="rounded border border-gray-300 px-3 py-1 text-sm font-medium">Run and wait</button>
 <a class="text-sm underline" href="/mods">Cancel</a>
 </div>
-<p class="mt-2 text-xs text-gray-500">"{{.View.Submit}}" runs this in the background and shows a live progress page. "Run and wait" runs it here and returns the result when it finishes.</p>
+<p class="mt-2 text-xs text-gray-500">"{{.View.Submit}}" runs this in the background and shows a live progress page.{{if .View.HasOptions}} "Update plan" re-reads the options above and shows what they would do, without running anything.{{end}} "Run and wait" runs it here and returns the result when it finishes.</p>
 </form>
 {{- end}}

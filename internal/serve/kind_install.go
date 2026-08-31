@@ -274,11 +274,15 @@ func confirmInstallPlan(pending, opts any) confirmView {
 	req, _ := opts.(installApplyRequest)
 
 	plan := p.Plan
+	chosenVersion := firstNonEmpty(req.Version, p.Version, planSelectedVersion(plan))
 	view := confirmView{
 		Heading:  fmt.Sprintf("%s %s", plan.Mod.Name, plan.Mod.Version),
 		Submit:   "Install",
-		Versions: p.Versions,
-		Version:  firstNonEmpty(req.Version, p.Version),
+		Versions: offeredVersions(p.Versions, chosenVersion),
+		Version:  chosenVersion,
+		// Sticky across a re-plan: once the user has answered a conflict,
+		// pressing "Update plan" must not silently drop that answer.
+		AcceptConflicts: req.AcceptConflicts,
 		Facts: []resultFact{
 			{Label: "Mod", Value: domain.ModKey(plan.SourceID, plan.Mod.ID)},
 			{Label: "Profile", Value: plan.Profile},
@@ -340,6 +344,37 @@ func confirmInstallPlan(pending, opts any) confirmView {
 	return view
 }
 
+// planSelectedVersion is the version the plan's OWN file selection would
+// record - domain.EffectiveInstalledVersion, the same rule the install
+// itself uses for the DB row, the profile ref and the cache key. It is the
+// version select's default, because a select whose visible value differed
+// from the plan shown right above it would pin a version the user never
+// chose the moment they pressed the button.
+func planSelectedVersion(plan *core.InstallPlan) string {
+	selected := make([]*domain.DownloadableFile, len(plan.Files))
+	for i := range plan.Files {
+		selected[i] = &plan.Files[i]
+	}
+	return domain.EffectiveInstalledVersion(plan.Mod.Version, selected)
+}
+
+// offeredVersions is the version select's option list: what the source
+// reports, with the plan's own version prepended when it is somehow absent
+// from that list. Without the guard, an unlisted default would leave the
+// browser selecting the FIRST option instead - silently pinning a version
+// the plan never previewed. An empty list renders no select at all.
+func offeredVersions(versions []string, chosen string) []string {
+	if len(versions) == 0 || chosen == "" {
+		return versions
+	}
+	for _, v := range versions {
+		if v == chosen {
+			return versions
+		}
+	}
+	return append([]string{chosen}, versions...)
+}
+
 // installFileChoices renders the candidate pool as checkboxes, or nil when
 // the pool holds fewer than two files - "file selection where the plan
 // offers it". A pick already made (req.FileIDs) wins; otherwise the plan's
@@ -349,9 +384,20 @@ func installFileChoices(p *pendingInstall, req installApplyRequest) []confirmFil
 		return nil
 	}
 
+	// A pick the CURRENT pool no longer contains is not a pick: changing
+	// the version narrows the pool, and carrying the old version's file IDs
+	// forward would tick nothing and then fail the Apply's pin resolution.
+	// Falling back to the plan's own selection is what makes "Update plan"
+	// after a version change land somewhere sensible.
+	available := make(map[string]bool, len(p.Candidates))
+	for _, f := range p.Candidates {
+		available[f.ID] = true
+	}
 	chosen := make(map[string]bool, len(req.FileIDs))
 	for _, id := range req.FileIDs {
-		chosen[id] = true
+		if available[id] {
+			chosen[id] = true
+		}
 	}
 	if len(chosen) == 0 {
 		for _, f := range p.Plan.Files {
