@@ -420,11 +420,11 @@ func TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames(t *te
 	assert.Empty(t, stdout, "the --json partial-failure path must never emit a Result document")
 	assert.Empty(t, buf.String(), "no listing may be printed under --json")
 
-	var partialErr *gameDetectPartialError
+	var partialErr *core.GameDetectPartialError
 	require.ErrorAs(t, callErr, &partialErr, "the error must carry the partial result, not just applyErr")
-	assert.Equal(t, []string{"skyrim-se"}, partialErr.result.Saved)
-	assert.Equal(t, []string{"skyrim-se/default"}, partialErr.result.Profiles)
-	assert.Equal(t, []string{"steam library at /nowhere is unreadable"}, partialErr.result.Warnings,
+	assert.Equal(t, []string{"skyrim-se"}, partialErr.Result.Saved)
+	assert.Equal(t, []string{"skyrim-se/default"}, partialErr.Result.Profiles)
+	assert.Equal(t, []string{"steam library at /nowhere is unreadable"}, partialErr.Result.Warnings,
 		"the scan warnings that preceded the apply must still reach the envelope's details")
 
 	envelope := captureStdout(t, func() error { reportError(callErr); return nil })

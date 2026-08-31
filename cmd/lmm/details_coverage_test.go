@@ -21,10 +21,10 @@ import (
 // and a type with no entry here (or an entry naming a test function that no
 // longer exists) fails the build.
 var detailsCoverage = map[string]string{
-	"core.ConflictError":        "TestReportError_JSON_ConflictError",
-	"core.ProfileWarningsError": "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
-	"gameDetectPartialError":    "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
-	"sourceValidationError":     "TestReportError_JSON_SourceValidationError",
+	"core.ConflictError":          "TestReportError_JSON_ConflictError",
+	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
+	"core.ProfileWarningsError":   "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
+	"sourceValidationError":       "TestReportError_JSON_SourceValidationError",
 }
 
 // TestDetailsTypesAreCovered enforces detailsCoverage: every type found to

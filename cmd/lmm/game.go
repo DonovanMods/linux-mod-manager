@@ -340,7 +340,7 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	result.Warnings = append(append([]string(nil), detectWarnings...), result.Warnings...)
 	if jsonOutput {
 		if applyErr != nil {
-			return &gameDetectPartialError{err: applyErr, result: result}
+			return &core.GameDetectPartialError{Err: applyErr, Result: result}
 		}
 		return emitJSON(result)
 	}
@@ -349,31 +349,6 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	}
 	return applyErr
 }
-
-// gameDetectPartialError reports a `game detect --json` run that failed
-// partway through ApplyGameDetect: result still names exactly the games
-// that were fully persisted (games.yaml write + default profile) before err
-// stopped it, so the --json error envelope's "details" can say what was
-// saved instead of only that the run failed - mirroring the plain-text
-// path's own partial-success contract (the "Added:" loop above prints every
-// game result.Profiles names, even on failure). Follows the
-// core.ConflictError / errorDetails convention (jsonout.go): Unwrap exposes
-// err for errors.Is/As, Details() any is the unnamed interface errorDetails
-// picks up automatically.
-type gameDetectPartialError struct {
-	err    error
-	result *core.GameDetectResult
-}
-
-// Error returns the wrapped ApplyGameDetect failure's own message.
-func (e *gameDetectPartialError) Error() string { return e.err.Error() }
-
-// Unwrap exposes the wrapped ApplyGameDetect error for errors.Is/As.
-func (e *gameDetectPartialError) Unwrap() error { return e.err }
-
-// Details returns the partial GameDetectResult - what was saved before the
-// failure - for the --json error envelope's "details" field.
-func (e *gameDetectPartialError) Details() any { return e.result }
 
 // gameDetectAnswer resolves the selection line gameDetectSelectionIndices
 // parses: --all/--select decide it non-interactively (in that priority -
