@@ -1,0 +1,74 @@
+{{define "content" -}}
+{{if .NotFound}}
+<h1 class="mb-4 text-2xl font-bold">Job</h1>
+<p class="text-gray-600">That job is no longer available: it either never existed, or it has aged out of this server's in-memory history.</p>
+<p class="mt-2 text-sm text-gray-600">Job history is forgotten when <code>lmm serve</code> restarts - the database remains the record of what actually happened.</p>
+<p class="mt-4"><a class="underline" href="/">Back to the dashboard</a></p>
+{{else}}
+<h1 class="mb-1 text-2xl font-bold">{{.Kind}}</h1>
+<p class="mb-4 text-sm text-gray-600">
+Job <code>{{.Status.ID}}</code> - <strong>{{.Status.State}}</strong>
+{{- if .Running}} <a class="ml-2 underline" href="/jobs/{{.Status.ID}}">Refresh</a>{{end}}
+</p>
+
+{{if .Running}}
+<p class="mb-6 rounded border border-sky-300 bg-sky-50 px-3 py-2 text-sm text-sky-800">
+This operation is still running. The page refreshes itself every {{.Refresh}} seconds; use the Refresh link above at any time.
+</p>
+{{end}}
+
+{{if .Facts}}
+<section aria-label="Result" class="mb-6">
+<h2 class="mb-2 text-lg font-semibold">Result</h2>
+<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+{{range .Facts}}<dt class="font-medium text-gray-500">{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}
+</dl>
+</section>
+{{end}}
+
+{{with .Status.Error}}
+<section aria-label="Failure" class="mb-6">
+<h2 class="mb-2 text-lg font-semibold">Failed</h2>
+<p class="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">{{.Error}}</p>
+</section>
+{{end}}
+{{with .ErrorDetails}}
+<section aria-label="Failure details" class="mb-6">
+<h2 class="mb-2 text-lg font-semibold">Details</h2>
+<pre class="overflow-x-auto rounded border border-gray-200 bg-white p-3 text-xs">{{.}}</pre>
+</section>
+{{end}}
+
+<section aria-label="Progress">
+<h2 class="mb-2 text-lg font-semibold">Progress</h2>
+{{if .Status.DroppedEvents}}
+<p class="mb-2 text-sm text-amber-800">{{.Status.DroppedEvents}} earlier event(s) are no longer available - this log shows the most recent {{len .Events}} of {{.Status.EventCount}}.</p>
+{{end}}
+{{if not .Events}}
+<p class="text-sm text-gray-600">No progress reported yet.</p>
+{{else}}
+<div class="overflow-x-auto">
+<table class="w-full text-left text-sm">
+<caption class="sr-only">Events reported by this job, oldest first</caption>
+<thead>
+<tr class="border-b border-gray-200 text-gray-500">
+<th scope="col" class="py-2 pr-4">Phase</th>
+<th scope="col" class="py-2 pr-4">Mod</th>
+<th scope="col" class="py-2 pr-4">Detail</th>
+</tr>
+</thead>
+<tbody>
+{{range .Events}}
+<tr class="border-b border-gray-100">
+<td class="py-2 pr-4"><code>{{if .Phase}}{{.Phase}}{{else}}{{.Type}}{{end}}</code></td>
+<td class="py-2 pr-4">{{.Mod}}</td>
+<td class="py-2 pr-4">{{.Detail}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+{{end}}
+</section>
+{{end}}
+{{- end}}

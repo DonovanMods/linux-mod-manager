@@ -124,6 +124,13 @@ type pageChrome struct {
 	Path        string
 	Nav         *selection
 	ExtraParams []queryParam
+
+	// Refresh, when non-zero, makes layout.gohtml emit a meta refresh of
+	// that many seconds INSIDE a <noscript> - so a page whose content
+	// changes on its own (the job page while its job runs) still advances
+	// with JavaScript disabled, and never fights the enhancement JS when it
+	// is enabled. Zero on every other page.
+	Refresh int
 }
 
 // queryParam is one pageChrome.ExtraParams entry: a query key/value pair

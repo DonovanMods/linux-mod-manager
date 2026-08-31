@@ -42,6 +42,10 @@ var updatesTemplate = parsePage("updates")
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var profilesTemplate = parsePage("profiles")
 
+// jobTemplate renders "/jobs/{id}" - one job's live state, progress and
+// result (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var jobTemplate = parsePage("job")
+
 // healthTemplate renders "/health" - verify findings and file conflicts
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var healthTemplate = parsePage("health")
