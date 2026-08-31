@@ -20,6 +20,13 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /profiles", s.wrap(s.handleProfiles))
 	s.mux.Handle("GET /health", s.wrap(s.handleHealth))
 	s.mux.Handle("GET /jobs/{id}", s.wrap(s.handleJobPage))
+	// Task 8's single-mod mutations (mutations.go). Each is POST-only: the
+	// route IS the action, and the confirm page a plan renders posts back to
+	// the very same URL rather than to a second "confirm" endpoint.
+	s.mux.Handle("POST /mods/{source}/{id}/enable", s.wrap(s.handleModEnable))
+	s.mux.Handle("POST /mods/{source}/{id}/disable", s.wrap(s.handleModDisable))
+	s.mux.Handle("POST /mods/{source}/{id}/install", s.wrap(s.handleModInstall))
+	s.mux.Handle("POST /mods/{source}/{id}/uninstall", s.wrap(s.handleModUninstall))
 	s.mux.Handle("GET /api/v1/status", s.wrap(s.handleAPIStatus))
 	s.mux.Handle("GET /api/v1/mods", s.wrap(s.handleAPIMods))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))

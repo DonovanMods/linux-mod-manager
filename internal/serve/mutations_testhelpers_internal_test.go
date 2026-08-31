@@ -1,0 +1,94 @@
+package serve
+
+// Shared fixtures for Task 8's mutation tests (package serve, so they can
+// reach the CSRF token, the plan store and the job registry directly).
+
+import (
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/stretchr/testify/require"
+)
+
+// formValues is one HTML form submission's fields, in the shape a test
+// writes them; postForm adds the CSRF token itself.
+type formValues map[string]string
+
+// newMutationFixtureServer is newDeployFixtureServer plus the Service, which
+// every mutation test needs for its end-state assertions (the DB row, the
+// profile, the deployed tree).
+func newMutationFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := newDeployFixtureService(t)
+	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: internalTestAddr}), svc, game
+}
+
+// seedFixtureModEnabled re-saves the fixture's seeded mod with the given
+// enabled state - the full-row upsert SaveInstalledMod performs is the only
+// way to reach the flag from outside package core.
+func seedFixtureModEnabled(t *testing.T, svc *core.Service, game *domain.Game, enabled bool) {
+	t.Helper()
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: fixtureSourceID, Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      enabled,
+	}))
+}
+
+// formRequest builds a browser-shaped form POST the middleware chain will
+// admit: the server's Host, a urlencoded body, and (unless withoutCSRF) the
+// process CSRF token in the hidden-field form a rendered page carries.
+func formRequest(s *Server, target string, values formValues, withCSRF bool) *http.Request {
+	form := url.Values{}
+	for k, v := range values {
+		form.Set(k, v)
+	}
+	if withCSRF {
+		form.Set(csrfFormField, s.csrf.token)
+	}
+	req := httptest.NewRequest(http.MethodPost, "http://"+internalTestAddr+target, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return req
+}
+
+// postForm runs one form POST against the server's full handler chain.
+func postForm(s *Server, target string, values formValues) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, formRequest(s, target, values, true))
+	return rec
+}
+
+// postFormWithoutCSRF is postForm with the token left off, for the refusal
+// tests every mutation route carries.
+func postFormWithoutCSRF(s *Server, target string, values formValues) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, formRequest(s, target, values, false))
+	return rec
+}
+
+// awaitRedirectedJob resolves the job a 303 redirect points at and blocks
+// until its Apply has returned, so the caller's end-state assertions never
+// race the goroutine.
+func awaitRedirectedJob(t *testing.T, s *Server, rec *httptest.ResponseRecorder) *job {
+	t.Helper()
+	loc := rec.Header().Get("Location")
+	require.True(t, strings.HasPrefix(loc, "/jobs/"), "expected a redirect to a job page, got %q (body: %s)", loc, rec.Body.String())
+
+	j, ok := s.jobs.job(jobID(strings.TrimPrefix(loc, "/jobs/")))
+	require.True(t, ok, "the redirect names a job the registry does not hold: %q", loc)
+
+	select {
+	case <-j.done():
+	case <-time.After(30 * time.Second):
+		t.Fatal("job did not finish")
+	}
+	return j
+}

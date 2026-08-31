@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"net/http"
 	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -71,6 +72,100 @@ type planKind struct {
 	// of facts the job page renders, so a user reading a finished job sees
 	// "3 deployed" rather than a JSON dump.
 	Summarize func(result any) []resultFact
+
+	// Form is the HTML half of this kind: how a browser form's fields decode
+	// into the SAME options the JSON decoders above produce, and how its
+	// plan reads on the confirm page (docs/plans/2026-08-30-serve-impl.md
+	// Task 8). It is nil for a kind only /api/v1 can reach - a page route
+	// that finds nil refuses rather than dereferencing it, which is what
+	// keeps "registered as a plan kind" and "reachable from a form" two
+	// separate decisions. Task 8 fills it in for install and uninstall;
+	// deploy's lands with Task 9's deploy page.
+	Form *kindForm
+}
+
+// kindForm is one kind's browser-facing half. The two decoders take the
+// whole request rather than a parsed form because a mutation's target lives
+// in the PATH (/mods/{source}/{id}/install), not in the body: the path is
+// what the read pages' form actions already encode, and taking it from
+// there means a submitted body can never name a different mod than the URL
+// the user acted on.
+type kindForm struct {
+	// PlanOptions builds this kind's plan-time options from the request -
+	// the same value type PlanOptions' JSON decoder produces.
+	PlanOptions func(r *http.Request) (any, error)
+
+	// ApplyOptions builds this kind's apply-time options from the confirm
+	// form - the same value type ApplyOptions' JSON decoder produces. It is
+	// also called on the ENTRY submission, so the confirm page can render
+	// the options the user already chose (a version picked on the mod-detail
+	// page, say) as its own initial values.
+	ApplyOptions func(r *http.Request) (any, error)
+
+	// Confirm renders the stored pending plan as the confirm page's display
+	// data, with opts (this kind's apply-time options, from ApplyOptions
+	// above) supplying the current value of every option the form offers.
+	Confirm func(pending, opts any) confirmView
+}
+
+// confirmView is a plan as the confirm page shows it: what the mutation
+// would do, and the options the user may still change before committing.
+// It is deliberately display data rather than a plan type - one template
+// renders every kind, so a kind adds a flow without adding a template.
+type confirmView struct {
+	// Heading names the specific thing being acted on ("Better Boots
+	// 1.2.0"), under the kind's own title.
+	Heading string
+
+	// Facts are the plan's headline label/value rows (the same shape a
+	// finished job's result readout uses).
+	Facts []resultFact
+
+	// Lists are the plan's enumerations - the files that would be removed,
+	// the dependencies that would come along, the hooks that would run.
+	Lists []confirmList
+
+	// Versions and Version drive the version <select> (#225): the versions
+	// the source offers, and the one currently chosen. Empty Versions means
+	// the source reports none, and no select renders.
+	Versions []string
+	Version  string
+
+	// Files drives the file checkboxes (#225). It is rendered ONLY when the
+	// plan actually offers a choice - a pool of two or more candidate files
+	// - so a single-file mod shows the file as a fact, not as a control
+	// with one option.
+	Files []confirmFile
+
+	// Toggles are the kind's boolean options (#226: uninstall's keep-cache,
+	// the hook and force switches), rendered as checkboxes.
+	Toggles []confirmToggle
+
+	// Submit is the primary button's label ("Install", "Uninstall").
+	Submit string
+}
+
+// confirmList is one named enumeration on a confirm page.
+type confirmList struct {
+	Label string
+	Items []string
+}
+
+// confirmFile is one selectable file in a confirm page's file picker.
+type confirmFile struct {
+	ID       string
+	Label    string
+	Selected bool
+}
+
+// confirmToggle is one boolean option a confirm page offers. Name is the
+// form field it submits under, and is what the kind's ApplyOptions reads
+// back.
+type confirmToggle struct {
+	Name    string
+	Label   string
+	Help    string
+	Checked bool
 }
 
 // resultFact is one label/value row of a finished job's result readout.
@@ -140,4 +235,32 @@ func decodeKindOptions[T any](body []byte) (any, error) {
 		}
 	}
 	return opts, nil
+}
+
+// jobKindTitle is a job kind's human title, from whichever of the two
+// registries holds it - the plan kinds above, or the two plan-free toggles
+// (kind_toggle.go). It falls back to the stored kind name for a job whose
+// kind is no longer registered (only possible across a code change, never
+// within one run).
+func jobKindTitle(kind string) string {
+	if k, ok := lookupPlanKind(kind); ok {
+		return k.Title
+	}
+	if k, ok := lookupToggleKind(kind); ok {
+		return k.Title
+	}
+	return kind
+}
+
+// jobKindFacts is a finished job's result readout, from whichever registry
+// owns its kind. An unknown kind (or a kind whose Summarize does not
+// recognise the result type) renders no facts rather than a JSON dump.
+func jobKindFacts(kind string, result any) []resultFact {
+	if k, ok := lookupPlanKind(kind); ok {
+		return k.Summarize(result)
+	}
+	if k, ok := lookupToggleKind(kind); ok {
+		return k.Summarize(result)
+	}
+	return nil
 }

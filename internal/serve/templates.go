@@ -49,3 +49,14 @@ var jobTemplate = parsePage("job")
 // healthTemplate renders "/health" - verify findings and file conflicts
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var healthTemplate = parsePage("health")
+
+// confirmTemplate renders every mutation's confirm page - the Plan a user
+// reviews before committing (docs/plans/2026-08-30-serve-design.md
+// §"Mutations: Plan -> confirm -> Apply"). One template serves every flow:
+// what is kind-specific reaches it as confirmView (plankinds.go).
+var confirmTemplate = parsePage("confirm")
+
+// resultTemplate renders a mutation's outcome when it did not become a job:
+// the ?sync=1 fallback's result, and every mutation failure that never got
+// as far as starting one (mutations.go).
+var resultTemplate = parsePage("result")

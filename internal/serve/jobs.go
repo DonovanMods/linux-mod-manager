@@ -119,6 +119,15 @@ type job struct {
 	kind    string
 	ring    int
 	started time.Time
+	// redo is the request that started this job, when the caller supplied
+	// one (jobRegistry.StartWith). It is what the job page needs to offer a
+	// RECOVERY action on a failure the user can answer - re-plan after a
+	// stale plan, overwrite after a conflict (docs/plans/2026-08-30-serve-impl.md
+	// Task 8) - without the user going back and re-entering anything. It is
+	// serve-internal display state, never part of jobStatus: the wire
+	// contract carries the outcome, not how the request that produced it
+	// was spelled. Immutable after construction.
+	redo any
 	// finished is closed exactly once, by finish. done() hands it out as
 	// the "this job is over" signal, readable without taking mu.
 	finished chan struct{}
@@ -186,6 +195,11 @@ func (j *job) failure() error {
 	defer j.mu.Unlock()
 	return j.err
 }
+
+// redoRequest returns the request this job was started from, or nil when it
+// was started without one (every /api/v1-initiated job). The job page type-
+// asserts it to build its recovery form; nothing else reads it.
+func (j *job) redoRequest() any { return j.redo }
 
 // emit is the core.EventSink handed to the job's Apply. Core calls sinks
 // synchronously on the operation's goroutine, so this must never block:
@@ -419,6 +433,14 @@ func newJobRegistry(ctx context.Context, log *slog.Logger, ring, retain int) *jo
 // very shutdown call it raced) or loses it (and never touches wg at all) -
 // never both, and never neither (task-6-review.md Important 1).
 func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
+	return r.StartWith(kind, nil, run)
+}
+
+// StartWith is Start carrying a redo value - the request that started the
+// job, kept so a failure the user can answer (a stale plan, a refused
+// conflict) can be re-offered from the job page as one click rather than a
+// re-entered form (see job.redo). A nil redo is exactly Start.
+func (r *jobRegistry) StartWith(kind string, redo any, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
 	j := &job{
 		id:       newJobID(),
 		kind:     kind,
@@ -427,6 +449,7 @@ func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSin
 		finished: make(chan struct{}),
 		state:    jobRunning,
 		subs:     map[int]*jobSub{},
+		redo:     redo,
 	}
 
 	r.mu.Lock()

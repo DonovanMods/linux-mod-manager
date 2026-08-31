@@ -90,25 +90,13 @@ func (s *Server) handleJobPage(w http.ResponseWriter, r *http.Request) {
 		data.Refresh = jobPageRefreshSeconds
 	}
 	if status.State == jobSucceeded {
-		if kind, ok := lookupPlanKind(status.Kind); ok {
-			data.Facts = kind.Summarize(status.Result)
-		}
+		data.Facts = jobKindFacts(status.Kind, status.Result)
 	}
 	if status.Error != nil && status.Error.Details != nil {
 		data.ErrorDetails = s.renderJobErrorDetails(status.Error.Details)
 	}
 
 	s.render(w, jobTemplate, data)
-}
-
-// jobKindTitle is the registered kind's human title, falling back to the
-// stored kind name for a job whose kind is no longer registered (only
-// possible across a code change, never within one run).
-func jobKindTitle(kind string) string {
-	if k, ok := lookupPlanKind(kind); ok {
-		return k.Title
-	}
-	return kind
 }
 
 // renderJobErrorDetails encodes a failure envelope's typed details for
