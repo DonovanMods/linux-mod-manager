@@ -411,8 +411,21 @@ func installFileChoices(p *pendingInstall, req installApplyRequest) []confirmFil
 		}
 	}
 	if len(chosen) == 0 {
-		for _, f := range p.Plan.Files {
-			chosen[f.ID] = true
+		// The pool itself decides the default tick, not the plan: with a
+		// version pin (p.Version != "") the plan's own Files describe the
+		// UNPINNED default pick, which this narrowed pool's IDs usually
+		// don't even contain - falling back to it left every checkbox
+		// unticked (task-9 review Minor 4). ResolveVersionFiles already
+		// sorts the pinned pool by category priority, so its own first
+		// entry IS that pool's primary. Without a pin, the plan's own
+		// selection - which DOES share IDs with this same
+		// FilterAndSortFiles-drawn pool - is still the right default.
+		if p.Version != "" {
+			chosen[p.Candidates[0].ID] = true
+		} else {
+			for _, f := range p.Plan.Files {
+				chosen[f.ID] = true
+			}
 		}
 	}
 
@@ -473,17 +486,23 @@ func selectedFileText(p *pendingInstall) string {
 }
 
 // installDownloadBytes is the byte count behind the confirm page's
-// "Download" fact. With a picker rendered, the plan's own total is right:
-// the ticked set IS the plan's selection until the user changes it. With no
-// picker it must be the sole candidate's size, for the same reason
-// soleInstallFile exists - plan.TotalDownloadBytes is computed from
-// plan.Files, so a version pin left it describing the wrong file. An
-// unreported size is -1, matching PlanInstall's own rule (any file with a
-// non-positive Size makes the whole total "unknown") rather than claiming a
-// zero-byte download.
+// "Download" fact. With a picker rendered and NO version pin, the plan's
+// own total is right: the ticked set IS the plan's selection until the
+// user changes it. With a version pin, the picker draws from the pinned
+// Candidates pool instead (installFileChoices), so plan.TotalDownloadBytes
+// - computed from the UNPINNED plan.Files - would describe the wrong set
+// of files, same defect soleInstallFile exists to avoid for the
+// collapsed-to-one case (task-9 review Minor 4): it is summed from the
+// ticked candidates' own sizes instead. With no picker at all it is the
+// sole candidate's size. An unreported size is -1, matching PlanInstall's
+// own rule (any file with a non-positive Size makes the whole total
+// "unknown") rather than claiming a zero-byte download.
 func installDownloadBytes(p *pendingInstall, files []confirmFile) int64 {
 	if len(files) > 0 {
-		return p.Plan.TotalDownloadBytes
+		if p.Version == "" {
+			return p.Plan.TotalDownloadBytes
+		}
+		return sumSelectedCandidateBytes(p.Candidates, files)
 	}
 	file, ok := soleInstallFile(p)
 	if !ok {
@@ -493,6 +512,29 @@ func installDownloadBytes(p *pendingInstall, files []confirmFile) int64 {
 		return -1
 	}
 	return file.Size
+}
+
+// sumSelectedCandidateBytes sums candidates' sizes for the IDs files marks
+// Selected, returning -1 (PlanInstall's "unknown" convention) if any
+// selected candidate's size is unreported.
+func sumSelectedCandidateBytes(candidates []domain.DownloadableFile, files []confirmFile) int64 {
+	selected := make(map[string]bool, len(files))
+	for _, f := range files {
+		if f.Selected {
+			selected[f.ID] = true
+		}
+	}
+	var total int64
+	for _, c := range candidates {
+		if !selected[c.ID] {
+			continue
+		}
+		if c.Size <= 0 {
+			return -1
+		}
+		total += c.Size
+	}
+	return total
 }
 
 // downloadSizeText renders a byte count the way core reports it: -1 means
