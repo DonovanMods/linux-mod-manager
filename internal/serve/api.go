@@ -153,6 +153,34 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// handleAPISearch answers GET /api/v1/search?q= with exactly the
+// core.SearchReport document `lmm search --json` emits
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface). Unlike the /search
+// PAGE, which renders the bare form when q is absent, the API has no form
+// to fall back to: a missing/empty q is bad input (400), matching the
+// CLI's own cobra.MinimumNArgs(1) requirement for `lmm search`. That check
+// runs before selection resolution, since a malformed request is wrong
+// regardless of what game/profile might have resolved.
+func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		s.writeAPIError(w, http.StatusBadRequest, errors.New(`missing required query parameter "q"`))
+		return
+	}
+
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query, core.SearchOptions{})
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 // handleAPIStatus answers GET /api/v1/status with exactly the
 // core.StatusReport document `lmm status --json` emits with no --game flag
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/" -> Status).
