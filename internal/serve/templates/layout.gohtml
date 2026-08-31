@@ -23,14 +23,14 @@
 <select id="nav-game" name="game" class="rounded border-gray-300 text-sm">
 {{range .Games}}<option value="{{.ID}}"{{if and $cur (eq .ID $cur.ID)}} selected{{end}}>{{.Name}}</option>{{end}}
 </select>
-{{end}}
+{{else if $cur}}<input type="hidden" name="game" value="{{$cur.ID}}">{{end}}
 {{if gt (len .Profiles) 1}}
 <label class="sr-only" for="nav-profile">Profile</label>
 <select id="nav-profile" name="profile" class="rounded border-gray-300 text-sm">
 {{$curProfile := .Profile}}
 {{range .Profiles}}<option value="{{.}}"{{if eq . $curProfile}} selected{{end}}>{{.}}</option>{{end}}
 </select>
-{{end}}
+{{else if .Profile}}<input type="hidden" name="profile" value="{{.Profile}}">{{end}}
 <button type="submit" class="rounded border border-gray-300 px-2 py-1 text-xs font-medium">Switch</button>
 </form>
 {{end}}
