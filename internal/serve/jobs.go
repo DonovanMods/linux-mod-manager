@@ -452,6 +452,31 @@ func (r *jobRegistry) job(id jobID) (*job, bool) {
 	return j, ok
 }
 
+// QueueDepth reports how many jobs this registry currently holds in state
+// running. beginOp serializes core's mutations to one in flight at a time
+// (internal/core/ops.go), so it BLOCKS rather than rejects: a second
+// mutation job started while one is running does not fail, it sits in state
+// running while doing nothing, indistinguishable from the job that is
+// actually working (task-6-review.md Minor 1). QueueDepth exists so a caller
+// can tell the two apart without inspecting individual jobs.
+//
+// Task 7's ruled policy is to refuse a new mutation job with a 409 envelope
+// ("an operation is already running") once QueueDepth() > 8; Task 6 defines
+// no route to enforce that against, so it is exposed here undecided and
+// unenforced - carried to Task 7, not built now.
+func (r *jobRegistry) QueueDepth() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	depth := 0
+	for _, j := range r.jobs {
+		if !j.isFinished() {
+			depth++
+		}
+	}
+	return depth
+}
+
 // evictLocked forgets the oldest FINISHED jobs until at most retain remain.
 // A running job is never evicted, however many jobs follow it: its
 // subscribers still need it, and its result has nowhere else to land. The

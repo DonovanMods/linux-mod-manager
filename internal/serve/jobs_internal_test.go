@@ -703,6 +703,41 @@ func TestJobRegistry_UnknownJobIsNotFound(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// TestJobRegistry_QueueDepthCountsOnlyRunningJobs pins the accessor Task 7's
+// backpressure gate (task-6-review.md Minor 1) will read: finished jobs the
+// registry still retains do not count, only ones still in state running do.
+func TestJobRegistry_QueueDepthCountsOnlyRunningJobs(t *testing.T) {
+	r := newTestRegistry(t, t.Context(), 8, 8)
+	assert.Equal(t, 0, r.QueueDepth(), "an empty registry has no queue depth")
+
+	release := make(chan struct{})
+	var running []jobID
+	for range 3 {
+		id, err := r.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+			<-release
+			return nil, nil
+		})
+		require.NoError(t, err)
+		running = append(running, id)
+	}
+	assert.Equal(t, 3, r.QueueDepth(), "three jobs parked mid-Apply all count")
+
+	finishedID, err := r.Start("enable", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+	require.NoError(t, err)
+	j, ok := r.job(finishedID)
+	require.True(t, ok)
+	waitFor(t, j.done(), "the finished job")
+	assert.Equal(t, 3, r.QueueDepth(), "a finished job the registry still retains does not count")
+
+	close(release)
+	for _, id := range running {
+		rj, ok := r.job(id)
+		require.True(t, ok)
+		waitFor(t, rj.done(), "each released job")
+	}
+	assert.Equal(t, 0, r.QueueDepth(), "no job is running once every one of them has finished")
+}
+
 // TestJobRegistry_ConcurrentSubscribersAndEmits is the -race sweep: many
 // subscribers joining and leaving while a job emits.
 func TestJobRegistry_ConcurrentSubscribersAndEmits(t *testing.T) {
