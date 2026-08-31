@@ -35,11 +35,19 @@ type apiErrorEnvelope struct {
 // errorDetails returns the data err carries for the /api/v1 error
 // envelope's "details" field via the shared `Details() any` convention
 // (*core.ConflictError, *core.ProfileWarningsError, ...) - the same
-// extension point cmd/lmm's own errorDetails (jsonout.go) uses. It is its
-// own copy here rather than shared code: cmd/lmm imports internal/serve,
-// never the reverse (boundary rule), so serve cannot reuse cmd/lmm's
-// unexported definition.
+// extension point cmd/lmm's own errorDetails (jsonout.go) uses, guard
+// included: core.ErrStalePlan is a plain sentinel with no data of its own,
+// so it must never surface a Details() payload even from a hypothetical
+// wrapper that carries one. It is its own copy here rather than shared
+// code: cmd/lmm imports internal/serve, never the reverse (boundary rule),
+// so serve cannot reuse cmd/lmm's unexported definition. No Details()
+// implementer wraps ErrStalePlan today (task-5 gate review Minor 4) - this
+// guard is prophylactic for Unit 4, which routes job failures (including a
+// stale plan) through this same writer.
 func errorDetails(err error) any {
+	if errors.Is(err, core.ErrStalePlan) {
+		return nil
+	}
 	var withDetails interface{ Details() any }
 	if errors.As(err, &withDetails) {
 		return withDetails.Details()

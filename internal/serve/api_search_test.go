@@ -62,10 +62,10 @@ func TestServer_APISearch_MissingQuery_Renders400(t *testing.T) {
 }
 
 // TestServer_APISearch_UnresolvedSelection_Renders404 proves the missing-q
-// check runs before selection resolution would even matter, but an empty
-// query on a game-less deployment still surfaces as bad input, not a
-// selection 404 - 400 takes priority since the request itself is malformed
-// independent of what game/profile might have resolved.
+// check only gates a genuinely absent/empty q: once q is present
+// (?q=boots), an unresolvable ?game= still surfaces as the ordinary
+// selection 404 (details naming the valid game), the same as every other
+// scoped endpoint - the 400 short-circuit above does not swallow it.
 func TestServer_APISearch_UnresolvedSelection_Renders404(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
