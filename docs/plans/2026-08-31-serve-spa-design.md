@@ -145,8 +145,10 @@ add/detect, `auth login`, custom-source management, archive import/adopt (the pr
 admin; this is a single-user tool). That pulls in #307 (non-interactive game add + credential
 store in core) and a real **Setup surface**: first-run flow in the game chooser, game add/detect
 UI, source auth UI, custom-source editor, archive import/adopt UI (over `ImportArchivePlan`).
-And vice-versa: any capability the web UI adds must be CLI-reachable — concretely, per-item
-update batches land in core (#324) with the CLI's `-i` selection picker (#254) closing that gap.
+And vice-versa **by judgment, not symmetry** (owner clarification, 2026-08-31): capabilities
+cross modalities only where they make sense there — visual-native features (e.g. the full-context
+search) may stay web-only, CLI-native ones CLI-only. Concretely judged in: per-item update
+batches land in core (#324) with the CLI's `-i` picker (#254), which was independently wanted.
 **Out:** remote access/auth, mobile layouts, no-JS operation, i18n.
 
 ## Testing
