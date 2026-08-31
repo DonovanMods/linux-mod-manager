@@ -1,0 +1,26 @@
+{
+  "plan_id": "0123456789abcdef0123456789abcdef",
+  "kind": "deploy",
+  "plan": {
+    "profile": "default",
+    "mods": [
+      {
+        "ref": {
+          "source_id": "fake",
+          "mod_id": "m1",
+          "version": "1.0",
+          "locked": false
+        },
+        "name": "Mod One",
+        "class": "individual",
+        "link": [
+          "Mods/one.pak"
+        ],
+        "remove": []
+      }
+    ],
+    "purge": [],
+    "hooks": [],
+    "no_changes": false
+  }
+}

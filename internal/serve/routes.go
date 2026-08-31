@@ -19,6 +19,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /updates", s.wrap(s.handleUpdates))
 	s.mux.Handle("GET /profiles", s.wrap(s.handleProfiles))
 	s.mux.Handle("GET /health", s.wrap(s.handleHealth))
+	s.mux.Handle("GET /jobs/{id}", s.wrap(s.handleJobPage))
 	s.mux.Handle("GET /api/v1/status", s.wrap(s.handleAPIStatus))
 	s.mux.Handle("GET /api/v1/mods", s.wrap(s.handleAPIMods))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))
@@ -27,5 +28,19 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/profiles", s.wrap(s.handleAPIProfiles))
 	s.mux.Handle("GET /api/v1/health", s.wrap(s.handleAPIHealth))
 	s.mux.Handle("GET /api/v1/conflicts", s.wrap(s.handleAPIConflicts))
+	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
+	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
+	s.mux.Handle("GET /api/v1/jobs/{id}", s.wrap(s.handleAPIJobStatus))
+	s.mux.Handle("GET /api/v1/jobs/{id}/events", s.wrap(s.handleAPIJobEvents))
+	// The /api/v1/ subtree fallback must be registered LAST in spirit
+	// (net/http's most-specific-pattern-wins makes the order irrelevant in
+	// fact): it claims every /api/v1 path no route above took, so no API
+	// request can fall through to net/http's text/plain 404. It goes
+	// through requestLogging only, not wrap - a request for a path that
+	// does not exist has nothing to protect with an Origin or CSRF check,
+	// and running them first would answer an unknown state-changing path
+	// with a text/plain 403, reintroducing exactly the non-JSON response
+	// this route exists to remove.
+	s.mux.Handle("/api/v1/", s.requestLogging(http.HandlerFunc(s.handleAPINotFound)))
 	s.mux.Handle("/static/", http.StripPrefix("/static/", staticHandler()))
 }

@@ -22,6 +22,18 @@ conflicts}` - each answering exactly the document `lmm <cmd> --json`
   emits for the identical call, with the CLI's `{"error","details"}`
   envelope on failure (#320). Mutations and background jobs land in
   follow-up units of this epic (#321/#322, epic #276).
+- `lmm serve` gains its jobs API: `POST /api/v1/plans/{kind}` computes a
+  mutation's plan and returns it with a single-use `plan_id`, `POST
+/api/v1/jobs` redeems that id and runs the Apply as a background job
+  (returning `{"job_id"}`), `GET /api/v1/jobs/{id}` reports its state and
+  result-or-error, and `GET /api/v1/jobs/{id}/events` streams the typed
+  core progress events as Server-Sent Events - replaying what the job has
+  already emitted before going live, so a page opened mid-operation sees
+  the whole run. A `/jobs/{id}` page renders the same state, progress and
+  result with no JavaScript. A job's Apply runs under the server's own
+  context, never the request's, so closing the tab that started an
+  operation never interrupts it. `deploy` is the first plan kind wired
+  end-to-end; the remaining mutations follow in #322 (epic #276).
 - `mod show` displays a mod's changelog when its source can supply one
   (`--json`: `changelog`, additive) - NexusMods now implements the new
   `source.ChangelogProvider` optional capability via its files endpoint's

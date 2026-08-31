@@ -23,7 +23,7 @@ func TestServer_NavSwitcher_HiddenWithOneGameAndProfile(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -49,7 +49,7 @@ func TestServer_NavSwitcher_ShownWithMultipleGames(t *testing.T) {
 		LinkMethod:  domain.LinkSymlink,
 	}))
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -69,7 +69,7 @@ func TestServer_NavSwitcher_ShownWithMultipleProfiles(t *testing.T) {
 	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "survival")
 	require.NoError(t, err)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -93,7 +93,7 @@ func TestServer_NavSwitcher_CarriesGameAsHiddenFieldWithOneGame(t *testing.T) {
 	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "survival")
 	require.NoError(t, err)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -119,7 +119,7 @@ func TestServer_NavSwitcher_CarriesProfileAsHiddenFieldWithOneProfile(t *testing
 		LinkMethod:  domain.LinkSymlink,
 	}))
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -146,7 +146,7 @@ func TestServer_NavSwitcher_PreservesSearchQuery(t *testing.T) {
 		LinkMethod:  domain.LinkSymlink,
 	}))
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/search?q=boots", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -175,7 +175,7 @@ func TestServer_NavSwitcher_NoExtraParamsOnMods(t *testing.T) {
 	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "survival")
 	require.NoError(t, err)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)

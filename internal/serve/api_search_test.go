@@ -24,7 +24,7 @@ func TestServer_APISearch_ReturnsExactSearchReport(t *testing.T) {
 	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Worse Hats", Version: "2.0"}})
 	svc, game := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -55,7 +55,7 @@ func TestServer_APISearch_LimitParam_CapsResults(t *testing.T) {
 	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "3", SourceID: "fake", Name: "Boots Gamma", Version: "1.0"}})
 	svc, game := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&limit=2", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -77,7 +77,7 @@ func TestServer_APISearch_LimitParam_CapsResults(t *testing.T) {
 func TestServer_APISearch_InvalidLimitParam_Renders400(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&limit=nope", nil)
 	rec := httptest.NewRecorder()
@@ -96,7 +96,7 @@ func TestServer_APISearch_InvalidLimitParam_Renders400(t *testing.T) {
 func TestServer_APISearch_MissingQuery_Renders400(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search", nil)
 	rec := httptest.NewRecorder()
@@ -118,7 +118,7 @@ func TestServer_APISearch_MissingQuery_Renders400(t *testing.T) {
 func TestServer_APISearch_UnresolvedSelection_Renders404(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&game=nope", nil)
 	rec := httptest.NewRecorder()

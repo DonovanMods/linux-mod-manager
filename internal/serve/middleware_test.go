@@ -36,7 +36,7 @@ func newMiddlewareTestServer(t *testing.T) *Server {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	srv := New(svc, slog.New(slog.DiscardHandler), Options{Addr: middlewareTestAddr})
+	srv := New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: middlewareTestAddr})
 	srv.mux.Handle("/__test/echo", srv.wrap(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -267,7 +267,7 @@ func TestMiddleware_WildcardBind_RejectsDNSRebindingHost(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	srv := New(svc, slog.New(slog.DiscardHandler), Options{Addr: "0.0.0.0:7420"})
+	srv := New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: "0.0.0.0:7420"})
 	srv.mux.Handle("/__test/echo", srv.wrap(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

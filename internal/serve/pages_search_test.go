@@ -22,7 +22,7 @@ func TestServer_Search_RendersHits(t *testing.T) {
 	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Worse Hats", Version: "2.0"}})
 	svc, _ := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/search?q=boots", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -44,7 +44,7 @@ func TestServer_Search_MarksInstalledHits(t *testing.T) {
 	svc, game := newFixtureServiceWithSource(t, src)
 	seedInstalledMod(t, svc, game, domain.Mod{ID: "1", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID}, true, nil)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/search?q=boots", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -61,7 +61,7 @@ func TestServer_Search_NoQuery_RendersFormOnly(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/search", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)

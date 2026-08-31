@@ -37,7 +37,7 @@ func TestServer_APIWriteJSON_LogsEncodeFailure(t *testing.T) {
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
-	srv := serve.New(svc, logger, serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, logger, serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/status", nil)
 	rec := writeFailRecorder{httptest.NewRecorder()}

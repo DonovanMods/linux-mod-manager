@@ -50,7 +50,7 @@ func TestServeGraceful_InFlightRequestCompletesAfterCancel(t *testing.T) {
 	var serveErr error
 	go func() {
 		defer wg.Done()
-		serveErr = serveGraceful(ctx, httpSrv, ln, 5*time.Second)
+		serveErr = serveGraceful(ctx, httpSrv, ln, 5*time.Second, nil)
 	}()
 
 	var respErr error
@@ -120,7 +120,7 @@ func TestServeGraceful_ExpiredGracePeriodStillReturns(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
-	go func() { done <- serveGraceful(ctx, httpSrv, ln, 50*time.Millisecond) }()
+	go func() { done <- serveGraceful(ctx, httpSrv, ln, 50*time.Millisecond, nil) }()
 
 	go func() {
 		resp, err := http.Get("http://" + ln.Addr().String() + "/")
@@ -160,7 +160,7 @@ func TestServer_Options_ShutdownGrace_ReachesServe(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	srv := New(svc, slog.New(slog.DiscardHandler), Options{Addr: "127.0.0.1:0", ShutdownGrace: 50 * time.Millisecond})
+	srv := New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: "127.0.0.1:0", ShutdownGrace: 50 * time.Millisecond})
 
 	started := make(chan struct{})
 	block := make(chan struct{})

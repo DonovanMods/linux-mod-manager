@@ -25,7 +25,7 @@ func TestServer_APIMods_ReturnsExactModList(t *testing.T) {
 		ID: "42", SourceID: "fake", Name: "Better Boots", Version: "1.2.0", GameID: game.ID,
 	}, true, map[string][]byte{"boots.esp": []byte("data")})
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -48,7 +48,7 @@ func TestServer_APIMods_ReturnsExactModList(t *testing.T) {
 // with details listing the (empty) valid choices.
 func TestServer_APIMods_NoGames_Renders404(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods", nil)
 	rec := httptest.NewRecorder()
@@ -75,7 +75,7 @@ func TestServer_APIMods_NoGames_Renders404(t *testing.T) {
 func TestServer_APIMods_UnknownGameParam_Renders404(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods?game=nope", nil)
 	rec := httptest.NewRecorder()
@@ -104,7 +104,7 @@ func TestServer_APIMods_UnknownGameParam_Renders404(t *testing.T) {
 func TestServer_APIMods_UnknownProfileParam_Renders404(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods?profile=nope", nil)
 	rec := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func TestServer_APIMods_InternalFailure_Renders500(t *testing.T) {
 	svc, _ := newFixtureServiceWithSource(t, src)
 	require.NoError(t, svc.Close())
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -156,7 +156,7 @@ func TestServer_APIModDetail_ReturnsExactModDetail(t *testing.T) {
 	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Better Boots", Version: "1.0"}})
 	svc, game := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods/fake/1", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -178,7 +178,7 @@ func TestServer_APIModDetail_UnknownMod_Renders404(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods/fake/bogus", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)

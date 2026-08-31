@@ -27,7 +27,7 @@ func TestServer_Mods_RendersInstalledMod(t *testing.T) {
 		GameID:   game.ID,
 	}, true, map[string][]byte{"boots.esp": []byte("data")})
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -55,7 +55,7 @@ func TestServer_Mods_MutationForms_AreDisabled(t *testing.T) {
 	svc, game := newFixtureServiceWithSource(t, src)
 	seedInstalledMod(t, svc, game, domain.Mod{ID: "1", SourceID: "fake", Name: "Mod", Version: "1.0", GameID: game.ID}, false, nil)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -70,7 +70,7 @@ func TestServer_Mods_NoModsInstalled_RendersEmptyState(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)

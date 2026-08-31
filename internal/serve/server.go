@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -57,12 +58,45 @@ type Server struct {
 	shutdownGrace time.Duration
 	csrf          *csrfGuard
 	ln            net.Listener
+
+	// plans holds the server-side Plan objects a confirm page round-trips
+	// a plan_id through (see plans.go); jobs runs each confirmed Apply in
+	// its own goroutine, rooted at New's ctx rather than any request's
+	// (see jobs.go). Both are process-lifetime state, forgotten on
+	// restart - the database remains the truth about what actually
+	// happened.
+	plans *planStore
+	jobs  *jobRegistry
+
+	// heartbeat is the clock seam every SSE stream's comment heartbeat
+	// runs on (see sse.go). Production is realHeartbeatTicker; an internal
+	// test swaps in a channel it sends on by hand so a heartbeat assertion
+	// never waits a real sseHeartbeatInterval.
+	heartbeat heartbeatTicker
+
+	// draining is closed once the http.Server begins shutting down. It
+	// exists for the SSE streams: an open stream is an ACTIVE request, and
+	// http.Server.Shutdown waits for active requests rather than
+	// cancelling their contexts, so a stream that only ended when its job
+	// ended would hold the entire shutdown grace open. Watching this makes
+	// a draining server hang up on its streams immediately while the jobs
+	// behind them keep running to their own bounded grace (jobs.go).
+	draining     chan struct{}
+	drainingOnce sync.Once
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
 // slog.LevelDebug; a nil log is treated as (*core.Service).Logger(), which
 // is itself never nil (it defaults to a discard handler).
-func New(svc *core.Service, log *slog.Logger, opts Options) *Server {
+//
+// ctx is the SERVER's lifetime context - the serve command's own root - and
+// is what every job's Apply ultimately derives from (see jobRegistry.
+// rootCtx for why the registry, not this context's cancellation, decides
+// when a running job is cut off). It is deliberately not the same
+// parameter Serve takes: Serve's ctx says when to START shutting down,
+// while this one is the root the work hangs off, and passing it here is
+// what keeps this package's context.Background() call count at zero.
+func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options) *Server {
 	if log == nil {
 		log = svc.Logger()
 	}
@@ -78,6 +112,10 @@ func New(svc *core.Service, log *slog.Logger, opts Options) *Server {
 		allowedHosts:  allowedHostsFor(opts.Addr),
 		shutdownGrace: grace,
 		csrf:          newCSRFGuard(),
+		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
+		jobs:          newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
+		heartbeat:     realHeartbeatTicker,
+		draining:      make(chan struct{}),
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,
@@ -88,6 +126,11 @@ func New(svc *core.Service, log *slog.Logger, opts Options) *Server {
 		// them.
 		Handler: securityHeaders(s.hostCheck(s.mux)),
 	}
+	// RegisterOnShutdown fires when Shutdown is called - the only hook
+	// net/http offers for "we are going away", since it never cancels an
+	// active request's context. sync.Once because Shutdown may be called
+	// more than once and each call runs the callbacks again.
+	s.httpServer.RegisterOnShutdown(func() { s.drainingOnce.Do(func() { close(s.draining) }) })
 	s.routes()
 	return s
 }
@@ -125,14 +168,14 @@ func (s *Server) Close() error {
 }
 
 // Serve runs the server until ctx is cancelled, then drains in-flight
-// requests within a bounded grace period before returning (see
-// serveGraceful). Listen must have been called first; ListenAndServe does
-// both in the usual order.
+// requests AND running jobs within a bounded grace period before returning
+// (see serveGraceful). Listen must have been called first; ListenAndServe
+// does both in the usual order.
 func (s *Server) Serve(ctx context.Context) error {
 	if s.ln == nil {
 		return errors.New("serve: Listen must be called before Serve")
 	}
-	return serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace)
+	return serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
 }
 
 // ListenAndServe binds Server's configured address and serves until ctx is
@@ -153,20 +196,47 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 // context.Background() call count (see CLAUDE.md's v2 boundary rules) stays
 // unchanged - the caller's ctx is the only root this package ever derives
 // from.
-func serveGraceful(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Duration) error {
+//
+// drain (nil in the direct-call tests, jobRegistry.shutdown in production)
+// is the SAME bounded window applied to running jobs, and runs concurrently
+// with Shutdown rather than after it: an Apply and the requests watching it
+// are draining the same event, so serialising the two would double the
+// worst-case exit time for no benefit. serveGraceful does not return until
+// both have finished, so a cancelled `lmm serve` never exits out from under
+// a mutation still in flight (docs/plans/2026-08-30-serve-impl.md Task 3:
+// "running jobs get a bounded grace"). A listener that dies on its own gets
+// the same drain before the failure is reported.
+func serveGraceful(ctx context.Context, srv *http.Server, ln net.Listener, grace time.Duration, drain func(context.Context)) error {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
 
+	var serveFailure error
 	select {
 	case err := <-serveErr:
-		return err
+		serveFailure = err
 	case <-ctx.Done():
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutting down: %w", err)
+
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		if drain != nil {
+			drain(shutdownCtx)
+		}
+	}()
+
+	if serveFailure != nil {
+		<-drained
+		return serveFailure
+	}
+
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	<-drained
+	if shutdownErr != nil {
+		return fmt.Errorf("shutting down: %w", shutdownErr)
 	}
 
 	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -36,7 +36,7 @@ func TestServer_Health_RendersConflictsAndVerifySummary(t *testing.T) {
 	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -55,7 +55,7 @@ func TestServer_Health_RendersConflictsAndVerifySummary(t *testing.T) {
 // no-data case.
 func TestServer_Health_NoGames_RendersEmptyState(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/health", nil)
 	rec := httptest.NewRecorder()
