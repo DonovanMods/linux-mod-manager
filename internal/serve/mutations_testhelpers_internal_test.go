@@ -159,3 +159,15 @@ func getPage(s *Server, target string) *httptest.ResponseRecorder {
 	s.Handler().ServeHTTP(rec, req)
 	return rec
 }
+
+// newLiveMutationFixtureServer is newMutationFixtureServer bound to a
+// WILDCARD address, for the tests that drive the server over real TCP
+// through httptest.NewServer (which picks its own ephemeral port): a
+// concrete bind would pin a port the test cannot know in advance and 403
+// every request. In-process helpers (postForm) still work against it, since
+// a wildcard bind admits any IP-literal Host.
+func newLiveMutationFixtureServer(t *testing.T) (*Server, *core.Service, *domain.Game) {
+	t.Helper()
+	svc, game := newDeployFixtureService(t)
+	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: ":0"}), svc, game
+}

@@ -7,7 +7,11 @@ package serve
 // database row, the game directory), never merely the status code.
 
 import (
+	"encoding/json/v2"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -94,4 +98,40 @@ func TestServer_ModToggle_UnknownMod_FailsTheJob(t *testing.T) {
 	require.Equal(t, jobFailed, j.status().State)
 	require.NotNil(t, j.status().Error)
 	assert.Contains(t, j.status().Error.Error, "nope")
+}
+
+// TestServer_ModDisable_JobStreamsToItsTerminalFrame proves the documented
+// claim in kind_toggle.go: a plan-free toggle is a JOB like any other, so
+// its SSE stream behaves like any other - it replays what there is and ends
+// on the terminal done frame carrying the final status. What it does NOT
+// carry is progress events, because DisableMod takes no EventSink; the
+// stream is still the signal a client waits on rather than polling.
+func TestServer_ModDisable_JobStreamsToItsTerminalFrame(t *testing.T) {
+	s, svc, game := newLiveMutationFixtureServer(t)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	rec := postForm(s, "/mods/fake/m1/disable", formValues{"game": game.ID, "profile": "default"})
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	id := strings.TrimPrefix(rec.Header().Get("Location"), "/jobs/")
+
+	stream := getStream(t, srv, "/api/v1/jobs/"+id+"/events")
+	defer func() { _ = stream.Body.Close() }()
+	require.Equal(t, sseContentType, stream.Header.Get("Content-Type"))
+
+	body, err := io.ReadAll(stream.Body)
+	require.NoError(t, err)
+	frames := parseSSE(t, string(body))
+	require.NotEmpty(t, frames)
+
+	terminal := frames[len(frames)-1]
+	require.Equal(t, sseDoneEvent, terminal.Event)
+	var final jobStatus
+	require.NoError(t, json.Unmarshal([]byte(terminal.Data), &final))
+	assert.Equal(t, jobSucceeded, final.State)
+	assert.Equal(t, "disable", final.Kind)
+
+	mod, err := svc.GetInstalledMod(t.Context(), "fake", "m1", game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled)
 }
