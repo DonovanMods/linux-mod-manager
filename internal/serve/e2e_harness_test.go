@@ -24,6 +24,7 @@ package serve_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -302,8 +303,8 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 // The returned setFailing toggles the fault on and off, so a scenario can
 // also prove the retry affordance recovers once the fault clears.
 //
-// The Director rewrites the forwarded request's Host to the backend's own
-// bound address: hostCheck (middleware.go) pins the allow-list to whatever
+// The rewrite sets the forwarded request's Host to the backend's own bound
+// address: hostCheck (middleware.go) pins the allow-list to whatever
 // Listen() actually bound, and the browser's Host header names the PROXY's
 // address instead, which the backend would otherwise reject.
 func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath string) (baseURL string, setFailing func(bool)) {
@@ -313,11 +314,11 @@ func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath str
 	backendURL, err := url.Parse(backend)
 	require.NoError(t, err)
 
-	proxy := httputil.NewSingleHostReverseProxy(backendURL)
-	baseDirector := proxy.Director
-	proxy.Director = func(r *http.Request) {
-		baseDirector(r)
-		r.Host = backendURL.Host
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(backendURL)
+			r.Out.Host = backendURL.Host
+		},
 	}
 
 	var failing atomic.Bool
@@ -338,8 +339,14 @@ func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath str
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	proxyServer := &http.Server{Handler: mux}
-	go proxyServer.Serve(ln)
-	t.Cleanup(func() { _ = proxyServer.Close() })
+	served := make(chan error, 1)
+	go func() { served <- proxyServer.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = proxyServer.Close()
+		if err := <-served; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("proxy server: %v", err)
+		}
+	})
 
 	return "http://" + ln.Addr().String(), failing.Store
 }
