@@ -195,6 +195,17 @@ func (j *job) failure() error {
 // reading must not be able to stall a deploy. A disconnected subscriber
 // sees its channel close while the job is still running, which is the
 // signal to re-subscribe: the ring replay then closes the gap.
+//
+// One instant stays ambiguous (task-6-review.md Minor 2): if the job
+// finishes between a subscriber's lag-drop and that subscriber's next
+// status() read, the read returns succeeded and the subscriber concludes
+// "done" having silently missed whatever happened in between - the end
+// state is still correct (it IS in status()), only the intermediate
+// progress is lost, and there is no signal distinguishing that from a
+// subscriber that stayed connected the whole time. Cheapest hardening for
+// Task 7: record the drop on the sub (or bump a DroppedSubscribers /
+// dropped_events-style counter) so the stream can say "history incomplete"
+// instead of a caller having to infer it from a state race.
 func (j *job) emit(e core.Event) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -506,6 +517,17 @@ func (r *jobRegistry) evictLocked() {
 // for them to unwind. Core's own Ruling-16 completions still run to the end
 // under cancellation, so a cancelled job leaves no half-written pair behind.
 // It is safe to call more than once.
+//
+// "Safe to call more than once" does not mean "leaks nothing": if a job
+// never returns even after cancellation (task-6-review.md Minor 3), the
+// goroutine this call spawns to wait on r.wg blocks forever - one such
+// goroutine per shutdown call made while that job is wedged. This is
+// unavoidable (a goroutine cannot be killed from outside) and bounded from
+// the caller's side by jobCancelGrace logging the failure, but it is NOT
+// covered by this package's goroutine-leak ratchet
+// (TestJobRegistry_ShutdownWaitsForRunningJobsAndLeavesNoGoroutines), which
+// only exercises jobs that do finish. A reader relying on that ratchet
+// should not assume it proves a wedged job leaks nothing too.
 func (r *jobRegistry) shutdown(ctx context.Context) {
 	defer r.cancel()
 
