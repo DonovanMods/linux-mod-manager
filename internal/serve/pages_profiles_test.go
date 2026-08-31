@@ -22,7 +22,7 @@ func TestServer_Profiles_RendersProfileList(t *testing.T) {
 	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "hardcore")
 	require.NoError(t, err)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/profiles", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -41,7 +41,7 @@ func TestServer_Profiles_RendersProfileList(t *testing.T) {
 // no-data case.
 func TestServer_Profiles_NoGames_RendersEmptyState(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/profiles", nil)
 	rec := httptest.NewRecorder()

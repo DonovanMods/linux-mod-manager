@@ -26,7 +26,7 @@ func TestServer_APIUpdates_ReturnsExactUpdateCheckReport(t *testing.T) {
 	svc, game := newFixtureServiceWithSource(t, src)
 	seedInstalledMod(t, svc, game, domain.Mod{ID: "1", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID}, true, nil)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/updates", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -53,7 +53,7 @@ func TestServer_APIUpdates_ReturnsExactUpdateCheckReport(t *testing.T) {
 // at 404, never a 200 empty document.
 func TestServer_APIUpdates_NoGames_Renders404(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/updates", nil)
 	rec := httptest.NewRecorder()
@@ -75,7 +75,7 @@ func TestServer_APIUpdates_InternalFailure_Renders500(t *testing.T) {
 	svc, _ := newFixtureServiceWithSource(t, src)
 	require.NoError(t, svc.Close())
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/updates", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)

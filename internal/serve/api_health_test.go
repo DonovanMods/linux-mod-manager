@@ -54,7 +54,7 @@ func twinConflictFixture(t *testing.T) (*core.Service, *domain.Game) {
 func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 	svc, game := twinConflictFixture(t)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -99,7 +99,7 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 		UpdatePolicy: domain.UpdateNotify,
 	}))
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -129,7 +129,7 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 // endpoints' unresolved-selection behaviour.
 func TestServer_APIHealth_NoGames_Renders404(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -150,7 +150,7 @@ func TestServer_APIHealth_NoGames_Renders404(t *testing.T) {
 func TestServer_APIConflicts_ReturnsExactConflictReport(t *testing.T) {
 	svc, game := twinConflictFixture(t)
 
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/conflicts", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
@@ -174,7 +174,7 @@ func TestServer_APIConflicts_ReturnsExactConflictReport(t *testing.T) {
 // endpoints' unresolved-selection behaviour.
 func TestServer_APIConflicts_NoGames_Renders404(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/conflicts", nil)
 	rec := httptest.NewRecorder()

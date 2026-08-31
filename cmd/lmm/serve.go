@@ -63,7 +63,7 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 		return err
 	}
 
-	srv := serve.New(svc, svc.Logger(), serve.Options{Addr: serveAddr})
+	srv := serve.New(ctx, svc, svc.Logger(), serve.Options{Addr: serveAddr})
 	addr, err := srv.Listen()
 	if err != nil {
 		return err

@@ -20,7 +20,7 @@ import (
 // game/profile selection).
 func TestServer_Mods_NoGames_RendersEmptyState(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
@@ -46,7 +46,7 @@ func TestServer_Mods_UnknownGameParam_RendersWarning(t *testing.T) {
 		ModPath:     t.TempDir(),
 		LinkMethod:  domain.LinkSymlink,
 	}))
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods?game=nope", nil)
 	rec := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestServer_Mods_UnknownGameParam_RendersWarning(t *testing.T) {
 func TestServer_Mods_UnknownProfileParam_RendersWarning(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods?profile=nope", nil)
 	rec := httptest.NewRecorder()
@@ -86,7 +86,7 @@ func TestServer_Mods_NoDefaultGame_RendersWarning(t *testing.T) {
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID: "g1", Name: "Undefaulted Game", InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
 	}))
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()
@@ -104,7 +104,7 @@ func TestServer_Mods_NoDefaultGame_RendersWarning(t *testing.T) {
 func TestServer_Mods_DefaultSelection_RendersGameAndProfile(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
 	rec := httptest.NewRecorder()

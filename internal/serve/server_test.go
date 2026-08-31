@@ -18,7 +18,7 @@ const testAddr = "127.0.0.1:7420"
 func newTestServer(t *testing.T) (*serve.Server, http.Handler) {
 	t.Helper()
 	svc := newFixtureService(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	return srv, srv.Handler()
 }
 
@@ -44,7 +44,7 @@ func TestServer_StatusPage_RendersGameName(t *testing.T) {
 // nothing is configured yet).
 func TestServer_StatusPage_WorksWithNoGames(t *testing.T) {
 	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/", nil)
 	rec := httptest.NewRecorder()
@@ -127,7 +127,7 @@ func TestServer_NotFound_HasSecurityHeaders(t *testing.T) {
 // exercised.
 func TestServer_ListenAndServe_BindsAndDrainsOnCancel(t *testing.T) {
 	svc := newFixtureService(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -147,7 +147,7 @@ func TestServer_ListenAndServe_BindsAndDrainsOnCancel(t *testing.T) {
 // Serve (e.g. doServe's startup-print failure path).
 func TestServer_Close_ClosesListener(t *testing.T) {
 	svc := newFixtureService(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
 
 	_, err := srv.Listen()
 	require.NoError(t, err)
@@ -159,7 +159,7 @@ func TestServer_Close_ClosesListener(t *testing.T) {
 // never invoked.
 func TestServer_Close_NoopWhenNeverListened(t *testing.T) {
 	svc := newFixtureService(t)
-	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
 
 	require.NoError(t, srv.Close())
 }
