@@ -33,6 +33,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /updates/apply", s.wrap(s.handleUpdatesApply))
 	s.mux.Handle("POST /profiles/{name}/switch", s.wrap(s.handleProfileSwitch))
 	s.mux.Handle("POST /profiles/{name}/apply", s.wrap(s.handleProfileApply))
+	s.mux.Handle("POST /profiles/{name}/deploy", s.wrap(s.handleProfileDeploy))
 	s.mux.Handle("GET /api/v1/status", s.wrap(s.handleAPIStatus))
 	s.mux.Handle("GET /api/v1/mods", s.wrap(s.handleAPIMods))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))

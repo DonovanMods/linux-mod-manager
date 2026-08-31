@@ -45,7 +45,7 @@
 <!-- The deploy kind is scoped by the resolved game+profile, not by a
      path segment, so this row's own profile travels as a hidden field. -->
 <input type="hidden" name="profile" value="{{.Name}}">
-<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Deploy</button>
+<button type="submit" class="rounded border border-gray-300 px-2 py-1 text-xs font-medium">Deploy</button>
 </form>
 </div>
 </td>
@@ -54,6 +54,6 @@
 </tbody>
 </table>
 </div>
-<p class="mt-1 text-xs text-gray-500">Switch and Apply both show you the full plan before anything changes.</p>
+<p class="mt-1 text-xs text-gray-500">Switch, Apply and Deploy all show you the full plan before anything changes.</p>
 {{end}}
 {{- end}}

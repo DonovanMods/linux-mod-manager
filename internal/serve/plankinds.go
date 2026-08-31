@@ -106,6 +106,20 @@ type kindForm struct {
 	// data, with opts (this kind's apply-time options, from ApplyOptions
 	// above) supplying the current value of every option the form offers.
 	Confirm func(pending, opts any) confirmView
+
+	// PlanIsCurrent reports whether the plan a confirm submission is about
+	// to redeem was computed from the options that submission carries. It
+	// is for the kinds whose options are PLAN-time: deploy's --purge
+	// changes what the plan SAYS, and ApplyDeploy must receive the very
+	// options its plan was computed from, so a user who ticks a box and
+	// presses the primary button would otherwise get a mutation they never
+	// previewed. Returning false re-plans onto a fresh confirm page instead
+	// of applying.
+	//
+	// Nil means "this kind's options are apply-time", which is the common
+	// case (install, uninstall, updates): the confirm form's own values are
+	// what applies, so there is nothing to disagree with.
+	PlanIsCurrent func(pending any, r *http.Request) bool
 }
 
 // confirmView is a plan as the confirm page shows it: what the mutation

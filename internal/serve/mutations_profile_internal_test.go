@@ -199,7 +199,8 @@ func TestServer_ProfileApply_WithoutCSRF_IsRefused(t *testing.T) {
 }
 
 // TestServer_Profiles_PageOffersTheSwitchAndApplyForms proves Task 4's
-// disabled shells are live.
+// disabled shells are live - all three of them, with nothing left disabled
+// on the page.
 func TestServer_Profiles_PageOffersTheSwitchAndApplyForms(t *testing.T) {
 	s, _, _ := newProfilesFixtureServer(t)
 
@@ -209,5 +210,7 @@ func TestServer_Profiles_PageOffersTheSwitchAndApplyForms(t *testing.T) {
 	body := rec.Body.String()
 	assert.Contains(t, body, `action="/profiles/`+switchTargetProfile+`/switch"`)
 	assert.Contains(t, body, `action="/profiles/`+applyTargetProfile+`/apply"`)
+	assert.Contains(t, body, `action="/profiles/`+activeProfile+`/deploy"`)
+	assert.NotContains(t, body, "disabled")
 	assert.NotContains(t, body, "coming in this release")
 }

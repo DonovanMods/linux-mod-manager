@@ -84,6 +84,7 @@ const (
 	noticePlanUnavailable = "That confirmation had already been used or had expired, so this is a freshly computed plan. Review it and confirm again."
 	noticeStalePlan       = "Something changed in this profile while the plan was open, so it was refused. This is a freshly computed plan - review it and confirm again."
 	noticeConflicts       = "Installing this mod would overwrite files another installed mod owns. Nothing has been changed. Choose Overwrite to install anyway."
+	noticeOptionsChanged  = "The options changed since this plan was computed, so nothing was applied - this flow's options change the plan itself. This is a fresh plan with the options you chose; review it and confirm again."
 )
 
 // mutationRequest is one mutation submission: which flow, which mod, which
@@ -258,6 +259,15 @@ func (s *Server) handleProfileApply(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "profile_apply")
 }
 
+// handleProfileDeploy answers POST /profiles/{name}/deploy. Unlike its two
+// neighbours the target profile is NOT read from the path: the deploy kind
+// is scoped by the resolved game+profile selection (it is the same kind
+// /api/v1 has driven since Task 7), so the profiles page sends the row's
+// profile as the hidden field every other scoped page uses.
+func (s *Server) handleProfileDeploy(w http.ResponseWriter, r *http.Request) {
+	s.handlePlannedMutation(w, r, "deploy")
+}
+
 // handleModInstall and handleModUninstall answer the two planned routes.
 func (s *Server) handleModInstall(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "install")
@@ -326,6 +336,15 @@ func (s *Server) handlePlannedMutation(w http.ResponseWriter, r *http.Request, k
 
 	pending, ok := s.pendingForConfirm(w, r, kind, sel, req)
 	if !ok {
+		return
+	}
+
+	// A kind whose options are PLAN-time must not apply a plan the
+	// submission no longer agrees with (kindForm.PlanIsCurrent). A recovery
+	// action (replan) is exempt: it just computed the plan from this very
+	// submission.
+	if kind.Form.PlanIsCurrent != nil && !req.Replan && !kind.Form.PlanIsCurrent(pending, r) {
+		s.planAndConfirm(w, r, kind, sel, req, confirmContext{Notice: noticeOptionsChanged})
 		return
 	}
 
