@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
@@ -176,6 +177,14 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 // CLI's own cobra.MinimumNArgs(1) requirement for `lmm search`. That check
 // runs before selection resolution, since a malformed request is wrong
 // regardless of what game/profile might have resolved.
+//
+// An optional ?limit= caps core.SearchReport.Mods via SearchOptions.Limit
+// (task-5 gate review Minor 7: a zero SearchOptions always returned every
+// hit, while `lmm search --json` defaults to --limit 10 - the one endpoint
+// whose bytes could diverge from its CLI twin for a reason unrelated to
+// Important 1). The default (no ?limit=) stays unset/uncapped, matching
+// the /search PAGE's own call and every existing test's expectations; a
+// non-numeric ?limit= is bad input (400), the same class as a missing q.
 func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -183,12 +192,22 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var limit int
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid query parameter %q: %w", "limit", err))
+			return
+		}
+		limit = n
+	}
+
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
 		return
 	}
 
-	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query, core.SearchOptions{})
+	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query, core.SearchOptions{Limit: limit})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

@@ -40,6 +40,55 @@ func TestServer_APISearch_ReturnsExactSearchReport(t *testing.T) {
 	requireEncodesLike(t, rec.Body.Bytes(), want)
 }
 
+// TestServer_APISearch_LimitParam_CapsResults is the task-5 gate review's
+// Minor 7 fix: /api/v1/search passed a zero core.SearchOptions, so it
+// always returned every hit, while `lmm search --json` defaults to
+// --limit 10 - the one endpoint whose bytes could diverge from its CLI
+// twin on the same state for a reason unrelated to Important 1. An
+// explicit ?limit= now caps core.SearchReport.Mods the same way
+// core.SearchOptions.Limit always has; the default (no ?limit=) stays
+// unset/uncapped, matching every other test in this file.
+func TestServer_APISearch_LimitParam_CapsResults(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Alpha", Version: "1.0"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Beta", Version: "1.0"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "3", SourceID: "fake", Name: "Boots Gamma", Version: "1.0"}})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&limit=2", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	require.Len(t, report.Mods, 2, "?limit=2 must cap the returned hits")
+	assert.Equal(t, 3, report.TotalResults, "TotalResults stays the untruncated count")
+
+	want, err := svc.Search(context.Background(), game, "default", "boots", core.SearchOptions{Limit: 2})
+	require.NoError(t, err)
+	requireEncodesLike(t, rec.Body.Bytes(), want)
+}
+
+// TestServer_APISearch_InvalidLimitParam_Renders400 proves a non-numeric
+// ?limit= is bad input (400), the same class of error as a missing q.
+func TestServer_APISearch_InvalidLimitParam_Renders400(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, _ := newFixtureServiceWithSource(t, src)
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&limit=nope", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var envelope apiErrorEnvelope
+	decodeStrict(t, rec.Body.Bytes(), &envelope)
+	assert.Contains(t, envelope.Error, "limit")
+}
+
 // TestServer_APISearch_MissingQuery_Renders400 proves a missing/empty q is
 // bad input (400): unlike the /search PAGE, which has a bare form to fall
 // back to, the API has nothing to render without a query, matching the
