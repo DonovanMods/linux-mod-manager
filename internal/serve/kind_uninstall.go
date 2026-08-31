@@ -24,15 +24,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// The uninstall confirm form's own field names (#226). They are the names
-// uninstallApplyForm reads back, and the names confirmUninstallPlan puts on
-// its toggles - one constant each, so a rename cannot half-apply.
-const (
-	keepCacheField = "keep_cache"
-	forceField     = "force"
-	skipHooksField = "skip_hooks"
-)
-
 func init() {
 	registerPlanKind(planKind{
 		Name:         "uninstall",

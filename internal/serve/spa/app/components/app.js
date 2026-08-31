@@ -25,12 +25,16 @@ export function App({ state, onThemeChange }) {
     </header>
     <main class="app-main">
       ${error && html`<p class="app-error">${error}</p>`}
-      ${route.view === "chooser"
-        ? html`<p class="section-header">Choose a game</p>`
-        : html`<p class="section-header">${route.game} / ${route.profile}</p>`}
-      ${status === null
-        ? html`<p class="app-booting">Loading&#8230;</p>`
-        : html`<p class="app-ready" data-hydrated="true">Ready.</p>`}
+      ${
+        route.view === "chooser"
+          ? html`<p class="section-header">Choose a game</p>`
+          : html`<p class="section-header">${route.game} / ${route.profile}</p>`
+      }
+      ${
+        status === null
+          ? html`<p class="app-booting">Loading&#8230;</p>`
+          : html`<p class="app-ready" data-hydrated="true">Ready.</p>`
+      }
     </main>
   `;
 }

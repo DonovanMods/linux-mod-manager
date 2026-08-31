@@ -28,14 +28,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// The deploy confirm form's own field names. purgeField and allField are
-// deploy's alone; the hook and force switches share the names every other
-// flow's confirm form uses, so one checkbox means one thing everywhere.
-const (
-	purgeField = "purge"
-	allField   = "all"
-)
-
 func init() {
 	registerPlanKind(planKind{
 		Name:         "deploy",

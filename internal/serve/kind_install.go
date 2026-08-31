@@ -34,16 +34,6 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// The install confirm form's own field names (#225 plus the conflict
-// answer). fileField is repeated once per ticked checkbox, which is how a
-// browser submits a multi-select.
-const (
-	versionField         = "version"
-	fileField            = "file"
-	acceptConflictsField = "accept_conflicts"
-	showArchivedField    = "show_archived"
-)
-
 func init() {
 	registerPlanKind(planKind{
 		Name:         "install",

@@ -254,16 +254,6 @@ func (j *job) replayLocked() []core.Event {
 	return out
 }
 
-// replay returns the job's retained event history, oldest first, without
-// subscribing to anything further - what the /jobs/{id} page renders as its
-// event log. A caller that also wants the events emitted after this instant
-// must use subscribe, which takes both halves atomically.
-func (j *job) replay() []core.Event {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return j.replayLocked()
-}
-
 // subscribe returns the job's retained event history and a channel carrying
 // every event emitted after that snapshot - taken in one critical section,
 // so a subscriber can neither miss an event nor see one twice. buf is the
