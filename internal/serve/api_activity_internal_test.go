@@ -357,6 +357,28 @@ func TestAPIEvents_DrainingServerClosesTheStream(t *testing.T) {
 	}
 }
 
+// TestActivityFrameNames_ArePinned: every test in this file refers to the
+// four frame-name constants, never their literal strings, so renaming one
+// is invisible to the whole suite - while the README, CLAUDE.md and Unit 3
+// all depend on the literals themselves (task-2-review.md Minor 1). Unit 3
+// consumes these names verbatim; changing any value here is a wire break.
+func TestActivityFrameNames_ArePinned(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"snapshot", activitySnapshotEvent, "snapshot"},
+		{"job_started", activityStartedEvent, "job_started"},
+		{"job_progress", activityProgressEvent, "job_progress"},
+		{"job_done", activityDoneEvent, "job_done"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.value)
+		})
+	}
+}
+
 // TestActivityBus_LaggingWatcherIsDropped: publishing must never block a
 // running Apply, so a watcher that cannot keep up is disconnected exactly
 // the way a lagging per-job subscriber is - and the browser's EventSource
