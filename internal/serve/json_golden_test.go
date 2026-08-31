@@ -126,7 +126,20 @@ func TestServeJSONGoldens(t *testing.T) {
 		},
 		{
 			"plan_kind_details",
-			planKindDetails{SupportedKinds: supportedPlanKinds()},
+			// A literal, not supportedPlanKinds() - this golden pins the
+			// document's SHAPE, not the registry's live contents, so it
+			// doesn't churn every time a new kind is registered (task-7
+			// review Minor 3). The unknown-kind test separately asserts
+			// the registry's actual generated content.
+			planKindDetails{SupportedKinds: []string{
+				"deploy",
+				"install",
+				"profile_apply",
+				"switch",
+				"uninstall",
+				"updates",
+				"verify_fix",
+			}},
 		},
 		{
 			"job_start_request",
