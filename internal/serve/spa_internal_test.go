@@ -191,12 +191,29 @@ func TestSPAAssets_ShellIsNotServedAsAnAsset(t *testing.T) {
 func TestSPAAssets_RawShellTemplateIsUnreachable(t *testing.T) {
 	s, _, _ := newFlowFixtureServer(t)
 
+	// dirs collects every directory the embedded SPA tree contains - the
+	// root ("") and each file's parent - so the walk below can probe them
+	// too. A walk that only ever requests FILE paths (as this test once
+	// did) cannot see the directory-index/listing guard assetHandler
+	// applies at all (task-2-review.md Minor 4): reverting that guard left
+	// this test green while TestSPAAssets_ShellIsNotServedAsAnAsset went
+	// red on exactly the paths below.
+	dirs := map[string]bool{"": true}
 	err := fs.WalkDir(spaFS, ".", func(p string, d fs.DirEntry, err error) error {
 		require.NoError(t, err)
+		rel := strings.TrimPrefix(p, "spa/")
+		if rel == "spa" || rel == "." {
+			rel = ""
+		}
 		if d.IsDir() {
+			dirs[rel] = true
 			return nil
 		}
-		rel := strings.TrimPrefix(p, "spa/")
+		parent := path.Dir(rel)
+		if parent == "." {
+			parent = ""
+		}
+		dirs[parent] = true
 		rec := doAPI(s, http.MethodGet, "/static/"+rel, "")
 		if rec.Code == http.StatusOK {
 			assert.NotContains(t, rec.Body.String(), "{{.CSRFToken}}",
@@ -205,6 +222,43 @@ func TestSPAAssets_RawShellTemplateIsUnreachable(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+
+	// Every directory - with a trailing slash, assetHandler's own guard
+	// must refuse it outright (404); without one, http.FileServerFS's
+	// directory redirect fires before the guard is ever consulted, so the
+	// most it can leak is a Location header, never a 200 body. Both are
+	// asserted so a regression in either layer is caught here rather than
+	// only in the file-path table test.
+	for dir := range dirs {
+		target := "/static/"
+		if dir != "" {
+			target += dir + "/"
+		}
+		t.Run(target, func(t *testing.T) {
+			rec := doAPI(s, http.MethodGet, target, "")
+			assert.Equal(t, http.StatusNotFound, rec.Code,
+				"a directory path must never resolve to an asset or a listing")
+		})
+
+		if dir == "" {
+			continue // "/static" bare is the mux's own subtree redirect, not this handler's guard
+		}
+		noSlash := "/static/" + dir
+		t.Run(noSlash, func(t *testing.T) {
+			rec := doAPI(s, http.MethodGet, noSlash, "")
+			assert.NotEqual(t, http.StatusOK, rec.Code,
+				"a directory path without a trailing slash must never resolve to a 200")
+		})
+	}
+
+	// vendorFS is a separate embed with no subdirectories of its own, so
+	// the walk above never sees it - probe its root directly.
+	for _, target := range []string{"/vendor/", "/vendor"} {
+		t.Run(target, func(t *testing.T) {
+			rec := doAPI(s, http.MethodGet, target, "")
+			assert.NotEqual(t, http.StatusOK, rec.Code)
+		})
+	}
 
 	// And the rendered shell itself, at every route it is actually served
 	// on, must carry a real token rather than the placeholder.
