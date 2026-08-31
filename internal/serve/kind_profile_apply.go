@@ -30,7 +30,6 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "profile_apply",
-		Title:        "Apply profile",
 		PlanOptions:  decodeKindOptions[profileApplyPlanRequest],
 		ApplyOptions: decodeKindOptions[profileApplyRequest],
 		Plan:         planProfileApplyKind,

@@ -27,7 +27,6 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "uninstall",
-		Title:        "Uninstall",
 		PlanOptions:  decodeKindOptions[uninstallPlanRequest],
 		ApplyOptions: decodeKindOptions[uninstallApplyRequest],
 		Plan:         planUninstallKind,

@@ -37,10 +37,6 @@ type planKind struct {
 	// entry again from nothing but a plan_id.
 	Name string
 
-	// Title is the human label a frontend puts in front of the user, e.g.
-	// "Deploy". The SPA reads it from the kind it asked to plan.
-	Title string
-
 	// PlanOptions decodes the POST /api/v1/plans/{kind} request body into
 	// this kind's own plan-time options value. An empty body decodes to the
 	// zero value, so a caller with nothing to say may send none. Use

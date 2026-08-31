@@ -36,7 +36,6 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "verify_fix",
-		Title:        "Repair",
 		PlanOptions:  decodeKindOptions[verifyFixPlanRequest],
 		ApplyOptions: decodeKindOptions[verifyFixApplyRequest],
 		Plan:         planVerifyFixKind,

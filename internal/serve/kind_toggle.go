@@ -43,8 +43,6 @@ type toggleKind struct {
 	// Name is the route segment (/api/v1/mods/{source}/{id}/enable) and the
 	// kind stored on the job.
 	Name string
-	// Title is the human label a frontend puts on the action.
-	Title string
 	// Apply runs the core call. It takes the job's own context, never the
 	// request's (jobs.go).
 	Apply func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error)
@@ -71,15 +69,13 @@ func lookupToggleKind(name string) (toggleKind, bool) {
 
 func init() {
 	registerToggleKind(toggleKind{
-		Name:  "enable",
-		Title: "Enable",
+		Name: "enable",
 		Apply: func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error) {
 			return s.svc.EnableMod(ctx, sel.Game, sel.Profile, sourceID, modID)
 		},
 	})
 	registerToggleKind(toggleKind{
-		Name:  "disable",
-		Title: "Disable",
+		Name: "disable",
 		Apply: func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error) {
 			return s.svc.DisableMod(ctx, sel.Game, sel.Profile, sourceID, modID)
 		},

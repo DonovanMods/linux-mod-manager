@@ -31,7 +31,6 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "switch",
-		Title:        "Switch profile",
 		PlanOptions:  decodeKindOptions[switchPlanRequest],
 		ApplyOptions: decodeKindOptions[switchApplyRequest],
 		Plan:         planSwitchKind,

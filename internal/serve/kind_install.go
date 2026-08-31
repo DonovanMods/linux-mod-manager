@@ -37,7 +37,6 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "install",
-		Title:        "Install",
 		PlanOptions:  decodeKindOptions[installPlanRequest],
 		ApplyOptions: decodeKindOptions[installApplyRequest],
 		Plan:         planInstallKind,

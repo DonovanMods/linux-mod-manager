@@ -31,7 +31,6 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "deploy",
-		Title:        "Deploy",
 		PlanOptions:  decodeKindOptions[deployPlanRequest],
 		ApplyOptions: decodeKindOptions[deployApplyRequest],
 		Plan:         planDeployKind,
@@ -114,11 +113,6 @@ type pendingDeploy struct {
 	Game *domain.Game
 	Plan *core.DeployPlan
 	Opts core.DeployOptions
-	// Req is the request Opts was built from - kept because it is
-	// comparable (core.DeployOptions holds a *domain.LinkMethod and is not),
-	// which is what lets deployPlanIsCurrent tell "the same options" from
-	// "the user changed something".
-	Req deployPlanRequest
 }
 
 // planDeployKind implements planKind.Plan for "deploy".
@@ -133,7 +127,7 @@ func planDeployKind(ctx context.Context, s *Server, sel selection, opts any) (an
 	if err != nil {
 		return nil, nil, err
 	}
-	return plan, &pendingDeploy{Game: sel.Game, Plan: plan, Opts: dopts, Req: req}, nil
+	return plan, &pendingDeploy{Game: sel.Game, Plan: plan, Opts: dopts}, nil
 }
 
 // applyDeployKind implements planKind.Apply for "deploy". ctx is the job's

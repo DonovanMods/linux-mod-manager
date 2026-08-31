@@ -40,7 +40,6 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "updates",
-		Title:        "Update",
 		PlanOptions:  decodeKindOptions[updatesPlanRequest],
 		ApplyOptions: decodeKindOptions[updatesApplyRequest],
 		Plan:         planUpdatesKind,
@@ -117,13 +116,9 @@ type updatesBatchPlan struct {
 // each one is re-planned immediately before its own apply (see this file's
 // doc comment).
 type pendingUpdates struct {
-	Game     *domain.Game
-	Profile  string
-	Updates  []domain.Update
-	NotFound []string
-	// Selection is the submitted key list, carried so the confirm page can
-	// re-send it and a re-plan can compute the same batch.
-	Selection []string
+	Game    *domain.Game
+	Profile string
+	Updates []domain.Update
 }
 
 // planUpdatesKind implements planKind.Plan for "updates": run the same
@@ -171,11 +166,9 @@ func planUpdatesKind(ctx context.Context, s *Server, sel selection, opts any) (a
 		NotFound: missing,
 	}
 	pending := &pendingUpdates{
-		Game:      sel.Game,
-		Profile:   sel.Profile,
-		Updates:   picked,
-		NotFound:  missing,
-		Selection: append([]string(nil), req.Mods...),
+		Game:    sel.Game,
+		Profile: sel.Profile,
+		Updates: picked,
 	}
 	return document, pending, nil
 }
