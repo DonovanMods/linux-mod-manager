@@ -165,14 +165,35 @@ func allowedHostsFor(hostPort string) map[string]struct{} {
 	return map[string]struct{}{hostPort: {}}
 }
 
+// hostIsSafeForWildcardBind reports whether host (a Host header, with or
+// without a port) is safe to admit when allowedHosts can't pin a single
+// value: an IP literal, or the special name "localhost". DNS rebinding
+// depends on a DNS name whose resolution changes after the browser has
+// already loaded a page under that name - an IP literal can't be "rebound"
+// that way, and "localhost" is resolved by the OS/browser stack itself,
+// not by attacker-controlled DNS, so both remain safe to compare Origin
+// against even without a pinned Host (see hostCheck and originCheck).
+func hostIsSafeForWildcardBind(hostHeader string) bool {
+	host := hostHeader
+	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+		host = h
+	}
+	return host == "localhost" || net.ParseIP(host) != nil
+}
+
 // hostCheck rejects any request whose Host header is not in the server's
 // allow-list - the DNS-rebinding guard
 // (docs/plans/2026-08-30-serve-design.md §Security). allowedHosts is nil
-// only for a wildcard bind (0.0.0.0/[::]): pinning a single Host there
-// would either reject every real client or accept a resolved-but-
-// unroutable literal (task-3 review Important 1), so the check is skipped
-// deliberately and the Origin and CSRF checks - still applied to every
-// state-changing request - are the defense on an exposed bind instead.
+// only for a wildcard bind (0.0.0.0/[::]), which has no single correct
+// Host to pin (task-3 review Important 1); rather than accept any Host
+// unconditionally, it still rejects a DNS name that isn't "localhost" -
+// otherwise a DNS-rebinding attack (the victim's browser loads a page from
+// an attacker-controlled name, whose DNS record is then repointed at this
+// server) would sail straight through, and since originCheck compares
+// Origin against this same r.Host, it would appear same-origin too,
+// defeating both checks at once. An IP literal or "localhost" can't be
+// rebound this way (see hostIsSafeForWildcardBind), which is what real LAN
+// traffic to a wildcard bind normally uses anyway.
 func (s *Server) hostCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.allowedHosts != nil {
@@ -180,6 +201,9 @@ func (s *Server) hostCheck(next http.Handler) http.Handler {
 				http.Error(w, "host not allowed", http.StatusForbidden)
 				return
 			}
+		} else if !hostIsSafeForWildcardBind(r.Host) {
+			http.Error(w, "host not allowed", http.StatusForbidden)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -189,9 +213,11 @@ func (s *Server) hostCheck(next http.Handler) http.Handler {
 // different origin than the Host it arrived on. Comparing against r.Host
 // rather than a value fixed at construction keeps this correct for a
 // wildcard bind too, where hostCheck (which always runs first - see wrap)
-// admits more than one Host. A request with no Origin header at all (curl,
-// the API used from a script) is not rejected here - the CSRF check
-// downstream still guards it.
+// admits more than one Host - though only an IP literal or "localhost"
+// there, which closes the DNS-rebinding gap a same-origin-by-header-
+// comparison would otherwise reopen (see hostCheck). A request with no
+// Origin header at all (curl, the API used from a script) is not rejected
+// here - the CSRF check downstream still guards it.
 func (s *Server) originCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if unsafeMethod(r.Method) {

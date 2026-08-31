@@ -209,3 +209,56 @@ func TestMiddleware_HostCheck_RejectsIPLiteralMismatch(t *testing.T) {
 		})
 	}
 }
+
+// TestHostIsSafeForWildcardBind covers the IP-literal-or-localhost split a
+// wildcard bind falls back to (a security-review finding on the Important
+// 1 fix: comparing Origin to an unpinned r.Host is only safe once r.Host
+// itself can't be a DNS-rebound name).
+func TestHostIsSafeForWildcardBind(t *testing.T) {
+	safe := []string{"127.0.0.1:7420", "[::1]:7420", "192.168.1.9:7420", "localhost:7420", "localhost"}
+	for _, host := range safe {
+		t.Run(host, func(t *testing.T) {
+			assert.True(t, hostIsSafeForWildcardBind(host))
+		})
+	}
+
+	unsafeHosts := []string{"attacker.example:7420", "attacker.example", "lmm.local:7420"}
+	for _, host := range unsafeHosts {
+		t.Run(host, func(t *testing.T) {
+			assert.False(t, hostIsSafeForWildcardBind(host))
+		})
+	}
+}
+
+// TestMiddleware_WildcardBind_RejectsDNSRebindingHost proves the fix for
+// that finding directly: on a wildcard bind, a DNS-name Host (the shape a
+// DNS-rebinding attack arrives with) is rejected even though hostCheck
+// can't pin a single value, while a real client's IP-literal or localhost
+// Host still gets through - and originCheck, which compares Origin against
+// this same r.Host, can no longer be fooled into treating a rebound
+// request as same-origin.
+func TestMiddleware_WildcardBind_RejectsDNSRebindingHost(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	srv := New(svc, slog.New(slog.DiscardHandler), Options{Addr: "0.0.0.0:7420"})
+	srv.mux.Handle("/__test/echo", srv.wrap(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rebind := httptest.NewRequest(http.MethodGet, "http://attacker.example:7420/__test/echo", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, rebind)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+
+	ipLiteral := httptest.NewRequest(http.MethodGet, "http://192.168.1.9:7420/__test/echo", nil)
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, ipLiteral)
+	require.Equal(t, http.StatusOK, rec2.Code)
+}
