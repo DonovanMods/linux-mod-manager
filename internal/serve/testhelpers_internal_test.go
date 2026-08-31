@@ -6,6 +6,7 @@ package serve
 // live in package serve_test and are not visible from here.
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,6 +70,9 @@ func newDeployFixtureService(t *testing.T) (*core.Service, *domain.Game) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
+	src := &fixtureSource{}
+	svc.RegisterSource(src)
+
 	ctx := t.Context()
 	game := &domain.Game{
 		ID:          "g1",
@@ -75,13 +80,14 @@ func newDeployFixtureService(t *testing.T) (*core.Service, *domain.Game) {
 		InstallPath: t.TempDir(),
 		ModPath:     t.TempDir(),
 		LinkMethod:  domain.LinkSymlink,
+		SourceIDs:   map[string]string{fixtureSourceID: ""},
 	}
 	require.NoError(t, svc.SaveGame(ctx, game))
 	_, err = svc.NewProfileManager().Create(ctx, game.ID, "default")
 	require.NoError(t, err)
 	require.NoError(t, svc.SetDefaultGame(ctx, game.ID))
 
-	mod := domain.Mod{ID: "m1", SourceID: "fake", Name: "Mod One", Version: "1.0", GameID: game.ID}
+	mod := domain.Mod{ID: "m1", SourceID: fixtureSourceID, Name: "Mod One", Version: "1.0", GameID: game.ID}
 	require.NoError(t, svc.GetGameCache(game).Store(
 		game.ID, mod.SourceID, mod.ID, mod.Version, deployFixtureFile, []byte("pak bytes")))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
@@ -98,6 +104,54 @@ func newDeployFixtureService(t *testing.T) (*core.Service, *domain.Game) {
 
 	return svc, game
 }
+
+// fixtureSourceID is the id the seeded mod's source is registered under.
+const fixtureSourceID = "fake"
+
+// fixtureSource is a minimal source.ModSource registered on the fixture
+// Service so the seeded game maps a real source, as a configured game
+// always does. It serves the one seeded mod from memory and supports no
+// download at all - every fixture mod's files are already in the cache, so
+// a deploy that reached the network would be a bug this double turns into a
+// visible failure rather than a silent live call.
+type fixtureSource struct{}
+
+func (*fixtureSource) ID() string      { return fixtureSourceID }
+func (*fixtureSource) Name() string    { return "Fixture Source" }
+func (*fixtureSource) AuthURL() string { return "" }
+
+func (*fixtureSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, source.ErrNotSupported
+}
+
+func (*fixtureSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, nil
+}
+
+func (*fixtureSource) GetMod(_ context.Context, _, modID string) (*domain.Mod, error) {
+	if modID != "m1" {
+		return nil, domain.ErrModNotFound
+	}
+	return &domain.Mod{ID: "m1", SourceID: fixtureSourceID, Name: "Mod One", Version: "1.0", GameID: "g1"}, nil
+}
+
+func (*fixtureSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+
+func (*fixtureSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	return nil, nil
+}
+
+func (*fixtureSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", source.ErrNotSupported
+}
+
+func (*fixtureSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+var _ source.ModSource = (*fixtureSource)(nil)
 
 // deployedFixturePath is where deployFixtureFile lands once a deploy has
 // actually run.
