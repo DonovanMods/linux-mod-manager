@@ -78,8 +78,13 @@ func New(svc *core.Service, log *slog.Logger, opts Options) *Server {
 		csrf:          newCSRFGuard(),
 	}
 	s.httpServer = &http.Server{
-		Addr:    opts.Addr,
-		Handler: s.mux,
+		Addr: opts.Addr,
+		// Security headers and the Host allow-list apply to every request
+		// the mux ever sees - including a 404/405 the mux generates itself
+		// and /static/, neither of which goes through wrap (task-3 review
+		// Minor 4). wrap adds the checks specific to the routes that need
+		// them.
+		Handler: securityHeaders(s.hostCheck(s.mux)),
 	}
 	s.routes()
 	return s

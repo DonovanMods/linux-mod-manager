@@ -103,3 +103,31 @@ func TestServer_NotFound_Is404(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// TestServer_NotFound_HasSecurityHeaders proves task-3 review Minor 4's
+// fix: security headers apply at the mux root, so a 404 - which never
+// reaches any route handler - still carries them.
+func TestServer_NotFound_HasSecurityHeaders(t *testing.T) {
+	_, handler := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/nope", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+}
+
+// TestServer_StaticAsset_WrongHost_403 proves the same fix for static
+// assets: /static/ no longer bypasses the Host allow-list the way it did
+// when only securityHeaders (not hostCheck) wrapped it.
+func TestServer_StaticAsset_WrongHost_403(t *testing.T) {
+	_, handler := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/static/app.css", nil)
+	req.Host = "evil.example:7420"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}

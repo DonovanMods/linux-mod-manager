@@ -74,17 +74,18 @@ func unsafeMethod(m string) bool {
 	}
 }
 
-// wrap applies the full security/observability middleware chain to fn:
-// security headers, request logging, the Host allow-list (DNS-rebinding
-// guard), and - for state-changing methods - the Origin and CSRF checks.
-// Every route New registers goes through this; there is no unwrapped path.
+// wrap applies request logging and - for state-changing methods - the
+// Origin and CSRF checks to fn. Security headers and the Host allow-list
+// (DNS-rebinding guard) are installed once at the mux root (see New) so
+// they cover every response including the mux's own 404/405 and
+// /static/, which don't go through wrap (task-3 review Minor 4: neither
+// carries user data or accepts state-changing methods, so they don't need
+// request logging or the Origin/CSRF checks).
 func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 	var h http.Handler = fn
 	h = s.csrfCheck(h)
 	h = s.originCheck(h)
-	h = s.hostCheck(h)
 	h = s.requestLogging(h)
-	h = securityHeaders(h)
 	return h
 }
 
