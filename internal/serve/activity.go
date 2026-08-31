@@ -167,6 +167,16 @@ func (r *jobRegistry) listLocked() []jobSummary {
 // The stream itself never ends of its own accord - there is no "done"
 // frame for the stream, only for individual jobs. It ends when the client
 // goes away or the server drains.
+//
+// EVICTION HAS NO FRAME OF ITS OWN. jobRegistry.evictLocked forgets the
+// oldest finished jobs once more than retain (the registry's own limit,
+// default 50) are held, silently: nothing on this stream says a job left
+// the index. A tray held open across more evictions than that therefore
+// holds rows GET /api/v1/jobs no longer returns. This is the stated
+// contract, not an oversight: a client that wants to stay correct across
+// an arbitrarily long session re-reads GET /api/v1/jobs (or reconnects,
+// which delivers a fresh snapshot) periodically, rather than trusting the
+// stream to announce every departure.
 const (
 	activitySnapshotEvent = "snapshot"
 	activityStartedEvent  = "job_started"
