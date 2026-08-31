@@ -454,6 +454,27 @@ func TestActivityBus_EveryJobAppearsExactlyOnceAcrossTheSeam(t *testing.T) {
 		}
 	}
 
+	// The loop above stops the instant every job HAS an entry, not once
+	// every queued frame has been read - a duplicate job_started for an
+	// already-seen job that is still queued behind the loop's last NEW one
+	// would otherwise never be read, and seen[id] == 2 would never be
+	// observed (task-2-review.md Minor 3). Drain whatever is left,
+	// non-blockingly, before the per-id assertions below.
+drain:
+	for {
+		select {
+		case ev, ok := <-live:
+			if !ok {
+				break drain
+			}
+			if ev.Name == activityStartedEvent {
+				seen[ev.Payload.(jobSummary).ID]++
+			}
+		default:
+			break drain
+		}
+	}
+
 	for id := range ids {
 		assert.Equal(t, 1, seen[id], "job %s must appear exactly once across the snapshot/live seam", id)
 	}
