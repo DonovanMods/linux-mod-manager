@@ -1,0 +1,178 @@
+package serve
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+// csrfFormField and csrfHeaderName are the two places a caller may attach
+// the CSRF token (docs/plans/2026-08-30-serve-design.md §Security): a
+// hidden field on every rendered form, or a header for the enhancement JS
+// and API scripts.
+const (
+	csrfFormField  = "csrf_token"
+	csrfHeaderName = "X-CSRF-Token"
+)
+
+// csrfGuard issues and verifies the server's single per-process CSRF token
+// (a synchronizer token, not a session cookie: a page rendered by this
+// process is the only way to ever see the value, so a cross-origin form
+// submission - blocked already by the Origin check - could never have
+// learned it either).
+type csrfGuard struct {
+	token string
+}
+
+// newCSRFGuard generates a fresh random token via crypto/rand (GO.md:
+// security-sensitive randomness must not use math/rand), unique to this
+// server process's lifetime.
+func newCSRFGuard() *csrfGuard {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand.Read failing means the OS entropy source is broken -
+		// not a recoverable request-time condition, so this fails the same
+		// way template.Must does for a broken embedded template.
+		panic(fmt.Errorf("serve: generating CSRF token: %w", err))
+	}
+	return &csrfGuard{token: hex.EncodeToString(b)}
+}
+
+// valid reports whether got matches the guard's token, in constant time so
+// timing can't leak the token byte-by-byte.
+func (g *csrfGuard) valid(got string) bool {
+	if got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(g.token), []byte(got)) == 1
+}
+
+// tokenFrom extracts a submitted CSRF token from r: the header first, then
+// the parsed form's csrf_token field. r.ParseForm is safe to call
+// repeatedly and safe on a GET (it just parses the URL query in that case).
+func tokenFrom(r *http.Request) string {
+	if h := r.Header.Get(csrfHeaderName); h != "" {
+		return h
+	}
+	_ = r.ParseForm()
+	return r.PostForm.Get(csrfFormField)
+}
+
+// unsafeMethod reports whether m is a state-changing HTTP method - the
+// Origin and CSRF checks apply only to these (docs/plans/2026-08-30-serve-design.md
+// §Security: "Origin check on non-GET").
+func unsafeMethod(m string) bool {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
+}
+
+// wrap applies the full security/observability middleware chain to fn:
+// security headers, request logging, the Host allow-list (DNS-rebinding
+// guard), and - for state-changing methods - the Origin and CSRF checks.
+// Every route New registers goes through this; there is no unwrapped path.
+func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
+	var h http.Handler = fn
+	h = s.csrfCheck(h)
+	h = s.originCheck(h)
+	h = s.hostCheck(h)
+	h = s.requestLogging(h)
+	h = securityHeaders(h)
+	return h
+}
+
+// securityHeaders sets conservative response headers
+// (docs/plans/2026-08-30-serve-design.md §Security: "assets served with
+// conservative headers") on every response, page or asset alike.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "same-origin")
+		h.Set("Content-Security-Policy", "default-src 'self'")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestLogging logs each request at Debug once it completes: method,
+// path, status, and duration.
+func (s *Server) requestLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		s.log.Debug("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration", time.Since(start),
+		)
+	})
+}
+
+// statusRecorder captures the status code a handler wrote, since
+// http.ResponseWriter has no getter of its own.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+// WriteHeader records code before delegating, so a handler that never calls
+// it explicitly (relying on the implicit 200 from the first Write) still
+// reports the default set in the recorder's zero value.
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// hostCheck rejects any request whose Host header does not exactly match
+// the server's bound address - the DNS-rebinding guard
+// (docs/plans/2026-08-30-serve-design.md §Security).
+func (s *Server) hostCheck(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != s.allowedHost {
+			http.Error(w, "host not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// originCheck rejects a state-changing request whose Origin header names a
+// different origin than this server. A request with no Origin header at
+// all (curl, the API used from a script) is not rejected here - the CSRF
+// check downstream still guards it.
+func (s *Server) originCheck(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if unsafeMethod(r.Method) {
+			if origin := r.Header.Get("Origin"); origin != "" {
+				expected := "http://" + s.allowedHost
+				if origin != expected {
+					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// csrfCheck rejects a state-changing request that does not carry a valid
+// CSRF token (docs/plans/2026-08-30-serve-design.md §Security: "CSRF token
+// on every form and state-changing API call").
+func (s *Server) csrfCheck(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if unsafeMethod(r.Method) && !s.csrf.valid(tokenFrom(r)) {
+			http.Error(w, "missing or invalid CSRF token", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

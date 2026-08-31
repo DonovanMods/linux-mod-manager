@@ -24,6 +24,7 @@ var allowedImports = []string{
 	"internal/app",
 	"internal/core",
 	"internal/domain",
+	"internal/serve",  // lmm serve (docs/plans/2026-08-30-serve-design.md §Architecture)
 	"internal/source", // the interface package only; its subpackages are not allowed
 }
 

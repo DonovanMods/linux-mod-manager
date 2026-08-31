@@ -1,0 +1,21 @@
+{{define "layout" -}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} - lmm</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="min-h-screen bg-gray-50 text-gray-900">
+<header class="border-b border-gray-200 bg-white">
+<nav class="mx-auto flex max-w-3xl items-center gap-4 p-4" aria-label="Primary">
+<a class="text-lg font-bold" href="/">lmm</a>
+</nav>
+</header>
+<main class="mx-auto max-w-3xl p-4">
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{- end}}
