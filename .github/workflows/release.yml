@@ -23,12 +23,31 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Extract release notes
+        id: release_notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          heading="## [$version]"
+          start_line="$(grep -n -F -m1 "$heading" CHANGELOG.md | cut -d: -f1 || true)"
+          if [ -z "$start_line" ]; then
+            echo "::error::No '$heading' heading found in CHANGELOG.md for tag ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          notes_path="${RUNNER_TEMP}/release-notes.md"
+          tail -n "+$((start_line + 1))" CHANGELOG.md | awk '/^## \[/{exit} {print}' > "$notes_path"
+          if [ ! -s "$notes_path" ]; then
+            echo "::error::CHANGELOG.md section for '$heading' is empty" >&2
+            exit 1
+          fi
+          echo "path=$notes_path" >> "$GITHUB_OUTPUT"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
           version: latest
-          args: release --clean
+          args: release --clean --release-notes=${{ steps.release_notes.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # The AUR deploy key. When the secret is not configured GitHub
