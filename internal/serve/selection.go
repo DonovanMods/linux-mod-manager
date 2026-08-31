@@ -3,8 +3,10 @@ package serve
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -133,6 +135,7 @@ type pageChrome struct {
 	Path        string
 	Nav         *selection
 	ExtraParams []queryParam
+	NavLinks    []navLink
 
 	// Refresh, when non-zero, makes layout.gohtml emit a meta refresh of
 	// that many seconds INSIDE a <noscript> - so a page whose content
@@ -160,7 +163,65 @@ func (s *Server) chrome(r *http.Request, title string, sel *selection) pageChrom
 		Path:        r.URL.Path,
 		Nav:         sel,
 		ExtraParams: extraQueryParams(r),
+		NavLinks:    buildNavLinks(r.URL.Path, sel),
 	}
+}
+
+// navLink is one entry in layout.gohtml's primary navigation - one of the
+// six top-level pages, every page reachable from every other one (epic live
+// review I1: before this, the shipped UI had exactly one nav link, "/", and
+// a user landing on an empty /mods or a fresh profile had no way to reach
+// anything else without hand-typing a URL).
+type navLink struct {
+	Label   string
+	Href    string
+	Current bool
+}
+
+// primaryNavItems is the six top-level pages, in the order they render.
+var primaryNavItems = []struct {
+	Path  string
+	Label string
+}{
+	{"/", "Status"},
+	{"/mods", "Mods"},
+	{"/search", "Search"},
+	{"/updates", "Updates"},
+	{"/profiles", "Profiles"},
+	{"/health", "Health"},
+}
+
+// buildNavLinks returns the primary nav's six links, each carrying sel's
+// resolved game/profile as query params (the same ?game/?profile a page
+// itself reads via resolveSelection) so following a nav link stays on the
+// context the user was already looking at, rather than silently falling
+// back to whatever the default game/profile happens to be. sel is nil for a
+// page with no single active game+profile (the status dashboard, a job
+// page) - those pages' own links carry no query params, and every
+// destination page resolves its own default from scratch. currentPath marks
+// exactly one link Current: "/" only when it IS the current path (so it
+// doesn't light up for every page), every other item when currentPath is it
+// or a sub-path of it (e.g. "/mods/{source}/{id}" still marks "Mods").
+func buildNavLinks(currentPath string, sel *selection) []navLink {
+	var query string
+	if sel != nil && sel.Game != nil {
+		params := url.Values{}
+		params.Set(gameParam, sel.Game.ID)
+		if sel.Profile != "" {
+			params.Set(profileParam, sel.Profile)
+		}
+		query = "?" + params.Encode()
+	}
+
+	links := make([]navLink, len(primaryNavItems))
+	for i, item := range primaryNavItems {
+		current := currentPath == item.Path
+		if item.Path != "/" {
+			current = current || strings.HasPrefix(currentPath, item.Path+"/")
+		}
+		links[i] = navLink{Label: item.Label, Href: item.Path + query, Current: current}
+	}
+	return links
 }
 
 // extraQueryParams returns r's query parameters other than gameParam/

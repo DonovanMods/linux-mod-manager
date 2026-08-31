@@ -3,12 +3,13 @@
 {{if not .List}}
 {{if not .Nav.Games}}
 <p class="text-gray-600">No games configured.</p>
-<p class="mt-2 text-sm text-gray-600">Add one from the command line with <code>lmm game add</code>.</p>
+<p class="mt-2 text-sm text-gray-600">Add one from the command line with <code>lmm game add</code> - see the README's Game Setup section for the full walkthrough.</p>
 {{else}}
 <p class="text-gray-600">Select a game and profile above to see its mods.</p>
 {{end}}
 {{else if not .List.Mods}}
 <p class="text-gray-600">No mods installed in this profile.</p>
+<p class="mt-2 text-sm text-gray-600"><a class="text-blue-700 hover:underline" href="/search{{if .Nav.Game}}?game={{.Nav.Game.ID}}{{end}}">Find mods to install</a>.</p>
 {{else}}
 <!-- Renders every installed mod unbounded for v2.1.0 - no pagination. -->
 <div class="overflow-x-auto">

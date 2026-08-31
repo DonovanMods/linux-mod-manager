@@ -40,6 +40,15 @@
 </div>
 {{end}}
 </nav>
+{{if .NavLinks}}
+<nav aria-label="Sections" class="border-t border-gray-200">
+<div class="mx-auto flex max-w-3xl flex-wrap gap-4 p-4 text-sm">
+{{range .NavLinks}}
+<a href="{{.Href}}"{{if .Current}} aria-current="page" class="font-semibold underline text-gray-900"{{else}} class="font-medium text-gray-700 hover:underline"{{end}}>{{.Label}}</a>
+{{end}}
+</div>
+</nav>
+{{end}}
 </header>
 <main id="main-content" class="mx-auto max-w-3xl p-4">
 {{with .Nav}}{{with .Warning}}<p class="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{{.}}</p>{{end}}{{end}}
