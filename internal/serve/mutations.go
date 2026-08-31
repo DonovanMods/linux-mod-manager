@@ -302,11 +302,14 @@ func (s *Server) handlePlannedMutation(w http.ResponseWriter, r *http.Request, k
 // response itself on every path that does not return a plan.
 func (s *Server) pendingForConfirm(w http.ResponseWriter, r *http.Request, kind planKind, sel selection, req mutationRequest) (any, bool) {
 	if req.PlanID != "" {
-		stored, err := s.plans.Take(req.PlanID)
-		if err == nil {
-			return stored.Plan, true
+		// PEEK before taking, so a handle belonging to a DIFFERENT flow is
+		// refused without being consumed - the same reason POST
+		// /api/v1/jobs peeks (api_jobs.go). Without it, an install confirm
+		// carrying an uninstall's plan_id would burn that other plan and
+		// then fail the job on a type assertion.
+		if stored := s.takePlanOfKind(req.PlanID, kind.Name); stored != nil {
+			return stored, true
 		}
-		s.log.Debug("serve: confirm submitted an unavailable plan", "kind", kind.Name, "err", err)
 	}
 
 	if !req.Replan {
@@ -325,6 +328,27 @@ func (s *Server) pendingForConfirm(w http.ResponseWriter, r *http.Request, kind 
 		return nil, false
 	}
 	return pending, true
+}
+
+// takePlanOfKind redeems id only when the plan stored under it belongs to
+// kind, returning nil when it is missing, expired, already applied, or
+// another flow's. A mismatched kind leaves that other plan takeable.
+func (s *Server) takePlanOfKind(id planID, kind string) any {
+	storedKind, ok := s.plans.Kind(id)
+	if !ok {
+		s.log.Debug("serve: confirm submitted an unavailable plan", "kind", kind)
+		return nil
+	}
+	if storedKind != kind {
+		s.log.Warn("serve: confirm submitted another flow's plan", "want", kind, "got", storedKind)
+		return nil
+	}
+	stored, err := s.plans.Take(id)
+	if err != nil {
+		s.log.Debug("serve: plan became unavailable between peek and take", "kind", kind, "err", err)
+		return nil
+	}
+	return stored.Plan
 }
 
 // applyPlannedInline is the ?sync=1 fallback for a planned kind: the Apply

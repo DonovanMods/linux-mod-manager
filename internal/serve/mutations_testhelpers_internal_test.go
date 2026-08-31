@@ -171,3 +171,13 @@ func newLiveMutationFixtureServer(t *testing.T) (*Server, *core.Service, *domain
 	svc, game := newDeployFixtureService(t)
 	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: ":0"}), svc, game
 }
+
+// hiddenFieldJSON pulls one string member out of a JSON response body -
+// enough to read a plan_id back without decoding the whole document.
+func hiddenFieldJSON(t *testing.T, body, member string) string {
+	t.Helper()
+	re := regexp.MustCompile(`"` + regexp.QuoteMeta(member) + `": "([^"]*)"`)
+	match := re.FindStringSubmatch(body)
+	require.Len(t, match, 2, "no %q member in the JSON response", member)
+	return match[1]
+}

@@ -146,3 +146,30 @@ func TestServer_ModUninstall_WithoutCSRF_IsRefused(t *testing.T) {
 	_, err := svc.GetInstalledMod(t.Context(), "fake", "m1", game.ID, "default")
 	require.NoError(t, err)
 }
+
+// TestServer_ModUninstall_ForeignPlanID_IsRefusedWithoutConsumingIt proves
+// the peek-before-take rule: a confirm form carrying another flow's plan_id
+// re-plans rather than applying, and leaves that other plan takeable.
+func TestServer_ModUninstall_ForeignPlanID_IsRefusedWithoutConsumingIt(t *testing.T) {
+	s, svc, game := newMutationFixtureServer(t)
+	deployFixtureProfile(t, s, game)
+
+	// A deploy plan, stored by the API half of the same registry.
+	code := doAPI(s, http.MethodPost, "/api/v1/plans/deploy", `{}`)
+	require.Equal(t, http.StatusOK, code.Code, code.Body.String())
+	deployPlanID := hiddenFieldJSON(t, code.Body.String(), "plan_id")
+
+	rec := postForm(s, "/mods/fake/m1/uninstall", formValues{
+		"game": game.ID, "profile": "default", "confirm": "1", "plan_id": deployPlanID,
+	})
+
+	require.Equal(t, http.StatusOK, rec.Code, "a foreign plan must land on a fresh confirm page")
+	assert.Contains(t, rec.Body.String(), "freshly computed plan")
+
+	_, err := svc.GetInstalledMod(t.Context(), "fake", "m1", game.ID, "default")
+	require.NoError(t, err, "nothing may have been applied")
+
+	kind, ok := s.plans.Kind(planID(deployPlanID))
+	require.True(t, ok, "the deploy plan must still be takeable")
+	assert.Equal(t, "deploy", kind)
+}
