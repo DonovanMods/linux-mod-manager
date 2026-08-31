@@ -33,7 +33,7 @@ func TestServer_Profiles_RendersProfileList(t *testing.T) {
 	assert.Contains(t, body, `action="/profiles/default/switch"`)
 	assert.Contains(t, body, `action="/profiles/default/apply"`)
 	assert.Contains(t, body, `action="/profiles/default/deploy"`)
-	assert.Contains(t, body, "coming in this release")
+	assert.NotContains(t, body, "coming in this release", "switch and apply went live with Task 9")
 	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
 }
 

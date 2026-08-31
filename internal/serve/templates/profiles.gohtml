@@ -32,16 +32,19 @@
 <form method="post" action="/profiles/{{.Name}}/switch">
 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 <input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
-<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Switch</button>
+<button type="submit" class="rounded border border-gray-300 px-2 py-1 text-xs font-medium">Switch</button>
 </form>
 <form method="post" action="/profiles/{{.Name}}/apply">
 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 <input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
-<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Apply</button>
+<button type="submit" class="rounded border border-gray-300 px-2 py-1 text-xs font-medium">Apply</button>
 </form>
 <form method="post" action="/profiles/{{.Name}}/deploy">
 <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
 <input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<!-- The deploy kind is scoped by the resolved game+profile, not by a
+     path segment, so this row's own profile travels as a hidden field. -->
+<input type="hidden" name="profile" value="{{.Name}}">
 <button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Deploy</button>
 </form>
 </div>
@@ -51,6 +54,6 @@
 </tbody>
 </table>
 </div>
-<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+<p class="mt-1 text-xs text-gray-500">Switch and Apply both show you the full plan before anything changes.</p>
 {{end}}
 {{- end}}

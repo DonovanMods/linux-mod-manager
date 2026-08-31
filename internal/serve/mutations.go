@@ -247,6 +247,17 @@ func (s *Server) handleUpdatesApply(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "updates")
 }
 
+// handleProfileSwitch and handleProfileApply answer the two profile routes.
+// Their target profile is the path's {name}, read by each kind's own form
+// decoder (kind_switch.go, kind_profile_apply.go).
+func (s *Server) handleProfileSwitch(w http.ResponseWriter, r *http.Request) {
+	s.handlePlannedMutation(w, r, "switch")
+}
+
+func (s *Server) handleProfileApply(w http.ResponseWriter, r *http.Request) {
+	s.handlePlannedMutation(w, r, "profile_apply")
+}
+
 // handleModInstall and handleModUninstall answer the two planned routes.
 func (s *Server) handleModInstall(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "install")

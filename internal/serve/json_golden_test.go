@@ -237,6 +237,18 @@ func TestServeJSONGoldens(t *testing.T) {
 			updateBatchFailure{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"},
 		},
 		{
+			// The two profile flows' plan requests. Neither has an apply
+			// request with anything in it - ApplyProfileSwitch and
+			// ProfileApplyOptions both take no options - so their empty
+			// structs carry no json tags and pin nothing.
+			"switch_plan_request",
+			switchPlanRequest{Profile: "modded"},
+		},
+		{
+			"profile_apply_plan_request",
+			profileApplyPlanRequest{Profile: "modded"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",

@@ -227,9 +227,15 @@ func summarizeInstallResult(result any) []resultFact {
 }
 
 // installedRefText renders one InstalledRef as a line - name, version, and
-// the reason when the entry is a skip or a failure.
+// the reason when the entry is a skip or a failure. A ref with no Name is
+// one that never resolved (a plan-time lookup failure records identity but
+// no mod), so it falls back to the mod key rather than rendering a line
+// that begins with the reason and never says which mod it is about.
 func installedRefText(ref core.InstalledRef) string {
 	text := ref.Name
+	if text == "" {
+		text = domain.ModKey(ref.SourceID, ref.ModID)
+	}
 	if ref.Version != "" {
 		text += " " + ref.Version
 	}
