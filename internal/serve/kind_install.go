@@ -212,7 +212,7 @@ func summarizeInstallResult(result any) []resultFact {
 	}
 	facts = append(facts, resultFact{Label: "Files deployed", Value: strconv.Itoa(res.FilesDeployed)})
 	for _, ref := range res.Failed {
-		facts = append(facts, resultFact{Label: "Failed", Value: installedRefText(ref)})
+		facts = append(facts, resultFact{Label: "Failed", Value: installedRefText(ref), Failure: true})
 	}
 	if res.MergedPakSyncFailed {
 		facts = append(facts, resultFact{Label: "Merged pak", Value: "the end-of-install sync failed"})

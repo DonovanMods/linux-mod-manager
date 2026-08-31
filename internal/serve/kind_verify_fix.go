@@ -184,7 +184,11 @@ func summarizeVerifyFixResult(result any) []resultFact {
 			healthy++
 			continue
 		}
-		facts = append(facts, resultFact{Label: findingLabel(finding.Status), Value: verifyFindingText(finding)})
+		facts = append(facts, resultFact{
+			Label:   findingLabel(finding.Status),
+			Value:   verifyFindingText(finding),
+			Failure: !findingRepaired(finding.Status),
+		})
 	}
 	if healthy > 0 {
 		facts = append(facts, resultFact{Label: "Healthy files", Value: strconv.Itoa(healthy)})
@@ -192,17 +196,29 @@ func summarizeVerifyFixResult(result any) []resultFact {
 	return facts
 }
 
+// findingRepaired reports whether status marks a finding this repair pass
+// actually resolved, rather than one still outstanding afterward (epic
+// re-review N-3: the single source of truth findingLabel and each fact's
+// own Failure marker both derive from, so the two can never disagree about
+// which findings are "not succeeded").
+func findingRepaired(status string) bool {
+	switch status {
+	case "fixed_stale_deployment", "fixed_needs_reingest":
+		return true
+	default:
+		return false
+	}
+}
+
 // findingLabel splits repaired rows from the ones still outstanding, so a
 // result readout does not list a fixed row and an unfixed one under the
 // same word. "ok" is not among these: summarizeVerifyFixResult never calls
 // this for an "ok" finding (see its own doc comment).
 func findingLabel(status string) string {
-	switch status {
-	case "fixed_stale_deployment", "fixed_needs_reingest":
+	if findingRepaired(status) {
 		return "Repaired"
-	default:
-		return "Still reported"
 	}
+	return "Still reported"
 }
 
 // verifyFindingText renders one finding as a line: which mod, which file,

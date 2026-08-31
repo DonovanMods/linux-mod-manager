@@ -216,3 +216,38 @@ func TestServer_HealthFix_RepairsVersionMismatch_NotJustTheMissingFile(t *testin
 		"a fresh full-tier verify must agree with what the repair just claimed - not still see a version_mismatch")
 	assert.Zero(t, fresh.Result.Issues, "the state really must be clean after the repair, not merely reported as clean")
 }
+
+// TestServer_HealthFix_SyncFallback_LockedFinding_NotGreenDone is N-3's own
+// test (epic re-review, new finding N-3): a locked mod's version_mismatch
+// cannot be repaired (internal/core/verify.go's lock refusal), so it comes
+// back from the SAME repair run as a "Still reported" fact rather than a
+// "Failed" one - the only label factsIncludeFailure checked for before this
+// fix (M6). C1's tier change made this the COMMON /health outcome, not a
+// corner case: a version mismatch is now visible at all, and a locked one
+// can never be repaired. The ?sync=1 inline result page must render the
+// amber "Done, with failures" banner, never the plain green "Done." - a
+// green headline sitting above a self-reported "Issues remaining" count and
+// a row literally saying the repair failed would be exactly the oversold
+// headline M6 nit 5 was written to fix.
+func TestServer_HealthFix_SyncFallback_LockedFinding_NotGreenDone(t *testing.T) {
+	s, svc, game := newVersionMismatchFixtureServer(t)
+	_, err := svc.SetModLock(context.Background(), fixtureSourceID, versionRepairModID, game.ID, "default", "")
+	require.NoError(t, err)
+
+	entry := postForm(s, "/health/fix", formValues{"game": game.ID, "profile": "default"})
+	require.Equal(t, http.StatusOK, entry.Code, entry.Body.String())
+
+	rec := postForm(s, "/health/fix?sync=1", formValues{
+		"game": game.ID, "profile": "default", "confirm": "1",
+		"plan_id": hiddenField(t, entry.Body.String(), "plan_id"),
+	})
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "with failures", "a locked, unrepaired finding must not render the unqualified green \"Done.\"")
+	assert.NotContains(t, body, `class="mb-4 rounded border border-green-300`, "the banner must not be the plain-success green")
+	assert.Contains(t, body, "Still reported")
+	assert.Contains(t, body, "locked")
+	assert.Contains(t, body, `<dt class="font-medium text-gray-500">Issues remaining</dt><dd>1</dd>`,
+		"the locked mismatch must still be counted as outstanding, not zeroed out by the refused repair")
+}

@@ -224,9 +224,17 @@ type confirmToggle struct {
 }
 
 // resultFact is one label/value row of a finished job's result readout.
+// Failure marks a row that represents a not-succeeded outcome (a failed
+// install, an unresolvable profile_apply entry, a verify_fix finding still
+// outstanding after the repair) - the semantic signal resultPageData.Partial
+// keys on (epic re-review N-3: the predicate previously matched the
+// literal label "Failed", which install and profile_apply happen to use
+// but verify_fix's "Still reported" rows never did, so a repair that left
+// findings outstanding rendered the plain green "Done." anyway).
 type resultFact struct {
-	Label string
-	Value string
+	Label   string
+	Value   string
+	Failure bool
 }
 
 // planKinds is the registry itself. It is written only from the init

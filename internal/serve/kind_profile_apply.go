@@ -113,7 +113,7 @@ func summarizeProfileApplyResult(result any) []resultFact {
 		facts = append(facts, resultFact{Label: "Replaced", Value: strconv.Itoa(res.Replaced)})
 	}
 	for _, ref := range res.Failed {
-		facts = append(facts, resultFact{Label: "Failed", Value: installedRefText(ref)})
+		facts = append(facts, resultFact{Label: "Failed", Value: installedRefText(ref), Failure: true})
 	}
 	for _, n := range res.Notes {
 		facts = append(facts, resultFact{Label: "Note", Value: n})
