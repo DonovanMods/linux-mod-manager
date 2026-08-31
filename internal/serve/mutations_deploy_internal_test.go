@@ -13,6 +13,7 @@ package serve
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -120,10 +121,18 @@ func TestServer_ProfileDeploy_JobStreamsLivePhases(t *testing.T) {
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 
-	entry := postForm(s, "/deploy", formValues{"game": game.ID, "profile": "default"})
+	// "purge": "1" so the purge pass actually runs (the fixture's one
+	// installed mod makes it non-empty) - without it, opts.Purge is false
+	// and deploy_purging/purge_complete never fire at all
+	// (internal/core/deploy.go's `if opts.Purge {...}`), leaving nothing
+	// for the ordered-subsequence assertion below to pin (task-9 review
+	// Minor 6 asked for the DeployPhase vocabulary to be seen in order,
+	// not just the single deploy_deployed phase the untouched happy path
+	// produces).
+	entry := postForm(s, "/deploy", formValues{"game": game.ID, "profile": "default", "purge": "1"})
 	require.Equal(t, http.StatusOK, entry.Code)
 	rec := postForm(s, "/deploy", formValues{
-		"game": game.ID, "profile": "default", "confirm": "1",
+		"game": game.ID, "profile": "default", "confirm": "1", "purge": "1",
 		"plan_id": hiddenField(t, entry.Body.String(), "plan_id"),
 	})
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -149,6 +158,8 @@ func TestServer_ProfileDeploy_JobStreamsLivePhases(t *testing.T) {
 		}
 	}
 	assert.Contains(t, phases, "deploy_deployed", "#257: the deploy's own phases must reach the stream")
+	assertOrderedSubsequence(t, phases, []string{"deploy_purging", "purge_complete", "deploy_deployed"},
+		"#257: the deploy's phases must reach the stream IN ORDER, not just be present")
 
 	terminal := frames[len(frames)-1]
 	require.Equal(t, sseDoneEvent, terminal.Event)
@@ -164,4 +175,23 @@ func TestServer_ProfileDeploy_JobStreamsLivePhases(t *testing.T) {
 	page := getPage(s, "/jobs/"+id)
 	require.Equal(t, http.StatusOK, page.Code)
 	assert.Contains(t, page.Body.String(), "deploy_deployed")
+}
+
+// assertOrderedSubsequence fails t unless want appears within got as an
+// ordered subsequence (other phases may appear between, before, or after
+// want's entries; want's own entries must not appear out of order or be
+// missing). A plain assert.Contains per element - what this replaced
+// (task-9 review Minor 6) - would pass even if the phases arrived in the
+// wrong order, since each membership check is independent of the others.
+func assertOrderedSubsequence(t *testing.T, got, want []string, msgAndArgs ...any) {
+	t.Helper()
+	i := 0
+	for _, g := range got {
+		if i < len(want) && g == want[i] {
+			i++
+		}
+	}
+	if i != len(want) {
+		assert.Fail(t, fmt.Sprintf("phases %v did not contain %v in order", got, want), msgAndArgs...)
+	}
 }
