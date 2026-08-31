@@ -4,10 +4,12 @@ import "net/http"
 
 // routes registers every route on the mux: the SPA's own (spa.go - the
 // shell, its assets, the legacy redirects) and /api/v1. Security headers
-// and the Host allow-list apply to both routes and the mux's own 404/405
-// responses via the root Handler (see New); every route below additionally
-// goes through wrap for the Origin/CSRF checks and request logging that
-// state-changing methods need.
+// and the Host allow-list apply to every response, routed or not, via the
+// root Handler (see New). Most routes below additionally go through wrap
+// for the Origin/CSRF checks and request logging that state-changing
+// methods need - the two exceptions are /static/ and /vendor/ (spa.go's
+// spaRoutes), which carry no user data and accept no state-changing
+// method, so they skip wrap entirely (middleware.go's wrap doc comment).
 func (s *Server) routes() {
 	s.spaRoutes()
 
