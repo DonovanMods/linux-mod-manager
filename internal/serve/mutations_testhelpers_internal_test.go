@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -180,4 +182,24 @@ func hiddenFieldJSON(t *testing.T, body, member string) string {
 	match := re.FindStringSubmatch(body)
 	require.Len(t, match, 2, "no %q member in the JSON response", member)
 	return match[1]
+}
+
+// deployedPath is where a relative game-directory path lands under the
+// fixture game's ModPath - the tree half of every flow's end-state
+// assertion (task-8 review: install's tests asserted the DB row and the
+// profile but never the file, so a regression that stopped install
+// deploying would have gone unnoticed).
+func deployedPath(game *domain.Game, rel string) string {
+	return filepath.Join(game.ModPath, filepath.FromSlash(rel))
+}
+
+// deployedContent reads what a deployed path actually resolves to. The
+// deployment is a symlink into the cache, so this follows it - which is
+// exactly the point: it proves WHICH cached file the game directory is
+// pointing at, not merely that something is there.
+func deployedContent(t *testing.T, game *domain.Game, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(deployedPath(game, rel))
+	require.NoError(t, err)
+	return string(data)
 }

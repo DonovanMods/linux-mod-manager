@@ -275,18 +275,24 @@ func confirmInstallPlan(pending, opts any) confirmView {
 
 	plan := p.Plan
 	chosenVersion := firstNonEmpty(req.Version, p.Version, planSelectedVersion(plan))
+	// The picker is computed BEFORE the facts because the facts depend on
+	// it: with no picker, "File" and "Download" are the only statement the
+	// page makes about what would be fetched, and they have to describe the
+	// pinned candidate rather than the plan's own unpinned default.
+	files := installFileChoices(p, req)
 	view := confirmView{
 		Heading:  fmt.Sprintf("%s %s", plan.Mod.Name, plan.Mod.Version),
 		Submit:   "Install",
 		Versions: offeredVersions(p.Versions, chosenVersion),
 		Version:  chosenVersion,
+		Files:    files,
 		// Sticky across a re-plan: once the user has answered a conflict,
 		// pressing "Update plan" must not silently drop that answer.
 		AcceptConflicts: req.AcceptConflicts,
 		Facts: []resultFact{
 			{Label: "Mod", Value: domain.ModKey(plan.SourceID, plan.Mod.ID)},
 			{Label: "Profile", Value: plan.Profile},
-			{Label: "Download", Value: downloadSizeText(plan.TotalDownloadBytes)},
+			{Label: "Download", Value: downloadSizeText(installDownloadBytes(p, files))},
 		},
 		Toggles: []confirmToggle{
 			{
@@ -319,8 +325,7 @@ func confirmInstallPlan(pending, opts any) confirmView {
 
 	// #225: a picker only where there is a choice. One candidate is shown as
 	// a fact instead, so the page still says what would be downloaded.
-	view.Files = installFileChoices(p, req)
-	if len(view.Files) == 0 {
+	if len(files) == 0 {
 		view.Facts = append(view.Facts, resultFact{Label: "File", Value: selectedFileText(p)})
 	}
 
@@ -430,12 +435,58 @@ func downloadableFileText(f domain.DownloadableFile) string {
 	return text
 }
 
+// soleInstallFile is the ONE file a confirm page with no picker would have
+// downloaded: the single remaining candidate when a version pin narrowed
+// the pool to it, else PlanInstall's own default selection.
+//
+// The distinction is the whole point (task-8 review, Important 1).
+// PlanInstall takes no version argument at all, so plan.Files is always the
+// UNPINNED default pick; pinning a version narrows p.Candidates without
+// recomputing the plan, and ApplyInstall then resolves the pin itself
+// (#96/#140). Reading the fact off plan.Files therefore named a file the
+// apply was not going to fetch - contradicting the version select rendered
+// two lines above it. Only a source that could not be listed at all leaves
+// Candidates empty, and there the plan's own pick is the honest answer.
+func soleInstallFile(p *pendingInstall) (domain.DownloadableFile, bool) {
+	if len(p.Candidates) == 1 {
+		return p.Candidates[0], true
+	}
+	if len(p.Plan.Files) > 0 {
+		return p.Plan.Files[0], true
+	}
+	return domain.DownloadableFile{}, false
+}
+
 // selectedFileText names the single file a no-choice plan would download.
 func selectedFileText(p *pendingInstall) string {
-	if len(p.Plan.Files) == 0 {
+	file, ok := soleInstallFile(p)
+	if !ok {
 		return "none"
 	}
-	return downloadableFileText(p.Plan.Files[0])
+	return downloadableFileText(file)
+}
+
+// installDownloadBytes is the byte count behind the confirm page's
+// "Download" fact. With a picker rendered, the plan's own total is right:
+// the ticked set IS the plan's selection until the user changes it. With no
+// picker it must be the sole candidate's size, for the same reason
+// soleInstallFile exists - plan.TotalDownloadBytes is computed from
+// plan.Files, so a version pin left it describing the wrong file. An
+// unreported size is -1, matching PlanInstall's own rule (any file with a
+// non-positive Size makes the whole total "unknown") rather than claiming a
+// zero-byte download.
+func installDownloadBytes(p *pendingInstall, files []confirmFile) int64 {
+	if len(files) > 0 {
+		return p.Plan.TotalDownloadBytes
+	}
+	file, ok := soleInstallFile(p)
+	if !ok {
+		return p.Plan.TotalDownloadBytes
+	}
+	if file.Size <= 0 {
+		return -1
+	}
+	return file.Size
 }
 
 // downloadSizeText renders a byte count the way core reports it: -1 means

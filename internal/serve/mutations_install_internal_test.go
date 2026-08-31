@@ -40,6 +40,7 @@ func TestServer_ModInstall_EntryPostRendersVersionsAndFiles(t *testing.T) {
 
 	_, err := svc.GetInstalledMod(t.Context(), "fake", installModID, game.ID, "default")
 	require.ErrorIs(t, err, domain.ErrModNotFound, "a plan must install nothing")
+	require.NoFileExists(t, deployedPath(game, installModFile), "a plan must deploy nothing either")
 }
 
 // TestServer_ModInstall_SingleCandidate_OffersNoFilePicker is the other half
@@ -76,6 +77,12 @@ func TestServer_ModInstall_ConfirmRunsTheJobAndInstalls(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, profile.Mods, 2, "the profile's load order gains the new mod")
 
+	// The tree, not just the record: an install that stopped deploying
+	// would leave every assertion above green.
+	require.FileExists(t, deployedPath(game, installModFile))
+	assert.Equal(t, "payload for m2/f2", deployedContent(t, game, installModFile),
+		"the deployed link must resolve to the PRIMARY file's cached content")
+
 	assert.Positive(t, src.downloadCount(), "the install must really have downloaded")
 }
 
@@ -97,6 +104,8 @@ func TestServer_ModInstall_FileSelectionIsHonoured(t *testing.T) {
 	installed, err := svc.GetInstalledMod(t.Context(), "fake", installModID, game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, "payload for m2/f1", deployedContent(t, game, installModFile),
+		"the TICKED file's content is what reached the game directory")
 }
 
 // TestServer_ModInstall_SyncFallback_MutatesIdentically is the no-JS
@@ -115,6 +124,8 @@ func TestServer_ModInstall_SyncFallback_MutatesIdentically(t *testing.T) {
 	installed, err := svc.GetInstalledMod(t.Context(), "fake", installModID, game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", installed.Version)
+	assert.Equal(t, "payload for m2/f2", deployedContent(t, game, installModFile),
+		"the inline path reaches the same tree state as the job path")
 }
 
 // TestServer_ModInstall_ConflictRoundTrip_OverwriteIsDownloadFree is the
@@ -172,6 +183,8 @@ func TestServer_ModInstall_ConflictRoundTrip_OverwriteIsDownloadFree(t *testing.
 	installed, err := svc.GetInstalledMod(t.Context(), "fake", conflictModID, game.ID, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "1.0", installed.Version)
+	assert.Equal(t, "payload for m3/c1", deployedContent(t, game, deployFixtureFile),
+		"an overwrite means the contested path now resolves to the NEW mod's file")
 	assert.Equal(t, afterRefusal, src.downloadCount(),
 		"the overwrite re-run must download nothing: the refused attempt already filled the cache")
 }
@@ -354,4 +367,27 @@ func TestServer_ModInstall_OverwriteDecisionSurvivesAnUpdatePlan(t *testing.T) {
 	require.Equal(t, http.StatusOK, updated.Code)
 	assert.Contains(t, updated.Body.String(), `name="accept_conflicts" value="1"`)
 	assert.Contains(t, updated.Body.String(), "Overwrite and Install")
+}
+
+// TestServer_ModInstall_PinnedVersion_FactsDescribeThePinnedFile is the
+// task-8 review's Important 1: with a version pinned, the candidate pool
+// narrows to that version's files, and a pool of one renders no picker - so
+// the File and Download facts are the ONLY thing on the page saying what
+// would be fetched. They must describe the pinned version's file, not
+// PlanInstall's own unpinned default (PlanInstall takes no version at all),
+// or the confirm page contradicts the version select two lines above it.
+func TestServer_ModInstall_PinnedVersion_FactsDescribeThePinnedFile(t *testing.T) {
+	s, _, game, _ := newInstallFixtureServer(t)
+
+	rec := postForm(s, "/mods/fake/"+installModID+"/install", formValues{
+		"game": game.ID, "profile": "default", "version": "1.0",
+	})
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.NotContains(t, body, `name="file"`, "a one-file pool renders no picker, so the facts are all there is")
+	assert.Contains(t, body, "boots-1.0.zip", "the File fact must name the PINNED version's file")
+	assert.NotContains(t, body, "boots-2.0.zip", "the plan's own default is not what would be installed")
+	assert.Contains(t, body, "96 bytes", "the Download fact must be the pinned file's size")
+	assert.NotContains(t, body, "128 bytes", "128 is the unpinned default's size")
 }
