@@ -41,6 +41,18 @@ func newDeployFixtureServer(t *testing.T) (*Server, *domain.Game) {
 	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: internalTestAddr}), game
 }
 
+// newLiveFixtureServer is newDeployFixtureServer for the tests that drive
+// the server over real TCP through httptest.NewServer, which binds its own
+// ephemeral port. It binds a WILDCARD address so allowedHostsFor returns
+// nil and hostCheck admits the "127.0.0.1:<random>" Host the test server
+// hands out - a concrete bind would pin a port the test cannot know in
+// advance and 403 every request.
+func newLiveFixtureServer(t *testing.T) (*Server, *domain.Game) {
+	t.Helper()
+	svc, game := newDeployFixtureService(t)
+	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: ":0"}), game
+}
+
 // newDeployFixtureService is newDeployFixtureServer's Service half, for the
 // tests that want to construct the Server themselves.
 func newDeployFixtureService(t *testing.T) (*core.Service, *domain.Game) {

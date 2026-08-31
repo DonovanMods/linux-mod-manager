@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -72,6 +73,16 @@ type Server struct {
 	// test swaps in a channel it sends on by hand so a heartbeat assertion
 	// never waits a real sseHeartbeatInterval.
 	heartbeat heartbeatTicker
+
+	// draining is closed once the http.Server begins shutting down. It
+	// exists for the SSE streams: an open stream is an ACTIVE request, and
+	// http.Server.Shutdown waits for active requests rather than
+	// cancelling their contexts, so a stream that only ended when its job
+	// ended would hold the entire shutdown grace open. Watching this makes
+	// a draining server hang up on its streams immediately while the jobs
+	// behind them keep running to their own bounded grace (jobs.go).
+	draining     chan struct{}
+	drainingOnce sync.Once
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
@@ -104,6 +115,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
 		jobs:          newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
 		heartbeat:     realHeartbeatTicker,
+		draining:      make(chan struct{}),
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,
@@ -114,6 +126,11 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		// them.
 		Handler: securityHeaders(s.hostCheck(s.mux)),
 	}
+	// RegisterOnShutdown fires when Shutdown is called - the only hook
+	// net/http offers for "we are going away", since it never cancels an
+	// active request's context. sync.Once because Shutdown may be called
+	// more than once and each call runs the callbacks again.
+	s.httpServer.RegisterOnShutdown(func() { s.drainingOnce.Do(func() { close(s.draining) }) })
 	s.routes()
 	return s
 }

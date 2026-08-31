@@ -301,6 +301,16 @@ func (j *job) unsubscribe(key int) {
 	}
 }
 
+// subscriberCount reports how many live subscribers the job currently
+// holds. Test-facing: it is how the SSE leak test proves a dropped client
+// really released its subscription rather than leaving a channel attached
+// to a still-running job.
+func (j *job) subscriberCount() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return len(j.subs)
+}
+
 // finish records the Apply's outcome and ends the job: a nil error stores
 // the result document, a non-nil one stores the {"error","details"}
 // envelope (typed details preserved through errorDetails, the same

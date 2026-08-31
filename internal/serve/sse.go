@@ -143,3 +143,99 @@ func realHeartbeatTicker(d time.Duration) (<-chan time.Time, func()) {
 	t := time.NewTicker(d)
 	return t.C, t.Stop
 }
+
+// sseSubscriberBuffer is how many events a stream may fall behind by before
+// the job disconnects it (jobs.go's emit: a subscriber that cannot keep up
+// is dropped rather than allowed to stall the Apply, because core calls
+// event sinks synchronously on the mutation's own goroutine). It is
+// deliberately generous - a quarter of the ring - since the only thing on
+// the other side of this buffer is a socket write, and a browser slow
+// enough to overflow it has almost certainly gone away.
+const sseSubscriberBuffer = 256
+
+// handleAPIJobEvents answers GET /api/v1/jobs/{id}/events with the job's
+// event stream: everything the ring still holds, then everything emitted
+// from that instant on. The 404 for an unknown job is written as the usual
+// JSON envelope, before the response becomes a stream.
+func (s *Server) handleAPIJobEvents(w http.ResponseWriter, r *http.Request) {
+	j, ok := s.lookupJob(w, r)
+	if !ok {
+		return
+	}
+	s.streamJobEvents(w, r, j)
+}
+
+// streamJobEvents writes j's events to w until the job finishes, the client
+// goes away, or the server starts draining.
+//
+// The replay/live seam is the whole point of subscribing BEFORE writing
+// anything: job.subscribe snapshots the ring and registers the live channel
+// in one critical section (jobs.go), so an event emitted while these replay
+// frames are being written lands in the live channel rather than falling
+// between the two. The stream therefore has no gap and no duplicate at the
+// seam - not by ordering luck, but because the two halves are taken
+// atomically.
+//
+// Every exit path runs cancel, which is what releases the subscription: a
+// closed browser tab must not leave a channel attached to a running job for
+// emit to keep writing into.
+func (s *Server) streamJobEvents(w http.ResponseWriter, r *http.Request, j *job) {
+	replay, live, cancel := j.subscribe(sseSubscriberBuffer)
+	defer cancel()
+
+	ticks, stopTicker := s.heartbeat(sseHeartbeatInterval)
+	defer stopTicker()
+
+	stream := newSSEStream(w)
+	for _, e := range replay {
+		if err := stream.sendEvent(e); err != nil {
+			s.log.Debug("serve: SSE replay write failed", "job", j.id, "err", err)
+			return
+		}
+	}
+
+	for {
+		select {
+		case e, ok := <-live:
+			if !ok {
+				s.finishStream(stream, j)
+				return
+			}
+			if err := stream.sendEvent(e); err != nil {
+				s.log.Debug("serve: SSE write failed", "job", j.id, "err", err)
+				return
+			}
+		case <-ticks:
+			if err := stream.comment("heartbeat"); err != nil {
+				s.log.Debug("serve: SSE heartbeat write failed", "job", j.id, "err", err)
+				return
+			}
+		case <-r.Context().Done():
+			return
+		case <-s.draining:
+			return
+		}
+	}
+}
+
+// finishStream writes whatever ends a stream whose live channel closed.
+//
+// The channel closes for two different reasons and they are answered
+// differently. If the job is over, the terminal sseDoneEvent frame carries
+// the final job status document, and the client stops. If the job is still
+// running, this subscriber was DROPPED for lagging (jobs.go's emit), and
+// the honest thing is to say so in a comment and hang up: an EventSource
+// reconnects on its own, and the reconnection's ring replay closes the gap
+// - at the cost of repeating events this stream already delivered, which is
+// the right trade when the alternative is silently missing some.
+func (s *Server) finishStream(stream *sseStream, j *job) {
+	status := j.status()
+	if status.State == jobRunning {
+		s.log.Debug("serve: SSE subscriber lagged and was disconnected", "job", j.id)
+		_ = stream.comment("lagged: reconnect to resume from the replay buffer")
+		return
+	}
+	if err := stream.sendDocument(sseDoneEvent, status); err != nil {
+		s.log.Debug("serve: SSE terminal frame write failed", "job", j.id, "err", err)
+	}
+}
