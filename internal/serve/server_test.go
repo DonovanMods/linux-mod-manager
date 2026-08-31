@@ -182,7 +182,7 @@ func TestServer_ListenAndServe_BindsAndDrainsOnCancel(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		return resp.StatusCode == http.StatusOK
 	}, 2*time.Second, 10*time.Millisecond, "server never answered a real request on the bound address")
 
