@@ -30,6 +30,30 @@ func AssertJSONContractCoverage(t *testing.T, dir string, exclusions map[string]
 	if err != nil {
 		t.Fatalf("parsing %s: %v", dir, err)
 	}
+	assertGoldensExist(t, dir, tagged, exclusions)
+}
+
+// AssertJSONWireCoverage is AssertJSONContractCoverage for a package whose
+// wire types are package-INTERNAL - internal/serve, whose job status
+// document, plan response and error envelope are all unexported because
+// nothing outside the package constructs them. They are still wire surface
+// a client parses, so they get the same "json tag implies golden" ratchet;
+// the only difference is that the scan does not skip unexported names.
+func AssertJSONWireCoverage(t *testing.T, dir string, exclusions map[string]bool) {
+	t.Helper()
+
+	tagged, err := JSONTaggedStructs(dir)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", dir, err)
+	}
+	assertGoldensExist(t, dir, tagged, exclusions)
+}
+
+// assertGoldensExist is the shared half of the two coverage assertions:
+// every scanned name needs dir/testdata/json/<snake>.golden unless it is
+// excluded.
+func assertGoldensExist(t *testing.T, dir string, tagged, exclusions map[string]bool) {
+	t.Helper()
 
 	for name := range tagged {
 		if exclusions[name] {
@@ -48,6 +72,19 @@ func AssertJSONContractCoverage(t *testing.T, dir string, exclusions map[string]
 // than go/parser.ParseDir, deprecated since Go 1.25) so it stays plain
 // stdlib with no new dependency on golang.org/x/tools/go/packages.
 func JSONTaggedExportedStructs(dir string) (map[string]bool, error) {
+	return jsonTaggedStructs(dir, true)
+}
+
+// JSONTaggedStructs is JSONTaggedExportedStructs including UNEXPORTED
+// struct types - the scan a package whose wire types are package-internal
+// needs (see AssertJSONWireCoverage).
+func JSONTaggedStructs(dir string) (map[string]bool, error) {
+	return jsonTaggedStructs(dir, false)
+}
+
+// jsonTaggedStructs is the shared scanner; exportedOnly skips unexported
+// type names.
+func jsonTaggedStructs(dir string, exportedOnly bool) (map[string]bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -73,7 +110,7 @@ func JSONTaggedExportedStructs(dir string) (map[string]bool, error) {
 			}
 			for _, spec := range gd.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || !ts.Name.IsExported() {
+				if !ok || (exportedOnly && !ts.Name.IsExported()) {
 					continue
 				}
 				st, ok := ts.Type.(*ast.StructType)

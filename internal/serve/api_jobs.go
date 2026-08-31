@@ -220,3 +220,31 @@ func (s *Server) handleAPIStartJob(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusAccepted, jobStartResponse{JobID: id})
 }
+
+// handleAPIJobStatus answers GET /api/v1/jobs/{id} with the job status
+// document (jobStatus, goldened in testdata/json/job_status.golden):
+// identity, state, timings, the event counters, and exactly one of the
+// core result document or the {"error","details"} envelope. It is the
+// no-stream way to read a job - what the /jobs/{id} page renders with
+// JavaScript off, and what a script polls.
+func (s *Server) handleAPIJobStatus(w http.ResponseWriter, r *http.Request) {
+	j, ok := s.lookupJob(w, r)
+	if !ok {
+		return
+	}
+	s.writeJSON(w, http.StatusOK, j.status())
+}
+
+// lookupJob resolves the {id} path value against the registry, writing the
+// 404 envelope itself when the job never existed or has aged out of
+// retention (jobs.go: the registry keeps the last defaultJobRetention
+// jobs, in memory only).
+func (s *Server) lookupJob(w http.ResponseWriter, r *http.Request) (*job, bool) {
+	id := jobID(r.PathValue("id"))
+	j, ok := s.jobs.job(id)
+	if !ok {
+		s.writeAPIError(w, http.StatusNotFound, fmt.Errorf("unknown job %q", id))
+		return nil, false
+	}
+	return j, true
+}

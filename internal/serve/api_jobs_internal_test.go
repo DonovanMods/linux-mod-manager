@@ -202,3 +202,56 @@ func TestAPIStartJob_WithoutCSRFToken_403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	assert.Equal(t, 1, s.plans.len())
 }
+
+// TestAPIJobStatus_ReportsTheJobStatusDocument pins GET /api/v1/jobs/{id}:
+// the document is the goldened jobStatus shape, carrying the core result
+// document verbatim once the Apply has returned.
+func TestAPIJobStatus_ReportsTheJobStatusDocument(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+	id := planDeployFixture(t, s)
+
+	start := startJob(s, id)
+	require.Equal(t, http.StatusAccepted, start.Code, start.Body.String())
+	var started jobStartResponse
+	require.NoError(t, json.Unmarshal(start.Body.Bytes(), &started))
+	j, ok := s.jobs.job(started.JobID)
+	require.True(t, ok)
+	waitFor(t, j.done(), "the deploy job to finish")
+
+	rec := doAPI(s, http.MethodGet, "/api/v1/jobs/"+string(started.JobID), "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+
+	var got struct {
+		ID            jobID              `json:"id"`
+		Kind          string             `json:"kind"`
+		State         jobState           `json:"state"`
+		StartedAt     time.Time          `json:"started_at"`
+		EndedAt       time.Time          `json:"ended_at"`
+		Result        *core.DeployResult `json:"result"`
+		EventCount    int                `json:"event_count"`
+		DroppedEvents int                `json:"dropped_events"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got, json.RejectUnknownMembers(true)))
+	assert.Equal(t, started.JobID, got.ID)
+	assert.Equal(t, "deploy", got.Kind)
+	assert.Equal(t, jobSucceeded, got.State)
+	assert.False(t, got.StartedAt.IsZero())
+	assert.False(t, got.EndedAt.IsZero())
+	require.NotNil(t, got.Result)
+	assert.Equal(t, 1, got.Result.Deployed)
+	assert.Positive(t, got.EventCount, "a real deploy emits events")
+}
+
+// TestAPIJobStatus_UnknownID_404 covers a job that never existed or has
+// aged out of the registry's retention.
+func TestAPIJobStatus_UnknownID_404(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+
+	rec := doAPI(s, http.MethodGet, "/api/v1/jobs/deadbeef", "")
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+	assert.Contains(t, decodeEnvelope(t, rec.Body.Bytes()).Error, "deadbeef")
+}
