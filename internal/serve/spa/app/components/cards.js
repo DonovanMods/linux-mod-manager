@@ -188,8 +188,17 @@ function CardError({ message, detail, onRetry }) {
 
 /** healthLabel prefers the finding's own note (already human-worded, e.g. a
  * repair failure's reason) and falls back to the status verbatim. */
+/** healthLabel prefers the finding's own note (already human-worded, e.g. a
+ * repair failure's reason), falls back to the status verbatim, and - for
+ * version_mismatch, the most common finding - appends the recorded/source
+ * versions VerifyFinding actually carries (verify.go), matching the CLI's
+ * own "AlphaMod - VERSION MISMATCH (recorded 1.0, source reports 2.0)". */
 function healthLabel(f) {
-  return f.note || f.status.replaceAll("_", " ");
+  const label = f.note || f.status.replaceAll("_", " ");
+  if (f.recorded && f.effective) {
+    return `${label} (recorded ${f.recorded}, source reports ${f.effective})`;
+  }
+  return label;
 }
 
 /** conflictLabel names the contenders AND the winning rule (design doc:

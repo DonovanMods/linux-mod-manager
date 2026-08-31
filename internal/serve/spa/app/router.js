@@ -53,10 +53,12 @@ export function contextPath(game, profile) {
 }
 
 /**
- * Navigates without a document load. replace: true is for the URL edits
- * that are not a new place - opening the slide-over annotates the current
- * URL, and stacking a history entry per row click would turn Back into a
- * long walk back through hover-depth decisions.
+ * Navigates without a document load. replace: true is for URL edits that
+ * are not a genuinely new place - e.g. the chooser's auto-redirect onto a
+ * resolved game/profile path. Opening the slide-over (library.js#openRow)
+ * deliberately does NOT use replace: it pushes a real history entry, which
+ * is what makes Back close the panel rather than leaving Mission Control
+ * entirely - the opposite of what an earlier version of this comment said.
  */
 export function navigate(to, { replace = false } = {}) {
   if (replace) {

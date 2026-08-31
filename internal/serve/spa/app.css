@@ -585,9 +585,17 @@ select {
   background: var(--surface-overlay);
 }
 
+/* A <button>, not a bare <td onClick> (M6): the row-open affordance is the
+ * primary navigation on the primary screen, so it must be reachable by
+ * keyboard (Tab, then Enter/Space), not mouse-only. */
 .mod-row__name {
-  cursor: pointer;
+  padding: 0;
+  border: none;
+  background: none;
   color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .mod-row__name:hover {

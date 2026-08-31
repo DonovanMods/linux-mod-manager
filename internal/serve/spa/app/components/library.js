@@ -194,8 +194,14 @@ export function Library({
                             title=${NOT_YET}
                           />
                         </td>
-                        <td class="mod-row__name" onClick=${() => openRow(row)}>
-                          ${row.name}
+                        <td>
+                          <button
+                            type="button"
+                            class="mod-row__name"
+                            onClick=${() => openRow(row)}
+                          >
+                            ${row.name}
+                          </button>
                         </td>
                         <td class="mono">
                           ${row.version}${row.hasUpdate && html` → ${row.updateTarget}`}

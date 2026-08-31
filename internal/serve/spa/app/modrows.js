@@ -49,6 +49,14 @@ export function buildRows(mods, updates, findings, conflicts) {
     return {
       ...mod,
       key,
+      // index + 1 is a DISPLAY index, not the profile's actual load order:
+      // ListMods (core/queries.go) places a mod that's installed but absent
+      // from the profile's load order first, so those rows are labelled 1,
+      // 2, … under a "Load order" column when they have none. Won't-fix for
+      // now - ModListing carries no field distinguishing "has no load-order
+      // entry" on the wire, and adding one is the same kind of JSON-contract
+      // change this unit's gate keeps frozen (see cards.js's HealthCard
+      // comment for the sibling case).
       loadOrder: index + 1,
       hasUpdate: Boolean(update),
       updateTarget: update?.new_version ?? "",
@@ -82,7 +90,12 @@ export function filterRows(rows, filter) {
 // this control moves in a local install's own timeline.
 const sortComparators = {
   name: (a, b) => a.name.localeCompare(b.name),
-  recent: (a, b) => new Date(b.installed_at) - new Date(a.installed_at),
+  // Date.parse(...) || 0 rather than bare `new Date(...) - new Date(...)`:
+  // an absent or unparsable installed_at parses to NaN, and Array.sort with
+  // a NaN comparator result gives an arbitrary order - falling back to the
+  // epoch keeps every undated row sorted (last, under "descending").
+  recent: (a, b) =>
+    (Date.parse(b.installed_at) || 0) - (Date.parse(a.installed_at) || 0),
 };
 
 /** The sort control's options, in display order. */

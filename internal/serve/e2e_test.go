@@ -16,8 +16,11 @@ package serve_test
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -182,6 +185,59 @@ func TestE2E_ChooserRendersGameCardsAndNavigatesOnClick(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_OnlyOnePickerDropdownOpenAtATime guards Minor 5: the game,
+// profile and activity-bell dropdowns each used to hold their own
+// independent open state, so opening a second one left the first standing
+// open behind it (verified live: opening the game picker then the profile
+// picker left BOTH `.picker__menu` nodes in the DOM). They now share one
+// "which picker is open" state in TopBar, plus an outside-click/Escape
+// listener that closes whichever one is open.
+func TestE2E_OnlyOnePickerDropdownOpenAtATime(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var afterSecondOpen int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.game-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.game-picker__menu`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".picker__menu").length`, &afterSecondOpen),
+	)
+	assert.Equal(t, 1, afterSecondOpen, "opening the profile picker must close the game picker")
+
+	var afterEscape int
+	f.runInBrowser(t,
+		chromedp.Sleep(200*time.Millisecond),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.Sleep(200*time.Millisecond),
+		chromedp.Evaluate(`document.querySelectorAll(".picker__menu").length`, &afterEscape),
+	)
+	assert.Zero(t, afterEscape, "Escape must close whichever picker is open")
+
+	// A real coordinate-based click risks landing on the tray's own
+	// absolutely-positioned dropdown if it happens to overlap the target
+	// point; dispatching the pointerdown directly on document.body proves
+	// the LISTENER's outside-of-header check without depending on layout.
+	// The preact/hooks vendor batches useEffect through its own
+	// requestAnimationFrame-driven flush (measured empirically at up to a
+	// handful of frames in a headless browser), so the sleeps give both the
+	// listener's attachment and its resulting re-render room to land before
+	// each half is asserted.
+	var afterOutsideClick int
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+		chromedp.Sleep(200*time.Millisecond),
+		chromedp.Evaluate(`document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`, nil),
+		chromedp.Sleep(200*time.Millisecond),
+		chromedp.Evaluate(`document.querySelectorAll(".picker__menu").length`, &afterOutsideClick),
+	)
+	assert.Zero(t, afterOutsideClick, "a click outside every picker must close the open one")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_MissionControlBodyHasGutterPadding guards the unit 2 gate's I1
 // finding: `.mission-control__body` had no CSS rule at all, so the
 // attention cards and the library ran flat against both viewport edges and
@@ -217,6 +273,28 @@ func TestE2E_EmptyLibraryShowsInlineHint(t *testing.T) {
 	)
 
 	assert.Contains(t, hint, "No mods installed yet")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_RowNameOpensSlideOverByKeyboard guards Minor 6: the row-open
+// affordance was a bare `<td onClick>` - not focusable, not activatable by
+// keyboard - making the primary navigation on the primary screen
+// mouse-only. It is now a real <button>, reachable by Tab and activatable
+// by Enter, with no mouse action anywhere in this scenario.
+func TestE2E_RowNameOpensSlideOverByKeyboard(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var url string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Focus(`.mod-row__name`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Enter),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Location(&url),
+	)
+
+	assert.Contains(t, url, "?mod=", "Enter on the focused row name must open the slide-over, same as a click")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -300,6 +378,44 @@ func TestE2E_LibrarySortReordersRowsByName(t *testing.T) {
 	)
 
 	assert.Equal(t, []string{"Alpha Mod", "Middle Mod", "Zebra Mod"}, names)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestSortRows_RecentToleratesMissingInstalledAt guards Minor 10:
+// modrows.js#sortRows's "recent" comparator used to be a bare
+// `new Date(x) - new Date(y)`, which is NaN for a missing or unparsable
+// installed_at, and Array.prototype.sort's behavior on a NaN-returning
+// comparator is not spec-guaranteed. modrows.js has no DOM, so it is
+// exercised directly here via a dynamic import in a real browser (the same
+// module the library component runs), rather than through the table -
+// there is no installed_mods row that reaches the wire without an
+// installed_at today, so this proves the guard rather than a live bug.
+func TestSortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var order []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { sortRows } = await import("/static/app/modrows.js");
+			const rows = [
+				{ name: "Newer", installed_at: "2025-06-01T00:00:00Z" },
+				{ name: "Missing" },
+				{ name: "Older", installed_at: "2020-01-01T00:00:00Z" },
+				{ name: "Malformed", installed_at: "not-a-date" },
+			];
+			return sortRows(rows, "recent").map((r) => r.name);
+		})()`, &order, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, order, 4, "the guard must never drop a row")
+	assert.Equal(t, []string{"Newer", "Older"}, order[:2],
+		"the two real dates must still sort correctly relative to each other")
+	assert.ElementsMatch(t, []string{"Missing", "Malformed"}, order[2:],
+		"an absent/unparsable installed_at must fall back to the epoch, not produce an arbitrary position")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -475,6 +591,8 @@ func TestE2E_AttentionCardsRenderFromSeededFixture(t *testing.T) {
 	assert.Contains(t, updates, "Better Boots")
 	assert.Contains(t, updates, "2.0", "the update target version must be named")
 	assert.Contains(t, health, "Better Boots", "the version-mismatch finding must name the mod")
+	assert.Contains(t, health, "recorded 1.0, source reports 2.0",
+		"M2: the version-mismatch finding must carry its own recorded/effective versions, matching the CLI")
 	assert.Contains(t, conflicts, "shared.esp", "the conflicting path must be named")
 	assert.Contains(t, conflicts, "wins: Mod Y",
 		"the spec's Missing 2: a conflict must name the winning rule, not just the contenders (Mod Y was added to the load order last)")

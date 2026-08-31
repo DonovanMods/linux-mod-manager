@@ -8,7 +8,7 @@
 // and disabled: Unit 3 lands the confirm-modal framework they submit
 // through, and the pre-flight forbids forking it early.
 
-import { html, useState } from "../render.js";
+import { html, useEffect, useRef, useState } from "../render.js";
 import { navigate, contextPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { resolveGamePath } from "../navigation.js";
@@ -27,11 +27,48 @@ export function TopBar({
 }) {
   const undeployed = countUndeployed(mods);
 
+  // Which of the three dropdowns (game/profile/activity) is open, lifted
+  // here rather than left as each picker's own useState (M5): opening one
+  // must close whatever else was open, and a single outside-click/Escape
+  // listener needs one source of truth to close instead of three.
+  const [openPicker, setOpenPicker] = useState(null);
+  const barRef = useRef(null);
+
+  useEffect(() => {
+    if (openPicker === null) return;
+    function handlePointerDown(e) {
+      if (barRef.current && !barRef.current.contains(e.target)) {
+        setOpenPicker(null);
+      }
+    }
+    function handleKeyDown(e) {
+      if (e.key === "Escape") setOpenPicker(null);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openPicker]);
+
   return html`
-    <header class="app-bar">
+    <header class="app-bar" ref=${barRef}>
       <span class="app-bar__brand">LMM</span>
-      <${GamePicker} status=${status} games=${games} />
-      <${ProfilePicker} status=${status} route=${route} />
+      <${GamePicker}
+        status=${status}
+        games=${games}
+        open=${openPicker === "game"}
+        onOpen=${() => setOpenPicker("game")}
+        onClose=${() => setOpenPicker(null)}
+      />
+      <${ProfilePicker}
+        status=${status}
+        route=${route}
+        open=${openPicker === "profile"}
+        onOpen=${() => setOpenPicker("profile")}
+        onClose=${() => setOpenPicker(null)}
+      />
       <span
         class="deploy-indicator ${undeployed > 0 ? "deploy-indicator--pending" : ""}"
       >
@@ -57,7 +94,12 @@ export function TopBar({
         value=${query}
         onInput=${(e) => onQueryChange(e.currentTarget.value)}
       />
-      <${ActivityBell} jobsIndex=${jobsIndex} />
+      <${ActivityBell}
+        jobsIndex=${jobsIndex}
+        open=${openPicker === "activity"}
+        onOpen=${() => setOpenPicker("activity")}
+        onClose=${() => setOpenPicker(null)}
+      />
       <button
         type="button"
         class="theme-toggle"
@@ -72,12 +114,11 @@ export function TopBar({
 /** GamePicker switches games via resolveGamePath - the same active-profile
  * resolution the chooser's auto-redirect uses, so a pick always lands on a
  * real Mission Control route rather than a context that can't resolve. */
-function GamePicker({ status, games }) {
-  const [open, setOpen] = useState(false);
+function GamePicker({ status, games, open, onOpen, onClose }) {
   const list = games ?? [];
 
   async function pick(id) {
-    setOpen(false);
+    onClose();
     if (id === status.id) return;
     const path = await resolveGamePath(id).catch(() => null);
     if (path) navigate(path);
@@ -88,7 +129,7 @@ function GamePicker({ status, games }) {
       <button
         type="button"
         class="picker__trigger game-picker__trigger"
-        onClick=${() => setOpen(!open)}
+        onClick=${() => (open ? onClose() : onOpen())}
       >
         ${status.name} ▾
       </button>
@@ -119,12 +160,11 @@ function GamePicker({ status, games }) {
 /** ProfilePicker switches profiles within the CURRENT game - a plain route
  * change, since the profile's own name (unlike a game switch) is already
  * known without another round trip. */
-function ProfilePicker({ status, route }) {
-  const [open, setOpen] = useState(false);
+function ProfilePicker({ status, route, open, onOpen, onClose }) {
   const profiles = status.profiles ?? [];
 
   function pick(name) {
-    setOpen(false);
+    onClose();
     if (name === route.profile) return;
     navigate(contextPath(route.game, name));
   }
@@ -134,7 +174,7 @@ function ProfilePicker({ status, route }) {
       <button
         type="button"
         class="picker__trigger profile-picker__trigger"
-        onClick=${() => setOpen(!open)}
+        onClick=${() => (open ? onClose() : onOpen())}
       >
         ${route.profile} ▾
       </button>
@@ -176,8 +216,7 @@ function ProfilePicker({ status, route }) {
 /** ActivityBell reads GET /api/v1/jobs's retained jobs; the tray it opens is
  * read-only in this unit - Unit 3 wires the live SSE stream and the tray's
  * own next-step affordances (e.g. a failed install's "Overwrite?"). */
-function ActivityBell({ jobsIndex }) {
-  const [open, setOpen] = useState(false);
+function ActivityBell({ jobsIndex, open, onOpen, onClose }) {
   const jobs = jobsIndex ?? [];
   const running = jobs.filter((j) => j.state === "running").length;
 
@@ -186,7 +225,7 @@ function ActivityBell({ jobsIndex }) {
       <button
         type="button"
         class="picker__trigger activity-bell__trigger"
-        onClick=${() => setOpen(!open)}
+        onClick=${() => (open ? onClose() : onOpen())}
       >
         🔔${running > 0 && html`<span class="activity-bell__count">${running}</span>`}
       </button>
