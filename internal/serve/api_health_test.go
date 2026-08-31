@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
-	"strconv"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -127,18 +125,21 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 	requireEncodesLike(t, rec.Body.Bytes(), want)
 }
 
-// healthSummaryPattern matches health.gohtml's "N issue(s), M warning(s), K
-// file(s) checked." summary line.
-var healthSummaryPattern = regexp.MustCompile(`(\d+) issue\(s\), (\d+) warning\(s\), (\d+) file\(s\) checked`)
-
-// TestServer_Health_PageMatchesAPIAndCLICounts is Important 2 (epic live
+// TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts is Important 2 (epic live
 // review): on the exact same state as TestServer_APIHealth_MatchesCLIVerifyTier
-// (a version_mismatch a VerifyLocal tier cannot see), the /health PAGE, the
-// /api/v1/health API, and a direct core.VerifyReport(VerifyFull) call - the
-// CLI's own tier - must all report the SAME issue count. Before the C1 fix
-// (the page pinned to VerifyLocal) this was RED: the page said "0 issue(s)"
-// while the API and the CLI-equivalent call both said "1".
-func TestServer_Health_PageMatchesAPIAndCLICounts(t *testing.T) {
+// (a version_mismatch a VerifyLocal tier cannot see), GET /api/v1/health and
+// a direct core.VerifyReport(VerifyFull) call - the CLI's own tier - must
+// report the SAME issue count. Before the C1 fix this was a THREE-leg test
+// whose first leg was the /health PAGE, pinned to VerifyLocal: the page said
+// "0 issue(s)" while the API and the CLI-equivalent call both said "1". The
+// page went with the server-rendered layer
+// (docs/plans/2026-08-31-serve-spa-design.md); the third leg it stood for -
+// that the REPAIR's own tier agrees too, which is the plan/apply mismatch
+// kind_verify_fix.go's doc comment warns can resurrect the corruption - is
+// carried by TestFlowVerifyFixPlan_TierMatchesTheAPIAndTheCLI
+// (c1_verify_fix_tier_internal_test.go), which can reach the CSRF token a
+// POST needs.
+func TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{
 		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
@@ -160,14 +161,6 @@ func TestServer_Health_PageMatchesAPIAndCLICounts(t *testing.T) {
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
-	pageReq := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/health", nil)
-	pageRec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(pageRec, pageReq)
-	require.Equal(t, http.StatusOK, pageRec.Code)
-	match := healthSummaryPattern.FindStringSubmatch(pageRec.Body.String())
-	require.Len(t, match, 4, "page must render the issue-count summary line: %s", pageRec.Body.String())
-	pageIssues := match[1]
-
 	apiReq := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
 	apiRec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(apiRec, apiReq)
@@ -178,8 +171,7 @@ func TestServer_Health_PageMatchesAPIAndCLICounts(t *testing.T) {
 	cliEquivalent, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
 
-	require.Equal(t, "1", pageIssues, "the page must see the version_mismatch too, not report a clean sheet")
-	assert.Equal(t, pageIssues, strconv.Itoa(apiReport.Result.Issues), "page and API must report the same issue count on the same state")
+	require.Equal(t, 1, apiReport.Result.Issues, "the API must see the version_mismatch, not report a clean sheet")
 	assert.Equal(t, apiReport.Result.Issues, cliEquivalent.Result.Issues, "API and the CLI's own tier must agree")
 }
 

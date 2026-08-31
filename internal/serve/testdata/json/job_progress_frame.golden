@@ -1,0 +1,13 @@
+{
+  "job_id": "0123456789abcdef0123456789abcdef",
+  "kind": "install",
+  "type": "step",
+  "op": "install",
+  "phase": "install_deploying",
+  "detail": "linking files",
+  "mod_name": "Mod One",
+  "index": 1,
+  "total": 2,
+  "downloaded": 12582912,
+  "total_bytes": 20971520
+}

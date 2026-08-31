@@ -28,8 +28,6 @@ package serve
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strconv"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -38,63 +36,11 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "verify_fix",
-		Title:        "Repair",
 		PlanOptions:  decodeKindOptions[verifyFixPlanRequest],
 		ApplyOptions: decodeKindOptions[verifyFixApplyRequest],
 		Plan:         planVerifyFixKind,
 		Apply:        applyVerifyFixKind,
-		Summarize:    summarizeVerifyFixResult,
-		Form: &kindForm{
-			PlanOptions:  verifyFixPlanForm,
-			ApplyOptions: verifyFixApplyForm,
-			Confirm:      confirmVerifyFixPlan,
-		},
 	})
-}
-
-// verifyFixRepairableStatuses are the finding statuses `--fix` actually
-// acts on, and therefore the ones that make a repair worth offering at all
-// (internal/core/verify.go's four repair branches plus the convergence
-// pass). A finding outside this set - version_unverifiable, a file-count
-// mismatch, a skipped row - is a report, not a repairable, and offering to
-// "fix" it would promise something the engine never attempts.
-//
-// The list is status-only. Core additionally refuses to repair a
-// domain.SourceLocal mod (an imported archive has no remote to re-fetch),
-// but VerifyFinding carries no source id, so a local-only profile can still
-// be offered a repair that reports the same rows back unchanged. That is
-// the honest failure mode of the data the report actually carries: better
-// than hiding the action from every profile because one mod in it might be
-// local.
-//
-// KNOWN DRIFT RISK (task-9 review Minor 2, accepted for v2.1.0, not fixed
-// here): this duplicates core's status vocabulary by string literal. Core
-// exports no constants for these either (they're literals in
-// internal/core/verify.go's repair branches), so a new repairable status
-// added there silently stops being offered here, with no test or ratchet
-// to catch the drift. The real fix - core.VerifyFindingIsRepairable or
-// exported status constants both sides read - touches core's public
-// surface and belongs in a follow-up issue, not this polish pass.
-var verifyFixRepairableStatuses = map[string]bool{
-	"missing":          true,
-	"no_checksum":      true,
-	"needs_reingest":   true,
-	"version_mismatch": true,
-	"stale_deployment": true,
-}
-
-// verifyFixableFindings returns the findings a repair would act on.
-func verifyFixableFindings(report *core.VerifyReport) []core.VerifyFinding {
-	if report == nil || report.Result == nil {
-		return nil
-	}
-	var fixable []core.VerifyFinding
-	for _, finding := range report.Result.Findings {
-		if verifyFixRepairableStatuses[finding.Status] {
-			fixable = append(fixable, finding)
-		}
-	}
-	return fixable
 }
 
 // verifyFixPlanRequest is POST /api/v1/plans/verify_fix's request body:
@@ -152,164 +98,4 @@ func applyVerifyFixKind(ctx context.Context, s *Server, pending, _ any, sink cor
 		return nil, fmt.Errorf("verify fix: unexpected pending type %T", pending)
 	}
 	return s.svc.VerifyReport(ctx, p.Game, p.Profile, verifyFixOptions(true), sink)
-}
-
-// summarizeVerifyFixResult implements planKind.Summarize for "verify_fix".
-// A repaired row rewrites its own status to a fixed_* form (or resolves to
-// "ok") and backs its count out, so the counts below are what REMAINS
-// outstanding after the repair - which is the number a user actually wants.
-//
-// "ok" is perFileWalk's baseline for every healthy checksummed file
-// (internal/core/verify.go:624), not an outcome a repair produced - a repair
-// that resolved a row TO "ok" (a successful redownload, a backfilled
-// checksum) is indistinguishable in the final VerifyResult from a file that
-// was never broken, so there is no reliable way to single the former out.
-// An "ok" row is therefore never listed one-per-file here; it is folded into
-// the "Healthy files" count instead (gate review Important 1).
-func summarizeVerifyFixResult(result any) []resultFact {
-	report, ok := result.(*core.VerifyReport)
-	if !ok || report.Result == nil {
-		return nil
-	}
-
-	res := report.Result
-	facts := []resultFact{
-		{Label: "Files checked", Value: strconv.Itoa(res.Checked)},
-		{Label: "Issues remaining", Value: strconv.Itoa(res.Issues)},
-		{Label: "Warnings remaining", Value: strconv.Itoa(res.Warnings)},
-	}
-	var healthy int
-	for _, finding := range res.Findings {
-		if finding.Status == "ok" {
-			healthy++
-			continue
-		}
-		facts = append(facts, resultFact{
-			Label:   findingLabel(finding.Status),
-			Value:   verifyFindingText(finding),
-			Failure: !findingRepaired(finding.Status),
-		})
-	}
-	if healthy > 0 {
-		facts = append(facts, resultFact{Label: "Healthy files", Value: strconv.Itoa(healthy)})
-	}
-	return facts
-}
-
-// findingRepaired reports whether status marks a finding this repair pass
-// actually resolved, rather than one still outstanding afterward (epic
-// re-review N-3: the single source of truth findingLabel and each fact's
-// own Failure marker both derive from, so the two can never disagree about
-// which findings are "not succeeded").
-func findingRepaired(status string) bool {
-	switch status {
-	case "fixed_stale_deployment", "fixed_needs_reingest":
-		return true
-	default:
-		return false
-	}
-}
-
-// findingLabel splits repaired rows from the ones still outstanding, so a
-// result readout does not list a fixed row and an unfixed one under the
-// same word. "ok" is not among these: summarizeVerifyFixResult never calls
-// this for an "ok" finding (see its own doc comment).
-func findingLabel(status string) string {
-	if findingRepaired(status) {
-		return "Repaired"
-	}
-	return "Still reported"
-}
-
-// verifyFindingText renders one finding as a line: which mod, which file,
-// what state, and whatever the engine had to say about it.
-func verifyFindingText(finding core.VerifyFinding) string {
-	text := finding.ModName
-	if text == "" {
-		text = finding.ModID
-	}
-	if finding.FileID != "" {
-		if text != "" {
-			text += " - "
-		}
-		text += finding.FileID
-	}
-	if text == "" {
-		text = "profile"
-	}
-	text += ": " + finding.Status
-	if finding.Recorded != "" && finding.Effective != "" {
-		text += fmt.Sprintf(" (recorded %s, effective %s)", finding.Recorded, finding.Effective)
-	}
-	if finding.Note != "" {
-		text += " - " + finding.Note
-	}
-	return text
-}
-
-// verifyFixPlanForm implements kindForm.PlanOptions: the repair is scoped
-// by the resolved game+profile alone, so there is nothing to read.
-func verifyFixPlanForm(*http.Request) (any, error) {
-	return verifyFixPlanRequest{}, nil
-}
-
-// verifyFixApplyForm implements kindForm.ApplyOptions: likewise nothing.
-func verifyFixApplyForm(*http.Request) (any, error) {
-	return verifyFixApplyRequest{}, nil
-}
-
-// confirmVerifyFixPlan implements kindForm.Confirm: the dry run's findings,
-// split into what a repair would act on and what it would only report
-// again.
-func confirmVerifyFixPlan(pending, _ any) confirmView {
-	p, ok := pending.(*pendingVerifyFix)
-	if !ok {
-		return confirmView{Submit: "Repair"}
-	}
-
-	report := p.Report
-	view := confirmView{
-		Heading: p.Profile,
-		Submit:  "Repair",
-		Facts: []resultFact{
-			{Label: "Profile", Value: p.Profile},
-			{Label: "Files checked", Value: strconv.Itoa(report.Result.Checked)},
-			{Label: "Issues", Value: strconv.Itoa(report.Result.Issues)},
-			{Label: "Warnings", Value: strconv.Itoa(report.Result.Warnings)},
-		},
-	}
-
-	fixable := verifyFixableFindings(report)
-	var repairable, reported []string
-	fixableKeys := make(map[string]bool, len(fixable))
-	for _, finding := range fixable {
-		repairable = append(repairable, verifyFindingText(finding))
-		fixableKeys[finding.ModID+"/"+finding.FileID+"/"+finding.Status] = true
-	}
-	for _, finding := range report.Result.Findings {
-		// A healthy "ok" row is not something a repair "cannot act on and
-		// would report again" - it is not a finding a repair would ever act
-		// on in the first place (gate review Important 1; same reasoning as
-		// summarizeVerifyFixResult).
-		if finding.Status == "ok" {
-			continue
-		}
-		if !fixableKeys[finding.ModID+"/"+finding.FileID+"/"+finding.Status] {
-			reported = append(reported, verifyFindingText(finding))
-		}
-	}
-
-	if len(repairable) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Findings a repair would act on", Items: repairable})
-	}
-	if len(reported) > 0 {
-		view.Lists = append(view.Lists, confirmList{
-			Label: "Findings a repair cannot act on, and would report again",
-			Items: reported,
-		})
-	}
-	if len(repairable) == 0 {
-		view.Facts = append(view.Facts, resultFact{Label: "Repairs", Value: "nothing here is repairable"})
-	}
-	return view
 }

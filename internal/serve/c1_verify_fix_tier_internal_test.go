@@ -1,7 +1,7 @@
 package serve
 
 // C1 (epic live review, .superpowers/sdd/2026-08-30-serve-impl/epic-live-
-// review.md): /health's repair ran at core.VerifyLocal, so its version pass
+// review.md): the repair ran at core.VerifyLocal, so its version pass
 // (the network-touching phase that detects a version_mismatch and corrects
 // the recorded version FIRST) never ran. perFileWalk's "missing" repair then
 // re-downloaded the file the source CURRENTLY reports and stored it under
@@ -11,6 +11,10 @@ package serve
 // because it always runs at core.VerifyFull, so the version record is
 // corrected before perFileWalk ever looks at the cache.
 //
+// Ported to the /api/v1 Plan -> job entry point with the deletion of the
+// server-rendered page layer (docs/plans/2026-08-31-serve-spa-design.md);
+// the fixture and every state assertion are unchanged.
+//
 // This fixture reproduces the review's exact repro: a mod recorded at
 // "2.0.0" with no cache dir for that version at all (simulating "the cache
 // dir was deleted"), while the source's current listing for the same file ID
@@ -19,10 +23,12 @@ package serve
 
 import (
 	"context"
+	"encoding/json/v2"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -156,31 +162,23 @@ func newVersionMismatchFixtureServer(t *testing.T) (*Server, *core.Service, *dom
 	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: internalTestAddr}), svc, game
 }
 
-// TestServer_HealthFix_RepairsVersionMismatch_NotJustTheMissingFile is C1's
-// headline RED test. Before the fix (pages_health.go/kind_verify_fix.go
-// pinned to core.VerifyLocal), the repair "succeeds" by writing the
-// source's CURRENT (3.0.0) content into the cache slot for the STALE
-// recorded (2.0.0) version, leaving the DB claiming 2.0.0 is intact and a
-// clean bill of health - exactly the review's reproduction. After the fix
+// TestFlowHealthFix_RepairsVersionMismatch_NotJustTheMissingFile is C1's
+// headline RED test. Before the fix (kind_verify_fix.go pinned to
+// core.VerifyLocal), the repair "succeeds" by writing the source's CURRENT
+// (3.0.0) content into the cache slot for the STALE recorded (2.0.0)
+// version, leaving the DB claiming 2.0.0 is intact and a clean bill of
+// health - exactly the review's reproduction. After the fix
 // (core.VerifyFull, matching the CLI and /api/v1/health), the version
 // record is corrected FIRST, so the redownload lands in the correct 3.0.0
 // slot with a matching DB record, and a fresh full-tier verify immediately
 // afterward agrees nothing is left to fix.
-func TestServer_HealthFix_RepairsVersionMismatch_NotJustTheMissingFile(t *testing.T) {
+func TestFlowHealthFix_RepairsVersionMismatch_NotJustTheMissingFile(t *testing.T) {
 	s, svc, game := newVersionMismatchFixtureServer(t)
 
-	entry := postForm(s, "/health/fix", formValues{"game": game.ID, "profile": "default"})
-	require.Equal(t, http.StatusOK, entry.Code, entry.Body.String())
-
-	rec := postForm(s, "/health/fix", formValues{
-		"game": game.ID, "profile": "default", "confirm": "1",
-		"plan_id": hiddenField(t, entry.Body.String(), "plan_id"),
-	})
-	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
-	j := awaitRedirectedJob(t, s, rec)
+	j := runFlow(t, s, game, "verify_fix", "", "")
 	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// The DB record must have moved to the version the source actually
 	// reports - not stayed pinned at the stale recorded value.
@@ -217,37 +215,71 @@ func TestServer_HealthFix_RepairsVersionMismatch_NotJustTheMissingFile(t *testin
 	assert.Zero(t, fresh.Result.Issues, "the state really must be clean after the repair, not merely reported as clean")
 }
 
-// TestServer_HealthFix_SyncFallback_LockedFinding_NotGreenDone is N-3's own
-// test (epic re-review, new finding N-3): a locked mod's version_mismatch
-// cannot be repaired (internal/core/verify.go's lock refusal), so it comes
-// back from the SAME repair run as a "Still reported" fact rather than a
-// "Failed" one - the only label factsIncludeFailure checked for before this
-// fix (M6). C1's tier change made this the COMMON /health outcome, not a
-// corner case: a version mismatch is now visible at all, and a locked one
-// can never be repaired. The ?sync=1 inline result page must render the
-// amber "Done, with failures" banner, never the plain green "Done." - a
-// green headline sitting above a self-reported "Issues remaining" count and
-// a row literally saying the repair failed would be exactly the oversold
-// headline M6 nit 5 was written to fix.
-func TestServer_HealthFix_SyncFallback_LockedFinding_NotGreenDone(t *testing.T) {
+// TestFlowVerifyFixPlan_TierMatchesTheAPIAndTheCLI is the leg
+// api_health_test.go's C1 three-way count check lost when the /health page
+// went away: the repair PLAN (the dry run a client previews) must be run at
+// the same tier GET /api/v1/health and the CLI's own VerifyFull call use.
+// A plan/apply tier mismatch here is precisely the corruption
+// kind_verify_fix.go's doc comment warns can resurrect, so the preview
+// agreeing with the other two surfaces is the property worth pinning.
+func TestFlowVerifyFixPlan_TierMatchesTheAPIAndTheCLI(t *testing.T) {
 	s, svc, game := newVersionMismatchFixtureServer(t)
-	_, err := svc.SetModLock(context.Background(), fixtureSourceID, versionRepairModID, game.ID, "default", "")
+
+	_, raw := planFlow(t, s, game, "verify_fix", "")
+	var planned struct {
+		Plan core.VerifyReport `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &planned))
+	require.NotNil(t, planned.Plan.Result)
+
+	apiRec := doAPI(s, http.MethodGet, scoped("/api/v1/health", game), "")
+	require.Equal(t, http.StatusOK, apiRec.Code)
+	var apiReport core.VerifyReport
+	require.NoError(t, json.Unmarshal(apiRec.Body.Bytes(), &apiReport))
+
+	cliEquivalent, err := svc.VerifyReport(t.Context(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
 
-	entry := postForm(s, "/health/fix", formValues{"game": game.ID, "profile": "default"})
-	require.Equal(t, http.StatusOK, entry.Code, entry.Body.String())
+	require.Positive(t, planned.Plan.Result.Issues,
+		"the repair preview must see the version_mismatch, not report a clean sheet")
+	assert.Equal(t, planned.Plan.Result.Issues, apiReport.Result.Issues,
+		"the repair preview and /api/v1/health must agree on the same state")
+	assert.Equal(t, apiReport.Result.Issues, cliEquivalent.Result.Issues,
+		"and both must agree with the CLI's own tier")
+}
 
-	rec := postForm(s, "/health/fix?sync=1", formValues{
-		"game": game.ID, "profile": "default", "confirm": "1",
-		"plan_id": hiddenField(t, entry.Body.String(), "plan_id"),
-	})
+// TestFlowHealthFix_LockedFinding_StaysOutstanding is N-3's own test (epic
+// re-review): a locked mod's version_mismatch cannot be repaired
+// (internal/core/verify.go's lock refusal), so it comes back from the SAME
+// repair run still outstanding rather than resolved. C1's tier change made
+// this the COMMON outcome, not a corner case: a version mismatch is visible
+// at all now, and a locked one can never be repaired.
+//
+// The original test asserted this through the ?sync=1 result page's amber
+// "Done, with failures" banner - the display rule M6/N-3 were about. That
+// banner went with the page layer; the fact it was reading is on the
+// result document, and that is what this pins: the job succeeds, the
+// finding is reported as refused because of the lock, and the outstanding
+// count is NOT zeroed out by the repair that could not run.
+func TestFlowHealthFix_LockedFinding_StaysOutstanding(t *testing.T) {
+	s, svc, game := newVersionMismatchFixtureServer(t)
+	_, err := svc.SetModLock(t.Context(), fixtureSourceID, versionRepairModID, game.ID, "default", "")
+	require.NoError(t, err)
 
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	body := rec.Body.String()
-	assert.Contains(t, body, "with failures", "a locked, unrepaired finding must not render the unqualified green \"Done.\"")
-	assert.NotContains(t, body, `class="mb-4 rounded border border-green-300`, "the banner must not be the plain-success green")
-	assert.Contains(t, body, "Still reported")
-	assert.Contains(t, body, "locked")
-	assert.Contains(t, body, `<dt class="font-medium text-gray-500">Issues remaining</dt><dd>1</dd>`,
+	j := runFlow(t, s, game, "verify_fix", "", "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	report, ok := j.status().Result.(*core.VerifyReport)
+	require.True(t, ok, "the stored result must be the core document")
+	assert.Equal(t, 1, report.Result.Issues,
 		"the locked mismatch must still be counted as outstanding, not zeroed out by the refused repair")
+
+	var refused *core.VerifyFinding
+	for i := range report.Result.Findings {
+		if strings.Contains(report.Result.Findings[i].Note, "locked") {
+			refused = &report.Result.Findings[i]
+		}
+	}
+	require.NotNil(t, refused, "the refusal must name the lock as its reason, not be silently dropped")
+	assert.NotEqual(t, "fixed_version_mismatch", refused.Status, "a refused repair is not a repair")
 }

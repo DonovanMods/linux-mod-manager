@@ -22,8 +22,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"strconv"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -32,17 +30,10 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "profile_apply",
-		Title:        "Apply profile",
 		PlanOptions:  decodeKindOptions[profileApplyPlanRequest],
 		ApplyOptions: decodeKindOptions[profileApplyRequest],
 		Plan:         planProfileApplyKind,
 		Apply:        applyProfileApplyKind,
-		Summarize:    summarizeProfileApplyResult,
-		Form: &kindForm{
-			PlanOptions:  profileApplyPlanForm,
-			ApplyOptions: profileApplyForm,
-			Confirm:      confirmProfileApplyPlan,
-		},
 	})
 }
 
@@ -94,118 +85,4 @@ func applyProfileApplyKind(ctx context.Context, s *Server, pending, _ any, sink 
 		return nil, fmt.Errorf("profile apply: unexpected pending type %T", pending)
 	}
 	return s.svc.ApplyProfileApply(ctx, p.Game, p.Plan, core.ProfileApplyOptions{}, sink)
-}
-
-// summarizeProfileApplyResult implements planKind.Summarize for
-// "profile_apply".
-func summarizeProfileApplyResult(result any) []resultFact {
-	res, ok := result.(*core.ProfileApplyResult)
-	if !ok {
-		return nil
-	}
-
-	facts := []resultFact{
-		{Label: "Disabled", Value: strconv.Itoa(res.Disabled)},
-		{Label: "Enabled", Value: strconv.Itoa(res.Enabled)},
-		{Label: "Installed", Value: strconv.Itoa(res.Installed)},
-	}
-	if res.Replaced > 0 {
-		facts = append(facts, resultFact{Label: "Replaced", Value: strconv.Itoa(res.Replaced)})
-	}
-	for _, ref := range res.Failed {
-		facts = append(facts, resultFact{Label: "Failed", Value: installedRefText(ref), Failure: true})
-	}
-	for _, n := range res.Notes {
-		facts = append(facts, resultFact{Label: "Note", Value: n})
-	}
-	for _, w := range res.Warnings {
-		facts = append(facts, resultFact{Label: "Warning", Value: w})
-	}
-	return facts
-}
-
-// profileApplyPlanForm implements kindForm.PlanOptions: the target profile
-// comes from the path.
-func profileApplyPlanForm(r *http.Request) (any, error) {
-	return profileApplyPlanRequest{Profile: r.PathValue("name")}, nil
-}
-
-// profileApplyForm implements kindForm.ApplyOptions: nothing to read back.
-func profileApplyForm(*http.Request) (any, error) {
-	return profileApplyRequest{}, nil
-}
-
-// confirmProfileApplyPlan implements kindForm.Confirm: what would be
-// installed, what would be removed, and what could not be resolved.
-func confirmProfileApplyPlan(pending, _ any) confirmView {
-	p, ok := pending.(*pendingProfileApply)
-	if !ok {
-		return confirmView{Submit: "Apply"}
-	}
-
-	plan := p.Plan
-	installs, unresolved := profileApplyInstallTexts(plan.ToInstall)
-	view := confirmView{
-		Heading: plan.Profile,
-		Submit:  "Apply",
-		Facts: []resultFact{
-			{Label: "Profile", Value: plan.Profile},
-			// len(installs), not len(plan.ToInstall) (epic live review M6):
-			// ToInstall also holds the entries profileApplyInstallTexts
-			// splits off as unresolved, which the apply will skip, not
-			// install - counting them here overstated "To install" by
-			// exactly the number listed separately below as skipped.
-			{Label: "To install", Value: strconv.Itoa(len(installs))},
-			{Label: "To remove", Value: strconv.Itoa(len(plan.ToDisable))},
-		},
-	}
-	if plan.NoChanges {
-		view.Facts = append(view.Facts, resultFact{Label: "Changes", Value: "what is installed already matches this profile"})
-	}
-
-	if len(installs) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be installed", Items: installs})
-	}
-	if names := installedModNames(plan.ToDisable); len(names) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be removed from this profile", Items: names})
-	}
-	if names := installedModNames(plan.ToEnable); len(names) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be enabled and deployed", Items: names})
-	}
-	if len(unresolved) > 0 {
-		view.Lists = append(view.Lists, confirmList{
-			Label: "Entries that could not be resolved, and would be reported and skipped",
-			Items: unresolved,
-		})
-	}
-	return view
-}
-
-// profileApplyInstallTexts splits the install list into the entries that
-// resolved and the ones that did not. The two are separated on the page
-// because they are separate decisions: the first is what the apply would
-// do, the second is what it already knows it cannot.
-func profileApplyInstallTexts(entries []core.ProfileApplyInstall) (installs, unresolved []string) {
-	for _, entry := range entries {
-		key := domain.ModKey(entry.Ref.SourceID, entry.Ref.ModID)
-		if entry.Error != "" {
-			unresolved = append(unresolved, key+" - "+entry.Error)
-			continue
-		}
-		text := key
-		if entry.Mod != nil && entry.Mod.Name != "" {
-			text = entry.Mod.Name
-		}
-		if entry.Version != "" {
-			text += " " + entry.Version
-		}
-		if entry.Cached {
-			text += " (already cached)"
-		}
-		if entry.Replaces != nil {
-			text += " - replacing the installed " + entry.Replaces.Version
-		}
-		installs = append(installs, text)
-	}
-	return installs, unresolved
 }

@@ -116,14 +116,16 @@ func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 
 // securityHeaders sets conservative response headers
 // (docs/plans/2026-08-30-serve-design.md §Security: "assets served with
-// conservative headers") on every response, page or asset alike.
+// conservative headers") on every response, shell or asset alike. The
+// Content-Security-Policy is built in spa.go, where the hash admitting the
+// shell's one inline script is measured.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
-		h.Set("Content-Security-Policy", "default-src 'self'")
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
 		next.ServeHTTP(w, r)
 	})
 }

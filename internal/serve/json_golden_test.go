@@ -108,6 +108,77 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// The activity tray's index row: jobStatus without the result
+			// document, which is the whole point of the type (activity.go).
+			// The failed shape, because that is the one carrying an
+			// envelope - the fact the tray offers a next step from.
+			"job_summary",
+			jobSummary{
+				ID:        "fedcba9876543210fedcba9876543210",
+				Kind:      "install",
+				State:     jobFailed,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(time.Second),
+				Error: &apiErrorEnvelope{
+					Error: "file conflicts detected",
+					Details: (&core.ConflictError{Conflicts: []core.Conflict{{
+						RelativePath:    "Mods/a.pak",
+						CurrentSourceID: "fake",
+						CurrentModID:    "m9",
+					}}}).Details(),
+				},
+				EventCount:    3,
+				DroppedEvents: 1,
+			},
+		},
+		{
+			// GET /api/v1/jobs, newest first: one running job above one
+			// finished one, so the golden pins both row shapes and the
+			// order in the same document.
+			"jobs_index",
+			jobsIndex{Jobs: []jobSummary{
+				{
+					ID:         "aaaabbbbccccddddeeeeffff00001111",
+					Kind:       "deploy",
+					State:      jobRunning,
+					StartedAt:  goldenTime.Add(10 * time.Second),
+					EventCount: 1,
+				},
+				{
+					ID:         "0123456789abcdef0123456789abcdef",
+					Kind:       "deploy",
+					State:      jobSucceeded,
+					StartedAt:  goldenTime,
+					EndedAt:    goldenTime.Add(3 * time.Second),
+					EventCount: 12,
+				},
+			}},
+		},
+		{
+			// One job_progress frame of the multiplexed activity stream: a
+			// SUMMARY of one core event, not core.MarshalEvent's frozen
+			// {"type","data"} envelope, which stays the per-job stream's
+			// contract (activity.go's frame vocabulary). Downloaded and
+			// TotalBytes are the byte-delta fallback's fields
+			// (task-2-review.md Important 1) - pinned here alongside the
+			// step-style fields even though no single core event sets both
+			// halves at once, so one golden covers the whole wire shape.
+			"job_progress_frame",
+			jobProgressFrame{
+				JobID:      "0123456789abcdef0123456789abcdef",
+				Kind:       "install",
+				Type:       "step",
+				Op:         "install",
+				Phase:      core.InstallDeploying.String(),
+				Detail:     "linking files",
+				ModName:    "Mod One",
+				Index:      1,
+				Total:      2,
+				Downloaded: 12582912,
+				TotalBytes: 20971520,
+			},
+		},
+		{
 			"plan_response",
 			planResponse{
 				PlanID: "0123456789abcdef0123456789abcdef",

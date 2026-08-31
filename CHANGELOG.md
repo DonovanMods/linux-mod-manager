@@ -7,7 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`lmm serve` is now a single-page application.** The page-per-command web
+  UI described by the unreleased entries below never shipped: it converted
+  the TUI too literally — six pages mapped to CLI verbs, context
+  re-established on every one of them, actions far from the data they act
+  on. It is replaced by the SPA in
+  `docs/plans/2026-08-31-serve-spa-design.md`: vendored Preact + htm (no
+  Node, no npm, no bundler — `go build` is still the entire build and users
+  install nothing), the game and profile in the URL path
+  (`/g/{game}/{profile}`), a light/dark theme following the system with a
+  persisted override, and the same `/api/v1` + jobs + SSE backend
+  underneath, unchanged. The old page URLs permanently redirect into the new
+  scheme. The `?sync=1` no-JavaScript form fallback is gone with the forms;
+  the CLI is the fallback. Enable/disable gain their own endpoints
+  (`POST /api/v1/mods/{source}/{id}/enable`, `.../disable`), which is where
+  the deleted form routes' one non-plan job path went (#327, epic #326).
+  The `lmm serve` entries below will be consolidated into a single accurate
+  entry before the first release that ships any of it.
+
 ### Added
+
+- `lmm serve` gains the two endpoints its activity tray is built on:
+  `GET /api/v1/jobs` lists every job the registry still retains, newest
+  first, each summarised without its (potentially large) result document —
+  a failed job carries its `{"error", "details"}` envelope inline so a
+  client can offer the next step without a second request — and
+  `GET /api/v1/events` is a single Server-Sent Events stream multiplexing
+  every job's lifecycle for the whole session. It opens with an
+  `event: snapshot` frame carrying the job index, so a client connecting
+  mid-deploy is caught up before it is told anything new, then sends
+  `job_started` / `job_progress` / `job_done` frames naming the job each
+  belongs to. Progress frames are summaries (phase, mod, position,
+  percent), and a download's per-read ticks are coalesced to whole
+  percents; the per-job stream (`GET /api/v1/jobs/{id}/events`) is
+  unchanged and remains the full-detail view (#327, epic #326)
 
 - `lmm serve` starts a local web UI (127.0.0.1:7420 by default, `--addr`
   to change it, `--no-open` to skip auto-opening a browser): a

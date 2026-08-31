@@ -12,7 +12,7 @@ A mod manager for Linux for searching, installing, updating, and managing game m
 - **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
 - **Dependency Resolution**: Automatically fetches and installs mod dependencies
 - **Infinite-Scroll Search**: Browse a continuously loading result list with clean cancel support
-- **Local Web UI**: `lmm serve` — a server-rendered browser UI over the same database and profiles, with a JSON API and live progress via SSE — see [Web UI](#web-ui-lmm-serve)
+- **Local Web UI**: `lmm serve` — a single-page browser UI over the same database and profiles, with a JSON API and live progress via SSE — see [Web UI](#web-ui-lmm-serve)
 - **Pure Go**: No CGO required, easy cross-compilation
 
 ## Installation
@@ -775,39 +775,42 @@ lmm serve --addr 127.0.0.1:8080
 lmm serve --no-open
 ```
 
-Every page is server-rendered HTML and works with JavaScript disabled — a
-small hand-written enhancement script upgrades a mutation's confirmation to
-submit in place and streams a running job's progress live, but nothing on
-the site depends on it.
+It is a single-page application: one small shell, then everything happens
+in place. It needs JavaScript and a current desktop browser (there is no
+small-screen layout — the CLI is the fallback, and it does everything the
+web UI does). It still installs nothing: Preact and htm are vendored in the
+repo at pinned versions and embedded in the binary, so `go build` remains
+the entire build and the UI never fetches anything from the network.
 
-### What it covers
+**Under construction.** This branch replaced the previous page-per-command
+UI with the SPA design in
+`docs/plans/2026-08-31-serve-spa-design.md`; the screens land unit by unit.
+What is in place today is the foundation — the shell, the URL scheme, the
+theme, and the whole `/api/v1` + jobs + SSE backend the screens drive.
 
-- **`/`** — status dashboard for the active game/profile
-- **`/mods`** — installed mods, with enable/disable/uninstall
-- **`/mods/{source}/{id}`** — full mod details: description, changelog, files, versions
-- **`/search`** — search a source and install, with version and file
-  selection whenever a mod offers more than one
-- **`/updates`** — check for updates and apply a chosen subset
-- **`/profiles`** — list profiles, switch the active one, apply pending
-  changes, deploy
-- **`/health`** — verify findings and file conflicts, with a repair action
-- **`/jobs/{id}`** — a running or finished mutation's live progress and result
+### URLs
 
-This is "CLI parity for the daily workflow," not full parity. **Stays
-CLI-only for now:** `lmm game add`/`game detect`, `lmm auth login`,
-custom-source management, archive import/adopt (`lmm import <archive>`),
-hooks configuration, `lmm profile export`/`import`, and settings mutation.
-Where the UI would otherwise link to one of these, it says so explicitly
-rather than silently leaving the option out.
+```text
+/                                        game chooser
+/g/{game}/{profile}                      Mission Control (home)
+/g/{game}/{profile}/mod/{source}/{id}    a mod's full page
+/g/{game}/{profile}/search?q=…           the search page
+```
 
-### Choosing a game and profile
+The game and profile live in the **path**, not in a query parameter, so the
+context you are working in cannot be lost or silently defaulted as you move
+around, and any URL can be bookmarked or shared as-is. The old
+query-parameter URLs (`/mods`, `/mods/{source}/{id}`, `/search`,
+`/updates`, `/profiles`, `/health`, `/jobs/{id}`) permanently redirect into
+this scheme, carrying whatever game/profile they resolved to; when they
+resolve to nothing, they land on `/`.
 
-Every page scoped to a game and profile reads `?game=` and `?profile=` from
-the URL (a mutation form carries the same two as hidden fields, so a
-resubmission stays scoped to what you were looking at). Leave either off
-and it falls back to your configured default game, and that game's active
-profile — the same defaults the CLI itself uses. An unknown value, or no
-configured default, renders a "pick one" page instead of failing.
+### Theme
+
+Light and dark, following your system by default, with a persisted
+override you can set from the top bar. The override is remembered in the
+browser's local storage and applied before the first paint, so switching
+pages never flashes the wrong theme.
 
 ### `/api/v1` and Server-Sent Events
 
@@ -835,24 +838,37 @@ GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
 GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
 ```
 
-(Enable/disable are the one exception: with no options and nothing to
-preview, they skip straight to a job with no plan step.)
+Two endpoints report on jobs as a whole rather than one at a time — what
+the UI's activity tray is built on:
 
-The events stream sends one JSON frame per typed core progress event
+```text
+GET  /api/v1/jobs               -> every retained job, newest first
+GET  /api/v1/events             -> Server-Sent Events: every job's lifecycle
+```
+
+(Enable/disable are the one exception: with no options and nothing to
+preview, they skip the plan step entirely —
+`POST /api/v1/mods/{source}/{id}/enable` and `.../disable` start the job
+directly and answer with the same `{"job_id"}` document.)
+
+The per-job events stream sends one JSON frame per typed core progress event
 (`event:` names the event type), a comment heartbeat roughly every 15
 seconds while a job is otherwise quiet, and a final `event: done` frame
 carrying the same job status document `GET /api/v1/jobs/{id}` returns — so
 a client never has to race "the stream closed" against "go fetch the final
 status" separately.
 
-### `?sync=1`: the no-JavaScript mutation fallback
-
-Every mutation's submit target also accepts `?sync=1`: instead of starting
-a background job and redirecting to `/jobs/{id}`, the server runs the
-operation inline and renders the result directly. This is what a plain
-HTML form gets with JavaScript disabled, and it's available to any caller —
-curl included — that would rather wait for the result than watch it stream
-in.
+`GET /api/v1/events` is the other shape: one stream for the whole session,
+multiplexing every job. It opens with an `event: snapshot` frame carrying
+the same document `GET /api/v1/jobs` answers with — so a client that
+connects mid-deploy is caught up before it is told anything new — then
+sends `event: job_started`, `event: job_progress` and `event: job_done`
+frames, each naming the job it belongs to. Progress frames are summaries
+(phase, mod, position, percent) rather than whole core events, and a
+download's ticks are coalesced to whole percents; open the per-job stream
+above for the full detail. The job index and the `job_done` frame both
+carry a failed job's `{"error", "details"}` envelope, but never its result
+document — read `GET /api/v1/jobs/{id}` for that.
 
 ### Security posture
 
@@ -872,13 +888,15 @@ single trusted user on their own machine:
   "rebound" by attacker-controlled DNS the way an arbitrary name could,
   which is what real LAN traffic to a wildcard bind normally uses anyway.
 - `Origin` is checked against `Host` on every state-changing request, and a
-  CSRF token — one per server process, carried in every rendered form and
-  accepted as an `X-CSRF-Token` header for scripts — is required for every
-  state-changing request, page or API alike.
-- Every response, page or static asset, carries conservative headers
+  CSRF token — one per server process, delivered to the UI in the shell's
+  `<meta name="csrf-token">` and sent back as an `X-CSRF-Token` header — is
+  required for every state-changing request.
+- Every response, shell or static asset, carries conservative headers
   (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a
   same-origin `Referrer-Policy`, and a `default-src 'self'`
-  Content-Security-Policy).
+  Content-Security-Policy). The policy admits exactly one inline script —
+  the theme bootstrap — and it does so by the SHA-256 of that script's own
+  bytes, not by `'unsafe-inline'`. There is no `'unsafe-eval'`.
 - **Cross-process note:** a CLI mutation and a `serve` mutation running at
   the same time are guarded only by SQLite's own locking, not a shared
   lock across processes — avoid running CLI mutations while a `serve`
@@ -1277,7 +1295,7 @@ internal/
 │   ├── config/           # YAML configuration
 │   └── cache/            # Mod file cache
 ├── linker/               # Deployment strategies
-├── serve/                # `lmm serve`: HTTP pages + /api/v1 JSON + SSE over core.Service (imports only app/core/domain; see Web UI above)
+├── serve/                # `lmm serve`: the SPA (spa/ + vendor/) + /api/v1 JSON + SSE over core.Service (imports only app/core/domain; see Web UI above)
 └── core/                 # Business logic orchestration (flat package, 49 files); frontends never reach past it
     ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
     ├── ops.go             # beginOp: the Service's single mutation-serialization slot
@@ -1391,21 +1409,28 @@ a dev build self-identifies as e.g. `1.29.0 (dev: v1.29.0-2-g140e3c6-dirty)`
 instead of silently claiming the last released version. A plain
 `go build`/`go test` (no ldflags) behaves exactly like a clean release build.
 
-### `lmm serve`'s CSS
+### `lmm serve`'s front end
 
-`internal/serve/static/app.css` is currently a **hand-written stopgap**, not
-a Tailwind build output: the standalone `tailwindcss` CLI (`make css`
-compiles `internal/serve/static/app.src.css` through it) has not been
-available in this project's build environment, and the build must never
-fetch or vendor one on its own. The stopgap defines, by hand, every
-Tailwind utility class the templates under `internal/serve/templates/`
-actually reference - `css_coverage_internal_test.go`'s
-`TestAppCSS_CoversEveryTemplateClass` fails the build if a template ever
-references a class the stopgap doesn't define, so the two can't silently
-drift apart. If you have the standalone `tailwindcss` CLI installed, run
-`make css` to regenerate `app.css` from `app.src.css` for real; if not,
-extend the stopgap by hand for any new class a template needs and let the
-ratchet keep it honest.
+There is **no Node, no npm and no bundler** anywhere in this project, and
+there never will be: `go build` is the entire build, and a user installs
+nothing. The web UI is plain ES modules a browser loads directly.
+
+- `internal/serve/spa/` — the shell (`index.html`), the stylesheet
+  (`app.css`, hand-written CSS custom properties, two full token sets for
+  dark and light), and the application's own modules under `app/`.
+- `internal/serve/vendor/` — Preact and htm, at pinned versions, committed.
+  Each file carries a header naming its package, exact version, source URL
+  and the SHA-256 of the upstream artifact, plus any local edit made to it.
+  **Nothing in this repo ever fetches them**; upgrading one is a deliberate,
+  reviewed commit that replaces the file and updates its header.
+
+Both trees are served from the binary via `go:embed`. Two ratchets keep the
+front end honest: `no_unsafe_dom_test.go` fails the build on any raw-markup
+write (`dangerouslySetInnerHTML`, `.innerHTML`, `document.write`, …), any
+`eval`, or any import over the network; and
+`TestSPAModuleGraphResolvesOverHTTP` walks the module graph from the entry
+point and requires every import to resolve — without a bundler, nothing
+else would catch a bad path before a browser did.
 
 ## License
 

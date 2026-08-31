@@ -1,0 +1,194 @@
+/*
+ * The "Launcher" design tokens and the shell's own baseline
+ * (docs/plans/2026-08-31-serve-spa-design.md §Visual design).
+ *
+ * TWO complete token sets, dark and light, both defined from day one so no
+ * screen can be built against only one of them. Which set applies:
+ *
+ *   :root                        the light set, the unconditional baseline
+ *   @media (prefers-color-scheme: dark)   the dark set, when the SYSTEM says
+ *                                         dark and no override is stamped
+ *   [data-theme="dark"|"light"]  the persisted user override, which wins
+ *                                over the system in both directions
+ *
+ * The override attribute is stamped by the shell's pre-paint inline script
+ * (spa/index.html) and maintained by app/theme.js.
+ *
+ * Density is tuned for >= 1080p desktop only; there is no small-screen
+ * design (owner decision, §Settled decisions).
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, back to front. */
+  --surface-base: #f4f5f7;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
+  --surface-sunken: #e8eaee;
+
+  /* Text. */
+  --text-primary: #10151c;
+  --text-secondary: #4a5461;
+  --text-muted: #6b7583;
+  --text-inverted: #f7f9fb;
+
+  /* Lines. */
+  --border-subtle: #d8dce2;
+  --border-strong: #b3bac4;
+  --focus-ring: #b06a00;
+
+  /* The amber primary action, and the good/warn/conflict semantics. */
+  --accent: #b06a00;
+  --accent-hover: #8d5500;
+  --accent-contrast: #ffffff;
+  --good: #1c7c3c;
+  --warn: #a86a00;
+  --danger: #b3261e;
+
+  /* Type. */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Rhythm. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --radius: 6px;
+  --shadow-raised: 0 1px 2px rgb(16 21 28 / 8%), 0 4px 12px rgb(16 21 28 / 6%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface-base: #0b0f14;
+    --surface-raised: #111823;
+    --surface-overlay: #16202d;
+    --surface-sunken: #070a0e;
+
+    --text-primary: #e8edf4;
+    --text-secondary: #a8b3c1;
+    --text-muted: #7c8896;
+    --text-inverted: #0b0f14;
+
+    --border-subtle: #223044;
+    --border-strong: #33455e;
+    --focus-ring: #f0a92b;
+
+    --accent: #f0a92b;
+    --accent-hover: #ffc257;
+    --accent-contrast: #0b0f14;
+    --good: #4ac97e;
+    --warn: #f0a92b;
+    --danger: #ff6b5e;
+
+    --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 32%);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-base: #0b0f14;
+  --surface-raised: #111823;
+  --surface-overlay: #16202d;
+  --surface-sunken: #070a0e;
+
+  --text-primary: #e8edf4;
+  --text-secondary: #a8b3c1;
+  --text-muted: #7c8896;
+  --text-inverted: #0b0f14;
+
+  --border-subtle: #223044;
+  --border-strong: #33455e;
+  --focus-ring: #f0a92b;
+
+  --accent: #f0a92b;
+  --accent-hover: #ffc257;
+  --accent-contrast: #0b0f14;
+  --good: #4ac97e;
+  --warn: #f0a92b;
+  --danger: #ff6b5e;
+
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 32%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+kbd,
+samp,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+:where(a) {
+  color: var(--accent);
+}
+
+:where(a):hover {
+  color: var(--accent-hover);
+}
+
+:where(:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Confident, tracked section headers - the Launcher signature. */
+.section-header {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-root {
+  min-height: 100vh;
+}
+
+/*
+ * What the shell shows before main.js has mounted anything, and what a
+ * browser with modules disabled is left with. Both are deliberately plain:
+ * this is the only markup in the application that Preact did not render.
+ */
+.app-booting,
+.app-noscript {
+  margin: 0;
+  padding: var(--space-8);
+  color: var(--text-muted);
+}
+
+.app-noscript code {
+  color: var(--text-primary);
+}

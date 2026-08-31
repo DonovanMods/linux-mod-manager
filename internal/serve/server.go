@@ -1,8 +1,11 @@
-// Package serve implements `lmm serve`: a local HTTP server rendering
-// server-side HTML pages and a small /api/v1 JSON layer over a long-lived
-// *core.Service, per docs/plans/2026-08-30-serve-design.md. It imports only
-// internal/app, internal/core, internal/domain, and the standard library
-// (enforced by boundary_test.go).
+// Package serve implements `lmm serve`: a local HTTP server hosting a
+// single-page application and the /api/v1 JSON + SSE layer it drives, over
+// a long-lived *core.Service. The API, jobs and SSE surfaces are
+// docs/plans/2026-08-30-serve-design.md's; the SPA that replaced that
+// design's server-rendered page layer is
+// docs/plans/2026-08-31-serve-spa-design.md. It imports only internal/app,
+// internal/core, internal/domain, and the standard library (enforced by
+// boundary_test.go).
 package serve
 
 import (
@@ -128,10 +131,9 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		Addr: opts.Addr,
 		// Security headers, request logging, and the Host allow-list apply
 		// to every request the mux ever sees - including a 404/405 the mux
-		// generates itself and /static/, neither of which goes through
-		// wrap (task-3 review Minor 4; the logging half is task-3
-		// re-review New finding 2). wrap adds the checks specific to the
-		// routes that need them.
+		// generates itself, which goes through no route at all (task-3
+		// review Minor 4; the logging half is task-3 re-review New finding
+		// 2). wrap adds the checks specific to the routes that need them.
 		Handler: securityHeaders(s.rootLogging(s.hostCheck(s.mux))),
 	}
 	// RegisterOnShutdown fires when Shutdown is called - the only hook

@@ -23,8 +23,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"strconv"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -33,17 +31,10 @@ import (
 func init() {
 	registerPlanKind(planKind{
 		Name:         "switch",
-		Title:        "Switch profile",
 		PlanOptions:  decodeKindOptions[switchPlanRequest],
 		ApplyOptions: decodeKindOptions[switchApplyRequest],
 		Plan:         planSwitchKind,
 		Apply:        applySwitchKind,
-		Summarize:    summarizeSwitchResult,
-		Form: &kindForm{
-			PlanOptions:  switchPlanForm,
-			ApplyOptions: switchApplyForm,
-			Confirm:      confirmSwitchPlan,
-		},
 	})
 }
 
@@ -99,128 +90,4 @@ func applySwitchKind(ctx context.Context, s *Server, pending, _ any, sink core.E
 		return nil, fmt.Errorf("switch apply: unexpected pending type %T", pending)
 	}
 	return s.svc.ApplyProfileSwitch(ctx, p.Game, p.Plan, sink)
-}
-
-// summarizeSwitchResult implements planKind.Summarize for "switch". The
-// Warnings come last and are never omitted: #294's whole point is that they
-// reach the user without a verbosity flag standing in the way.
-func summarizeSwitchResult(result any) []resultFact {
-	res, ok := result.(*core.SwitchResult)
-	if !ok {
-		return nil
-	}
-
-	facts := []resultFact{
-		{Label: "Disabled", Value: strconv.Itoa(res.Disabled)},
-		{Label: "Enabled", Value: strconv.Itoa(res.Enabled)},
-		{Label: "Installed", Value: strconv.Itoa(res.Installed)},
-	}
-	for _, n := range res.Notes {
-		facts = append(facts, resultFact{Label: "Note", Value: n})
-	}
-	for _, w := range res.Warnings {
-		facts = append(facts, resultFact{Label: "Warning", Value: w})
-	}
-	return facts
-}
-
-// switchPlanForm implements kindForm.PlanOptions: the target profile comes
-// from the path, never the body, so a submission can never switch to a
-// different profile than the button the user pressed.
-func switchPlanForm(r *http.Request) (any, error) {
-	return switchPlanRequest{Profile: r.PathValue("name")}, nil
-}
-
-// switchApplyForm implements kindForm.ApplyOptions: there is nothing to
-// read back.
-func switchApplyForm(*http.Request) (any, error) {
-	return switchApplyRequest{}, nil
-}
-
-// confirmSwitchPlan implements kindForm.Confirm: the diff, and the locked
-// refs whose profile record the switch will not be able to update.
-func confirmSwitchPlan(pending, _ any) confirmView {
-	p, ok := pending.(*pendingSwitch)
-	if !ok {
-		return confirmView{Submit: "Switch"}
-	}
-
-	plan := p.Plan
-	view := confirmView{
-		Heading: fmt.Sprintf("%s -> %s", plan.From, plan.To),
-		Submit:  "Switch",
-		Facts: []resultFact{
-			{Label: "From", Value: plan.From},
-			{Label: "To", Value: plan.To},
-		},
-	}
-	switch {
-	case plan.AlreadyActive:
-		view.Facts = append(view.Facts, resultFact{Label: "Changes", Value: plan.To + " is already the active profile"})
-	case plan.NoChanges:
-		view.Facts = append(view.Facts, resultFact{Label: "Changes", Value: "the same mods are in both profiles; only the active profile would move"})
-	}
-
-	if names := installedModNames(plan.ToDisable); len(names) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be disabled and undeployed", Items: names})
-	}
-	if names := installedModNames(plan.ToEnable); len(names) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be enabled and deployed", Items: names})
-	}
-	if refs := modRefTexts(plan.ToInstall); len(refs) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be downloaded and installed", Items: refs})
-	}
-	if locked := lockedRefWarnings(plan.ToInstall); len(locked) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Locked profile entries", Items: locked})
-	}
-	return view
-}
-
-// installedModNames lists installed mods by name and version, for the two
-// sides of a diff that carry whole rows.
-func installedModNames(mods []domain.InstalledMod) []string {
-	if len(mods) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(mods))
-	for _, m := range mods {
-		names = append(names, m.Name+" "+m.Version)
-	}
-	return names
-}
-
-// modRefTexts names references a plan carries with no resolved mod behind
-// them yet - a profile's own entries, which have an id and a version but no
-// name until the source is asked.
-func modRefTexts(refs []domain.ModReference) []string {
-	if len(refs) == 0 {
-		return nil
-	}
-	items := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		text := domain.ModKey(ref.SourceID, ref.ModID)
-		if ref.Version != "" {
-			text += " " + ref.Version
-		}
-		items = append(items, text)
-	}
-	return items
-}
-
-// lockedRefWarnings names the refs whose lock will refuse the switch's own
-// profile write (#294). It is warning-class rather than a plain list entry:
-// the install still happens, the DB row still moves, and the profile record
-// silently does not - which is precisely why core reports it
-// unconditionally instead of as a --verbose note.
-func lockedRefWarnings(refs []domain.ModReference) []string {
-	var locked []string
-	for _, ref := range refs {
-		if !ref.Locked {
-			continue
-		}
-		locked = append(locked, fmt.Sprintf(
-			"%s is locked at %s - if the install records a different version, its profile entry will not be updated and the switch will report a warning",
-			domain.ModKey(ref.SourceID, ref.ModID), ref.Version))
-	}
-	return locked
 }
