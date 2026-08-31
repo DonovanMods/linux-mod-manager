@@ -170,3 +170,73 @@ func TestServer_Updates_PageOffersTheBatchForm(t *testing.T) {
 	assert.NotContains(t, body, "disabled")
 	assert.NotContains(t, body, "coming in this release")
 }
+
+// TestServer_UpdatesApply_LockedSelection_IsRefusedWithoutStoppingTheBatch
+// pins the two halves of the batch's own contract about a mod it cannot
+// update. The confirm page says so before anything runs, and the run itself
+// records the refusal and carries on: one locked mod must not cost the rest
+// of the selection its update, which is exactly what cmd/lmm's bulk loop
+// does.
+func TestServer_UpdatesApply_LockedSelection_IsRefusedWithoutStoppingTheBatch(t *testing.T) {
+	s, svc, game := newUpdatesFixtureServer(t)
+	_, err := svc.SetModLock(t.Context(), "fake", "u3", game.ID, "default", updateFromVersion)
+	require.NoError(t, err)
+
+	selection := url.Values{
+		"game": {game.ID}, "profile": {"default"}, "mod": {"fake:u1", "fake:u3"},
+	}
+	entry := postFormMulti(s, "/updates/apply", selection)
+	require.Equal(t, http.StatusOK, entry.Code, entry.Body.String())
+	assert.Contains(t, entry.Body.String(), "Locked, so the update would be refused")
+
+	confirm := url.Values{"confirm": {"1"}, "plan_id": {hiddenField(t, entry.Body.String(), "plan_id")}}
+	for key, vs := range selection {
+		confirm[key] = vs
+	}
+	rec := postFormMulti(s, "/updates/apply", confirm)
+	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	j := awaitRedirectedJob(t, s, rec)
+	require.Equal(t, jobSucceeded, j.status().State, "a refused item must not fail the whole batch")
+
+	updated, err := svc.GetInstalledMod(t.Context(), "fake", "u1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, updateToVersion, updated.Version, "the unlocked mod still gets its update")
+
+	locked, err := svc.GetInstalledMod(t.Context(), "fake", "u3", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, updateFromVersion, locked.Version, "the locked mod is left where the lock put it")
+
+	page := getPage(s, "/jobs/"+string(j.status().ID))
+	require.Equal(t, http.StatusOK, page.Code)
+	assert.Contains(t, page.Body.String(), "Not updated", "the refusal must be reported, not swallowed")
+}
+
+// TestServer_UpdatesApply_UpdatePlanKeepsTheSelection is why the confirm
+// page carries the ticked set as hidden fields: re-planning from the form
+// must compute the SAME batch, not an empty one.
+func TestServer_UpdatesApply_UpdatePlanKeepsTheSelection(t *testing.T) {
+	s, svc, game := newUpdatesFixtureServer(t)
+	first := postFormMulti(s, "/updates/apply", updatesBatchForm(game.ID, nil))
+	require.Equal(t, http.StatusOK, first.Code)
+	firstPlanID := hiddenField(t, first.Body.String(), "plan_id")
+
+	// No confirm flag: the "Update plan" button, submitting the page's own
+	// fields plus a changed option.
+	updated := postFormMulti(s, "/updates/apply", updatesBatchForm(game.ID, url.Values{
+		"plan_id": {firstPlanID}, "skip_hooks": {"1"},
+	}))
+
+	require.Equal(t, http.StatusOK, updated.Code, "no confirm flag means re-plan, not apply")
+	body := updated.Body.String()
+	assert.Contains(t, body, "U1", "the re-plan must still be about the ticked mods")
+	assert.Contains(t, body, "U2")
+	assert.NotContains(t, body, "U3")
+	assert.NotEqual(t, firstPlanID, hiddenField(t, body, "plan_id"), "a re-plan issues a fresh handle")
+
+	assertUntouchedThirdMod(t, s, game)
+	for _, modID := range []string{"u1", "u2"} {
+		installed, err := svc.GetInstalledMod(t.Context(), "fake", modID, game.ID, "default")
+		require.NoError(t, err)
+		assert.Equal(t, updateFromVersion, installed.Version, "Update plan must apply nothing")
+	}
+}
