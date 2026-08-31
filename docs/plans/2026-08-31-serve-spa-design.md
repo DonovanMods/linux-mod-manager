@@ -139,12 +139,14 @@ internal/serve/
 
 ## Scope
 
-**In (feature-complete bar):** everything above — the full daily workflow incl. the five
-previously CLI-only actions, per-mod job history, theme override.
-**Explicit owner decision requested at doc review:** does feature-complete include the **admin
-surface** (game add/detect, `auth login`, custom-source management, archive import) — needing
-#307's non-interactive core work — or does admin stay CLI-only for the redesign's first release?
-The design accommodates either (a Setup modal slot in the game chooser).
+**In (feature-complete bar — owner decision at doc review, 2026-08-31): FULL BIDIRECTIONAL
+PARITY.** The web UI can do everything the CLI can — including **all admin tools**: game
+add/detect, `auth login`, custom-source management, archive import/adopt (the primary user IS the
+admin; this is a single-user tool). That pulls in #307 (non-interactive game add + credential
+store in core) and a real **Setup surface**: first-run flow in the game chooser, game add/detect
+UI, source auth UI, custom-source editor, archive import/adopt UI (over `ImportArchivePlan`).
+And vice-versa: any capability the web UI adds must be CLI-reachable — concretely, per-item
+update batches land in core (#324) with the CLI's `-i` selection picker (#254) closing that gap.
 **Out:** remote access/auth, mobile layouts, no-JS operation, i18n.
 
 ## Testing
