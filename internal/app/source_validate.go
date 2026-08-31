@@ -1,7 +1,7 @@
 package app
 
 import (
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // SourceProbeResult is `lmm source validate --probe`'s live smoke-test

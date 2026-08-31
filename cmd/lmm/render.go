@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // flowLine is the CLI's flat view of a core flow event. Its field names are

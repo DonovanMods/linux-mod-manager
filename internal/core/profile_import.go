@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // --- ImportPlan/ApplyImport (Phase 6b Task 8) ---

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/app"
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
@@ -33,7 +33,7 @@ var ErrCancelled = errors.New("cancelled")
 var ErrReported = errors.New("already reported")
 
 var (
-	version = "1.30.1"
+	version = "2.0.0"
 
 	// buildDescribe is injected at build time via -ldflags -X (see the
 	// Makefile's `build` target) with `git describe --tags --dirty`.

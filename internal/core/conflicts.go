@@ -7,7 +7,7 @@ import (
 	"io/fs"
 	"sort"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ConflictModRef identifies one mod participating in a file conflict. Key is

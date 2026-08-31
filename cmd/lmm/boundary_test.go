@@ -12,7 +12,7 @@ import (
 )
 
 // modulePrefix is the import-path prefix of every package in this module.
-const modulePrefix = "github.com/DonovanMods/linux-mod-manager/"
+const modulePrefix = "github.com/DonovanMods/linux-mod-manager/v2/"
 
 // allowedImports are the intra-module packages a frontend may depend on.
 // Anything else means logic that belongs in internal/core has leaked into a

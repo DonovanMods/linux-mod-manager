@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // Extractor handles archive extraction for mod files

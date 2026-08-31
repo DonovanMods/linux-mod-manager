@@ -12,7 +12,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // errorBodyLimit caps how much of an error response we read into memory before

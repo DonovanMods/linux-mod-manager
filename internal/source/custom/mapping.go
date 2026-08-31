@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // lookupPath traverses a decoded JSON document (map[string]any tree) by a

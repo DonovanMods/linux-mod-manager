@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -411,7 +411,7 @@ func errCalledFromCore() bool {
 		return false
 	}
 	name := runtime.FuncForPC(pc).Name()
-	return strings.Contains(name, "linux-mod-manager/internal/core.")
+	return strings.Contains(name, "linux-mod-manager/v2/internal/core.")
 }
 
 // countingCoreContext counts every synchronous, same-goroutine ctx.Err()

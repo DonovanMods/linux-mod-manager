@@ -9,7 +9,7 @@ package core
 import (
 	"context"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ModSettingResult reports sourceID/modID's full settings snapshot after a

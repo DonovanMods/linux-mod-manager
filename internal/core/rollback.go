@@ -10,7 +10,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // --- PlanRollback (v2 Phase 2 Unit I, #289) ---

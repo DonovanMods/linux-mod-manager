@@ -16,7 +16,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // ProfileSyncPlan is the pure, displayable diff between the DB's

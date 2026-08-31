@@ -38,7 +38,7 @@ func TestImportBoundary_NeverImportsConcreteSources(t *testing.T) {
 		deps[dep] = true
 	}
 
-	const base = "github.com/DonovanMods/linux-mod-manager/internal/source/"
+	const base = "github.com/DonovanMods/linux-mod-manager/v2/internal/source/"
 	forbidden := concreteSourcePackages(t)
 	for _, pkg := range forbidden {
 		require.False(t, deps[base+pkg],

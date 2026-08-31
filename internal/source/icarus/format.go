@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/DonovanMods/go-unrealpak"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // This file implements source.MergeCompiler's format-vocabulary methods

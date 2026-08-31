@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/app"
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"

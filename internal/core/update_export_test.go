@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // NewUpdatePlanForApplyTest builds an UpdatePlan directly around an

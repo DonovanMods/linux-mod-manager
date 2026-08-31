@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // SettingsResult reports the state of the settings a mutation just wrote -

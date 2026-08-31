@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // GameFromDetected converts one domain.DetectedGame (an app.DetectGames

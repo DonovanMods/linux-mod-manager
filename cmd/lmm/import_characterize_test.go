@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

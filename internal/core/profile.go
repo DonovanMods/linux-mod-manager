@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // ProfileResult reports the profile a profile-management mutation acted on:

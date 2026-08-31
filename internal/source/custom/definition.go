@@ -3,7 +3,7 @@
 // docs/plans/2026-07-13-custom-sources-design.md
 package custom
 
-import "github.com/DonovanMods/linux-mod-manager/internal/source"
+import "github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
 // SourceDefinition and its Type* constants moved to internal/source (v2
 // Phase 2 Task 22): the interface package a frontend may import without

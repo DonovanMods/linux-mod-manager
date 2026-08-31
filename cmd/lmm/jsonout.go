@@ -6,7 +6,7 @@ import (
 	"errors"
 	"os"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
 
 // emitJSON writes v to stdout as exactly one JSON document (2-space indent,

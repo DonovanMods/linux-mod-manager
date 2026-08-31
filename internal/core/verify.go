@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // VerifyTier selects how much of the verify engine's work runs: VerifyLocal

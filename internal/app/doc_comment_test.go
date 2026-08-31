@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/testutil"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/testutil"
 )
 
 // TestExportedIdentifiersHaveDocComments is internal/core's doc-comment

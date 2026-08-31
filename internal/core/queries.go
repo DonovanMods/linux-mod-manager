@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // ModListing is one row of a ModList: the installed mod itself plus the

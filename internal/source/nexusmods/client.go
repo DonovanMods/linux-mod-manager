@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/source/httpclient"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 )
 
 const (

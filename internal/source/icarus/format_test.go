@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/go-unrealpak"
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // newFormatTestSource returns an *Icarus suitable for exercising the format

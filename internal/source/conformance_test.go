@@ -3,10 +3,10 @@ package source_test
 import (
 	"testing"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/curseforge"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/custom"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/curseforge"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

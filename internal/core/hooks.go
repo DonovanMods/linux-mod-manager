@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // HookContext provides environment information for hook scripts

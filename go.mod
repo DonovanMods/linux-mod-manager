@@ -1,4 +1,4 @@
-module github.com/DonovanMods/linux-mod-manager
+module github.com/DonovanMods/linux-mod-manager/v2
 
 go 1.27
 

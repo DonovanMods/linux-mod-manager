@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 const defaultHookTimeout = 60 * time.Second

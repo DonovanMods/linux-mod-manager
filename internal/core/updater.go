@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // Updater checks for and applies mod updates

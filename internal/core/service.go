@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/linker"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/config"
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/db"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 	"golang.org/x/sync/errgroup"
 )
 

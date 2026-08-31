@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
 
 // Open resolves the installation's paths, prepares its directories, opens the

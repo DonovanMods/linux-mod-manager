@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // Token represents an OAuth token

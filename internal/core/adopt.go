@@ -30,8 +30,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // LocalScan is the pure, displayable result of scanning a game's mod_path

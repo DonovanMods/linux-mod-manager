@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 
-	"github.com/DonovanMods/linux-mod-manager/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/internal/source/steam"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steam"
 )
 
 // DetectGames scans Steam libraries for known moddable games, exposing

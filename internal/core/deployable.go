@@ -8,7 +8,7 @@
 package core
 
 import (
-	"github.com/DonovanMods/linux-mod-manager/internal/storage/cache"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
 // deployableFiles returns the version-dir-relative files that deploy-direction
