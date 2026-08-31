@@ -1,0 +1,93 @@
+{{define "content" -}}
+{{if not .Nav.Game}}
+<h1 class="mb-4 text-2xl font-bold">Mod</h1>
+{{if not .Nav.Games}}
+<p class="text-gray-600">No games configured.</p>
+<p class="mt-2 text-sm text-gray-600">Add one from the command line with <code>lmm game add</code>.</p>
+{{else}}
+<p class="text-gray-600">Select a game and profile above to see this mod.</p>
+{{end}}
+{{else if .NotFound}}
+<h1 class="mb-4 text-2xl font-bold">Mod not found</h1>
+<p class="text-gray-600">No mod {{.ModID}} from source {{.SourceID}} could be found.</p>
+{{else if .Detail}}
+<h1 class="mb-1 text-2xl font-bold">{{.Detail.Mod.Name}}</h1>
+<p class="mb-4 text-sm text-gray-600">
+{{.Detail.Mod.SourceID}} / {{.Detail.Mod.ID}} - version {{.Detail.Mod.Version}}
+{{if .Detail.Mod.Author}} - by {{.Detail.Mod.Author}}{{end}}
+</p>
+
+{{if .Detail.Mod.Summary}}<p class="mb-4 text-gray-800">{{.Detail.Mod.Summary}}</p>{{end}}
+
+{{if .Detail.Mod.Description}}
+<section aria-label="Description" class="mb-6">
+<h2 class="mb-2 text-lg font-semibold">Description</h2>
+<!-- Mod.Description carries a source's raw markup (e.g. NexusMods HTML) all
+     the way through - it is rendered here as plain, auto-escaped TEXT, never
+     as template.HTML, so any markup shows up literally rather than as live
+     HTML (docs/plans/2026-08-30-serve-impl.md Global Constraints: escaping
+     ruling). -->
+<p class="whitespace-pre-wrap text-gray-800">{{.Detail.Mod.Description}}</p>
+</section>
+{{end}}
+
+{{if .Detail.Changelog}}
+<section aria-label="Changelog" class="mb-6">
+<h2 class="mb-2 text-lg font-semibold">Changelog</h2>
+<!-- source.ChangelogProvider's contract requires plain text, but this is
+     still rendered as auto-escaped text, never template.HTML - the same
+     ratchet Description is held to. -->
+<p class="whitespace-pre-wrap text-gray-800">{{.Detail.Changelog}}</p>
+</section>
+{{end}}
+
+{{if .Detail.Notes}}
+<p class="mb-4 text-sm text-amber-700">{{range .Detail.Notes}}{{.}} {{end}}</p>
+{{end}}
+
+{{with .Detail.Installed}}
+<section aria-label="Installed state" class="mb-6 rounded border border-gray-200 bg-white p-4">
+<h2 class="mb-2 text-lg font-semibold">Installed</h2>
+<dl class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm text-gray-700">
+<dt class="font-medium text-gray-500">Profile</dt><dd>{{.Profile}}</dd>
+<dt class="font-medium text-gray-500">Version</dt><dd>{{.Version}}</dd>
+<dt class="font-medium text-gray-500">Update policy</dt><dd>{{.UpdatePolicy}}</dd>
+{{if .Locked}}<dt class="font-medium text-gray-500">Locked</dt><dd>{{.LockedVersion}}</dd>{{end}}
+</dl>
+</section>
+{{end}}
+
+{{if .Files}}
+<section aria-label="Files" class="mb-6">
+<h2 class="mb-2 text-lg font-semibold">Files</h2>
+{{if .Files.MergedPakOnly}}
+<p class="text-sm text-gray-600">This mod contributes only to the profile's merged pak; it owns no files of its own.</p>
+{{else if not .Files.Files}}
+<p class="text-sm text-gray-600">No deployed files recorded.</p>
+{{else}}
+<!-- Renders every file unbounded for v2.1.0 - no pagination. -->
+<ul class="list-inside list-disc text-sm text-gray-700">
+{{range .Files.Files}}<li>{{.Path}} ({{.Size}} bytes{{if not .Deployed}}, missing{{end}})</li>{{end}}
+</ul>
+{{end}}
+</section>
+{{end}}
+
+<section aria-label="Install" class="rounded border border-gray-200 bg-white p-4">
+<h2 class="mb-2 text-lg font-semibold">Install</h2>
+<form method="post" action="/mods/{{.SourceID}}/{{.ModID}}/install">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<input type="hidden" name="game" value="{{.Nav.Game.ID}}">
+<input type="hidden" name="profile" value="{{.Nav.Profile}}">
+{{if .Versions}}
+<label class="mb-1 block text-sm font-medium text-gray-700" for="install-version">Version</label>
+<select id="install-version" name="version" disabled class="mb-2 rounded border-gray-300 text-sm">
+{{range .Versions}}<option value="{{.}}">{{.}}</option>{{end}}
+</select>
+{{end}}
+<button type="submit" disabled class="rounded border border-gray-300 px-3 py-1 text-sm text-gray-400">Install</button>
+<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+</form>
+</section>
+{{end}}
+{{- end}}

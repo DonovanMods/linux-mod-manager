@@ -1,0 +1,68 @@
+{{define "content" -}}
+<h1 class="mb-4 text-2xl font-bold">Search</h1>
+
+<form method="get" action="/search" class="mb-6 flex flex-wrap items-end gap-2" role="search">
+<div>
+<label class="mb-1 block text-sm font-medium text-gray-700" for="search-q">Query</label>
+<input id="search-q" type="search" name="q" value="{{.Query}}" class="rounded border-gray-300 text-sm">
+</div>
+{{if .Nav.Game}}
+<input type="hidden" name="game" value="{{.Nav.Game.ID}}">
+<input type="hidden" name="profile" value="{{.Nav.Profile}}">
+{{end}}
+<button type="submit" class="rounded border border-gray-300 px-3 py-1 text-sm font-medium">Search</button>
+</form>
+
+{{if not .Nav.Game}}
+{{if not .Nav.Games}}
+<p class="text-gray-600">No games configured.</p>
+<p class="mt-2 text-sm text-gray-600">Add one from the command line with <code>lmm game add</code>.</p>
+{{else}}
+<p class="text-gray-600">Select a game and profile above to search.</p>
+{{end}}
+{{else if not .Query}}
+<p class="text-gray-600">Enter a query above to search this game's sources.</p>
+{{else if not .Report}}
+<p class="text-gray-600">No results for "{{.Query}}".</p>
+{{else if not .Report.Mods}}
+<p class="text-gray-600">No results for "{{.Query}}".</p>
+{{if .Report.Warnings}}
+<ul class="mt-2 text-sm text-amber-700">
+{{range .Report.Warnings}}<li>{{.SourceID}}: {{.ErrorMessage}}</li>{{end}}
+</ul>
+{{end}}
+{{else}}
+<p class="mb-2 text-sm text-gray-600">{{.Report.TotalResults}} result(s) for "{{.Report.Query}}".</p>
+<!-- Renders every result unbounded for v2.1.0 - no pagination. -->
+<div class="overflow-x-auto">
+<table class="w-full text-left text-sm">
+<thead>
+<tr class="border-b border-gray-200 text-gray-500">
+<th scope="col" class="py-2 pr-4">Name</th>
+<th scope="col" class="py-2 pr-4">Version</th>
+<th scope="col" class="py-2 pr-4">Installed</th>
+<th scope="col" class="py-2 pr-4">Actions</th>
+</tr>
+</thead>
+<tbody>
+{{range .Report.Mods}}
+<tr class="border-b border-gray-100">
+<td class="py-2 pr-4"><a class="font-medium text-blue-700 hover:underline" href="/mods/{{.SourceID}}/{{.ID}}">{{.Name}}</a></td>
+<td class="py-2 pr-4">{{.Version}}</td>
+<td class="py-2 pr-4">{{if .Installed}}yes{{else}}no{{end}}</td>
+<td class="py-2 pr-4">
+<form method="post" action="/mods/{{.SourceID}}/{{.ID}}/install">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<input type="hidden" name="profile" value="{{$.Nav.Profile}}">
+<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Install</button>
+</form>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+{{end}}
+{{- end}}

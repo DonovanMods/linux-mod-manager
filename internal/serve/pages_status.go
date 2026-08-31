@@ -6,9 +6,12 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
 
-// statusPageData is "/"'s template data.
+// statusPageData is "/"'s template data. Nav stays nil (via pageChrome's
+// zero value passed through chrome(r, "Status", nil)): the dashboard lists
+// every configured game at once, so it has no single active game+profile
+// for the nav switcher to represent.
 type statusPageData struct {
-	Title string
+	pageChrome
 	Games []statusGameCard
 }
 
@@ -32,7 +35,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := statusPageData{Title: "Status", Games: make([]statusGameCard, 0, len(report.Games))}
+	data := statusPageData{pageChrome: s.chrome(r, "Status", nil), Games: make([]statusGameCard, 0, len(report.Games))}
 	for _, summary := range report.Games {
 		card := statusGameCard{Summary: summary}
 		game := summary.Game

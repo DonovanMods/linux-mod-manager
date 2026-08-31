@@ -11,8 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `lmm serve` starts a local web UI (127.0.0.1:7420 by default, `--addr`
   to change it, `--no-open` to skip auto-opening a browser): a
-  server-rendered status dashboard for now, with the read pages, JSON API,
-  and mutations landing in follow-up units of this epic (#319, epic #276).
+  server-rendered status dashboard, plus `/mods`, `/mods/{source}/{id}`
+  (full prose, changelog, files, versions - #232/#87), `/search`,
+  `/updates` (#74), `/profiles`, and `/health` (verify findings + file
+  conflicts) read pages, each with a game/profile switcher and disabled
+  mutation form shells previewing the routes a later unit wires (#319). A
+  read-only `GET /api/v1` JSON API mirrors the same reads -
+  `/api/v1/{status,mods,mods/{source}/{id},search,updates,profiles,health,
+conflicts}` - each answering exactly the document `lmm <cmd> --json`
+  emits for the identical call, with the CLI's `{"error","details"}`
+  envelope on failure (#320). Mutations and background jobs land in
+  follow-up units of this epic (#321/#322, epic #276).
 - `mod show` displays a mod's changelog when its source can supply one
   (`--json`: `changelog`, additive) - NexusMods now implements the new
   `source.ChangelogProvider` optional capability via its files endpoint's

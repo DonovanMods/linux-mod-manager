@@ -21,3 +21,27 @@ func parsePage(name string) *template.Template {
 // statusTemplate renders "/" - the status dashboard
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var statusTemplate = parsePage("status")
+
+// modsTemplate renders "/mods" - the installed mods list
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var modsTemplate = parsePage("mods")
+
+// modDetailTemplate renders "/mods/{source}/{id}" - a mod's full detail
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var modDetailTemplate = parsePage("mod_detail")
+
+// searchTemplate renders "/search" - the search form and results
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var searchTemplate = parsePage("search")
+
+// updatesTemplate renders "/updates" - the update-selection table
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var updatesTemplate = parsePage("updates")
+
+// profilesTemplate renders "/profiles" - the profile list
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var profilesTemplate = parsePage("profiles")
+
+// healthTemplate renders "/health" - verify findings and file conflicts
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var healthTemplate = parsePage("health")

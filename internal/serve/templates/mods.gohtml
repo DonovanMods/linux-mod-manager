@@ -1,0 +1,65 @@
+{{define "content" -}}
+<h1 class="mb-4 text-2xl font-bold">Mods</h1>
+{{if not .List}}
+{{if not .Nav.Games}}
+<p class="text-gray-600">No games configured.</p>
+<p class="mt-2 text-sm text-gray-600">Add one from the command line with <code>lmm game add</code>.</p>
+{{else}}
+<p class="text-gray-600">Select a game and profile above to see its mods.</p>
+{{end}}
+{{else if not .List.Mods}}
+<p class="text-gray-600">No mods installed in this profile.</p>
+{{else}}
+<!-- Renders every installed mod unbounded for v2.1.0 - no pagination. -->
+<div class="overflow-x-auto">
+<table class="w-full text-left text-sm">
+<caption class="sr-only">Mods installed in {{.Nav.Profile}}</caption>
+<thead>
+<tr class="border-b border-gray-200 text-gray-500">
+<th scope="col" class="py-2 pr-4">Name</th>
+<th scope="col" class="py-2 pr-4">Version</th>
+<th scope="col" class="py-2 pr-4">Enabled</th>
+<th scope="col" class="py-2 pr-4">Update policy</th>
+<th scope="col" class="py-2 pr-4">Actions</th>
+</tr>
+</thead>
+<tbody>
+{{range .List.Mods}}
+<tr class="border-b border-gray-100">
+<td class="py-2 pr-4"><a class="font-medium text-blue-700 hover:underline" href="/mods/{{.SourceID}}/{{.ID}}">{{.Name}}</a></td>
+<td class="py-2 pr-4">{{.Version}}</td>
+<td class="py-2 pr-4">{{if .Enabled}}yes{{else}}no{{end}}</td>
+<td class="py-2 pr-4">{{.UpdatePolicy}}</td>
+<td class="py-2 pr-4">
+<div class="flex flex-wrap gap-2">
+{{if .Enabled}}
+<form method="post" action="/mods/{{.SourceID}}/{{.ID}}/disable">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<input type="hidden" name="profile" value="{{$.Nav.Profile}}">
+<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Disable</button>
+</form>
+{{else}}
+<form method="post" action="/mods/{{.SourceID}}/{{.ID}}/enable">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<input type="hidden" name="profile" value="{{$.Nav.Profile}}">
+<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Enable</button>
+</form>
+{{end}}
+<form method="post" action="/mods/{{.SourceID}}/{{.ID}}/uninstall">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="game" value="{{$.Nav.Game.ID}}">
+<input type="hidden" name="profile" value="{{$.Nav.Profile}}">
+<button type="submit" disabled class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-400">Uninstall</button>
+</form>
+</div>
+<p class="mt-1 text-xs text-gray-400">Mutations are coming in this release.</p>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+</div>
+{{end}}
+{{- end}}
