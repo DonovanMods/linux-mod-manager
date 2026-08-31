@@ -142,6 +142,28 @@ func TestServer_ListenAndServe_BindsAndDrainsOnCancel(t *testing.T) {
 	}
 }
 
+// TestServer_Close_ClosesListener proves task-3 review Minor 7's fix: the
+// listener bound by Listen is released even if the caller never reaches
+// Serve (e.g. doServe's startup-print failure path).
+func TestServer_Close_ClosesListener(t *testing.T) {
+	svc := newFixtureService(t)
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
+
+	_, err := srv.Listen()
+	require.NoError(t, err)
+	require.NoError(t, srv.Close())
+}
+
+// TestServer_Close_NoopWhenNeverListened proves Close is safe to call
+// unconditionally, as doServe's deferred call does, even when Listen was
+// never invoked.
+func TestServer_Close_NoopWhenNeverListened(t *testing.T) {
+	svc := newFixtureService(t)
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
+
+	require.NoError(t, srv.Close())
+}
+
 // TestServer_StaticAsset_WrongHost_403 proves the same fix for static
 // assets: /static/ no longer bypasses the Host allow-list the way it did
 // when only securityHeaders (not hostCheck) wrapped it.

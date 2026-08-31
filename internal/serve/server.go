@@ -110,6 +110,18 @@ func (s *Server) Listen() (net.Addr, error) {
 	return ln.Addr(), nil
 }
 
+// Close closes the listener bound by Listen, if any, without starting a
+// shutdown. It's for a caller that fails between Listen and Serve (e.g. a
+// startup-print error) and needs to release the socket instead of leaking
+// it (task-3 review Minor 7); it is a no-op if Listen was never called or
+// Serve is already draining the listener itself.
+func (s *Server) Close() error {
+	if s.ln == nil {
+		return nil
+	}
+	return s.ln.Close()
+}
+
 // Serve runs the server until ctx is cancelled, then drains in-flight
 // requests within a bounded grace period before returning (see
 // serveGraceful). Listen must have been called first; ListenAndServe does

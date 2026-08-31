@@ -68,6 +68,7 @@ func doServe(ctx context.Context, cmd *cobra.Command, svc *core.Service) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = srv.Close() }()
 
 	url := fmt.Sprintf("http://%s/", addr)
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "lmm serve listening on %s\n", url); err != nil {
