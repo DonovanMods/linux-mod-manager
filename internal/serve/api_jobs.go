@@ -248,3 +248,20 @@ func (s *Server) lookupJob(w http.ResponseWriter, r *http.Request) (*job, bool) 
 	}
 	return j, true
 }
+
+// handleAPINotFound is the /api/v1/ subtree fallback: any path under
+// /api/v1 that no route claimed answers the JSON envelope, so EVERY
+// /api/v1 response is JSON (Unit 3 review Minor 8, carried to this task).
+// Without it net/http answers its own text/plain "404 page not found",
+// which a client that only knows how to parse this API's envelope cannot
+// read.
+//
+// It also swallows what would otherwise be a 405: because the fallback
+// pattern matches every method, a POST to a GET-only route lands here as a
+// 404 rather than net/http's Method Not Allowed. That is the deliberate
+// trade - one JSON shape for every /api/v1 failure beats a more precise
+// status delivered as plain text - and it is what the "wrong method on a
+// real route" case pins.
+func (s *Server) handleAPINotFound(w http.ResponseWriter, r *http.Request) {
+	s.writeAPIError(w, http.StatusNotFound, fmt.Errorf("no such API endpoint: %s", r.URL.Path))
+}

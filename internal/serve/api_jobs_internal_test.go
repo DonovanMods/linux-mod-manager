@@ -255,3 +255,32 @@ func TestAPIJobStatus_UnknownID_404(t *testing.T) {
 	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
 	assert.Contains(t, decodeEnvelope(t, rec.Body.Bytes()).Error, "deadbeef")
 }
+
+// TestAPIUnknownPath_404Envelope closes Unit 3's Minor 8 carry-in: every
+// /api/v1 response is JSON, including the one for a path that does not
+// exist. Without the subtree fallback these answered net/http's own
+// text/plain "404 page not found", which a client parsing JSON cannot
+// read.
+func TestAPIUnknownPath_404Envelope(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"unknown collection", http.MethodGet, "/api/v1/nope"},
+		{"unknown nested path", http.MethodGet, "/api/v1/jobs/abc/nope"},
+		{"wrong method on a real route", http.MethodPost, "/api/v1/status"},
+		{"unknown state-changing path", http.MethodPost, "/api/v1/nope"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newDeployFixtureServer(t)
+
+			rec := doAPI(s, tc.method, tc.path, "")
+
+			require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+			assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+			assert.Contains(t, decodeEnvelope(t, rec.Body.Bytes()).Error, tc.path)
+		})
+	}
+}
