@@ -98,10 +98,16 @@ func verifyFixableFindings(report *core.VerifyReport) []core.VerifyFinding {
 }
 
 // verifyFixPlanRequest is POST /api/v1/plans/verify_fix's request body:
-// nothing yet. The tier is fixed at VerifyLocal for both halves, matching
-// what /health itself renders - a page must stay cheap and offline, and a
-// repair the user asked for from that page should act on the findings that
-// page showed, not on a wider set it never saw.
+// nothing yet. The tier is fixed at VerifyFull for both halves (epic live
+// review C1), matching what /health itself now renders - a repair the user
+// asked for from that page acts on exactly the findings that page showed,
+// which now includes a version_mismatch. Running the plan half at a
+// DIFFERENT (cheaper) tier than the apply half would let the confirm page
+// show one set of findings while the apply repairs a different one -
+// version_mismatch's repair mutates the recorded version BEFORE the
+// missing-file repair ever looks at the cache, so a plan/apply tier
+// mismatch here could resurrect exactly the corruption this fix exists to
+// close.
 type verifyFixPlanRequest struct{}
 
 // verifyFixApplyRequest is the "options" member POST /api/v1/jobs accepts
@@ -125,7 +131,7 @@ type pendingVerifyFix struct {
 // verifyFixOptions is the shared option set both halves use; only Fix
 // differs, which is the whole point.
 func verifyFixOptions(fix bool) core.VerifyOptions {
-	return core.VerifyOptions{Tier: core.VerifyLocal, Fix: fix}
+	return core.VerifyOptions{Tier: core.VerifyFull, Fix: fix}
 }
 
 // planVerifyFixKind implements planKind.Plan for "verify_fix": the dry run.
