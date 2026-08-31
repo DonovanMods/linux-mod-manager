@@ -631,6 +631,7 @@ func TestJSONGoldens(t *testing.T) {
 					Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
 					Locked: true, LockedVersion: "1.2.3", ConvertPaks: boolPtr(true),
 				},
+				Changelog: "Fixed a crash on load.",
 			},
 		},
 		{
