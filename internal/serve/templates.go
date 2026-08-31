@@ -41,3 +41,7 @@ var updatesTemplate = parsePage("updates")
 // profilesTemplate renders "/profiles" - the profile list
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface).
 var profilesTemplate = parsePage("profiles")
+
+// healthTemplate renders "/health" - verify findings and file conflicts
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
+var healthTemplate = parsePage("health")
