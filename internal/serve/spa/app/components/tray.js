@@ -49,8 +49,12 @@ export function ActivityBell({ state, deepLinkJob, open, onOpen, onClose }) {
 
   const active = jobs.filter((job) => job.state === "running");
   const unseenFailures = jobs.filter(
+    // Date.parse(undefined) is NaN, and NaN > acknowledgedAt is false - the
+    // honest default for a job whose ended_at cannot be read. An "|| 0"
+    // fallback here would parse as "0", which V8 reads as 2000-01-01, a
+    // large positive timestamp that always reads as "unseen".
     (job) =>
-      job.state === "failed" && Date.parse(job.ended_at || 0) > acknowledgedAt,
+      job.state === "failed" && Date.parse(job.ended_at) > acknowledgedAt,
   );
   const count = active.length || unseenFailures.length;
   const tone = active.length > 0 ? "active" : "failed";

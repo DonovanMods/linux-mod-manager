@@ -1286,3 +1286,52 @@ func TestE2E_FailureNextStepIsDecidedByTypedDetails(t *testing.T) {
 	assert.Nil(t, got[5])
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_UnseenFailureBadgeIgnoresAJobWithNoEndTime is M5: the real,
+// unmodified ActivityBell rendered directly (the same pure-module idiom
+// TestE2E_FailureNextStepIsDecidedByTypedDetails uses one layer down, here
+// applied to a component instead of a bare function) against a failed job
+// with no ended_at at all - a shape the real server never sends today (the
+// registry always sets it on a failed job), but exactly the shape the old
+// "|| 0" fallback existed to guard.
+//
+// Date.parse(undefined || 0) parses "0", which V8 reads as 2000-01-01 - a
+// large positive timestamp that reads as "unseen" no matter what
+// acknowledgedAt is, so the badge showed "1" for a job that never proved
+// anything. Date.parse(undefined) is NaN, and NaN > acknowledgedAt is
+// false: the honest default, and the badge renders nothing at all (a
+// picker's count > 0 check, tray.js's ActivityBell).
+func TestE2E_UnseenFailureBadgeIgnoresAJobWithNoEndTime(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var badge string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { render, h } = await import("/static/app/render.js");
+			const { ActivityBell } = await import("/static/app/components/tray.js");
+
+			const container = document.createElement("div");
+			document.body.appendChild(container);
+
+			const state = {
+				jobsIndex: [{ id: "j1", kind: "deploy", state: "failed" }],
+				jobProgress: {},
+			};
+			render(h(ActivityBell, {
+				state, open: false, onOpen: () => {}, onClose: () => {},
+			}), container);
+
+			const text = container.querySelector(".activity-bell__count")?.textContent ?? "";
+			container.remove();
+			return text;
+		})()`, &badge, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	assert.Empty(t, badge,
+		"a failed job with no readable end time must not be invented as unseen")
+	assert.Empty(t, f.BrowserErrors())
+}
