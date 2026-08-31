@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"os"
 
@@ -13,15 +11,11 @@ import (
 // deterministic map/key ordering) followed by exactly one trailing newline.
 // Every --json document this process emits goes through this one function,
 // so the framing a caller piping stdout to a parser relies on - one
-// document, one newline - stays identical everywhere (Ruling 3).
+// document, one newline - stays identical everywhere (Ruling 3). The
+// framing itself is core.EncodeJSON's contract; this is stdout's wrapper
+// around it.
 func emitJSON(v any) error {
-	b, err := json.Marshal(v, json.Deterministic(true), jsontext.WithIndent("  "))
-	if err != nil {
-		return err
-	}
-	b = append(b, '\n')
-	_, err = os.Stdout.Write(b)
-	return err
+	return core.EncodeJSON(os.Stdout, v)
 }
 
 // jsonErrorEnvelope is the document reportError emits under --json. Details
