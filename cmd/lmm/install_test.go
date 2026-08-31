@@ -584,14 +584,23 @@ type fakeInstallSource struct {
 	// default) reproduces the original always-empty behavior every other
 	// test in this file relies on.
 	searchResults []domain.Mod
+
+	// changelogs is keyed by mod ID; SetChangelog populates it. Every
+	// fakeInstallSource implements source.ChangelogProvider unconditionally
+	// (#87) - a mod ID with no entry returns "", the ordinary "nothing to
+	// report" case (omitzero on the wire), so every existing test that never
+	// calls SetChangelog is unaffected.
+	changelogs   map[string]string
+	changelogErr error
 }
 
 func newFakeInstallSource(id string) *fakeInstallSource {
 	s := &fakeInstallSource{
-		id:        id,
-		mods:      make(map[string]*domain.Mod),
-		files:     make(map[string][]domain.DownloadableFile),
-		downloads: make(map[string][]byte),
+		id:         id,
+		mods:       make(map[string]*domain.Mod),
+		files:      make(map[string][]domain.DownloadableFile),
+		downloads:  make(map[string][]byte),
+		changelogs: make(map[string]string),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -665,6 +674,21 @@ func (s *fakeInstallSource) AddDownload(fileID string, content []byte) {
 
 // DownloadCount reports how many download requests the fake actually served.
 func (s *fakeInstallSource) DownloadCount() int { return int(s.served.Load()) }
+
+// Changelog implements source.ChangelogProvider (#87): returns the text
+// staged for modID via SetChangelog, or changelogErr when set (version is
+// ignored - no test here needs per-version fixtures).
+func (s *fakeInstallSource) Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error) {
+	if s.changelogErr != nil {
+		return "", s.changelogErr
+	}
+	return s.changelogs[modID], nil
+}
+
+// SetChangelog stages modID's changelog text for the next Changelog call.
+func (s *fakeInstallSource) SetChangelog(modID, text string) {
+	s.changelogs[modID] = text
+}
 
 // setupDoInstallTest builds a *core.Service, a game configured for
 // fakeInstallSource, and resets install's package-level flag globals to

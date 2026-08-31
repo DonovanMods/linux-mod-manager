@@ -239,7 +239,7 @@ func probeSource(ctx context.Context, cmd *cobra.Command, svc *core.Service, def
 // otherwise-valid one - for the --json error envelope: Details() is the
 // SourceValidationReport itself, so a caller sees exactly which part
 // failed instead of a bare message. Follows the core.ConflictError /
-// gameDetectPartialError pattern (jsonout.go).
+// core.GameDetectPartialError pattern (jsonout.go).
 type sourceValidationError struct {
 	err    error
 	report *app.SourceValidationReport

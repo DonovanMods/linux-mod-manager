@@ -322,6 +322,7 @@ func TestJSONGolden_ModShow(t *testing.T) {
 		svc, game, src := setupDoModLockTest(t)
 		seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
 		src.AddMod(richMod(game.ID), nil)
+		src.SetChangelog("a", "Fixed a crash on load.")
 		withJSONOutput(t)
 
 		out := captureStdout(t, func() error {

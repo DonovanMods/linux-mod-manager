@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -104,14 +105,15 @@ func TestModShowGolden_SparseMod(t *testing.T) {
 }
 
 // TestModShowGolden_JSON's json_installed golden was re-recorded once, in
-// v2 Phase 3 Task 6 (#302), when --json switched to core.ModDetail - the
-// single deliberate JSON shape change Ruling 3 reserves. The same document
-// is also pinned by TestJSONGolden_ModShow ("mod_show_installed",
-// -update-json-cli); a future shape change has to move BOTH.
+// v2 Phase 3 Task 6 (#302), when --json switched to core.ModDetail, and
+// again for #87's additive "changelog" key. The same document is also
+// pinned by TestJSONGolden_ModShow ("mod_show_installed", -update-json-cli);
+// a future shape change has to move BOTH.
 func TestModShowGolden_JSON(t *testing.T) {
 	svc, game, src := setupDoModLockTest(t)
 	seedLockableMod(t, svc, game, "a", "Mod A", "1.5")
 	src.AddMod(richMod(game.ID), nil)
+	src.SetChangelog("a", "Fixed a crash on load.")
 
 	old := jsonOutput
 	jsonOutput = true
@@ -141,6 +143,69 @@ func TestDoModShow_DescriptionHTMLCleaned(t *testing.T) {
 	assert.Contains(t, out, "Line & two.")
 	assert.NotContains(t, out, "<p>", "raw HTML tags must not reach the terminal")
 	assert.NotContains(t, out, "&amp;", "HTML entities must be decoded")
+}
+
+// TestDoModShow_ChangelogSection (#87): mod show renders a "Changelog:"
+// section only when ModDetail carries one - a plain assert.Contains/
+// NotContains capture (not a byte golden) for both states, per the task's
+// own instruction that this is asserted rather than golden-diffed.
+func TestDoModShow_ChangelogSection(t *testing.T) {
+	t.Run("non-empty: section renders, cleaned like Description", func(t *testing.T) {
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+		src.SetChangelog("a", "<p>Fixed a crash.</p>")
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assert.Contains(t, out, "Changelog:")
+		assert.Contains(t, out, "Fixed a crash.")
+		assert.NotContains(t, out, "<p>", "changelog HTML must be cleaned, same as Description")
+	})
+
+	t.Run("empty: no section at all", func(t *testing.T) {
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assert.NotContains(t, out, "Changelog:")
+	})
+}
+
+// TestDoModShow_NotesRenderUnderVerbose (#87/#318, task-2 review Important
+// #1): ModDetail.Notes carries best-effort degradations (a failed changelog
+// fetch, today) - doModShow renders them through printModNotes, so they
+// follow that helper's established --verbose gate (deploy_test.go, mod
+// enable/disable) rather than appearing unconditionally or not at all.
+func TestDoModShow_NotesRenderUnderVerbose(t *testing.T) {
+	oldVerbose := verbose
+	t.Cleanup(func() { verbose = oldVerbose })
+
+	t.Run("without --verbose: note is suppressed", func(t *testing.T) {
+		verbose = false
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+		src.changelogErr = errors.New("upstream timeout")
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assert.NotContains(t, out, "changelog unavailable")
+	})
+
+	t.Run("with --verbose: note renders", func(t *testing.T) {
+		verbose = true
+		svc, game, src := setupDoModLockTest(t)
+		src.AddMod(richMod(game.ID), nil)
+		src.changelogErr = errors.New("upstream timeout")
+
+		out := captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "a")
+		})
+		assert.Contains(t, out, "changelog unavailable: upstream timeout")
+	})
 }
 
 // TestDoModShow_JSONDescriptionStaysRaw pins the deliberate asymmetry above.

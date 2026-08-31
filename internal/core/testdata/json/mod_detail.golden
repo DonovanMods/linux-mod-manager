@@ -23,5 +23,9 @@
     "locked": true,
     "locked_version": "1.2.3",
     "convert_paks": true
-  }
+  },
+  "changelog": "Fixed a crash on load.",
+  "notes": [
+    "changelog unavailable: upstream timeout"
+  ]
 }

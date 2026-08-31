@@ -624,6 +624,12 @@ func TestJSONGoldens(t *testing.T) {
 			core.DeployedFile{SourceID: "nexusmods", ModID: "42", FileID: "file-1", Checksum: "abc123"},
 		},
 		{
+			// Notes is populated here (unlike every earlier ModDetail use in
+			// this file/package) specifically to pin the "notes" key's wire
+			// shape - moddetail_test.go's TestModDetail_Changelog only ever
+			// asserted the Go struct field, so this golden was the only place
+			// in the JSON-contract suite that ever exercised it (task-2
+			// review, Important #1).
 			"mod_detail",
 			core.ModDetail{
 				Mod: &jsonGoldenMod,
@@ -631,6 +637,8 @@ func TestJSONGoldens(t *testing.T) {
 					Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
 					Locked: true, LockedVersion: "1.2.3", ConvertPaks: boolPtr(true),
 				},
+				Changelog: "Fixed a crash on load.",
+				Notes:     []string{"changelog unavailable: upstream timeout"},
 			},
 		},
 		{

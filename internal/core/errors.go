@@ -52,6 +52,71 @@ type conflictErrorDetails struct {
 	Conflicts []Conflict `json:"conflicts"`
 }
 
+// ProfileWarningsError carries the diagnostics `ApplyProfileSwitch`/
+// `ApplyProfileApply`/`ApplyProfileSync` accumulated before a fatal error,
+// for a frontend's error envelope's "details" field
+// ({"error": "...", "details": {"warnings": [...]}}). Plain text prints
+// them directly, but an envelope (--json, or a future API response) only
+// carries data for a typed error - so without this wrapper the #294
+// warnings would reach neither the plain-text stream nor the envelope on
+// this path, leaving the DB-vs-profile divergence #294 exists to expose
+// silent again.
+//
+// Only construct this when there is at least one warning, so a fatal run
+// with nothing to report still produces the bare {"error": ...} envelope.
+// Follows the ConflictError / GameDetectPartialError convention: Unwrap
+// exposes Err for errors.Is/As, Details() any is the unnamed interface a
+// frontend's envelope writer picks up automatically.
+type ProfileWarningsError struct {
+	Err      error
+	Warnings []string
+}
+
+// Error returns the wrapped fatal failure's own message, so plain text and
+// the envelope's "error" field are unchanged by the wrapping.
+func (e *ProfileWarningsError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the wrapped fatal error for errors.Is/errors.As.
+func (e *ProfileWarningsError) Unwrap() error { return e.Err }
+
+// Details returns the accumulated warnings for a frontend's error
+// envelope's "details" field.
+func (e *ProfileWarningsError) Details() any {
+	return profileWarningsDetails{Warnings: e.Warnings}
+}
+
+// profileWarningsDetails is ProfileWarningsError's wire shape: a named type
+// rather than a map so the "warnings" key is part of the JSON contract and
+// matches the same key on the ProfileApplyResult/ProfileSyncResult/
+// SwitchResult documents a SUCCESSFUL run emits.
+type profileWarningsDetails struct {
+	Warnings []string `json:"warnings"`
+}
+
+// GameDetectPartialError reports a `game detect` run that failed partway
+// through ApplyGameDetect: Result still names exactly the games that were
+// fully persisted (games.yaml write + default profile) before Err stopped
+// it, so a frontend's error envelope can say what was saved instead of only
+// that the run failed - mirroring the plain-text path's own partial-success
+// contract (the CLI's "Added:" loop prints every game Result.Profiles names,
+// even on failure). Follows the ConflictError / ProfileWarningsError
+// convention: Unwrap exposes Err for errors.Is/As, Details() any is the
+// unnamed interface a frontend's envelope writer picks up automatically.
+type GameDetectPartialError struct {
+	Err    error
+	Result *GameDetectResult
+}
+
+// Error returns the wrapped ApplyGameDetect failure's own message.
+func (e *GameDetectPartialError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the wrapped ApplyGameDetect error for errors.Is/errors.As.
+func (e *GameDetectPartialError) Unwrap() error { return e.Err }
+
+// Details returns the partial GameDetectResult - what was saved before the
+// failure - for a frontend's error envelope's "details" field.
+func (e *GameDetectPartialError) Details() any { return e.Result }
+
 // ErrConfirmationRequired is returned by a frontend-facing entry point that
 // would have to prompt but cannot - the CLI's --json mode, which never reads
 // stdin (Ruling 2). The decision must come from a flag instead.

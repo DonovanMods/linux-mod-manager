@@ -482,7 +482,7 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 		// error into the envelope's "details" instead of vanishing.
 		if result != nil && len(result.Warnings) > 0 {
 			if jsonOutput {
-				return &profileWarningsError{err: err, warnings: result.Warnings}
+				return &core.ProfileWarningsError{Err: err, Warnings: result.Warnings}
 			}
 			for _, w := range result.Warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
@@ -838,7 +838,7 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 		// Ruling 15 forbids the stderr line.
 		if result != nil && len(result.Warnings) > 0 {
 			if jsonOutput {
-				return &profileWarningsError{err: err, warnings: result.Warnings}
+				return &core.ProfileWarningsError{Err: err, Warnings: result.Warnings}
 			}
 			for _, w := range result.Warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
@@ -1103,7 +1103,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		// Ruling 15 forbids the stderr line.
 		if result != nil && len(result.Warnings) > 0 {
 			if jsonOutput {
-				return &profileWarningsError{err: err, warnings: result.Warnings}
+				return &core.ProfileWarningsError{Err: err, Warnings: result.Warnings}
 			}
 			for _, w := range result.Warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
@@ -1143,41 +1143,4 @@ func profileApplyTarget(ctx context.Context, service *core.Service, game *domain
 		return "default"
 	}
 	return defaultProfile.Name
-}
-
-// profileWarningsError carries the diagnostics `lmm profile apply`/`sync`/
-// `switch` accumulated before a fatal error into the --json error envelope's
-// "details" field (unit Q review, M3). Plain text prints them to stderr, but
-// Ruling 15 keeps stderr empty under --json and reportError's envelope only
-// carries data for a typed error - so without this wrapper the #294 warnings
-// reached neither stream, leaving the DB-vs-profile divergence #294 exists
-// to expose silent on exactly this path.
-//
-// Only constructed when there is at least one warning, so a fatal run with
-// nothing to report still produces the bare {"error": ...} envelope.
-// Follows the core.ConflictError / gameDetectPartialError convention
-// (jsonout.go): Unwrap exposes err for errors.Is/As, Details() any is the
-// unnamed interface errorDetails picks up automatically.
-type profileWarningsError struct {
-	err      error
-	warnings []string
-}
-
-// Error returns the wrapped fatal failure's own message, so plain text and
-// the envelope's "error" field are unchanged by the wrapping.
-func (e *profileWarningsError) Error() string { return e.err.Error() }
-
-// Unwrap exposes the wrapped fatal error for errors.Is/As.
-func (e *profileWarningsError) Unwrap() error { return e.err }
-
-// Details returns the accumulated warnings for the --json error envelope's
-// "details" field.
-func (e *profileWarningsError) Details() any { return profileWarningsDetails{Warnings: e.warnings} }
-
-// profileWarningsDetails is profileWarningsError's wire shape: a named type
-// rather than a map so the "warnings" key is part of the JSON contract and
-// matches the same key on the ProfileApplyResult/ProfileSyncResult/
-// SwitchResult documents a SUCCESSFUL --json run emits.
-type profileWarningsDetails struct {
-	Warnings []string `json:"warnings"`
 }

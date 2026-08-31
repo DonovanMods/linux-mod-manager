@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `mod show` displays a mod's changelog when its source can supply one
+  (`--json`: `changelog`, additive) - NexusMods now implements the new
+  `source.ChangelogProvider` optional capability via its files endpoint's
+  changelog field; a source without it, or a failed live fetch, simply
+  omits the section rather than failing the command (#87).
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

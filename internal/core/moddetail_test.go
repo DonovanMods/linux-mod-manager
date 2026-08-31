@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -201,6 +202,71 @@ func TestModDetail_ConvertPaks(t *testing.T) {
 		require.NotNil(t, detail.Installed)
 		require.NotNil(t, detail.Installed.ConvertPaks, "a non-nil pointer to false must survive")
 		assert.False(t, *detail.Installed.ConvertPaks)
+	})
+}
+
+// changelogMockSource embeds mockSource and adds source.ChangelogProvider -
+// mirrors updater_test.go's reportingMockSource embedding pattern for
+// UpdateProgressReporter. changelog/err are read by every call; set exactly
+// one per test.
+type changelogMockSource struct {
+	*mockSource
+	changelog string
+	err       error
+}
+
+func newChangelogMockSource(id string) *changelogMockSource {
+	return &changelogMockSource{mockSource: newMockSource(id)}
+}
+
+func (c *changelogMockSource) Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error) {
+	if c.err != nil {
+		return "", c.err
+	}
+	return c.changelog, nil
+}
+
+// TestModDetail_Changelog (#87): ModDetail.Changelog is populated
+// best-effort from a source's optional source.ChangelogProvider - present
+// and non-erroring carries the text, absent leaves the field empty (never
+// an error), and a provider error degrades to a Note rather than failing
+// the whole call.
+func TestModDetail_Changelog(t *testing.T) {
+	t.Run("provider supplies a changelog", func(t *testing.T) {
+		svc, game, _ := newModDetailTestService(t)
+		src := newChangelogMockSource("src")
+		src.changelog = "Fixed a crash on load."
+		svc.RegisterSource(src)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		assert.Equal(t, "Fixed a crash on load.", detail.Changelog)
+		assert.Empty(t, detail.Notes)
+	})
+
+	t.Run("non-provider source leaves the field absent", func(t *testing.T) {
+		svc, game, src := newModDetailTestService(t)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		assert.Empty(t, detail.Changelog)
+		assert.Empty(t, detail.Notes)
+	})
+
+	t.Run("provider error becomes a Note, never a failure", func(t *testing.T) {
+		svc, game, _ := newModDetailTestService(t)
+		src := newChangelogMockSource("src")
+		src.err = errors.New("upstream timeout")
+		svc.RegisterSource(src)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err, "a changelog provider failure must not fail ModDetail")
+		assert.Empty(t, detail.Changelog)
+		require.Len(t, detail.Notes, 1)
+		assert.Contains(t, detail.Notes[0], "upstream timeout")
 	})
 }
 

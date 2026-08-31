@@ -653,7 +653,7 @@ func chmodDefaultProfileReadOnly(t *testing.T, game *domain.Game) {
 // on stderr), so before this fix the warnings reached neither stream and the
 // silent DB-vs-profile divergence #294 exists to expose was silent again on
 // exactly this path. They now ride the error into the envelope's "details"
-// as {"warnings": [...]}, the core.ConflictError/gameDetectPartialError
+// as {"warnings": [...]}, the core.ConflictError/core.GameDetectPartialError
 // convention.
 func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testing.T) {
 	svc, game := switchLockRefusalFixture(t)
@@ -669,9 +669,9 @@ func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testi
 	assert.Empty(t, stdout, "Ruling 15: the failing --json run emits no Result document of its own")
 	assert.Empty(t, stderr, "Ruling 15: nothing but the one document may reach the streams")
 
-	var warnErr *profileWarningsError
+	var warnErr *core.ProfileWarningsError
 	require.ErrorAs(t, err, &warnErr, "the fatal error must carry the accumulated warnings")
-	assert.Equal(t, []string{switchLockRefusalDetail}, warnErr.warnings)
+	assert.Equal(t, []string{switchLockRefusalDetail}, warnErr.Warnings)
 
 	envelope, envStderr, _ := captureStdoutStderrErr(t, func() error { reportError(err); return nil })
 	assert.Empty(t, envStderr)
@@ -680,7 +680,7 @@ func TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings(t *testi
 	want := captureStdout(t, func() error {
 		return emitJSON(jsonErrorEnvelope{
 			Error:   err.Error(),
-			Details: profileWarningsDetails{Warnings: []string{switchLockRefusalDetail}},
+			Details: warnErr.Details(),
 		})
 	})
 	assert.Equal(t, want, envelope, "M3: stdout is exactly the one error envelope")
@@ -708,7 +708,7 @@ func TestDoProfileSwitch_JSON_FatalWithoutWarnings_EnvelopeUnchanged(t *testing.
 	assert.Empty(t, stdout)
 	assert.Empty(t, stderr)
 
-	var warnErr *profileWarningsError
+	var warnErr *core.ProfileWarningsError
 	assert.False(t, errors.As(callErr, &warnErr), "no warnings means no wrapper")
 
 	envelope := captureStdout(t, func() error { reportError(callErr); return nil })

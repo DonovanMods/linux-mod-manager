@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -186,6 +187,79 @@ func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 	}
 
 	return files, nil
+}
+
+// Changelog implements source.ChangelogProvider (#87): the REST files
+// endpoint's FileData.Changelog (types.go's changelog_html field) is the
+// same data CheckUpdatesWithProgress already reads, exposed here by mod
+// version. Selection: an exact version match wins, checked across every
+// file regardless of IsPrimary; otherwise the PRIMARY file's changelog, if
+// it has one. A non-primary file's changelog is never used as a fallback,
+// even when it's the only file that has one - narrower than
+// CheckUpdatesWithProgress's own fallback (which accepts any file's
+// non-empty changelog when no primary file has one), and deliberately so:
+// this method exists to answer "what changed in this specific version",
+// where a non-matching non-primary file's changelog is more likely to
+// mislead than help. Returns "" when nothing matches - not an error, since
+// "nothing to show" is ordinary and only a failed lookup is a real error.
+//
+// The returned text is always plain: stripChangelogHTML removes markup and
+// decodes entities before this returns, so ModDetail.Changelog never
+// carries raw changelog_html - unlike Mod.Description, which stays raw HTML
+// all the way to `--json` by existing, accepted precedent (#86). Changelog
+// is a new field with no such precedent to honor, so a future HTML renderer
+// (e.g. `lmm serve`) never has to sanitize it itself.
+func (n *NexusMods) Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error) {
+	id, err := strconv.Atoi(modID)
+	if err != nil {
+		return "", fmt.Errorf("invalid mod ID: %w", err)
+	}
+
+	fileList, err := n.client.GetModFiles(ctx, sourceGameID, id)
+	if err != nil {
+		return "", fmt.Errorf("getting mod files: %w", err)
+	}
+
+	primary := ""
+	for _, f := range fileList.Files {
+		if f.Changelog == "" {
+			continue
+		}
+		if version != "" && f.Version == version {
+			return stripChangelogHTML(f.Changelog), nil
+		}
+		if f.IsPrimary && primary == "" {
+			primary = f.Changelog
+		}
+	}
+	return stripChangelogHTML(primary), nil
+}
+
+// changelogBreakRE/changelogTagRE back stripChangelogHTML. Duplicated from
+// internal/core's CleanChangelog (rather than imported) because
+// internal/source sits below internal/core in the project's layering
+// (cmd/lmm -> core -> source -> domain, per the repo CLAUDE.md) - source has
+// no business depending on the layer that depends on it.
+var (
+	changelogBreakRE = regexp.MustCompile(`(?i)<br\s*/?>|</p>|<p[^>]*>`)
+	changelogTagRE   = regexp.MustCompile(`<[^>]*>`)
+)
+
+// stripChangelogHTML converts a NexusMods changelog_html value to plain
+// text: <br> and <p>/</p> become newlines, every other tag is removed
+// outright, and the five HTML entities a changelog typically contains are
+// decoded. Mirrors internal/core.CleanChangelog's behavior exactly, so
+// double-cleaning downstream (cmd/lmm's plain-text render already calls
+// CleanChangelog on every ModDetail.Changelog) is a harmless no-op.
+func stripChangelogHTML(html string) string {
+	html = changelogBreakRE.ReplaceAllString(html, "\n")
+	html = changelogTagRE.ReplaceAllString(html, "")
+	html = strings.ReplaceAll(html, "&nbsp;", " ")
+	html = strings.ReplaceAll(html, "&amp;", "&")
+	html = strings.ReplaceAll(html, "&lt;", "<")
+	html = strings.ReplaceAll(html, "&gt;", ">")
+	html = strings.ReplaceAll(html, "&quot;", "\"")
+	return strings.TrimSpace(html)
 }
 
 func sanitizeFileName(name string) string {
