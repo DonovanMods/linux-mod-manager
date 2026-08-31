@@ -188,6 +188,38 @@ func (n *NexusMods) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.
 	return files, nil
 }
 
+// Changelog implements source.ChangelogProvider (#87): the REST files
+// endpoint's FileData.Changelog (types.go's changelog_html field) is the
+// same data CheckUpdatesWithProgress already reads, exposed here by mod
+// version. Mirrors that method's selection: an exact version match wins;
+// otherwise the primary file's changelog; otherwise empty (not an error -
+// "nothing to show" is ordinary, only a failed lookup is a real error).
+func (n *NexusMods) Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error) {
+	id, err := strconv.Atoi(modID)
+	if err != nil {
+		return "", fmt.Errorf("invalid mod ID: %w", err)
+	}
+
+	fileList, err := n.client.GetModFiles(ctx, sourceGameID, id)
+	if err != nil {
+		return "", fmt.Errorf("getting mod files: %w", err)
+	}
+
+	primary := ""
+	for _, f := range fileList.Files {
+		if f.Changelog == "" {
+			continue
+		}
+		if version != "" && f.Version == version {
+			return f.Changelog, nil
+		}
+		if f.IsPrimary && primary == "" {
+			primary = f.Changelog
+		}
+	}
+	return primary, nil
+}
+
 func sanitizeFileName(name string) string {
 	const fallbackFileName = "download"
 
