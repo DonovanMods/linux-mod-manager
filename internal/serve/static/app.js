@@ -169,8 +169,17 @@
     if (form.dataset.jsEnhanced) return;
     form.dataset.jsEnhanced = "1";
 
+    // resubmitting holds the button whose native requestSubmit() fallback
+    // (below) is in flight - requestSubmit re-fires "submit" (plain
+    // form.submit() didn't), so this guards against re-intercepting it.
+    var resubmitting = null;
+
     form.addEventListener("submit", function (event) {
       var submitter = event.submitter;
+      if (resubmitting) {
+        resubmitting = null;
+        return; // native fallback resubmission - let it through
+      }
       event.preventDefault();
 
       var action =
@@ -193,10 +202,27 @@
           replaceMain(result.html, result.url);
         })
         .catch(function () {
-          // Fall back to the plain navigation this replaced.
-          // HTMLFormElement.submit() does not re-fire "submit", so this
-          // cannot loop back into this same handler.
+          // Fall back to a native resubmission that honors WHICH button
+          // was clicked: confirm.gohtml keys its action off the button
+          // ("confirm" vs. the sync fallback), not a hidden field, so bare
+          // form.submit() took the default action and dropped it.
+          // requestSubmit(submitter) resubmits as that button; where it's
+          // unavailable, mirror it into a hidden input first. Only
+          // reachable on a real fetch failure - untestable via
+          // jsdom/httptest, verified manually (task-11 report).
           if (submitter) submitter.disabled = false;
+          if (submitter && form.requestSubmit) {
+            resubmitting = submitter;
+            form.requestSubmit(submitter);
+            return;
+          }
+          if (submitter && submitter.name) {
+            var hidden = document.createElement("input");
+            hidden.type = "hidden";
+            hidden.name = submitter.name;
+            hidden.value = submitter.value;
+            form.appendChild(hidden);
+          }
           form.submit();
         });
     });
