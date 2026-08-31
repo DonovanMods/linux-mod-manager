@@ -24,10 +24,14 @@ const defaultShutdownGrace = 10 * time.Second
 // Options configures a Server.
 type Options struct {
 	// Addr is the "host:port" ListenAndServe binds to, e.g.
-	// "127.0.0.1:7420". It is also the only Host header value accepted from
-	// incoming requests until Listen resolves the real bound address (the
-	// DNS-rebinding guard in docs/plans/2026-08-30-serve-design.md
-	// §Security).
+	// "127.0.0.1:7420". Until Listen resolves the actually-bound address, it
+	// also seeds the Host allow-list hostCheck enforces (the DNS-rebinding
+	// guard in docs/plans/2026-08-30-serve-design.md §Security): a concrete
+	// bind pins that exact value, while a wildcard bind (0.0.0.0, [::], or a
+	// bare ":port") has no single correct Host by definition, so hostCheck
+	// accepts any Host it sees and leaves the Origin and CSRF checks as the
+	// defense on an exposed bind (task-3 review Important 1; see
+	// allowedHostsFor in middleware.go).
 	Addr string
 
 	// ShutdownGrace bounds how long a cancelled Serve waits for in-flight
@@ -40,11 +44,14 @@ type Options struct {
 // (docs/plans/2026-08-30-serve-design.md §Security) and every page/asset
 // route already registered.
 type Server struct {
-	httpServer    *http.Server
-	svc           *core.Service
-	log           *slog.Logger
-	mux           *http.ServeMux
-	allowedHost   string
+	httpServer *http.Server
+	svc        *core.Service
+	log        *slog.Logger
+	mux        *http.ServeMux
+	// allowedHosts is the Host allow-list hostCheck enforces (see
+	// allowedHostsFor in middleware.go). nil means a wildcard bind: any
+	// Host is accepted.
+	allowedHosts  map[string]struct{}
 	shutdownGrace time.Duration
 	csrf          *csrfGuard
 	ln            net.Listener
@@ -66,7 +73,7 @@ func New(svc *core.Service, log *slog.Logger, opts Options) *Server {
 		svc:           svc,
 		log:           log,
 		mux:           http.NewServeMux(),
-		allowedHost:   opts.Addr,
+		allowedHosts:  allowedHostsFor(opts.Addr),
 		shutdownGrace: grace,
 		csrf:          newCSRFGuard(),
 	}
@@ -94,7 +101,7 @@ func (s *Server) Listen() (net.Addr, error) {
 		return nil, fmt.Errorf("listening on %s: %w", s.httpServer.Addr, err)
 	}
 	s.ln = ln
-	s.allowedHost = ln.Addr().String()
+	s.allowedHosts = allowedHostsFor(ln.Addr().String())
 	return ln.Addr(), nil
 }
 

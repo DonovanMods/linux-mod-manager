@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 )
@@ -132,28 +133,61 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// hostCheck rejects any request whose Host header does not exactly match
-// the server's bound address - the DNS-rebinding guard
-// (docs/plans/2026-08-30-serve-design.md §Security).
+// allowedHostsFor derives the Host allow-list hostCheck enforces from a
+// "host:port" string - either Options.Addr as given, or the address Listen
+// actually bound. A concrete bind (a specific IP or name) is pinned to
+// that exact value. A wildcard bind (0.0.0.0, [::], or an empty host as in
+// ":7420") returns nil: a wildcard has no single correct Host by
+// definition (measured directly - a wildcard Listen resolves to an
+// address like "[::]:44957" that no real client ever sends as its Host),
+// so hostCheck must accept any Host it sees there instead of rejecting
+// every request (task-3 review Important 1).
+func allowedHostsFor(hostPort string) map[string]struct{} {
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return map[string]struct{}{hostPort: {}}
+	}
+	if host == "" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return nil
+	}
+	return map[string]struct{}{hostPort: {}}
+}
+
+// hostCheck rejects any request whose Host header is not in the server's
+// allow-list - the DNS-rebinding guard
+// (docs/plans/2026-08-30-serve-design.md §Security). allowedHosts is nil
+// only for a wildcard bind (0.0.0.0/[::]): pinning a single Host there
+// would either reject every real client or accept a resolved-but-
+// unroutable literal (task-3 review Important 1), so the check is skipped
+// deliberately and the Origin and CSRF checks - still applied to every
+// state-changing request - are the defense on an exposed bind instead.
 func (s *Server) hostCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != s.allowedHost {
-			http.Error(w, "host not allowed", http.StatusForbidden)
-			return
+		if s.allowedHosts != nil {
+			if _, ok := s.allowedHosts[r.Host]; !ok {
+				http.Error(w, "host not allowed", http.StatusForbidden)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
 // originCheck rejects a state-changing request whose Origin header names a
-// different origin than this server. A request with no Origin header at
-// all (curl, the API used from a script) is not rejected here - the CSRF
-// check downstream still guards it.
+// different origin than the Host it arrived on. Comparing against r.Host
+// rather than a value fixed at construction keeps this correct for a
+// wildcard bind too, where hostCheck (which always runs first - see wrap)
+// admits more than one Host. A request with no Origin header at all (curl,
+// the API used from a script) is not rejected here - the CSRF check
+// downstream still guards it.
 func (s *Server) originCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if unsafeMethod(r.Method) {
 			if origin := r.Header.Get("Origin"); origin != "" {
-				expected := "http://" + s.allowedHost
+				expected := "http://" + r.Host
 				if origin != expected {
 					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 					return

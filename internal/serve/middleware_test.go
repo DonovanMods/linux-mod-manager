@@ -109,6 +109,38 @@ func TestMiddleware_GETNeedsNoCSRFToken(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestAllowedHostsFor covers allowedHostsFor's concrete-vs-wildcard split
+// (task-3 review Important 1): a concrete bind (any specific IP or name)
+// yields a single-entry allow-list; a wildcard bind - including the exact
+// "[::]:44957"-shaped string a real ephemeral wildcard Listen resolves to
+// - yields nil, hostCheck's "accept any Host" signal.
+func TestAllowedHostsFor(t *testing.T) {
+	concrete := []struct {
+		name     string
+		hostPort string
+	}{
+		{"loopback IPv4", "127.0.0.1:7420"},
+		{"loopback IPv6", "[::1]:7420"},
+		{"private LAN IP", "192.168.1.5:7420"},
+		{"hostname", "example.com:7420"},
+	}
+	for _, tt := range concrete {
+		t.Run(tt.name, func(t *testing.T) {
+			got := allowedHostsFor(tt.hostPort)
+			_, ok := got[tt.hostPort]
+			assert.True(t, ok, "expected %q in allow-list, got %v", tt.hostPort, got)
+			assert.Len(t, got, 1)
+		})
+	}
+
+	wildcards := []string{"0.0.0.0:7420", "[::]:7420", ":7420", "0.0.0.0:0", "[::]:44957"}
+	for _, addr := range wildcards {
+		t.Run(addr, func(t *testing.T) {
+			assert.Nil(t, allowedHostsFor(addr))
+		})
+	}
+}
+
 // TestMiddleware_HostCheck_ExactMatchOnly covers the DNS-rebinding guard at
 // the unit level (server_test.go covers it end to end through the status
 // page): only the exact configured host passes.
