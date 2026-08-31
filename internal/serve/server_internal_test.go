@@ -8,12 +8,14 @@ package serve
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,4 +141,63 @@ func TestServeGraceful_ExpiredGracePeriodStillReturns(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("serveGraceful did not return within the bounded grace period")
 	}
+}
+
+// TestServer_Options_ShutdownGrace_ReachesServe proves task-3 review Minor
+// 5's fix: Options.ShutdownGrace actually flows through New into
+// Server.Serve, not just serveGraceful's own direct-call tests above (which
+// pass a grace straight to serveGraceful, bypassing Options entirely). A
+// tiny configured grace makes Serve return quickly despite a handler that
+// never finishes; the default is 10s, so a fast return proves the custom
+// value was used.
+func TestServer_Options_ShutdownGrace_ReachesServe(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	srv := New(svc, slog.New(slog.DiscardHandler), Options{Addr: "127.0.0.1:0", ShutdownGrace: 50 * time.Millisecond})
+
+	started := make(chan struct{})
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	srv.mux.Handle("/__test/slow", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-block
+	}))
+
+	_, err = srv.Listen()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ctx) }()
+
+	go func() {
+		resp, err := http.Get("http://" + srv.ln.Addr().String() + "/__test/slow")
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never started")
+	}
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return within the configured grace period")
+	}
+	assert.Less(t, time.Since(start), 2*time.Second,
+		"Serve should return close to the 50ms configured ShutdownGrace, not the 10s default")
 }

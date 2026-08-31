@@ -1,10 +1,12 @@
 package serve_test
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
 	"github.com/stretchr/testify/assert"
@@ -116,6 +118,28 @@ func TestServer_NotFound_HasSecurityHeaders(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+}
+
+// TestServer_ListenAndServe_BindsAndDrainsOnCancel proves task-3 review
+// Minor 5's fix: nothing else calls ListenAndServe (cmd/lmm needs the
+// resolved address to print its startup URL, so it calls Listen and Serve
+// separately), so this is the only place its Listen+Serve composition is
+// exercised.
+func TestServer_ListenAndServe_BindsAndDrainsOnCancel(t *testing.T) {
+	svc := newFixtureService(t)
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: "127.0.0.1:0"})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.ListenAndServe(ctx) }()
+	cancel()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListenAndServe did not return after ctx cancellation")
+	}
 }
 
 // TestServer_StaticAsset_WrongHost_403 proves the same fix for static
