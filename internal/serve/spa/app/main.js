@@ -113,9 +113,27 @@ async function hydrate(route) {
   });
 }
 
+// contextKey identifies the data a route needs, not the route itself: the
+// ?mod= slide-over annotation (route.mod) and a search's ?q= (route.q) are
+// both carried on the route object but never change what Mission Control
+// has to fetch (router.js's own doc comment: "?mod= annotates the current
+// URL" instead of routing). Only view/game/profile decide that.
+function contextKey(route) {
+  return `${route.view}:${route.game}:${route.profile}`;
+}
+
+// lastHydratedContext starts undefined, which never equals a real
+// contextKey - so the very first go() call always hydrates, including the
+// chooser (whose route is otherwise identical to store.js's initial state).
+let lastHydratedContext;
+
 function go(route) {
   store.set({ route });
-  hydrate(route);
+  const key = contextKey(route);
+  if (key !== lastHydratedContext) {
+    lastHydratedContext = key;
+    hydrate(route);
+  }
 }
 
 // The shell's inline script already stamped any persisted override before

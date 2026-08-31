@@ -271,6 +271,48 @@ func TestE2E_LibrarySortReordersRowsByName(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_OpeningSlideOverDoesNotRehydrate guards the unit 2 gate's I2
+// finding: opening or closing the ?mod= slide-over annotation dispatched a
+// popstate, and main.js#go used to call hydrate() unconditionally on every
+// route change - re-running the full Mission Control hydrate (five fetches,
+// one of them the network-heavy full-tier verify) on a click that never
+// changes which game/profile is on screen. A fetch spy installed AFTER the
+// initial hydrate has settled proves neither the open nor the close costs a
+// single additional request.
+func TestE2E_OpeningSlideOverDoesNotRehydrate(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			window.__fetchCount = 0;
+			const origFetch = window.fetch;
+			window.fetch = (...args) => {
+				window.__fetchCount++;
+				return origFetch(...args);
+			};
+		`, nil),
+	)
+
+	var afterOpen int
+	f.runInBrowser(t,
+		chromedp.Click(`.mod-row__name`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Evaluate(`window.__fetchCount`, &afterOpen),
+	)
+	assert.Zero(t, afterOpen, "opening the slide-over must not trigger any /api/v1 fetch")
+
+	var afterClose int
+	f.runInBrowser(t,
+		chromedp.Click(`.slide-over__close`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		chromedp.Evaluate(`window.__fetchCount`, &afterClose),
+	)
+	assert.Zero(t, afterClose, "closing the slide-over must not trigger any /api/v1 fetch either")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_AttentionCardsRenderFromSeededFixture is the "card presence"
 // scenario: on a fixture where all three cards have something to say, all
 // three actually render, each naming what it found.
