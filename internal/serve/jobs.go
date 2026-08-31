@@ -210,16 +210,20 @@ func (j *job) redoRequest() any { return j.redo }
 // sees its channel close while the job is still running, which is the
 // signal to re-subscribe: the ring replay then closes the gap.
 //
-// One instant stays ambiguous (task-6-review.md Minor 2): if the job
-// finishes between a subscriber's lag-drop and that subscriber's next
-// status() read, the read returns succeeded and the subscriber concludes
-// "done" having silently missed whatever happened in between - the end
-// state is still correct (it IS in status()), only the intermediate
-// progress is lost, and there is no signal distinguishing that from a
-// subscriber that stayed connected the whole time. Cheapest hardening for
-// Task 7: record the drop on the sub (or bump a DroppedSubscribers /
-// dropped_events-style counter) so the stream can say "history incomplete"
-// instead of a caller having to infer it from a state race.
+// One instant stays ambiguous (task-6-review.md Minor 2; Task 7 narrowed
+// but did not close it - task-7-review.md Minor 2). While the job is still
+// running when a subscriber lags, sse.go's finishStream tells that
+// subscriber it was dropped ("lagged: reconnect...") so its EventSource
+// reconnects and the ring replay closes the gap. But if the job finishes
+// in the window between the lag-drop and finishStream's status() read, the
+// stream instead gets a normal terminal "done" frame - correct (the result
+// IS the truth), but silent about the dropped events in between, with
+// nothing distinguishing it from a subscriber that stayed connected the
+// whole time. A client can still detect this itself: EventCount on the
+// "done" frame's job status document is the total the job ever emitted,
+// so a stream that counts what it actually received and compares against
+// that total learns its history was partial even without an explicit
+// signal.
 func (j *job) emit(e core.Event) {
 	j.mu.Lock()
 	defer j.mu.Unlock()

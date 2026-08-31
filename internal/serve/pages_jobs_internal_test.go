@@ -111,6 +111,27 @@ func TestJobPage_RendersTheEventLog(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), core.DeployDeployed.String())
 }
 
+// TestJobPage_FinishedWithNoEvents_DoesNotSayYet is M6 (epic live review):
+// a job that emitted no events at all still said "No progress reported
+// yet" even once it was already succeeded/failed - "yet" implies more is
+// coming on a job that is not going to report anything else.
+func TestJobPage_FinishedWithNoEvents_DoesNotSayYet(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+	id, err := s.jobs.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+		return &core.DeployResult{}, nil
+	})
+	require.NoError(t, err)
+	j, ok := s.jobs.job(id)
+	require.True(t, ok)
+	waitFor(t, j.done(), "job completion")
+
+	rec := doAPI(s, http.MethodGet, "/jobs/"+string(id), "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, "reported yet", "a finished job has nothing left to report - it isn't a matter of \"yet\"")
+}
+
 // TestJobPage_UnknownJob_404Page answers a job that never existed or has
 // aged out with a real HTML page, not bare error text (WEBUI.md).
 func TestJobPage_UnknownJob_404Page(t *testing.T) {
@@ -121,4 +142,46 @@ func TestJobPage_UnknownJob_404Page(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Contains(t, rec.Header().Get("Content-Type"), "text/html")
 	assert.Contains(t, rec.Body.String(), "no longer available")
+}
+
+// TestJobPage_Running_CarriesSSEHooks proves a running job's page carries
+// every attribute Task 10's app.js needs to find it and announce progress
+// accessibly (docs/plans/unit6-carry-list.md): data-job-id/data-job-state
+// for discovery, aria-busy while running (assistive tech), and the
+// aria-live region app.js writes into - present and empty even with
+// JavaScript off, per the file's own header comment.
+func TestJobPage_Running_CarriesSSEHooks(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	id, err := s.jobs.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
+		sink(indexEvent(1))
+		<-release
+		return &core.DeployResult{}, nil
+	})
+	require.NoError(t, err)
+
+	rec := doAPI(s, http.MethodGet, "/jobs/"+string(id), "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `data-job-id="`+string(id)+`"`)
+	assert.Contains(t, body, `data-job-state="running"`)
+	assert.Contains(t, body, `aria-busy="true"`, "a running job must announce itself busy to assistive tech")
+	assert.Contains(t, body, `data-job-live`, "the element app.js writes live progress into must exist even with JS off")
+	assert.Contains(t, body, `aria-live="polite"`, "progress updates must be announced without moving focus")
+}
+
+// TestJobPage_Succeeded_OmitsAriaBusy proves aria-busy is only ever true
+// while the job actually runs - a finished job's page must not keep
+// announcing itself as busy to assistive tech.
+func TestJobPage_Succeeded_OmitsAriaBusy(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+	id := finishedJob(t, s, "deploy", &core.DeployResult{Deployed: 1}, nil)
+
+	rec := doAPI(s, http.MethodGet, "/jobs/"+string(id), "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "aria-busy")
 }

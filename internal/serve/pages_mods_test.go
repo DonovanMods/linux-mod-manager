@@ -1,6 +1,7 @@
 package serve_test
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -64,6 +65,32 @@ func TestServer_Mods_ToggleForms_AreLive(t *testing.T) {
 	assert.Contains(t, body, `action="/mods/fake/1/enable"`)
 	assert.Regexp(t, `<button type="submit"(?:\s+class="[^"]*")?>Enable</button>`, body)
 	assert.NotRegexp(t, `<button type="submit" disabled[^>]*>Enable</button>`, body)
+}
+
+// TestServer_Mods_ShowsLockedMods is M4 (epic live review): /mods's only
+// lock-adjacent column, "Update policy", reads a plain "notify" for a
+// locked mod - the same as an unlocked one - so a user scanning the list
+// cannot tell which mods are pinned. /updates and the mod detail page both
+// already surface this; /mods must too.
+func TestServer_Mods_ShowsLockedMods(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, game := newFixtureServiceWithSource(t, src)
+	seedInstalledMod(t, svc, game, domain.Mod{ID: "42", SourceID: "fake", Name: "Better Boots", Version: "1.2.0", GameID: game.ID}, true, nil)
+
+	ctx := context.Background()
+	require.NoError(t, svc.NewProfileManager().AddMod(ctx, game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "42", Version: "1.2.0"}))
+	_, err := svc.SetModLock(ctx, "fake", "42", game.ID, "default", "1.2.0")
+	require.NoError(t, err)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "yes (1.2.0)", "a locked mod's row must name its lock, matching /updates and the mod detail page")
 }
 
 // TestServer_Mods_NoModsInstalled_RendersEmptyState covers the

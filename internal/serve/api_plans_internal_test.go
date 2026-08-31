@@ -96,7 +96,11 @@ func TestAPIPlan_UnknownKind_400NamesTheSupportedKinds(t *testing.T) {
 }
 
 // TestAPIPlan_WithoutCSRFToken_403 covers the design's "CSRF token on every
-// form and state-changing API call" for the new POST surface.
+// form and state-changing API call" for the new POST surface. The failure
+// must carry the same {"error","details"} JSON envelope every other
+// /api/v1 failure does (epic live review M1) - not a bare text/plain
+// http.Error, the one shape that broke the README's unconditional claim
+// that every API failure uses the envelope.
 func TestAPIPlan_WithoutCSRFToken_403(t *testing.T) {
 	s, _ := newDeployFixtureServer(t)
 
@@ -105,7 +109,30 @@ func TestAPIPlan_WithoutCSRFToken_403(t *testing.T) {
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusForbidden, rec.Code)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	var envelope apiErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope, json.RejectUnknownMembers(true)))
+	assert.Contains(t, envelope.Error, "CSRF")
+}
+
+// TestAPIPlan_CrossOrigin_403 is the Origin-check half of M1: an
+// /api/v1 request whose Origin disagrees with its Host must also get the
+// JSON envelope, not the bare text/plain http.Error every non-API route
+// still uses.
+func TestAPIPlan_CrossOrigin_403(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+
+	req := apiRequest(s, http.MethodPost, "/api/v1/plans/deploy", `{}`)
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	var envelope apiErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope, json.RejectUnknownMembers(true)))
+	assert.Contains(t, envelope.Error, "cross-origin")
 }
 
 // TestAPIPlanDeploy_RejectsUnusableOptions covers the options decoder: an

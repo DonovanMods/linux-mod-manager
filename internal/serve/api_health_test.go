@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -123,6 +125,62 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
 	requireEncodesLike(t, rec.Body.Bytes(), want)
+}
+
+// healthSummaryPattern matches health.gohtml's "N issue(s), M warning(s), K
+// file(s) checked." summary line.
+var healthSummaryPattern = regexp.MustCompile(`(\d+) issue\(s\), (\d+) warning\(s\), (\d+) file\(s\) checked`)
+
+// TestServer_Health_PageMatchesAPIAndCLICounts is Important 2 (epic live
+// review): on the exact same state as TestServer_APIHealth_MatchesCLIVerifyTier
+// (a version_mismatch a VerifyLocal tier cannot see), the /health PAGE, the
+// /api/v1/health API, and a direct core.VerifyReport(VerifyFull) call - the
+// CLI's own tier - must all report the SAME issue count. Before the C1 fix
+// (the page pinned to VerifyLocal) this was RED: the page said "0 issue(s)"
+// while the API and the CLI-equivalent call both said "1".
+func TestServer_Health_PageMatchesAPIAndCLICounts(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID,
+		},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	pageReq := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/health", nil)
+	pageRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(pageRec, pageReq)
+	require.Equal(t, http.StatusOK, pageRec.Code)
+	match := healthSummaryPattern.FindStringSubmatch(pageRec.Body.String())
+	require.Len(t, match, 4, "page must render the issue-count summary line: %s", pageRec.Body.String())
+	pageIssues := match[1]
+
+	apiReq := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
+	apiRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(apiRec, apiReq)
+	require.Equal(t, http.StatusOK, apiRec.Code)
+	var apiReport core.VerifyReport
+	decodeStrict(t, apiRec.Body.Bytes(), &apiReport)
+
+	cliEquivalent, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, "1", pageIssues, "the page must see the version_mismatch too, not report a clean sheet")
+	assert.Equal(t, pageIssues, strconv.Itoa(apiReport.Result.Issues), "page and API must report the same issue count on the same state")
+	assert.Equal(t, apiReport.Result.Issues, cliEquivalent.Result.Issues, "API and the CLI's own tier must agree")
 }
 
 // TestServer_APIHealth_NoGames_Renders404 mirrors the other scoped

@@ -54,6 +54,23 @@ func TestServer_Health_OffersRepairOnlyWhenSomethingIsFixable(t *testing.T) {
 	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
 }
 
+// TestServer_Health_FixButton_DoesNotCallWarningsIssues is M6 (epic live
+// review): a stray deployment is a WARNING, not an issue
+// (internal/core/verify.go: "each becomes a stale_deployment warning"), so
+// a report of "0 issue(s), 1 warning(s)" must not sit above a button
+// reading "Fix 1 issue(s)" - Fixable counts fixable warnings too, and the
+// button's own wording must not misname them.
+func TestServer_Health_FixButton_DoesNotCallWarningsIssues(t *testing.T) {
+	s, _, game := newMutationFixtureServer(t)
+	strayDeployment(t, s, game, "stray.pak")
+
+	rec := getPage(s, "/health")
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "0 issue(s), 1 warning(s)")
+	assert.NotContains(t, body, "issue(s)</button>", "the fix button must not call a warning-only fixable set an \"issue\"")
+}
+
 // TestServer_HealthFix_ConfirmShowsTheDryRun is the plan half: the same
 // engine, every repair withheld - so the page names the finding, and the
 // divergence is still there afterwards.

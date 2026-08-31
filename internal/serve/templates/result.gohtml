@@ -11,7 +11,11 @@
 {{else if .Notice}}
 <p role="status" class="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{{.Notice}}</p>
 {{else}}
+{{if .Partial}}
+<p role="status" class="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">Done, with failures - see below.</p>
+{{else}}
 <p role="status" class="mb-4 rounded border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-800">Done.</p>
+{{end}}
 {{if .Facts}}
 <section aria-label="Result" class="mb-6">
 <h2 class="mb-2 text-lg font-semibold">Result</h2>

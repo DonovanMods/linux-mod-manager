@@ -123,6 +123,10 @@ func TestServer_ProfileApply_ConfirmListsInstallsAndRemovals(t *testing.T) {
 	assert.Contains(t, body, unresolvableModID, "the unresolvable entry must be named")
 	assert.Contains(t, body, "could not be resolved")
 	assert.Regexp(t, `name="plan_id" value="[0-9a-f]{32}"`, body)
+	// M6 (epic live review): "To install" must count only the entry that
+	// would actually be installed - not the unresolvable one this same
+	// page lists separately as skipped.
+	assert.Regexp(t, `>To install</dt><dd>1</dd>`, body)
 
 	installed, err := svc.GetInstalledMod(t.Context(), "fake", "p4", game.ID, applyTargetProfile)
 	require.NoError(t, err)
@@ -165,7 +169,9 @@ func TestServer_ProfileApply_ConfirmRunsTheJobAndConverges(t *testing.T) {
 }
 
 // TestServer_ProfileApply_SyncFallback_MutatesIdentically is the no-JS path
-// for the apply.
+// for the apply. This fixture's apply is itself a partial failure (the
+// unresolvable entry) - epic live review M6 - so the inline result must say
+// so rather than the unqualified "Done." a fully-successful apply gets.
 func TestServer_ProfileApply_SyncFallback_MutatesIdentically(t *testing.T) {
 	s, svc, game := newProfilesFixtureServer(t)
 	entry := postForm(s, "/profiles/"+applyTargetProfile+"/apply", formValues{"game": game.ID})
@@ -176,7 +182,10 @@ func TestServer_ProfileApply_SyncFallback_MutatesIdentically(t *testing.T) {
 	})
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "Done.")
+	body := rec.Body.String()
+	assert.Contains(t, body, "with failures", "a partial failure must not render the unqualified green \"Done.\"")
+	assert.NotContains(t, body, `class="mb-4 rounded border border-green-300`, "the banner must not be the plain-success green")
+	assert.Contains(t, body, unresolvableModID)
 
 	installedP4, err := svc.GetInstalledMod(t.Context(), "fake", "p4", game.ID, applyTargetProfile)
 	require.NoError(t, err)

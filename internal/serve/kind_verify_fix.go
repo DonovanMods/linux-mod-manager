@@ -66,6 +66,15 @@ func init() {
 // the honest failure mode of the data the report actually carries: better
 // than hiding the action from every profile because one mod in it might be
 // local.
+//
+// KNOWN DRIFT RISK (task-9 review Minor 2, accepted for v2.1.0, not fixed
+// here): this duplicates core's status vocabulary by string literal. Core
+// exports no constants for these either (they're literals in
+// internal/core/verify.go's repair branches), so a new repairable status
+// added there silently stops being offered here, with no test or ratchet
+// to catch the drift. The real fix - core.VerifyFindingIsRepairable or
+// exported status constants both sides read - touches core's public
+// surface and belongs in a follow-up issue, not this polish pass.
 var verifyFixRepairableStatuses = map[string]bool{
 	"missing":          true,
 	"no_checksum":      true,
@@ -89,10 +98,16 @@ func verifyFixableFindings(report *core.VerifyReport) []core.VerifyFinding {
 }
 
 // verifyFixPlanRequest is POST /api/v1/plans/verify_fix's request body:
-// nothing yet. The tier is fixed at VerifyLocal for both halves, matching
-// what /health itself renders - a page must stay cheap and offline, and a
-// repair the user asked for from that page should act on the findings that
-// page showed, not on a wider set it never saw.
+// nothing yet. The tier is fixed at VerifyFull for both halves (epic live
+// review C1), matching what /health itself now renders - a repair the user
+// asked for from that page acts on exactly the findings that page showed,
+// which now includes a version_mismatch. Running the plan half at a
+// DIFFERENT (cheaper) tier than the apply half would let the confirm page
+// show one set of findings while the apply repairs a different one -
+// version_mismatch's repair mutates the recorded version BEFORE the
+// missing-file repair ever looks at the cache, so a plan/apply tier
+// mismatch here could resurrect exactly the corruption this fix exists to
+// close.
 type verifyFixPlanRequest struct{}
 
 // verifyFixApplyRequest is the "options" member POST /api/v1/jobs accepts
@@ -116,7 +131,7 @@ type pendingVerifyFix struct {
 // verifyFixOptions is the shared option set both halves use; only Fix
 // differs, which is the whole point.
 func verifyFixOptions(fix bool) core.VerifyOptions {
-	return core.VerifyOptions{Tier: core.VerifyLocal, Fix: fix}
+	return core.VerifyOptions{Tier: core.VerifyFull, Fix: fix}
 }
 
 // planVerifyFixKind implements planKind.Plan for "verify_fix": the dry run.
@@ -169,7 +184,11 @@ func summarizeVerifyFixResult(result any) []resultFact {
 			healthy++
 			continue
 		}
-		facts = append(facts, resultFact{Label: findingLabel(finding.Status), Value: verifyFindingText(finding)})
+		facts = append(facts, resultFact{
+			Label:   findingLabel(finding.Status),
+			Value:   verifyFindingText(finding),
+			Failure: !findingRepaired(finding.Status),
+		})
 	}
 	if healthy > 0 {
 		facts = append(facts, resultFact{Label: "Healthy files", Value: strconv.Itoa(healthy)})
@@ -177,17 +196,29 @@ func summarizeVerifyFixResult(result any) []resultFact {
 	return facts
 }
 
+// findingRepaired reports whether status marks a finding this repair pass
+// actually resolved, rather than one still outstanding afterward (epic
+// re-review N-3: the single source of truth findingLabel and each fact's
+// own Failure marker both derive from, so the two can never disagree about
+// which findings are "not succeeded").
+func findingRepaired(status string) bool {
+	switch status {
+	case "fixed_stale_deployment", "fixed_needs_reingest":
+		return true
+	default:
+		return false
+	}
+}
+
 // findingLabel splits repaired rows from the ones still outstanding, so a
 // result readout does not list a fixed row and an unfixed one under the
 // same word. "ok" is not among these: summarizeVerifyFixResult never calls
 // this for an "ok" finding (see its own doc comment).
 func findingLabel(status string) string {
-	switch status {
-	case "fixed_stale_deployment", "fixed_needs_reingest":
+	if findingRepaired(status) {
 		return "Repaired"
-	default:
-		return "Still reported"
 	}
+	return "Still reported"
 }
 
 // verifyFindingText renders one finding as a line: which mod, which file,

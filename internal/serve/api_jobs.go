@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
@@ -256,12 +257,39 @@ func (s *Server) lookupJob(w http.ResponseWriter, r *http.Request) (*job, bool) 
 // which a client that only knows how to parse this API's envelope cannot
 // read.
 //
-// It also swallows what would otherwise be a 405: because the fallback
-// pattern matches every method, a POST to a GET-only route lands here as a
-// 404 rather than net/http's Method Not Allowed. That is the deliberate
-// trade - one JSON shape for every /api/v1 failure beats a more precise
-// status delivered as plain text - and it is what the "wrong method on a
-// real route" case pins.
+// A request that reaches here for a path a route DOES claim, just not for
+// this method (a POST to a GET-only route), gets a 405 with Allow instead
+// of the generic 404 (task-7 review Minor 1): apiAllowedMethods is the only
+// way to ask that without actually invoking a handler.
 func (s *Server) handleAPINotFound(w http.ResponseWriter, r *http.Request) {
+	if allow := s.apiAllowedMethods(r); len(allow) > 0 {
+		w.Header().Set("Allow", strings.Join(allow, ", "))
+		s.writeAPIError(w, http.StatusMethodNotAllowed,
+			fmt.Errorf("method %s not allowed on %s", r.Method, r.URL.Path))
+		return
+	}
 	s.writeAPIError(w, http.StatusNotFound, fmt.Errorf("no such API endpoint: %s", r.URL.Path))
+}
+
+// apiMethodsToProbe are the only methods any /api/v1 route ever uses today
+// (routes.go registers each one as either GET or POST) - the closed set
+// apiAllowedMethods needs to try, not every HTTP method that exists.
+var apiMethodsToProbe = []string{http.MethodGet, http.MethodPost}
+
+// apiAllowedMethods reports which of apiMethodsToProbe a registered
+// /api/v1 route actually claims for r's URL, by cloning r with each
+// candidate method and asking the mux which pattern it would dispatch to.
+// The fallback's own pattern ("/api/v1/", registered in routes.go) doesn't
+// count as a claim - it matches every method by design, which is exactly
+// why net/http's built-in 405 can't fire on its own here.
+func (s *Server) apiAllowedMethods(r *http.Request) []string {
+	var allowed []string
+	for _, method := range apiMethodsToProbe {
+		clone := r.Clone(r.Context())
+		clone.Method = method
+		if _, pattern := s.mux.Handler(clone); pattern != "" && pattern != "/api/v1/" {
+			allowed = append(allowed, method)
+		}
+	}
+	return allowed
 }

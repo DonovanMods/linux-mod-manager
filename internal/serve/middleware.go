@@ -1,12 +1,15 @@
 package serve
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -62,6 +65,27 @@ func tokenFrom(r *http.Request) string {
 	return r.PostForm.Get(csrfFormField)
 }
 
+// isAPIPath reports whether path is under the /api/v1 subtree.
+func isAPIPath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/")
+}
+
+// forbidden answers a 403 the same envelope every other /api/v1 failure
+// uses when r's path is under the API tree (epic live review M1: a CSRF or
+// Origin rejection on /api/v1 previously answered a bare text/plain
+// http.Error, the one failure shape the README's unconditional "the CLI's
+// {"error","details"} envelope on failure" claim didn't actually hold for -
+// every other API failure already goes through writeAPIError). A page
+// route's rejection keeps the plain-text http.Error a browser's own error
+// page (or a no-JS form submission) is equipped to show.
+func (s *Server) forbidden(w http.ResponseWriter, r *http.Request, msg string) {
+	if isAPIPath(r.URL.Path) {
+		s.writeAPIError(w, http.StatusForbidden, errors.New(msg))
+		return
+	}
+	http.Error(w, msg, http.StatusForbidden)
+}
+
 // unsafeMethod reports whether m is a state-changing HTTP method - the
 // Origin and CSRF checks apply only to these (docs/plans/2026-08-30-serve-design.md
 // §Security: "Origin check on non-GET").
@@ -80,7 +104,8 @@ func unsafeMethod(m string) bool {
 // they cover every response including the mux's own 404/405 and
 // /static/, which don't go through wrap (task-3 review Minor 4: neither
 // carries user data or accepts state-changing methods, so they don't need
-// request logging or the Origin/CSRF checks).
+// the Origin/CSRF checks); rootLogging covers the request logging half of
+// that same gap (task-3 re-review New finding 2).
 func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 	var h http.Handler = fn
 	h = s.csrfCheck(h)
@@ -104,12 +129,68 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 // requestLogging logs each request at Debug once it completes: method,
-// path, status, and duration.
+// path, status, and duration. It also flips the marker rootLogging
+// installed (see markLogged) so the root-level logger - which sees every
+// request, including the ones this middleware never reaches - doesn't log
+// the same request a second time.
 func (s *Server) requestLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
+		markLogged(r)
+		s.log.Debug("http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration", time.Since(start),
+		)
+	})
+}
+
+// loggedMarkerKey is the context key requestLogging uses to tell
+// rootLogging it already logged a request, so a route reached through wrap
+// (which includes requestLogging) is never logged twice.
+type loggedMarkerKey struct{}
+
+// withLoggedMarker installs a fresh, unset marker in r's context and
+// returns both the new request and a pointer to the marker: a pointer
+// survives being carried through http.Request.WithContext (which a
+// downstream handler may call, replacing rootLogging's own copy of the
+// request) in a way a plain context value read back by rootLogging itself
+// would not.
+func withLoggedMarker(r *http.Request) (*http.Request, *bool) {
+	marked := new(bool)
+	return r.WithContext(context.WithValue(r.Context(), loggedMarkerKey{}, marked)), marked
+}
+
+// markLogged flips the marker withLoggedMarker installed on r's context,
+// if any (there is none for the direct-call middleware tests that never
+// route through rootLogging).
+func markLogged(r *http.Request) {
+	if marked, ok := r.Context().Value(loggedMarkerKey{}).(*bool); ok {
+		*marked = true
+	}
+}
+
+// rootLogging restores Debug request logging for every request requestLogging
+// never sees: a Host rejected by hostCheck, and a path/method the mux itself
+// answers with 404 or 405 (task-3 re-review New finding 2 - the Minor-4 hoist
+// that moved securityHeaders/hostCheck to the server's root silently dropped
+// logging for exactly these). It sits between securityHeaders and hostCheck
+// (see New) so it observes the final status of every request reaching either
+// of them, and skips logging anything requestLogging already logged
+// downstream (see markLogged) rather than double-logging every ordinary
+// route.
+func (s *Server) rootLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		r, marked := withLoggedMarker(r)
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		if *marked {
+			return
+		}
 		s.log.Debug("http request",
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -154,23 +235,35 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter 
 // that no real client ever sends as its Host), so hostCheck must accept
 // any Host it sees there instead of rejecting every request (task-3 review
 // Important 1).
-func allowedHostsFor(hostPort string) map[string]struct{} {
+// allowedHostsFor also returns the wildcard bind's port (empty for a
+// concrete bind, which needs no separate port check - its allow-list
+// already pins an exact "host:port"): hostCheck passes it to
+// hostIsSafeForWildcardBind so a wildcard bind's port half is checked too.
+// A literal "0" (an ephemeral-port Addr like ":0" that hasn't gone through
+// Listen yet, which resolves it to the real bound port) normalises to ""
+// rather than the meaningless literal port number 0 - "0" was never a port
+// any real client request could arrive on, so treating it as "not yet
+// known" (no port check) is the correct reading, not a special case.
+func allowedHostsFor(hostPort string) (hosts map[string]struct{}, wildcardPort string) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return map[string]struct{}{hostPort: {}}
+		return map[string]struct{}{hostPort: {}}, ""
+	}
+	if port == "0" {
+		port = ""
 	}
 	if host == "" {
-		return nil
+		return nil, port
 	}
 	ip := net.ParseIP(host)
 	if ip != nil && ip.IsUnspecified() {
-		return nil
+		return nil, port
 	}
-	hosts := map[string]struct{}{hostPort: {}}
+	hosts = map[string]struct{}{hostPort: {}}
 	if ip != nil && ip.IsLoopback() {
 		hosts["localhost:"+port] = struct{}{}
 	}
-	return hosts
+	return hosts, ""
 }
 
 // hostIsSafeForWildcardBind reports whether host (a Host header, with or
@@ -181,9 +274,20 @@ func allowedHostsFor(hostPort string) map[string]struct{} {
 // that way, and "localhost" is resolved by the OS/browser stack itself,
 // not by attacker-controlled DNS, so both remain safe to compare Origin
 // against even without a pinned Host (see hostCheck and originCheck).
-func hostIsSafeForWildcardBind(hostHeader string) bool {
+//
+// boundPort, when non-empty, is the port the wildcard bind is actually
+// listening on: a Host header that names one (e.g. "10.10.10.110:9999" on
+// a ":17421" bind) must name THAT port too, closing the gap where the port
+// half of the Host header was accepted unchecked (task-3 re-review New
+// finding 4). A Host header with no port at all (bare "localhost", which a
+// browser may send for a default-port request) is left alone - it was
+// never claiming to name the bound port in the first place.
+func hostIsSafeForWildcardBind(hostHeader, boundPort string) bool {
 	host := hostHeader
-	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+	if h, p, err := net.SplitHostPort(hostHeader); err == nil {
+		if boundPort != "" && p != boundPort {
+			return false
+		}
 		host = h
 	}
 	return host == "localhost" || net.ParseIP(host) != nil
@@ -206,11 +310,11 @@ func (s *Server) hostCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.allowedHosts != nil {
 			if _, ok := s.allowedHosts[r.Host]; !ok {
-				http.Error(w, "host not allowed", http.StatusForbidden)
+				s.forbidden(w, r, "host not allowed")
 				return
 			}
-		} else if !hostIsSafeForWildcardBind(r.Host) {
-			http.Error(w, "host not allowed", http.StatusForbidden)
+		} else if !hostIsSafeForWildcardBind(r.Host, s.wildcardPort) {
+			s.forbidden(w, r, "host not allowed")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -220,19 +324,20 @@ func (s *Server) hostCheck(next http.Handler) http.Handler {
 // originCheck rejects a state-changing request whose Origin header names a
 // different origin than the Host it arrived on. Comparing against r.Host
 // rather than a value fixed at construction keeps this correct for a
-// wildcard bind too, where hostCheck (which always runs first - see wrap)
-// admits more than one Host - though only an IP literal or "localhost"
-// there, which closes the DNS-rebinding gap a same-origin-by-header-
-// comparison would otherwise reopen (see hostCheck). A request with no
-// Origin header at all (curl, the API used from a script) is not rejected
-// here - the CSRF check downstream still guards it.
+// wildcard bind too, where hostCheck (which always runs first - it wraps
+// the mux at the server's root; see New) admits more than one Host -
+// though only an IP literal or "localhost" there, which closes the
+// DNS-rebinding gap a same-origin-by-header-comparison would otherwise
+// reopen (see hostCheck). A request with no Origin header at all (curl,
+// the API used from a script) is not rejected here - the CSRF check
+// downstream still guards it.
 func (s *Server) originCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if unsafeMethod(r.Method) {
 			if origin := r.Header.Get("Origin"); origin != "" {
 				expected := "http://" + r.Host
 				if origin != expected {
-					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
+					s.forbidden(w, r, "cross-origin request rejected")
 					return
 				}
 			}
@@ -247,7 +352,7 @@ func (s *Server) originCheck(next http.Handler) http.Handler {
 func (s *Server) csrfCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if unsafeMethod(r.Method) && !s.csrf.valid(tokenFrom(r)) {
-			http.Error(w, "missing or invalid CSRF token", http.StatusForbidden)
+			s.forbidden(w, r, "missing or invalid CSRF token")
 			return
 		}
 		next.ServeHTTP(w, r)

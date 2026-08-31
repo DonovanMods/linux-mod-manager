@@ -6,12 +6,13 @@ import (
 	"net/http"
 )
 
-//go:embed static/app.css
+//go:embed static/app.css static/app.js
 var staticFS embed.FS
 
-// staticHandler serves the embedded static assets (app.css, the committed
-// Tailwind build output described by the Makefile's `css` target) under
-// /static/.
+// staticHandler serves the embedded static assets under /static/: app.css
+// (the committed Tailwind build output described by the Makefile's `css`
+// target) and app.js (the progressive-enhancement script - Task 10; every
+// page and mutation works with it absent, per WEBUI.md).
 func staticHandler() http.Handler {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {

@@ -53,8 +53,13 @@ type Server struct {
 	mux        *http.ServeMux
 	// allowedHosts is the Host allow-list hostCheck enforces (see
 	// allowedHostsFor in middleware.go). nil means a wildcard bind: any
-	// Host is accepted.
-	allowedHosts  map[string]struct{}
+	// IP-literal or "localhost" Host naming wildcardPort is accepted.
+	allowedHosts map[string]struct{}
+	// wildcardPort is the port a wildcard bind is listening on, used to
+	// close the port-ignoring gap in hostIsSafeForWildcardBind (task-3
+	// re-review New finding 4). Empty when allowedHosts is non-nil - a
+	// concrete bind's allow-list already pins an exact "host:port".
+	wildcardPort  string
 	shutdownGrace time.Duration
 	csrf          *csrfGuard
 	ln            net.Listener
@@ -105,11 +110,13 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		grace = defaultShutdownGrace
 	}
 
+	allowedHosts, wildcardPort := allowedHostsFor(opts.Addr)
 	s := &Server{
 		svc:           svc,
 		log:           log,
 		mux:           http.NewServeMux(),
-		allowedHosts:  allowedHostsFor(opts.Addr),
+		allowedHosts:  allowedHosts,
+		wildcardPort:  wildcardPort,
 		shutdownGrace: grace,
 		csrf:          newCSRFGuard(),
 		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
@@ -119,12 +126,13 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,
-		// Security headers and the Host allow-list apply to every request
-		// the mux ever sees - including a 404/405 the mux generates itself
-		// and /static/, neither of which goes through wrap (task-3 review
-		// Minor 4). wrap adds the checks specific to the routes that need
-		// them.
-		Handler: securityHeaders(s.hostCheck(s.mux)),
+		// Security headers, request logging, and the Host allow-list apply
+		// to every request the mux ever sees - including a 404/405 the mux
+		// generates itself and /static/, neither of which goes through
+		// wrap (task-3 review Minor 4; the logging half is task-3
+		// re-review New finding 2). wrap adds the checks specific to the
+		// routes that need them.
+		Handler: securityHeaders(s.rootLogging(s.hostCheck(s.mux))),
 	}
 	// RegisterOnShutdown fires when Shutdown is called - the only hook
 	// net/http offers for "we are going away", since it never cancels an
@@ -151,7 +159,7 @@ func (s *Server) Listen() (net.Addr, error) {
 		return nil, fmt.Errorf("listening on %s: %w", s.httpServer.Addr, err)
 	}
 	s.ln = ln
-	s.allowedHosts = allowedHostsFor(ln.Addr().String())
+	s.allowedHosts, s.wildcardPort = allowedHostsFor(ln.Addr().String())
 	return ln.Addr(), nil
 }
 

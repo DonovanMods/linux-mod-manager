@@ -124,7 +124,16 @@ type kindForm struct {
 	//
 	// Nil means "this kind's options are apply-time", which is the common
 	// case (install, uninstall, updates): the confirm form's own values are
-	// what applies, so there is nothing to disagree with.
+	// what applies, so there is nothing to disagree with - Apply always
+	// receives exactly the options the submission carries, regardless of
+	// what PlanIsCurrent would have said. That does NOT mean an apply-time
+	// option can never appear in the plan text: uninstall's KeepCache and
+	// SkipHooks are apply-time (unlock only, per this doc), yet the stored
+	// plan document echoes them (kind_uninstall.go), so ticking one and
+	// pressing the primary button applies the tick correctly even though
+	// the confirm page's plan-derived summary above it can lag one step
+	// behind until "Update plan" is pressed (task-9 review Minor 3) - a
+	// display staleness, never a mismatch in what actually happens.
 	PlanIsCurrent func(pending any, r *http.Request) bool
 }
 
@@ -215,9 +224,17 @@ type confirmToggle struct {
 }
 
 // resultFact is one label/value row of a finished job's result readout.
+// Failure marks a row that represents a not-succeeded outcome (a failed
+// install, an unresolvable profile_apply entry, a verify_fix finding still
+// outstanding after the repair) - the semantic signal resultPageData.Partial
+// keys on (epic re-review N-3: the predicate previously matched the
+// literal label "Failed", which install and profile_apply happen to use
+// but verify_fix's "Still reported" rows never did, so a repair that left
+// findings outstanding rendered the plain green "Done." anyway).
 type resultFact struct {
-	Label string
-	Value string
+	Label   string
+	Value   string
+	Failure bool
 }
 
 // planKinds is the registry itself. It is written only from the init

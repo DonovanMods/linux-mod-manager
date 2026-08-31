@@ -269,7 +269,6 @@ func TestAPIUnknownPath_404Envelope(t *testing.T) {
 	}{
 		{"unknown collection", http.MethodGet, "/api/v1/nope"},
 		{"unknown nested path", http.MethodGet, "/api/v1/jobs/abc/nope"},
-		{"wrong method on a real route", http.MethodPost, "/api/v1/status"},
 		{"unknown state-changing path", http.MethodPost, "/api/v1/nope"},
 	}
 	for _, tc := range tests {
@@ -281,6 +280,36 @@ func TestAPIUnknownPath_404Envelope(t *testing.T) {
 			require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 			assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
 			assert.Contains(t, decodeEnvelope(t, rec.Body.Bytes()).Error, tc.path)
+		})
+	}
+}
+
+// TestAPIWrongMethodOnRealRoute_405WithAllow closes task-7 review Minor 1:
+// a path a route DOES claim, hit with a method it doesn't answer, gets a
+// JSON 405 naming the allowed method(s) via Allow - not the generic 404
+// every truly unknown path gets.
+func TestAPIWrongMethodOnRealRoute_405WithAllow(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		path        string
+		wantAllow   string
+		wantMessage string
+	}{
+		{"POST on a GET-only route", http.MethodPost, "/api/v1/status", "GET", "method POST not allowed on /api/v1/status"},
+		{"GET on a POST-only route", http.MethodGet, "/api/v1/jobs", "POST", "method GET not allowed on /api/v1/jobs"},
+		{"PUT on a GET-only route with a path param", http.MethodPut, "/api/v1/jobs/abc/events", "GET", "method PUT not allowed on /api/v1/jobs/abc/events"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newDeployFixtureServer(t)
+
+			rec := doAPI(s, tc.method, tc.path, "")
+
+			require.Equal(t, http.StatusMethodNotAllowed, rec.Code, rec.Body.String())
+			assert.Equal(t, tc.wantAllow, rec.Header().Get("Allow"))
+			assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+			assert.Contains(t, decodeEnvelope(t, rec.Body.Bytes()).Error, tc.wantMessage)
 		})
 	}
 }

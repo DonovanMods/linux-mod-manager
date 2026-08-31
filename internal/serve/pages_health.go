@@ -28,10 +28,18 @@ type healthPageData struct {
 // conflicts (GetProfileConflicts) between the profile's enabled mods
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface). The "Fix issues"
 // form targets POST /health/fix (Task 9, #322) and renders only when the
-// report holds a finding a repair would act on. Verify runs at VerifyLocal
-// (no network calls) - a page render must stay cheap and offline - which is
-// also the tier the repair itself runs at, so the action acts on the very
-// findings this page showed.
+// report holds a finding a repair would act on. Verify runs at VerifyFull,
+// matching /api/v1/health and the CLI's `lmm verify` (epic live review C1/
+// I2): an earlier version pinned VerifyLocal to keep the page cheap and
+// offline, but that let the page and its own repair miss version_mismatch
+// findings entirely - and since perFileWalk's "missing" repair fetches
+// whatever the source CURRENTLY reports and stores it under the STILL-
+// recorded (stale) version's cache directory, a repair run at VerifyLocal
+// could silently write a newer version's content into an older version's
+// slot while reporting a clean bill of health. VerifyFull runs the version
+// pass first, so a real mismatch is corrected before the file walk ever
+// looks at the cache. The network cost is accepted on this page render, the
+// same tradeoff /api/v1/health already made.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	sel, err := s.resolveSelection(r)
 	if err != nil {
@@ -42,7 +50,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	data := healthPageData{pageChrome: s.chrome(r, "Health", &sel)}
 	if sel.ready() {
 		ctx := r.Context()
-		report, err := s.svc.VerifyReport(ctx, sel.Game, sel.Profile, core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+		report, err := s.svc.VerifyReport(ctx, sel.Game, sel.Profile, core.VerifyOptions{Tier: core.VerifyFull}, nil)
 		if err != nil {
 			s.renderError(w, err)
 			return

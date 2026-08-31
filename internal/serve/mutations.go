@@ -571,6 +571,28 @@ type resultPageData struct {
 	Notice string
 	// Facts is a successful Apply's readout (the kind's Summarize).
 	Facts []resultFact
+	// Partial is true when Facts names at least one Failure row (epic live
+	// review M6, generalized by epic re-review N-3): profile_apply and
+	// install both report a resolved-but-partial Apply this way (a failure
+	// recorded as data, not a returned error), and verify_fix does the same
+	// for a finding a repair could not resolve - an unqualified green
+	// "Done." would oversell that headline even though the outstanding
+	// entry is listed honestly right below it. Keyed on each fact's own
+	// Failure marker rather than a literal label match, so a kind whose
+	// vocabulary for "not resolved" isn't the word "Failed" (verify_fix
+	// says "Still reported") isn't missed.
+	Partial bool
+}
+
+// factsIncludeFailure reports whether facts names at least one Failure row -
+// see resultPageData.Partial.
+func factsIncludeFailure(facts []resultFact) bool {
+	for _, f := range facts {
+		if f.Failure {
+			return true
+		}
+	}
+	return false
 }
 
 // renderMutationResult renders a successful inline Apply. It takes the
@@ -582,6 +604,7 @@ func (s *Server) renderMutationResult(w http.ResponseWriter, r *http.Request, se
 		pageChrome: s.chrome(r, title, &sel),
 		KindTitle:  title,
 		Facts:      facts,
+		Partial:    factsIncludeFailure(facts),
 	})
 }
 

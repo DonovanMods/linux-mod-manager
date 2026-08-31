@@ -299,13 +299,15 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 //
 // Tier is VerifyFull, matching the CLI's own hardcoded tier (cmd/lmm/verify.go
 // has no tier flag) - task-5 gate review Important 1: an earlier version
-// pinned VerifyLocal to keep the endpoint cheap and offline like the /health
-// PAGE (pages_health.go, which stays VerifyLocal on purpose - a page render
-// must not hit the network), but core.VerifyReport carries no tier field, so
-// the API and the CLI's --json document were silently disagreeing on the
-// same state with no way for a consumer to tell. An additive `?tier=` query
-// param (default full) to let an API caller opt back into the cheap offline
-// check is a possible later addition - not added here.
+// pinned VerifyLocal to keep the endpoint cheap and offline, but
+// core.VerifyReport carries no tier field, so the API and the CLI's --json
+// document were silently disagreeing on the same state with no way for a
+// consumer to tell. The /health PAGE (pages_health.go) and its repair
+// (kind_verify_fix.go) made the same mistake for the same reason and were
+// fixed to VerifyFull too (epic live review C1) - all three surfaces now
+// agree. An additive `?tier=` query param (default full) to let an API
+// caller opt back into the cheap offline check is a possible later
+// addition - not added here.
 func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {

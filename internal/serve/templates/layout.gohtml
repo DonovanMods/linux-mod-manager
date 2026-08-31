@@ -7,24 +7,27 @@
 <title>{{.Title}} - lmm</title>
 {{if .Refresh}}<noscript><meta http-equiv="refresh" content="{{.Refresh}}"></noscript>{{end}}
 <link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
 </head>
 <body class="min-h-screen bg-gray-50 text-gray-900">
+<a class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-white focus:p-2 focus:text-sm focus:font-medium focus:shadow-sm" href="#main-content">Skip to main content</a>
 <header class="border-b border-gray-200 bg-white">
 <nav class="mx-auto flex max-w-3xl flex-wrap items-center gap-4 p-4" aria-label="Primary">
 <a class="text-lg font-bold" href="/">lmm</a>
 {{with .Nav}}
 <div class="flex flex-wrap items-center gap-3 text-sm text-gray-700">
 {{if .Game}}<span>{{.Game.Name}} / {{if .Profile}}{{.Profile}}{{else}}<em>no active profile</em>{{end}}</span>{{end}}
-{{if or (gt (len .Games) 1) (gt (len .Profiles) 1)}}
+{{if or (gt (len .Games) 1) (gt (len .Profiles) 1) (and (not .Game) (gt (len .Games) 0))}}
 <form method="get" action="{{$.Path}}" class="flex flex-wrap items-center gap-2" aria-label="Switch game or profile">
 {{range $.ExtraParams}}<input type="hidden" name="{{.Key}}" value="{{.Value}}">{{end}}
 {{$cur := .Game}}
-{{if gt (len .Games) 1}}
+{{if or (gt (len .Games) 1) (not $cur)}}
 <label class="sr-only" for="nav-game">Game</label>
 <select id="nav-game" name="game" class="rounded border-gray-300 text-sm">
+{{if not $cur}}<option value="" disabled selected>Choose a game…</option>{{end}}
 {{range .Games}}<option value="{{.ID}}"{{if and $cur (eq .ID $cur.ID)}} selected{{end}}>{{.Name}}</option>{{end}}
 </select>
-{{else if $cur}}<input type="hidden" name="game" value="{{$cur.ID}}">{{end}}
+{{else}}<input type="hidden" name="game" value="{{$cur.ID}}">{{end}}
 {{if gt (len .Profiles) 1}}
 <label class="sr-only" for="nav-profile">Profile</label>
 <select id="nav-profile" name="profile" class="rounded border-gray-300 text-sm">
@@ -38,8 +41,17 @@
 </div>
 {{end}}
 </nav>
+{{if .NavLinks}}
+<nav aria-label="Sections" class="border-t border-gray-200">
+<div class="mx-auto flex max-w-3xl flex-wrap gap-4 p-4 text-sm">
+{{range .NavLinks}}
+<a href="{{.Href}}"{{if .Current}} aria-current="page" class="font-semibold underline text-gray-900"{{else}} class="font-medium text-gray-700 hover:underline"{{end}}>{{.Label}}</a>
+{{end}}
+</div>
+</nav>
+{{end}}
 </header>
-<main class="mx-auto max-w-3xl p-4">
+<main id="main-content" class="mx-auto max-w-3xl p-4">
 {{with .Nav}}{{with .Warning}}<p class="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{{.}}</p>{{end}}{{end}}
 {{template "content" .}}
 </main>
