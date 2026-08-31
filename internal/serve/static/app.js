@@ -169,17 +169,8 @@
     if (form.dataset.jsEnhanced) return;
     form.dataset.jsEnhanced = "1";
 
-    // resubmitting holds the button whose native requestSubmit() fallback
-    // (below) is in flight - requestSubmit re-fires "submit" (plain
-    // form.submit() didn't), so this guards against re-intercepting it.
-    var resubmitting = null;
-
     form.addEventListener("submit", function (event) {
       var submitter = event.submitter;
-      if (resubmitting) {
-        resubmitting = null;
-        return; // native fallback resubmission - let it through
-      }
       event.preventDefault();
 
       var action =
@@ -202,20 +193,22 @@
           replaceMain(result.html, result.url);
         })
         .catch(function () {
-          // Fall back to a native resubmission that honors WHICH button
-          // was clicked: confirm.gohtml keys its action off the button
-          // ("confirm" vs. the sync fallback), not a hidden field, so bare
-          // form.submit() took the default action and dropped it.
-          // requestSubmit(submitter) resubmits as that button; where it's
-          // unavailable, mirror it into a hidden input first. Only
-          // reachable on a real fetch failure - untestable via
-          // jsdom/httptest, verified manually (task-11 report).
+          // Fall back to a plain navigation that still honors WHICH button
+          // was clicked and where it targets: confirm.gohtml keys its real
+          // action off the submitter (not a hidden field) and the sync
+          // button's own formaction, neither of which a bare form.submit()
+          // reads on its own - it always POSTs to form.action with none of
+          // the submitter's fields. form.requestSubmit(submitter) looks
+          // like the fix (and IS one when called synchronously from a
+          // click), but verified manually in a real browser (task-11
+          // report) it silently no-ops - no request, no thrown error -
+          // when called from this async fetch().catch() continuation
+          // instead of directly inside a click handler, which would make
+          // the fallback do nothing at all. So mirror both pieces into the
+          // form by hand instead and use the plain submit() that already
+          // worked.
           if (submitter) submitter.disabled = false;
-          if (submitter && form.requestSubmit) {
-            resubmitting = submitter;
-            form.requestSubmit(submitter);
-            return;
-          }
+          form.action = action;
           if (submitter && submitter.name) {
             var hidden = document.createElement("input");
             hidden.type = "hidden";
