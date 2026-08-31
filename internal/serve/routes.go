@@ -25,5 +25,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
 	s.mux.Handle("GET /api/v1/profiles", s.wrap(s.handleAPIProfiles))
+	s.mux.Handle("GET /api/v1/health", s.wrap(s.handleAPIHealth))
+	s.mux.Handle("GET /api/v1/conflicts", s.wrap(s.handleAPIConflicts))
 	s.mux.Handle("/static/", http.StripPrefix("/static/", staticHandler()))
 }

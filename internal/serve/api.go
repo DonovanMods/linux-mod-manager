@@ -252,6 +252,50 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, listing)
 }
 
+// handleAPIHealth answers GET /api/v1/health with exactly the
+// core.VerifyReport document `lmm verify --json` emits, pinned to
+// VerifyLocal so an API read stays cheap and offline like its page
+// (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/health" ->
+// Verify). Ruled deviation from the design doc's original api-route list
+// (coordinator ruling, Task 5): this endpoint answers with the bare
+// VerifyReport document - exact CLI-document parity, no serve-local
+// composite type - and the conflicts half of the page's pairing gets its
+// own additive GET /api/v1/conflicts route (handleAPIConflicts) instead of
+// being folded into this one's shape. The design doc's HTTP-surface table
+// gets a one-line amendment for this in Unit 6's docs task.
+func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile, core.VerifyOptions{Tier: core.VerifyLocal}, nil)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+// handleAPIConflicts answers GET /api/v1/conflicts with exactly the
+// core.ConflictReport document `lmm conflicts --json` emits. Additive route
+// beyond the design doc's original api-route list - see handleAPIHealth's
+// doc comment for the ruling that put conflicts here instead of folded into
+// /api/v1/health.
+func (s *Server) handleAPIConflicts(w http.ResponseWriter, r *http.Request) {
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	conflicts, err := s.svc.GetProfileConflicts(r.Context(), sel.Game, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, &core.ConflictReport{GameID: sel.Game.ID, Profile: sel.Profile, Conflicts: conflicts})
+}
+
 // handleAPIStatus answers GET /api/v1/status with exactly the
 // core.StatusReport document `lmm status --json` emits with no --game flag
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/" -> Status).
