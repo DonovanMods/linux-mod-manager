@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -19,6 +20,15 @@ import (
 type ModDetail struct {
 	Mod       *domain.Mod      `json:"mod,omitempty"`
 	Installed *InstalledDetail `json:"installed,omitempty"`
+	// Changelog is populated best-effort from the source's optional
+	// source.ChangelogProvider capability (#87) - absent when the source
+	// does not implement it, or when it has nothing to report. A provider
+	// error never fails ModDetail; it lands in Notes instead.
+	Changelog string `json:"changelog,omitzero"`
+	// Notes carries non-fatal degradations (currently: a failed changelog
+	// fetch) - populated only when something best-effort didn't work, never
+	// present on a clean fetch.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // InstalledDetail is the local install state. Nil on ModDetail when the mod
@@ -45,6 +55,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		return nil, fmt.Errorf("mod not found: %w", err)
 	}
 	detail := &ModDetail{Mod: mod}
+	detail.Changelog, detail.Notes = s.modChangelog(ctx, sourceID, game, modID, mod.Version)
 
 	// Only a genuine "not installed" - the ordinary case for a mod browsed
 	// from search - omits the Installed block. Any other failure is a real
@@ -78,4 +89,34 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	}
 	detail.Installed = info
 	return detail, nil
+}
+
+// modChangelog best-effort fetches modID's changelog text from sourceID's
+// optional source.ChangelogProvider capability (#87) - the same
+// registry-lookup + type-assert pattern GetMod uses for the sourceID ->
+// source-specific game ID mapping. A source that doesn't implement the
+// capability, or a live call failure, both degrade to an empty changelog:
+// the failure additionally appends a Note rather than propagating, since a
+// changelog is decoration on ModDetail, not something callers should have
+// to handle as an error.
+func (s *Service) modChangelog(ctx context.Context, sourceID string, game *domain.Game, modID, version string) (changelog string, notes []string) {
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return "", nil
+	}
+	provider, ok := src.(source.ChangelogProvider)
+	if !ok {
+		return "", nil
+	}
+
+	sourceGameID := game.ID
+	if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
+		sourceGameID = id
+	}
+
+	changelog, err = provider.Changelog(ctx, sourceGameID, modID, version)
+	if err != nil {
+		return "", []string{fmt.Sprintf("changelog unavailable: %v", err)}
+	}
+	return changelog, nil
 }
