@@ -96,6 +96,38 @@ func TestServer_Mods_NoDefaultGame_RendersWarning(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "no default game is configured")
 }
 
+// TestServer_ScopedPages_NoDefaultGame_OffersAWorkingGamePicker is the N-1
+// fix's own test (epic re-review, new finding N-1): a single game
+// configured with no default game SET left all five game/profile-scoped
+// pages pointing at a nav switcher the layout never actually rendered -
+// the outer gate only fired on more than one game or more than one
+// profile, and resolveSelection never populates Profiles until a game
+// resolves - so "Select a game and profile above" was a dead end (the
+// switcher block was empty). Each page must now render a working
+// <select id="nav-game"> offering the one configured game, not just the
+// warning that a default is missing.
+func TestServer_ScopedPages_NoDefaultGame_OffersAWorkingGamePicker(t *testing.T) {
+	svc := newFixtureServiceNoGames(t)
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "g1", Name: "Undefaulted Game", InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+	}))
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	for _, path := range []string{"/mods", "/search", "/updates", "/profiles", "/health"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+path, nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			body := rec.Body.String()
+			assert.Contains(t, body, `id="nav-game"`, "no working game picker rendered")
+			assert.Contains(t, body, `value="g1"`, "the one configured game must be a pickable option")
+			assert.Contains(t, body, "Undefaulted Game")
+		})
+	}
+}
+
 // TestServer_Mods_DefaultSelection_RendersGameAndProfile proves the
 // zero-param case resolves the configured default game and its default
 // profile, and that the resolved pair is visible on the page (Global

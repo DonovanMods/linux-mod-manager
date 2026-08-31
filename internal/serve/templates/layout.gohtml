@@ -17,16 +17,17 @@
 {{with .Nav}}
 <div class="flex flex-wrap items-center gap-3 text-sm text-gray-700">
 {{if .Game}}<span>{{.Game.Name}} / {{if .Profile}}{{.Profile}}{{else}}<em>no active profile</em>{{end}}</span>{{end}}
-{{if or (gt (len .Games) 1) (gt (len .Profiles) 1)}}
+{{if or (gt (len .Games) 1) (gt (len .Profiles) 1) (and (not .Game) (gt (len .Games) 0))}}
 <form method="get" action="{{$.Path}}" class="flex flex-wrap items-center gap-2" aria-label="Switch game or profile">
 {{range $.ExtraParams}}<input type="hidden" name="{{.Key}}" value="{{.Value}}">{{end}}
 {{$cur := .Game}}
-{{if gt (len .Games) 1}}
+{{if or (gt (len .Games) 1) (not $cur)}}
 <label class="sr-only" for="nav-game">Game</label>
 <select id="nav-game" name="game" class="rounded border-gray-300 text-sm">
+{{if not $cur}}<option value="" disabled selected>Choose a game…</option>{{end}}
 {{range .Games}}<option value="{{.ID}}"{{if and $cur (eq .ID $cur.ID)}} selected{{end}}>{{.Name}}</option>{{end}}
 </select>
-{{else if $cur}}<input type="hidden" name="game" value="{{$cur.ID}}">{{end}}
+{{else}}<input type="hidden" name="game" value="{{$cur.ID}}">{{end}}
 {{if gt (len .Profiles) 1}}
 <label class="sr-only" for="nav-profile">Profile</label>
 <select id="nav-profile" name="profile" class="rounded border-gray-300 text-sm">
