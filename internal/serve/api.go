@@ -10,6 +10,7 @@ package serve
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -322,14 +323,50 @@ func (s *Server) handleAPIConflicts(w http.ResponseWriter, r *http.Request) {
 // handleAPIStatus answers GET /api/v1/status with exactly the
 // core.StatusReport document `lmm status --json` emits with no --game flag
 // (docs/plans/2026-08-30-serve-design.md §HTTP surface: "/" -> Status).
-// Unlike every other /api/v1 endpoint, status is not game/profile-scoped -
-// it summarizes every configured game at once, mirroring "/"'s own
+// Unlike every other /api/v1 endpoint, status is not game/profile-scoped by
+// the shared resolveSelection default-game fallback - it summarizes every
+// configured game at once when ?game is absent, mirroring "/"'s own
 // handleStatus, which never calls resolveSelection either.
+//
+// An explicit ?game=<id> switches to exactly the core.GameStatus document
+// `lmm status --game <id> --json` emits (task-5 gate review Minor 6: ?game
+// was previously silently ignored, with no API twin for that CLI form even
+// though the design doc's page row lists both documents). An unresolvable
+// ?game answers the same selection-error envelope every other scoped
+// endpoint uses, via writeSelectionError - GetGame's own untyped "game not
+// found" error mirrors cmd/lmm's own showGameStatusJSON here, so this is
+// the one selection check done by hand rather than through
+// resolveReadyAPISelection/resolveGameAPISelection, both of which default
+// an absent ?game to the configured default game - a default this endpoint
+// must not apply, since "no ?game" means "summarize every game", not "the
+// default one".
 func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
-	report, err := s.svc.Status(r.Context())
+	gameID := r.URL.Query().Get(gameParam)
+	if gameID == "" {
+		report, err := s.svc.Status(r.Context())
+		if err != nil {
+			s.writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeJSON(w, http.StatusOK, report)
+		return
+	}
+
+	game, err := s.svc.GetGame(gameID)
+	if err != nil {
+		entries, err := s.svc.ListGameEntries(r.Context())
+		if err != nil {
+			s.writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.writeSelectionError(w, selection{Games: entries, Warning: fmt.Sprintf("unknown game %q", gameID)})
+		return
+	}
+
+	status, err := s.svc.GameStatus(r.Context(), game)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, report)
+	s.writeJSON(w, http.StatusOK, status)
 }
