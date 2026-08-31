@@ -40,6 +40,33 @@ func TestServer_Profiles_RendersProfileList(t *testing.T) {
 	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
 }
 
+// TestServer_Profiles_MarksTheActiveProfile is M6 (epic live review):
+// /profiles had a "Default" column but marked no ACTIVE profile - with no
+// default explicitly set, every row read "no" even though one profile was
+// genuinely the one in use (resolveSelection's own fallback, mirrored by
+// the nav bar, which was the only place that said which). Requests the
+// non-default "hardcore" profile explicitly and asserts ITS row - not
+// "default"'s - is the one marked active.
+func TestServer_Profiles_MarksTheActiveProfile(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, game := newFixtureServiceWithSource(t, src)
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "hardcore")
+	require.NoError(t, err)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/profiles?profile=hardcore", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Regexp(t, `<tr[^>]*>\s*<td[^>]*>hardcore</td>\s*<td[^>]*>\d+</td>\s*<td[^>]*>(yes|no)</td>\s*<td[^>]*>(yes|no)</td>`, body)
+	assert.Regexp(t, `hardcore</td>\s*<td[^>]*>\d+</td>\s*<td[^>]*>(yes|no)</td>\s*<td[^>]*>yes</td>`, body,
+		"the requested (active) profile's row must be marked active")
+	assert.Regexp(t, `>default</td>\s*<td[^>]*>\d+</td>\s*<td[^>]*>(yes|no)</td>\s*<td[^>]*>no</td>`, body,
+		"a non-active profile's row must not be marked active")
+}
+
 // TestServer_Profiles_NoGames_RendersEmptyState covers the CSS/JS-absent,
 // no-data case.
 func TestServer_Profiles_NoGames_RendersEmptyState(t *testing.T) {

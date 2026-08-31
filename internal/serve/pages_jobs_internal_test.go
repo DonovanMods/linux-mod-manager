@@ -111,6 +111,27 @@ func TestJobPage_RendersTheEventLog(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), core.DeployDeployed.String())
 }
 
+// TestJobPage_FinishedWithNoEvents_DoesNotSayYet is M6 (epic live review):
+// a job that emitted no events at all still said "No progress reported
+// yet" even once it was already succeeded/failed - "yet" implies more is
+// coming on a job that is not going to report anything else.
+func TestJobPage_FinishedWithNoEvents_DoesNotSayYet(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+	id, err := s.jobs.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+		return &core.DeployResult{}, nil
+	})
+	require.NoError(t, err)
+	j, ok := s.jobs.job(id)
+	require.True(t, ok)
+	waitFor(t, j.done(), "job completion")
+
+	rec := doAPI(s, http.MethodGet, "/jobs/"+string(id), "")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, "reported yet", "a finished job has nothing left to report - it isn't a matter of \"yet\"")
+}
+
 // TestJobPage_UnknownJob_404Page answers a job that never existed or has
 // aged out with a real HTML page, not bare error text (WEBUI.md).
 func TestJobPage_UnknownJob_404Page(t *testing.T) {

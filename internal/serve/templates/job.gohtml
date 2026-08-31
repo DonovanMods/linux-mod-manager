@@ -87,7 +87,11 @@ This operation is still running. The page refreshes itself every {{.Refresh}} se
 <p class="mb-2 text-sm text-amber-800">{{.Status.DroppedEvents}} earlier event(s) are no longer available - this log shows the most recent {{len .Events}} of {{.Status.EventCount}}.</p>
 {{end}}
 {{if not .Events}}
+{{if .Running}}
 <p class="text-sm text-gray-600">No progress reported yet.</p>
+{{else}}
+<p class="text-sm text-gray-600">This job reported no progress events.</p>
+{{end}}
 {{else}}
 <div class="overflow-x-auto">
 <table class="w-full text-left text-sm">

@@ -144,12 +144,18 @@ func confirmProfileApplyPlan(pending, _ any) confirmView {
 	}
 
 	plan := p.Plan
+	installs, unresolved := profileApplyInstallTexts(plan.ToInstall)
 	view := confirmView{
 		Heading: plan.Profile,
 		Submit:  "Apply",
 		Facts: []resultFact{
 			{Label: "Profile", Value: plan.Profile},
-			{Label: "To install", Value: strconv.Itoa(len(plan.ToInstall))},
+			// len(installs), not len(plan.ToInstall) (epic live review M6):
+			// ToInstall also holds the entries profileApplyInstallTexts
+			// splits off as unresolved, which the apply will skip, not
+			// install - counting them here overstated "To install" by
+			// exactly the number listed separately below as skipped.
+			{Label: "To install", Value: strconv.Itoa(len(installs))},
 			{Label: "To remove", Value: strconv.Itoa(len(plan.ToDisable))},
 		},
 	}
@@ -157,7 +163,6 @@ func confirmProfileApplyPlan(pending, _ any) confirmView {
 		view.Facts = append(view.Facts, resultFact{Label: "Changes", Value: "what is installed already matches this profile"})
 	}
 
-	installs, unresolved := profileApplyInstallTexts(plan.ToInstall)
 	if len(installs) > 0 {
 		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be installed", Items: installs})
 	}
