@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // jobSummary is one row of the jobs index and the payload of the stream's
@@ -151,7 +152,12 @@ func (r *jobRegistry) listLocked() []jobSummary {
 //	                    event (which job, which phase, which mod, how far),
 //	                    not the event itself. The full typed event is one
 //	                    click away on the per-job stream. Download ticks are
-//	                    coalesced to whole percents (activityProgressGate).
+//	                    coalesced to whole percents when the total size is
+//	                    known, or to a byte-delta threshold when it is not
+//	                    (activityProgressGate) - a Content-Length-less
+//	                    (chunked) download reports Percent 0 for its whole
+//	                    duration, so Downloaded/TotalBytes are the only
+//	                    fields a tray row can move on for one.
 //
 //	event: job_done     data: a jobSummary, terminal for that job id, its
 //	                    {"error","details"} envelope included when it
@@ -211,8 +217,15 @@ type jobProgressFrame struct {
 	Total   int    `json:"total,omitzero"`
 
 	// Percent is a download tick's completion, 0 when the total size is
-	// unknown or the event is not a download.
-	Percent float64 `json:"percent,omitzero"`
+	// unknown or the event is not a download. Downloaded and TotalBytes
+	// are the byte counts behind it (both 0 for a non-download event);
+	// TotalBytes stays 0 for the whole duration of a Content-Length-less
+	// (chunked) download, which is when a tray row needs Downloaded
+	// instead of Percent to show progress at all (task-2-review.md
+	// Important 1).
+	Percent    float64 `json:"percent,omitzero"`
+	Downloaded int64   `json:"downloaded,omitzero"`
+	TotalBytes int64   `json:"total_bytes,omitzero"`
 }
 
 // summarizeJobEvent projects one core event onto its progress frame.
@@ -242,9 +255,20 @@ func summarizeJobEvent(id jobID, kind string, e core.Event) jobProgressFrame {
 		frame.Detail = ev.Message
 	case core.DownloadEvent:
 		frame.Percent = ev.Percent
+		frame.Downloaded = ev.Downloaded
+		frame.TotalBytes = ev.TotalBytes
 	}
 	return frame
 }
+
+// activityByteDeltaThreshold is the byte-delta gate's own "whole percent
+// changed": how many additional bytes a download whose total size is
+// unknown (TotalBytes 0 for its whole duration - downloader.go's contract
+// for a Content-Length-less, chunked, response) must transfer before
+// another tick is forwarded. int(Percent) is 0 for every such tick, so the
+// percent gate below would otherwise forward exactly one frame for the
+// entire download (task-2-review.md Important 1).
+const activityByteDeltaThreshold = 1 << 20 // 1 MiB
 
 // activityProgressGate decides which of a job's events reach the
 // multiplexed stream.
@@ -254,17 +278,30 @@ func summarizeJobEvent(id jobID, kind string, e core.Event) jobProgressFrame {
 // of events for one large mod - fine for the per-job stream a viewer opened
 // deliberately, and not fine at all for a stream that is open for the whole
 // session and multiplexes every job at once. A download tick is therefore
-// forwarded only when its WHOLE percent changes: at most 101 frames per
+// forwarded only when its WHOLE percent changes (at most 101 frames per
 // download, and the tray's progress bar cannot render finer than that
-// anyway. Every other event type passes through untouched.
+// anyway) - or, when the total size is unknown and there is no percent to
+// coalesce by, when Downloaded has grown by activityByteDeltaThreshold
+// since the last forwarded tick. Every other event type passes through
+// untouched.
 //
-// Coalescing by percent rather than by elapsed time is what keeps this
+// Coalescing by a threshold rather than by elapsed time is what keeps this
 // clock-free and deterministic - there is no second timer to inject, and a
 // test asserts an exact frame count.
+//
+// The two counters are keyed to one file: a change in the event's File or
+// ModName resets both, so a second download in the same job cannot lose
+// its first frame to the previous file's last whole percent (or last byte
+// count).
 type activityProgressGate struct {
-	mu        sync.Mutex
+	mu sync.Mutex
+
 	seen      bool
 	lastWhole int
+	lastBytes int64
+
+	lastFile    *domain.DownloadableFile
+	lastModName string
 }
 
 // allow reports whether e should be published to the activity stream. It is
@@ -277,9 +314,23 @@ func (g *activityProgressGate) allow(e core.Event) bool {
 		return true
 	}
 
-	whole := int(download.Percent)
 	g.mu.Lock()
 	defer g.mu.Unlock()
+
+	if g.seen && (download.File != g.lastFile || download.ModName != g.lastModName) {
+		g.seen = false
+	}
+	g.lastFile, g.lastModName = download.File, download.ModName
+
+	if download.TotalBytes <= 0 {
+		if g.seen && download.Downloaded-g.lastBytes < activityByteDeltaThreshold {
+			return false
+		}
+		g.seen, g.lastBytes = true, download.Downloaded
+		return true
+	}
+
+	whole := int(download.Percent)
 	if g.seen && whole == g.lastWhole {
 		return false
 	}

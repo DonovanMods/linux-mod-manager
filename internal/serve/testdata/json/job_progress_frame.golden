@@ -7,5 +7,7 @@
   "detail": "linking files",
   "mod_name": "Mod One",
   "index": 1,
-  "total": 2
+  "total": 2,
+  "downloaded": 12582912,
+  "total_bytes": 20971520
 }

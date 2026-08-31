@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -171,7 +172,9 @@ func TestAPIEvents_FailedJobDoneFrameCarriesTheEnvelope(t *testing.T) {
 // thousands of events for one large mod. The per-job stream carries them
 // all - that is what a viewer watching a download wants - but this stream
 // is open for the whole session, so it forwards a download tick only when
-// its WHOLE percent changes.
+// its WHOLE percent changes. TotalBytes is set (a known Content-Length) so
+// the gate takes this path rather than its byte-delta fallback
+// (TestAPIEvents_ChunkedDownloadsCoalesceByByteDelta, below).
 func TestAPIEvents_DownloadTicksAreCoalescedToWholePercent(t *testing.T) {
 	s, _ := newLiveFixtureServer(t)
 	reader := openActivityStream(t, s)
@@ -181,9 +184,11 @@ func TestAPIEvents_DownloadTicksAreCoalescedToWholePercent(t *testing.T) {
 	_, err := s.jobs.Start("install", func(_ context.Context, sink core.EventSink) (any, error) {
 		for _, pct := range percents {
 			sink(core.DownloadEvent{
-				Scope:   core.Scope{Op: core.OpDownload},
-				Phase:   core.InstallDownloading,
-				Percent: pct,
+				Scope:      core.Scope{Op: core.OpDownload},
+				Phase:      core.InstallDownloading,
+				Percent:    pct,
+				Downloaded: int64(pct * 1000),
+				TotalBytes: 10000,
 			})
 		}
 		return nil, nil
@@ -200,9 +205,73 @@ func TestAPIEvents_DownloadTicksAreCoalescedToWholePercent(t *testing.T) {
 		require.Equal(t, activityProgressEvent, frame.Event)
 		var payload jobProgressFrame
 		decodeFrame(t, frame, &payload)
+		assert.EqualValues(t, 10000, payload.TotalBytes)
 		got = append(got, int(payload.Percent))
 	}
 	assert.Equal(t, []int{10, 11, 12}, got, "six ticks spanning three whole percents are three frames")
+}
+
+// TestAPIEvents_ChunkedDownloadsCoalesceByByteDelta is
+// TestAPIEvents_DownloadTicksAreCoalescedToWholePercent's twin for the case
+// the percent gate cannot see at all: a download with no Content-Length
+// (chunked transfer-encoding) reports TotalBytes 0 for every tick
+// (downloader.go's contract), so int(Percent) is always 0 and the percent
+// gate would forward exactly one frame for the whole download
+// (task-2-review.md Important 1). The byte-delta fallback forwards a tick
+// once Downloaded has grown by activityByteDeltaThreshold since the last
+// forwarded one, so jobProgressFrame's Downloaded field still moves. It
+// also covers the gate's per-file reset: a second file's first tick is
+// forwarded even though its own Downloaded count is far smaller than the
+// first file's last forwarded one.
+func TestAPIEvents_ChunkedDownloadsCoalesceByByteDelta(t *testing.T) {
+	s, _ := newLiveFixtureServer(t)
+	reader := openActivityStream(t, s)
+	require.Equal(t, activitySnapshotEvent, nextFrame(t, reader).Event)
+
+	const threshold = activityByteDeltaThreshold
+	file1 := &domain.DownloadableFile{Name: "one.zip"}
+	file2 := &domain.DownloadableFile{Name: "two.zip"}
+	ticks := []struct {
+		file       *domain.DownloadableFile
+		modName    string
+		downloaded int64
+	}{
+		{file1, "Mod One", 500_000},                       // first tick of the job: always forwarded
+		{file1, "Mod One", 900_000},                       // +400,000: below the threshold, coalesced
+		{file1, "Mod One", 500_000 + threshold + 100_000}, // crosses the threshold: forwarded
+		{file1, "Mod One", 500_000 + threshold + 200_000}, // +100,000: coalesced
+		{file2, "Mod Two", 50_000},                        // a second file: forwarded despite the small absolute count
+	}
+	_, err := s.jobs.Start("install", func(_ context.Context, sink core.EventSink) (any, error) {
+		for _, tk := range ticks {
+			sink(core.DownloadEvent{
+				Scope:      core.Scope{Op: core.OpDownload, ModName: tk.modName},
+				Phase:      core.InstallDownloading,
+				File:       tk.file,
+				Downloaded: tk.downloaded,
+				TotalBytes: 0,
+			})
+		}
+		return nil, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, activityStartedEvent, nextFrame(t, reader).Event)
+
+	var got []int64
+	for {
+		frame := nextFrame(t, reader)
+		if frame.Event == activityDoneEvent {
+			break
+		}
+		require.Equal(t, activityProgressEvent, frame.Event)
+		var payload jobProgressFrame
+		decodeFrame(t, frame, &payload)
+		assert.Zero(t, payload.TotalBytes, "total size stays unknown for the whole download")
+		assert.Zero(t, payload.Percent, "percent is meaningless when the total is unknown")
+		got = append(got, payload.Downloaded)
+	}
+	assert.Equal(t, []int64{500_000, 500_000 + threshold + 100_000, 50_000}, got,
+		"the first tick, the tick that crosses the byte-delta threshold, and the next file's first tick are forwarded")
 }
 
 // TestAPIEvents_HeartbeatOnTheInjectedClock: an idle session stream still

@@ -158,18 +158,24 @@ func TestServeJSONGoldens(t *testing.T) {
 			// One job_progress frame of the multiplexed activity stream: a
 			// SUMMARY of one core event, not core.MarshalEvent's frozen
 			// {"type","data"} envelope, which stays the per-job stream's
-			// contract (activity.go's frame vocabulary).
+			// contract (activity.go's frame vocabulary). Downloaded and
+			// TotalBytes are the byte-delta fallback's fields
+			// (task-2-review.md Important 1) - pinned here alongside the
+			// step-style fields even though no single core event sets both
+			// halves at once, so one golden covers the whole wire shape.
 			"job_progress_frame",
 			jobProgressFrame{
-				JobID:   "0123456789abcdef0123456789abcdef",
-				Kind:    "install",
-				Type:    "step",
-				Op:      "install",
-				Phase:   core.InstallDeploying.String(),
-				Detail:  "linking files",
-				ModName: "Mod One",
-				Index:   1,
-				Total:   2,
+				JobID:      "0123456789abcdef0123456789abcdef",
+				Kind:       "install",
+				Type:       "step",
+				Op:         "install",
+				Phase:      core.InstallDeploying.String(),
+				Detail:     "linking files",
+				ModName:    "Mod One",
+				Index:      1,
+				Total:      2,
+				Downloaded: 12582912,
+				TotalBytes: 20971520,
 			},
 		},
 		{
