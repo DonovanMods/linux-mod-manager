@@ -205,9 +205,10 @@ func TestJobRegistry_RunsToCompletionAndStoresTheResult(t *testing.T) {
 	r := newTestRegistry(t, t.Context(), 8, 4)
 
 	want := &core.EnableResult{Changed: true}
-	id := r.Start("enable", func(context.Context, core.EventSink) (any, error) {
+	id, err := r.Start("enable", func(context.Context, core.EventSink) (any, error) {
 		return want, nil
 	})
+	require.NoError(t, err)
 
 	j, ok := r.job(id)
 	require.True(t, ok)
@@ -236,9 +237,10 @@ func TestJobRegistry_FailedJobStoresTheErrorEnvelope(t *testing.T) {
 		CurrentSourceID: "fake",
 		CurrentModID:    "m9",
 	}}}
-	id := r.Start("install", func(context.Context, core.EventSink) (any, error) {
+	id, err := r.Start("install", func(context.Context, core.EventSink) (any, error) {
 		return nil, conflictErr
 	})
+	require.NoError(t, err)
 
 	j, ok := r.job(id)
 	require.True(t, ok)
@@ -275,11 +277,12 @@ func TestJobRegistry_JobOutlivesTheStartingRequestContext(t *testing.T) {
 	started := make(chan struct{})
 	proceed := make(chan struct{})
 
-	id := r.Start("set-update-policy", func(ctx context.Context, _ core.EventSink) (any, error) {
+	id, err := r.Start("set-update-policy", func(ctx context.Context, _ core.EventSink) (any, error) {
 		close(started)
 		<-proceed // the request is cancelled while we sit here: mid-Apply
 		return svc.SetModUpdatePolicy(ctx, blockingSourceID, "m1", "g1", "default", domain.UpdateAuto)
 	})
+	require.NoError(t, err)
 	waitFor(t, started, "job start")
 	cancelRequest()
 	require.Error(t, reqCtx.Err(), "the starting request is cancelled while the Apply is in flight")
@@ -311,12 +314,13 @@ func TestJobRegistry_JobContextDerivesFromTheServerRoot(t *testing.T) {
 
 	seen := make(chan any, 1)
 	cancelled := make(chan struct{})
-	id := r.Start("long", func(ctx context.Context, _ core.EventSink) (any, error) {
+	id, err := r.Start("long", func(ctx context.Context, _ core.EventSink) (any, error) {
 		seen <- ctx.Value(key)
 		<-ctx.Done()
 		close(cancelled)
 		return nil, ctx.Err()
 	})
+	require.NoError(t, err)
 
 	select {
 	case v := <-seen:
@@ -353,14 +357,16 @@ func TestJobRegistry_SecondJobQueuesBehindCoreMutationSlot(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.Files, 1, "the fixture install must resolve exactly one file to download")
 
-	blocker := r.Start("install", func(ctx context.Context, sink core.EventSink) (any, error) {
+	blocker, err := r.Start("install", func(ctx context.Context, sink core.EventSink) (any, error) {
 		return svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, sink)
 	})
+	require.NoError(t, err)
 	waitFor(t, src.reached, "the blocking install to reach the download")
 
-	queued := r.Start("set-update-policy", func(ctx context.Context, _ core.EventSink) (any, error) {
+	queued, err := r.Start("set-update-policy", func(ctx context.Context, _ core.EventSink) (any, error) {
 		return svc.SetModUpdatePolicy(ctx, blockingSourceID, "m1", "g1", "default", domain.UpdateAuto)
 	})
+	require.NoError(t, err)
 	queuedJob, ok := r.job(queued)
 	require.True(t, ok)
 	requireNotYet(t, queuedJob.done(), "the second job's mutation")
@@ -380,7 +386,7 @@ func TestJobRegistry_LateSubscriberReplaysEveryBufferedEvent(t *testing.T) {
 
 	emitted := make(chan struct{})
 	proceed := make(chan struct{})
-	id := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
+	id, err := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
 		for i := range 3 {
 			sink(core.StepEvent{Scope: core.Scope{Op: core.OpDeploy, Index: i + 1}, Detail: "before"})
 		}
@@ -389,6 +395,7 @@ func TestJobRegistry_LateSubscriberReplaysEveryBufferedEvent(t *testing.T) {
 		sink(core.StepEvent{Scope: core.Scope{Op: core.OpDeploy, Index: 4}, Detail: "after"})
 		return &core.DeployResult{}, nil
 	})
+	require.NoError(t, err)
 	j, ok := r.job(id)
 	require.True(t, ok)
 	waitFor(t, emitted, "the first three events")
@@ -425,12 +432,13 @@ func TestJobRegistry_LateSubscriberReplaysEveryBufferedEvent(t *testing.T) {
 func TestJobRegistry_RingBufferDropsOldestOnOverflow(t *testing.T) {
 	r := newTestRegistry(t, t.Context(), 4, 4)
 
-	id := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
+	id, err := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
 		for i := range 10 {
 			sink(core.StepEvent{Scope: core.Scope{Op: core.OpDeploy, Index: i + 1}})
 		}
 		return nil, nil
 	})
+	require.NoError(t, err)
 	j, ok := r.job(id)
 	require.True(t, ok)
 	waitFor(t, j.done(), "job completion")
@@ -459,7 +467,7 @@ func TestJobRegistry_LaggingSubscriberIsDisconnected(t *testing.T) {
 	startEmit := make(chan struct{})
 	emitted := make(chan struct{})
 	holdOpen := make(chan struct{})
-	id := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
+	id, err := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
 		<-startEmit
 		for i := range 8 {
 			sink(core.StepEvent{Scope: core.Scope{Op: core.OpDeploy, Index: i + 1}})
@@ -468,6 +476,7 @@ func TestJobRegistry_LaggingSubscriberIsDisconnected(t *testing.T) {
 		<-holdOpen
 		return nil, nil
 	})
+	require.NoError(t, err)
 	j, ok := r.job(id)
 	require.True(t, ok)
 
@@ -492,7 +501,8 @@ func TestJobRegistry_EvictsAllButTheMostRecentJobs(t *testing.T) {
 
 	var ids []jobID
 	for range 5 {
-		id := r.Start("enable", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+		id, err := r.Start("enable", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+		require.NoError(t, err)
 		j, ok := r.job(id)
 		require.True(t, ok)
 		waitFor(t, j.done(), "job completion")
@@ -513,13 +523,15 @@ func TestJobRegistry_NeverEvictsARunningJob(t *testing.T) {
 	r := newTestRegistry(t, t.Context(), 8, 2)
 
 	release := make(chan struct{})
-	long := r.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+	long, err := r.Start("deploy", func(context.Context, core.EventSink) (any, error) {
 		<-release
 		return nil, nil
 	})
+	require.NoError(t, err)
 
 	for range 4 {
-		id := r.Start("enable", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+		id, err := r.Start("enable", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+		require.NoError(t, err)
 		j, ok := r.job(id)
 		require.True(t, ok)
 		waitFor(t, j.done(), "job completion")
@@ -541,11 +553,13 @@ func TestJobRegistry_ShutdownWaitsForRunningJobsAndLeavesNoGoroutines(t *testing
 	finished := make(chan struct{}, 3)
 	var ids []jobID
 	for range 3 {
-		ids = append(ids, r.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+		id, err := r.Start("deploy", func(context.Context, core.EventSink) (any, error) {
 			<-release
 			finished <- struct{}{}
 			return nil, nil
-		}))
+		})
+		require.NoError(t, err)
+		ids = append(ids, id)
 	}
 
 	close(release)
@@ -590,10 +604,11 @@ func requireNoExtraGoroutines(t *testing.T, baseline int) {
 func TestJobRegistry_ShutdownCancelsJobsOnceTheGraceExpires(t *testing.T) {
 	r := newJobRegistry(t.Context(), slog.New(slog.DiscardHandler), 8, 8)
 
-	id := r.Start("deploy", func(ctx context.Context, _ core.EventSink) (any, error) {
+	id, err := r.Start("deploy", func(ctx context.Context, _ core.EventSink) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
+	require.NoError(t, err)
 
 	drainCtx, cancel := context.WithCancel(context.WithoutCancel(t.Context()))
 	cancel() // the grace has already expired
@@ -607,15 +622,71 @@ func TestJobRegistry_ShutdownCancelsJobsOnceTheGraceExpires(t *testing.T) {
 	assert.Contains(t, got.Error.Error, context.Canceled.Error())
 }
 
+// TestJobRegistry_StartRacingShutdownNeverOrphansAJob is the regression for
+// task-6-review.md's Important 1: a Start that races shutdown must either be
+// admitted - in which case the very shutdown call it raced drains it, since
+// wg.Add happens in the same critical section that checked closing - or be
+// refused outright with errRegistryClosing before it ever touches wg. What
+// must never happen is Start succeeding and the job being left undrained.
+// Looped internally because a single scheduling rarely hits the interleaving
+// that matters; meant to be run under `go test -race -count=25`.
+func TestJobRegistry_StartRacingShutdownNeverOrphansAJob(t *testing.T) {
+	for range 50 {
+		r := newJobRegistry(t.Context(), slog.New(slog.DiscardHandler), 8, 8)
+
+		var (
+			startID  jobID
+			startErr error
+		)
+		startDone := make(chan struct{})
+		go func() {
+			defer close(startDone)
+			startID, startErr = r.Start("race", func(context.Context, core.EventSink) (any, error) {
+				return nil, nil
+			})
+		}()
+
+		drainCtx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+		r.shutdown(drainCtx)
+		cancel()
+		<-startDone
+
+		if startErr != nil {
+			assert.ErrorIs(t, startErr, errRegistryClosing, "a refused start must fail with the shutdown sentinel, not some other error")
+			continue
+		}
+		j, ok := r.job(startID)
+		require.True(t, ok, "an admitted job must still be addressable after the shutdown it raced")
+		assert.True(t, j.isFinished(), "shutdown must not return until every job it admitted - even one admitted mid-race - has finished")
+	}
+}
+
+// TestJobRegistry_StartRefusedAfterShutdown pins the simple, non-racing half
+// of the same contract: once shutdown has returned, every later Start is
+// refused rather than silently accepted into a registry that already told
+// its caller it was done draining.
+func TestJobRegistry_StartRefusedAfterShutdown(t *testing.T) {
+	r := newJobRegistry(t.Context(), slog.New(slog.DiscardHandler), 8, 8)
+	r.shutdown(t.Context())
+
+	id, err := r.Start("deploy", func(context.Context, core.EventSink) (any, error) { return nil, nil })
+	require.ErrorIs(t, err, errRegistryClosing)
+	assert.Empty(t, id)
+
+	_, ok := r.job(id)
+	assert.False(t, ok, "a refused start must never appear in the registry")
+}
+
 // TestJobRegistry_PanickingRunFailsTheJob: an Apply that panics is a bug,
 // but it must fail its own job rather than take the whole server down with
 // it (an unrecovered panic in a non-handler goroutine kills the process).
 func TestJobRegistry_PanickingRunFailsTheJob(t *testing.T) {
 	r := newTestRegistry(t, t.Context(), 8, 4)
 
-	id := r.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+	id, err := r.Start("deploy", func(context.Context, core.EventSink) (any, error) {
 		panic("boom")
 	})
+	require.NoError(t, err)
 	j, ok := r.job(id)
 	require.True(t, ok)
 	waitFor(t, j.done(), "job completion")
@@ -638,13 +709,14 @@ func TestJobRegistry_ConcurrentSubscribersAndEmits(t *testing.T) {
 	r := newTestRegistry(t, t.Context(), 32, 8)
 
 	go1 := make(chan struct{})
-	id := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
+	id, err := r.Start("deploy", func(_ context.Context, sink core.EventSink) (any, error) {
 		close(go1)
 		for i := range 200 {
 			sink(core.StepEvent{Scope: core.Scope{Op: core.OpDeploy, Index: i + 1}})
 		}
 		return nil, nil
 	})
+	require.NoError(t, err)
 	j, ok := r.job(id)
 	require.True(t, ok)
 	waitFor(t, go1, "job start")

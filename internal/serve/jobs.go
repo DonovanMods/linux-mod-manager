@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
@@ -47,6 +48,15 @@ const (
 	// jobs' context, so a wedged Apply cannot hold `lmm serve` open forever.
 	jobCancelGrace = 5 * time.Second
 )
+
+// errRegistryClosing is Start's refusal sentinel: once shutdown has set
+// jobRegistry.closing, no new job may be accepted, because shutdown is about
+// to (or already did) call wg.Wait, and a job admitted after that point
+// would either race sync.WaitGroup's Add-after-Wait rule (task-6-review.md
+// Important 1) or run under a root context shutdown is about to cancel.
+// Task 7's mutation handlers map this to a 503 envelope: the server is
+// draining, and retrying against this same process cannot help.
+var errRegistryClosing = errors.New("serve: job registry is shutting down")
 
 // jobState is a job's lifecycle state, and its wire value in a job status
 // document.
@@ -332,8 +342,12 @@ type jobRegistry struct {
 	ring   int
 	retain int
 
-	mu   sync.Mutex
-	jobs map[jobID]*job
+	mu sync.Mutex
+	// closing is set at the top of shutdown, under mu, before wg.Wait is
+	// called - see Start, where the same lock makes "is the registry
+	// closing" and "add this job to wg" one atomic decision.
+	closing bool
+	jobs    map[jobID]*job
 	// order is every retained job's id in start order - the eviction pass
 	// walks it oldest-first.
 	order []jobID
@@ -366,7 +380,14 @@ func newJobRegistry(ctx context.Context, log *slog.Logger, ring, retain int) *jo
 // that started it can redirect to the job page while the Apply is still
 // going. run receives the registry's root context - NEVER the request's -
 // and an EventSink that feeds the job's ring buffer and its subscribers.
-func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSink) (any, error)) jobID {
+//
+// Start refuses to admit a job once shutdown has begun, returning
+// errRegistryClosing: the check against closing and the wg.Add that commits
+// the registry to waiting for this job happen in the same critical section,
+// so a Start racing shutdown either wins that section (and is drained by the
+// very shutdown call it raced) or loses it (and never touches wg at all) -
+// never both, and never neither (task-6-review.md Important 1).
+func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSink) (any, error)) (jobID, error) {
 	j := &job{
 		id:       newJobID(),
 		kind:     kind,
@@ -378,14 +399,18 @@ func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSin
 	}
 
 	r.mu.Lock()
+	if r.closing {
+		r.mu.Unlock()
+		return "", errRegistryClosing
+	}
 	r.jobs[j.id] = j
 	r.order = append(r.order, j.id)
 	r.evictLocked()
+	r.wg.Add(1)
 	r.mu.Unlock()
 
-	r.wg.Add(1)
 	go r.run(j, run)
-	return j.id
+	return j.id, nil
 }
 
 // run executes one job's Apply and records its outcome. A panic is
@@ -458,6 +483,10 @@ func (r *jobRegistry) evictLocked() {
 // It is safe to call more than once.
 func (r *jobRegistry) shutdown(ctx context.Context) {
 	defer r.cancel()
+
+	r.mu.Lock()
+	r.closing = true
+	r.mu.Unlock()
 
 	done := make(chan struct{})
 	go func() {

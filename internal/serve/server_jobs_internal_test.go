@@ -67,10 +67,11 @@ func TestServer_NewWiresThePlanStoreAndJobRegistry(t *testing.T) {
 	require.NotNil(t, srv.jobs, "New must wire a job registry")
 
 	seen := make(chan any, 1)
-	id := srv.jobs.Start("probe", func(ctx context.Context, _ core.EventSink) (any, error) {
+	id, err := srv.jobs.Start("probe", func(ctx context.Context, _ core.EventSink) (any, error) {
 		seen <- ctx.Value(key)
 		return nil, nil
 	})
+	require.NoError(t, err)
 	j, ok := srv.jobs.job(id)
 	require.True(t, ok)
 	waitFor(t, j.done(), "job completion")
@@ -89,10 +90,11 @@ func TestServer_ServeWaitsForRunningJobsWithinTheGrace(t *testing.T) {
 	srv, cancelServe, done := newDrainServer(t, 10*time.Second)
 
 	release := make(chan struct{})
-	id := srv.jobs.Start("deploy", func(context.Context, core.EventSink) (any, error) {
+	id, err := srv.jobs.Start("deploy", func(context.Context, core.EventSink) (any, error) {
 		<-release
 		return &core.DeployResult{}, nil
 	})
+	require.NoError(t, err)
 
 	cancelServe()
 	requireNotYet(t, done, "Serve returning while a job is still running")
@@ -111,10 +113,11 @@ func TestServer_ServeWaitsForRunningJobsWithinTheGrace(t *testing.T) {
 func TestServer_ServeCancelsJobsOnceTheGraceExpires(t *testing.T) {
 	srv, cancelServe, done := newDrainServer(t, 50*time.Millisecond)
 
-	id := srv.jobs.Start("deploy", func(ctx context.Context, _ core.EventSink) (any, error) {
+	id, err := srv.jobs.Start("deploy", func(ctx context.Context, _ core.EventSink) (any, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
+	require.NoError(t, err)
 
 	start := time.Now()
 	cancelServe()
