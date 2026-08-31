@@ -838,17 +838,37 @@ GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
 GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
 ```
 
+Two endpoints report on jobs as a whole rather than one at a time — what
+the UI's activity tray is built on:
+
+```text
+GET  /api/v1/jobs               -> every retained job, newest first
+GET  /api/v1/events             -> Server-Sent Events: every job's lifecycle
+```
+
 (Enable/disable are the one exception: with no options and nothing to
 preview, they skip the plan step entirely —
 `POST /api/v1/mods/{source}/{id}/enable` and `.../disable` start the job
 directly and answer with the same `{"job_id"}` document.)
 
-The events stream sends one JSON frame per typed core progress event
+The per-job events stream sends one JSON frame per typed core progress event
 (`event:` names the event type), a comment heartbeat roughly every 15
 seconds while a job is otherwise quiet, and a final `event: done` frame
 carrying the same job status document `GET /api/v1/jobs/{id}` returns — so
 a client never has to race "the stream closed" against "go fetch the final
 status" separately.
+
+`GET /api/v1/events` is the other shape: one stream for the whole session,
+multiplexing every job. It opens with an `event: snapshot` frame carrying
+the same document `GET /api/v1/jobs` answers with — so a client that
+connects mid-deploy is caught up before it is told anything new — then
+sends `event: job_started`, `event: job_progress` and `event: job_done`
+frames, each naming the job it belongs to. Progress frames are summaries
+(phase, mod, position, percent) rather than whole core events, and a
+download's ticks are coalesced to whole percents; open the per-job stream
+above for the full detail. The job index and the `job_done` frame both
+carry a failed job's `{"error", "details"}` envelope, but never its result
+document — read `GET /api/v1/jobs/{id}` for that.
 
 ### Security posture
 

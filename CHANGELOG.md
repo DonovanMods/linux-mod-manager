@@ -29,6 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `lmm serve` gains the two endpoints its activity tray is built on:
+  `GET /api/v1/jobs` lists every job the registry still retains, newest
+  first, each summarised without its (potentially large) result document —
+  a failed job carries its `{"error", "details"}` envelope inline so a
+  client can offer the next step without a second request — and
+  `GET /api/v1/events` is a single Server-Sent Events stream multiplexing
+  every job's lifecycle for the whole session. It opens with an
+  `event: snapshot` frame carrying the job index, so a client connecting
+  mid-deploy is caught up before it is told anything new, then sends
+  `job_started` / `job_progress` / `job_done` frames naming the job each
+  belongs to. Progress frames are summaries (phase, mod, position,
+  percent), and a download's per-read ticks are coalesced to whole
+  percents; the per-job stream (`GET /api/v1/jobs/{id}/events`) is
+  unchanged and remains the full-detail view (#327, epic #326)
+
 - `lmm serve` starts a local web UI (127.0.0.1:7420 by default, `--addr`
   to change it, `--no-open` to skip auto-opening a browser): a
   server-rendered status dashboard, plus `/mods`, `/mods/{source}/{id}`
