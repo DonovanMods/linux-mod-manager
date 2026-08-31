@@ -289,7 +289,8 @@ func TestLegacyPageRoutes_301IntoTheSPAScheme(t *testing.T) {
 		{"updates", "/updates", "/g/g1/default"},
 		{"profiles", "/profiles", "/g/g1/default"},
 		{"health", "/health", "/g/g1/default"},
-		{"job page", "/jobs/abc123", "/g/g1/default"},
+		{"job page", "/jobs/abc123", "/g/g1/default?job=abc123"},
+		{"job page, id needing escaping", "/jobs/a%2Fb", "/g/g1/default?job=a%2Fb"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := doAPI(s, http.MethodGet, tc.from, "")
