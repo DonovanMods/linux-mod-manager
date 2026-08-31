@@ -54,6 +54,22 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
 )
 
+// e2eShutdownGrace is how long a browser fixture's server waits for
+// in-flight requests when the test tears it down. It is generous compared
+// with production's own default (10s) for one reason, measured rather than
+// guessed: the SPA holds a session-long EventSource on GET /api/v1/events
+// (activity.js), and a browser being torn down can re-establish it once or
+// twice before its process is actually gone - each reconnect making the
+// connection active again just as http.Server.Shutdown was about to finish.
+// Observed waits were 2-6 seconds under a loaded full-suite run.
+//
+// It is a TEST allowance and nothing else: Shutdown still returns the
+// instant the connection really closes (microseconds, in the ordinary
+// case), so this costs no wall clock on a healthy teardown, and the
+// server's real shutdown semantics are pinned by their own tests
+// (TestServer_ServeCancelsJobsOnceTheGraceExpires and friends), not here.
+const e2eShutdownGrace = 20 * time.Second
+
 // e2eTimeout bounds one chromedp.Run. Generous, because a cold browser
 // start is the slowest thing in this package by an order of magnitude, and
 // a timeout here should mean "the page is broken", never "the machine is
@@ -135,10 +151,13 @@ func newE2EFixture(t *testing.T) e2eFixture {
 	sandboxE2EEnv(t)
 
 	svc, game := newFixtureServiceWithSource(t, newFakeSource("fake"))
+	// The server is started BEFORE the browser deliberately: see
+	// startE2EServer's doc comment on cleanup order.
+	baseURL := startE2EServer(t, svc)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eFixture{
 		Ctx:           ctx,
-		BaseURL:       startE2EServer(t, svc),
+		BaseURL:       baseURL,
 		Svc:           svc,
 		Game:          game,
 		Profile:       "default",
@@ -212,10 +231,11 @@ func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
 	_, err := svc.DeployProfile(t.Context(), game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 
+	baseURL := startE2EServer(t, svc)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eFixture{
 		Ctx:           ctx,
-		BaseURL:       startE2EServer(t, svc),
+		BaseURL:       baseURL,
 		Svc:           svc,
 		Game:          game,
 		Profile:       "default",
@@ -258,10 +278,11 @@ func newE2EMultiGameFixture(t *testing.T) e2eMultiGameFixture {
 	_, err = svc.NewProfileManager().Create(t.Context(), gameB.ID, "default")
 	require.NoError(t, err)
 
+	baseURL := startE2EServer(t, svc)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eMultiGameFixture{
 		Ctx:           ctx,
-		BaseURL:       startE2EServer(t, svc),
+		BaseURL:       baseURL,
 		GameA:         gameA,
 		GameB:         gameB,
 		BrowserErrors: browserErrors,
@@ -279,15 +300,35 @@ func (f e2eMultiGameFixture) runInBrowser(t *testing.T, actions ...chromedp.Acti
 // the origin. Serve is stopped and its error checked at test end - a
 // browser test that left the server running would leak a goroutine into
 // every test after it.
+//
+// CLEANUP ORDER. Every fixture calls this BEFORE newE2EBrowser, and must
+// keep doing so. t.Cleanup runs last-registered-first, so starting the
+// server first means the BROWSER is torn down first - which is the order
+// that matters, because a page still open is a page still holding requests
+// against this server. The SPA keeps a session-long EventSource on
+// GET /api/v1/events (activity.js), and http.Server.Shutdown waits for
+// active requests: shut the server down first and that stream is still
+// live, so the wait runs out and Serve returns "shutting down: context
+// deadline exceeded". That was a real, intermittent failure across the
+// proxy-backed fixtures before this ordering was made explicit.
 func startE2EServer(t *testing.T, svc *core.Service) string {
 	t.Helper()
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler),
-		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: 5 * time.Second})
+		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace})
 	addr, err := srv.Listen()
 	require.NoError(t, err)
 
-	serveCtx, cancel := context.WithCancel(t.Context())
+	// WithoutCancel, then our own cancel: t.Context() is cancelled when the
+	// test FUNCTION returns, which is BEFORE any t.Cleanup runs. Deriving the
+	// serve context from it directly therefore starts the graceful shutdown
+	// while the browser is still open and still holding its session-long
+	// EventSource on GET /api/v1/events - so Shutdown waits out its whole
+	// grace and Serve returns "shutting down: context deadline exceeded".
+	// That was an intermittent failure across the browser fixtures; the
+	// server must be stopped by the cleanup below, in order, not by the test
+	// function's own return.
+	serveCtx, cancel := context.WithCancel(context.WithoutCancel(t.Context()))
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(serveCtx) }()
 	t.Cleanup(func() {
@@ -371,8 +412,8 @@ func newE2EFixtureWithFailingPath(t *testing.T, failPath string) (e2eFixture, fu
 	seedInstalledMod(t, svc, game,
 		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: game.ID}, true, nil)
 
-	ctx, browserErrors := newE2EBrowser(t)
 	baseURL, setFailing := startE2EServerWithFailingPath(t, svc, failPath)
+	ctx, browserErrors := newE2EBrowser(t)
 	return e2eFixture{
 		Ctx:           ctx,
 		BaseURL:       baseURL,
@@ -400,7 +441,20 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	t.Cleanup(cancelAlloc)
 
 	ctx, cancelCtx := chromedp.NewContext(allocCtx)
-	t.Cleanup(cancelCtx)
+	t.Cleanup(func() {
+		// chromedp.Cancel, not the bare context cancel: it closes the
+		// browser AND WAITS for the process to exit. Neither cancelCtx nor
+		// cancelAlloc waits (both return in microseconds), which leaves
+		// Chrome alive while the cleanups below shut the server down - and
+		// a live Chrome re-establishes the SPA's session-long EventSource
+		// (activity.js) every few seconds, so http.Server.Shutdown keeps
+		// finding an active request and eventually runs out its grace. That
+		// was the cause of an intermittent "shutting down: context deadline
+		// exceeded" across the browser fixtures.
+		if err := chromedp.Cancel(ctx); err != nil {
+			cancelCtx()
+		}
+	})
 
 	var (
 		mu     sync.Mutex
@@ -594,4 +648,26 @@ func startDeployFromAnotherClient(t *testing.T, f e2eFixture) string {
 	jobID, ok := job["job_id"].(string)
 	require.True(t, ok, "the job response must carry a job_id: %v", job)
 	return jobID
+}
+
+// newE2EFixtureWithFailingDeploy seeds a deployable profile whose
+// install.before_all hook exits non-zero, which is a real, supported way
+// for a deploy to fail: without --force, core refuses to continue past a
+// failed before_all (internal/core/deploy.go), so ApplyDeploy returns an
+// error and the job lands in state failed with that error's envelope.
+//
+// It is how the browser gets a genuinely failed job to render without
+// faking a registry state that could never occur.
+func newE2EFixtureWithFailingDeploy(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	script := filepath.Join(t.TempDir(), "failing-before-all")
+	require.NoError(t, os.WriteFile(script,
+		[]byte("#!/bin/sh\necho 'the mod directory is not writable' >&2\nexit 1\n"), 0o755))
+	f.Game.Hooks.Install.BeforeAll = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f
 }
