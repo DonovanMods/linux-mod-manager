@@ -18,8 +18,9 @@ import (
 // RED test (docs/plans/2026-08-30-serve-impl.md Task 4): two enabled mods
 // that provide the same game-dir path, deployed for real, must render as a
 // conflict row naming both mods, alongside a real (non-error) verify
-// summary, and the "Fix issues" form's target route Task 9 (#322) will
-// wire.
+// summary. Task 9 (#322) wired POST /health/fix and made its form
+// conditional, so a report with nothing repairable - like this one - offers
+// no repair action at all.
 func TestServer_Health_RendersConflictsAndVerifySummary(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, game := newFixtureServiceWithSource(t, src)
@@ -46,9 +47,11 @@ func TestServer_Health_RendersConflictsAndVerifySummary(t *testing.T) {
 	assert.Contains(t, body, "shared.esp")
 	assert.Contains(t, body, "Mod X")
 	assert.Contains(t, body, "Mod Y")
-	assert.Contains(t, body, `action="/health/fix"`)
-	assert.Contains(t, body, "coming in this release")
-	assert.Regexp(t, `name="csrf_token" value="[0-9a-f]{64}"`, body)
+	assert.NotContains(t, body, `action="/health/fix"`, "nothing here is repairable, so no repair is offered")
+	assert.NotContains(t, body, "coming in this release")
+	// The repair form was this page's only form, so its CSRF token is
+	// asserted where the form actually renders
+	// (TestServer_Health_OffersRepairOnlyWhenSomethingIsFixable).
 }
 
 // TestServer_Health_NoGames_RendersEmptyState covers the CSS/JS-absent,

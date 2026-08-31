@@ -268,6 +268,12 @@ func (s *Server) handleProfileDeploy(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "deploy")
 }
 
+// handleHealthFix answers POST /health/fix - `lmm verify --fix` for the
+// resolved game+profile (kind_verify_fix.go).
+func (s *Server) handleHealthFix(w http.ResponseWriter, r *http.Request) {
+	s.handlePlannedMutation(w, r, "verify_fix")
+}
+
 // handleModInstall and handleModUninstall answer the two planned routes.
 func (s *Server) handleModInstall(w http.ResponseWriter, r *http.Request) {
 	s.handlePlannedMutation(w, r, "install")

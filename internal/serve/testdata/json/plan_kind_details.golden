@@ -5,6 +5,7 @@
     "profile_apply",
     "switch",
     "uninstall",
-    "updates"
+    "updates",
+    "verify_fix"
   ]
 }
