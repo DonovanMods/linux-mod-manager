@@ -693,6 +693,19 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		fmt.Println(desc)
 	}
 
+	// #87: Changelog is best-effort (a source without the capability, or a
+	// failed live call, both leave it empty) - only render the section when
+	// there's something to show.
+	if detail.Changelog != "" {
+		fmt.Println("Changelog:")
+		cl := core.CleanChangelog(detail.Changelog)
+		const maxChangelog = 2000
+		if len(cl) > maxChangelog {
+			cl = cl[:maxChangelog] + "\n... (truncated; view on site for full changelog)"
+		}
+		fmt.Println(cl)
+	}
+
 	if installedInfo != nil {
 		fmt.Println()
 		fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)

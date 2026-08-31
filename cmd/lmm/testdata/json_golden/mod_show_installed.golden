@@ -21,5 +21,6 @@
     "profile": "default",
     "update_policy": "notify",
     "locked": false
-  }
+  },
+  "changelog": "Fixed a crash on load."
 }
