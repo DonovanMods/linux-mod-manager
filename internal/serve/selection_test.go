@@ -32,10 +32,20 @@ func TestServer_Mods_NoGames_RendersEmptyState(t *testing.T) {
 
 // TestServer_Mods_UnknownGameParam_RendersWarning proves an explicit
 // ?game= naming an unconfigured game degrades to a friendly warning rather
-// than a 404/500, and still lists the valid game(s) to switch to.
+// than a 404/500, and - once there is more than one game to choose from -
+// still lists the valid game(s) to switch to (a single-game deployment
+// gates the switcher itself away entirely; see
+// TestServer_NavSwitcher_HiddenWithOneGameAndProfile).
 func TestServer_Mods_UnknownGameParam_RendersWarning(t *testing.T) {
 	src := newFakeSource("fake")
 	svc, _ := newFixtureServiceWithSource(t, src)
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID:          "g2",
+		Name:        "Second Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+	}))
 	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/mods?game=nope", nil)

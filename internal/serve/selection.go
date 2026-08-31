@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -113,12 +114,23 @@ func (s *Server) resolveSelection(r *http.Request) (selection, error) {
 // the nav switcher's resolved selection (Nav is nil for a page with no
 // single active game+profile, e.g. the status dashboard). Path is the
 // switcher form's GET target, so switching game/profile reloads the same
-// page it was submitted from.
+// page it was submitted from. ExtraParams are the current request's query
+// parameters other than game/profile (e.g. /search's "q"), carried as the
+// switcher form's hidden fields so submitting it doesn't reset them (task-4
+// review Minor 2).
 type pageChrome struct {
-	Title     string
-	CSRFToken string
-	Path      string
-	Nav       *selection
+	Title       string
+	CSRFToken   string
+	Path        string
+	Nav         *selection
+	ExtraParams []queryParam
+}
+
+// queryParam is one pageChrome.ExtraParams entry: a query key/value pair
+// the nav switcher's GET form round-trips as a hidden field.
+type queryParam struct {
+	Key   string
+	Value string
 }
 
 // chrome builds the pageChrome common to every page. sel is nil for a page
@@ -126,5 +138,40 @@ type pageChrome struct {
 // page passes the selection resolveSelection returned so layout.gohtml can
 // render the switcher and any resolution Warning.
 func (s *Server) chrome(r *http.Request, title string, sel *selection) pageChrome {
-	return pageChrome{Title: title, CSRFToken: s.csrf.token, Path: r.URL.Path, Nav: sel}
+	return pageChrome{
+		Title:       title,
+		CSRFToken:   s.csrf.token,
+		Path:        r.URL.Path,
+		Nav:         sel,
+		ExtraParams: extraQueryParams(r),
+	}
+}
+
+// extraQueryParams returns r's query parameters other than gameParam/
+// profileParam, sorted by key then value for deterministic rendering - the
+// hidden fields the nav switcher's form carries so a page-specific
+// parameter (e.g. /search's "q") survives a game/profile switch instead of
+// being silently dropped (task-4 review Minor 2: a GET form submission
+// replaces the whole query string with only the fields the form itself
+// declares).
+func extraQueryParams(r *http.Request) []queryParam {
+	q := r.URL.Query()
+	q.Del(gameParam)
+	q.Del(profileParam)
+	if len(q) == 0 {
+		return nil
+	}
+	params := make([]queryParam, 0, len(q))
+	for key, values := range q {
+		for _, v := range values {
+			params = append(params, queryParam{Key: key, Value: v})
+		}
+	}
+	sort.Slice(params, func(i, j int) bool {
+		if params[i].Key != params[j].Key {
+			return params[i].Key < params[j].Key
+		}
+		return params[i].Value < params[j].Value
+	})
+	return params
 }
