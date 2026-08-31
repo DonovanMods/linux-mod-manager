@@ -183,30 +183,20 @@
       }
       if (submitter) submitter.disabled = true;
 
+      // .catch covers fetch/read only, not replaceMain below - a render
+      // failure after a successful POST must not re-submit the form.
       fetch(action, { method: "POST", body: data })
         .then(function (res) {
           return res.text().then(function (html) {
             return { html: html, url: res.url };
           });
         })
-        .then(function (result) {
-          replaceMain(result.html, result.url);
-        })
         .catch(function () {
-          // Fall back to a plain navigation that still honors WHICH button
-          // was clicked and where it targets: confirm.gohtml keys its real
-          // action off the submitter (not a hidden field) and the sync
-          // button's own formaction, neither of which a bare form.submit()
-          // reads on its own - it always POSTs to form.action with none of
-          // the submitter's fields. form.requestSubmit(submitter) looks
-          // like the fix (and IS one when called synchronously from a
-          // click), but verified manually in a real browser (task-11
-          // report) it silently no-ops - no request, no thrown error -
-          // when called from this async fetch().catch() continuation
-          // instead of directly inside a click handler, which would make
-          // the fallback do nothing at all. So mirror both pieces into the
-          // form by hand instead and use the plain submit() that already
-          // worked.
+          // Fall back to a plain navigation honoring WHICH button was
+          // clicked and where it targets, mirrored by hand: a bare
+          // form.submit() ignores both, and form.requestSubmit(submitter)
+          // silently no-ops from this async continuation (verified live,
+          // task-11 report) - it only works called synchronously on click.
           if (submitter) submitter.disabled = false;
           form.action = action;
           if (submitter && submitter.name) {
@@ -217,6 +207,10 @@
             form.appendChild(hidden);
           }
           form.submit();
+          return null;
+        })
+        .then(function (result) {
+          if (result) replaceMain(result.html, result.url);
         });
     });
   }
