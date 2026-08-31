@@ -310,11 +310,11 @@ func (s *Server) hostCheck(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.allowedHosts != nil {
 			if _, ok := s.allowedHosts[r.Host]; !ok {
-				http.Error(w, "host not allowed", http.StatusForbidden)
+				s.forbidden(w, r, "host not allowed")
 				return
 			}
 		} else if !hostIsSafeForWildcardBind(r.Host, s.wildcardPort) {
-			http.Error(w, "host not allowed", http.StatusForbidden)
+			s.forbidden(w, r, "host not allowed")
 			return
 		}
 		next.ServeHTTP(w, r)

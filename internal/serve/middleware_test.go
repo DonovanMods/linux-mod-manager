@@ -8,6 +8,7 @@ package serve
 // production API surface stays exactly what the design calls for.
 
 import (
+	"encoding/json/v2"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -212,6 +213,28 @@ func TestMiddleware_HostCheck_ExactMatchOnly(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec2, bad)
 	require.Equal(t, http.StatusForbidden, rec2.Code)
+}
+
+// TestMiddleware_HostCheck_APIPath_UsesJSONEnvelope is the re-review fix's
+// own test (epic re-review M1-PARTIAL): a Host rejection under /api/v1 is
+// the third 403 producer on that path, and it still answered a bare
+// text/plain http.Error after M1's CSRF/Origin fix, leaving README:815's
+// unconditional "the CLI's {"error","details"} envelope on failure" claim
+// still untrue for this one case. hostCheck must now route through the
+// same s.forbidden helper the CSRF and Origin checks already use.
+func TestMiddleware_HostCheck_APIPath_UsesJSONEnvelope(t *testing.T) {
+	srv := newMiddlewareTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+middlewareTestAddr+"/api/v1/status", nil)
+	req.Host = "attacker.example"
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	var envelope apiErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope, json.RejectUnknownMembers(true)))
+	assert.Contains(t, envelope.Error, "host not allowed")
 }
 
 // TestMiddleware_HostCheck_RejectsIPLiteralMismatch covers the same guard
