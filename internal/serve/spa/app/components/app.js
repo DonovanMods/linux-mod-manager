@@ -8,6 +8,26 @@
 import { html } from "../render.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 
+/**
+ * The one fact Unit 1 renders FROM the hydrated document, so that "the
+ * store fetched /api/v1/status" is observable in the DOM and not only in
+ * the network tab. It is what the browser E2E asserts on (e2e_test.go): the
+ * URL carries the game's ID, this line carries its NAME, which nothing but
+ * the fetched document knows. Mission Control replaces the whole component
+ * in Unit 2.
+ *
+ * A scoped route answers core.GameStatus, which embeds the game (so it has
+ * a name); the chooser route answers core.StatusReport, which is a list of
+ * games and has no name of its own.
+ */
+function hydratedSummary(status) {
+  if (status.name) {
+    return `${status.name}: ready.`;
+  }
+  const games = status.games?.length ?? 0;
+  return `${games} game${games === 1 ? "" : "s"} configured.`;
+}
+
 /** The application root: reads the route and the hydrated status document. */
 export function App({ state, onThemeChange }) {
   const { route, status, error } = state;
@@ -33,7 +53,9 @@ export function App({ state, onThemeChange }) {
       ${
         status === null
           ? html`<p class="app-booting">Loading&#8230;</p>`
-          : html`<p class="app-ready" data-hydrated="true">Ready.</p>`
+          : html`<p class="app-ready" data-hydrated="true">
+              ${hydratedSummary(status)}
+            </p>`
       }
     </main>
   `;
