@@ -53,7 +53,20 @@ export function DeployPlanView({ plan }) {
                 class="plan__mod ${mod.skipped ? "plan__mod--skipped" : ""}"
               >
                 <span class="plan__mod-name">${mod.name}</span>
-                <span class="mono plan__mod-version">${mod.ref.version}</span>
+                ${
+                  // Conditional, because a deploy plan's refs carry no
+                  // version: planDeploy builds each DeployPlanMod.Ref from
+                  // the source and mod id alone (internal/core/deploy.go),
+                  // so this is empty for every deploy row today. Rendering
+                  // the span anyway would leave a gap that reads as a
+                  // missing value rather than an absent field. Filed as a
+                  // carry-in - the version a deploy would put on disk is a
+                  // fact the confirm modal should be able to show.
+                  mod.ref.version &&
+                  html`<span class="mono plan__mod-version"
+                    >${mod.ref.version}</span
+                  >`
+                }
                 <span class="plan__mod-detail">${modDetail(mod)}</span>
                 ${
                   (mod.link ?? []).length > 0 &&

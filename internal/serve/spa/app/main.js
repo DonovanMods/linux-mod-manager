@@ -211,6 +211,16 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
   }
 }
 
+// bindingJob is the in-flight POST /api/v1/jobs, if any. It resolves only
+// AFTER the origin binding has been written to the store, which is what
+// onJobDone waits on: a job can finish before the response that names it
+// has even been read (a deploy whose before_all hook exits immediately does
+// exactly that), and a completion looked up before its binding lands finds
+// no origin and toasts a control that is right there on screen. Observed,
+// not hypothetical - it is what the failing-deploy scenario now asserts
+// against.
+let bindingJob = null;
+
 /** Redeems the open modal's plan handle, starting its Apply as a job
  * (POST /api/v1/jobs) and binding it to the control that opened the modal.
  *
@@ -223,16 +233,24 @@ async function confirmPlan() {
   if (!modal || modal.status !== "ready") return;
 
   store.set({ modal: { ...modal, status: "starting" } });
+  bindingJob = (async () => {
+    try {
+      const { job_id: jobID } = await startJob(modal.planID);
+      if (store.get().modal?.seq !== modal.seq) return;
+      store.set({
+        modal: null,
+        origins: { ...store.get().origins, [modal.origin]: jobID },
+      });
+    } catch (err) {
+      if (store.get().modal?.seq !== modal.seq) return;
+      store.set({ modal: { ...modal, status: "error", ...describe(err) } });
+    }
+  })();
+
   try {
-    const { job_id: jobID } = await startJob(modal.planID);
-    if (store.get().modal?.seq !== modal.seq) return;
-    store.set({
-      modal: null,
-      origins: { ...store.get().origins, [modal.origin]: jobID },
-    });
-  } catch (err) {
-    if (store.get().modal?.seq !== modal.seq) return;
-    store.set({ modal: { ...modal, status: "error", ...describe(err) } });
+    await bindingJob;
+  } finally {
+    bindingJob = null;
   }
 }
 
@@ -256,6 +274,9 @@ function clearOrigin(origin) {
   store.set({ origins });
 }
 
+let toastSeq = 0;
+const toastDismissMillis = 8000;
+
 /** Pushes a toast. Successes clear themselves after a while; failures do
  * not - a failure nobody saw is the case toasts exist for. */
 function pushToast(toast) {
@@ -265,9 +286,6 @@ function pushToast(toast) {
     setTimeout(() => dismissToast(id), toastDismissMillis);
   }
 }
-
-let toastSeq = 0;
-const toastDismissMillis = 8000;
 
 function dismissToast(id) {
   store.set({ toasts: store.get().toasts.filter((t) => t.id !== id) });
@@ -283,8 +301,14 @@ function dismissToast(id) {
  * on screen it resurfaces there and toasting it too would be telling the
  * user something they are already looking at (design doc §Jobs).
  */
-function onJobDone(summary) {
+async function onJobDone(summary) {
   hydrate(store.get().route);
+
+  // Wait for an in-flight start to bind its origin before deciding: see
+  // bindingJob. Captured first, because confirmPlan clears it as soon as it
+  // settles.
+  const pending = bindingJob;
+  if (pending) await pending;
 
   const origin = originOf(summary.id);
   if (origin && isOriginMounted(origin)) return;

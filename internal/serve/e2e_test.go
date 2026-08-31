@@ -1083,7 +1083,7 @@ func TestE2E_FailedJobSurfacesInPlaceAndInTheTray(t *testing.T) {
 	f := newE2EFixtureWithFailingDeploy(t)
 
 	var inline, trayMessage, badge string
-	var overwrites int
+	var overwrites, toasts int
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
@@ -1097,6 +1097,7 @@ func TestE2E_FailedJobSurfacesInPlaceAndInTheTray(t *testing.T) {
 		chromedp.WaitVisible(`.tray__row[data-state="failed"]`, chromedp.ByQuery),
 		textContent(`.tray__failure-message`, &trayMessage),
 		chromedp.Evaluate(`document.querySelectorAll('[data-action="overwrite"]').length`, &overwrites),
+		chromedp.Evaluate(`document.querySelectorAll(".toast").length`, &toasts),
 	)
 
 	assert.Contains(t, inline, "Failed")
@@ -1105,6 +1106,10 @@ func TestE2E_FailedJobSurfacesInPlaceAndInTheTray(t *testing.T) {
 	assert.Equal(t, "1", badge, "with nothing running, the bell counts the failure nobody has seen")
 	assert.Zero(t, overwrites,
 		"this failure's details name no action, so no affordance may be invented for it")
+	assert.Zero(t, toasts,
+		"the control is on screen, so the failure must resurface there and NOT also toast - "+
+			"this deploy fails before its own start response is read, which is how the "+
+			"origin binding came to be checked too early")
 	assert.Empty(t, f.BrowserErrors())
 }
 

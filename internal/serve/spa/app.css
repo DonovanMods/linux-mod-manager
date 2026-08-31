@@ -960,6 +960,10 @@ select {
   align-items: center;
   gap: var(--space-2);
   min-width: 14rem;
+  /* Bounded, because the text can be a core error message: an uncapped
+   * failure readout grew the top bar until the game picker wrapped onto two
+   * lines. The text ellipsizes; the tray carries it in full. */
+  max-width: 26rem;
   padding: var(--space-1) var(--space-2);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
@@ -1095,6 +1099,15 @@ select {
 /* ---------------------------------------------------------------------- */
 /* The activity tray.                                                      */
 /* ---------------------------------------------------------------------- */
+
+/* The bell sits at the far right of the top bar, so its menu hangs from
+ * the right edge - the shared .picker__menu's left: 0 would run a 26rem
+ * tray straight off the side of the viewport, which is exactly what it did
+ * (the running row's progress line was cut off mid-word). */
+.activity-bell .picker__menu {
+  right: 0;
+  left: auto;
+}
 
 .tray {
   min-width: 26rem;
