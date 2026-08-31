@@ -10,5 +10,6 @@ import "net/http"
 // wrap entirely (task-3 review Minor 4).
 func (s *Server) routes() {
 	s.mux.Handle("GET /{$}", s.wrap(s.handleStatus))
+	s.mux.Handle("GET /mods", s.wrap(s.handleMods))
 	s.mux.Handle("/static/", http.StripPrefix("/static/", staticHandler()))
 }
