@@ -38,38 +38,6 @@ func newTestServer(t *testing.T) (*serve.Server, http.Handler) {
 	return srv, srv.Handler()
 }
 
-// TestServer_StatusPage_RendersGameName is the skeleton's headline RED
-// test (docs/plans/2026-08-30-serve-impl.md Task 3): `/` must render the
-// seeded fixture game's name, using the Status/GameStatus core calls
-// (docs/plans/2026-08-30-serve-design.md §HTTP surface).
-func TestServer_StatusPage_RendersGameName(t *testing.T) {
-	_, handler := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), "Fixture Game")
-	assert.Contains(t, rec.Header().Get("Content-Type"), "text/html")
-}
-
-// TestServer_StatusPage_WorksWithNoGames covers the CSS/JS-absent, no-data
-// case: an empty StatusReport must still render a normal 200 page (WEBUI.md
-// "semantic HTML first" - the dashboard is never blank/broken just because
-// nothing is configured yet).
-func TestServer_StatusPage_WorksWithNoGames(t *testing.T) {
-	svc := newFixtureServiceNoGames(t)
-	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/", nil)
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), "No games configured")
-}
-
 // TestServer_WrongHost_403 covers the DNS-rebinding guard
 // (docs/plans/2026-08-30-serve-design.md §Security): a request whose Host
 // header does not match the server's bound address is rejected before it
@@ -95,37 +63,6 @@ func TestServer_RightHost_NotForbidden(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	assert.NotEqual(t, http.StatusForbidden, rec.Code)
-}
-
-// TestServer_StaticAsset_Served proves static/app.css is reachable over
-// /static/, embedded via go:embed rather than read from disk at runtime.
-func TestServer_StaticAsset_Served(t *testing.T) {
-	_, handler := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/static/app.css", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Header().Get("Content-Type"), "css")
-	assert.NotEmpty(t, rec.Body.String())
-}
-
-// TestServer_StaticAsset_AppJS_ServedUnderBudget is TestServer_StaticAsset_Served
-// for app.js (Task 10's one enhancement file), plus the size budget Task 10
-// set: docs/plans/2026-08-30-serve-impl.md Task 10 caps it at ~10KB
-// unminified so it stays the "one small file", never the start of a bundle.
-func TestServer_StaticAsset_AppJS_ServedUnderBudget(t *testing.T) {
-	_, handler := newTestServer(t)
-
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/static/app.js", nil)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Header().Get("Content-Type"), "javascript")
-	assert.NotEmpty(t, rec.Body.String())
-	assert.LessOrEqual(t, rec.Body.Len(), 10*1024, "app.js must stay within Task 10's ~10KB unminified budget")
 }
 
 // TestServer_NotFound_Is404 is a baseline sanity check for the mux itself.
@@ -178,7 +115,7 @@ func TestServer_ListenAndServe_BindsAndDrainsOnCancel(t *testing.T) {
 	go func() { done <- srv.ListenAndServe(ctx) }()
 
 	require.Eventually(t, func() bool {
-		resp, err := http.Get("http://" + addr + "/")
+		resp, err := http.Get("http://" + addr + "/api/v1/status")
 		if err != nil {
 			return false
 		}
@@ -260,7 +197,7 @@ func TestServer_RejectedAndUnroutedRequests_AreLogged(t *testing.T) {
 
 // TestServer_OrdinaryRoute_LoggedOnce proves rootLogging's marker skip: a
 // normal request, which requestLogging inside wrap already logs, must not
-// also be logged by rootLogging - otherwise every ordinary page view would
+// also be logged by rootLogging - otherwise every ordinary request would
 // produce two log lines instead of one.
 func TestServer_OrdinaryRoute_LoggedOnce(t *testing.T) {
 	var buf bytes.Buffer
@@ -268,7 +205,7 @@ func TestServer_OrdinaryRoute_LoggedOnce(t *testing.T) {
 	svc := newFixtureService(t)
 	srv := serve.New(t.Context(), svc, logger, serve.Options{Addr: testAddr})
 
-	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/status", nil)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -278,7 +215,9 @@ func TestServer_OrdinaryRoute_LoggedOnce(t *testing.T) {
 
 // TestServer_StaticAsset_WrongHost_403 proves the same fix for static
 // assets: /static/ no longer bypasses the Host allow-list the way it did
-// when only securityHeaders (not hostCheck) wrapped it.
+// when only securityHeaders (not hostCheck) wrapped it. It asserts the
+// rejection, not the asset, so it holds for any /static/ path: hostCheck
+// answers before the mux ever routes.
 func TestServer_StaticAsset_WrongHost_403(t *testing.T) {
 	_, handler := newTestServer(t)
 

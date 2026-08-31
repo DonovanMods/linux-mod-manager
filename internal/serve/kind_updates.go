@@ -30,18 +30,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
-
-// updateModField is the /updates table's checkbox name. Each ticked box
-// submits one "<source-id>:<mod-id>" value - domain.ModKey's own spelling,
-// so the page, the form and the plan all name a mod the same way.
-const updateModField = "mod"
 
 func init() {
 	registerPlanKind(planKind{
@@ -51,12 +45,6 @@ func init() {
 		ApplyOptions: decodeKindOptions[updatesApplyRequest],
 		Plan:         planUpdatesKind,
 		Apply:        applyUpdatesKind,
-		Summarize:    summarizeUpdatesResult,
-		Form: &kindForm{
-			PlanOptions:  updatesPlanForm,
-			ApplyOptions: updatesApplyForm,
-			Confirm:      confirmUpdatesPlan,
-		},
 	})
 }
 
@@ -246,144 +234,4 @@ func applyUpdatesKind(ctx context.Context, s *Server, pending, opts any, sink co
 		result.Applied = append(result.Applied, *applied)
 	}
 	return result, nil
-}
-
-// summarizeUpdatesResult implements planKind.Summarize for "updates".
-func summarizeUpdatesResult(result any) []resultFact {
-	res, ok := result.(*updatesBatchResult)
-	if !ok {
-		return nil
-	}
-
-	facts := make([]resultFact, 0, len(res.Applied)+len(res.Failed)+1)
-	for _, applied := range res.Applied {
-		facts = append(facts, resultFact{
-			Label: "Updated",
-			Value: fmt.Sprintf("%s %s -> %s", applied.Name, applied.FromVersion, applied.ToVersion),
-		})
-		for _, w := range applied.Warnings {
-			facts = append(facts, resultFact{Label: "Warning", Value: applied.Name + ": " + w})
-		}
-	}
-	for _, failed := range res.Failed {
-		facts = append(facts, resultFact{Label: "Not updated", Value: updateFailureText(failed)})
-	}
-	if len(facts) == 0 {
-		facts = append(facts, resultFact{Label: "Updates", Value: "nothing was left to apply"})
-	}
-	return facts
-}
-
-// updateFailureText names one refused or failed mod on the result readout.
-func updateFailureText(failed updateBatchFailure) string {
-	name := failed.Name
-	if name == "" {
-		name = failed.Mod
-	}
-	return name + " - " + failed.Error
-}
-
-// updatesPlanForm implements kindForm.PlanOptions: the ticked checkboxes.
-func updatesPlanForm(r *http.Request) (any, error) {
-	if err := r.ParseForm(); err != nil {
-		return nil, fmt.Errorf("reading form: %w", err)
-	}
-	return updatesPlanRequest{Mods: append([]string(nil), r.Form[updateModField]...)}, nil
-}
-
-// updatesApplyForm implements kindForm.ApplyOptions: the confirm page's two
-// checkboxes, read back into the same type the JSON decoder produces.
-func updatesApplyForm(r *http.Request) (any, error) {
-	return updatesApplyRequest{
-		Force:     formFlag(r, forceField),
-		SkipHooks: formFlag(r, skipHooksField),
-	}, nil
-}
-
-// confirmUpdatesPlan implements kindForm.Confirm: which mods would move,
-// from what to what, and what would be refused if it were attempted.
-func confirmUpdatesPlan(pending, opts any) confirmView {
-	p, ok := pending.(*pendingUpdates)
-	if !ok {
-		return confirmView{Submit: "Update"}
-	}
-	req, _ := opts.(updatesApplyRequest)
-
-	view := confirmView{
-		Heading: fmt.Sprintf("%d selected mod(s)", len(p.Updates)),
-		Submit:  "Update",
-		Facts: []resultFact{
-			{Label: "Profile", Value: p.Profile},
-			{Label: "To update", Value: fmt.Sprintf("%d", len(p.Updates))},
-		},
-		Toggles: []confirmToggle{
-			{
-				Name:    skipHooksField,
-				Label:   "Skip hooks",
-				Help:    "run no install.* or uninstall.* hooks at all",
-				Checked: req.SkipHooks,
-			},
-			{
-				Name:    forceField,
-				Label:   "Continue past a failing before-hook",
-				Help:    "the failure is recorded as a warning instead of stopping that mod",
-				Checked: req.Force,
-			},
-		},
-		Hidden: updateSelectionFields(p.Selection),
-	}
-
-	var moves, locked []string
-	for _, upd := range p.Updates {
-		if upd.Locked {
-			locked = append(locked, fmt.Sprintf("%s (locked at %s)", upd.InstalledMod.Name, upd.LockedVersion))
-			continue
-		}
-		moves = append(moves, updateMoveText(upd))
-	}
-	if len(moves) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Mods that would be updated", Items: moves})
-	}
-	if len(locked) > 0 {
-		view.Lists = append(view.Lists, confirmList{
-			Label: "Locked, so the update would be refused",
-			Items: locked,
-		})
-	}
-	if len(p.NotFound) > 0 {
-		view.Lists = append(view.Lists, confirmList{
-			Label: "Selected, but no update is available any more",
-			Items: p.NotFound,
-		})
-	}
-	return view
-}
-
-// updateMoveText renders one row the way the /updates table does: a version
-// move, or a recompile with the reason that triggered it (#196/#197, where
-// NewVersion deliberately equals the installed version).
-func updateMoveText(upd domain.Update) string {
-	if upd.RecompileNeeded {
-		text := upd.InstalledMod.Name + " - recompile"
-		if upd.RecompileReason != "" {
-			text += " (" + upd.RecompileReason + ")"
-		}
-		return text
-	}
-	return fmt.Sprintf("%s %s -> %s", upd.InstalledMod.Name, upd.InstalledMod.Version, upd.NewVersion)
-}
-
-// updateSelectionFields renders the ticked set as the hidden fields the
-// confirm form carries back, so "Update plan" re-plans the SAME batch
-// rather than an empty one.
-func updateSelectionFields(selection []string) []queryParam {
-	if len(selection) == 0 {
-		return nil
-	}
-	fields := make([]queryParam, 0, len(selection))
-	for _, key := range selection {
-		fields = append(fields, queryParam{Key: updateModField, Value: key})
-	}
-	sortQueryParams(fields)
-	return fields
 }

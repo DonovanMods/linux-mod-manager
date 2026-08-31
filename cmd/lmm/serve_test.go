@@ -109,7 +109,12 @@ func TestRunServe_WildcardAddr_ServesRequests(t *testing.T) {
 
 	_, port, err := net.SplitHostPort(addr)
 	require.NoError(t, err)
-	resp, err := http.Get("http://127.0.0.1:" + port + "/")
+	// /api/v1/status rather than "/": this test's subject is the Host
+	// allow-list on a wildcard bind, not which frontend the root route
+	// serves, so it probes an endpoint whose existence does not depend on
+	// that (docs/plans/2026-08-31-serve-spa-design.md replaced the
+	// server-rendered page layer with an SPA shell).
+	resp, err := http.Get("http://127.0.0.1:" + port + "/api/v1/status")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

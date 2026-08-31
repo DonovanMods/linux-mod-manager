@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -42,12 +41,6 @@ func init() {
 		ApplyOptions: decodeKindOptions[uninstallApplyRequest],
 		Plan:         planUninstallKind,
 		Apply:        applyUninstallKind,
-		Summarize:    summarizeUninstallResult,
-		Form: &kindForm{
-			PlanOptions:  uninstallPlanForm,
-			ApplyOptions: uninstallApplyForm,
-			Confirm:      confirmUninstallPlan,
-		},
 	})
 }
 
@@ -129,113 +122,4 @@ func applyUninstallKind(ctx context.Context, s *Server, pending, opts any, _ cor
 		return nil, fmt.Errorf("uninstall apply: unexpected options type %T", opts)
 	}
 	return s.svc.ApplyUninstall(ctx, p.Game, p.Plan, req.uninstallOptions())
-}
-
-// summarizeUninstallResult implements planKind.Summarize for "uninstall".
-// UninstallResult carries only diagnostics - every step that could report a
-// number is unconditional - so a clean run says so in words rather than
-// rendering an empty readout.
-func summarizeUninstallResult(result any) []resultFact {
-	res, ok := result.(*core.UninstallResult)
-	if !ok {
-		return nil
-	}
-	facts := make([]resultFact, 0, len(res.Warnings)+len(res.Notes)+1)
-	for _, w := range res.Warnings {
-		facts = append(facts, resultFact{Label: "Warning", Value: w})
-	}
-	for _, n := range res.Notes {
-		facts = append(facts, resultFact{Label: "Note", Value: n})
-	}
-	if len(facts) == 0 {
-		facts = append(facts, resultFact{Label: "Mod", Value: "removed from the profile"})
-	}
-	return facts
-}
-
-// uninstallPlanForm implements kindForm.PlanOptions: the target comes from
-// the path, the two plan-visible options from the form.
-func uninstallPlanForm(r *http.Request) (any, error) {
-	return uninstallPlanRequest{
-		ModID:     r.PathValue("id"),
-		SourceID:  r.PathValue("source"),
-		KeepCache: formFlag(r, keepCacheField),
-		SkipHooks: formFlag(r, skipHooksField),
-	}, nil
-}
-
-// uninstallApplyForm implements kindForm.ApplyOptions: the confirm form's
-// three checkboxes (#226), read back into the same type the JSON decoder
-// produces.
-func uninstallApplyForm(r *http.Request) (any, error) {
-	return uninstallApplyRequest{
-		KeepCache: formFlag(r, keepCacheField),
-		Force:     formFlag(r, forceField),
-		SkipHooks: formFlag(r, skipHooksField),
-	}, nil
-}
-
-// confirmUninstallPlan implements kindForm.Confirm: what the uninstall
-// would remove, and the options the user may still change.
-func confirmUninstallPlan(pending, opts any) confirmView {
-	p, ok := pending.(*pendingUninstall)
-	if !ok {
-		return confirmView{Submit: "Uninstall"}
-	}
-	req, _ := opts.(uninstallApplyRequest)
-
-	plan := p.Plan
-	view := confirmView{
-		Heading: fmt.Sprintf("%s %s", plan.Mod.Name, plan.Mod.Version),
-		Submit:  "Uninstall",
-		Facts: []resultFact{
-			{Label: "Mod", Value: domain.ModKey(plan.Mod.SourceID, plan.Mod.ID)},
-			{Label: "Profile", Value: plan.Mod.ProfileName},
-			{Label: "Files to remove", Value: fmt.Sprintf("%d", len(plan.Files))},
-		},
-		Toggles: []confirmToggle{
-			{
-				Name:    keepCacheField,
-				Label:   "Keep the cached download",
-				Help:    "reinstalling later needs no download",
-				Checked: req.KeepCache,
-			},
-			{
-				Name:    skipHooksField,
-				Label:   "Skip hooks",
-				Help:    "run no uninstall.* hooks at all",
-				Checked: req.SkipHooks,
-			},
-			{
-				Name:    forceField,
-				Label:   "Continue past a failing before-hook",
-				Help:    "the failure is recorded as a warning instead of stopping",
-				Checked: req.Force,
-			},
-		},
-	}
-
-	if plan.MergedArtifact != nil {
-		view.Facts = append(view.Facts, resultFact{
-			Label: "Merged artifact",
-			Value: mergedArtifactSummary(plan.MergedArtifact),
-		})
-	}
-	if len(plan.Files) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Files that would be removed", Items: plan.Files})
-	}
-	if len(plan.Hooks) > 0 {
-		view.Lists = append(view.Lists, confirmList{Label: "Hooks that would run", Items: plan.Hooks})
-	}
-	return view
-}
-
-// mergedArtifactSummary renders a plan's merged-artifact effect as one line
-// - an effect the file list cannot express, since the artifact belongs to
-// the profile rather than to the mod being removed.
-func mergedArtifactSummary(effect *core.MergedArtifactEffect) string {
-	if effect.Action == core.MergedArtifactRemove {
-		return effect.Path + " would be removed"
-	}
-	return effect.Path + " would be rebuilt from the merge sources that remain"
 }

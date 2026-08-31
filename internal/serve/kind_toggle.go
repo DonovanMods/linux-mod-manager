@@ -27,7 +27,9 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 )
@@ -38,17 +40,14 @@ import (
 // would put POST /api/v1/plans/enable on the wire, an endpoint that could
 // only ever answer "there is nothing to plan".
 type toggleKind struct {
-	// Name is the route segment (/mods/{source}/{id}/enable) and the kind
-	// stored on the job.
+	// Name is the route segment (/api/v1/mods/{source}/{id}/enable) and the
+	// kind stored on the job.
 	Name string
-	// Title is the human label the job page and result page show.
+	// Title is the human label a frontend puts on the action.
 	Title string
 	// Apply runs the core call. It takes the job's own context, never the
 	// request's (jobs.go).
 	Apply func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error)
-	// Summarize turns the core result into the job page's readout, exactly
-	// as planKind.Summarize does.
-	Summarize func(result any) []resultFact
 }
 
 // toggleKinds is the closed table of plan-free mutation kinds, written only
@@ -77,7 +76,6 @@ func init() {
 		Apply: func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error) {
 			return s.svc.EnableMod(ctx, sel.Game, sel.Profile, sourceID, modID)
 		},
-		Summarize: summarizeEnableResult,
 	})
 	registerToggleKind(toggleKind{
 		Name:  "disable",
@@ -85,44 +83,68 @@ func init() {
 		Apply: func(ctx context.Context, s *Server, sel selection, sourceID, modID string) (any, error) {
 			return s.svc.DisableMod(ctx, sel.Game, sel.Profile, sourceID, modID)
 		},
-		Summarize: summarizeDisableResult,
 	})
 }
 
-// summarizeEnableResult reads an EnableResult the way a user would: did
-// anything change, and what did the flow have to say about it.
-func summarizeEnableResult(result any) []resultFact {
-	res, ok := result.(*core.EnableResult)
-	if !ok {
-		return nil
-	}
-	return toggleFacts(res.Changed, "enabled", res.Notes, res.Warnings)
+// handleAPIModEnable answers POST /api/v1/mods/{source}/{id}/enable.
+func (s *Server) handleAPIModEnable(w http.ResponseWriter, r *http.Request) {
+	s.startToggleJob(w, r, "enable")
 }
 
-// summarizeDisableResult is summarizeEnableResult for a DisableResult.
-func summarizeDisableResult(result any) []resultFact {
-	res, ok := result.(*core.DisableResult)
-	if !ok {
-		return nil
-	}
-	return toggleFacts(res.Changed, "disabled", res.Notes, res.Warnings)
+// handleAPIModDisable answers POST /api/v1/mods/{source}/{id}/disable.
+func (s *Server) handleAPIModDisable(w http.ResponseWriter, r *http.Request) {
+	s.startToggleJob(w, r, "disable")
 }
 
-// toggleFacts renders the shared shape of both toggle results. An unchanged
-// toggle is reported as such rather than as a bare success: "it was already
-// disabled" is the whole answer in that case, and core returns it as a
-// non-error precisely so a frontend can say so.
-func toggleFacts(changed bool, verb string, notes, warnings []string) []resultFact {
-	state := "already " + verb
-	if changed {
-		state = verb
+// startToggleJob is the shared half of the two toggle endpoints: resolve
+// the game/profile selection the same way every other scoped endpoint does,
+// then start the core call as a job and answer 202 with its id - the same
+// document POST /api/v1/jobs answers with, because from a client's point of
+// view the only difference is that there was no plan to redeem first.
+//
+// The two enable/disable routes are registered explicitly (routes.go) rather
+// than as one {action} wildcard, so an unknown action falls through to the
+// /api/v1/ subtree fallback's JSON 404 instead of reaching a handler that
+// would have to invent its own refusal. The queue-depth check and the
+// draining-registry 503 are POST /api/v1/jobs's, for the same reasons
+// (api_jobs.go): a toggle occupies the same one-mutation-at-a-time slot in
+// core that every other job does.
+func (s *Server) startToggleJob(w http.ResponseWriter, r *http.Request, kindName string) {
+	kind, ok := lookupToggleKind(kindName)
+	if !ok {
+		s.writeAPIError(w, http.StatusInternalServerError, fmt.Errorf("unregistered toggle kind %q", kindName))
+		return
 	}
-	facts := []resultFact{{Label: "Mod", Value: state}}
-	for _, w := range warnings {
-		facts = append(facts, resultFact{Label: "Warning", Value: w})
+
+	sourceID, modID := r.PathValue("source"), r.PathValue("id")
+	if sourceID == "" || modID == "" {
+		s.writeAPIError(w, http.StatusBadRequest, errors.New("the mod's source and id are both required"))
+		return
 	}
-	for _, n := range notes {
-		facts = append(facts, resultFact{Label: "Note", Value: n})
+
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
 	}
-	return facts
+
+	if depth := s.jobs.QueueDepth(); depth > maxQueuedJobs {
+		s.log.Warn("serve: refusing a toggle, queue depth exceeded", "depth", depth, "max", maxQueuedJobs)
+		s.writeAPIError(w, http.StatusConflict,
+			fmt.Errorf("%d operations are already running; wait for one to finish and try again", depth))
+		return
+	}
+
+	id, err := s.jobs.Start(kind.Name, func(ctx context.Context, _ core.EventSink) (any, error) {
+		return kind.Apply(ctx, s, sel, sourceID, modID)
+	})
+	if errors.Is(err, errRegistryClosing) {
+		s.writeAPIError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	if err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	s.writeJSON(w, http.StatusAccepted, jobStartResponse{JobID: id})
 }
