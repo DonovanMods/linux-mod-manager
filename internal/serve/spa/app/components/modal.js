@@ -44,7 +44,11 @@ export function Modal({ kind, title, onClose, footer, children }) {
     document.addEventListener("keydown", handleKeyDown);
     // Focus the panel on open: without it the keyboard focus stays on the
     // control that opened the modal, which is now behind a scrim, and Tab
-    // walks the page underneath instead of the dialog.
+    // would start walking the page underneath instead of the dialog. This
+    // only fixes where Tab STARTS - there is no focus trap (the page behind
+    // the panel is neither inert nor aria-hidden), so Tab can still walk out
+    // of the dialog once it starts. Full keyboard containment is Unit 8's
+    // a11y pass.
     panelRef.current?.focus();
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
