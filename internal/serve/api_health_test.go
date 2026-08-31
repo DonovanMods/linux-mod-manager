@@ -136,8 +136,9 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 // (docs/plans/2026-08-31-serve-spa-design.md); the third leg it stood for -
 // that the REPAIR's own tier agrees too, which is the plan/apply mismatch
 // kind_verify_fix.go's doc comment warns can resurrect the corruption - is
-// carried by TestServer_VerifyFixPlan_TierMatchesTheAPIAndTheCLI, which can
-// reach the CSRF token a POST needs.
+// carried by TestFlowVerifyFixPlan_TierMatchesTheAPIAndTheCLI
+// (c1_verify_fix_tier_internal_test.go), which can reach the CSRF token a
+// POST needs.
 func TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{
