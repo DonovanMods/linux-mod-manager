@@ -99,6 +99,22 @@ func TestMiddleware_POSTWithInvalidCSRFToken_403(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+// TestMiddleware_SameOriginPOSTWithOriginHeader_Passes covers the
+// originCheck accept branch (task-3 review Minor 6): the other passing-POST
+// tests above omit the Origin header entirely, so a same-origin request
+// that actually carries one was previously unexercised.
+func TestMiddleware_SameOriginPOSTWithOriginHeader_Passes(t *testing.T) {
+	srv := newMiddlewareTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "http://"+middlewareTestAddr+"/__test/echo", nil)
+	req.Header.Set("Origin", "http://"+middlewareTestAddr)
+	req.Header.Set("X-CSRF-Token", srv.csrf.token)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestMiddleware_GETNeedsNoCSRFToken(t *testing.T) {
 	srv := newMiddlewareTestServer(t)
 
@@ -175,4 +191,21 @@ func TestMiddleware_HostCheck_ExactMatchOnly(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec2, bad)
 	require.Equal(t, http.StatusForbidden, rec2.Code)
+}
+
+// TestMiddleware_HostCheck_RejectsIPLiteralMismatch covers the same guard
+// with IP-literal Host values (task-3 review Minor 6): the existing
+// wrong-Host tests only ever use DNS names.
+func TestMiddleware_HostCheck_RejectsIPLiteralMismatch(t *testing.T) {
+	srv := newMiddlewareTestServer(t)
+
+	for _, host := range []string{"192.168.1.5:7420", "127.0.0.1:9999"} {
+		t.Run(host, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+middlewareTestAddr+"/__test/echo", nil)
+			req.Host = host
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+			require.Equal(t, http.StatusForbidden, rec.Code)
+		})
+	}
 }
