@@ -2,12 +2,15 @@ package serve
 
 import "net/http"
 
-// routes registers every /api/v1 route on the mux. Security headers and
-// the Host allow-list apply to both routes and the mux's own 404/405
-// responses via the root Handler (see New); /api/v1 additionally goes
-// through wrap for the Origin/CSRF checks and request logging that
+// routes registers every route on the mux: the SPA's own (spa.go - the
+// shell, its assets, the legacy redirects) and /api/v1. Security headers
+// and the Host allow-list apply to both routes and the mux's own 404/405
+// responses via the root Handler (see New); every route below additionally
+// goes through wrap for the Origin/CSRF checks and request logging that
 // state-changing methods need.
 func (s *Server) routes() {
+	s.spaRoutes()
+
 	s.mux.Handle("GET /api/v1/status", s.wrap(s.handleAPIStatus))
 	s.mux.Handle("GET /api/v1/mods", s.wrap(s.handleAPIMods))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))

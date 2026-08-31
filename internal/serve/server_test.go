@@ -83,7 +83,10 @@ func TestServer_NotFound_Is404(t *testing.T) {
 // which net/http's own http.Error already sets on every response
 // regardless of any middleware): a build that dropped securityHeaders
 // from the root handler entirely would still pass the old assertion
-// (task-3 re-review New finding 1).
+// (task-3 re-review New finding 1). The policy's script-src half, which
+// carries the SPA shell's inline-script hash, is pinned by
+// TestSPAShell_CSPAdmitsTheInlineScriptByHash; here only its presence
+// matters.
 func TestServer_NotFound_HasSecurityHeaders(t *testing.T) {
 	_, handler := newTestServer(t)
 
@@ -93,7 +96,7 @@ func TestServer_NotFound_HasSecurityHeaders(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
-	assert.Equal(t, "default-src 'self'", rec.Header().Get("Content-Security-Policy"))
+	assert.Contains(t, rec.Header().Get("Content-Security-Policy"), "default-src 'self'")
 	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
 }
 

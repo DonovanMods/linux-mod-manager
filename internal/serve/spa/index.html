@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      The ONE sanctioned inline script in this application
+      (docs/plans/2026-08-31-webui-impl.md §Pre-flight). It has to be inline
+      and synchronous: it reads the persisted theme override out of
+      localStorage and stamps it on <html> BEFORE the first paint, and doing
+      that from a module - which is deferred by definition - is precisely
+      what a theme flash is. Everything else in this UI is an ES module.
+
+      It is admitted by the Content-Security-Policy by the SHA-256 of these
+      exact bytes, computed from this embedded file at startup (spa.go), so
+      the policy still refuses inline script in general and this one script
+      cannot drift out from under its own hash.
+
+      Absent or unreadable storage (a private window, storage disabled) is
+      not an error: no attribute is set and the page follows the system
+      preference, which is the documented default.
+    -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("lmm-theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (e) {
+          /* no persisted override is readable; follow the system */
+        }
+      })();
+    </script>
+    <title>lmm</title>
+    <!--
+      The CSRF token this server process issued. The SPA reads it here once
+      and sends it as X-CSRF-Token on every mutation, which is the same
+      token the middleware has always required - the delivery moved, the
+      check did not (docs/plans/2026-08-31-serve-spa-design.md §Architecture).
+    -->
+    <meta name="csrf-token" content="{{.CSRFToken}}" />
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <div id="app" class="app-root">
+      <p class="app-booting">Loading&#8230;</p>
+    </div>
+    <noscript>
+      <p class="app-noscript">
+        This interface needs JavaScript. The <code>lmm</code> command-line
+        interface does everything it does and needs none
+        &#8212; run <code>lmm --help</code>.
+      </p>
+    </noscript>
+    <script type="module" src="/static/app/main.js"></script>
+  </body>
+</html>
