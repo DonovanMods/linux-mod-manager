@@ -92,7 +92,7 @@ man:
 ## stopgap covering only the classes currently in use (see that file's own
 ## header comment).
 css:
-	@command -v tailwindcss >/dev/null 2>&1 || { echo "tailwindcss (standalone CLI) not found on PATH; install it from https://github.com/tailwindlabs/tailwindcss/releases and re-run 'make css'" >&2; exit 1; }
+	@tailwindcss --help >/dev/null 2>&1 || { echo "tailwindcss (standalone CLI) not usable; install it from https://github.com/tailwindlabs/tailwindcss/releases and re-run 'make css'" >&2; echo "(a shim on PATH that errors when actually run - e.g. a version manager with no version selected - counts as not usable; 'command -v' alone can't tell the difference)" >&2; exit 1; }
 	@tailwindcss -c internal/serve/tailwind.config.js -i internal/serve/static/app.src.css -o internal/serve/static/app.css --minify
 
 ## clean: Remove build artifacts
