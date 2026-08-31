@@ -133,6 +133,14 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap exposes the underlying ResponseWriter to http.ResponseController,
+// so handlers behind this middleware can still Flush (SSE) and set
+// deadlines - without it, http.NewResponseController(w).Flush() fails with
+// "feature not supported" for every handler wrap wraps, which would look
+// like an sse.go bug rather than a middleware one once Unit 4 adds SSE
+// (task-3 review Important 2).
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // allowedHostsFor derives the Host allow-list hostCheck enforces from a
 // "host:port" string - either Options.Addr as given, or the address Listen
 // actually bound. A concrete bind (a specific IP or name) is pinned to

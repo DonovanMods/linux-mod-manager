@@ -109,6 +109,24 @@ func TestMiddleware_GETNeedsNoCSRFToken(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// TestMiddleware_ResponseController_FlushWorksThroughWrap proves task-3
+// review Important 2's fix: http.NewResponseController(w).Flush() must
+// succeed for a handler registered through wrap, since Unit 4's SSE
+// endpoint depends on this exact path.
+func TestMiddleware_ResponseController_FlushWorksThroughWrap(t *testing.T) {
+	srv := newMiddlewareTestServer(t)
+	var flushErr error
+	srv.mux.Handle("/__test/flush", srv.wrap(func(w http.ResponseWriter, _ *http.Request) {
+		flushErr = http.NewResponseController(w).Flush()
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+middlewareTestAddr+"/__test/flush", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.NoError(t, flushErr)
+}
+
 // TestAllowedHostsFor covers allowedHostsFor's concrete-vs-wildcard split
 // (task-3 review Important 1): a concrete bind (any specific IP or name)
 // yields a single-entry allow-list; a wildcard bind - including the exact
