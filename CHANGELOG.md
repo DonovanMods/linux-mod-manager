@@ -17,14 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conflicts) read pages, each with a game/profile switcher and disabled
   mutation form shells previewing the routes a later unit wires (#319). A
   read-only `GET /api/v1` JSON API mirrors the same reads -
-  `/api/v1/{status,mods,mods/{source}/{id},search,updates,profiles,health,
-conflicts}` - each answering exactly the document `lmm <cmd> --json`
-  emits for the identical call, with the CLI's `{"error","details"}`
-  envelope on failure (#320). Mutations and background jobs land in
-  follow-up units of this epic (#321/#322, epic #276).
+  `/api/v1/{status,mods,mods/{source}/{id},search,updates,profiles,health,conflicts}`
+  each answering exactly the document `lmm <cmd> --json` emits for the
+  identical call, with the CLI's `{"error","details"}` envelope on failure
+  (#320). Mutations and background jobs land in follow-up units of this
+  epic (#321/#322, epic #276).
 - `lmm serve` gains its jobs API: `POST /api/v1/plans/{kind}` computes a
-  mutation's plan and returns it with a single-use `plan_id`, `POST
-/api/v1/jobs` redeems that id and runs the Apply as a background job
+  mutation's plan and returns it with a single-use `plan_id`,
+  `POST /api/v1/jobs` redeems that id and runs the Apply as a background job
   (returning `{"job_id"}`), `GET /api/v1/jobs/{id}` reports its state and
   result-or-error, and `GET /api/v1/jobs/{id}/events` streams the typed
   core progress events as Server-Sent Events - replaying what the job has

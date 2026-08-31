@@ -228,6 +228,14 @@ func (s *Server) streamJobEvents(w http.ResponseWriter, r *http.Request, j *job)
 // reconnects on its own, and the reconnection's ring replay closes the gap
 // - at the cost of repeating events this stream already delivered, which is
 // the right trade when the alternative is silently missing some.
+//
+// A residual race (jobs.go's emit doc comment, task-7-review.md Minor 2):
+// if the job finishes in the narrow window between a lag-drop and this
+// status() read, the branch below fires instead of the lag comment above,
+// so the stream ends on a normal "done" frame with no lag notice at all. A
+// client that cares can still tell: the done frame's job status document
+// carries EventCount, the total the job ever emitted, so comparing that
+// against how many frames the stream actually delivered reveals a gap.
 func (s *Server) finishStream(stream *sseStream, j *job) {
 	status := j.status()
 	if status.State == jobRunning {
