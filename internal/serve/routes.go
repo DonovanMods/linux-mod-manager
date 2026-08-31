@@ -29,6 +29,10 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/disable", s.wrap(s.handleAPIModDisable))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
+	// The activity tray's index (api_activity.go). GET and POST on the same
+	// path are two routes to net/http's method-aware mux, so the index sits
+	// beside the mutation entry point rather than needing a path of its own.
+	s.mux.Handle("GET /api/v1/jobs", s.wrap(s.handleAPIJobs))
 	s.mux.Handle("GET /api/v1/jobs/{id}", s.wrap(s.handleAPIJobStatus))
 	s.mux.Handle("GET /api/v1/jobs/{id}/events", s.wrap(s.handleAPIJobEvents))
 	// The /api/v1/ subtree fallback must be registered LAST in spirit
