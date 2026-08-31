@@ -64,3 +64,24 @@ func TestServer_APIUpdates_NoGames_Renders404(t *testing.T) {
 	decodeStrict(t, rec.Body.Bytes(), &envelope)
 	assert.NotEmpty(t, envelope.Error)
 }
+
+// TestServer_APIUpdates_InternalFailure_Renders500 is the task-5 gate
+// review's Minor 2 fix: /api/v1/updates' own GetInstalledMods 500 branch
+// (api.go's handleAPIUpdates) was untested - the package's only 500 case
+// lived on /api/v1/mods. Same "closing the DB early forces the read to
+// fail" pattern internal/core's own tests use.
+func TestServer_APIUpdates_InternalFailure_Renders500(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, _ := newFixtureServiceWithSource(t, src)
+	require.NoError(t, svc.Close())
+
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/updates", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	var envelope apiErrorEnvelope
+	decodeStrict(t, rec.Body.Bytes(), &envelope)
+	assert.NotEmpty(t, envelope.Error)
+}

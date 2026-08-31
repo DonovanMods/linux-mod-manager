@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -75,4 +77,34 @@ func TestServer_APIProfiles_UnknownGameParam_Renders404(t *testing.T) {
 	var envelope apiErrorEnvelope
 	decodeStrict(t, rec.Body.Bytes(), &envelope)
 	assert.Contains(t, envelope.Error, "nope")
+}
+
+// TestServer_APIProfiles_InternalFailure_Renders500 is the task-5 gate
+// review's Minor 2 fix: ListProfiles' 500 branch (api.go's
+// handleAPIProfiles) was untested - the package's only 500 case lived on
+// /api/v1/mods, and unlike that one, ListProfiles reads profiles from disk
+// rather than the DB, so closing the DB (the /mods test's fault) has no
+// effect here. Making the profiles directory unreadable forces the same
+// ListProfiles failure the handler's own call would hit.
+func TestServer_APIProfiles_InternalFailure_Renders500(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks are bypassed when running as root")
+	}
+
+	src := newFakeSource("fake")
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	profilesDir := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles")
+	require.NoError(t, os.Chmod(profilesDir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(profilesDir, 0o755) })
+
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/profiles", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	var envelope apiErrorEnvelope
+	decodeStrict(t, rec.Body.Bytes(), &envelope)
+	assert.NotEmpty(t, envelope.Error)
 }

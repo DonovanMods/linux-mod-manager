@@ -95,6 +95,35 @@ func TestServer_APIMods_UnknownGameParam_Renders404(t *testing.T) {
 	assert.Equal(t, "g1", envelope.Details.Games[0].ID)
 }
 
+// TestServer_APIMods_UnknownProfileParam_Renders404 is the task-5 gate
+// review's Minor 3 fix: the Task 5 carry-in ruling names game AND profile
+// for the unknown-selection 404, but only the game half had a unit test
+// (the profile case was verified live in the gate review, not by a test).
+// An explicit ?profile= naming an unconfigured profile answers 404 with
+// details listing the real, configured profile(s) as the valid choices.
+func TestServer_APIMods_UnknownProfileParam_Renders404(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, _ := newFixtureServiceWithSource(t, src)
+	srv := serve.New(svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/mods?profile=nope", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	var envelope struct {
+		Error   string `json:"error"`
+		Details struct {
+			Games    []core.GameListEntry `json:"games"`
+			Profiles []string             `json:"profiles"`
+		} `json:"details"`
+	}
+	decodeStrict(t, rec.Body.Bytes(), &envelope)
+	assert.Contains(t, envelope.Error, "nope")
+	assert.Equal(t, []string{"default"}, envelope.Details.Profiles)
+}
+
 // TestServer_APIMods_InternalFailure_Renders500 proves a genuine internal
 // failure (the DB closed out from under the request - the same
 // "closing the DB early forces the read to fail" pattern internal/core's
