@@ -75,6 +75,16 @@ export function MissionControl({ state, onThemeChange, actions }) {
         onThemeChange=${onThemeChange}
         actions=${actions}
       />
+      ${
+        // A re-hydrate failure (main.js's I3-style handling of onJobDone)
+        // that happened after this page already loaded - reported here
+        // rather than blanking the page, the same rule the four
+        // supplementary reads below already follow.
+        fetchErrors?.status &&
+        html`<p class="app-error">
+          ${fetchErrors.status} — showing the last loaded data.
+        </p>`
+      }
       <main class="mission-control__body">
         <${AttentionCards}
           updates=${updates}

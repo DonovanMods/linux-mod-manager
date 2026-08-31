@@ -849,6 +849,68 @@ func TestE2E_DeployRunsAsAJobAndMorphsTheControl(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_PostJobRehydrateFailureLeavesMissionControlOnScreen is M3: every
+// job completion re-hydrates the route (main.js's onJobDone), and that
+// re-hydrate can fail on its own (the API restarting, a network blip) for
+// reasons that have nothing to do with the job that just finished. Before
+// the fix that failure blanked the whole page into the fatal "Choose a
+// different game" state - taking the just-finished job's own inline outcome
+// and the tray down with it. The fix routes it into fetchErrors instead (the
+// I3 rule already applied to the four supplementary reads), so the page and
+// everything on it survive.
+//
+// The fault is a stubbed window.fetch, installed in the page AFTER the
+// initial load has already succeeded, so what fails is specifically the
+// POST-JOB re-hydrate - not the first one, which stays fatal on purpose
+// (there is nothing on screen yet to protect). A server-side fault (the
+// reverse-proxy harness startE2EServerWithFailingPath uses) is the wrong
+// tool here: it rewrites the forwarded Host but not Origin, and the
+// deploy this scenario needs to actually SUCCEED is a real POST that the
+// Origin/Host mismatch would then get refused by the CSRF middleware before
+// ever reaching core - failing the setup, not exercising the finding.
+// Stubbing fetch in the page is the honest equivalent of "the network blipped
+// for this one document", exactly as the finding's own wording allows.
+func TestE2E_PostJobRehydrateFailureLeavesMissionControlOnScreen(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var banner, indicator string
+	var trayPresent bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(() => {
+			const real = window.fetch.bind(window);
+			window.fetch = (input, init) => {
+				const url = typeof input === "string" ? input : (input && input.url) || "";
+				if (url.includes("/api/v1/status")) {
+					return Promise.reject(new Error("simulated status failure"));
+				}
+				return real(input, init);
+			};
+		})()`, nil),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		// The job itself succeeds (it never touches /api/v1/status) - it is
+		// only the re-hydrate that follows it that hits the stub.
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// This selector is the crux: under the bug, the re-hydrate's catch
+		// blanks `status`, MissionControl's early return replaces the WHOLE
+		// subtree with the fatal branch, and `.mission-control` itself stops
+		// existing - so this WaitVisible times out rather than merely
+		// finding empty text.
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"] .app-error`, chromedp.ByQuery),
+		textContent(`.mission-control .app-error`, &banner),
+		textContent(`.deploy-indicator`, &indicator),
+		chromedp.Evaluate(`document.querySelector(".activity-bell__trigger") !== null`, &trayPresent),
+	)
+
+	assert.Contains(t, banner, "simulated status failure")
+	assert.True(t, trayPresent, "the tray must still render, not a blank fatal page")
+	assert.NotEmpty(t, indicator, "the top bar's own last-known state must survive, not go blank")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_DeployDismissesBackToTheButton closes the morph's loop: a
 // finished job's readout is dismissible, and dismissing it returns the
 // control to the thing it was, ready to be used again. A progress readout

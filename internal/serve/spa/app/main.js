@@ -108,9 +108,26 @@ async function hydrate(route) {
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    store.set({ status, games: allStatus.games, error: null });
+    store.set({
+      status,
+      games: allStatus.games,
+      error: null,
+      fetchErrors: { ...store.get().fetchErrors, status: null },
+    });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
+    // A RE-hydrate (main.js's onJobDone runs this on every job completion,
+    // not just a route change) that fails must not blank a page that
+    // already has a status - that would take the inline outcome and the
+    // tray down with it over a fetch that has nothing to do with either.
+    // The fatal `error` slice is reserved for the FIRST load, where there
+    // is nothing on screen yet to protect (the I3 rule, applied here).
+    if (store.get().status) {
+      store.set({
+        fetchErrors: { ...store.get().fetchErrors, status: message },
+      });
+      return;
+    }
     store.set({ status: null, games: null, error: message });
     return;
   }

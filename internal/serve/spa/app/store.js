@@ -60,7 +60,18 @@ export function initialState() {
     // independently of the null the failed slice itself gets set to - so a
     // component can tell "nothing to report" from "couldn't check" and
     // render an explicit error state instead of the all-clear empty one.
-    fetchErrors: { mods: null, updates: null, health: null, conflicts: null },
+    // `status` is the same idea applied to a RE-hydrate (main.js's
+    // onJobDone): the first load's failure is still fatal (there is nothing
+    // on screen yet), but a later one must not blank a page that already
+    // loaded - it reports here instead, same as the four supplementary
+    // reads (I3).
+    fetchErrors: {
+      mods: null,
+      updates: null,
+      health: null,
+      conflicts: null,
+      status: null,
+    },
   };
 }
 
