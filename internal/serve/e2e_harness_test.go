@@ -24,14 +24,19 @@ package serve_test
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -470,4 +475,123 @@ func textContent(sel string, out *string) chromedp.Action {
 		*out = strings.Join(strings.Fields(raw), " ")
 		return nil
 	})
+}
+
+// newE2EFixtureWithDeployableMods seeds two enabled mods whose files are
+// already in the cache and which have never been deployed - the state a
+// real deploy acts on, and the one the top bar's undeployed indicator
+// counts. Everything the deploy needs is local, so no source round trip
+// (and no network) is involved in applying it.
+func newE2EFixtureWithDeployableMods(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f
+}
+
+// newE2EFixtureWithSlowDeploy is newE2EFixtureWithDeployableMods plus an
+// install.after_each hook that sleeps, which is what gives the browser a
+// deterministic window in which a deploy job is genuinely IN FLIGHT.
+//
+// Without it every scenario about a running job would be a race against a
+// deploy of two local files, which finishes in milliseconds: "open the tray
+// during a job" would pass or fail on machine speed. A hook is the honest
+// lever for this - it is a real, supported way for a deploy to take time -
+// and it runs AFTER the first mod's DeployDeployed event, so the job is not
+// merely running but running WITH PROGRESS already reported.
+func newE2EFixtureWithSlowDeploy(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	script := filepath.Join(t.TempDir(), "slow-after-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
+	f.Game.Hooks.Install.AfterEach = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	seedDeployableMods(t, f.Svc, f.Game)
+	return f
+}
+
+// seedDeployableMods installs two enabled mods with one cached file each
+// AND puts both in the profile's load order.
+//
+// The load order is not decoration here: PlanDeploy's full-profile branch
+// reads GetInstalledModsInProfileOrder, which deliberately omits a mod that
+// is installed but absent from the profile (unlike the library's own
+// ListMods, which lists it first). A fixture that skipped AddMod would
+// therefore plan a deploy of nothing at all while the library rendered two
+// rows - which is exactly what the first run of these scenarios showed.
+func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", GameID: game.ID},
+		true, map[string][]byte{"alpha.pak": []byte("alpha")})
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", Author: "Ada Lovelace", GameID: game.ID},
+		true, map[string][]byte{"beta.pak": []byte("beta")})
+
+	pm := svc.NewProfileManager()
+	for _, id := range []string{"a", "b"} {
+		require.NoError(t, pm.AddMod(t.Context(), game.ID, "default",
+			domain.ModReference{SourceID: "fake", ModID: id, Version: "1.0"}))
+	}
+}
+
+// csrfMetaPattern lifts the shell's CSRF token out of the served document -
+// the same place the SPA reads it from (spa/index.html's meta tag).
+var csrfMetaPattern = regexp.MustCompile(`name="csrf-token" content="([^"]+)"`)
+
+// startDeployFromAnotherClient runs a deploy through /api/v1 the way a
+// SECOND client would - another browser tab, or a script - without the page
+// under test having clicked anything.
+//
+// It is how a scenario produces a job with no origin on screen, which is
+// the exact condition the design's toast rule turns on ("job completion/
+// failure when its origin isn't on-screen"). Faking it by navigating away
+// mid-job would be a race against a deploy that takes milliseconds; this is
+// not a race at all, because no control in the page ever claimed this job.
+//
+// It goes through the real security middleware - the shell's own token as
+// X-CSRF-Token, and an Origin naming the server itself - so it exercises
+// the same path the SPA does rather than a privileged back door.
+func startDeployFromAnotherClient(t *testing.T, f e2eFixture) string {
+	t.Helper()
+
+	shell, err := http.Get(f.BaseURL + "/")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, shell.Body.Close()) }()
+	body, err := io.ReadAll(shell.Body)
+	require.NoError(t, err)
+	match := csrfMetaPattern.FindSubmatch(body)
+	require.Len(t, match, 2, "the shell must carry a CSRF token")
+	token := string(match[1])
+
+	post := func(path, payload string) map[string]any {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.BaseURL+path, strings.NewReader(payload))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", token)
+		req.Header.Set("Origin", f.BaseURL)
+
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer func() { require.NoError(t, resp.Body.Close()) }()
+		raw, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Less(t, resp.StatusCode, 300, "POST %s: %s", path, raw)
+
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(raw, &decoded))
+		return decoded
+	}
+
+	plan := post("/api/v1/plans/deploy?game="+url.QueryEscape(f.Game.ID)+"&profile="+url.QueryEscape(f.Profile), "{}")
+	planID, ok := plan["plan_id"].(string)
+	require.True(t, ok, "the plan response must carry a plan_id: %v", plan)
+
+	job := post("/api/v1/jobs", `{"plan_id":"`+planID+`"}`)
+	jobID, ok := job["job_id"].(string)
+	require.True(t, ok, "the job response must carry a job_id: %v", job)
+	return jobID
 }

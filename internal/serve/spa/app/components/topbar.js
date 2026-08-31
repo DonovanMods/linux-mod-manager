@@ -4,26 +4,35 @@
 // read-only tray, and the theme toggle
 // (docs/plans/2026-08-31-serve-spa-design.md §Mission Control: "Top bar").
 //
-// Every mutation affordance here - Deploy, "Manage profiles…" - is present
-// and disabled: Unit 3 lands the confirm-modal framework they submit
-// through, and the pre-flight forbids forking it early.
+// Deploy is this unit's one WIRED mutation, and it is wired through the
+// framework every later one uses: it opens the confirm-plan modal, and the
+// button itself morphs into the job's progress once confirmed (InlineJob).
+// "Manage profiles…" is still present and disabled - it is Unit 6's, and
+// the pre-flight forbids forking the framework early to land it sooner.
 
 import { html, useEffect, useRef, useState } from "../render.js";
 import { navigate, contextPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { resolveGamePath } from "../navigation.js";
 import { countUndeployed } from "../modrows.js";
+import { InlineJob } from "./jobprogress.js";
 import { NOT_YET } from "../ui.js";
 
+// DEPLOY_ORIGIN is the key the top bar's Deploy control morphs on. Origins
+// are stable strings, one per control (jobprogress.js) - a later unit's
+// per-mod controls use "install:fake/123" and friends.
+const DEPLOY_ORIGIN = "deploy";
+
 export function TopBar({
+  state,
   status,
   games,
   route,
   mods,
-  jobsIndex,
   query,
   onQueryChange,
   onThemeChange,
+  actions,
 }) {
   const undeployed = countUndeployed(mods);
 
@@ -78,14 +87,23 @@ export function TopBar({
             : "Deployed"
         }
       </span>
-      <button
-        type="button"
-        class="button button--primary"
-        disabled
-        title=${NOT_YET}
-      >
-        Deploy
-      </button>
+      <${InlineJob} origin=${DEPLOY_ORIGIN} state=${state} actions=${actions}>
+        <button
+          type="button"
+          class="button button--primary"
+          data-action="deploy"
+          onClick=${() =>
+            actions.openPlan({
+              kind: "deploy",
+              origin: DEPLOY_ORIGIN,
+              title: "Deploy this profile",
+              confirmLabel: "Deploy",
+              options: {},
+            })}
+        >
+          Deploy
+        </button>
+      <//>
       <input
         type="search"
         class="omnibar"
@@ -95,7 +113,7 @@ export function TopBar({
         onInput=${(e) => onQueryChange(e.currentTarget.value)}
       />
       <${ActivityBell}
-        jobsIndex=${jobsIndex}
+        state=${state}
         open=${openPicker === "activity"}
         onOpen=${() => setOpenPicker("activity")}
         onClose=${() => setOpenPicker(null)}
@@ -216,8 +234,8 @@ function ProfilePicker({ status, route, open, onOpen, onClose }) {
 /** ActivityBell reads GET /api/v1/jobs's retained jobs; the tray it opens is
  * read-only in this unit - Unit 3 wires the live SSE stream and the tray's
  * own next-step affordances (e.g. a failed install's "Overwrite?"). */
-function ActivityBell({ jobsIndex, open, onOpen, onClose }) {
-  const jobs = jobsIndex ?? [];
+function ActivityBell({ state, open, onOpen, onClose }) {
+  const jobs = state.jobsIndex ?? [];
   const running = jobs.filter((j) => j.state === "running").length;
 
   return html`

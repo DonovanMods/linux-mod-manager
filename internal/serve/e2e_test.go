@@ -14,6 +14,9 @@ package serve_test
 // because each needs the modules to have EXECUTED.
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -692,5 +695,267 @@ func TestE2E_WideColumnsCarryTheDocumentsOwnData(t *testing.T) {
 	assert.Equal(t, "symlink", method)
 	assert.NotEmpty(t, installed)
 	assert.NotEqual(t, "—", installed, "the seeded mods all carry an installed_at")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_DeployOpensAConfirmModalRenderingThePlan is the confirm-plan
+// framework's core promise: the SPA's sibling of the CLI's confirm prompt.
+// Clicking a mutation control does NOT mutate - it computes the plan
+// (POST /api/v1/plans/deploy) and renders that plan document, so what is
+// about to happen is on screen before anything is asked of the machine.
+//
+// The assertion is on facts only the PLAN knows - the mods it would deploy
+// and the file each would link - rather than on the button's own label,
+// because a modal that renders its title and nothing else is exactly the
+// failure this scenario exists to catch.
+func TestE2E_DeployOpensAConfirmModalRenderingThePlan(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var body, indicator string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		textContent(`.deploy-indicator`, &indicator),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="deploy"]`, &body),
+	)
+
+	assert.Contains(t, indicator, "2 changes undeployed")
+	assert.Contains(t, body, "Alpha Mod")
+	assert.Contains(t, body, "Beta Mod")
+	assert.Contains(t, body, "alpha.pak", "the plan names the files it would link")
+	assert.Contains(t, body, f.Profile)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ConfirmModalCancelsWithoutMutating is the other half of a
+// confirm: Cancel closes it and nothing happened. The proof that nothing
+// happened is the undeployed indicator, which still counts both mods -
+// a plan that had been applied would leave it reading "Deployed".
+func TestE2E_ConfirmModalCancelsWithoutMutating(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var indicator string
+	var modals int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="cancel"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".modal").length`, &modals),
+		textContent(`.deploy-indicator`, &indicator),
+	)
+
+	assert.Zero(t, modals)
+	assert.Contains(t, indicator, "2 changes undeployed", "Cancel must not have deployed anything")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ConfirmModalEscapeClosesIt covers the keyboard route out of a
+// modal, which is the one every desktop user reaches for first and the one
+// a hand-rolled dialog most often forgets.
+func TestE2E_ConfirmModalEscapeClosesIt(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+	)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ConfirmModalRendersAPlanFailureHonestly is the I3 rule applied to
+// the modal: a plan that could not be computed says so, with the envelope's
+// own message, and offers no Confirm button at all. Rendering an empty plan
+// with a live Confirm would invite the user to apply nothing.
+func TestE2E_ConfirmModalRendersAPlanFailureHonestly(t *testing.T) {
+	f, _ := newE2EFixtureWithFailingPath(t, "/api/v1/plans/deploy")
+
+	var body string
+	var confirms int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal .modal__error`, chromedp.ByQuery),
+		textContent(`.modal`, &body),
+		chromedp.Evaluate(`document.querySelectorAll('.modal [data-action="confirm"]').length`, &confirms),
+	)
+
+	assert.Contains(t, body, "simulated upstream failure")
+	assert.Zero(t, confirms, "a plan that failed to compute must offer nothing to confirm")
+}
+
+// TestE2E_DeployRunsAsAJobAndMorphsTheControl is Unit 3's spine, end to
+// end: the top bar's Deploy button opens the confirm modal, the confirm
+// starts a real job, the BUTTON ITSELF becomes that job's progress
+// (docs/plans/2026-08-31-serve-spa-design.md §Jobs: "the control you
+// clicked morphs into its progress"), the phase text moves as core's own
+// events arrive over the activity stream, and the outcome resurfaces in
+// place. When it is over the undeployed indicator has caught up, because a
+// finished mutation re-hydrates the documents it invalidated.
+//
+// The end state is asserted on DISK as well as on screen: a green progress
+// bar over a game directory with nothing in it would be the worst possible
+// pass. The fixture's deploy is slowed by a real install.after_each hook,
+// which is what makes "while it is running" a window a browser can be
+// driven through rather than a race (newE2EFixtureWithSlowDeploy).
+func TestE2E_DeployRunsAsAJobAndMorphsTheControl(t *testing.T) {
+	f := newE2EFixtureWithSlowDeploy(t)
+
+	var running, finished, indicator string
+	var toasts int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		// The modal closes the moment the job is accepted, and the control
+		// it was opened from is now the job's progress.
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress`, chromedp.ByQuery),
+		// A determinate bar means a real progress FRAME arrived: an
+		// indeterminate one is what the control shows before core has said
+		// anything at all, so waiting on this is waiting on the stream.
+		chromedp.WaitVisible(`.job-progress__bar:not(.job-progress__bar--indeterminate)`, chromedp.ByQuery),
+		textContent(`.job-progress__text`, &running),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		textContent(`.job-progress__text`, &finished),
+		chromedp.WaitVisible(`.deploy-indicator:not(.deploy-indicator--pending)`, chromedp.ByQuery),
+		textContent(`.deploy-indicator`, &indicator),
+		chromedp.Evaluate(`document.querySelectorAll(".toast").length`, &toasts),
+	)
+
+	assert.Contains(t, running, "Deployed", "the humanized phase, not the wire name")
+	assert.NotContains(t, running, "deploy_", "the wire phase name must not reach the screen")
+	assert.Contains(t, running, "of 2", "the batch position core reports")
+	assert.Equal(t, "Done", finished)
+	assert.Equal(t, "Deployed", indicator, "the undeployed count must re-hydrate after the job")
+	assert.Zero(t, toasts, "a completion whose control is on screen must not also toast")
+
+	for _, name := range []string{"alpha.pak", "beta.pak"} {
+		_, err := os.Lstat(filepath.Join(f.Game.ModPath, name))
+		assert.NoError(t, err, "the deploy must have put %s in the game directory", name)
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_DeployDismissesBackToTheButton closes the morph's loop: a
+// finished job's readout is dismissible, and dismissing it returns the
+// control to the thing it was, ready to be used again. A progress readout
+// that never goes away would leave the top bar with no Deploy button after
+// the first deploy of the session.
+func TestE2E_DeployDismissesBackToTheButton(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		chromedp.Click(`.job-progress__dismiss`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="deploy"]`, chromedp.ByQuery),
+	)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_OffScreenCompletionRaisesAToast is the other half of the design's
+// toast rule (§Jobs): a completion whose originating control is NOT on
+// screen would otherwise be invisible, so it surfaces as a toast. Its twin
+// assertion - that a completion the user IS watching does not also toast -
+// lives in TestE2E_DeployRunsAsAJobAndMorphsTheControl.
+//
+// The job here is started by a second client, which is the honest version
+// of "no origin on screen": another tab, or a script, or a `lmm` command in
+// a terminal. Nothing in this page ever claimed it, so nothing in this page
+// can show its outcome in place.
+func TestE2E_OffScreenCompletionRaisesAToast(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var toast string
+	var morphed int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.ActionFunc(func(context.Context) error {
+			startDeployFromAnotherClient(t, f)
+			return nil
+		}),
+		chromedp.WaitVisible(`.toast--success`, chromedp.ByQuery),
+		textContent(`.toast--success .toast__title`, &toast),
+		chromedp.Evaluate(`document.querySelectorAll(".job-progress").length`, &morphed),
+	)
+
+	assert.Contains(t, toast, "deploy", "the toast must name the mutation that finished")
+	assert.Zero(t, morphed, "no control started this job, so none may claim it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProgressVocabularyIsHumanized exercises progress.js directly in
+// the browser, which is the only runner this application has (no Node
+// anywhere, by design). The pure module is worth pinning on its own: it
+// turns ~90 core phase names into English by RULE rather than by table, so
+// a phase core adds later still renders - and the rule is exactly the kind
+// of thing a rendering assertion cannot distinguish from a lucky match.
+func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var got []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { humanizePhase, progressText, jobStateLabel, formatBytes } =
+				await import("/static/app/progress.js");
+			return [
+				humanizePhase("deploy_deployed"),
+				humanizePhase("deploy_merge_synced"),
+				humanizePhase("install_dep_installing"),
+				humanizePhase("import_archive_fetching"),
+				humanizePhase("a_phase_core_adds_later"),
+				humanizePhase(""),
+				progressText({ type: "mod", phase: "deploy_deployed", mod_name: "Alpha Mod", index: 1, total: 2 }),
+				progressText({ type: "download", phase: "deploy_downloading", mod_name: "Alpha Mod", percent: 42.7, total_bytes: 1048576 }),
+				progressText({ type: "download", phase: "deploy_downloading", downloaded: 3145728 }),
+				jobStateLabel({ state: "running", event_count: 0 }),
+				jobStateLabel({ state: "running", event_count: 3 }),
+				jobStateLabel({ state: "failed" }),
+				formatBytes(0),
+			];
+		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, got, 13)
+	assert.Equal(t, "Deployed", got[0])
+	assert.Equal(t, "Merge synced", got[1])
+	assert.Equal(t, "Dependency installing", got[2],
+		"a dependency phase must not read as if it were about the mod itself")
+	assert.Equal(t, "Archive fetching", got[3])
+	assert.Equal(t, "A phase core adds later", got[4],
+		"an unknown phase must still render - core adds phases without the SPA")
+	assert.Empty(t, got[5])
+	assert.Equal(t, "Deployed · Alpha Mod · 1 of 2", got[6])
+	assert.Equal(t, "Downloading · Alpha Mod · 43% of 1.0 MB", got[7])
+	assert.Equal(t, "Downloading · 3.0 MB transferred", got[8],
+		"a Content-Length-less download has no percent to show, only bytes")
+	assert.Equal(t, "queued", got[9],
+		"a running job that has emitted nothing has not started working (activity.go's heuristic)")
+	assert.Equal(t, "running", got[10])
+	assert.Equal(t, "failed", got[11])
+	assert.Empty(t, got[12])
 	assert.Empty(t, f.BrowserErrors())
 }

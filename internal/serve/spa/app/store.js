@@ -26,11 +26,34 @@ export function initialState() {
     health: null,
     conflicts: null,
     profiles: null,
-    // jobsIndex is GET /api/v1/jobs's own "jobs" array (newest first) - the
-    // activity bell's read-only tray. Distinct from `jobs` below: that slice
-    // is reserved for a later unit's per-job SSE-tracked state, keyed by id.
+    // jobsIndex is the activity tray's rows: every job the registry still
+    // retains, newest first. It is seeded by GET /api/v1/events's snapshot
+    // frame and maintained by that stream's job_started/job_done frames
+    // (activity.js) - the ONE place it is written, so a poll and a live
+    // frame can never disagree about what the machine is doing.
     jobsIndex: null,
-    jobs: {},
+    // jobProgress is the latest jobProgressFrame per job id - what a
+    // morphing control, a tray row and the library's live count all read to
+    // say how far along a job is. Only the newest frame is kept: it is a
+    // POSITION, not a log (the log is the per-job stream, one click away).
+    jobProgress: {},
+    // origins maps a control's origin key ("deploy", later
+    // "install:fake/123") to the job id it started, which is what lets the
+    // control that was clicked morph into that job's progress and no other.
+    origins: {},
+    // toasts are the completions whose origin was NOT on screen when they
+    // landed (design doc §Jobs: "never for things in view").
+    toasts: [],
+    // activityError is the multiplexed stream's own failure, kept apart
+    // from `error` (which blanks the page): losing the live stream must
+    // leave every already-loaded document on screen and say so in the tray,
+    // not tear Mission Control down.
+    activityError: null,
+    // modal is the ONE modal this application ever has open (design doc
+    // §Modals: "Modals stack at most one deep"), null when none is. Today
+    // that is always the confirm-plan modal; a later unit's reorder or
+    // profiles modal is another shape in this same slot, not another slot.
+    modal: null,
     error: null,
     // fetchErrors carries the rejection message for each of Mission
     // Control's four supplementary reads (mods/updates/health/conflicts),
@@ -62,12 +85,6 @@ export function createStore(state = initialState()) {
      */
     set(patch) {
       current = { ...current, ...patch };
-      notify();
-    },
-
-    /** Replaces one job's tracked state, keyed by job id. */
-    setJob(id, job) {
-      current = { ...current, jobs: { ...current.jobs, [id]: job } };
       notify();
     },
 

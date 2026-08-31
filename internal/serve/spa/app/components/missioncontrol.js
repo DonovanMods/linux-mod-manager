@@ -31,7 +31,6 @@ export function MissionControl({ state, onThemeChange, actions }) {
     updates,
     health,
     conflicts,
-    jobsIndex,
     error,
     fetchErrors,
   } = state;
@@ -55,14 +54,15 @@ export function MissionControl({ state, onThemeChange, actions }) {
   return html`
     <div class="mission-control" data-hydrated="true">
       <${TopBar}
+        state=${state}
         status=${status}
         games=${games}
         route=${route}
         mods=${mods?.mods}
-        jobsIndex=${jobsIndex}
         query=${query}
         onQueryChange=${setQuery}
         onThemeChange=${onThemeChange}
+        actions=${actions}
       />
       <main class="mission-control__body">
         <${AttentionCards}
