@@ -24,12 +24,18 @@ package serve_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os/exec"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,6 +102,11 @@ type e2eFixture struct {
 	Ctx context.Context
 	// BaseURL is the running server's origin, e.g. "http://127.0.0.1:41234".
 	BaseURL string
+	// Svc is the Service backing BaseURL - exposed so a scenario can seed
+	// further state (installed mods, deploys) before it starts driving the
+	// browser, the same Service every /api/v1 request the browser makes
+	// reads from.
+	Svc *core.Service
 	// Game is the seeded game the SPA routes are scoped to.
 	Game *domain.Game
 	// Profile is the seeded game's profile name.
@@ -123,10 +134,136 @@ func newE2EFixture(t *testing.T) e2eFixture {
 	return e2eFixture{
 		Ctx:           ctx,
 		BaseURL:       startE2EServer(t, svc),
+		Svc:           svc,
 		Game:          game,
 		Profile:       "default",
 		BrowserErrors: browserErrors,
 	}
+}
+
+// newE2EFixtureWithLibrarySample is newE2EFixture plus three installed mods
+// with distinguishable names and enabled states - enough to prove the
+// library's filter and sort controls actually narrow/reorder the DOM,
+// without needing the fuller health/conflict machinery
+// newE2EFixtureWithAttention sets up. Seeded with no cache files (nil), so
+// none of the three trips a verify finding of its own.
+func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "z", SourceID: "fake", Name: "Zebra Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "m", SourceID: "fake", Name: "Middle Mod", Version: "1.0", GameID: f.Game.ID}, false, nil)
+
+	return f
+}
+
+// newE2EFixtureWithAttention seeds a state where all three attention cards
+// have something to say: Better Boots is installed recording version 1.0
+// while its matched file now reports 2.0 (Updates, and - since the
+// recorded/effective versions disagree - Health too), and Mod X/Mod Y both
+// provide the same deployed path (Conflicts). It is
+// api_health_test.go's TestServer_APIHealth_MatchesCLIVerifyTier fixture and
+// its twinConflictFixture, combined into one browser scenario, so the
+// library and the cards both have real, non-trivial documents to render.
+func newE2EFixtureWithAttention(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "x", SourceID: "fake", Name: "Mod X", Version: "1.0", GameID: game.ID}, true,
+		map[string][]byte{"shared.esp": []byte("X-content")})
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "y", SourceID: "fake", Name: "Mod Y", Version: "1.0", GameID: game.ID}, true,
+		map[string][]byte{"shared.esp": []byte("Y-content")})
+
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(t.Context(), game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "x", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(t.Context(), game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "y", Version: "1.0"}))
+	_, err := svc.DeployProfile(t.Context(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx:           ctx,
+		BaseURL:       startE2EServer(t, svc),
+		Svc:           svc,
+		Game:          game,
+		Profile:       "default",
+		BrowserErrors: browserErrors,
+	}
+}
+
+// e2eMultiGameFixture is a browser test's world with more than one
+// configured game and no default among them - the state where "/" has a
+// real choice to render rather than something to auto-redirect through
+// (docs/plans/2026-08-31-serve-spa-design.md §Information architecture: "/
+// -> game chooser (or redirect to the single/default game)" - this is the
+// chooser's own branch).
+type e2eMultiGameFixture struct {
+	Ctx           context.Context
+	BaseURL       string
+	GameA, GameB  *domain.Game
+	BrowserErrors func() []string
+}
+
+func newE2EMultiGameFixture(t *testing.T) e2eMultiGameFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+		CacheDir:  t.TempDir(),
+		Logger:    slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameA := &domain.Game{ID: "game-a", Name: "Game Alpha", InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	gameB := &domain.Game{ID: "game-b", Name: "Game Beta", InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	require.NoError(t, svc.SaveGame(t.Context(), gameA))
+	require.NoError(t, svc.SaveGame(t.Context(), gameB))
+	_, err = svc.NewProfileManager().Create(t.Context(), gameA.ID, "default")
+	require.NoError(t, err)
+	_, err = svc.NewProfileManager().Create(t.Context(), gameB.ID, "default")
+	require.NoError(t, err)
+
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eMultiGameFixture{
+		Ctx:           ctx,
+		BaseURL:       startE2EServer(t, svc),
+		GameA:         gameA,
+		GameB:         gameB,
+		BrowserErrors: browserErrors,
+	}
+}
+
+func (f e2eMultiGameFixture) runInBrowser(t *testing.T, actions ...chromedp.Action) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(f.Ctx, e2eTimeout)
+	defer cancel()
+	require.NoError(t, chromedp.Run(ctx, actions...))
 }
 
 // startE2EServer binds a loopback listener, serves svc on it, and returns
@@ -155,6 +292,86 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 	})
 
 	return "http://" + addr.String()
+}
+
+// startE2EServerWithFailingPath is startE2EServer plus a reverse proxy in
+// front of the real server that can answer one exact request path with a
+// 500 JSON error envelope instead of forwarding it - simulating an upstream
+// failure (offline, rate limit, source outage) for exactly one of Mission
+// Control's supplementary reads (the I3 scenarios), without touching
+// production code or the other three, which still reach the real server.
+// The returned setFailing toggles the fault on and off, so a scenario can
+// also prove the retry affordance recovers once the fault clears.
+//
+// The rewrite sets the forwarded request's Host to the backend's own bound
+// address: hostCheck (middleware.go) pins the allow-list to whatever
+// Listen() actually bound, and the browser's Host header names the PROXY's
+// address instead, which the backend would otherwise reject.
+func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath string) (baseURL string, setFailing func(bool)) {
+	t.Helper()
+	backend := startE2EServer(t, svc)
+
+	backendURL, err := url.Parse(backend)
+	require.NoError(t, err)
+
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(backendURL)
+			r.Out.Host = backendURL.Host
+		},
+	}
+
+	var failing atomic.Bool
+	failing.Store(true)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(failPath, func(w http.ResponseWriter, r *http.Request) {
+		if !failing.Load() {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"simulated upstream failure"}`))
+	})
+	mux.Handle("/", proxy)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyServer := &http.Server{Handler: mux}
+	served := make(chan error, 1)
+	go func() { served <- proxyServer.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = proxyServer.Close()
+		if err := <-served; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("proxy server: %v", err)
+		}
+	})
+
+	return "http://" + ln.Addr().String(), failing.Store
+}
+
+// newE2EFixtureWithFailingPath is newE2EFixture, plus one seeded mod (so the
+// three OTHER supplementary reads have something non-trivial to answer),
+// served through startE2EServerWithFailingPath's proxy instead of directly.
+func newE2EFixtureWithFailingPath(t *testing.T, failPath string) (e2eFixture, func(bool)) {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	svc, game := newFixtureServiceWithSource(t, newFakeSource("fake"))
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: game.ID}, true, nil)
+
+	ctx, browserErrors := newE2EBrowser(t)
+	baseURL, setFailing := startE2EServerWithFailingPath(t, svc, failPath)
+	return e2eFixture{
+		Ctx:           ctx,
+		BaseURL:       baseURL,
+		Svc:           svc,
+		Game:          game,
+		Profile:       "default",
+		BrowserErrors: browserErrors,
+	}, setFailing
 }
 
 // newE2EBrowser starts a headless browser and returns its chromedp context
