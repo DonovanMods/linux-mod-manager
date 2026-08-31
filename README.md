@@ -1391,6 +1391,22 @@ a dev build self-identifies as e.g. `1.29.0 (dev: v1.29.0-2-g140e3c6-dirty)`
 instead of silently claiming the last released version. A plain
 `go build`/`go test` (no ldflags) behaves exactly like a clean release build.
 
+### `lmm serve`'s CSS
+
+`internal/serve/static/app.css` is currently a **hand-written stopgap**, not
+a Tailwind build output: the standalone `tailwindcss` CLI (`make css`
+compiles `internal/serve/static/app.src.css` through it) has not been
+available in this project's build environment, and the build must never
+fetch or vendor one on its own. The stopgap defines, by hand, every
+Tailwind utility class the templates under `internal/serve/templates/`
+actually reference - `css_coverage_internal_test.go`'s
+`TestAppCSS_CoversEveryTemplateClass` fails the build if a template ever
+references a class the stopgap doesn't define, so the two can't silently
+drift apart. If you have the standalone `tailwindcss` CLI installed, run
+`make css` to regenerate `app.css` from `app.src.css` for real; if not,
+extend the stopgap by hand for any new class a template needs and let the
+ratchet keep it honest.
+
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.

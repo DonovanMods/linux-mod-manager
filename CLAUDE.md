@@ -157,7 +157,7 @@ internal/
     ├── kind_deploy.go     # deploy with live SSE phases (#257)
     ├── kind_verify_fix.go # `lmm verify --fix` as a job
     ├── templates/*.gohtml # one base layout + one template per page
-    └── static/            # app.css (committed Tailwind build) + app.js (progressive enhancement)
+    └── static/            # app.css (hand-written Tailwind-utility stopgap, see README's Development section) + app.js (progressive enhancement)
 ```
 
 **Data Flow**: CLI → app.Open → Core Service → Source Registry + Storage → Linker → Game Directory; `lmm serve` → app.Open → Core Service → same Source Registry + Storage → Linker (a second frontend over the identical core)
