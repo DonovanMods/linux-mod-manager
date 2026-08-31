@@ -35,6 +35,11 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/jobs", s.wrap(s.handleAPIJobs))
 	s.mux.Handle("GET /api/v1/jobs/{id}", s.wrap(s.handleAPIJobStatus))
 	s.mux.Handle("GET /api/v1/jobs/{id}/events", s.wrap(s.handleAPIJobEvents))
+	// The multiplexed session stream (api_activity.go). It sits beside the
+	// per-job stream above rather than replacing it: this one summarises
+	// every job's lifecycle for the tray, that one carries one job's full
+	// typed events for whoever opened it.
+	s.mux.Handle("GET /api/v1/events", s.wrap(s.handleAPIEvents))
 	// The /api/v1/ subtree fallback must be registered LAST in spirit
 	// (net/http's most-specific-pattern-wins makes the order irrelevant in
 	// fact): it claims every /api/v1 path no route above took, so no API

@@ -367,6 +367,10 @@ type jobRegistry struct {
 	ring   int
 	retain int
 
+	// mu guards everything below. LOCK ORDER: mu may be held while taking
+	// a job's own mu (jobRegistry.list, and Start's own announcement), and
+	// the reverse must NEVER happen - see list()'s doc comment, and run(),
+	// which is careful to finish with job.emit before it publishes.
 	mu sync.Mutex
 	// closing is set at the top of shutdown, under mu, before wg.Wait is
 	// called - see Start, where the same lock makes "is the registry
@@ -376,7 +380,13 @@ type jobRegistry struct {
 	// order is every retained job's id in start order - the eviction pass
 	// walks it oldest-first.
 	order []jobID
-	wg    sync.WaitGroup
+	// watchers are the multiplexed activity stream's subscribers
+	// (activity.go). They are registry-level rather than per-job because
+	// the stream they feed outlives any one job: it is opened once, for the
+	// session, and carries every job's lifecycle.
+	watchers    map[int]*activityWatcher
+	nextWatcher int
+	wg          sync.WaitGroup
 }
 
 // newJobRegistry builds a registry whose jobs derive from ctx (see
@@ -391,12 +401,13 @@ func newJobRegistry(ctx context.Context, log *slog.Logger, ring, retain int) *jo
 	}
 	rootCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	return &jobRegistry{
-		rootCtx: rootCtx,
-		cancel:  cancel,
-		log:     log,
-		ring:    ring,
-		retain:  retain,
-		jobs:    map[jobID]*job{},
+		rootCtx:  rootCtx,
+		cancel:   cancel,
+		log:      log,
+		ring:     ring,
+		retain:   retain,
+		jobs:     map[jobID]*job{},
+		watchers: map[int]*activityWatcher{},
 	}
 }
 
@@ -405,6 +416,9 @@ func newJobRegistry(ctx context.Context, log *slog.Logger, ring, retain int) *jo
 // that started it can redirect to the job page while the Apply is still
 // going. run receives the registry's root context - NEVER the request's -
 // and an EventSink that feeds the job's ring buffer and its subscribers.
+//
+// Admitting a job also announces it on the multiplexed activity stream, in
+// the same critical section (activity.go's frame vocabulary).
 //
 // Start refuses to admit a job once shutdown has begun, returning
 // errRegistryClosing: the check against closing and the wg.Add that commits
@@ -423,6 +437,11 @@ func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSin
 		subs:     map[int]*jobSub{},
 	}
 
+	// Summarised BEFORE the registry lock is taken: j is not shared yet, so
+	// this touches no contended lock, and the announcement below then needs
+	// nothing but the registry's own.
+	announcement := activityEvent{Name: activityStartedEvent, Payload: j.summary()}
+
 	r.mu.Lock()
 	if r.closing {
 		r.mu.Unlock()
@@ -432,6 +451,12 @@ func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSin
 	r.order = append(r.order, j.id)
 	r.evictLocked()
 	r.wg.Add(1)
+	// Admitting the job and announcing it are ONE critical section, which
+	// is what makes a job appear exactly once to an activity subscriber:
+	// a watcher registered before this point receives the frame, one
+	// registered after finds the job in its snapshot, and none can do both
+	// (activity.go's watch).
+	r.publishLocked(announcement)
 	r.mu.Unlock()
 
 	go r.run(j, run)
@@ -445,6 +470,24 @@ func (r *jobRegistry) Start(kind string, run func(context.Context, core.EventSin
 // other running job - down with it.
 func (r *jobRegistry) run(j *job, apply func(context.Context, core.EventSink) (any, error)) {
 	defer r.wg.Done()
+
+	// The sink the Apply is handed does two things: it feeds this job's own
+	// ring and per-job subscribers (j.emit), and it feeds the multiplexed
+	// activity stream a SUMMARY of the same event (activity.go). The order
+	// is load-bearing - j.emit finishes with the job's mutex before publish
+	// reaches for the registry's, which is the lock order jobRegistry.mu
+	// documents - and the gate is what keeps a download's per-read tick
+	// storm off a stream that is open all session.
+	gate := &activityProgressGate{}
+	sink := func(e core.Event) {
+		j.emit(e)
+		if gate.allow(e) {
+			r.publish(activityEvent{
+				Name:    activityProgressEvent,
+				Payload: summarizeJobEvent(j.id, j.kind, e),
+			})
+		}
+	}
 
 	var (
 		result any
@@ -460,10 +503,11 @@ func (r *jobRegistry) run(j *job, apply func(context.Context, core.EventSink) (a
 				"job", j.id, "kind", j.kind, "panic", p, "stack", string(debug.Stack()))
 			result, err = nil, fmt.Errorf("%s job panicked: %v", j.kind, p)
 		}()
-		result, err = apply(r.rootCtx, j.emit)
+		result, err = apply(r.rootCtx, sink)
 	}()
 
 	j.finish(result, err, time.Now())
+	r.publish(activityEvent{Name: activityDoneEvent, Payload: j.summary()})
 }
 
 // job returns the job with the given id, if the registry still holds it.

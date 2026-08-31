@@ -155,6 +155,24 @@ func TestServeJSONGoldens(t *testing.T) {
 			}},
 		},
 		{
+			// One job_progress frame of the multiplexed activity stream: a
+			// SUMMARY of one core event, not core.MarshalEvent's frozen
+			// {"type","data"} envelope, which stays the per-job stream's
+			// contract (activity.go's frame vocabulary).
+			"job_progress_frame",
+			jobProgressFrame{
+				JobID:   "0123456789abcdef0123456789abcdef",
+				Kind:    "install",
+				Type:    "step",
+				Op:      "install",
+				Phase:   core.InstallDeploying.String(),
+				Detail:  "linking files",
+				ModName: "Mod One",
+				Index:   1,
+				Total:   2,
+			},
+		},
+		{
 			"plan_response",
 			planResponse{
 				PlanID: "0123456789abcdef0123456789abcdef",
