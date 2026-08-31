@@ -43,6 +43,6 @@ release:
   github:
     owner: DonovanMods
     name: linux-mod-manager
-  draft: false
+  draft: true
   prerelease: auto
   name_template: v{{ .Version }}
