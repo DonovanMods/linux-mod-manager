@@ -59,17 +59,23 @@ func errorDetails(err error) any {
 // the exact wire framing (2-space indent, deterministic key ordering, one
 // trailing newline) the CLI's --json output uses for the identical value
 // (docs/plans/2026-08-30-serve-impl.md Task 5 ruling: no second encoder
-// anywhere in this file).
-func writeJSON(w http.ResponseWriter, status int, v any) {
+// anywhere in this file). A mid-stream encode/write failure is logged, not
+// silently discarded (task-5 gate review Minor 5): the status line and
+// headers are already on the wire by the time EncodeJSON runs, so nothing
+// about the response itself can still change - logging is all that's left,
+// unlike cmd/lmm's emitJSON, which can still return the error to its caller.
+func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", apiContentType)
 	w.WriteHeader(status)
-	_ = core.EncodeJSON(w, v)
+	if err := core.EncodeJSON(w, v); err != nil {
+		s.log.Error("api response encode failed", "status", status, "err", err)
+	}
 }
 
 // writeAPIError writes err as the {"error","details"} envelope at status.
 func (s *Server) writeAPIError(w http.ResponseWriter, status int, err error) {
 	s.log.Debug("api error", "status", status, "err", err)
-	writeJSON(w, status, apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
+	s.writeJSON(w, status, apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
 }
 
 // selectionErrorDetails is the "details" payload for a game/profile
@@ -96,7 +102,7 @@ func (s *Server) writeSelectionError(w http.ResponseWriter, sel selection) {
 		msg = "no games configured"
 	}
 	s.log.Debug("api selection unresolved", "msg", msg)
-	writeJSON(w, http.StatusNotFound, apiErrorEnvelope{
+	s.writeJSON(w, http.StatusNotFound, apiErrorEnvelope{
 		Error:   msg,
 		Details: selectionErrorDetails{Games: sel.Games, Profiles: sel.Profiles},
 	})
@@ -135,7 +141,7 @@ func (s *Server) handleAPIMods(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	s.writeJSON(w, http.StatusOK, list)
 }
 
 // handleAPIModDetail answers GET /api/v1/mods/{source}/{id} with exactly
@@ -158,7 +164,7 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, detail)
+	s.writeJSON(w, http.StatusOK, detail)
 }
 
 // handleAPISearch answers GET /api/v1/search?q= with exactly the
@@ -186,7 +192,7 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	s.writeJSON(w, http.StatusOK, report)
 }
 
 // handleAPIUpdates answers GET /api/v1/updates with exactly the
@@ -221,7 +227,7 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()
 	}
-	writeJSON(w, http.StatusOK, report)
+	s.writeJSON(w, http.StatusOK, report)
 }
 
 // resolveGameAPISelection is resolveReadyAPISelection for /api/v1/profiles,
@@ -257,7 +263,7 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, listing)
+	s.writeJSON(w, http.StatusOK, listing)
 }
 
 // handleAPIHealth answers GET /api/v1/health with exactly the
@@ -291,7 +297,7 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	s.writeJSON(w, http.StatusOK, report)
 }
 
 // handleAPIConflicts answers GET /api/v1/conflicts with exactly the
@@ -310,7 +316,7 @@ func (s *Server) handleAPIConflicts(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, &core.ConflictReport{GameID: sel.Game.ID, Profile: sel.Profile, Conflicts: conflicts})
+	s.writeJSON(w, http.StatusOK, &core.ConflictReport{GameID: sel.Game.ID, Profile: sel.Profile, Conflicts: conflicts})
 }
 
 // handleAPIStatus answers GET /api/v1/status with exactly the
@@ -325,5 +331,5 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	s.writeJSON(w, http.StatusOK, report)
 }
