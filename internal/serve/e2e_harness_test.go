@@ -606,6 +606,27 @@ func newE2EFixtureWithSlowDeploy(t *testing.T) e2eFixture {
 	return f
 }
 
+// newE2EFixtureWithQueuedToggle is newE2EFixtureWithSlowDeploy plus a third,
+// disabled mod ("Gamma Mod") that is never added to the profile - it exists
+// only so a concurrently-started enable job (startEnableFromAnotherClient)
+// has something valid to act on, entirely independent of what the slow
+// deploy is doing to Alpha/Beta.
+//
+// The slow deploy's AfterEach hook holds core's one mutation slot for the
+// whole time it sleeps, so an enable job started while it runs sits blocked
+// in beginOp: registered, state "running", zero events, no frame - exactly
+// jobStateLabel's "queued" heuristic (progress.js) - for a window a browser
+// can actually be driven through, rather than a race against a toggle that
+// would otherwise complete in microseconds.
+func newE2EFixtureWithQueuedToggle(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithSlowDeploy(t)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "c", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: f.Game.ID},
+		false, nil)
+	return f
+}
+
 // seedDeployableMods installs two enabled mods with one cached file each
 // AND puts both in the profile's load order.
 //
@@ -635,20 +656,13 @@ func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
 // the same place the SPA reads it from (spa/index.html's meta tag).
 var csrfMetaPattern = regexp.MustCompile(`name="csrf-token" content="([^"]+)"`)
 
-// startDeployFromAnotherClient runs a deploy through /api/v1 the way a
-// SECOND client would - another browser tab, or a script - without the page
-// under test having clicked anything.
-//
-// It is how a scenario produces a job with no origin on screen, which is
-// the exact condition the design's toast rule turns on ("job completion/
-// failure when its origin isn't on-screen"). Faking it by navigating away
-// mid-job would be a race against a deploy that takes milliseconds; this is
-// not a race at all, because no control in the page ever claimed this job.
-//
-// It goes through the real security middleware - the shell's own token as
-// X-CSRF-Token, and an Origin naming the server itself - so it exercises
-// the same path the SPA does rather than a privileged back door.
-func startDeployFromAnotherClient(t *testing.T, f e2eFixture) string {
+// postAsAnotherClient returns a POST closure that goes through the real
+// security middleware - the shell's own CSRF token as X-CSRF-Token, and an
+// Origin naming the server itself - so a scenario can drive /api/v1 the way
+// a SECOND client would (another browser tab, or a script) rather than
+// through a privileged back door. Shared by startDeployFromAnotherClient and
+// startEnableFromAnotherClient.
+func postAsAnotherClient(t *testing.T, f e2eFixture) func(path, payload string) map[string]any {
 	t.Helper()
 
 	shell, err := http.Get(f.BaseURL + "/")
@@ -660,7 +674,7 @@ func startDeployFromAnotherClient(t *testing.T, f e2eFixture) string {
 	require.Len(t, match, 2, "the shell must carry a CSRF token")
 	token := string(match[1])
 
-	post := func(path, payload string) map[string]any {
+	return func(path, payload string) map[string]any {
 		t.Helper()
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.BaseURL+path, strings.NewReader(payload))
 		require.NoError(t, err)
@@ -679,12 +693,45 @@ func startDeployFromAnotherClient(t *testing.T, f e2eFixture) string {
 		require.NoError(t, json.Unmarshal(raw, &decoded))
 		return decoded
 	}
+}
+
+// startDeployFromAnotherClient runs a deploy through /api/v1 the way a
+// SECOND client would - another browser tab, or a script - without the page
+// under test having clicked anything.
+//
+// It is how a scenario produces a job with no origin on screen, which is
+// the exact condition the design's toast rule turns on ("job completion/
+// failure when its origin isn't on-screen"). Faking it by navigating away
+// mid-job would be a race against a deploy that takes milliseconds; this is
+// not a race at all, because no control in the page ever claimed this job.
+func startDeployFromAnotherClient(t *testing.T, f e2eFixture) string {
+	t.Helper()
+	post := postAsAnotherClient(t, f)
 
 	plan := post("/api/v1/plans/deploy?game="+url.QueryEscape(f.Game.ID)+"&profile="+url.QueryEscape(f.Profile), "{}")
 	planID, ok := plan["plan_id"].(string)
 	require.True(t, ok, "the plan response must carry a plan_id: %v", plan)
 
 	job := post("/api/v1/jobs", `{"plan_id":"`+planID+`"}`)
+	jobID, ok := job["job_id"].(string)
+	require.True(t, ok, "the job response must carry a job_id: %v", job)
+	return jobID
+}
+
+// startEnableFromAnotherClient starts an enable job through /api/v1's one
+// sanctioned plan-free mutation path (kind_toggle.go), the way a second
+// client would. EnableMod takes no core.EventSink (kind_toggle.go's own doc
+// comment), so a job it starts NEVER gets a progress frame for its whole
+// life - which is what makes it the deterministic way to hold a job in
+// jobStateLabel's "queued" state (progress.js) for as long as core's single
+// mutation slot (beginOp) is held by something else.
+func startEnableFromAnotherClient(t *testing.T, f e2eFixture, sourceID, modID string) string {
+	t.Helper()
+	post := postAsAnotherClient(t, f)
+
+	path := "/api/v1/mods/" + url.PathEscape(sourceID) + "/" + url.PathEscape(modID) + "/enable" +
+		"?game=" + url.QueryEscape(f.Game.ID) + "&profile=" + url.QueryEscape(f.Profile)
+	job := post(path, "")
 	jobID, ok := job["job_id"].(string)
 	require.True(t, ok, "the job response must carry a job_id: %v", job)
 	return jobID

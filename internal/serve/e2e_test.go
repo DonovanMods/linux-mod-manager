@@ -998,6 +998,75 @@ func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_QueuedJobDoesNotRenderRunningProgress is M2: a job the registry
+// reports as state "running" is not necessarily WORKING - jobStateLabel
+// (progress.js) reads "queued" for one that has emitted nothing yet, which
+// is core's beginOp serialising mutations by blocking rather than
+// rejecting. Before the fix, TrayRow gated its progress block on the raw
+// job.state, so a queued row rendered an indeterminate bar captioned
+// "Working…" directly under its own "Queued" heading - a lie about what was
+// actually happening (nothing).
+//
+// The queued job here is an enable (kind_toggle.go): it takes no
+// core.EventSink at all, so once it does start running it STILL never gets
+// a frame, staying "queued" by the same heuristic for its whole (otherwise
+// near-instant) life - which is what makes the assertion window here the
+// deploy's AfterEach sleep (newE2EFixtureWithQueuedToggle), not a race
+// against the enable itself.
+func TestE2E_QueuedJobDoesNotRenderRunningProgress(t *testing.T) {
+	f := newE2EFixtureWithQueuedToggle(t)
+
+	var jobID string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		// Wait for the modal to actually leave the DOM before doing
+		// anything else: its scrim covers the whole viewport, and a click
+		// issued while it is still present - even mid-teardown - can be
+		// intercepted by the scrim instead of landing on the element
+		// underneath it (observed: the bell click silently opened nothing).
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		// The deploy now holds core's one mutation slot for the duration of
+		// its AfterEach sleep. Start a second, wholly independent job while
+		// it does - the only way this enable can be blocked in beginOp,
+		// which is the real (not simulated) condition "queued" exists for.
+		chromedp.ActionFunc(func(context.Context) error {
+			jobID = startEnableFromAnotherClient(t, f, "fake", "c")
+			return nil
+		}),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row[data-state="queued"]`, chromedp.ByQuery),
+	)
+
+	// Scoped by the enable job's OWN id rather than "the first queued row":
+	// the slow deploy can still be queued too at this instant (it has not
+	// necessarily emitted its own first event yet), and row order is an
+	// implementation detail this assertion should not depend on.
+	rowSel := `.tray__row[data-job="` + jobID + `"]`
+	var kind, rowText, sectionTitle string
+	var progressBlocks int
+	f.runInBrowser(t,
+		chromedp.WaitVisible(rowSel, chromedp.ByQuery),
+		textContent(rowSel+` .tray__kind`, &kind),
+		textContent(rowSel, &rowText),
+		chromedp.Evaluate(
+			`document.querySelectorAll('`+rowSel+` .tray__progress').length`,
+			&progressBlocks),
+		chromedp.Evaluate(
+			`document.querySelector('`+rowSel+`').closest('.tray__section').querySelector('.tray__section-title').textContent`,
+			&sectionTitle),
+	)
+
+	assert.Equal(t, "enable", kind)
+	assert.Contains(t, sectionTitle, "Queued")
+	assert.Zero(t, progressBlocks, "a queued row must not render the running-progress block at all")
+	assert.NotContains(t, rowText, "Working…", `a row under "Queued" must never read "Working…"`)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_TrayEntryExpandsToTheEventStream is the "full path one click
 // away" half: an entry opens onto that job's own phase-by-phase events,
 // which is a SECOND stream (GET /api/v1/jobs/{id}/events) opened only for

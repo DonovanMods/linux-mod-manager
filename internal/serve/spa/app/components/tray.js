@@ -181,7 +181,12 @@ function TrayRow({ job, frame, expanded, onToggle }) {
       </button>
 
       ${
-        job.state === "running" &&
+        // Gated on the COMPUTED label, not the raw registry state: a queued
+        // job is also in state "running" (jobStateLabel's heuristic - core
+        // has no "queued" state of its own), and a queued row rendering an
+        // indeterminate bar captioned "Working…" under the "Queued" heading
+        // would be lying about what is actually happening.
+        label === "running" &&
         html`
           <div class="tray__progress">
             <div
