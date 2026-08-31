@@ -5,19 +5,12 @@
 // already in the cache), and because it is the flow whose live progress the
 // SSE stream exists for (#257).
 //
-// Task 9 adds its browser half, and deploy is the one kind where the
-// confirm page IS the plan page in a load-bearing sense: its options are
-// PLAN-time (see deployApplyRequest), so ticking --purge and pressing
-// Deploy cannot silently apply the plan computed without it. kindForm's
-// PlanIsCurrent catches exactly that and re-plans instead - the same answer
-// every other "this is not the plan you were looking at" case gets.
-//
-// Two of the option struct's members are deliberately NOT on the page.
-// ModID/SourceID would make the button a different action ("deploy this one
-// mod"), not an option of "deploy this profile", and no read page offers
-// that button; LinkMethod is a per-deploy override of how files land, which
-// the confirm form has no honest one-line way to explain and which stays
-// available through /api/v1. Both remain fully wired for JSON callers.
+// Deploy's options are PLAN-time: deployApplyRequest is empty, so
+// ApplyDeploy always runs with the exact core.DeployOptions planDeployKind
+// resolved and stored on pendingDeploy.Opts. Ticking --purge and applying
+// therefore cannot silently deploy something the plan never previewed - a
+// caller that wants a different option re-plans; it cannot apply the old
+// pending value under new options.
 package serve
 
 import (

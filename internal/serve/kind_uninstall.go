@@ -101,7 +101,8 @@ func planUninstallKind(ctx context.Context, s *Server, sel selection, opts any) 
 
 // applyUninstallKind implements planKind.Apply for "uninstall". The sink is
 // unused because ApplyUninstall takes none - the flow reports through its
-// result's Notes and Warnings instead, which Summarize surfaces.
+// result's Notes and Warnings instead, which ride the wire on the stored
+// job result verbatim.
 func applyUninstallKind(ctx context.Context, s *Server, pending, opts any, _ core.EventSink) (any, error) {
 	p, ok := pending.(*pendingUninstall)
 	if !ok {

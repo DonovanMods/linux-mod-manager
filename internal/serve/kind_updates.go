@@ -1,14 +1,12 @@
 // kind_updates.go registers the "updates" plan kind - #74's per-item update
-// selection (docs/plans/2026-08-30-serve-impl.md Task 9): the /updates
-// checkbox set becomes ONE plan, ONE confirm page and ONE job, and only the
-// ticked rows are applied.
+// selection (docs/plans/2026-08-30-serve-impl.md Task 9): a set of ticked
+// mods becomes ONE plan and ONE job, and only the ticked rows are applied.
 //
 // It is the first kind whose target is a SET rather than one mod, and that
 // changes exactly one thing about the shape: the selection arrives as
-// repeated form fields instead of path segments, so the confirm page carries
-// it back through confirmView.Hidden. Everything else - the plan store, the
-// job, the ?sync=1 fallback, the CSRF gate - is the same machinery every
-// other flow uses.
+// repeated keys in the plan request body (updatesPlanRequest.Mods) instead
+// of a path segment. Everything else - the plan store, the job, the CSRF
+// gate - is the same machinery every other flow uses.
 //
 // The one thing it must NOT do is compute a single core plan up front and
 // apply it N times. Ruling 5 makes a plan a contract about a world that has
