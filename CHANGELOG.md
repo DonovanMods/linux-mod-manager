@@ -29,6 +29,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `lmm serve` SPA can now run a mutation, and every mutation it will
+  ever run goes the same way: clicking a control computes the plan and
+  shows it - the exact mods, files, hooks and purge paths the CLI's
+  `--dry-run` would print - and confirming starts it as a background job,
+  at which point the control you clicked becomes that job's live progress
+  (phase text, batch position, byte counters), and its outcome resurfaces
+  in the same place. **Deploy** is the first control wired to it; the
+  others follow unit by unit. A top-bar activity tray collects every job
+  the session has run - running with progress, queued, failed with the
+  reason and its next step, recently finished - and each entry expands to
+  that job's own phase-by-phase event stream. Completions whose control is
+  no longer on screen arrive as a toast instead, and the old `/jobs/{id}`
+  URL now deep-links into the tray entry for that job (#329, epic #326)
+
+- The `lmm serve` library table uses a wide display: author and install
+  date appear at 1440px and up, source and link method at 1920px and up.
+  Its two leading checkbox columns are labelled at last - "Select" (for
+  batch actions) and "Enabled" (the mod's own state) - which were
+  previously two unlabelled columns of identical checkboxes (#329)
+
 - `lmm serve` gains the two endpoints its activity tray is built on:
   `GET /api/v1/jobs` lists every job the registry still retains, newest
   first, each summarised without its (potentially large) result document —

@@ -785,8 +785,13 @@ the entire build and the UI never fetches anything from the network.
 **Under construction.** This branch replaced the previous page-per-command
 UI with the SPA design in
 `docs/plans/2026-08-31-serve-spa-design.md`; the screens land unit by unit.
-What is in place today is the foundation — the shell, the URL scheme, the
-theme, and the whole `/api/v1` + jobs + SSE backend the screens drive.
+In place today: the shell, the URL scheme and the theme; Mission Control's
+read surface (the game/profile pickers, the attention cards, the library);
+and the mutation pipeline — a control opens a confirm modal showing the
+plan, confirming starts a job, and the control becomes that job's live
+progress, with an activity tray collecting every job the session has run.
+**Deploy** is wired end to end. The remaining actions are present but
+disabled, each waiting on its own unit; the CLI does all of them today.
 
 ### URLs
 
