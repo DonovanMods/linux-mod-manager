@@ -787,11 +787,18 @@ UI with the SPA design in
 `docs/plans/2026-08-31-serve-spa-design.md`; the screens land unit by unit.
 In place today: the shell, the URL scheme and the theme; Mission Control's
 read surface (the game/profile pickers, the attention cards, the library);
-and the mutation pipeline — a control opens a confirm modal showing the
-plan, confirming starts a job, and the control becomes that job's live
-progress, with an activity tray collecting every job the session has run.
-**Deploy** is wired end to end. The remaining actions are present but
-disabled, each waiting on its own unit; the CLI does all of them today.
+the mutation pipeline — a control opens a confirm modal showing the plan,
+confirming starts a job, and the control becomes that job's live progress,
+with an activity tray collecting every job the session has run; and the
+drill-in surfaces — click a library row for the slide-over (name, author,
+version, an editable lock/policy pair, findings, conflicts, a changelog
+preview, and Update/Enable-or-Disable/Uninstall), or "More info →" for the
+full mod page (description, changelog, files, versions, dependencies,
+rollback, and that mod's own job history). **Deploy, Enable/Disable,
+Uninstall, per-mod Update and Rollback** are wired end to end. The
+remaining actions (search/install, batch update, reorder, profiles,
+health repair, admin) are present but disabled, each waiting on its own
+unit; the CLI does all of them today.
 
 ### URLs
 
@@ -827,6 +834,8 @@ on failure:
 GET  /api/v1/status
 GET  /api/v1/mods
 GET  /api/v1/mods/{source}/{id}
+GET  /api/v1/mods/{source}/{id}/files
+GET  /api/v1/mods/{source}/{id}/versions
 GET  /api/v1/search?q=
 GET  /api/v1/updates
 GET  /api/v1/profiles
@@ -851,10 +860,15 @@ GET  /api/v1/jobs               -> every retained job, newest first
 GET  /api/v1/events             -> Server-Sent Events: every job's lifecycle
 ```
 
-(Enable/disable are the one exception: with no options and nothing to
-preview, they skip the plan step entirely —
-`POST /api/v1/mods/{source}/{id}/enable` and `.../disable` start the job
-directly and answer with the same `{"job_id"}` document.)
+(Enable/disable are an exception: with no options and nothing to preview,
+they skip the plan step entirely — `POST /api/v1/mods/{source}/{id}/enable`
+and `.../disable` start the job directly and answer with the same
+`{"job_id"}` document. Lock/unlock/update-policy skip jobs too, but for a
+different reason: `POST /api/v1/mods/{source}/{id}/lock`, `.../unlock` and
+`.../update-policy` are single DB writes with nothing to run in the
+background at all, so they answer synchronously with the mod's full
+settings snapshot — the same document `lmm mod lock`/`unlock`/`set-update
+--json` print.)
 
 The per-job events stream sends one JSON frame per typed core progress event
 (`event:` names the event type), a comment heartbeat roughly every 15

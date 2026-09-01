@@ -29,6 +29,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `lmm serve` SPA's drill-in surfaces are wired. Clicking a library row
+  opens the slide-over for real: name, author, installed → available
+  version, an editable lock toggle and update-policy select (thin
+  `POST /api/v1/mods/{source}/{id}/{lock,unlock,update-policy}` routes over
+  `Service.SetModLock`/`ClearModLock`/`SetModUpdatePolicy`, no plan or job -
+  a single DB write with nothing to preview), the mod's own summary,
+  findings and conflicts, a changelog preview, and Update/Enable-or-Disable/
+  Uninstall actions - Enable/Disable through the existing plan-free toggle
+  endpoints, Uninstall and Update through the confirm-plan framework's
+  second and third registered kinds (`UninstallPlanView`, and `updates`
+  deliberately left on the framework's generic fallback view - its own
+  batch UI is a later unit's). Esc, an outside click, or ←/→ (stepping
+  through the library's current filtered/sorted order) all work. "More
+  info →" opens the full mod page at
+  `/g/{game}/{profile}/mod/{source}/{id}`: full description, complete
+  changelog, a files table, a versions table (`GET
+.../versions` - `AvailableModVersions`' first real consumer), a new
+  **rollback** plan kind wired from it (`core.PlanRollback`/`ApplyRollback`,
+  honoring lock rules), dependency info, and a per-mod job history built
+  from the finished jobs whose own result document names the mod (`updates`
+  and `rollback` today - `enable`/`disable`/`uninstall` report no mod
+  identity in their result, a gap left for a later unit rather than another
+  wire change here). A deploy plan's mod rows now carry the version each
+  mod would deploy (`DeployPlanMod.Ref.Version`, previously always empty),
+  which the confirm modal already had a conditional slot ready to show
+  (#330, epic #326)
+
 - The `lmm serve` SPA can now run a mutation, and every mutation it will
   ever run goes the same way: clicking a control computes the plan and
   shows it - the exact mods, files, hooks and purge paths the CLI's
