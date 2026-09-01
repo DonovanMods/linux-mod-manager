@@ -739,7 +739,8 @@ select {
 }
 
 /* ---------------------------------------------------------------------- */
-/* Slide-over placeholder (the real one is Unit 4's).                     */
+/* The slide-over (issue 330): default drill-in, ~40% width over a still-  */
+/* visible home.                                                          */
 /* ---------------------------------------------------------------------- */
 
 .slide-over {
@@ -755,14 +756,25 @@ select {
   width: 40%;
   min-width: 22rem;
   padding: var(--space-6);
+  overflow-y: auto;
   background: var(--surface-raised);
   box-shadow: var(--shadow-raised);
 }
 
-.slide-over__close {
+.slide-over__panel:focus {
+  outline: none;
+}
+
+.slide-over__nav {
   position: absolute;
   top: var(--space-3);
   right: var(--space-3);
+  display: flex;
+  gap: var(--space-2);
+}
+
+.slide-over__close,
+.slide-over__step {
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -770,8 +782,64 @@ select {
   cursor: pointer;
 }
 
-.placeholder-note {
-  color: var(--text-muted);
+.slide-over__step:disabled {
+  color: var(--border-strong);
+  cursor: default;
+}
+
+.slide-over__meta {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+}
+
+.slide-over__summary {
+  color: var(--text-secondary);
+}
+
+.slide-over__settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.slide-over__setting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.slide-over__actions {
+  display: flex;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.slide-over__section {
+  margin-top: var(--space-4);
+}
+
+.slide-over__changelog {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.slide-over__more {
+  display: inline-block;
+  margin-top: var(--space-4);
+  color: var(--accent);
+}
+
+.mod-row__live {
+  display: block;
+  color: var(--accent);
+  font-size: 0.8em;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -853,6 +921,10 @@ select {
 .plan__note {
   margin: 0 0 var(--space-4);
   color: var(--text-secondary);
+}
+
+.plan__note--warn {
+  color: var(--warn);
 }
 
 .plan__section {
@@ -1225,4 +1297,59 @@ select {
   color: var(--accent);
   font-size: 0.85em;
   white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The full mod page (issue 330): the slide-over's "More info ->", the     */
+/* design's "full path" one click away from it.                            */
+/* ---------------------------------------------------------------------- */
+
+.mod-page {
+  max-width: 60rem;
+  margin: 0 auto;
+}
+
+.mod-page__back {
+  color: var(--text-secondary);
+}
+
+.mod-page__title {
+  margin: var(--space-4) 0 var(--space-1);
+  color: var(--text-primary);
+  font-size: 1.4em;
+}
+
+.mod-page__meta {
+  margin: 0 0 var(--space-6);
+  color: var(--text-secondary);
+}
+
+.mod-page__section {
+  margin-bottom: var(--space-6);
+}
+
+.mod-page__prose {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.mod-page__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mod-page__table th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.mod-page__table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
 }

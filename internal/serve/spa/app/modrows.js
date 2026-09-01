@@ -121,6 +121,46 @@ export function countUndeployed(mods) {
   );
 }
 
+// modOriginPattern parses the "mod:{source}/{id}:{action}" origin
+// convention every per-mod control this unit adds uses (jobprogress.js's
+// own doc comment names this exact shape). sourceID stops at the FIRST "/"
+// (a registry key never contains one); modID is everything up to the LAST
+// ":" (router.js's own ?mod= parsing tolerates a modID that itself contains
+// "/", so this must too - a greedy `.+` backtracks to let the trailing
+// `:action` anchor win).
+const modOriginPattern = /^mod:([^/]+)\/(.+):([a-z_]+)$/;
+
+/**
+ * runningMutations maps each mod currently being mutated - as far as THIS
+ * browser session's own controls can say - to that job's summary/progress
+ * frame, for the library's own row-level live indicator (issue 330 carry-3:
+ * "say WHICH mutation, or move onto the rows it concerns"). It reads
+ * state.origins (jobprogress.js's control -> job id map), not the job's own
+ * document: the registry attributes a job to no mod at all (activity.go's
+ * jobSummary carries no such field), so only the control that started it -
+ * here, the row itself - can say which mod a running job belongs to. A job
+ * started from another tab or script therefore never appears here; Mission
+ * Control's header falls back to naming the kind alone for that case
+ * (missioncontrol.js).
+ */
+export function runningMutations(jobsIndex, jobProgress, origins) {
+  const byID = new Map((jobsIndex ?? []).map((j) => [j.id, j]));
+  const result = new Map();
+  for (const [origin, jobID] of Object.entries(origins ?? {})) {
+    const match = modOriginPattern.exec(origin);
+    if (!match) continue;
+    const summary = byID.get(jobID);
+    if (!summary || summary.state !== "running") continue;
+    const [, sourceID, modID] = match;
+    result.set(`${sourceID}:${modID}`, {
+      jobID,
+      summary,
+      frame: jobProgress?.[jobID],
+    });
+  }
+  return result;
+}
+
 /**
  * Renders an ISO timestamp as a short local date for the library's
  * "Installed" column, or an em dash when there is nothing parsable to

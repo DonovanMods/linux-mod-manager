@@ -1,21 +1,23 @@
 // library.js - Mission Control's spine: the mod table, its filter/sort
 // controls, multi-select and the batch-bar shell
 // (docs/plans/2026-08-31-serve-spa-design.md §Mission Control: "Library").
-// Every mutation affordance here is present and disabled - Unit 3 wires the
-// confirm-modal framework they submit through. Row click navigates into the
-// ?mod= slide-over annotation; the panel itself is a placeholder until
-// Unit 4.
+// Row click navigates into the ?mod= slide-over, wired for real in issue
+// 330 (Unit 4); its own multi-mod batch actions and the row-level enable
+// toggle stay disabled - the batch bar is Unit 6's (reorder/profiles/health
+// repair/update-batch), and moving a single-row enable/disable/uninstall
+// action onto this table too would duplicate the slide-over's own affordance
+// for no reader-visible benefit yet, in a unit already touching every mod-
+// mutation surface once.
+//
+// The row join (buildRows) and the filter/sort STATE both moved up to
+// missioncontrol.js in issue 330: the slide-over's ←/→ stepping needs the
+// exact list this table is showing, so this component now renders `visible`
+// rather than computing it.
 
-import { html, useMemo, useState } from "../render.js";
+import { html, useState } from "../render.js";
 import { navigate } from "../router.js";
-import {
-  buildRows,
-  filterRows,
-  sortRows,
-  formatDate,
-  FILTER_NAMES,
-  SORT_NAMES,
-} from "../modrows.js";
+import { formatDate, FILTER_NAMES, SORT_NAMES } from "../modrows.js";
+import { mutationLabel, progressText } from "../progress.js";
 import { NOT_YET } from "../ui.js";
 
 const FILTER_LABELS = {
@@ -33,36 +35,18 @@ const SORT_LABELS = {
 
 export function Library({
   mods,
-  updates,
-  health,
-  conflicts,
+  visible,
+  filter,
+  sort,
+  onFilterChange,
+  onSortChange,
+  mutations,
   liveActivity,
   query,
   error,
   onRetry,
 }) {
-  const [filter, setFilter] = useState("all");
-  const [sort, setSort] = useState("load-order");
   const [selected, setSelected] = useState(() => new Set());
-
-  const rows = useMemo(
-    () =>
-      buildRows(
-        mods?.mods ?? [],
-        updates?.updates ?? [],
-        health?.result?.findings ?? [],
-        conflicts?.conflicts ?? [],
-      ),
-    [mods, updates, health, conflicts],
-  );
-
-  const visible = useMemo(() => {
-    const q = (query ?? "").trim().toLowerCase();
-    const matched = q
-      ? rows.filter((r) => r.name.toLowerCase().includes(q))
-      : rows;
-    return sortRows(filterRows(matched, filter), sort);
-  }, [rows, filter, sort, query]);
 
   function toggleSelect(key) {
     setSelected((prev) => {
@@ -144,7 +128,7 @@ export function Library({
           <select
             name="filter"
             value=${filter}
-            onChange=${(e) => setFilter(e.currentTarget.value)}
+            onChange=${(e) => onFilterChange(e.currentTarget.value)}
           >
             ${FILTER_NAMES.map((f) => html`<option value=${f}>${FILTER_LABELS[f]}</option>`)}
           </select>
@@ -154,7 +138,7 @@ export function Library({
           <select
             name="sort"
             value=${sort}
-            onChange=${(e) => setSort(e.currentTarget.value)}
+            onChange=${(e) => onSortChange(e.currentTarget.value)}
           >
             ${SORT_NAMES.map((s) => html`<option value=${s}>${SORT_LABELS[s]}</option>`)}
           </select>
@@ -182,8 +166,14 @@ export function Library({
                   </tr>
                 </thead>
                 <tbody>
-                  ${visible.map(
-                    (row) => html`
+                  ${visible.map((row) => {
+                    // issue 330 carry-3's "move onto the rows it concerns":
+                    // a mutation this session started against THIS mod
+                    // (modrows.js#runningMutations, keyed the same
+                    // "source:id" way modKey() is) shows its own live text
+                    // here instead of the library's shared header line.
+                    const mutation = mutations?.get(row.key);
+                    return html`
                       <tr
                         key=${row.key}
                         class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""}"
@@ -214,6 +204,17 @@ export function Library({
                           >
                             ${row.name}
                           </button>
+                          ${
+                            mutation &&
+                            html`<span class="mod-row__live" role="status">
+                              ${[
+                                mutationLabel(mutation.summary.kind),
+                                progressText(mutation.frame),
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>`
+                          }
                         </td>
                         <td class="mono">
                           ${row.version}${row.hasUpdate && html` → ${row.updateTarget}`}
@@ -273,8 +274,8 @@ export function Library({
                           </button>
                         </td>
                       </tr>
-                    `,
-                  )}
+                    `;
+                  })}
                 </tbody>
               </table>
             `

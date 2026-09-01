@@ -12,14 +12,15 @@ import { html } from "../render.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { GameChooser } from "./gamechooser.js";
 import { MissionControl } from "./missioncontrol.js";
+import { FullModPage } from "./fullmodpage.js";
 import { ConfirmPlanModal } from "./confirmplan.js";
 import { Toasts } from "./toasts.js";
 
-/** ComingSoon answers the two routes this unit's screens don't render yet -
- * the full mod page and the search page (Units 4 and 5) - so a direct link
- * into either is a real page rather than a blank one. */
+/** ComingSoon answers the one route this unit's screens still don't render -
+ * the dedicated search page (Unit 5) - so a direct link into it is a real
+ * page rather than a blank one. */
 function ComingSoon({ route }) {
-  const label = route.view === "search" ? "Search" : "The full mod page";
+  const label = route.view === "search" ? "Search" : "This page";
   return html`<p class="app-booting">${label} lands in a later unit.</p>`;
 }
 
@@ -45,6 +46,18 @@ export function App({ state, onThemeChange, actions }) {
     return html`
       <${MissionControl}
         state=${state}
+        onThemeChange=${onThemeChange}
+        actions=${actions}
+      />
+      ${overlays}
+    `;
+  }
+
+  if (route.view === "mod") {
+    return html`
+      <${FullModPage}
+        state=${state}
+        route=${route}
         onThemeChange=${onThemeChange}
         actions=${actions}
       />

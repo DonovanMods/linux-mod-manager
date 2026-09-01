@@ -23,9 +23,21 @@
 import { html } from "../render.js";
 import { DocumentView } from "./documentview.js";
 import { DeployPlanView } from "./plan_deploy.js";
+import { UninstallPlanView } from "./plan_uninstall.js";
+import { RollbackPlanView } from "./plan_rollback.js";
 
+// issue 330 carry-2: "the first unit wiring a kind without a renderer adds
+// an explicit [E2E] scenario." "updates" is that kind here, deliberately:
+// its plan document (updatesBatchPlan, kind_updates.go) is a SELECTION, not
+// a per-mod preview worth a bespoke renderer of its own, and the batch UI
+// that would actually want one - checkboxes, a running per-item tally - is
+// Unit 6's (the update-batch modal). Wiring it through GenericPlanView now,
+// honestly, is better than either leaving it unwired or building a
+// throwaway renderer this unit would just delete again.
 const renderers = {
   deploy: DeployPlanView,
+  uninstall: UninstallPlanView,
+  rollback: RollbackPlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */

@@ -26,6 +26,16 @@ export function initialState() {
     health: null,
     conflicts: null,
     profiles: null,
+    // modPage is the full mod page's own state (route.view === "mod"):
+    // {key, filesReport, error, detail, detailError, versions,
+    // versionsError}. filesReport (core.ModFilesReport) is the PRIMARY
+    // read - error is fatal, and only ever set from IT, never from detail/
+    // versions, which are optional (main.js's hydrateModPage doc comment
+    // explains why). key is "source/id" - the same fencing modalSeq gives
+    // a slow plan, applied to a fetch that resolves after the user has
+    // already arrowed or linked away to a different mod. null until that
+    // route is visited at least once.
+    modPage: null,
     // jobsIndex is the activity tray's rows: every job the registry still
     // retains, newest first. It is seeded by GET /api/v1/events's snapshot
     // frame and maintained by that stream's job_started/job_done frames
