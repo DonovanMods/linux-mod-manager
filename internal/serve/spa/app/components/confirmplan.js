@@ -97,7 +97,7 @@ export function ConfirmPlanModal({ modal, actions }) {
                   ${details && html`<${DocumentView} value=${details} />`}
                 </div>
               `
-            : html`<${PlanView} plan=${plan} />`
+            : html`<${PlanView} plan=${plan} actions=${actions} />`
       }
     <//>
   `;
