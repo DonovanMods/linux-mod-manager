@@ -8,11 +8,14 @@
 // is WHICH version and WHICH file. PlanInstall answers neither on its own -
 // it takes no version and its Files is the non-interactive default pick
 // ("INTERACTIVE selection is the CALLER's job", internal/core/install.go).
-// So the confirm page asks, and the answer travels as
+// So the confirm modal asks, and the answer travels as
 // InstallOptions.TargetVersion / TargetFileIDs, which ApplyInstall resolves
 // up front - the sanctioned core path (#96/#140), not a plan.Files
-// overwrite of our own. The candidate pool the picker renders is computed
-// here at plan time, and a pool of one renders no picker at all: "file
+// overwrite of our own. The candidate pool the picker renders is
+// core.InstallPlan.FilePool (#331) - computed inside PlanInstall itself from
+// the exact GetModFiles read Files was picked from, not a second one here,
+// so the plan document IS the disclosure rather than a serve-side
+// recomputation of it. A pool of one renders no picker at all: "file
 // selection where the plan offers it" means offering a choice only where
 // there is one.
 //

@@ -110,6 +110,87 @@ func TestServer_APISearch_MissingQuery_Renders400(t *testing.T) {
 	assert.Contains(t, envelope.Error, "q")
 }
 
+// TestServer_APISearch_PageParams_ThreadThroughAndCapResults is #331's RED
+// test for the search PAGE's pagination: ?page=/?page_size= forward into
+// SearchOptions, echo back on the report, and (with no ?limit=) page_size
+// doubles as the merged-results cap so a client asking for one page of N
+// gets at most N rows rather than every source's own page concatenated.
+func TestServer_APISearch_PageParams_ThreadThroughAndCapResults(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Alpha", Version: "1.0"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Beta", Version: "1.0"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "3", SourceID: "fake", Name: "Boots Gamma", Version: "1.0"}})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&page=0&page_size=2", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	assert.Equal(t, 0, report.Page)
+	assert.Equal(t, 2, report.PageSize)
+	require.Len(t, report.Mods, 2, "page_size doubles as the merged-results cap with no explicit limit")
+
+	want, err := svc.Search(context.Background(), game, "default", "boots", core.SearchOptions{Page: 0, PageSize: 2, Limit: 2})
+	require.NoError(t, err)
+	requireEncodesLike(t, rec.Body.Bytes(), want)
+}
+
+// TestServer_APISearch_InvalidPageParam_Renders400 and its page_size
+// sibling prove both new params are refused the same way ?limit= already
+// is: bad input, not a 500 from a core call that never runs.
+func TestServer_APISearch_InvalidPageParam_Renders400(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, _ := newFixtureServiceWithSource(t, src)
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&page=nope", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var envelope apiErrorEnvelope
+	decodeStrict(t, rec.Body.Bytes(), &envelope)
+	assert.Contains(t, envelope.Error, "page")
+}
+
+func TestServer_APISearch_InvalidPageSizeParam_Renders400(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, _ := newFixtureServiceWithSource(t, src)
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&page_size=nope", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var envelope apiErrorEnvelope
+	decodeStrict(t, rec.Body.Bytes(), &envelope)
+	assert.Contains(t, envelope.Error, "page_size")
+}
+
+// TestServer_APISearch_ExplicitLimitOverridesPageSizeCap proves an explicit
+// ?limit= wins over page_size's implicit cap, the more specific ask.
+func TestServer_APISearch_ExplicitLimitOverridesPageSizeCap(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Alpha", Version: "1.0"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Beta", Version: "1.0"}})
+	svc, _ := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&page_size=2&limit=1", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	require.Len(t, report.Mods, 1, "the explicit limit must win over page_size's implicit cap")
+}
+
 // TestServer_APISearch_UnresolvedSelection_Renders404 proves the missing-q
 // check only gates a genuinely absent/empty q: once q is present
 // (?q=boots), an unresolvable ?game= still surfaces as the ordinary

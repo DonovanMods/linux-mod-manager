@@ -185,6 +185,19 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 // Important 1). The default (no ?limit=) stays unset/uncapped, matching
 // the /search PAGE's own call and every existing test's expectations; a
 // non-numeric ?limit= is bad input (400), the same class as a missing q.
+//
+// ?page=/?page_size= are #331's pagination params, for the dedicated search
+// PAGE's escape-hatch browsing (the omnibar never sets either - a live
+// filter has no "next page", it just re-fans-out): forwarded verbatim into
+// SearchOptions.Page/PageSize, which core.Search already threads through to
+// searchAllSources/SearchMods (both paginate per-source). Absent, both
+// default to 0 - "page 0, let each source apply its own default size" -
+// matching the CLI's own historical always-page-0 behavior. A ?page_size=
+// with no ?limit= also becomes the Limit cap (a page's worth of MERGED
+// results, not an unbounded merge of every source's own page), so a client
+// asking for one page of N gets at most N rows back; an explicit ?limit=
+// still wins when both are given, since it is the more specific ask.
+// Either non-numeric value is bad input (400), the same class as ?limit=.
 func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -192,14 +205,20 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var limit int
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid query parameter %q: %w", "limit", err))
-			return
-		}
-		limit = n
+	limit, ok := s.parseOptionalIntParam(w, r, "limit")
+	if !ok {
+		return
+	}
+	page, ok := s.parseOptionalIntParam(w, r, "page")
+	if !ok {
+		return
+	}
+	pageSize, ok := s.parseOptionalIntParam(w, r, "page_size")
+	if !ok {
+		return
+	}
+	if limit == 0 && pageSize != 0 {
+		limit = pageSize
 	}
 
 	sel, ok := s.resolveReadyAPISelection(w, r)
@@ -207,12 +226,31 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query, core.SearchOptions{Limit: limit})
+	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query,
+		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, report)
+}
+
+// parseOptionalIntParam reads name from r's query string: 0/true when
+// absent, the parsed value/true when present and numeric, or 0/false (the
+// 400 envelope already written) when present but not. Shared by every
+// ?limit=/?page=/?page_size= parse on this endpoint so the three agree on
+// what "bad input" means.
+func (s *Server) parseOptionalIntParam(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid query parameter %q: %w", name, err))
+		return 0, false
+	}
+	return n, true
 }
 
 // handleAPIUpdates answers GET /api/v1/updates with exactly the
