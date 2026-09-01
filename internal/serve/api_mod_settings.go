@@ -20,7 +20,9 @@
 package serve
 
 import (
+	"context"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -74,7 +76,7 @@ func (s *Server) handleAPIModLock(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.svc.SetModLock(r.Context(), sourceID, modID, sel.Game.ID, sel.Profile, req.Version)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
+		s.writeAPIError(w, s.modSettingErrorStatus(r.Context(), sourceID, modID, sel, err), err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)
@@ -91,7 +93,7 @@ func (s *Server) handleAPIModUnlock(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.svc.ClearModLock(r.Context(), sourceID, modID, sel.Game.ID, sel.Profile)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
+		s.writeAPIError(w, s.modSettingErrorStatus(r.Context(), sourceID, modID, sel, err), err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)
@@ -114,8 +116,29 @@ func (s *Server) handleAPIModUpdatePolicy(w http.ResponseWriter, r *http.Request
 
 	result, err := s.svc.SetModUpdatePolicy(r.Context(), sourceID, modID, sel.Game.ID, sel.Profile, req.Policy)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
+		s.writeAPIError(w, s.modSettingErrorStatus(r.Context(), sourceID, modID, sel, err), err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)
+}
+
+// modSettingErrorStatus classifies a SetModLock/ClearModLock/
+// SetModUpdatePolicy failure (M2): not-found - sourceID/modID names a mod
+// that is not installed in sel's profile, so a lock/unlock/policy write has
+// no existing install to target - answers 404, the same not-found
+// treatment the sibling read route already gets (api_mod_files.go); any
+// other failure (a profile config I/O error, say) answers 500.
+// SetModUpdatePolicy's own not-found path already wraps
+// domain.ErrModNotFound (db.UpdateModPolicy); ProfileManager.SetModLock/
+// ClearModLock's does not (a plain "not found in profile" error, pinned
+// verbatim by other tests, so not reworded here) - a live existence check
+// is the one not-found signal both shapes share.
+func (s *Server) modSettingErrorStatus(ctx context.Context, sourceID, modID string, sel selection, err error) int {
+	if errors.Is(err, domain.ErrModNotFound) {
+		return http.StatusNotFound
+	}
+	if _, gerr := s.svc.GetInstalledMod(ctx, sourceID, modID, sel.Game.ID, sel.Profile); errors.Is(gerr, domain.ErrModNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
 }

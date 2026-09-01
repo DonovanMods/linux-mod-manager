@@ -128,6 +128,25 @@ func TestServer_APIModUpdatePolicy_UnknownValue_Renders400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
 
+// TestServer_APIModLock_NotFound_Renders404 is M2: a lock write against a
+// mod that is not installed in the resolved profile must answer 404,
+// matching the sibling read route's own not-found treatment
+// (api_mod_files.go's TestServer_APIModFiles_NotInstalled_Renders404) -
+// before the fix all three settings routes mapped EVERY core error,
+// not-found included, to 500.
+func TestServer_APIModLock_NotFound_Renders404(t *testing.T) {
+	src := newFakeSource("fake")
+	svc, _ := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	rec := postAPI(t, srv, "/api/v1/mods/fake/nope/lock", `{}`)
+
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	var envelope apiErrorEnvelope
+	decodeStrict(t, rec.Body.Bytes(), &envelope)
+	assert.Contains(t, envelope.Error, "not found in profile")
+}
+
 // TestServer_APIModLock_WithoutCSRF_Refuses proves lock/unlock/update-policy
 // go through the same CSRF gate every other mutation route does - it is not
 // a job, but it is still a state-changing POST.
