@@ -321,6 +321,30 @@ func TestServeJSONGoldens(t *testing.T) {
 			updateBatchFailure{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"},
 		},
 		{
+			// api_mod_settings.go's two request bodies: an explicit version
+			// (the full mod page's versions-table "lock this version"
+			// affordance - the slide-over's own lock checkbox sends an
+			// empty one, which carries no json key and pins nothing new).
+			"mod_lock_request",
+			modLockRequest{Version: "1.2.0"},
+		},
+		{
+			"mod_update_policy_request",
+			modUpdatePolicyRequest{Policy: domain.UpdatePinned},
+		},
+		{
+			// #330's new "rollback" plan kind (kind_rollback.go), both
+			// halves: what the PLAN is computed with, and RollbackOptions'
+			// own Force/SkipHooks as the confirm page's apply-time choice -
+			// the same plan/apply split uninstall's own two requests use.
+			"rollback_plan_request",
+			rollbackPlanRequest{ModID: "m1", SourceID: "fake"},
+		},
+		{
+			"rollback_apply_request",
+			rollbackApplyRequest{Force: true, SkipHooks: true},
+		},
+		{
 			// The two profile flows' plan requests. Neither has an apply
 			// request with anything in it - ApplyProfileSwitch and
 			// ProfileApplyOptions both take no options - so their empty
@@ -338,6 +362,16 @@ func TestServeJSONGoldens(t *testing.T) {
 				Error:   "profile switch finished with warnings",
 				Details: (&core.ProfileWarningsError{Warnings: []string{"1 mod could not be undeployed"}}).Details(),
 			},
+		},
+		{
+			// #330's un-orphaning of AvailableModVersions: the wrapper
+			// document the full mod page's versions table renders. The
+			// Supported-false shape (a source with no version metadata) is
+			// covered live by api_mod_files_test.go rather than a second
+			// golden row - it is the same two fields with different values,
+			// not a different wire shape.
+			"mod_versions_document",
+			modVersionsDocument{Versions: []string{"1.0", "2.0"}, Supported: true},
 		},
 		{
 			"selection_error_details",

@@ -16,6 +16,8 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/status", s.wrap(s.handleAPIStatus))
 	s.mux.Handle("GET /api/v1/mods", s.wrap(s.handleAPIMods))
 	s.mux.Handle("GET /api/v1/mods/{source}/{id}", s.wrap(s.handleAPIModDetail))
+	s.mux.Handle("GET /api/v1/mods/{source}/{id}/files", s.wrap(s.handleAPIModFiles))
+	s.mux.Handle("GET /api/v1/mods/{source}/{id}/versions", s.wrap(s.handleAPIModVersions))
 	s.mux.Handle("GET /api/v1/search", s.wrap(s.handleAPISearch))
 	s.mux.Handle("GET /api/v1/updates", s.wrap(s.handleAPIUpdates))
 	s.mux.Handle("GET /api/v1/profiles", s.wrap(s.handleAPIProfiles))
@@ -27,6 +29,11 @@ func (s *Server) routes() {
 	// 404 instead of a handler that would have to refuse it itself.
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/enable", s.wrap(s.handleAPIModEnable))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/disable", s.wrap(s.handleAPIModDisable))
+	// The three thin lock/policy mutation routes (api_mod_settings.go) - NOT
+	// jobs, unlike enable/disable above: see that file's doc comment for why.
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/lock", s.wrap(s.handleAPIModLock))
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unlock", s.wrap(s.handleAPIModUnlock))
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/update-policy", s.wrap(s.handleAPIModUpdatePolicy))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
 	// The activity tray's index (api_activity.go). GET and POST on the same
