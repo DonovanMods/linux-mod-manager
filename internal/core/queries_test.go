@@ -687,6 +687,73 @@ func TestSearch_LimitAboveLenIsNoop(t *testing.T) {
 	require.Len(t, report.Mods, 1)
 }
 
+// TestSearch_PageAndPageSizeEchoAndHasMoreReflectsExhausted pins the search
+// PAGE's pagination contract on the aggregate path (#331): Page/PageSize are
+// SearchOptions echoed back verbatim (so a client rendering page N needs
+// nothing else to confirm it), and HasMore is searchAllSources'
+// AggregateSearchResult.Exhausted negated - a source whose TotalCount
+// exceeds what one page returned means there is a page 2 to offer.
+func TestSearch_PageAndPageSizeEchoAndHasMoreReflectsExhausted(t *testing.T) {
+	hasMore := &searchStubSource{id: "alpha", result: source.SearchResult{
+		Mods:       mods("alpha", "a1", "a2"),
+		TotalCount: 5,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, hasMore)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{Page: 0, PageSize: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.Page)
+	assert.Equal(t, 2, report.PageSize)
+	assert.True(t, report.HasMore, "alpha's TotalCount (5) exceeds what page 0 of size 2 could return")
+}
+
+// TestSearch_HasMoreFalseWhenExhausted is the counterpart: a source whose
+// whole catalog fit on the requested page must not offer a next one.
+func TestSearch_HasMoreFalseWhenExhausted(t *testing.T) {
+	exhausted := &searchStubSource{id: "alpha", result: source.SearchResult{
+		Mods: mods("alpha", "a1"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, exhausted)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{Page: 0, PageSize: 10})
+	require.NoError(t, err)
+	assert.False(t, report.HasMore)
+}
+
+// TestSearch_NoPageSizeReportsNoMore pins the "no paging concept" default:
+// the CLI's own single-page call never sets PageSize, and a report with no
+// paging window must never claim a next page exists.
+func TestSearch_NoPageSizeReportsNoMore(t *testing.T) {
+	src := &searchStubSource{id: "alpha", result: source.SearchResult{
+		Mods: mods("alpha", "a1"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+	report, err := svc.Search(context.Background(), game, "default", "query", core.SearchOptions{})
+	require.NoError(t, err)
+	assert.Zero(t, report.Page)
+	assert.Zero(t, report.PageSize)
+	assert.False(t, report.HasMore)
+}
+
+// TestSearch_SingleSourcePageThreadsThroughAndHasMore covers the named-
+// --source path: Page/PageSize forward straight to SearchMods, and HasMore
+// uses the same single-source sourceHasMore heuristic the aggregate path's
+// Exhausted is built from.
+func TestSearch_SingleSourcePageThreadsThroughAndHasMore(t *testing.T) {
+	src := &searchStubSource{id: "alpha", result: source.SearchResult{
+		Mods: mods("alpha", "a1", "a2"), TotalCount: 5,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"alpha": ""}, src)
+
+	report, err := svc.Search(context.Background(), game, "default", "query",
+		core.SearchOptions{SourceID: "alpha", Page: 1, PageSize: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Page)
+	assert.Equal(t, 2, report.PageSize)
+	assert.True(t, report.HasMore, "alpha's TotalCount (5) exceeds what page 1 of size 2 could return")
+}
+
 // --- ListGameEntries ---
 
 // TestListGameEntries_ByIDWithDefaultMarked covers `lmm game list`: every

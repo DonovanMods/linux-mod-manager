@@ -262,6 +262,12 @@ func TestJSONGoldens(t *testing.T) {
 				Files: []domain.DownloadableFile{
 					{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", Size: 104857600, IsPrimary: true},
 				},
+				// FilePool (#331): the candidate list Files' pick came FROM -
+				// two versions here, so a picker has something to group.
+				FilePool: []domain.DownloadableFile{
+					{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", Size: 104857600, IsPrimary: true},
+					{ID: "file-0", Name: "Main File", FileName: "sample-mod-1.2.2.zip", Version: "1.2.2", Size: 104857600},
+				},
 				Dependencies:        nil,
 				MissingDependencies: []domain.ModReference{{SourceID: "nexusmods", ModID: "99"}},
 				CycleDetected:       true,
