@@ -236,7 +236,11 @@ export function ModPanel({
           >
         </p>
 
-        <${ModSettingsControls} row=${row} actions=${actions} />
+        <${ModSettingsControls}
+          row=${row}
+          actions=${actions}
+          panelRef=${panelRef}
+        />
 
         ${
           row.summary && html`<p class="slide-over__summary">${row.summary}</p>`
@@ -399,8 +403,19 @@ function changelogPreview(text) {
  * a successful write lets refreshAfterModSetting (main.js) bring fresh
  * data back down through `row` on the next render, so this component
  * never has to hold its own copy of what changed. */
-function ModSettingsControls({ row, actions }) {
+function ModSettingsControls({ row, actions, panelRef }) {
   const [state, setState] = useState({ busy: false, error: "" });
+
+  // M4: the checkbox/select's own `disabled` attribute (set below, for the
+  // whole write) blurs it the instant the browser applies it - a disabled
+  // control cannot hold focus - and focus never returns to the panel on
+  // its own once the write settles and re-enables it. Restoring it here,
+  // once either write settles, is what keeps waitForPanelFocus() (and Esc/
+  // the arrow steps, which rely on the panel - not some stray control -
+  // holding focus) usable after a settings interaction.
+  function restorePanelFocus() {
+    panelRef.current?.focus();
+  }
 
   async function toggleLock() {
     setState({ busy: true, error: "" });
@@ -416,6 +431,8 @@ function ModSettingsControls({ row, actions }) {
         busy: false,
         error: err instanceof ApiError ? err.message : String(err),
       });
+    } finally {
+      restorePanelFocus();
     }
   }
 
@@ -429,6 +446,8 @@ function ModSettingsControls({ row, actions }) {
         busy: false,
         error: err instanceof ApiError ? err.message : String(err),
       });
+    } finally {
+      restorePanelFocus();
     }
   }
 
