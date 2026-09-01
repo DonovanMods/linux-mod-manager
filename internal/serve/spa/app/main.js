@@ -14,6 +14,13 @@ import {
   scoped,
   plan as planMutation,
   startJob,
+  startToggle as startToggleJob,
+  setModLock as apiSetModLock,
+  clearModLock as apiClearModLock,
+  setModUpdatePolicy as apiSetModUpdatePolicy,
+  getModDetail,
+  getModFiles,
+  getModVersions,
   ApiError,
 } from "./api.js";
 import { resolveGamePath } from "./navigation.js";
@@ -132,6 +139,10 @@ async function hydrate(route) {
     return;
   }
 
+  if (route.view === "mod") {
+    await hydrateModPage(route, context);
+    return;
+  }
   if (route.view !== "home") return;
 
   // The jobs index is NOT fetched here: GET /api/v1/events opens with a
@@ -154,6 +165,88 @@ async function hydrate(route) {
       updates: failureMessage(updates),
       health: failureMessage(health),
       conflicts: failureMessage(conflicts),
+    },
+  });
+}
+
+/**
+ * Loads the full mod page's documents.
+ *
+ * core.ModFilesReport is the PRIMARY, FATAL-on-failure read - not
+ * ModDetail: ModFilesReport.Mod is the INSTALLED record (persisted at
+ * install time), so identity/files render for a mod whose SOURCE has since
+ * gone away (unregistered, offline, a local/adopted mod with nothing live
+ * to ask), the same mod a still-installed row in the library keeps
+ * showing. ModDetail is a LIVE source read - the only source of the full
+ * description, the changelog, and (because ModDetail composes lock/policy
+ * alongside its live GetMod call - internal/core/moddetail.go) this page's
+ * own lock-aware version-table gating - so it is fetched alongside the
+ * versions document, both I3-style: a source that cannot answer degrades
+ * this page's EXTRAS, never blanks the identity/files a real install
+ * record already answered for.
+ *
+ * modPage.key ("source/id") fences a stale write the same way modalSeq
+ * does: a slow fetch for a mod the user has already arrowed away from must
+ * not land on the page after the faster one for the mod now on screen.
+ *
+ * A RE-hydrate (onJobDone runs this on every job completion, not just a
+ * route change) for the mod ALREADY on screen must not blank it - the same
+ * rule hydrate()'s own status guard applies to Mission Control (I1). Only a
+ * genuine navigation to a DIFFERENT mod resets to the loading state; the
+ * existing filesReport otherwise survives until the new fetch resolves one
+ * way or the other, which is what keeps this page's own InlineJob outcome
+ * on screen through the re-hydrate a job's own completion triggers.
+ */
+async function hydrateModPage(route, context) {
+  const key = `${route.sourceID}/${route.modID}`;
+  const reHydrating = store.get().modPage?.key === key;
+  if (!reHydrating) {
+    store.set({ modPage: { key, filesReport: null, error: null } });
+  }
+
+  let filesReport;
+  try {
+    filesReport = await getModFiles(route.sourceID, route.modID, context);
+  } catch (err) {
+    if (store.get().modPage?.key !== key) return;
+    if (reHydrating) return;
+    const message = err instanceof ApiError ? err.message : String(err);
+    store.set({ modPage: { key, filesReport: null, error: message } });
+    return;
+  }
+  if (store.get().modPage?.key !== key) return;
+  store.set({
+    modPage: {
+      key,
+      filesReport,
+      error: null,
+      detail: null,
+      detailError: null,
+      versions: null,
+      versionsError: null,
+      updates: null,
+    },
+  });
+
+  // updates joins the versions table against the ONE version
+  // CheckGameUpdates would actually land this mod on (C1) - fetched
+  // alongside detail/versions, both I3-style: a source that cannot answer
+  // degrades this page's EXTRAS, never blanks the identity/files a real
+  // install record already answered for.
+  const [detail, versions, updates] = await Promise.allSettled([
+    getModDetail(route.sourceID, route.modID, context),
+    getModVersions(route.sourceID, route.modID, context),
+    get(scoped("/api/v1/updates", context)),
+  ]);
+  if (store.get().modPage?.key !== key) return;
+  store.set({
+    modPage: {
+      ...store.get().modPage,
+      detail: settled(detail),
+      detailError: failureMessage(detail),
+      versions: settled(versions),
+      versionsError: failureMessage(versions),
+      updates: settled(updates),
     },
   });
 }
@@ -271,6 +364,128 @@ async function confirmPlan() {
   }
 }
 
+/**
+ * Starts an enable/disable job directly - the one sanctioned plan-free
+ * mutation path (kind_toggle.go) - and binds it to the control that started
+ * it, mirroring confirmPlan's own bindingJob fencing so onJobDone's
+ * toast-vs-inline decision can never race a job that finishes before its
+ * own start response has even been read.
+ *
+ * A failure to START (a 409 over the queue-depth cap, a network error) has
+ * no modal to render in the way a plan's error state does - unlike every
+ * other mutation in this application, a toggle has no Plan step at all - so
+ * it becomes a toast instead, the same "the origin isn't on screen to say
+ * so" surface every other unseen outcome already uses.
+ */
+async function startToggle({ action, sourceID, modID, origin }) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  bindingJob = (async () => {
+    try {
+      const { job_id: jobID } = await startToggleJob(
+        action,
+        sourceID,
+        modID,
+        context,
+      );
+      store.set({ origins: { ...store.get().origins, [origin]: jobID } });
+    } catch (err) {
+      pushToast({
+        tone: "failure",
+        title: `${action} failed`,
+        detail: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  })();
+  try {
+    await bindingJob;
+  } finally {
+    bindingJob = null;
+  }
+}
+
+/**
+ * refreshAfterModSetting re-reads whatever is on screen after a
+ * lock/unlock/update-policy write - a THIN, synchronous mutation
+ * (api_mod_settings.go), not a job, so there is no onJobDone re-hydrate to
+ * do this automatically the way every job-backed mutation gets for free.
+ * Refreshes the library's own mods document when the slide-over (or the
+ * plain library table) is what is on screen, and re-runs the full mod
+ * page's own hydrate when the edit came from THAT mod's own full page -
+ * both are cheap enough to always re-run rather than trying to patch the
+ * single field that changed into two different documents by hand.
+ */
+async function refreshAfterModSetting(sourceID, modID) {
+  const route = store.get().route;
+  if (
+    route.view === "mod" &&
+    route.sourceID === sourceID &&
+    route.modID === modID
+  ) {
+    await hydrateModPage(route, { game: route.game, profile: route.profile });
+    return;
+  }
+  await reload("mods", "/api/v1/mods");
+}
+
+/** setModLock/clearModLock/setModUpdatePolicy are the slide-over's and the
+ * full mod page's editable lock/policy controls - direct API calls (no
+ * plan, no job), refreshing whatever is on screen on success and otherwise
+ * rejecting with the ApiError the caller renders inline (there is no modal
+ * or toast for these - the control that submitted the edit is right there
+ * on screen to say what went wrong). */
+async function setModLock(sourceID, modID, version) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiSetModLock(sourceID, modID, version, context);
+  await refreshAfterModSetting(sourceID, modID);
+}
+
+async function clearModLock(sourceID, modID) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiClearModLock(sourceID, modID, context);
+  await refreshAfterModSetting(sourceID, modID);
+}
+
+async function setModUpdatePolicy(sourceID, modID, policy) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiSetModUpdatePolicy(sourceID, modID, policy, context);
+  await refreshAfterModSetting(sourceID, modID);
+}
+
+/** reloadModPageSlice re-fetches one of the full mod page's two
+ * supplementary reads (detail/versions) in isolation - the I3 retry
+ * affordance the four Mission Control reads already offer, applied to this
+ * page's own pair. The primary read (ModFiles) has no slice retry of its
+ * own; a failure there is the whole page's fatal state, retried by
+ * revisiting the route (actions.reloadModPage). */
+async function reloadModPageSlice(key, fetcher) {
+  const route = store.get().route;
+  if (route.view !== "mod") return;
+  const context = { game: route.game, profile: route.profile };
+  try {
+    const value = await fetcher(route.sourceID, route.modID, context);
+    store.set({
+      modPage: { ...store.get().modPage, [key]: value, [`${key}Error`]: null },
+    });
+  } catch (err) {
+    const message = err instanceof ApiError ? err.message : String(err);
+    store.set({
+      modPage: { ...store.get().modPage, [`${key}Error`]: message },
+    });
+  }
+}
+
 /** describe unwraps a rejection into the modal's error/details pair. An
  * ApiError carries the /api/v1 envelope's typed details, which are rendered
  * rather than dropped - they are often the whole answer (which file
@@ -361,12 +576,23 @@ const actions = {
   reloadUpdates: () => reload("updates", "/api/v1/updates"),
   reloadHealth: () => reload("health", "/api/v1/health"),
   reloadConflicts: () => reload("conflicts", "/api/v1/conflicts"),
+  reloadModPage: () => {
+    const route = store.get().route;
+    if (route.view === "mod")
+      hydrateModPage(route, { game: route.game, profile: route.profile });
+  },
+  reloadModDetail: () => reloadModPageSlice("detail", getModDetail),
+  reloadModVersions: () => reloadModPageSlice("versions", getModVersions),
   openPlan,
   closePlan: () => {
     modalSeq += 1;
     store.set({ modal: null });
   },
   confirmPlan,
+  startToggle,
+  setModLock,
+  clearModLock,
+  setModUpdatePolicy,
   clearOrigin,
   dismissToast,
 };
@@ -375,9 +601,12 @@ const actions = {
 // ?mod= slide-over annotation (route.mod) and a search's ?q= (route.q) are
 // both carried on the route object but never change what Mission Control
 // has to fetch (router.js's own doc comment: "?mod= annotates the current
-// URL" instead of routing). Only view/game/profile decide that.
+// URL" instead of routing). sourceID/modID are the one exception - issue
+// 330: the FULL MOD PAGE's view IS "which mod", so a direct transition
+// between two mods' full pages (a dependency cross-link, say) must
+// re-hydrate even though view/game/profile all stayed the same.
 function contextKey(route) {
-  return `${route.view}:${route.game}:${route.profile}`;
+  return `${route.view}:${route.game}:${route.profile}:${route.sourceID ?? ""}:${route.modID ?? ""}`;
 }
 
 // lastHydratedContext starts undefined, which never equals a real

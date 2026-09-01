@@ -72,5 +72,54 @@ export const plan = (kind, options, context) =>
 export const startJob = (planID, options) =>
   post("/api/v1/jobs", { plan_id: planID, ...(options ? { options } : {}) });
 
-/** Reads one job's status document. */
+/** Reads one job's status document - callerless since Unit 3 landed it,
+ * until issue 330's per-mod job history (jobhistory.js) became its first
+ * consumer: the tray's own jobsIndex is deliberately Result-less
+ * (activity.go), so a caller that needs to know what a FINISHED job's own
+ * result document said has to read this. */
 export const jobStatus = (id) => get(`/api/v1/jobs/${encodeURIComponent(id)}`);
+
+/** modPath builds one mod's /api/v1/mods/{source}/{id} base path - shared
+ * by every per-mod read/write endpoint below. */
+function modPath(sourceID, modID) {
+  return `/api/v1/mods/${encodeURIComponent(sourceID)}/${encodeURIComponent(modID)}`;
+}
+
+/** Reads one mod's core.ModDetail document (name, description, changelog). */
+export const getModDetail = (sourceID, modID, context) =>
+  get(scoped(modPath(sourceID, modID), context));
+
+/** Reads one installed mod's core.ModFilesReport document. */
+export const getModFiles = (sourceID, modID, context) =>
+  get(scoped(`${modPath(sourceID, modID)}/files`, context));
+
+/** Reads one mod's versions document ({versions, supported}). */
+export const getModVersions = (sourceID, modID, context) =>
+  get(scoped(`${modPath(sourceID, modID)}/versions`, context));
+
+/** Starts an enable/disable job directly - the one sanctioned plan-free
+ * mutation path (kind_toggle.go); no plan step, so there is nothing to
+ * confirm before it runs. Returns {job_id}, the same shape startJob does. */
+export const startToggle = (action, sourceID, modID, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/${action}`, context));
+
+/** Sets sourceID/modID's lock, at version (empty locks at whatever is
+ * currently installed). Returns core.ModSettingResult directly - this is a
+ * thin, synchronous mutation, not a job (api_mod_settings.go's own doc
+ * comment: nothing meaningful to show in flight for a single DB write). */
+export const setModLock = (sourceID, modID, version, context) =>
+  post(
+    scoped(`${modPath(sourceID, modID)}/lock`, context),
+    version ? { version } : {},
+  );
+
+/** Clears sourceID/modID's lock. Returns core.ModSettingResult directly. */
+export const clearModLock = (sourceID, modID, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/unlock`, context), {});
+
+/** Sets sourceID/modID's update policy ("notify"/"auto"/"pinned"). Returns
+ * core.ModSettingResult directly. */
+export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/update-policy`, context), {
+    policy,
+  });

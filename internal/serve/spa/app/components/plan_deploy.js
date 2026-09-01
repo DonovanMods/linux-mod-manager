@@ -54,14 +54,14 @@ export function DeployPlanView({ plan }) {
               >
                 <span class="plan__mod-name">${mod.name}</span>
                 ${
-                  // Conditional, because a deploy plan's refs carry no
-                  // version: planDeploy builds each DeployPlanMod.Ref from
-                  // the source and mod id alone (internal/core/deploy.go),
-                  // so this is empty for every deploy row today. Rendering
-                  // the span anyway would leave a gap that reads as a
-                  // missing value rather than an absent field. Filed as a
-                  // carry-in - the version a deploy would put on disk is a
-                  // fact the confirm modal should be able to show.
+                  // Conditional rather than unconditional: issue 330 carry-4
+                  // taught planDeploy to stamp Ref.Version from the
+                  // resolved installed mod (internal/core/deploy.go), but
+                  // the "mod not found" skip branch still has no mod to
+                  // read a version from, so this stays empty for that one
+                  // row shape. Rendering the span anyway would leave a gap
+                  // that reads as a missing value rather than an absent
+                  // field.
                   mod.ref.version &&
                   html`<span class="mono plan__mod-version"
                     >${mod.ref.version}</span

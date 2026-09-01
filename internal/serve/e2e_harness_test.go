@@ -174,13 +174,40 @@ func (f e2eFixture) HomePath() string {
 	return f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile
 }
 
+// SlideOverPath is the Mission Control route with sourceID/modID annotated
+// as the ?mod= slide-over - a deep link into it, exactly as a bookmark or
+// the tray's ?job= would carry (router.js).
+func (f e2eFixture) SlideOverPath(sourceID, modID string) string {
+	return f.HomePath() + "?mod=" + sourceID + "/" + modID
+}
+
+// ModPagePath is the full mod page route for sourceID/modID.
+func (f e2eFixture) ModPagePath(sourceID, modID string) string {
+	return f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/mod/" + sourceID + "/" + modID
+}
+
 // newE2EFixture seeds a Service, serves it on a real loopback listener, and
 // opens a browser against it. Every resource is released through t.Cleanup.
 func newE2EFixture(t *testing.T) e2eFixture {
 	t.Helper()
+	return newE2EFixtureFromSource(t, newFakeSource("fake"))
+}
+
+// newE2EFixtureFromSource is newE2EFixture over a caller-supplied source,
+// for a scenario that needs specific catalog entries - issue 330's slide-
+// over/full-mod-page scenarios, whose ModDetail/versions reads are LIVE
+// source calls (unlike everything Mission Control itself reads): a mod
+// seedInstalledMod puts in the DB/cache with no matching src.addMod is
+// installed but unreachable at the source, which those two reads report as
+// a genuine (if gracefully handled) failure - and the resulting network
+// log entry fails the plain assert.Empty(t, f.BrowserErrors()) every
+// happy-path scenario in this suite uses, same as any other unexpected
+// network error would.
+func newE2EFixtureFromSource(t *testing.T, src *fakeSource) e2eFixture {
+	t.Helper()
 	sandboxE2EEnv(t)
 
-	svc, game := newFixtureServiceWithSource(t, newFakeSource("fake"))
+	svc, game := newFixtureServiceWithSource(t, src)
 	// The server is started BEFORE the browser deliberately: see
 	// startE2EServer's doc comment on cleanup order.
 	baseURL := startE2EServer(t, svc)
@@ -203,7 +230,21 @@ func newE2EFixture(t *testing.T) e2eFixture {
 // none of the three trips a verify finding of its own.
 func newE2EFixtureWithLibrarySample(t *testing.T) e2eFixture {
 	t.Helper()
-	f := newE2EFixture(t)
+
+	// Registered in the source's own catalog too (not just the DB/cache
+	// seedInstalledMod writes), so a row's slide-over - issue 330 - can
+	// resolve its live ModDetail/versions reads instead of 404ing
+	// (newE2EFixtureFromSource's own doc comment explains why that matters
+	// for this suite's plain assert.Empty(t, f.BrowserErrors()) bar).
+	src := newFakeSource("fake")
+	for _, mod := range []struct{ id, name string }{
+		{"z", "Zebra Mod"}, {"a", "Alpha Mod"}, {"m", "Middle Mod"},
+	} {
+		src.addMod(fakeSourceMod{Mod: domain.Mod{
+			ID: mod.id, SourceID: "fake", Name: mod.name, Version: "1.0", Author: "Ada Lovelace",
+		}})
+	}
+	f := newE2EFixtureFromSource(t, src)
 
 	// Every one carries the same author, so an assertion about the wide
 	// columns' CONTENT (TestE2E_WideColumnsCarryTheDocumentsOwnData) does
@@ -756,5 +797,134 @@ func newE2EFixtureWithFailingDeploy(t *testing.T) e2eFixture {
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
 
 	seedDeployableMods(t, f.Svc, f.Game)
+	return f
+}
+
+// --- issue 330 (Unit 4): drill-in fixtures - the slide-over, the full mod
+// page, and the mod mutations both surfaces wire. ---
+
+// newE2EFixtureWithDrillInMods seeds two installed, catalog-registered mods
+// (registration matters: the slide-over's changelog preview and the full
+// mod page's own reads are LIVE source calls, unlike everything Mission
+// Control itself reads - newE2EFixtureFromSource's own doc comment) with
+// distinguishable names for the arrow-step scenarios, one carrying a real
+// changelog and a two-entry version list.
+func newE2EFixtureWithDrillInMods(t *testing.T) e2eFixture {
+	t.Helper()
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", Summary: "A tidy little mod."},
+		Files: []domain.DownloadableFile{
+			{ID: "f1", Version: "1.0"},
+			{ID: "f2", Version: "2.0"},
+		},
+		Changelog: "Fixed a crash on load.",
+	})
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", Author: "Ada Lovelace"},
+	})
+	f := newE2EFixtureFromSource(t, src)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", Author: "Ada Lovelace", Summary: "A tidy little mod.", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", Author: "Ada Lovelace", GameID: f.Game.ID},
+		true, nil)
+
+	// Both in the profile's own load order too - SetModLock/ClearModLock
+	// (ProfileManager.SetModLock) look the ref up there, not in the DB row
+	// seedInstalledMod alone writes (the same "both halves" pairing
+	// seedDeployableMods' own doc comment explains).
+	pm := f.Svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "b", Version: "1.0"}))
+
+	return f
+}
+
+// newE2EFixtureWithRollbackReadyMod seeds one catalog-registered, deployed
+// mod already advanced to a second version - PreviousVersion set, both
+// versions' cache entries present - the precondition ApplyRollback's own
+// guards check. Built the same way api_flow_rollback_internal_test.go's
+// rollbackReadyFlowFixtureServer is: entirely from public Service calls,
+// since core_test's own seedRollbackReadyMod helper is unreachable from
+// here (its GetInstallerForTest/ApplyModUpdateForTest exports are
+// core_test-only).
+func newE2EFixtureWithRollbackReadyMod(t *testing.T) e2eFixture {
+	t.Helper()
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"}})
+	f := newE2EFixtureFromSource(t, src)
+
+	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(f.Game.ID, "fake", "a", "1.0", "alpha.esp", []byte("old content")))
+	require.NoError(t, f.Svc.GetGameCache(f.Game).Store(f.Game.ID, "fake", "a", "2.0", "alpha.esp", []byte("new content")))
+	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:             domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0", GameID: f.Game.ID},
+		ProfileName:     "default",
+		UpdatePolicy:    domain.UpdateNotify,
+		Enabled:         true,
+		LinkMethod:      domain.LinkSymlink,
+		PreviousVersion: "1.0",
+	}))
+	require.NoError(t, f.Svc.NewProfileManager().UpsertMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "2.0"}))
+	_, err := f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	return f
+}
+
+// newE2EFixtureWithThreeVersionsAndACheckedUpdate is C1's own repro: one
+// installed mod at 1.0 whose source reports three per-file versions
+// (1.0/2.0/3.0, AvailableModVersions) while the catalog's own Mod.Version is
+// 3.0 - the ONE version fakeSource.CheckUpdates (and so CheckGameUpdates)
+// will ever find, since it compares the catalog's Mod.Version against the
+// installed row, never a per-file version. The versions table therefore has
+// a row (2.0) core cannot actually reach at all, sitting between the
+// installed row and the one row core WOULD update to (3.0).
+func newE2EFixtureWithThreeVersionsAndACheckedUpdate(t *testing.T) e2eFixture {
+	t.Helper()
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "3.0"},
+		Files: []domain.DownloadableFile{
+			{ID: "f1", Version: "1.0"},
+			{ID: "f2", Version: "2.0"},
+			{ID: "f3", Version: "3.0"},
+		},
+	})
+	f := newE2EFixtureFromSource(t, src)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+
+	return f
+}
+
+// newE2EFixtureWithDrillInModsAndSlowDeploy is newE2EFixtureWithDrillInMods
+// plus an install.after_each hook that sleeps - the same lever
+// newE2EFixtureWithSlowDeploy uses, applied to the drill-in catalog/fixture
+// pair, so a deploy started against it (startDeployFromAnotherClient) holds
+// core's one mutation slot long enough for a per-mod job started from the
+// slide-over to sit genuinely "running" (queued in beginOp) for a window a
+// browser can be driven through - M3's own row-level live-line scenario
+// needs exactly that, or it is a race against a toggle that finishes in
+// microseconds.
+func newE2EFixtureWithDrillInModsAndSlowDeploy(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInMods(t)
+
+	script := filepath.Join(t.TempDir(), "slow-after-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
+	f.Game.Hooks.Install.AfterEach = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
 	return f
 }

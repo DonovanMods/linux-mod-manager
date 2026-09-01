@@ -54,6 +54,37 @@ export function humanizePhase(phase) {
   return words ? words[0].toUpperCase() + words.slice(1) : "";
 }
 
+// mutationKindLabels names each registered job kind (planKinds/toggleKinds,
+// internal/serve/plankinds.go and kind_toggle.go) in the present participle
+// a live indicator reads naturally with ("Deploying…", not "Deploy…").
+// issue 330 carry-3: with several kinds able to run at once, the library's
+// live line used to read only the humanized PHASE - which is empty for a
+// kind that reports no progress events at all (enable/disable/uninstall
+// all run with no core.EventSink, kind_toggle.go's and kind_uninstall.go's
+// own doc comments) - so a running uninstall rendered nothing rather than
+// naming itself.
+const mutationKindLabels = {
+  deploy: "Deploying",
+  install: "Installing",
+  uninstall: "Uninstalling",
+  updates: "Updating",
+  rollback: "Rolling back",
+  switch: "Switching profile",
+  profile_apply: "Applying profile",
+  verify_fix: "Repairing",
+  enable: "Enabling",
+  disable: "Disabling",
+};
+
+/** mutationLabel names a running job's KIND in words, falling back to the
+ * kind's own wire name (underscores opened up) for one this vocabulary
+ * hasn't seen - the same "still renders, just not humanized" safety
+ * humanizePhase gives an unrecognized phase, so a kind added later needs no
+ * matching SPA release to show something sensible. */
+export function mutationLabel(kind) {
+  return mutationKindLabels[kind] ?? humanizePhase(kind);
+}
+
 /** formatBytes renders a byte count at the largest unit that keeps it
  * readable. Used for a download whose total size is unknown, where the byte
  * counter is the only thing that can move (activity.go's frame vocabulary:
