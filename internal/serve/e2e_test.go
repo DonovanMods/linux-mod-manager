@@ -1089,6 +1089,7 @@ func TestE2E_TrayShowsARunningJobWithProgress(t *testing.T) {
 	assert.Equal(t, "deploy", kind)
 	assert.Contains(t, detail, "of 2", "a running row carries its progress, not just its state")
 	assert.Contains(t, live, "of 2", "the library's live line reads the same frame")
+	assert.Contains(t, live, "Deploying", "M3: the header line must also NAME the kind (mutationLabel), not just carry the phase text")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -1531,8 +1532,15 @@ func TestE2E_SlideOver_LockAndPolicyEditsPersistThroughTheAPI(t *testing.T) {
 		// edit fired while the first is still in flight would land on a
 		// disabled control.
 		chromedp.WaitVisible(`.slide-over__settings input[type="checkbox"]:checked`, chromedp.ByQuery),
+		// M4: the checkbox's own `disabled` attribute (set while the write
+		// is in flight) blurs it the instant the browser applies it, and
+		// focus never returns on its own - waitForPanelFocus() is the
+		// reviewer's own activeElement probe, pinning that the panel
+		// reclaims focus once the write settles.
+		waitForPanelFocus(),
 		chromedp.SetValue(`.slide-over__settings select`, "pinned", chromedp.ByQuery),
 		chromedp.Poll(`document.querySelector(".slide-over__settings select").value === "pinned"`, nil),
+		waitForPanelFocus(),
 	)
 
 	result, err := f.Svc.ModDetail(t.Context(), f.Game, f.Profile, "fake", "a")
@@ -1619,6 +1627,14 @@ func TestE2E_SlideOver_UninstallThroughTheModal_RemovesFromDisk(t *testing.T) {
 	)
 	assert.Contains(t, planBody, "Alpha Mod")
 	assert.Contains(t, planBody, "alpha.esp", "UninstallPlanView names the files it would remove")
+	// I2: pins the registration itself, not just what its output happens to
+	// say - GenericPlanView's raw DocumentView would satisfy every
+	// assertion above too, which is exactly how this went unpinned.
+	var uninstallRendererPresent bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall"] .plan--uninstall') !== null`, &uninstallRendererPresent),
+	)
+	assert.True(t, uninstallRendererPresent, "UninstallPlanView, not GenericPlanView, must be what's registered for this kind")
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
@@ -1673,6 +1689,14 @@ func TestE2E_FullModPage_RollbackRoundTrip(t *testing.T) {
 	)
 	assert.Contains(t, planBody, "2.0")
 	assert.Contains(t, planBody, "1.0")
+	// I2: pins the registration itself, not just what its output happens to
+	// say - GenericPlanView's raw DocumentView would satisfy the two
+	// assertions above too, which is exactly how this went unpinned.
+	var rollbackRendererPresent bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="rollback"] .plan--rollback') !== null`, &rollbackRendererPresent),
+	)
+	assert.True(t, rollbackRendererPresent, "RollbackPlanView, not GenericPlanView, must be what's registered for this kind")
 
 	f.runInBrowser(t,
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
@@ -1808,5 +1832,153 @@ func TestE2E_UpdatesKind_RendersThroughGenericPlanView(t *testing.T) {
 	)
 	assert.Contains(t, body, "no dedicated preview yet", "GenericPlanView's own note")
 	assert.Contains(t, body, "Alpha Mod", "the raw plan document is still rendered, via DocumentView")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPage_VersionsTableUpdateButtonTargetsTheCheckedVersion is
+// C1: the versions table's own header comment (fullmodpage.js) promises an
+// Update action on exactly the row whose version matches the version
+// CheckGameUpdates actually found - before the fix every non-installed row
+// got an identically-wired button that planned whatever the check found
+// regardless of which row's button was clicked. Reproduced exactly the
+// review's own repro: 1.0 installed, 2.0/3.0 available, the check finds
+// 3.0 (fakeSource.CheckUpdates: catalog Mod.Version vs installed.Version).
+func TestE2E_FullModPage_VersionsTableUpdateButtonTargetsTheCheckedVersion(t *testing.T) {
+	f := newE2EFixtureWithThreeVersionsAndACheckedUpdate(t)
+
+	var buttonCount int
+	var rowsText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll(".mod-page__table tbody tr").length === 3`, nil),
+		chromedp.Evaluate(`document.querySelectorAll(".mod-page__table tbody button").length`, &buttonCount),
+		textContent(`.mod-page__table`, &rowsText),
+	)
+	assert.Contains(t, rowsText, "2.0")
+	assert.Contains(t, rowsText, "3.0")
+	assert.Equal(t, 1, buttonCount, "only the row matching the checked update target (3.0) may offer a button - 2.0 is informational, core cannot land there")
+
+	var buttonLabel string
+	f.runInBrowser(t, textContent(`.mod-page__table tbody button`, &buttonLabel))
+	assert.Equal(t, "Update to 3.0", buttonLabel)
+
+	var modalTitle, planBody string
+	f.runInBrowser(t,
+		chromedp.Click(`.mod-page__table tbody button`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		textContent(`.modal__title`, &modalTitle),
+		textContent(`.modal[data-kind="updates"]`, &planBody),
+	)
+	assert.Equal(t, "Update to 3.0", modalTitle)
+	assert.Contains(t, planBody, "3.0", "the plan must name the version it will actually apply")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPage_JobCompletionDoesNotDropToLoading is I1:
+// onJobDone (main.js) re-hydrates the current route after EVERY job
+// completion, not just a route change - for the full mod page that reaches
+// hydrateModPage, whose first write used to blank filesReport
+// unconditionally, tripping the page's own loading guard and unmounting
+// everything on screen (including the InlineJob readout the user is
+// looking at) for the duration of the re-fetch. A MutationObserver watches
+// for the EXACT markup the top-level guard renders (`.app-main` with a
+// DIRECT `.app-booting` child - VersionsTable's own "Loading versions…" is
+// nested inside `.mod-page__section` and never means the page unmounted),
+// since a poll taken after the fact could miss a flash this short.
+func TestE2E_FullModPage_JobCompletionDoesNotDropToLoading(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var flashed bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			window.__modPageFlashed = false;
+			window.__modPageObserver = new MutationObserver(() => {
+				if (document.querySelector(".app-main > .app-booting")) {
+					window.__modPageFlashed = true;
+				}
+			});
+			window.__modPageObserver.observe(document.getElementById("app"), { childList: true, subtree: true });
+		`, nil),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-page__section button"))
+				.find((b) => ["Enable", "Disable"].includes(b.textContent.trim()))
+				.click();
+		`, nil),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// onJobDone's own re-hydrate is a real (if fast) network round trip
+		// against the in-process test server - this waits it out; the
+		// MutationObserver above is what actually catches a flash.
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.Evaluate(`window.__modPageFlashed`, &flashed),
+	)
+	assert.False(t, flashed, "a job completion must not blank the full mod page back to its Loading state")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPage_RollbackHiddenWithNoPreviousVersion is M1: a mod that
+// has never been updated (no PreviousVersion) has nothing core can roll it
+// back to - the button used to render anyway, opening a plan that failed
+// with PlanRollback's own honest "no previous version available" error,
+// but only after presenting a fully clickable action as if it worked. The
+// page's PRIMARY read (ModFilesReport.Mod, a full domain.InstalledMod)
+// already carries previous_version when there is one - a plain fixture mod
+// with none must show no rollback control at all.
+func TestE2E_FullModPage_RollbackHiddenWithNoPreviousVersion(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var present bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll(".mod-page__table tbody tr").length > 0`, nil),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll("button"))
+				.some((b) => b.textContent.trim() === "Roll back to the previous version")
+		`, &present),
+	)
+	assert.False(t, present, "a mod with no PreviousVersion must not offer a rollback control at all")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine is M3's row-level
+// half: closing the panel while one of its own mutations is still running
+// must not lose the mutation's own live indication - it moves from the
+// panel's InlineJob onto the row it concerns
+// (modrows.js#runningMutations), which only "the slide-over covers the
+// library while open" (issue 330 carry-3's own note) leaves unreachable
+// any other way.
+func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
+	f := newE2EFixtureWithDrillInModsAndSlowDeploy(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		// Holds core's one mutation slot for the AfterEach sleep - the same
+		// lever newE2EFixtureWithQueuedToggle uses to make "running with no
+		// progress" a real, driveable window rather than a race against a
+		// toggle that finishes in microseconds.
+		chromedp.ActionFunc(func(context.Context) error {
+			startDeployFromAnotherClient(t, f)
+			return nil
+		}),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over__nav`, chromedp.ByQuery),
+		chromedp.Click(`.slide-over__actions button`, chromedp.ByQuery),
+		// The toggle is now blocked in beginOp behind the deploy - its
+		// origin is bound (the control has morphed) while it sits queued.
+		chromedp.WaitVisible(`.job-progress`, chromedp.ByQuery),
+		chromedp.Click(`.slide-over__close`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+	)
+
+	var rowLive string
+	f.runInBrowser(t,
+		chromedp.WaitVisible(`.mod-row__live`, chromedp.ByQuery),
+		textContent(`.mod-row__live`, &rowLive),
+	)
+	assert.Contains(t, rowLive, "Disabling", "the row must name the mutation, not just show a bare dot")
 	assert.Empty(t, f.BrowserErrors())
 }

@@ -876,3 +876,55 @@ func newE2EFixtureWithRollbackReadyMod(t *testing.T) e2eFixture {
 
 	return f
 }
+
+// newE2EFixtureWithThreeVersionsAndACheckedUpdate is C1's own repro: one
+// installed mod at 1.0 whose source reports three per-file versions
+// (1.0/2.0/3.0, AvailableModVersions) while the catalog's own Mod.Version is
+// 3.0 - the ONE version fakeSource.CheckUpdates (and so CheckGameUpdates)
+// will ever find, since it compares the catalog's Mod.Version against the
+// installed row, never a per-file version. The versions table therefore has
+// a row (2.0) core cannot actually reach at all, sitting between the
+// installed row and the one row core WOULD update to (3.0).
+func newE2EFixtureWithThreeVersionsAndACheckedUpdate(t *testing.T) e2eFixture {
+	t.Helper()
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "3.0"},
+		Files: []domain.DownloadableFile{
+			{ID: "f1", Version: "1.0"},
+			{ID: "f2", Version: "2.0"},
+			{ID: "f3", Version: "3.0"},
+		},
+	})
+	f := newE2EFixtureFromSource(t, src)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+
+	return f
+}
+
+// newE2EFixtureWithDrillInModsAndSlowDeploy is newE2EFixtureWithDrillInMods
+// plus an install.after_each hook that sleeps - the same lever
+// newE2EFixtureWithSlowDeploy uses, applied to the drill-in catalog/fixture
+// pair, so a deploy started against it (startDeployFromAnotherClient) holds
+// core's one mutation slot long enough for a per-mod job started from the
+// slide-over to sit genuinely "running" (queued in beginOp) for a window a
+// browser can be driven through - M3's own row-level live-line scenario
+// needs exactly that, or it is a race against a toggle that finishes in
+// microseconds.
+func newE2EFixtureWithDrillInModsAndSlowDeploy(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInMods(t)
+
+	script := filepath.Join(t.TempDir(), "slow-after-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\n"), 0o755))
+	f.Game.Hooks.Install.AfterEach = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	return f
+}

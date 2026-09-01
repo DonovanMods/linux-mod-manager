@@ -128,6 +128,18 @@ export function countUndeployed(mods) {
 // ":" (router.js's own ?mod= parsing tolerates a modID that itself contains
 // "/", so this must too - a greedy `.+` backtracks to let the trailing
 // `:action` anchor win).
+//
+// The versions table's own origin(`update:${v}`) (fullmodpage.js) is a
+// DIFFERENT shape - "action:version", not a bare action - so its trailing
+// ":${v}" is meant to fall outside `[a-z_]+` and never match here at all
+// (M3, harmless: that table's own controls are never looked up through
+// this map). It only holds for a NUMERIC v ("update:2.0" has a "." the
+// action group can't consume). A purely-lowercase v ("update:beta") WOULD
+// match: `[a-z_]+` claims "beta" as the action and modID's own greedy
+// `(.+)` absorbs "a:update" instead, keying a row that never exists. No
+// source in this fixture set reports a non-numeric version, so this stays
+// theoretical - flagged rather than fixed, since a real one would need a
+// less ambiguous origin shape for that table, not a smarter regex here.
 const modOriginPattern = /^mod:([^/]+)\/(.+):([a-z_]+)$/;
 
 /**

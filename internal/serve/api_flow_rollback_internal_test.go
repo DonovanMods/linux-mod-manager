@@ -6,6 +6,7 @@ package serve
 // every other flow test in this file's siblings follows.
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -100,4 +101,32 @@ func TestFlowRollback_NoPreviousVersion_PlanRefuses(t *testing.T) {
 	rec := doAPI(s, "POST", scoped("/api/v1/plans/rollback", game), rollbackPlanBody)
 	assert.NotEqual(t, 200, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "no previous version")
+}
+
+// TestFlowRollback_LockedMod_JobRefuses is I3: this project's own history
+// (the v1 final review caught rollback as a lock bypass) means the new
+// rollback plan kind carries its own regression pin at this layer rather
+// than relying on internal/core's alone. The behaviour is already correct
+// (applyRollback refuses on ref.Locked unconditionally,
+// internal/core/rollback.go), but nothing at the serve layer pinned it -
+// locks through the SAME POST .../lock route the slide-over and full mod
+// page drive, plans, and starts the job with the client's only escape
+// hatch ({"force":true}), proving the server genuinely refuses rather than
+// merely disabling the button.
+func TestFlowRollback_LockedMod_JobRefuses(t *testing.T) {
+	s, svc, game := rollbackReadyFlowFixtureServer(t)
+
+	lockRec := doAPI(s, "POST", scoped("/api/v1/mods/"+fixtureSourceID+"/m1/lock", game), "{}")
+	require.Equal(t, http.StatusOK, lockRec.Code, lockRec.Body.String())
+
+	id, _ := planFlow(t, s, game, "rollback", rollbackPlanBody)
+	j := startFlowJob(t, s, id, `{"force":true}`)
+
+	require.Equal(t, jobFailed, j.status().State, "a locked mod must refuse even with force")
+	require.NotNil(t, j.status().Error)
+	assert.Contains(t, j.status().Error.Error, "mod is locked")
+
+	mod, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, rollbackFixtureNewVersion, mod.Version, "a refused rollback must not move the version")
 }
