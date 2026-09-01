@@ -22,6 +22,7 @@ import { TopBar } from "./topbar.js";
 import { AttentionCards } from "./cards.js";
 import { Library } from "./library.js";
 import { ModPanel } from "./modpanel.js";
+import { OmnibarResults } from "./omnibarresults.js";
 
 /** goToChooser is the error state's escape hatch: a click, not just advice
  * to edit the URL bar, back to a context that does resolve. */
@@ -166,6 +167,12 @@ export function MissionControl({ state, onThemeChange, actions }) {
           error=${fetchErrors?.mods}
           onRetry=${actions.reloadMods}
         />
+        <${OmnibarResults}
+          omnibarSearch=${state.omnibarSearch}
+          query=${query}
+          state=${state}
+          actions=${actions}
+        />
       </main>
       ${
         route.mod &&
@@ -174,6 +181,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
           contextPath=${contextPath(route.game, route.profile)}
           rows=${rows}
           visible=${visible}
+          catalogRows=${state.omnibarSearch?.report?.mods ?? []}
           route=${route}
           state=${state}
           actions=${actions}

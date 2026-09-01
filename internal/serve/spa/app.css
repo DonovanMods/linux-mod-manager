@@ -990,6 +990,115 @@ select {
   color: var(--text-secondary);
 }
 
+.plan__heading--warn {
+  color: var(--warn);
+}
+
+/* install's version/file picker (issue 331, plan_install.js) - the one plan
+ * renderer with something to CHOOSE rather than only read. */
+.plan__section--picker {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.plan__control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Search: the omnibar's "search sources" affordance, the fan-out appended */
+/* below the library, and the dedicated search page's own result list     */
+/* (issue 331, docs/plans/2026-08-31-serve-spa-design.md §Search).        */
+/* ---------------------------------------------------------------------- */
+
+.omnibar__fanout {
+  white-space: nowrap;
+}
+
+.omnibar-results {
+  margin-top: var(--space-6);
+}
+
+.search-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.search-result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.search-result:last-child {
+  border-bottom: none;
+}
+
+.search-result--warning {
+  color: var(--warn);
+}
+
+.search-result__name {
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-result__name:hover {
+  text-decoration: underline;
+}
+
+.search-result__version {
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.search-result__source {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.search-result__author {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.search-page {
+  max-width: 60rem;
+}
+
+.search-page__toolbar {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.search-page__toolbar .section-header {
+  margin: 0;
+  flex: 1;
+}
+
+.search-page__pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
 /* The generic document renderer (a plan with no bespoke view yet, and a
  * failure envelope's typed details). */
 .doc__pairs {

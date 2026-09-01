@@ -47,6 +47,7 @@ export function ModPanel({
   contextPath,
   rows,
   visible,
+  catalogRows,
   route,
   state,
   actions,
@@ -55,6 +56,21 @@ export function ModPanel({
   const row = useMemo(
     () => (rows ?? []).find((r) => r.source_id === sourceID && r.id === modID),
     [rows, sourceID, modID],
+  );
+  // catalogMod (issue 331) is the omnibar fan-out's own answer for the SAME
+  // key, checked only when the mod isn't installed (row is undefined): a
+  // search result opens this same slide-over (design doc §Search: "slide-
+  // over on click for source results too"), just with nothing installed to
+  // show - name/version/author/summary plus Install, not the full
+  // lock/policy/findings/changelog surface an installed row gets.
+  const catalogMod = useMemo(
+    () =>
+      row
+        ? null
+        : (catalogRows ?? []).find(
+            (m) => m.source_id === sourceID && m.id === modID,
+          ),
+    [row, catalogRows, sourceID, modID],
   );
 
   const index = useMemo(
@@ -159,6 +175,89 @@ export function ModPanel({
       cancelled = true;
     };
   }, [sourceID, modID, route.game, route.profile]);
+
+  if (!row && catalogMod) {
+    const origin = `install:${catalogMod.source_id}/${catalogMod.id}`;
+    return html`
+      <div
+        class="slide-over"
+        role="dialog"
+        aria-label="${catalogMod.name} details"
+        onClick=${closeOnScrim}
+      >
+        <div class="slide-over__panel" ref=${panelRef} tabindex="-1">
+          <button
+            type="button"
+            class="slide-over__close"
+            onClick=${close}
+            aria-label="Close"
+          >
+            ×
+          </button>
+          <p class="section-header">${catalogMod.name}</p>
+          <p class="slide-over__meta">
+            ${catalogMod.author ? html`by ${catalogMod.author} · ` : ""}
+            <span class="mono">${catalogMod.version}</span> ·
+            <span class="badge">${catalogMod.source_id}</span>
+          </p>
+          ${
+            catalogMod.summary &&
+            html`<p class="slide-over__summary">${catalogMod.summary}</p>`
+          }
+          <div class="slide-over__actions">
+            ${
+              catalogMod.installed
+                ? html`<span class="badge badge--good">Installed</span>`
+                : html`<${InlineJob}
+                    origin=${origin}
+                    state=${state}
+                    actions=${actions}
+                  >
+                    <button
+                      type="button"
+                      class="button button--primary"
+                      onClick=${() =>
+                        actions.openPlan({
+                          kind: "install",
+                          origin,
+                          title: `Install ${catalogMod.name}`,
+                          confirmLabel: "Install",
+                          options: {
+                            source_id: catalogMod.source_id,
+                            mod_id: catalogMod.id,
+                          },
+                        })}
+                    >
+                      Install
+                    </button>
+                  <//>`
+            }
+          </div>
+          <section
+            class="slide-over__section"
+            data-changelog-status=${changelog.status}
+          >
+            <p class="plan__heading">Changelog</p>
+            ${
+              changelog.status === "loading"
+                ? html`<p class="empty-state__hint">Loading changelog…</p>`
+                : changelog.status === "error"
+                  ? html`<p class="empty-state__hint">
+                      Couldn't load the changelog: ${changelog.error}
+                    </p>`
+                  : changelog.text
+                    ? html`<p class="slide-over__changelog">
+                        ${changelogPreview(changelog.text)}
+                      </p>`
+                    : html`<p class="empty-state__hint">
+                        No changelog available.
+                      </p>`
+            }
+          </section>
+        </div>
+      </div>
+    `;
+  }
 
   if (!row) {
     return html`

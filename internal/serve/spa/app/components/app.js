@@ -13,16 +13,9 @@ import { currentTheme, cycleTheme } from "../theme.js";
 import { GameChooser } from "./gamechooser.js";
 import { MissionControl } from "./missioncontrol.js";
 import { FullModPage } from "./fullmodpage.js";
+import { SearchPage } from "./searchpage.js";
 import { ConfirmPlanModal } from "./confirmplan.js";
 import { Toasts } from "./toasts.js";
-
-/** ComingSoon answers the one route this unit's screens still don't render -
- * the dedicated search page (Unit 5) - so a direct link into it is a real
- * page rather than a blank one. */
-function ComingSoon({ route }) {
-  const label = route.view === "search" ? "Search" : "This page";
-  return html`<p class="app-booting">${label} lands in a later unit.</p>`;
-}
 
 /** The application root: reads the route and dispatches to its screen. The
  * chooser owns its own minimal header (no game/profile context exists yet);
@@ -65,6 +58,18 @@ export function App({ state, onThemeChange, actions }) {
     `;
   }
 
+  if (route.view === "search") {
+    return html`
+      <${SearchPage}
+        state=${state}
+        route=${route}
+        onThemeChange=${onThemeChange}
+        actions=${actions}
+      />
+      ${overlays}
+    `;
+  }
+
   return html`
     <header class="app-bar app-bar--minimal">
       <span class="app-bar__brand">LMM</span>
@@ -78,11 +83,7 @@ export function App({ state, onThemeChange, actions }) {
     </header>
     <main class="app-main">
       ${error && html`<p class="app-error">${error}</p>`}
-      ${
-        route.view === "chooser"
-          ? html`<${GameChooser} games=${state.games} />`
-          : html`<${ComingSoon} route=${route} />`
-      }
+      <${GameChooser} games=${state.games} />
     </main>
     ${overlays}
   `;

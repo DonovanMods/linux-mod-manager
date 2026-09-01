@@ -97,6 +97,28 @@ export const getModFiles = (sourceID, modID, context) =>
 export const getModVersions = (sourceID, modID, context) =>
   get(scoped(`${modPath(sourceID, modID)}/versions`, context));
 
+/**
+ * Runs a search against the game's configured sources: GET /api/v1/search,
+ * returning core.SearchReport verbatim. opts.page/pageSize are issue 331's
+ * pagination params (the omnibar's fan-out never sets either - a live
+ * filter has no "next page"; the dedicated search page does). Category/
+ * source filtering and sort are applied CLIENT-SIDE over one page's own
+ * Mods (searchresults.js) rather than round-tripping the server again -
+ * every hit already carries its own category/source_id/downloads.
+ */
+export function search(query, opts, context) {
+  const url = new URL(
+    scoped("/api/v1/search", context),
+    window.location.origin,
+  );
+  url.searchParams.set("q", query);
+  if (opts?.page != null) url.searchParams.set("page", String(opts.page));
+  if (opts?.pageSize != null)
+    url.searchParams.set("page_size", String(opts.pageSize));
+  if (opts?.limit != null) url.searchParams.set("limit", String(opts.limit));
+  return get(url.pathname + url.search);
+}
+
 /** Starts an enable/disable job directly - the one sanctioned plan-free
  * mutation path (kind_toggle.go); no plan step, so there is nothing to
  * confirm before it runs. Returns {job_id}, the same shape startJob does. */
