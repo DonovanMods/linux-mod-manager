@@ -286,14 +286,14 @@ function formatBytes(bytes) {
  * whether THIS source happens to implement per-file version reporting, so
  * it must not be gated behind that capability the way the table itself is.
  *
- * The rollback button is also not conditioned on a "has a previous
- * version" check: core.ModDetail's own InstalledDetail carries no
- * PreviousVersion field (unlike domain.InstalledMod, which this page does
- * not otherwise need to fetch), so there is no signal here to hide it on.
- * A mod with nothing to roll back to gets the confirm modal's own honest
- * I3 treatment instead - PlanRollback's "no previous version available"
- * error, rendered with no live Confirm button (confirmplan.js) - the same
- * pattern every other plan failure in this application already uses.
+ * The rollback button IS conditioned on "has a previous version" (M1):
+ * core.ModDetail's own InstalledDetail carries no PreviousVersion field,
+ * but the page's PRIMARY read does - ModFilesReport.Mod is a full
+ * domain.InstalledMod (internal/core/mod_files.go), whose wire form
+ * carries previous_version whenever ApplyRollback would actually have
+ * somewhere to land. A mod with nothing to roll back to shows no control
+ * at all, rather than a fully clickable button whose plan then fails with
+ * PlanRollback's own honest "no previous version available" error.
  */
 function VersionsSection({
   modPage,
@@ -305,6 +305,7 @@ function VersionsSection({
   modID,
 }) {
   const locked = Boolean(installed?.locked);
+  const hasPrevious = Boolean(modPage.filesReport.mod?.previous_version);
 
   return html`
     <section class="mod-page__section">
@@ -318,28 +319,31 @@ function VersionsSection({
         sourceID=${sourceID}
         modID=${modID}
       />
-      <${InlineJob}
-        origin=${origin("rollback")}
-        state=${state}
-        actions=${actions}
-      >
-        <button
-          type="button"
-          class="button"
-          disabled=${locked}
-          title=${locked ? "Unlock this mod to roll it back" : undefined}
-          onClick=${() =>
-            actions.openPlan({
-              kind: "rollback",
-              origin: origin("rollback"),
-              title: "Roll back to the previous version",
-              confirmLabel: "Roll back",
-              options: { source_id: sourceID, mod_id: modID },
-            })}
+      ${
+        hasPrevious &&
+        html`<${InlineJob}
+          origin=${origin("rollback")}
+          state=${state}
+          actions=${actions}
         >
-          Roll back to the previous version
-        </button>
-      <//>
+          <button
+            type="button"
+            class="button"
+            disabled=${locked}
+            title=${locked ? "Unlock this mod to roll it back" : undefined}
+            onClick=${() =>
+              actions.openPlan({
+                kind: "rollback",
+                origin: origin("rollback"),
+                title: "Roll back to the previous version",
+                confirmLabel: "Roll back",
+                options: { source_id: sourceID, mod_id: modID },
+              })}
+          >
+            Roll back to the previous version
+          </button>
+        <//>`
+      }
     </section>
   `;
 }
@@ -379,6 +383,15 @@ function VersionsTable({
   }
 
   const locked = Boolean(installed?.locked);
+  // The checked update target - the ONE version CheckGameUpdates actually
+  // found for this mod, if any (C1: core has no primitive for landing an
+  // installed mod on any OTHER non-installed version - see this file's own
+  // header comment). Joined from /api/v1/updates (main.js's hydrateModPage)
+  // rather than carried on ModDetail, which has no such field.
+  const updateTarget = (modPage.updates?.updates ?? []).find(
+    (u) =>
+      u.installed_mod?.source_id === sourceID && u.installed_mod?.id === modID,
+  )?.new_version;
 
   return html`
     <table class="mod-page__table">
@@ -392,6 +405,7 @@ function VersionsTable({
       <tbody>
         ${modPage.versions.versions.map((v) => {
           const isInstalled = v === installed?.version;
+          const isUpdateTarget = !isInstalled && v === updateTarget;
           // origin(`update:${v}`) rather than the plain origin("update")
           // every other control here uses: this table can show several
           // non-installed rows at once, each with its own button, and a
@@ -406,9 +420,8 @@ function VersionsTable({
               <td>${isInstalled ? "installed" : ""}</td>
               <td>
                 ${
-                  isInstalled
-                    ? ""
-                    : html`<${InlineJob}
+                  isUpdateTarget
+                    ? html`<${InlineJob}
                         origin=${origin(`update:${v}`)}
                         state=${state}
                         actions=${actions}
@@ -427,9 +440,10 @@ function VersionsTable({
                               options: { mods: [`${sourceID}:${modID}`] },
                             })}
                         >
-                          Update to this version
+                          Update to ${v}
                         </button>
                       <//>`
+                    : ""
                 }
               </td>
             </tr>

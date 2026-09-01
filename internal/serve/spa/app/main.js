@@ -188,16 +188,28 @@ async function hydrate(route) {
  * modPage.key ("source/id") fences a stale write the same way modalSeq
  * does: a slow fetch for a mod the user has already arrowed away from must
  * not land on the page after the faster one for the mod now on screen.
+ *
+ * A RE-hydrate (onJobDone runs this on every job completion, not just a
+ * route change) for the mod ALREADY on screen must not blank it - the same
+ * rule hydrate()'s own status guard applies to Mission Control (I1). Only a
+ * genuine navigation to a DIFFERENT mod resets to the loading state; the
+ * existing filesReport otherwise survives until the new fetch resolves one
+ * way or the other, which is what keeps this page's own InlineJob outcome
+ * on screen through the re-hydrate a job's own completion triggers.
  */
 async function hydrateModPage(route, context) {
   const key = `${route.sourceID}/${route.modID}`;
-  store.set({ modPage: { key, filesReport: null, error: null } });
+  const reHydrating = store.get().modPage?.key === key;
+  if (!reHydrating) {
+    store.set({ modPage: { key, filesReport: null, error: null } });
+  }
 
   let filesReport;
   try {
     filesReport = await getModFiles(route.sourceID, route.modID, context);
   } catch (err) {
     if (store.get().modPage?.key !== key) return;
+    if (reHydrating) return;
     const message = err instanceof ApiError ? err.message : String(err);
     store.set({ modPage: { key, filesReport: null, error: message } });
     return;
@@ -212,12 +224,19 @@ async function hydrateModPage(route, context) {
       detailError: null,
       versions: null,
       versionsError: null,
+      updates: null,
     },
   });
 
-  const [detail, versions] = await Promise.allSettled([
+  // updates joins the versions table against the ONE version
+  // CheckGameUpdates would actually land this mod on (C1) - fetched
+  // alongside detail/versions, both I3-style: a source that cannot answer
+  // degrades this page's EXTRAS, never blanks the identity/files a real
+  // install record already answered for.
+  const [detail, versions, updates] = await Promise.allSettled([
     getModDetail(route.sourceID, route.modID, context),
     getModVersions(route.sourceID, route.modID, context),
+    get(scoped("/api/v1/updates", context)),
   ]);
   if (store.get().modPage?.key !== key) return;
   store.set({
@@ -227,6 +246,7 @@ async function hydrateModPage(route, context) {
       detailError: failureMessage(detail),
       versions: settled(versions),
       versionsError: failureMessage(versions),
+      updates: settled(updates),
     },
   });
 }
