@@ -15,6 +15,8 @@ package serve_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +28,9 @@ import (
 	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // TestE2E_ShellLoadsAndStoreHydratesStatus is the whole boot path in one
@@ -422,45 +427,68 @@ func TestSortRows_RecentToleratesMissingInstalledAt(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_OpeningSlideOverDoesNotRehydrate guards the unit 2 gate's I2
-// finding: opening or closing the ?mod= slide-over annotation dispatched a
-// popstate, and main.js#go used to call hydrate() unconditionally on every
-// route change - re-running the full Mission Control hydrate (five fetches,
-// one of them the network-heavy full-tier verify) on a click that never
-// changes which game/profile is on screen. A fetch spy installed AFTER the
-// initial hydrate has settled proves neither the open nor the close costs a
-// single additional request.
-func TestE2E_OpeningSlideOverDoesNotRehydrate(t *testing.T) {
+// TestE2E_OpeningSlideOverDoesNotRehydrateMissionControl guards the unit 2
+// gate's I2 finding, updated for issue 330's real slide-over: opening or
+// closing the ?mod= annotation dispatches a popstate, and main.js#go used
+// to call hydrate() unconditionally on every route change - re-running the
+// full Mission Control hydrate (five fetches, one of them the network-heavy
+// full-tier verify) on a click that never changes which game/profile is on
+// screen. That guarantee still holds and is still asserted here - but the
+// slide-over itself now legitimately fetches ONE thing of its own (its
+// changelog preview, core.ModDetail - the one section that cannot render
+// from what Mission Control already loaded, modpanel.js's own header
+// comment), so this asserts on WHICH paths were fetched rather than a bare
+// count. A fetch spy installed AFTER the initial hydrate has settled proves
+// neither open nor close re-touches any of Mission Control's own four
+// documents or /api/v1/status.
+func TestE2E_OpeningSlideOverDoesNotRehydrateMissionControl(t *testing.T) {
 	f := newE2EFixtureWithLibrarySample(t)
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
 		chromedp.Evaluate(`
-			window.__fetchCount = 0;
+			window.__fetchedPaths = [];
 			const origFetch = window.fetch;
 			window.fetch = (...args) => {
-				window.__fetchCount++;
+				window.__fetchedPaths.push(new URL(args[0], window.location.origin).pathname);
 				return origFetch(...args);
 			};
 		`, nil),
 	)
 
-	var afterOpen int
+	var afterOpen []string
 	f.runInBrowser(t,
 		chromedp.Click(`.mod-row__name`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
-		chromedp.Evaluate(`window.__fetchCount`, &afterOpen),
+		// Waits for the changelog's own lazy fetch to settle (modpanel.js's
+		// data-changelog-status), rather than racing it: the slide-over's
+		// other content renders synchronously from data Mission Control
+		// already had, but the changelog section starts in "loading" and
+		// only reaches "ready" once its fetch has actually happened.
+		chromedp.WaitVisible(`.slide-over__section[data-changelog-status="ready"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`window.__fetchedPaths`, &afterOpen),
 	)
-	assert.Zero(t, afterOpen, "opening the slide-over must not trigger any /api/v1 fetch")
+	assert.NotContains(t, afterOpen, "/api/v1/mods", "opening the slide-over must not re-fetch the library")
+	assert.NotContains(t, afterOpen, "/api/v1/updates")
+	assert.NotContains(t, afterOpen, "/api/v1/health")
+	assert.NotContains(t, afterOpen, "/api/v1/conflicts")
+	assert.NotContains(t, afterOpen, "/api/v1/status")
+	found := false
+	for _, p := range afterOpen {
+		if strings.HasPrefix(p, "/api/v1/mods/fake/") {
+			found = true
+		}
+	}
+	assert.True(t, found, "opening the slide-over must fetch that one mod's own ModDetail for its changelog: %v", afterOpen)
 
-	var afterClose int
+	var afterClose []string
 	f.runInBrowser(t,
 		chromedp.Click(`.slide-over__close`, chromedp.ByQuery),
 		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
-		chromedp.Evaluate(`window.__fetchCount`, &afterClose),
+		chromedp.Evaluate(`window.__fetchedPaths`, &afterClose),
 	)
-	assert.Zero(t, afterClose, "closing the slide-over must not trigger any /api/v1 fetch either")
+	assert.Equal(t, afterOpen, afterClose, "closing the slide-over must not trigger any further /api/v1 fetch")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -726,6 +754,10 @@ func TestE2E_DeployOpensAConfirmModalRenderingThePlan(t *testing.T) {
 	assert.Contains(t, body, "Beta Mod")
 	assert.Contains(t, body, "alpha.pak", "the plan names the files it would link")
 	assert.Contains(t, body, f.Profile)
+	// #330 carry-4: planDeploy now stamps each row's Ref.Version, and
+	// plan_deploy.js renders it - seedDeployableMods installs both mods at
+	// "1.0".
+	assert.Contains(t, body, "1.0", "the plan names the version each mod would deploy")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -1333,5 +1365,448 @@ func TestE2E_UnseenFailureBadgeIgnoresAJobWithNoEndTime(t *testing.T) {
 
 	assert.Empty(t, badge,
 		"a failed job with no readable end time must not be invented as unseen")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// --- issue 330 (Unit 4): the slide-over, the full mod page, and the mod
+// mutations both surfaces wire. ---
+
+// clickModRow drives a browser click on the library row whose name is
+// exactly name, found by text rather than position - the fixtures below
+// seed more than one mod and ListMods' own ordering (a mod absent from the
+// profile's load order sorts first, core/queries.go) is not something a
+// scenario about WHICH mod opens should have to depend on.
+func clickModRow(name string) chromedp.Action {
+	return chromedp.Evaluate(fmt.Sprintf(`
+		Array.from(document.querySelectorAll(".mod-row__name"))
+			.find((b) => b.textContent.includes(%q))
+			.click();
+	`, name), nil)
+}
+
+// waitForPanelFocus waits until the slide-over panel is document.
+// activeElement - modpanel.js focuses it in a useEffect that can still be
+// pending on the very next chromedp action even after the panel itself is
+// visible, and a key event (Escape, an arrow) sent before that settles is
+// a real, observed race. Polls document.activeElement directly rather
+// than the CSS ":focus" pseudo-class: headless Chrome can leave a window
+// without OS-level focus, where ":focus" never matches even though
+// .focus() genuinely made the element document.activeElement (a known
+// headless quirk, confirmed against this exact page).
+func waitForPanelFocus() chromedp.Action {
+	return chromedp.Poll(
+		`document.activeElement && document.activeElement.classList.contains("slide-over__panel")`,
+		nil,
+	)
+}
+
+// TestE2E_SlideOver_OpensWithModInfoAndDeepLinkWorks proves the slide-over
+// renders the design's own inventory from a row click (name, author,
+// version, summary) and that a fresh navigation straight to the ?mod= URL
+// opens on the same panel - a bookmark or a shared link, not just a click
+// in an already-loaded page.
+func TestE2E_SlideOver_OpensWithModInfoAndDeepLinkWorks(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		textContent(`.slide-over__panel`, &body),
+	)
+	assert.Contains(t, body, "Alpha Mod")
+	assert.Contains(t, body, "Ada Lovelace")
+	assert.Contains(t, body, "1.0")
+	assert.Contains(t, body, "A tidy little mod.", "the summary prose renders from ModListing, zero-fetch")
+
+	var deepLinkBody string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		// NOT `.slide-over` alone: on a cold load ModPanel renders a
+		// `.slide-over` immediately either way, and until /api/v1/mods
+		// resolves `rows` is still empty, so the FIRST paint is the "not
+		// in this profile's library" not-found state - a real race,
+		// observed under `go test -race` (which slows the server enough
+		// to widen the window). `.slide-over__nav` only renders once a
+		// row was actually found.
+		chromedp.WaitVisible(`.slide-over__nav`, chromedp.ByQuery),
+		textContent(`.slide-over__panel`, &deepLinkBody),
+	)
+	assert.Contains(t, deepLinkBody, "Alpha Mod")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SlideOver_EscapeClosesAndOutsideClickCloses covers the design
+// doc's own words for how the slide-over closes: "Esc / outside click".
+func TestE2E_SlideOver_EscapeClosesAndOutsideClickCloses(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		waitForPanelFocus(),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+	)
+
+	f.runInBrowser(t,
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		// A fixed point near the top-left corner: the panel is right-
+		// aligned at ~40% width (app.css), so this is scrim regardless of
+		// viewport size - unlike clicking the ".slide-over" selector
+		// itself, whose node-center click could land inside the panel on
+		// a narrow viewport.
+		chromedp.MouseClickXY(20, 20),
+		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+	)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SlideOver_ArrowKeysStepThroughVisibleList proves </-> move
+// between mods in the library's own current (sorted) order, and that
+// arriving at either end disables the matching step button.
+func TestE2E_SlideOver_ArrowKeysStepThroughVisibleList(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var firstName string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		// A deterministic order to step through: sort by name.
+		chromedp.SetValue(`select[name="sort"]`, "name", chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		// See TestE2E_SlideOver_EscapeClosesAndOutsideClickCloses's own
+		// comment: a key event sent before the panel's focus effect has
+		// settled is a real race.
+		waitForPanelFocus(),
+		textContent(`.slide-over .section-header`, &firstName),
+	)
+	assert.Contains(t, firstName, "Alpha Mod")
+
+	var afterRight string
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.ArrowRight),
+		textContent(`.slide-over .section-header`, &afterRight),
+	)
+	assert.Contains(t, afterRight, "Beta Mod", "-> must step to the NEXT mod in the sorted list")
+
+	var afterLeft string
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.ArrowLeft),
+		textContent(`.slide-over .section-header`, &afterLeft),
+	)
+	assert.Contains(t, afterLeft, "Alpha Mod", "<- must step back to the PREVIOUS mod")
+
+	var prevDisabled bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector(".slide-over__step[aria-label='Previous mod']").disabled`, &prevDisabled),
+	)
+	assert.True(t, prevDisabled, "the first mod in the list has no previous mod to step to")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SlideOver_LockAndPolicyEditsPersistThroughTheAPI proves the
+// slide-over's editable lock + update-policy controls are real mutations,
+// not local-only UI state: reloading the page must still show them.
+func TestE2E_SlideOver_LockAndPolicyEditsPersistThroughTheAPI(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Click(`.slide-over__settings input[type="checkbox"]`, chromedp.ByQuery),
+		// The lock write is a plain POST with no job/morph to wait on -
+		// waiting for the checkbox to actually reflect the persisted value
+		// (rather than a fixed sleep) is what proves the round trip
+		// completed. It also re-enables the policy select below: both
+		// controls share one busy flag (ModSettingsControls), so a second
+		// edit fired while the first is still in flight would land on a
+		// disabled control.
+		chromedp.WaitVisible(`.slide-over__settings input[type="checkbox"]:checked`, chromedp.ByQuery),
+		chromedp.SetValue(`.slide-over__settings select`, "pinned", chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector(".slide-over__settings select").value === "pinned"`, nil),
+	)
+
+	result, err := f.Svc.ModDetail(t.Context(), f.Game, f.Profile, "fake", "a")
+	require.NoError(t, err)
+	require.NotNil(t, result.Installed)
+	assert.True(t, result.Installed.Locked, "the lock write must have reached the server")
+	assert.Equal(t, domain.UpdatePinned, result.Installed.UpdatePolicy)
+
+	// Reload proves it is not merely in-memory store state.
+	var checked bool
+	var policy string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		chromedp.WaitVisible(`.slide-over__settings`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.slide-over__settings input[type="checkbox"]:checked`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".slide-over__settings input[type='checkbox']").checked`, &checked),
+		chromedp.Value(`.slide-over__settings select`, &policy, chromedp.ByQuery),
+	)
+	assert.True(t, checked)
+	assert.Equal(t, "pinned", policy)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SlideOver_EnableDisableMorphsInline proves the slide-over's
+// Enable/Disable toggle morphs to "Done" inline once the job succeeds -
+// pinning the fix for a real bug this unit's own gate found: the control's
+// origin used to be keyed on the CURRENT direction ("enable" vs "disable"),
+// which flips the instant the toggle succeeds and the row re-hydrates, so
+// the very next render looked up a DIFFERENT origin than the one the job
+// was bound to and never found it - the button silently reverted to idle
+// instead of showing its own outcome. The origin is a stable "toggle" now.
+func TestE2E_SlideOver_EnableDisableMorphsInline(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over__nav`, chromedp.ByQuery),
+	)
+
+	var label string
+	f.runInBrowser(t, textContent(`.slide-over__actions button`, &label))
+	require.Equal(t, "Disable", label, "Alpha Mod is seeded enabled")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.slide-over__actions button`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SlideOver_UninstallThroughTheModal_RemovesFromDisk drives the
+// confirm-plan framework's second registered kind end to end: Uninstall
+// opens the modal rendering UninstallPlanView, Confirm runs it as a job,
+// and the mod is genuinely gone from the game directory afterward.
+func TestE2E_SlideOver_UninstallThroughTheModal_RemovesFromDisk(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+	_, err := f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	deployedPath := filepath.Join(f.Game.ModPath, "alpha.esp")
+	require.FileExists(t, deployedPath)
+
+	var planBody string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+	)
+	// The uninstall button carries no data-action of its own (only the
+	// modal's footer buttons do) - it is found by its own text instead.
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".slide-over__actions button"))
+				.find((b) => b.textContent.trim() === "Uninstall").click();
+		`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="uninstall"]`, &planBody),
+	)
+	assert.Contains(t, planBody, "Alpha Mod")
+	assert.Contains(t, planBody, "alpha.esp", "UninstallPlanView names the files it would remove")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+	)
+
+	// The end state is asserted on the SERVICE, polled, rather than on any
+	// one DOM state after Confirm: uninstalling removes the mod from
+	// /api/v1/mods, so main.js's post-job re-hydrate can beat (or lose to)
+	// the SSE job_done frame that would otherwise let the button morph to
+	// "Done" inline - whichever wins, the row (and the InlineJob wrapping
+	// the button that started it) is gone from the panel within the same
+	// instant the job itself finishes, leaving no single DOM state a test
+	// can reliably wait on. The mod being gone from the SERVICE - the fact
+	// that actually matters - is not racy.
+	require.Eventually(t, func() bool {
+		_, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+		return errors.Is(err, domain.ErrModNotFound)
+	}, 5*time.Second, 20*time.Millisecond, "the uninstall job must remove the mod")
+
+	assert.NoFileExists(t, deployedPath)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPage_RollbackRoundTrip drives the new "rollback" plan kind
+// end to end from the full mod page's versions section: the button opens
+// the confirm modal rendering RollbackPlanView, Confirm runs it as a job,
+// and the mod's version and deployed content both genuinely revert.
+func TestE2E_FullModPage_RollbackRoundTrip(t *testing.T) {
+	f := newE2EFixtureWithRollbackReadyMod(t)
+	deployedPath := filepath.Join(f.Game.ModPath, "alpha.esp")
+	before, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	require.Equal(t, "new content", string(before))
+
+	var planBody string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		// The rollback button lives in VersionsSection, which starts in a
+		// "Loading versions…" state (modPage.versions is fetched
+		// separately from the page's primary ModFiles read) - waiting for
+		// its own text is what waits out that fetch rather than clicking
+		// nothing.
+		chromedp.Poll(`Array.from(document.querySelectorAll("button")).some((b) => b.textContent.trim() === "Roll back to the previous version")`, nil),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll("button"))
+				.find((b) => b.textContent.trim() === "Roll back to the previous version").click();
+		`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="rollback"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="rollback"]`, &planBody),
+	)
+	assert.Contains(t, planBody, "2.0")
+	assert.Contains(t, planBody, "1.0")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", mod.Version)
+	after, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "old content", string(after))
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPage_RendersFilesAndVersions proves the files table (core.
+// ModFilesReport) and the versions table (the AvailableModVersions wrapper,
+// #97's first real consumer) both render real per-mod data.
+func TestE2E_FullModPage_RendersFilesAndVersions(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+	// ModFiles reports DEPLOYED paths (GetDeployedFilesForMod), not merely
+	// cached ones - a mod cached but never deployed shows an empty table.
+	_, err := f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	var filesBody, versionsBody string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page__table`, chromedp.ByQuery),
+		textContent(`.mod-page`, &filesBody),
+	)
+	assert.Contains(t, filesBody, "alpha.esp")
+	assert.Contains(t, filesBody, "Files")
+	assert.Contains(t, filesBody, "Versions")
+
+	f.runInBrowser(t, textContent(`.mod-page`, &versionsBody))
+	assert.Contains(t, versionsBody, "1.0")
+	assert.Contains(t, versionsBody, "2.0")
+	assert.Contains(t, versionsBody, "installed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPage_EnableDisableWorks proves issue 330's explicit task
+// brief - enable/disable are wired "from slide-over + full page" - holds
+// on the full page too: a direct deep link into it can toggle the mod
+// without a detour back through the slide-over.
+func TestE2E_FullModPage_EnableDisableWorks(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var label string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		textContent(`.mod-page__section button`, &label),
+	)
+	require.Equal(t, "Disable", label, "Alpha Mod is seeded enabled")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.mod-page__section button`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	mod, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+	require.NoError(t, err)
+	assert.False(t, mod.Enabled, "the disable job must have reached the server")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPage_JobHistoryListsFinishedJobs proves the job-history
+// section (jobhistory.js's own first consumer of api.js#jobStatus) lists a
+// finished rollback job for the mod it concerned.
+func TestE2E_FullModPage_JobHistoryListsFinishedJobs(t *testing.T) {
+	f := newE2EFixtureWithRollbackReadyMod(t)
+	post := postAsAnotherClient(t, f)
+	plan := post("/api/v1/plans/rollback?game="+f.Game.ID+"&profile="+f.Profile, `{"source_id":"fake","mod_id":"a"}`)
+	planID, ok := plan["plan_id"].(string)
+	require.True(t, ok, "%v", plan)
+	job := post("/api/v1/jobs", `{"plan_id":"`+planID+`"}`)
+	_, ok = job["job_id"].(string)
+	require.True(t, ok, "%v", job)
+
+	// The mod page is navigated to AFTER the job has been started but with
+	// no wait for it to finish - the job history section's own effect
+	// re-runs on every jobsIndex change (jobhistory.js), so a still-running
+	// job that finishes moments later, over the activity stream this page
+	// already subscribes to at boot, still lands here. `.mod-page li` only
+	// ever appears once the job history has a real entry (this fixture's
+	// mod carries no dependencies, the page's other <li>-bearing section),
+	// so waiting for it also waits out that race rather than sampling too
+	// early.
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mod-page li`, chromedp.ByQuery),
+		textContent(`.mod-page`, &body),
+	)
+	assert.Contains(t, body, "Rolling back", "the job history names the mutation kind")
+	assert.NotContains(t, body, "No update or rollback jobs recorded")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_UpdatesKind_RendersThroughGenericPlanView is issue 330 carry-2's
+// explicit scenario: "updates" is wired (the slide-over's Update action)
+// with no dedicated renderer of its own (planrenderers.js's own comment
+// explains why - the batch UI it deserves is Unit 6's), so this is the
+// first kind an E2E scenario proves reaches GenericPlanView rather than a
+// bespoke one.
+func TestE2E_UpdatesKind_RendersThroughGenericPlanView(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"}})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+	)
+	// The update button carries no data-action of its own (only the modal's
+	// footer buttons do) - it is found by its own text instead.
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".slide-over__actions button"))
+				.find((b) => b.textContent.trim() === "Update").click();
+		`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan--generic`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="updates"]`, &body),
+	)
+	assert.Contains(t, body, "no dedicated preview yet", "GenericPlanView's own note")
+	assert.Contains(t, body, "Alpha Mod", "the raw plan document is still rendered, via DocumentView")
 	assert.Empty(t, f.BrowserErrors())
 }
