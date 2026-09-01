@@ -13,29 +13,31 @@
 // Ruling 1's: Apply never calls back into the frontend, so a mid-flight
 // decision is a typed error the caller answers by RE-RUNNING Apply with the
 // matching option. In the tray that means re-planning the same mutation
-// with (say) install's AcceptConflicts set - which is the install kind's,
-// and lands with it in Unit 5.
-//
-// Until then a next step is rendered but disabled, carrying the name of the
-// unit that wires it. That is deliberate: the details are always shown in
-// full either way, and an affordance that says what it is waiting for is
-// more honest than a failure with nothing under it.
+// with install's AcceptConflicts set (main.js's retryInstallOverwrite,
+// issue 331) - the only kind whose ConflictError this failure implies a next
+// step for; every other failed kind still renders its details in full with
+// no action under them.
 
 /**
- * nextStepFor returns the affordance a failure envelope implies, or null
- * when its details name no action this UI knows.
+ * nextStepFor returns the affordance job's failure envelope implies, or
+ * null when its details name no action this UI knows.
  *
- * The returned `pending` is the reason the action is not live yet; a later
- * unit that wires the action returns the same shape with pending null and
- * an `options` payload for the re-run.
+ * `action` is the actions.js entry point that answers it - always fired
+ * with job.id, since that is the one thing every caller (the tray) already
+ * has in hand; the entry point itself resolves the rest (which origin, what
+ * to re-plan) from state main.js alone keeps.
  */
-export function nextStepFor(envelope) {
+export function nextStepFor(job) {
+  const envelope = job?.error ?? {};
   const conflicts = envelope?.details?.conflicts;
-  if (Array.isArray(conflicts) && conflicts.length > 0) {
+  if (
+    job?.kind === "install" &&
+    Array.isArray(conflicts) &&
+    conflicts.length > 0
+  ) {
     return {
       action: "overwrite",
       label: `Overwrite ${conflicts.length} file${conflicts.length === 1 ? "" : "s"}?`,
-      pending: "Wired when install lands in Unit 5",
     };
   }
   return null;
