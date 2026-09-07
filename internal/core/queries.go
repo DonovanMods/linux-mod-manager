@@ -448,19 +448,23 @@ type SearchHit struct {
 // errors); naming one restricts the search to it and makes any failure the
 // call's own error. Category/Tags are forwarded verbatim - support varies by
 // source, and a source that ignores them simply returns unfiltered results.
-// PageSize is what each source is asked for; 0 lets every source apply its
-// own default. Search always requests page 0 - callers that page use
-// searchAllSources/SearchMods directly. Limit caps how many hits
-// SearchReport.Mods returns (0 or negative applies no cap, matching a
-// non-positive PageSize's "no opinion" convention); SearchReport.TotalResults
-// always reports the untruncated count regardless (final review, Important
-// #3 / #302: the cap lives here, in core, so a caller applying its own
-// --limit and `lmm serve` rendering the same call see the identical
-// document, instead of a caller truncating core's result after the fact).
+// Page/PageSize are what each source is asked for (source.SearchQuery's own
+// fields, forwarded verbatim to searchAllSources/SearchMods); PageSize 0
+// lets every source apply its own default, and Page is meaningless without
+// it (searchAllSources' own per-source cursor). The CLI's single-page call
+// never sets either, matching their historical "always page 0" behavior.
+// Limit caps how many hits SearchReport.Mods returns (0 or negative applies
+// no cap, matching a non-positive PageSize's "no opinion" convention);
+// SearchReport.TotalResults always reports the untruncated count regardless
+// (final review, Important #3 / #302: the cap lives here, in core, so a
+// caller applying its own --limit and `lmm serve` rendering the same call
+// see the identical document, instead of a caller truncating core's result
+// after the fact).
 type SearchOptions struct {
 	SourceID string
 	Category string
 	Tags     []string
+	Page     int
 	PageSize int
 	Limit    int
 }
@@ -487,6 +491,17 @@ type SearchOptions struct {
 //     source or fails outright, so it has no such case to distinguish.
 //   - Warnings stay structured (SourceID + error), never pre-formatted
 //     lines: rendering them is the frontend's job.
+//   - Page/PageSize echo SearchOptions.Page/PageSize verbatim (#331: the
+//     search PAGE's own pagination controls need nothing else to confirm
+//     which page a report answers). Both omitzero: the CLI's own single-page
+//     call never sets either, so its report carries neither key at all
+//     rather than two zeroes that look like a real page 0 of size 0.
+//   - HasMore reports whether the sources queried might have a page N+1:
+//     AggregateSearchResult.Exhausted negated on the aggregate path,
+//     sourceHasMore's own per-source heuristic on a named --source. Always
+//     false when PageSize is unset - with no page size there is no paging
+//     concept to report on (sourceHasMore's own "pageSize <= 0 has no
+//     next-page concept at all", which Exhausted already folds in).
 type SearchReport struct {
 	GameID         string          `json:"game_id"`
 	Query          string          `json:"query"`
@@ -494,6 +509,9 @@ type SearchReport struct {
 	Warnings       []SourceWarning `json:"warnings"`
 	TotalResults   int             `json:"total_results"`
 	AttemptedCount int             `json:"attempted_count"`
+	Page           int             `json:"page,omitzero"`
+	PageSize       int             `json:"page_size,omitzero"`
+	HasMore        bool            `json:"has_more,omitzero"`
 }
 
 // Search runs query against the game's sources (or the one named in opts)
@@ -506,23 +524,28 @@ type SearchReport struct {
 // With no hits, the profile is never read: nothing can be marked installed,
 // and a search that found nothing must not fail on an unreadable profile.
 func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, query string, opts SearchOptions) (*SearchReport, error) {
-	report := &SearchReport{GameID: game.ID, Query: query, AttemptedCount: -1}
+	report := &SearchReport{
+		GameID: game.ID, Query: query, AttemptedCount: -1,
+		Page: opts.Page, PageSize: opts.PageSize,
+	}
 
 	var found []domain.Mod
 	if opts.SourceID == "" {
-		agg, err := s.searchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, 0, opts.PageSize)
+		agg, err := s.searchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize)
 		if err != nil {
 			return nil, err
 		}
 		found = agg.Mods
 		report.Warnings = agg.Warnings
 		report.AttemptedCount = agg.AttemptedCount
+		report.HasMore = !agg.Exhausted
 	} else {
-		result, err := s.SearchMods(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, 0, opts.PageSize)
+		result, err := s.SearchMods(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize)
 		if err != nil {
 			return nil, err
 		}
 		found = result.Mods
+		report.HasMore = sourceHasMore(result, opts.Page, opts.PageSize)
 	}
 
 	report.TotalResults = len(found)

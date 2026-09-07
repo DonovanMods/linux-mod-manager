@@ -122,16 +122,32 @@ export function TopBar({
         type="search"
         class="omnibar"
         name="q"
-        placeholder="Filter your library…"
+        placeholder="Filter your library, or press Enter to search sources…"
         value=${query}
         onInput=${(e) => onQueryChange(e.currentTarget.value)}
+        onKeyDown=${(e) => {
+          if (e.key === "Enter") actions.searchSources(query);
+        }}
       />
+      ${
+        query.trim() &&
+        html`
+          <button
+            type="button"
+            class="button button--small omnibar__fanout"
+            onClick=${() => actions.searchSources(query)}
+          >
+            search sources ↵
+          </button>
+        `
+      }
       <${ActivityBell}
         state=${state}
         deepLinkJob=${deepLinkJob}
         open=${openPicker === "activity"}
         onOpen=${() => setOpenPicker("activity")}
         onClose=${() => setOpenPicker(null)}
+        actions=${actions}
       />
       <button
         type="button"

@@ -124,6 +124,19 @@ type InstallPlan struct {
 	// positive TotalBytes/Size is treated as "known").
 	TotalDownloadBytes int64 `json:"total_download_bytes"`
 
+	// FilePool is the candidate list Files' single default pick was chosen
+	// FROM: GetModFiles' result after the same FilterAndSortFiles(showArchived)
+	// filter Files applies, but WITHOUT selectDeployFiles' further narrowing
+	// to one - a frontend's version/file picker (#331's "install candidate
+	// pool disclosure" carry-in) groups it by each entry's own Version to
+	// offer a version choice, and by file when more than one file shares a
+	// version. Computed from the exact same fetch Files was picked from, so
+	// there is no second network round trip and the two can never disagree
+	// about what the source actually offers. Length <= 1 means there is
+	// nothing to pick - Files already names the only candidate there is.
+	// Empty (like every other single-mod field) on a Batch plan.
+	FilePool []domain.DownloadableFile `json:"file_pool,omitempty"`
+
 	// ShowArchived is the showArchived value PlanInstall was called with -
 	// stored on the plan (Phase 5b Task 2) so ApplyInstall can resolve each
 	// Dependencies entry's own downloadable files (at apply time - see
@@ -337,6 +350,7 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no downloadable files available for this mod")
 	}
+	plan.FilePool = files
 	selected, _, err := selectDeployFiles(files, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to select files: %w", err)

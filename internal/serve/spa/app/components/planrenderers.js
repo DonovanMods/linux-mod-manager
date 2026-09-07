@@ -25,6 +25,7 @@ import { DocumentView } from "./documentview.js";
 import { DeployPlanView } from "./plan_deploy.js";
 import { UninstallPlanView } from "./plan_uninstall.js";
 import { RollbackPlanView } from "./plan_rollback.js";
+import { InstallPlanView } from "./plan_install.js";
 
 // issue 330 carry-2: "the first unit wiring a kind without a renderer adds
 // an explicit [E2E] scenario." "updates" is that kind here, deliberately:
@@ -38,6 +39,7 @@ const renderers = {
   deploy: DeployPlanView,
   uninstall: UninstallPlanView,
   rollback: RollbackPlanView,
+  install: InstallPlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */

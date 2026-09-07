@@ -21,6 +21,7 @@ import {
   getModDetail,
   getModFiles,
   getModVersions,
+  search as apiSearch,
   ApiError,
 } from "./api.js";
 import { resolveGamePath } from "./navigation.js";
@@ -141,6 +142,10 @@ async function hydrate(route) {
 
   if (route.view === "mod") {
     await hydrateModPage(route, context);
+    return;
+  }
+  if (route.view === "search") {
+    await runSearchPage({ query: route.q ?? "", page: 0 });
     return;
   }
   if (route.view !== "home") return;
@@ -278,6 +283,216 @@ async function reload(key, path) {
   }
 }
 
+// SEARCH_PAGE_SIZE is the dedicated search page's per-page request size -
+// the issue 331 pagination the omnibar's own live filter never needs.
+const SEARCH_PAGE_SIZE = 20;
+
+// OMNIBAR_FANOUT_LIMIT caps how many rows the omnibar's inline fan-out ever
+// appends (M8, unit 5 fix wave): the omnibar sets no page/pageSize at all
+// (a live filter has no "next page"), so with no limit either, a real
+// multi-source catalog (NexusMods' default page alone can run past a
+// hundred hits) could append an unbounded list below the library. The
+// dedicated search page is the escape hatch for "more than this" - it
+// pages, this never does.
+const OMNIBAR_FANOUT_LIMIT = 20;
+
+// omnibarSeq fences the omnibar's fan-out the same way modalSeq fences a
+// plan: a slow search whose query the user has since typed past (or
+// re-searched) must not land after a newer one.
+let omnibarSeq = 0;
+
+/**
+ * searchSources fans the omnibar's current text out to the game's sources
+ * (design doc §Search: "Enter fans out ... appends 'From sources (n)' rows
+ * in place"). A blank query clears whatever fan-out is showing rather than
+ * searching for nothing.
+ */
+async function searchSources(query) {
+  const q = (query ?? "").trim();
+  omnibarSeq += 1;
+  const seq = omnibarSeq;
+  if (!q) {
+    store.set({ omnibarSearch: null });
+    return;
+  }
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  store.set({
+    omnibarSearch: { status: "loading", query: q, report: null, error: null },
+  });
+  try {
+    const report = await apiSearch(q, { limit: OMNIBAR_FANOUT_LIMIT }, context);
+    if (omnibarSeq !== seq) return;
+    store.set({
+      omnibarSearch: { status: "ready", query: q, report, error: null },
+    });
+  } catch (err) {
+    if (omnibarSeq !== seq) return;
+    store.set({
+      omnibarSearch: {
+        status: "error",
+        query: q,
+        report: null,
+        error: err instanceof ApiError ? err.message : String(err),
+      },
+    });
+  }
+}
+
+// searchPageSeq fences the dedicated search page's own fetches the same way
+// omnibarSeq fences the inline fan-out - a slow page 1 must not land after a
+// faster page 2 (or after the user has navigated to a different query).
+let searchPageSeq = 0;
+
+/** emptyFacets is searchPage.facets' shape before anything has loaded - the
+ * category/source SELECTs render no options until a real report answers. */
+const emptyFacets = { categories: [], sourceIDs: [] };
+
+/** facetsFromReport derives the category/source filter SELECTs' own option
+ * lists from a report's hits. Called only for an UNFILTERED report (no
+ * category/source applied) - see runSearchPage's own comment on why. */
+function facetsFromReport(report) {
+  const hits = report.mods ?? [];
+  return {
+    categories: [
+      ...new Set(hits.map((h) => h.category).filter(Boolean)),
+    ].sort(),
+    sourceIDs: [...new Set(hits.map((h) => h.source_id))].sort(),
+  };
+}
+
+/**
+ * runSearchPage loads one page of the dedicated /search route (design doc
+ * §Search: "a dedicated search page ... pagination"). Called by hydrate()
+ * on route entry/deep link and by the page's own Next/Prev/category/source
+ * controls - none touch the URL's ?q=, which stays the query alone
+ * (pagination and filtering are client-driven state, not part of the
+ * route).
+ *
+ * category/source are Important 1b's own fix (unit 5 fix wave): moved
+ * SERVER-SIDE from a client-side slice of one page's own hits, so the count
+ * this renders answers the CATALOG for that filter, not one page of it. A
+ * filter change always re-queries PAGE 0 (searchPageSetCategory/
+ * searchPageSetSource below) - a filtered page 3 carried over from an
+ * unfiltered browse would be a page number with nothing behind it.
+ *
+ * facets (the category/source SELECTs' own option lists) are derived ONLY
+ * from an UNFILTERED report (no category/source of its own) and then
+ * RETAINED across a filter change for the same query, rather than
+ * recomputed from whatever the filtered report happens to hold: a report
+ * already narrowed to "Armor" carries no "Weapons" hits at all, so
+ * recomputing from it would make every OTHER category vanish from its own
+ * picker the moment one was chosen. Reset only on a genuinely new query.
+ */
+async function runSearchPage({ query, page, category = "", source = "" }) {
+  const q = (query ?? "").trim();
+  searchPageSeq += 1;
+  const seq = searchPageSeq;
+  if (!q) {
+    store.set({ searchPage: null });
+    return;
+  }
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  const previous = store.get().searchPage;
+  const facets =
+    previous?.query === q && previous.status !== "error"
+      ? previous.facets
+      : emptyFacets;
+
+  store.set({
+    searchPage: {
+      status: "loading",
+      query: q,
+      page,
+      pageSize: SEARCH_PAGE_SIZE,
+      category,
+      source,
+      report: null,
+      error: null,
+      facets,
+    },
+  });
+  try {
+    const report = await apiSearch(
+      q,
+      { page, pageSize: SEARCH_PAGE_SIZE, category, source },
+      context,
+    );
+    if (searchPageSeq !== seq) return;
+    const nextFacets = !category && !source ? facetsFromReport(report) : facets;
+    store.set({
+      searchPage: {
+        status: "ready",
+        query: q,
+        page,
+        pageSize: SEARCH_PAGE_SIZE,
+        category,
+        source,
+        report,
+        error: null,
+        facets: nextFacets,
+      },
+    });
+  } catch (err) {
+    if (searchPageSeq !== seq) return;
+    store.set({
+      searchPage: {
+        status: "error",
+        query: q,
+        page,
+        pageSize: SEARCH_PAGE_SIZE,
+        category,
+        source,
+        report: null,
+        error: err instanceof ApiError ? err.message : String(err),
+        facets,
+      },
+    });
+  }
+}
+
+/** searchPageGoTo re-runs the search page at a different page, keeping the
+ * current query/category/source - the Next/Prev controls' own action. */
+function searchPageGoTo(page) {
+  const current = store.get().searchPage;
+  if (!current) return;
+  runSearchPage({
+    query: current.query,
+    page,
+    category: current.category,
+    source: current.source,
+  });
+}
+
+/** searchPageSetCategory/searchPageSetSource apply a new filter at page 0 -
+ * the category/source SELECTs' own onChange (Important 1b). */
+function searchPageSetCategory(category) {
+  const current = store.get().searchPage;
+  if (!current) return;
+  runSearchPage({
+    query: current.query,
+    page: 0,
+    category,
+    source: current.source,
+  });
+}
+
+function searchPageSetSource(source) {
+  const current = store.get().searchPage;
+  if (!current) return;
+  runSearchPage({
+    query: current.query,
+    page: 0,
+    category: current.category,
+    source,
+  });
+}
+
 // modalSeq fences a slow plan against a modal that is no longer open. Each
 // openPlan takes the next number; the response only writes itself into the
 // store if that number is still current, so a plan that arrives after the
@@ -301,7 +516,12 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  const base = { kind, origin, title, confirmLabel, seq };
+  // options (the PLAN-time request) is retained on the modal, not just sent:
+  // install's conflict round trip (retryInstallOverwrite) needs it to
+  // re-plan the identical mutation once a job it started fails with
+  // *core.ConflictError, and nothing else remembers what was asked for
+  // after planMutation's request has already gone out.
+  const base = { kind, origin, title, confirmLabel, seq, options };
 
   store.set({ modal: { ...base, status: "planning" } });
   try {
@@ -321,15 +541,67 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
   }
 }
 
-// bindingJob is the in-flight POST /api/v1/jobs, if any. It resolves only
-// AFTER the origin binding has been written to the store, which is what
+// bindingJobs is every in-flight POST /api/v1/jobs (or plan-free toggle
+// start), keyed by the origin that started it. Each entry resolves only
+// AFTER that origin's binding has been written to the store, which is what
 // onJobDone waits on: a job can finish before the response that names it
 // has even been read (a deploy whose before_all hook exits immediately does
 // exactly that), and a completion looked up before its binding lands finds
 // no origin and toasts a control that is right there on screen. Observed,
-// not hypothetical - it is what the failing-deploy scenario now asserts
-// against.
-let bindingJob = null;
+// not hypothetical - it is what the failing-deploy scenario asserts against.
+//
+// A Map keyed by origin rather than one shared slot (issue 331 carry-in, Unit 3
+// review M6): Unit 3 could only ever have one control confirming at a time
+// (one modal open), but Unit 5's inline per-row install means two DIFFERENT
+// origins ("install:fake/1", "install:fake/2") can each start a job while
+// the other's own start is still in flight - a single module-level slot
+// would let the second start silently clobber the first's entry, so
+// onJobDone's wait for THAT job's own binding would resolve immediately
+// instead of actually waiting, exactly the race the single slot existed to
+// close. Keying by origin also means two starts from the SAME origin can
+// never overlap in the first place - InlineJob unmounts the button the
+// instant state.origins[origin] is set, so there is nothing left on screen
+// to click a second time.
+const bindingJobs = new Map();
+
+// Exposed for the E2E overlap test's own introspection only (Important 2,
+// unit 5 fix wave review): TestE2E_OverlappingInstallAndToggleBothTrack
+// Correctly's END-STATE assertions (which mod ends up enabled, which job's
+// failure lands on which row) pass identically whether bindingJobs is this
+// Map or Unit 3's single module-level slot - a scenario timed so the
+// install's start is slow and the toggle's is fast never puts a check in
+// the window where the two implementations actually disagree (the review's
+// own finding, reverting this Map and re-running got 6/6 green). The one
+// thing that DOES discriminate them is how many starts are tracked at once
+// while both are genuinely still in flight, which no rendered DOM state
+// exposes on its own.
+if (typeof window !== "undefined") {
+  window.__lmmBindingJobsSize = () => bindingJobs.size;
+}
+
+/** startBinding runs work (an async fn returning nothing) as origin's
+ * binding: recorded in bindingJobs until it settles, keyed so a concurrent
+ * binding for a DIFFERENT origin is never disturbed. Shared by confirmPlan
+ * and startToggle - the two entry points that write into state.origins. */
+async function startBinding(origin, work) {
+  const promise = work();
+  bindingJobs.set(origin, promise);
+  try {
+    await promise;
+  } finally {
+    if (bindingJobs.get(origin) === promise) bindingJobs.delete(origin);
+  }
+}
+
+/** awaitBindings snapshots every currently in-flight binding and waits for
+ * all of them - onJobDone's own use, since a job that just finished could be
+ * the one behind ANY of them, not necessarily the most recent. Snapshotting
+ * before awaiting (rather than awaiting bindingJobs.values() live) matches
+ * the original single-bindingJob fencing: a binding that STARTS after this
+ * call began is a different job's concern, not this completion's. */
+function awaitBindings() {
+  return Promise.allSettled([...bindingJobs.values()]);
+}
 
 /** Redeems the open modal's plan handle, starting its Apply as a job
  * (POST /api/v1/jobs) and binding it to the control that opened the modal.
@@ -343,10 +615,16 @@ async function confirmPlan() {
   if (!modal || modal.status !== "ready") return;
 
   store.set({ modal: { ...modal, status: "starting" } });
-  bindingJob = (async () => {
+  await startBinding(modal.origin, async () => {
     try {
-      const { job_id: jobID } = await startJob(modal.planID);
+      const { job_id: jobID } = await startJob(
+        modal.planID,
+        modal.applyOptions,
+      );
       if (store.get().modal?.seq !== modal.seq) return;
+      if (modal.kind === "install") {
+        rememberInstallRequest(modal.origin, modal.options, modal.applyOptions);
+      }
       store.set({
         modal: null,
         origins: { ...store.get().origins, [modal.origin]: jobID },
@@ -355,13 +633,92 @@ async function confirmPlan() {
       if (store.get().modal?.seq !== modal.seq) return;
       store.set({ modal: { ...modal, status: "error", ...describe(err) } });
     }
-  })();
+  });
+}
 
-  try {
-    await bindingJob;
-  } finally {
-    bindingJob = null;
+// installRequests remembers the exact (plan-time, apply-time) request pair
+// behind each install origin that has successfully STARTED a job - the
+// conflict round trip's (failures.js/tray.js) only source for what to
+// re-plan once that job fails with *core.ConflictError: the failed job's own
+// summary carries the typed envelope, never the request that produced it
+// (activity.go's jobSummary has no such field - it is the tray's job to
+// offer the next step, not the registry's to remember why). Overwritten on
+// every (re-)start of the same origin, so a retry-after-retry always answers
+// from the MOST RECENT attempt.
+const installRequests = new Map();
+
+function rememberInstallRequest(origin, planOptions, applyOptions) {
+  installRequests.set(origin, { planOptions, applyOptions });
+}
+
+/**
+ * canRetryInstallOverwrite reports whether retryInstallOverwrite has
+ * anything to re-plan for jobID (I3, unit 5 fix wave): installRequests is a
+ * page-lifetime Map, so a failed install's tray entry - itself server-side
+ * and reload-durable via GET /api/v1/jobs - can outlive the ONLY record of
+ * what to re-plan. The failed job's own summary carries no source_id/mod_id/
+ * options of its own to rebuild it from (activity.go's jobSummary; a failed
+ * job's Result is never populated either) - only its typed conflict details,
+ * which name the file's CURRENT owner, not the mod that failed to install -
+ * so after a reload this is honestly false rather than a guess. The tray
+ * button reads this to disable itself instead of silently doing nothing.
+ */
+function canRetryInstallOverwrite(jobID) {
+  const origin = originOf(jobID);
+  return Boolean(origin && installRequests.get(origin));
+}
+
+/**
+ * retryInstallOverwrite answers a failed install's conflict the way v2 Phase
+ * 3 Ruling 1 answers every mid-flight decision: not a callback into Apply,
+ * but a fresh Plan/Apply re-run with the matching option set - here,
+ * accept_conflicts. The re-plan's own Apply finds the cache the refused
+ * attempt already warmed (kind_install.go's own doc comment), so it
+ * downloads nothing the second time.
+ *
+ * Routed through startBinding under the SAME origin the original install
+ * used: the map-keyed bindingJobs fix (issue 331 carry-in) is what makes this
+ * safe to fire while a DIFFERENT row's install is independently in flight -
+ * two origins' bindings never see each other.
+ */
+async function retryInstallOverwrite(jobID) {
+  const origin = originOf(jobID);
+  const req = origin && installRequests.get(origin);
+  if (!req) {
+    // Reachable only if something fires this despite canRetryInstallOverwrite
+    // saying no (the tray button is disabled in that case) - a toast rather
+    // than the silent no-op this used to be (I3): a failure whose next step
+    // does nothing at all is worse than one with no next step offered.
+    pushToast({
+      tone: "failure",
+      title: "Can't retry",
+      detail:
+        "This install must be retried from a fresh attempt - the page was reloaded since it started.",
+    });
+    return;
   }
+
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await startBinding(origin, async () => {
+    try {
+      const response = await planMutation("install", req.planOptions, context);
+      const { job_id: newJobID } = await startJob(response.plan_id, {
+        ...req.applyOptions,
+        accept_conflicts: true,
+      });
+      rememberInstallRequest(origin, req.planOptions, req.applyOptions);
+      store.set({ origins: { ...store.get().origins, [origin]: newJobID } });
+    } catch (err) {
+      pushToast({
+        tone: "failure",
+        title: "Overwrite failed",
+        detail: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  });
 }
 
 /**
@@ -382,7 +739,7 @@ async function startToggle({ action, sourceID, modID, origin }) {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
-  bindingJob = (async () => {
+  await startBinding(origin, async () => {
     try {
       const { job_id: jobID } = await startToggleJob(
         action,
@@ -398,12 +755,7 @@ async function startToggle({ action, sourceID, modID, origin }) {
         detail: err instanceof ApiError ? err.message : String(err),
       });
     }
-  })();
-  try {
-    await bindingJob;
-  } finally {
-    bindingJob = null;
-  }
+  });
 }
 
 /**
@@ -496,6 +848,24 @@ function describe(err) {
   return { error: String(err), details: null };
 }
 
+/**
+ * Merges patch into the open modal's apply-time options - the "options"
+ * member confirmPlan sends POST /api/v1/jobs (issue 331: install's version/file
+ * picker is the first renderer that needs to change what Confirm actually
+ * submits). A no-op when no modal is open, which happens only if a renderer
+ * fires this after the user has already cancelled - nothing left to patch.
+ */
+function setPlanOptions(patch) {
+  const modal = store.get().modal;
+  if (!modal) return;
+  store.set({
+    modal: {
+      ...modal,
+      applyOptions: { ...(modal.applyOptions ?? {}), ...patch },
+    },
+  });
+}
+
 /** Detaches a finished job from its control, returning it to its idle
  * state. Only ever called for a job that has ENDED - a running job's
  * progress is not dismissible, because hiding a mutation in flight is how a
@@ -524,6 +894,28 @@ function dismissToast(id) {
 }
 
 /**
+ * refreshSearchResults re-runs whatever search state is currently cached
+ * (M5, unit 5 fix wave): a hit's own `installed` flag is only as fresh as
+ * the report that produced it, and this application's search reports are
+ * NOT part of hydrate()'s own route-scoped refresh (they can be showing on
+ * the home route while hydrate() only re-fetches Mission Control's four
+ * documents) - without this, a row that had just been installed through it
+ * kept offering "Install" until the next explicit search. Both slices are
+ * independent, so either, both, or neither may be populated at call time.
+ */
+function refreshSearchResults() {
+  const { omnibarSearch, searchPage } = store.get();
+  if (omnibarSearch) searchSources(omnibarSearch.query);
+  if (searchPage)
+    runSearchPage({
+      query: searchPage.query,
+      page: searchPage.page,
+      category: searchPage.category,
+      source: searchPage.source,
+    });
+}
+
+/**
  * Handles a job reaching a terminal state, wherever it was started from.
  *
  * Two things follow from any completed mutation. The documents on screen
@@ -535,12 +927,12 @@ function dismissToast(id) {
  */
 async function onJobDone(summary) {
   hydrate(store.get().route);
+  refreshSearchResults();
 
-  // Wait for an in-flight start to bind its origin before deciding: see
-  // bindingJob. Captured first, because confirmPlan clears it as soon as it
-  // settles.
-  const pending = bindingJob;
-  if (pending) await pending;
+  // Wait for every currently in-flight start to bind its origin before
+  // deciding: see bindingJobs. The job that just finished could be behind
+  // ANY of them, not just the most recently started one.
+  await awaitBindings();
 
   const origin = originOf(summary.id);
   if (origin && isOriginMounted(origin)) return;
@@ -589,24 +981,36 @@ const actions = {
     store.set({ modal: null });
   },
   confirmPlan,
+  setPlanOptions,
+  searchSources,
+  searchPageGoTo,
+  searchPageSetCategory,
+  searchPageSetSource,
   startToggle,
   setModLock,
   clearModLock,
   setModUpdatePolicy,
   clearOrigin,
   dismissToast,
+  retryInstallOverwrite,
+  canRetryInstallOverwrite,
 };
 
 // contextKey identifies the data a route needs, not the route itself: the
-// ?mod= slide-over annotation (route.mod) and a search's ?q= (route.q) are
-// both carried on the route object but never change what Mission Control
-// has to fetch (router.js's own doc comment: "?mod= annotates the current
-// URL" instead of routing). sourceID/modID are the one exception - issue
-// 330: the FULL MOD PAGE's view IS "which mod", so a direct transition
-// between two mods' full pages (a dependency cross-link, say) must
-// re-hydrate even though view/game/profile all stayed the same.
+// ?mod= slide-over annotation (route.mod) is carried on the route object but
+// never changes what Mission Control has to fetch (router.js's own doc
+// comment: "?mod= annotates the current URL" instead of routing).
+// sourceID/modID are one exception - issue 330: the FULL MOD PAGE's view IS
+// "which mod", so a direct transition between two mods' full pages (a
+// dependency cross-link, say) must re-hydrate even though view/game/profile
+// all stayed the same. A search's own ?q= (route.q) is the other (issue 331): the
+// SEARCH PAGE's view IS "which query", so navigating from one deep link to
+// another (`/search?q=a` -> `/search?q=b`) must re-run the search even
+// though view/game/profile stayed the same too - every other route ignores
+// q entirely, matching router.js's own doc comment for it.
 function contextKey(route) {
-  return `${route.view}:${route.game}:${route.profile}:${route.sourceID ?? ""}:${route.modID ?? ""}`;
+  const q = route.view === "search" ? `:${route.q ?? ""}` : "";
+  return `${route.view}:${route.game}:${route.profile}:${route.sourceID ?? ""}:${route.modID ?? ""}${q}`;
 }
 
 // lastHydratedContext starts undefined, which never equals a real
@@ -614,7 +1018,30 @@ function contextKey(route) {
 // chooser (whose route is otherwise identical to store.js's initial state).
 let lastHydratedContext;
 
+// lastGameProfile is contextKey's own game/profile half, tracked separately
+// (I5, unit 5 fix wave): omnibarSearch/searchPage/installRequests answer a
+// SPECIFIC game+profile, not a route, so they must clear on a switch between
+// two HOME routes just as much as on a switch away from one - a case
+// contextKey's own comparison (which also folds in view/mod/query, and so
+// changes on plenty of same-context navigations that must NOT clear these)
+// cannot answer by itself. undefined never equals a real "game:profile"
+// pair, so the very first go() call never clears anything there is nothing
+// in yet.
+let lastGameProfile;
+
 function go(route) {
+  const gameProfile = `${route.game}:${route.profile}`;
+  if (lastGameProfile !== undefined && gameProfile !== lastGameProfile) {
+    // Neither slice is scoped to game/profile on the wire - they are
+    // client-only caches of a report that answered a DIFFERENT context's
+    // question (which sources, which installed set). Left alone, a stale
+    // omnibarSearch/searchPage kept rendering the previous profile's "From
+    // sources" rows, with a live Install button, over the new one.
+    store.set({ omnibarSearch: null, searchPage: null });
+    installRequests.clear();
+  }
+  lastGameProfile = gameProfile;
+
   store.set({ route });
   const key = contextKey(route);
   if (key !== lastHydratedContext) {

@@ -43,7 +43,14 @@ const maxStreamedEvents = 200;
  * opened the tray since - because a finished-but-failed deploy that leaves
  * a silent bell is exactly the outcome a bell exists to prevent.
  */
-export function ActivityBell({ state, deepLinkJob, open, onOpen, onClose }) {
+export function ActivityBell({
+  state,
+  deepLinkJob,
+  open,
+  onOpen,
+  onClose,
+  actions,
+}) {
   const jobs = state.jobsIndex ?? [];
   const [acknowledgedAt, setAcknowledgedAt] = useState(0);
 
@@ -89,6 +96,7 @@ export function ActivityBell({ state, deepLinkJob, open, onOpen, onClose }) {
           state=${state}
           jobs=${jobs}
           deepLinkJob=${deepLinkJob}
+          actions=${actions}
         />`
       }
     </div>
@@ -96,7 +104,7 @@ export function ActivityBell({ state, deepLinkJob, open, onOpen, onClose }) {
 }
 
 /** ActivityTray renders the retained jobs, grouped by what they need. */
-function ActivityTray({ state, jobs, deepLinkJob }) {
+function ActivityTray({ state, jobs, deepLinkJob, actions }) {
   // The expanded entry starts at whatever ?job= named (the deleted
   // /jobs/{id} page's 301 target, spa.go), and follows it if the URL
   // changes underneath an open tray.
@@ -131,6 +139,7 @@ function ActivityTray({ state, jobs, deepLinkJob }) {
                 frame=${state.jobProgress?.[job.id]}
                 expanded=${expanded === job.id}
                 onToggle=${() => setExpanded(expanded === job.id ? "" : job.id)}
+                actions=${actions}
               />
             `,
           )}
@@ -167,7 +176,7 @@ function ActivityTray({ state, jobs, deepLinkJob }) {
 
 /** TrayRow is one job: what it is, how it is going, and - once expanded -
  * everything it has said. */
-function TrayRow({ job, frame, expanded, onToggle }) {
+function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const label = jobStateLabel(job, frame);
   const fraction = progressFraction(frame);
 
@@ -207,9 +216,56 @@ function TrayRow({ job, frame, expanded, onToggle }) {
           </div>
         `
       }
-      ${job.state === "failed" && html`<${FailureNextStep} job=${job} />`}
+      ${job.state === "failed" && html`<${FailureNextStep} job=${job} actions=${actions} />`}
       ${expanded && html`<${JobEventStream} jobID=${job.id} />`}
     </li>
+  `;
+}
+
+/**
+ * OverwriteButton renders nextStepFor's affordance alone (I3/I4, unit 5 fix
+ * wave) - the busy-toggling button without the failure message/details
+ * FailureNextStep always pairs it with in the tray. jobprogress.js's own
+ * inline chip (I4: the search page has no tray to fall back on) needs just
+ * the button beside the row's own "Failed: ..." text, which would otherwise
+ * say the same thing twice.
+ *
+ * Disabled, with a title explaining why, when actions.canRetryInstallOverwrite
+ * says the request behind this job can no longer be reconstructed (I3: a
+ * page reload outlives installRequests, main.js's only record of what to
+ * re-plan) - never a button that silently does nothing when clicked.
+ */
+export function OverwriteButton({ job, actions }) {
+  const step = nextStepFor(job);
+  const [busy, setBusy] = useState(false);
+  if (!step) return null;
+
+  const retryable = actions.canRetryInstallOverwrite(job.id);
+
+  async function fire() {
+    setBusy(true);
+    try {
+      await actions.retryInstallOverwrite(job.id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <button
+      type="button"
+      class="button button--small"
+      data-action=${step.action}
+      disabled=${busy || !retryable}
+      title=${
+        retryable
+          ? undefined
+          : "This retry must be started from a fresh install attempt"
+      }
+      onClick=${fire}
+    >
+      ${busy ? "Overwriting…" : step.label}
+    </button>
   `;
 }
 
@@ -223,27 +279,13 @@ function TrayRow({ job, frame, expanded, onToggle }) {
  * in full whether or not they imply an action, because a failure whose
  * reason is hidden is the one thing worse than a failure with no next step.
  */
-function FailureNextStep({ job }) {
+function FailureNextStep({ job, actions }) {
   const envelope = job.error ?? {};
-  const step = nextStepFor(envelope);
 
   return html`
     <div class="tray__failure">
       <p class="tray__failure-message">${envelope.error ?? "failed"}</p>
-      ${
-        step &&
-        html`
-          <button
-            type="button"
-            class="button button--small"
-            data-action=${step.action}
-            disabled=${Boolean(step.pending)}
-            title=${step.pending ?? undefined}
-          >
-            ${step.label}
-          </button>
-        `
-      }
+      <${OverwriteButton} job=${job} actions=${actions} />
       ${envelope.details && html`<${DocumentView} value=${envelope.details} />`}
     </div>
   `;

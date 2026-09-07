@@ -23,6 +23,8 @@ package serve_test
 // later units add their own beside them.
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -31,13 +33,16 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,6 +57,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/serve"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // e2eShutdownGrace is how long a browser fixture's server waits for
@@ -927,4 +933,502 @@ func newE2EFixtureWithDrillInModsAndSlowDeploy(t *testing.T) e2eFixture {
 	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
 
 	return f
+}
+
+// --- issue 331 (Unit 5): search and install - the omnibar, the dedicated
+// search page, and installing (with a version pick and a conflict round
+// trip) through the confirm-plan framework's install renderer. ---
+
+// e2eSearchSourceMod is one catalog entry e2eSearchSource offers: the mod,
+// its downloadable files, and the archive member each file's real zip
+// carries - mirroring install_fixture_internal_test.go's installSource,
+// ported here because that fixture lives in package serve (internal test),
+// unreachable from this package's own external e2e_test.go.
+type e2eSearchSourceMod struct {
+	mod     domain.Mod
+	files   []domain.DownloadableFile
+	members map[string]string // file ID -> the single path inside its zip
+}
+
+// e2eSearchSource is a searchable, REALLY-downloading source.ModSource: a
+// real httptest download server (so an install actually lands bytes on
+// disk, not just a DB row), plus Search, since #331's scenarios reach these
+// mods through the omnibar/search page - unlike installSource's ID-only
+// fixture, which never needed to be found by a query.
+type e2eSearchSource struct {
+	id          string
+	server      *httptest.Server
+	mods        map[string]*e2eSearchSourceMod
+	urlRequests atomic.Int64
+}
+
+func newE2ESearchSource(t *testing.T, id string) *e2eSearchSource {
+	t.Helper()
+	s := &e2eSearchSource{id: id, mods: map[string]*e2eSearchSourceMod{}}
+	s.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		modID, fileID, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+		entry, ok := s.mods[modID]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		member, ok := entry.members[fileID]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(e2eZipWith(member, "payload for "+modID+"/"+fileID))
+	}))
+	t.Cleanup(s.server.Close)
+	return s
+}
+
+func (s *e2eSearchSource) addMod(mod e2eSearchSourceMod) { s.mods[mod.mod.ID] = &mod }
+
+// e2eZipWith returns a zip archive holding exactly one member at the given
+// path - the smallest real archive the extractor will accept.
+func e2eZipWith(member, content string) []byte {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(path.Clean(member))
+	if err != nil {
+		panic(err)
+	}
+	if _, err := w.Write([]byte(content)); err != nil {
+		panic(err)
+	}
+	if err := zw.Close(); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
+}
+
+func (s *e2eSearchSource) ID() string      { return s.id }
+func (s *e2eSearchSource) Name() string    { return "E2E Search Source" }
+func (s *e2eSearchSource) AuthURL() string { return "" }
+
+func (s *e2eSearchSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, source.ErrNotSupported
+}
+
+func (s *e2eSearchSource) Search(_ context.Context, q source.SearchQuery) (source.SearchResult, error) {
+	var mods []domain.Mod
+	needle := strings.ToLower(q.Query)
+	for _, entry := range s.mods {
+		if needle == "" || strings.Contains(strings.ToLower(entry.mod.Name), needle) {
+			mods = append(mods, entry.mod)
+		}
+	}
+	sort.Slice(mods, func(i, j int) bool { return mods[i].ID < mods[j].ID })
+	return source.SearchResult{Mods: mods, TotalCount: len(mods)}, nil
+}
+
+func (s *e2eSearchSource) GetMod(_ context.Context, _, modID string) (*domain.Mod, error) {
+	entry, ok := s.mods[modID]
+	if !ok {
+		return nil, domain.ErrModNotFound
+	}
+	mod := entry.mod
+	return &mod, nil
+}
+
+func (s *e2eSearchSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	return nil, nil
+}
+
+func (s *e2eSearchSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	entry, ok := s.mods[mod.ID]
+	if !ok {
+		return nil, domain.ErrModNotFound
+	}
+	return append([]domain.DownloadableFile(nil), entry.files...), nil
+}
+
+// GetDownloadURL is the counted call: downloadModToCache asks for a URL only
+// when it has decided to actually fetch the file, so this counter is the
+// cache-warm oracle the conflict-overwrite scenario asserts on.
+func (s *e2eSearchSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fileID string) (string, error) {
+	s.urlRequests.Add(1)
+	return s.server.URL + "/" + mod.ID + "/" + fileID, nil
+}
+
+func (s *e2eSearchSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	return nil, nil
+}
+
+func (s *e2eSearchSource) downloadCount() int { return int(s.urlRequests.Load()) }
+
+var _ source.ModSource = (*e2eSearchSource)(nil)
+
+// e2eFailingSearchSource is a second, registered source whose Search always
+// fails - #331's "a failing source's warning row" scenario. Nothing else on
+// it is ever called: an aggregate search skips straight to Search per
+// source, so every other method panics if reached, catching a fixture bug
+// (a real call here would mean the scenario is testing the wrong thing).
+type e2eFailingSearchSource struct{ id string }
+
+func (s *e2eFailingSearchSource) ID() string      { return s.id }
+func (s *e2eFailingSearchSource) Name() string    { return "Flaky Source" }
+func (s *e2eFailingSearchSource) AuthURL() string { return "" }
+func (s *e2eFailingSearchSource) ExchangeToken(context.Context, string) (*source.Token, error) {
+	return nil, source.ErrNotSupported
+}
+func (s *e2eFailingSearchSource) Search(context.Context, source.SearchQuery) (source.SearchResult, error) {
+	return source.SearchResult{}, errors.New("upstream unavailable")
+}
+func (s *e2eFailingSearchSource) GetMod(context.Context, string, string) (*domain.Mod, error) {
+	panic("e2eFailingSearchSource.GetMod: unreachable by a search-only scenario")
+}
+func (s *e2eFailingSearchSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
+	panic("e2eFailingSearchSource.GetDependencies: unreachable by a search-only scenario")
+}
+func (s *e2eFailingSearchSource) GetModFiles(context.Context, *domain.Mod) ([]domain.DownloadableFile, error) {
+	panic("e2eFailingSearchSource.GetModFiles: unreachable by a search-only scenario")
+}
+func (s *e2eFailingSearchSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	panic("e2eFailingSearchSource.GetDownloadURL: unreachable by a search-only scenario")
+}
+func (s *e2eFailingSearchSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
+	panic("e2eFailingSearchSource.CheckUpdates: unreachable by a search-only scenario")
+}
+
+var _ source.ModSource = (*e2eFailingSearchSource)(nil)
+
+// e2eSearchInstallModID/e2eSearchConflictModID/e2eSearchDeployedFile name
+// the search-fixture's own catalog, mirroring install_fixture_internal_
+// test.go's installModID/conflictModID/installModFile constants.
+const (
+	e2eSearchInstallModID   = "boots"
+	e2eSearchConflictModID  = "clash"
+	e2eSearchMultiFileModID = "multi"
+	e2eSearchDeployedFile   = "Mods/alpha.pak"
+)
+
+// e2eSearchFixture is newE2EFixture's own shape plus the two extra sources
+// #331's scenarios need: Src (searchable, really downloads) and Failing
+// (registered on the same game, always fails Search).
+type e2eSearchFixture struct {
+	e2eFixture
+	Src     *e2eSearchSource
+	Failing *e2eFailingSearchSource
+}
+
+// newE2EFixtureWithSearchableMods seeds: one ALREADY-INSTALLED, deployed mod
+// ("Alpha Mod", owning e2eSearchDeployedFile - what the conflict scenario
+// collides with) plus three SEARCHABLE, not-yet-installed catalog mods -
+// "Better Boots" (two files/versions, #225's version-pick scenario),
+// "Clashing Mod" (one file whose archive member is the ALREADY-DEPLOYED
+// path, the conflict-round-trip scenario), and "Multi Edition Mod" (TWO
+// files sharing the SAME version - plan_install.js's own file sub-picker,
+// which only renders once the chosen version itself resolves to more than
+// one file) - across TWO registered sources, the second of which always
+// fails Search (the warning-row scenario).
+func newE2EFixtureWithSearchableMods(t *testing.T) e2eSearchFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src := newE2ESearchSource(t, "fake")
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: e2eSearchInstallModID, SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		files: []domain.DownloadableFile{
+			{ID: "f2", Name: "Main 2.0", FileName: "boots-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128},
+			{ID: "f1", Name: "Main 1.0", FileName: "boots-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
+		},
+		members: map[string]string{"f1": "Mods/boots.pak", "f2": "Mods/boots.pak"},
+	})
+	src.addMod(e2eSearchSourceMod{
+		mod:     domain.Mod{ID: e2eSearchConflictModID, SourceID: "fake", Name: "Clashing Mod", Version: "1.0"},
+		files:   []domain.DownloadableFile{{ID: "c1", Name: "Main", FileName: "clash.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 32}},
+		members: map[string]string{"c1": e2eSearchDeployedFile},
+	})
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: e2eSearchMultiFileModID, SourceID: "fake", Name: "Multi Edition Mod", Version: "1.0"},
+		files: []domain.DownloadableFile{
+			{ID: "m1", Name: "Regular Edition", FileName: "multi-regular.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 48},
+			{ID: "m2", Name: "Definitive Edition", FileName: "multi-definitive.zip", Version: "1.0", Category: "MAIN", Size: 48},
+		},
+		members: map[string]string{"m1": "Mods/multi-regular.pak", "m2": "Mods/multi-definitive.pak"},
+	})
+
+	failing := &e2eFailingSearchSource{id: "flaky"}
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src)
+	svc.RegisterSource(failing)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{src.ID(): "", failing.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	// "other" is I5's own profile-switch scenario's target - an empty
+	// sibling profile that never fanned anything out, so a stale
+	// omnibarSearch/searchPage surviving the switch is unambiguous.
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "other")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "alpha", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: game.ID},
+		true, map[string][]byte{e2eSearchDeployedFile: []byte("alpha content")})
+	require.NoError(t, svc.NewProfileManager().AddMod(t.Context(), game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "alpha", Version: "1.0"}))
+	_, err = svc.DeployProfile(t.Context(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eSearchFixture{
+		e2eFixture: e2eFixture{
+			Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+			BrowserErrors: browserErrors,
+		},
+		Src:     src,
+		Failing: failing,
+	}
+}
+
+// SearchPagePath is the dedicated search page's deep-link route.
+func (f e2eSearchFixture) SearchPagePath(query string) string {
+	return f.HomePath() + "/search?q=" + url.QueryEscape(query)
+}
+
+// e2eManyResultsPageSize mirrors main.js's own SEARCH_PAGE_SIZE - the
+// pagination scenario needs strictly more catalog mods than one page holds
+// to prove a Next page is real rather than a control that merely LOOKS
+// clickable.
+const e2eManyResultsPageSize = 20
+
+// startE2EServerWithDelayedJobStart is startE2EServer plus a reverse proxy
+// that sleeps for delay before forwarding every POST /api/v1/jobs OR
+// POST .../enable|disable (the toggle's own plan-free start) - #331's
+// bindingJob carry-in ("installs can now start from multiple search rows
+// while a modal is open elsewhere - re-check the single-slot assumption
+// ... make it a map keyed by origin, with a test proving the overlap
+// case"): a deterministic window in which one origin's start call is
+// genuinely still in flight (bindingJobs still holds its promise), so a
+// SECOND origin's own start (issued through a completely different UI path
+// - a toggle, which needs no modal at all) is a real overlap rather than a
+// race against microsecond-fast local HTTP round trips that would pass or
+// fail on machine speed alone.
+//
+// Delaying the TOGGLE's own start too, by its own shorter toggleDelay (unit
+// 5 fix wave, Important 2), is what makes the overlap OBSERVABLE rather
+// than merely real: without it the toggle's start resolves in microseconds,
+// so by the time anything reads bindingJobs' size the toggle's own entry is
+// already gone and the window where both starts are genuinely tracked at
+// once has closed before a test could ever sample it. toggleDelay must stay
+// SHORTER than delay: the scenario's own staleness conflict depends on the
+// toggle's disable genuinely finishing (not just starting) before the
+// install's own Apply runs, which only holds if the toggle, started AFTER
+// the install, still resolves first.
+func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay, toggleDelay time.Duration) string {
+	t.Helper()
+	backend := startE2EServer(t, svc)
+	backendURL, err := url.Parse(backend)
+	require.NoError(t, err)
+
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(backendURL)
+			r.Out.Host = backendURL.Host
+			// originCheck (middleware.go) rejects a state-changing request
+			// whose Origin header names anything other than "http://" +
+			// r.Host - it never sees this proxy exists, so the browser's
+			// real Origin (the PROXY's own address, since that is where
+			// the shell was served from) must be rewritten to match the
+			// BACKEND's address the same way Host just was, or every POST
+			// through this proxy is refused as cross-origin. startE2EServer
+			// WithFailingPath's proxy gets away without this because it is
+			// only ever driven with GET requests, which originCheck never
+			// inspects (unsafeMethod) - this proxy is the first to carry a
+			// real mutation, so it is the first to need the fix.
+			if r.Out.Header.Get("Origin") != "" {
+				r.Out.Header.Set("Origin", "http://"+backendURL.Host)
+			}
+		},
+	}
+
+	sleepThenProxy := func(d time.Duration) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(d)
+			proxy.ServeHTTP(w, r)
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/jobs", sleepThenProxy(delay))
+	mux.HandleFunc("POST /api/v1/mods/{source}/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("action") {
+		case "enable", "disable":
+			sleepThenProxy(toggleDelay)(w, r)
+		default:
+			proxy.ServeHTTP(w, r)
+		}
+	})
+	mux.Handle("/", proxy)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyServer := &http.Server{Handler: mux}
+	served := make(chan error, 1)
+	go func() { served <- proxyServer.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = proxyServer.Close()
+		if err := <-served; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("proxy server: %v", err)
+		}
+	})
+
+	return "http://" + ln.Addr().String()
+}
+
+// newE2EFixtureWithSearchableModsAndDelayedJobStart is
+// newE2EFixtureWithSearchableMods, routed through the job-start-delaying
+// proxy above, plus one extra ALREADY-INSTALLED, ENABLED mod ("Gamma Mod") -
+// the other half of the overlap scenario, reachable through the slide-over
+// (no modal, no lock) while the install's own confirm modal sits "starting"
+// for the whole delay window. toggleDelay is the SAME proxy's own shorter
+// delay on the toggle's start (see startE2EServerWithDelayedJobStart) - both
+// starts genuinely overlap, but the toggle still resolves (and finishes
+// disabling Gamma) before the install's own Apply runs.
+func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay, toggleDelay time.Duration) e2eSearchFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src := newE2ESearchSource(t, "fake")
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: e2eSearchInstallModID, SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		files: []domain.DownloadableFile{
+			{ID: "f2", Name: "Main 2.0", FileName: "boots-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128},
+			{ID: "f1", Name: "Main 1.0", FileName: "boots-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
+		},
+		members: map[string]string{"f1": "Mods/boots.pak", "f2": "Mods/boots.pak"},
+	})
+	// Registered in the catalog too (not just the DB row seedInstalledMod
+	// writes below) - newE2EFixtureFromSource's own doc comment explains
+	// why: the slide-over's changelog is a LIVE ModDetail read, which 404s
+	// for an installed-but-unregistered mod and fails this scenario's own
+	// assert.Empty(t, f.BrowserErrors()) bar over an unrelated fetch.
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: "gamma", SourceID: "fake", Name: "Gamma Mod", Version: "1.0"},
+	})
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{src.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+
+	seedInstalledMod(t, svc, game,
+		domain.Mod{ID: "gamma", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: game.ID}, true, nil)
+
+	baseURL := startE2EServerWithDelayedJobStart(t, svc, delay, toggleDelay)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eSearchFixture{
+		e2eFixture: e2eFixture{
+			Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+			BrowserErrors: browserErrors,
+		},
+		Src: src,
+	}
+}
+
+// newE2EFixtureWithManySearchResults seeds one source with
+// e2eManyResultsPageSize+5 catalog mods, split evenly across two
+// categories ("Armor"/"Weapons") - the search page's own pagination
+// (Next/Prev) and category-filter scenarios. No downloads needed here (no
+// install happens against this fixture), so a plain fakeSource-shaped
+// catalog is enough - GetModFiles is never called.
+func newE2EFixtureWithManySearchResults(t *testing.T) e2eFixture {
+	t.Helper()
+
+	src := newFakeSource("fake")
+	for i := 1; i <= e2eManyResultsPageSize+5; i++ {
+		category := "Armor"
+		if i%2 == 0 {
+			category = "Weapons"
+		}
+		src.addMod(fakeSourceMod{Mod: domain.Mod{
+			ID: fmt.Sprintf("item%02d", i), SourceID: "fake",
+			Name: fmt.Sprintf("Item %02d", i), Version: "1.0", Category: category,
+			// Downloads is the SAME across every item: core's own
+			// rankAggregate (service.go) re-ranks a name-matching aggregate
+			// by Downloads descending, then Name ascending - a tie here (as
+			// a real source's uniform catalog might legitimately have) lets
+			// the Name tiebreak hold, which is what this fixture's
+			// pagination test relies on for a stable, predictable order.
+			// Summary still varies, for the detailed-row rendering assertion.
+			Downloads: 100, Summary: fmt.Sprintf("Summary text for item %02d", i),
+		}})
+	}
+	return newE2EFixtureFromSource(t, src)
+}
+
+// newE2EFixtureWithTwoWorkingSearchSources seeds TWO real (non-failing)
+// sources on one game, both contributing hits to the same "gizmo" query -
+// M4 (unit 5 fix wave): the search page's source filter (sourceIDs.length
+// > 1) had no fixture where it was ever true, so it shipped untested end to
+// end. newE2EFixtureWithSearchableMods's own second source ("flaky")
+// always fails and so never lights it up. No downloads happen against this
+// fixture - a plain catalog is enough.
+func newE2EFixtureWithTwoWorkingSearchSources(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src1 := newFakeSource("fake")
+	src1.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Gizmo One", Version: "1.0"}})
+	src1.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Gizmo Two", Version: "1.0"}})
+	src1.addMod(fakeSourceMod{Mod: domain.Mod{ID: "3", SourceID: "fake", Name: "Gizmo Three", Version: "1.0"}})
+
+	src2 := newFakeSource("fake2")
+	src2.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake2", Name: "Gizmo Four", Version: "1.0"}})
+	src2.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake2", Name: "Gizmo Five", Version: "1.0"}})
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src1)
+	svc.RegisterSource(src2)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{src1.ID(): "", src2.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+		BrowserErrors: browserErrors,
+	}
 }

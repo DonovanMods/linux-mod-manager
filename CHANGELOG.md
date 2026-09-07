@@ -29,6 +29,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `lmm serve` SPA's omnibar now searches, and installing works.
+  Typing narrows the library in place ("In your library (n)", unchanged
+  from Mission Control's first cut); pressing Enter (or the "search
+  sources ↵" button) fans the same text out to the game's configured
+  sources and appends the results below the library ("From sources (n)")
+  without ever leaving home - each one installable inline, with a version
+  picker where the source offers more than one, and a click opens the same
+  slide-over an installed row does. A source that fails to answer renders a
+  warning row beside whatever did, never in its place. The dedicated search
+  page (`/g/{game}/{profile}/search?q=…`, reachable by deep link or the
+  fan-out) is the escape hatch for heavier browsing: source badges,
+  download counts, summaries, category/source filters, sort, and real
+  server-side pagination (`GET /api/v1/search` gains additive `page`/
+  `page_size` params; `core.SearchReport` gains additive `page`/
+  `page_size`/`has_more` fields, present only when a caller actually
+  pages - the CLI's own single-page call still emits neither). Install goes
+  through the confirm-plan framework's own renderer, the first with
+  something to _choose_ rather than only read: `core.InstallPlan` gains an
+  additive `file_pool` field - the full candidate list `Files`' single
+  default pick was chosen from, computed at plan time from the same fetch
+  so there is no second network round trip - which the picker groups by
+  version (and, where a version itself resolves to more than one file, by
+  file). Installing over a file another mod already owns fails inline with
+  the typed `*core.ConflictError` the CLI's own confirm prompt answers,
+  and the tray's failed entry now offers a live "Overwrite?" that re-plans
+  and re-applies with `accept_conflicts` set - the refused attempt already
+  downloaded the file, so the retry re-uses the cache rather than
+  downloading it again. (Unit 3's single in-flight `bindingJob` slot
+  correctly assumed one modal implied one in-flight start; it is now a map
+  keyed by origin, since an inline install and an independent slide-over
+  mutation can now genuinely overlap.) (#331, epic #326)
+
 - The `lmm serve` SPA's drill-in surfaces are wired. Clicking a library row
   opens the slide-over for real: name, author, installed → available
   version, an editable lock toggle and update-policy select (thin

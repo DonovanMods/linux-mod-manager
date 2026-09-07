@@ -39,5 +39,7 @@
   ],
   "warnings": [],
   "total_results": 3,
-  "attempted_count": 1
+  "attempted_count": 1,
+  "page_size": 2,
+  "has_more": true
 }

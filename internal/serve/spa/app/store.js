@@ -26,6 +26,19 @@ export function initialState() {
     health: null,
     conflicts: null,
     profiles: null,
+    // omnibarSearch is the omnibar's fan-out (issue 331, design doc §Search:
+    // "Enter fans out to the game's sources and appends 'From sources (n)'
+    // rows in place"): {status: "loading"|"ready"|"error", query, report,
+    // error}. query is what was actually searched, so a component renders
+    // this only while it still matches the LIVE omnibar text - typing past
+    // a stale fan-out hides it without anyone having to clear it. null
+    // until Enter is pressed at least once.
+    omnibarSearch: null,
+    // searchPage is the dedicated /search?q= route's own state
+    // (route.view === "search"): {status, query, page, pageSize, report,
+    // error}. Independent of omnibarSearch - the escape-hatch page supports
+    // pagination the inline fan-out never does (design doc §Search).
+    searchPage: null,
     // modPage is the full mod page's own state (route.view === "mod"):
     // {key, filesReport, error, detail, detailError, versions,
     // versionsError}. filesReport (core.ModFilesReport) is the PRIMARY

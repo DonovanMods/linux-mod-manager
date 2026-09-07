@@ -40,6 +40,11 @@ export function parseLocation(url = window.location) {
   if (rest[0] === "search") {
     route.view = "search";
     route.q = params.get("q") || "";
+    // ?mod= annotates the search page's own URL the same way it does
+    // Mission Control's (this file's header comment) - design doc §Search's
+    // "slide-over on click for source results too" applies here as well as
+    // on the omnibar's inline fan-out.
+    route.mod = params.get("mod") || "";
     return route;
   }
   if (rest[0] === "mod" && rest.length >= 3) {
