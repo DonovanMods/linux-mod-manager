@@ -2136,9 +2136,10 @@ func TestE2E_InlineInstallWithVersionPickWritesToDisk(t *testing.T) {
 // version itself resolves to more than one file (unlike Better Boots
 // above, whose two files each carry a DIFFERENT version and so exercise
 // only the version ▾). "Multi Edition Mod" has one version and two files -
-// the version ▾ still renders (a pool of >1 file, per plan_install.js's own
-// rule), but with a single option, and picking a file must be what decides
-// which one is deployed.
+// the version ▾ does NOT render (M6, unit 5 fix wave: gated on more than one
+// distinct VERSION, not merely a pool of more than one file - a single-
+// option version dropdown had nothing to decide), only the file ▾, and
+// picking a file must be what decides which one is deployed.
 func TestE2E_InlineInstallWithFilePickWritesToDisk(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 
@@ -2154,15 +2155,19 @@ func TestE2E_InlineInstallWithFilePickWritesToDisk(t *testing.T) {
 	)
 
 	var fileOptions []string
+	var versionPickerPresent bool
 	f.runInBrowser(t,
 		chromedp.WaitVisible(`select[name="install-file"]`, chromedp.ByQuery),
 		chromedp.Evaluate(
 			`Array.from(document.querySelectorAll('select[name="install-file"] option')).map(o => o.textContent)`,
 			&fileOptions,
 		),
+		chromedp.Evaluate(`document.querySelector('select[name="install-version"]') !== null`, &versionPickerPresent),
 	)
 	assert.Contains(t, fileOptions, "Regular Edition")
 	assert.Contains(t, fileOptions, "Definitive Edition")
+	assert.False(t, versionPickerPresent,
+		"a one-version pool with several files must show only the file picker (M6)")
 
 	f.runInBrowser(t,
 		chromedp.SetValue(`select[name="install-file"]`, "m2", chromedp.ByQuery),

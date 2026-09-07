@@ -32,7 +32,10 @@
 //
 // A pool of length <= 1 renders no picker at all (kind_install.go's own
 // words): there is nothing to choose between, and Files already names the
-// one candidate there is.
+// one candidate there is. The VERSION select specifically is gated on more
+// than one distinct version (M6, unit 5 fix wave): a pool of several files
+// sharing one version has nothing for a version picker to decide, only the
+// file picker beneath it.
 
 import { html, useState } from "../render.js";
 
@@ -54,13 +57,19 @@ function distinctVersions(pool) {
 /** InstallPlanView renders core.InstallPlan (internal/core/install.go). */
 export function InstallPlanView({ plan, actions }) {
   const pool = plan.file_pool ?? [];
-  const showPicker = pool.length > 1;
   const versions = distinctVersions(pool);
+  // The version SELECT only earns its place once there is more than one
+  // version to choose between (M6): a pool of several files at the SAME
+  // version (the file sub-picker's own case, below) has nothing for it to
+  // decide, and a one-option dropdown just above the file picker that
+  // actually matters was confusing rather than informative.
+  const showVersionPicker = versions.length > 1;
   const defaultVersion = plan.files?.[0]?.version ?? plan.mod.version;
 
   const [version, setVersion] = useState(defaultVersion);
   const filesForVersion = pool.filter((f) => f.version === version);
   const showFilePicker = filesForVersion.length > 1;
+  const showPicker = showVersionPicker || showFilePicker;
   const [fileID, setFileID] = useState("");
 
   /** pickVersion applies a version change: local display state, AND the
@@ -85,7 +94,7 @@ export function InstallPlanView({ plan, actions }) {
   return html`
     <div class="plan plan--install">
       <p class="plan__summary">
-        Installing <span class="mono">${plan.mod.name}</span>
+        Installing <span class="mono">${plan.mod.name}</span>${" "}
         <span class="mono">${version}</span>
         ${plan.replaces && html` (replacing the installed version)`}.
       </p>
@@ -94,18 +103,23 @@ export function InstallPlanView({ plan, actions }) {
         showPicker &&
         html`
           <section class="plan__section plan__section--picker">
-            <label class="plan__control">
-              Version
-              <select
-                name="install-version"
-                value=${version}
-                onChange=${(e) => pickVersion(e.currentTarget.value)}
-              >
-                ${versions.map(
-                  (v) => html`<option key=${v} value=${v}>${v}</option>`,
-                )}
-              </select>
-            </label>
+            ${
+              showVersionPicker &&
+              html`
+                <label class="plan__control">
+                  Version
+                  <select
+                    name="install-version"
+                    value=${version}
+                    onChange=${(e) => pickVersion(e.currentTarget.value)}
+                  >
+                    ${versions.map(
+                      (v) => html`<option key=${v} value=${v}>${v}</option>`,
+                    )}
+                  </select>
+                </label>
+              `
+            }
             ${
               showFilePicker &&
               html`
