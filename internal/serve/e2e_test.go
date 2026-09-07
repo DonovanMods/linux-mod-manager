@@ -2105,6 +2105,35 @@ func TestE2E_FailingSourceRendersWarningRowNotSwallowed(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_OmnibarFanOutIsCapped is M8 (unit 5 fix wave): the omnibar's
+// fan-out set no limit at all, so a catalog with more matches than a real
+// source's own default page (NexusMods' can run past a hundred) could
+// append an unbounded list below the library. The 25-mod fixture's "item"
+// query matches all of them; the fan-out must cap at OMNIBAR_FANOUT_LIMIT
+// (20), not append all 25 - the dedicated search page is the escape hatch
+// for the rest.
+func TestE2E_OmnibarFanOutIsCapped(t *testing.T) {
+	f := newE2EFixtureWithManySearchResults(t)
+
+	var heading string
+	var rowCount int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		// This fixture seeds no INSTALLED mods, only a searchable catalog -
+		// the library renders its empty state, not a table.
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "item", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
+		textContent(`.omnibar-results .section-header`, &heading),
+		chromedp.Evaluate(`document.querySelectorAll(".omnibar-results .search-result").length`, &rowCount),
+	)
+
+	assert.Equal(t, "From sources (20)", heading, "the fan-out must cap at OMNIBAR_FANOUT_LIMIT, not the full 25-mod catalog")
+	assert.Equal(t, 20, rowCount)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_InlineInstallWithVersionPickWritesToDisk is #331's central
 // scenario: fan out, install a search result INLINE (no navigation away),
 // pick a non-default version in the confirm modal's picker (#225's version

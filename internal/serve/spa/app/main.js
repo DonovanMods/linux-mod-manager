@@ -287,6 +287,15 @@ async function reload(key, path) {
 // the issue 331 pagination the omnibar's own live filter never needs.
 const SEARCH_PAGE_SIZE = 20;
 
+// OMNIBAR_FANOUT_LIMIT caps how many rows the omnibar's inline fan-out ever
+// appends (M8, unit 5 fix wave): the omnibar sets no page/pageSize at all
+// (a live filter has no "next page"), so with no limit either, a real
+// multi-source catalog (NexusMods' default page alone can run past a
+// hundred hits) could append an unbounded list below the library. The
+// dedicated search page is the escape hatch for "more than this" - it
+// pages, this never does.
+const OMNIBAR_FANOUT_LIMIT = 20;
+
 // omnibarSeq fences the omnibar's fan-out the same way modalSeq fences a
 // plan: a slow search whose query the user has since typed past (or
 // re-searched) must not land after a newer one.
@@ -314,7 +323,7 @@ async function searchSources(query) {
     omnibarSearch: { status: "loading", query: q, report: null, error: null },
   });
   try {
-    const report = await apiSearch(q, {}, context);
+    const report = await apiSearch(q, { limit: OMNIBAR_FANOUT_LIMIT }, context);
     if (omnibarSeq !== seq) return;
     store.set({
       omnibarSearch: { status: "ready", query: q, report, error: null },
