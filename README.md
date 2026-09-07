@@ -789,16 +789,28 @@ In place today: the shell, the URL scheme and the theme; Mission Control's
 read surface (the game/profile pickers, the attention cards, the library);
 the mutation pipeline — a control opens a confirm modal showing the plan,
 confirming starts a job, and the control becomes that job's live progress,
-with an activity tray collecting every job the session has run; and the
+with an activity tray collecting every job the session has run; the
 drill-in surfaces — click a library row for the slide-over (name, author,
 version, an editable lock/policy pair, findings, conflicts, a changelog
 preview, and Update/Enable-or-Disable/Uninstall), or "More info →" for the
 full mod page (description, changelog, files, versions, dependencies,
-rollback, and that mod's own job history). **Deploy, Enable/Disable,
-Uninstall, per-mod Update and Rollback** are wired end to end. The
-remaining actions (search/install, batch update, reorder, profiles,
-health repair, admin) are present but disabled, each waiting on its own
-unit; the CLI does all of them today.
+rollback, and that mod's own job history); and search + install — the
+omnibar filters your library as you type and, on Enter (or "search sources
+↵"), fans out to the game's configured sources, appending the results in
+place below the library ("From sources (n)") with an inline Install and a
+version picker where the source offers more than one; a slow or failing
+source shows a warning row beside whatever did answer, never in place of
+it; a source result opens the same slide-over an installed row does. The
+dedicated search page (`/g/{game}/{profile}/search?q=…`) is the escape
+hatch for heavier browsing: source badges, download counts, summaries,
+category/source filters, sort, and real pagination. Installing that hits a
+file already on disk from another mod surfaces the conflict right in the
+confirm flow's activity entry, with a live "Overwrite?" that re-runs the
+install accepting it. **Deploy, Enable/Disable, Uninstall, per-mod Update,
+Rollback, and Search + Install** are wired end to end. The remaining
+actions (batch update, reorder, profiles, health repair, admin) are
+present but disabled, each waiting on its own unit; the CLI does all of
+them today.
 
 ### URLs
 
@@ -836,7 +848,7 @@ GET  /api/v1/mods
 GET  /api/v1/mods/{source}/{id}
 GET  /api/v1/mods/{source}/{id}/files
 GET  /api/v1/mods/{source}/{id}/versions
-GET  /api/v1/search?q=
+GET  /api/v1/search?q=&page=&page_size=&limit=
 GET  /api/v1/updates
 GET  /api/v1/profiles
 GET  /api/v1/health
@@ -975,27 +987,27 @@ has a recorded golden under `internal/core/testdata/json/`,
 its exact wire shape. A field can only change by changing that golden, which
 shows up as a diff in review.
 
-| Command                        | Document                                                                                                                                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                                                                                                  |
-| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                                                                                                  |
-| `lmm profile list`             | `core.ProfileListing` — `{game_id, profiles[]}`                                                                                                                                |
-| `lmm profile export <name>`    | `domain.ExportedProfile` — `{name, game_id, mods[], link_method?, overrides?, hooks, hooks_explicit}`                                                                          |
-| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                              |
-| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                             |
-| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count}`                                                                                   |
-| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`                                                                                            |
-| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                      |
-| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                   |
-| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                   |
-| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                                                                                                         |
-| `lmm source validate <file>`   | `app.SourceValidationReport` — `{path, id?, type?, valid, errors[], warnings[], probe?}` (an invalid file/failed probe is the error envelope instead, `details` = this report) |
-| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                                                                                                     |
-| `lmm game show-default`        | `core.DefaultGame` — `{set, id?, name?}`                                                                                                                                       |
-| `lmm auth status`              | `app.AuthStatusReport` — `{sources[], orphaned[]}`                                                                                                                             |
-| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                                                                                                  |
-| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`                                                                                                |
-| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`                                                                                               |
+| Command                        | Document                                                                                                                                                                                                                                           |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                                                                                                                                                                      |
+| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                                                                                                                                                                      |
+| `lmm profile list`             | `core.ProfileListing` — `{game_id, profiles[]}`                                                                                                                                                                                                    |
+| `lmm profile export <name>`    | `domain.ExportedProfile` — `{name, game_id, mods[], link_method?, overrides?, hooks, hooks_explicit}`                                                                                                                                              |
+| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                                                                                                  |
+| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                                                                                                 |
+| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count, page?, page_size?, has_more?}` (the last three are omitted unless a caller pages — `lmm serve`'s search page does, the CLI's single-page call doesn't) |
+| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`                                                                                                                                                                |
+| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                                                                                          |
+| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                                                                                       |
+| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                       |
+| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                                                                                                                                                                             |
+| `lmm source validate <file>`   | `app.SourceValidationReport` — `{path, id?, type?, valid, errors[], warnings[], probe?}` (an invalid file/failed probe is the error envelope instead, `details` = this report)                                                                     |
+| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                                                                                                                                                                         |
+| `lmm game show-default`        | `core.DefaultGame` — `{set, id?, name?}`                                                                                                                                                                                                           |
+| `lmm auth status`              | `app.AuthStatusReport` — `{sources[], orphaned[]}`                                                                                                                                                                                                 |
+| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                                                                                                                                                                      |
+| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`                                                                                                                                                                    |
+| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`                                                                                                                                                                   |
 
 Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
 that run would have applied:
