@@ -1282,6 +1282,14 @@ func TestE2E_FailedJobSurfacesInPlaceAndInTheTray(t *testing.T) {
 // core's own Details() extension point - and never from matching on the
 // message text, which is prose and changes. The envelope below is the exact
 // shape testdata/json/job_summary.golden pins for a failed install.
+//
+// Issue 331 landed the action live (main.js's retryInstallOverwrite): what
+// was "present but not live until install lands" is now a real, enabled
+// affordance with no `pending` reason - and nextStepFor now takes the whole
+// job (job.kind gates the action to install, the one kind whose
+// ConflictError this implies a next step for; a conflict shape attached to
+// any OTHER kind - which core never actually produces today - must still
+// render no invented affordance).
 func TestE2E_FailureNextStepIsDecidedByTypedDetails(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -1291,18 +1299,20 @@ func TestE2E_FailureNextStepIsDecidedByTypedDetails(t *testing.T) {
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`(async () => {
 			const { nextStepFor } = await import("/static/app/failures.js");
+			const conflictDetails = { conflicts: [
+				{ relative_path: "Mods/a.pak", current_source_id: "fake", current_mod_id: "m9" },
+			] };
 			const conflict = nextStepFor({
-				error: "file conflicts detected",
-				details: { conflicts: [
-					{ relative_path: "Mods/a.pak", current_source_id: "fake", current_mod_id: "m9" },
-				] },
+				kind: "install",
+				error: { error: "file conflicts detected", details: conflictDetails },
 			});
 			return [
 				conflict.action,
 				conflict.label,
-				Boolean(conflict.pending),
-				nextStepFor({ error: "install.before_all hook failed" }),
-				nextStepFor({ error: "x", details: { conflicts: [] } }),
+				"pending" in conflict,
+				nextStepFor({ kind: "install", error: { error: "install.before_all hook failed" } }),
+				nextStepFor({ kind: "install", error: { error: "x", details: { conflicts: [] } } }),
+				nextStepFor({ kind: "deploy", error: { error: "x", details: conflictDetails } }),
 				nextStepFor(undefined),
 			];
 		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
@@ -1310,13 +1320,14 @@ func TestE2E_FailureNextStepIsDecidedByTypedDetails(t *testing.T) {
 		}),
 	)
 
-	require.Len(t, got, 6)
+	require.Len(t, got, 7)
 	assert.Equal(t, "overwrite", got[0])
 	assert.Equal(t, "Overwrite 1 file?", got[1])
-	assert.Equal(t, true, got[2], "the action is present but not live until install lands")
+	assert.Equal(t, false, got[2], "the affordance is live now - no pending reason left to carry")
 	assert.Nil(t, got[3], "a failure whose details name no action gets no invented affordance")
 	assert.Nil(t, got[4], "an empty conflict list is not a conflict")
-	assert.Nil(t, got[5])
+	assert.Nil(t, got[5], "the action is gated to install - the only kind core's ConflictError comes from")
+	assert.Nil(t, got[6])
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -1980,5 +1991,462 @@ func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
 		textContent(`.mod-row__live`, &rowLive),
 	)
 	assert.Contains(t, rowLive, "Disabling", "the row must name the mutation, not just show a bare dot")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// --- issue 331 (Unit 5): search and install - the omnibar's live filter and
+// fan-out, the dedicated search page, and installing (with a version pick
+// and a conflict round trip) through the confirm-plan framework's install
+// renderer. Fixtures live in e2e_harness_test.go (newE2EFixtureWithSearchableMods,
+// newE2EFixtureWithManySearchResults). ---
+
+// searchResultRow finds the "From sources"/search-page row for sourceID/modID.
+func searchResultRow(sourceID, modID string) string {
+	return fmt.Sprintf(`.search-result[data-mod=%q]`, sourceID+"/"+modID)
+}
+
+// TestE2E_OmnibarLiveFilterNarrowsLibraryWithoutFanningOut proves typing in
+// the omnibar still only narrows the INSTALLED library (design doc §Search:
+// "typing live-filters the library") and never fans out on its own - the
+// fan-out is Enter (or the "search sources" button), a deliberate second
+// step, not a side effect of every keystroke.
+func TestE2E_OmnibarLiveFilterNarrowsLibraryWithoutFanningOut(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var header string
+	var fanoutPresent bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "alpha", chromedp.ByQuery),
+		textContent(`.library .section-header`, &header),
+		chromedp.Evaluate(`document.querySelector(".omnibar-results") !== null`, &fanoutPresent),
+	)
+
+	assert.Equal(t, "In your library (1)", header, "the live filter narrows the installed library alone")
+	assert.False(t, fanoutPresent, "typing without Enter must not fan out to the sources")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_OmnibarFanOutAppendsSourceRows is the design's headline promise:
+// Enter (here, the "search sources ↵" button - functionally identical, and
+// a more reliable chromedp interaction than a synthetic Enter keypress on a
+// search input) fans out to the game's sources and appends "From sources
+// (n)" rows IN PLACE below the library - "you never leave home".
+func TestE2E_OmnibarFanOutAppendsSourceRows(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var heading, url string
+	var names []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
+		textContent(`.omnibar-results .section-header`, &heading),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll(".omnibar-results .search-result__name")).map(e => e.textContent)`,
+			&names,
+		),
+		chromedp.Location(&url),
+	)
+
+	assert.Equal(t, "From sources (1)", heading)
+	assert.Contains(t, names, "Better Boots")
+	assert.Contains(t, url, f.HomePath(), "the fan-out must never navigate away from Mission Control")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FailingSourceRendersWarningRowNotSwallowed covers the design's
+// explicit rule: "Source failures surface as a warning row, never
+// swallowed." The fixture's second source ("flaky") always fails Search -
+// its failure must appear ALONGSIDE the working source's real hit, not
+// instead of it.
+func TestE2E_FailingSourceRendersWarningRowNotSwallowed(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var warning string
+	var hitNames []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result--warning`, chromedp.ByQuery),
+		textContent(`.omnibar-results .search-result--warning`, &warning),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll(".omnibar-results .search-result__name")).map(e => e.textContent)`,
+			&hitNames,
+		),
+	)
+
+	assert.Contains(t, warning, "flaky")
+	assert.Contains(t, warning, "upstream unavailable")
+	assert.Contains(t, hitNames, "Better Boots", "the working source's hit must still render beside the warning")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_InlineInstallWithVersionPickWritesToDisk is #331's central
+// scenario: fan out, install a search result INLINE (no navigation away),
+// pick a non-default version in the confirm modal's picker (#225's version
+// selection, re-surfaced from InstallPlan.FilePool), confirm, and the job
+// really lands the SELECTED version's bytes on disk - not the default pick.
+func TestE2E_InlineInstallWithVersionPickWritesToDisk(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+	)
+
+	var versionOptions []string
+	f.runInBrowser(t,
+		chromedp.WaitVisible(`select[name="install-version"]`, chromedp.ByQuery),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll('select[name="install-version"] option')).map(o => o.value)`,
+			&versionOptions,
+		),
+	)
+	assert.ElementsMatch(t, []string{"2.0", "1.0"}, versionOptions,
+		"the picker must offer every version InstallPlan.FilePool carries")
+
+	f.runInBrowser(t,
+		chromedp.SetValue(`select[name="install-version"]`, "1.0", chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	deployed, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "boots.pak"))
+	require.NoError(t, err)
+	assert.Equal(t, "payload for boots/f1", string(deployed),
+		"the SELECTED version's file (f1, 1.0) must be what landed on disk, not the primary (f2, 2.0)")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_InlineInstallWithFilePickWritesToDisk covers plan_install.js's
+// OTHER picker: the FILE sub-select that only renders once the chosen
+// version itself resolves to more than one file (unlike Better Boots
+// above, whose two files each carry a DIFFERENT version and so exercise
+// only the version ▾). "Multi Edition Mod" has one version and two files -
+// the version ▾ still renders (a pool of >1 file, per plan_install.js's own
+// rule), but with a single option, and picking a file must be what decides
+// which one is deployed.
+func TestE2E_InlineInstallWithFilePickWritesToDisk(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchMultiFileModID)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "multi edition", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+	)
+
+	var fileOptions []string
+	f.runInBrowser(t,
+		chromedp.WaitVisible(`select[name="install-file"]`, chromedp.ByQuery),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll('select[name="install-file"] option')).map(o => o.textContent)`,
+			&fileOptions,
+		),
+	)
+	assert.Contains(t, fileOptions, "Regular Edition")
+	assert.Contains(t, fileOptions, "Definitive Edition")
+
+	f.runInBrowser(t,
+		chromedp.SetValue(`select[name="install-file"]`, "m2", chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	deployed, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "multi-definitive.pak"))
+	require.NoError(t, err)
+	assert.Equal(t, "payload for multi/m2", string(deployed),
+		"the SELECTED file (m2, Definitive Edition) must be what landed on disk, not the primary (m1)")
+	assert.NoFileExists(t, filepath.Join(f.Game.ModPath, "Mods", "multi-regular.pak"))
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ConflictOverwriteRoundTripSucceeds is the conflict round trip end
+// to end: installing "Clashing Mod" fails inline with *core.ConflictError
+// (its archive collides with the already-deployed Alpha Mod's file), the
+// tray's failed entry offers a live Overwrite affordance (failures.js,
+// wired for real in #331 - see TestE2E_FailureNextStepIsDecidedByTypedDetails
+// for the same wiring pinned in isolation), and taking it re-plans/re-applies
+// with accept_conflicts, landing the new mod's bytes - downloading nothing
+// the second time, because the refused attempt already warmed the cache.
+func TestE2E_ConflictOverwriteRoundTripSucceeds(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+	deployedPath := filepath.Join(f.Game.ModPath, filepath.FromSlash(e2eSearchDeployedFile))
+	before, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	require.Equal(t, "alpha content", string(before))
+
+	row := searchResultRow("fake", e2eSearchConflictModID)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "clash", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
+	)
+
+	afterRefusal := f.Src.downloadCount()
+	assert.Positive(t, afterRefusal, "the refused attempt must have downloaded - that is why the cache is warm")
+
+	current, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "alpha content", string(current), "a refused conflict must not have touched the deployed file")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
+		chromedp.Click(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	after, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "payload for clash/c1", string(after),
+		"the overwrite must have replaced the contested path with the NEW mod's file")
+	assert.Equal(t, afterRefusal, f.Src.downloadCount(),
+		"the overwrite re-run must download nothing: the refused attempt already filled the cache")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SearchPagePaginatesAndFiltersByCategory covers the escape
+// hatch's own two features the inline fan-out never needs: a real second
+// PAGE (Next fetches page 1 from the server, not a client-side slice of
+// page 0's own results) and a category filter applied client-side over
+// whatever page is currently on screen.
+func TestE2E_SearchPagePaginatesAndFiltersByCategory(t *testing.T) {
+	f := newE2EFixtureWithManySearchResults(t)
+
+	var page1Count int
+	var page1Header string
+	var nextDisabled bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/g/"+f.Game.ID+"/"+f.Profile+"/search?q=item"),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".search-result").length`, &page1Count),
+		textContent(`.search-page .section-header`, &page1Header),
+		chromedp.Evaluate(`document.querySelector(".search-page__pager button:last-child").disabled`, &nextDisabled),
+	)
+	assert.Equal(t, e2eManyResultsPageSize, page1Count, "page 1 holds exactly SEARCH_PAGE_SIZE hits")
+	assert.Contains(t, page1Header, "(20)", "the header counts the CURRENT page's own hits, not the total catalog")
+	assert.False(t, nextDisabled, "25 catalog mods over a page size of 20 must offer a next page")
+
+	// design doc §Search's search-PAGE bullet ("source badges, star/download
+	// counts, summaries") - the terser omnibar fan-out never renders these,
+	// so this is the ONE surface that must.
+	var firstSummary, firstDownloads string
+	f.runInBrowser(t,
+		textContent(`.search-result__summary`, &firstSummary),
+		textContent(`.search-result__downloads`, &firstDownloads),
+	)
+	assert.Contains(t, firstSummary, "Summary text for item")
+	assert.Contains(t, firstDownloads, "100 downloads")
+
+	var page2Count int
+	var firstNameOnPage2 string
+	f.runInBrowser(t,
+		chromedp.Click(`.search-page__pager button:last-child`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.search-results`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".search-result").length`, &page2Count),
+		textContent(`.search-result__name`, &firstNameOnPage2),
+	)
+	assert.Equal(t, 5, page2Count, "the remaining 5 catalog mods, not a repeat of page 1")
+	assert.Equal(t, "Item 21", firstNameOnPage2, "a genuinely DIFFERENT page, not page 1 truncated again")
+
+	var filteredCount int
+	f.runInBrowser(t,
+		chromedp.Click(`.search-page__pager button:first-child`, chromedp.ByQuery),
+		chromedp.WaitVisible(`select[name="category"]`, chromedp.ByQuery),
+		chromedp.SetValue(`select[name="category"]`, "Armor", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".search-result").length`, &filteredCount),
+	)
+	assert.Equal(t, 10, filteredCount, "page 1 holds 10 Armor-category hits (odd item numbers 1..19)")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_DeepLinkToSearchPage proves /search?q= is reachable on its own,
+// not merely as a client-side navigation from the omnibar - a bookmark or a
+// shared link must land the same result.
+func TestE2E_DeepLinkToSearchPage(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var names []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("boots")),
+		chromedp.WaitVisible(`.search-results`, chromedp.ByQuery),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll(".search-result__name")).map(e => e.textContent)`,
+			&names,
+		),
+	)
+
+	assert.Contains(t, names, "Better Boots")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SearchPageRowClickOpensSlideOverAndCloseReturnsToResults proves
+// the design's "slide-over on click for source results too" (design doc
+// §Search) holds on the DEDICATED search page as well as the omnibar's
+// inline fan-out - SourceResultsList (searchresults.js) is the same shared
+// component either way, and a row's name click must not be a dead click
+// that merely rewrites the URL with nothing to show for it.
+func TestE2E_SearchPageRowClickOpensSlideOverAndCloseReturnsToResults(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	var name, url string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("boots")),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__name", chromedp.ByQuery),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		textContent(`.slide-over .section-header`, &name),
+		chromedp.Location(&url),
+	)
+	assert.Equal(t, "Better Boots", name)
+	assert.Contains(t, url, "mod=fake%2Fboots")
+	assert.Contains(t, url, "q=boots", "opening the panel must preserve the search page's own query")
+
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.search-results`, chromedp.ByQuery),
+		chromedp.Location(&url),
+	)
+	assert.Contains(t, url, "/search?q=boots", "closing the panel must return to the search results, not navigate home")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_OverlappingInstallAndToggleBothTrackCorrectly is #331's carry-in
+// proof: main.js's single module-level bindingJob slot was correct only
+// while one modal implied one in-flight job start; Unit 5's inline
+// per-search-row install means a SECOND origin (here, a slide-over toggle,
+// which needs no modal and so is never locked out by one) can start while
+// the first is still genuinely in flight - bindingJobs (main.js) is now a
+// Map keyed by origin for exactly this reason.
+//
+// The install's own POST /api/v1/jobs is deliberately delayed (the fixture's
+// startE2EServerWithDelayedJobStart), so its origin binding is a real,
+// observable in-flight promise - not a race against microsecond-fast local
+// HTTP round trips - for the whole window in which the toggle starts and
+// finishes. The proof is END STATE, not timing: each origin's own outcome
+// must land on ITS OWN mod, not be lost or attributed to the other.
+func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
+	f := newE2EFixtureWithSearchableModsAndDelayedJobStart(t, 600*time.Millisecond)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		// The install's own start call is now sleeping server-side (still
+		// unresolved in bindingJobs); the modal's own busy state proves it.
+		chromedp.WaitVisible(`.modal [data-action="confirm"][disabled]`, chromedp.ByQuery),
+		// Clear the omnibar's own live filter - it still reads "boots" from
+		// the fan-out above, which would filter Gamma Mod (an installed
+		// row, not a search hit) out of the library entirely. Setting
+		// .value and dispatching "input" directly is what actually fires
+		// Preact's onInput; chromedp.Clear's select-all+Backspace key
+		// sequence did not reliably clear this field under automated key
+		// dispatch.
+		chromedp.Evaluate(`(() => {
+			const el = document.querySelector(".omnibar");
+			el.value = "";
+			el.dispatchEvent(new Event("input", { bubbles: true }));
+		})()`, nil),
+		chromedp.WaitVisible(`.library .section-header`, chromedp.ByQuery),
+		clickModRow("Gamma Mod"),
+		chromedp.WaitVisible(`.slide-over__actions`, chromedp.ByQuery),
+		// The install's confirm modal is STILL ON SCREEN (locked
+		// "starting") throughout this whole scenario - that overlay's own
+		// scrim sits above the slide-over in DOM order and intercepts a
+		// coordinate-based click aimed at its Disable button. A
+		// programmatic click (the same technique clickModRow already uses
+		// to reach the row underneath it) bypasses hit-testing entirely,
+		// which is the right tool here: this scenario is about
+		// bindingJobs' overlap, not about whether a modal's scrim can be
+		// clicked through - a separate, real UX question of its own.
+		chromedp.Evaluate(`document.querySelector(".slide-over__actions button").click()`, nil),
+		chromedp.WaitVisible(`.slide-over .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".slide-over__close").click()`, nil),
+	)
+
+	// Re-fan-out for "boots": clearing the omnibar above hid the search row
+	// entirely (OmnibarResults only renders while its own query still
+	// matches the live omnibar text), so the install's own eventual
+	// completion toasted instead of resurfacing on it - re-searching
+	// brings the row back, and origins["install:fake/boots"] (untouched by
+	// any of this - a completely separate store slice from the search
+	// results themselves) still names whichever job actually finished, so
+	// InlineJob picks its CURRENT state straight back up.
+	//
+	// That job FAILS - correctly, not a bug: the toggle really did change
+	// the installed-mods set the install's plan was computed against
+	// (Ruling 5's own freshness precondition, already covered on its own
+	// terms by TestFlowInstall_StalePlan_FailsTheJobAndAFreshPlanSucceeds),
+	// so ApplyInstall refuses it as stale. That refusal is this scenario's
+	// own proof: the failure must resurface on the RIGHT row, naming the
+	// RIGHT reason, with the toggle's own success nowhere near it - which
+	// is exactly what a clobbered bindingJobs slot could get wrong.
+	var jobHTML string
+	f.runInBrowser(t,
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
+		textContent(row+` .job-progress__text`, &jobHTML),
+	)
+	assert.Contains(t, jobHTML, "stale",
+		"the install's own origin must show ITS OWN outcome (the real staleness conflict), not the toggle's success")
+
+	var gammaEnabled bool
+	f.runInBrowser(t,
+		// The omnibar still reads "boots" from the re-search above, which
+		// would filter Gamma Mod out of the library the same way it did
+		// earlier - clear it again before reading the library's own state.
+		chromedp.Evaluate(`(() => {
+			const el = document.querySelector(".omnibar");
+			el.value = "";
+			el.dispatchEvent(new Event("input", { bubbles: true }));
+		})()`, nil),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Gamma Mod"))
+				.querySelector("td.col--enabled input").checked
+		`, &gammaEnabled),
+	)
+	assert.False(t, gammaEnabled, "the toggle's own origin must have landed on GAMMA - not lost, not misattributed to the install")
+
+	require.NoFileExists(t, filepath.Join(f.Game.ModPath, "Mods", "boots.pak"),
+		"a refused (stale) install must not have installed anything")
 	assert.Empty(t, f.BrowserErrors())
 }
