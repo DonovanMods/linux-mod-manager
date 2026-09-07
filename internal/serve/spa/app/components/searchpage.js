@@ -17,6 +17,7 @@ import { html, useMemo, useState } from "../render.js";
 import { navigate, contextPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { SourceResultsList } from "./searchresults.js";
+import { ModPanel } from "./modpanel.js";
 
 function BackLink({ to }) {
   return html`<a
@@ -189,6 +190,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         warnings=${report.warnings}
         state=${state}
         actions=${actions}
+        detailed=${true}
       />
 
       <div class="search-page__pager">
@@ -211,5 +213,26 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
         </button>
       </div>
     </main>
+    ${
+      route.mod &&
+      html`<${ModPanel}
+        modKey=${route.mod}
+        contextPath=${searchPagePath(home, searchPage.query)}
+        rows=${[]}
+        visible=${[]}
+        catalogRows=${sorted}
+        route=${route}
+        state=${state}
+        actions=${actions}
+      />`
+    }
   `;
+}
+
+/** searchPagePath is the ?mod= slide-over's own contextPath on this route -
+ * the current search results (?q= preserved), not home: closing the panel
+ * (or stepping through it) must land back on the results the user was
+ * browsing, not navigate away from the search page entirely. */
+function searchPagePath(home, query) {
+  return `${home}/search?q=${encodeURIComponent(query)}`;
 }

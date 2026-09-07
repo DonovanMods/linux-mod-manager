@@ -1031,8 +1031,8 @@ select {
 
 .search-result {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: var(--space-1);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -1041,7 +1041,19 @@ select {
   border-bottom: none;
 }
 
+/* the row of name/version/badges/action - the omnibar's own layout, and
+ * the search page's own `detailed` first line above its summary. */
+.search-result__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
 .search-result--warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   color: var(--warn);
 }
 
@@ -1073,6 +1085,25 @@ select {
 
 .search-result__author {
   color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/* detailed-only (search page): category badge, download count, summary
+ * line - design doc §Search's "source badges, star/download counts,
+ * summaries", none of which the terser omnibar fan-out renders. */
+.search-result__category {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.search-result__downloads {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.search-result__summary {
+  margin: 0;
+  color: var(--text-secondary);
   font-size: 0.85em;
 }
 
