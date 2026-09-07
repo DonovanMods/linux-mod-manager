@@ -2149,6 +2149,43 @@ func TestE2E_InlineInstallWithVersionPickWritesToDisk(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_SearchRowReadsInstalledAfterItsOwnJobSucceeds is M5 (unit 5 fix
+// wave): a search row's own hit.installed is only as fresh as the report
+// that produced it, and search reports are outside hydrate()'s own
+// route-scoped refresh - without main.js#refreshSearchResults, dismissing a
+// just-succeeded install's job chip returned the row straight back to an
+// enabled "Install" button, offering to install the very thing it just
+// finished installing.
+func TestE2E_SearchRowReadsInstalledAfterItsOwnJobSucceeds(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		chromedp.Click(row+` .job-progress__dismiss`, chromedp.ByQuery),
+	)
+
+	var installButtonPresent bool
+	var installedBadge string
+	f.runInBrowser(t,
+		chromedp.WaitVisible(row+` .badge--good`, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q) !== null`, row+" .search-result__install"), &installButtonPresent),
+		textContent(row+` .badge--good`, &installedBadge),
+	)
+	assert.False(t, installButtonPresent, "a just-installed row must not offer to install itself again")
+	assert.Equal(t, "Installed", installedBadge)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_InlineInstallWithFilePickWritesToDisk covers plan_install.js's
 // OTHER picker: the FILE sub-select that only renders once the chosen
 // version itself resolves to more than one file (unlike Better Boots

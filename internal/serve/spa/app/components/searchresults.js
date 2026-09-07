@@ -47,6 +47,15 @@ function formatDownloads(n) {
  * framework's install modal (plan_install.js), the same pipeline every
  * other mutation in this application uses; nothing here mutates directly.
  *
+ * InlineJob ALWAYS wraps the control, regardless of hit.installed (M5, unit
+ * 5 fix wave): hit.installed only decides what its CHILDREN render (the
+ * Install button vs the Installed badge) once InlineJob itself has no
+ * active/undismissed job for this origin to show instead. Gating InlineJob
+ * itself on hit.installed - the earlier shape - meant the moment a refreshed
+ * search report (main.js#refreshSearchResults) marked a hit installed, the
+ * whole control (including a job still showing its own "succeeded" chip)
+ * was replaced out from under it before the user ever dismissed it.
+ *
  * detailed (design doc §Search's search-PAGE bullet: "source badges, star/
  * download counts, summaries") adds the category badge, the download
  * count, and a one-line summary - the omnibar's inline fan-out stays
@@ -88,15 +97,11 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
           downloads &&
           html`<span class="search-result__downloads">${downloads}</span>`
         }
-        ${
-          hit.installed
-            ? html`<span class="badge badge--good">Installed</span>`
-            : html`<${InlineJob}
-                origin=${origin}
-                state=${state}
-                actions=${actions}
-              >
-                <button
+        <${InlineJob} origin=${origin} state=${state} actions=${actions}>
+          ${
+            hit.installed
+              ? html`<span class="badge badge--good">Installed</span>`
+              : html`<button
                   type="button"
                   class="button button--small search-result__install"
                   onClick=${() =>
@@ -109,9 +114,9 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
                     })}
                 >
                   Install
-                </button>
-              <//>`
-        }
+                </button>`
+          }
+        <//>
       </div>
       ${
         detailed &&

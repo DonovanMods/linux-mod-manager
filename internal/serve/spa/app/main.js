@@ -778,6 +778,22 @@ function dismissToast(id) {
 }
 
 /**
+ * refreshSearchResults re-runs whatever search state is currently cached
+ * (M5, unit 5 fix wave): a hit's own `installed` flag is only as fresh as
+ * the report that produced it, and this application's search reports are
+ * NOT part of hydrate()'s own route-scoped refresh (they can be showing on
+ * the home route while hydrate() only re-fetches Mission Control's four
+ * documents) - without this, a row that had just been installed through it
+ * kept offering "Install" until the next explicit search. Both slices are
+ * independent, so either, both, or neither may be populated at call time.
+ */
+function refreshSearchResults() {
+  const { omnibarSearch, searchPage } = store.get();
+  if (omnibarSearch) searchSources(omnibarSearch.query);
+  if (searchPage) runSearchPage(searchPage.query, searchPage.page);
+}
+
+/**
  * Handles a job reaching a terminal state, wherever it was started from.
  *
  * Two things follow from any completed mutation. The documents on screen
@@ -789,6 +805,7 @@ function dismissToast(id) {
  */
 async function onJobDone(summary) {
   hydrate(store.get().route);
+  refreshSearchResults();
 
   // Wait for every currently in-flight start to bind its origin before
   // deciding: see bindingJobs. The job that just finished could be behind
