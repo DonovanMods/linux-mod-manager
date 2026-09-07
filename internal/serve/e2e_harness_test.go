@@ -1203,12 +1203,6 @@ func (f e2eSearchFixture) SearchPagePath(query string) string {
 // clickable.
 const e2eManyResultsPageSize = 20
 
-// newE2EFixtureWithManySearchResults seeds one source with
-// e2eManyResultsPageSize+5 catalog mods, split evenly across two
-// categories ("Armor"/"Weapons") - the search page's own pagination
-// (Next/Prev) and category-filter scenarios. No downloads needed here (no
-// install happens against this fixture), so a plain fakeSource-shaped
-// catalog is enough - GetModFiles is never called.
 // startE2EServerWithDelayedJobStart is startE2EServer plus a reverse proxy
 // that sleeps for delay before forwarding every POST /api/v1/jobs - #331's
 // bindingJob carry-in ("installs can now start from multiple search rows
@@ -1329,6 +1323,12 @@ func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay time.
 	}
 }
 
+// newE2EFixtureWithManySearchResults seeds one source with
+// e2eManyResultsPageSize+5 catalog mods, split evenly across two
+// categories ("Armor"/"Weapons") - the search page's own pagination
+// (Next/Prev) and category-filter scenarios. No downloads needed here (no
+// install happens against this fixture), so a plain fakeSource-shaped
+// catalog is enough - GetModFiles is never called.
 func newE2EFixtureWithManySearchResults(t *testing.T) e2eFixture {
 	t.Helper()
 
