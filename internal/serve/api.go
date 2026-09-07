@@ -192,11 +192,24 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 // SearchOptions.Page/PageSize, which core.Search already threads through to
 // searchAllSources/SearchMods (both paginate per-source). Absent, both
 // default to 0 - "page 0, let each source apply its own default size" -
-// matching the CLI's own historical always-page-0 behavior. A ?page_size=
-// with no ?limit= also becomes the Limit cap (a page's worth of MERGED
-// results, not an unbounded merge of every source's own page), so a client
-// asking for one page of N gets at most N rows back; an explicit ?limit=
-// still wins when both are given, since it is the more specific ask.
+// matching the CLI's own historical always-page-0 behavior.
+//
+// ?page_size= is NEVER used to derive an implicit Limit on this (AGGREGATE)
+// path (unit 5 fix wave, Important 6 - previously `if limit == 0 && pageSize
+// != 0 { limit = pageSize }` ran unconditionally). searchAllSources requests
+// page N from EVERY configured source and merges - a page can therefore
+// hold up to page_size × (number of sources) rows - so capping the merge at
+// a single page_size silently and PERMANENTLY dropped whatever a page's
+// later-ranked sources contributed: with two sources at page_size=20, page 0
+// fetched 40 candidates and kept only the top-ranked 20, and page 1 asked
+// each source for ITS OWN next 20, never revisiting the 20 that were
+// dropped from page 0's merge - they were unreachable on any page. Only a
+// single-source search (SourceMods, which paginates ONE cursor directly) can
+// honestly promise "at most page_size rows" without a cap of its own; that
+// path does not exist on this endpoint yet (SearchOptions.SourceID is not
+// wired to a query param here), so no case currently needs one. An explicit
+// ?limit= still caps the merge exactly as before - it says what it means
+// regardless of how many sources answered.
 // Either non-numeric value is bad input (400), the same class as ?limit=.
 func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
@@ -216,9 +229,6 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	pageSize, ok := s.parseOptionalIntParam(w, r, "page_size")
 	if !ok {
 		return
-	}
-	if limit == 0 && pageSize != 0 {
-		limit = pageSize
 	}
 
 	sel, ok := s.resolveReadyAPISelection(w, r)

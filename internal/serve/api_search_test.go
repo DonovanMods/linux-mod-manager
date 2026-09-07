@@ -2,6 +2,7 @@ package serve_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -189,6 +190,77 @@ func TestServer_APISearch_ExplicitLimitOverridesPageSizeCap(t *testing.T) {
 	var report core.SearchReport
 	decodeStrict(t, rec.Body.Bytes(), &report)
 	require.Len(t, report.Mods, 1, "the explicit limit must win over page_size's implicit cap")
+}
+
+// TestServer_APISearch_AggregateMultiSourcePagination_NoResultsDropped is
+// Important 6 (unit 5 fix wave): with TWO sources configured, page_size
+// previously doubled as an implicit Limit on the merged results, capping a
+// 20-candidate page at its own page_size even though searchAllSources had
+// fetched a page from EACH source. Two sources, 15 mods apiece (fs1's IDs/
+// names sort strictly before fs2's, so rankAggregate's name-ascending
+// tiebreak - both sources' Downloads are 0 - orders the merge fs1-then-fs2
+// deterministically): page 0 at page_size=10 fetches page 0 from BOTH (10 +
+// 10 = 20 candidates); the old bug capped that at 10, permanently dropping
+// fs2's entire page-0 contribution (fs2 page 1 only ever re-fetches items
+// 11-15, never 1-10). This proves every one of the 30 catalog mods is
+// reachable across the two pages that exist, with no explicit ?limit=.
+func TestServer_APISearch_AggregateMultiSourcePagination_NoResultsDropped(t *testing.T) {
+	fs1 := newFakeSource("fs1")
+	fs2 := newFakeSource("fs2")
+	for i := 1; i <= 15; i++ {
+		fs1.addMod(fakeSourceMod{Mod: domain.Mod{
+			ID: fmt.Sprintf("%02d", i), SourceID: "fs1",
+			Name: fmt.Sprintf("Item S1-%02d", i), Version: "1.0",
+		}})
+		fs2.addMod(fakeSourceMod{Mod: domain.Mod{
+			ID: fmt.Sprintf("%02d", i), SourceID: "fs2",
+			Name: fmt.Sprintf("Item S2-%02d", i), Version: "1.0",
+		}})
+	}
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(fs1)
+	svc.RegisterSource(fs2)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{fs1.ID(): "", fs2.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err = svc.NewProfileManager().Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(context.Background(), game.ID))
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	fetchPage := func(page int) core.SearchReport {
+		req := httptest.NewRequest(http.MethodGet,
+			fmt.Sprintf("http://%s/api/v1/search?q=item&page=%d&page_size=10", testAddr, page), nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var report core.SearchReport
+		decodeStrict(t, rec.Body.Bytes(), &report)
+		return report
+	}
+
+	page0 := fetchPage(0)
+	require.Len(t, page0.Mods, 20, "page 0 must hold BOTH sources' own page-0 contributions (10+10), uncapped")
+
+	page1 := fetchPage(1)
+	require.Len(t, page1.Mods, 10, "page 1 holds both sources' remaining 5 mods apiece")
+
+	seen := map[string]bool{}
+	for _, hit := range append(page0.Mods, page1.Mods...) {
+		seen[hit.SourceID+"/"+hit.ID] = true
+	}
+	assert.Len(t, seen, 30, "every mod from both 15-mod catalogs must be reachable across the two pages")
 }
 
 // TestServer_APISearch_UnresolvedSelection_Renders404 proves the missing-q
