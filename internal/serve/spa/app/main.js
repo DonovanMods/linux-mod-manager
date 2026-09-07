@@ -565,6 +565,23 @@ function rememberInstallRequest(origin, planOptions, applyOptions) {
 }
 
 /**
+ * canRetryInstallOverwrite reports whether retryInstallOverwrite has
+ * anything to re-plan for jobID (I3, unit 5 fix wave): installRequests is a
+ * page-lifetime Map, so a failed install's tray entry - itself server-side
+ * and reload-durable via GET /api/v1/jobs - can outlive the ONLY record of
+ * what to re-plan. The failed job's own summary carries no source_id/mod_id/
+ * options of its own to rebuild it from (activity.go's jobSummary; a failed
+ * job's Result is never populated either) - only its typed conflict details,
+ * which name the file's CURRENT owner, not the mod that failed to install -
+ * so after a reload this is honestly false rather than a guess. The tray
+ * button reads this to disable itself instead of silently doing nothing.
+ */
+function canRetryInstallOverwrite(jobID) {
+  const origin = originOf(jobID);
+  return Boolean(origin && installRequests.get(origin));
+}
+
+/**
  * retryInstallOverwrite answers a failed install's conflict the way v2 Phase
  * 3 Ruling 1 answers every mid-flight decision: not a callback into Apply,
  * but a fresh Plan/Apply re-run with the matching option set - here,
@@ -580,7 +597,19 @@ function rememberInstallRequest(origin, planOptions, applyOptions) {
 async function retryInstallOverwrite(jobID) {
   const origin = originOf(jobID);
   const req = origin && installRequests.get(origin);
-  if (!req) return;
+  if (!req) {
+    // Reachable only if something fires this despite canRetryInstallOverwrite
+    // saying no (the tray button is disabled in that case) - a toast rather
+    // than the silent no-op this used to be (I3): a failure whose next step
+    // does nothing at all is worse than one with no next step offered.
+    pushToast({
+      tone: "failure",
+      title: "Can't retry",
+      detail:
+        "This install must be retried from a fresh attempt - the page was reloaded since it started.",
+    });
+    return;
+  }
 
   const context = {
     game: store.get().route.game,
@@ -869,6 +898,7 @@ const actions = {
   clearOrigin,
   dismissToast,
   retryInstallOverwrite,
+  canRetryInstallOverwrite,
 };
 
 // contextKey identifies the data a route needs, not the route itself: the

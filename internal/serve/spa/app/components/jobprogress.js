@@ -16,6 +16,7 @@
 import { html, useEffect } from "../render.js";
 import { registerOrigin } from "../activity.js";
 import { progressText, progressFraction, jobStateLabel } from "../progress.js";
+import { OverwriteButton } from "./tray.js";
 
 /**
  * InlineJob renders children when origin has no job, and that job's live
@@ -38,6 +39,7 @@ export function InlineJob({ origin, state, actions, children }) {
     jobID=${jobID}
     summary=${summary}
     frame=${frame}
+    actions=${actions}
     onDismiss=${() => actions.clearOrigin(origin)}
   />`;
 }
@@ -49,8 +51,15 @@ export function InlineJob({ origin, state, actions, children }) {
  * A job whose summary has not arrived yet (the job start returned, the
  * stream's job_started frame has not) renders as starting rather than as
  * nothing - the click must never look like it did nothing.
+ *
+ * A failed job renders tray.js's own OverwriteButton beside its "Failed:
+ * ..." text (I4, unit 5 fix wave: the action lives where the failure is
+ * shown, not only in a tray a route may not even have) - actions is
+ * optional so a caller with nothing to retry through (there is none today,
+ * but nothing here should hard-require it) can still render every other
+ * state.
  */
-export function JobProgress({ jobID, summary, frame, onDismiss }) {
+export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   const state = summary?.state ?? "running";
 
   if (state === "running") {
@@ -87,6 +96,12 @@ export function JobProgress({ jobID, summary, frame, onDismiss }) {
       <span class="job-progress__text">
         ${failed ? `Failed: ${summary?.error?.error ?? "unknown error"}` : "Done"}
       </span>
+      ${
+        failed &&
+        summary &&
+        actions &&
+        html`<${OverwriteButton} job=${summary} actions=${actions} />`
+      }
       <button
         type="button"
         class="job-progress__dismiss"

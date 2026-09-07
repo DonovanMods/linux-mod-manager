@@ -2291,6 +2291,110 @@ func TestE2E_ConflictOverwriteRoundTripSucceeds(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage is I4 (unit 5
+// fix wave): installing from the DEDICATED SEARCH PAGE and hitting a
+// conflict used to be a dead end there - app.js renders SearchPage with no
+// TopBar, so there is no activity bell/tray on that route at all, and the
+// tray was the ONLY place the Overwrite affordance rendered. tray.js's own
+// OverwriteButton now renders INLINE beside the failed row's own job chip
+// (jobprogress.js), so this scenario completes without a tray anywhere in
+// reach.
+func TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+	deployedPath := filepath.Join(f.Game.ModPath, filepath.FromSlash(e2eSearchDeployedFile))
+
+	row := searchResultRow("fake", e2eSearchConflictModID)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("clash")),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
+	)
+
+	var trayPresent bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector(".activity-bell__trigger") !== null`, &trayPresent),
+	)
+	require.False(t, trayPresent, "the search page has no top bar/tray at all - the row is the only way in")
+
+	f.runInBrowser(t,
+		chromedp.Click(row+` button[data-action="overwrite"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	after, err := os.ReadFile(deployedPath)
+	require.NoError(t, err)
+	assert.Equal(t, "payload for clash/c1", string(after),
+		"the overwrite must have replaced the contested path with the NEW mod's file")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled is I3 (unit 5 fix
+// wave): main.js's installRequests (the only record of what a failed
+// install's Overwrite should re-plan) is a page-lifetime Map, while the
+// failed job itself is server-side and reload-durable (GET /api/v1/jobs) -
+// before this fix, a reload left the tray's button present, enabled, and
+// silently doing nothing when clicked. The row's own inline copy of the
+// button doesn't even reach this case: state.origins (which job belongs to
+// which control) is ALSO page-lifetime, so after a reload the row shows a
+// plain Install button again and the tray is the only place the stale
+// failure - and this scenario - still exists at all.
+func TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchConflictModID)
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "clash", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
+	)
+
+	var disabledBeforeReload bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(
+			`document.querySelector('.tray__row[data-state="failed"] button[data-action="overwrite"]').disabled`,
+			&disabledBeforeReload,
+		),
+	)
+	assert.False(t, disabledBeforeReload, "same-session, the request is still reconstructable")
+
+	f.runInBrowser(t,
+		chromedp.Reload(),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row[data-state="failed"] button[data-action="overwrite"]`, chromedp.ByQuery),
+	)
+
+	var disabledAfterReload bool
+	var title string
+	f.runInBrowser(t,
+		chromedp.Evaluate(
+			`document.querySelector('.tray__row[data-state="failed"] button[data-action="overwrite"]').disabled`,
+			&disabledAfterReload,
+		),
+		chromedp.Evaluate(
+			`document.querySelector('.tray__row[data-state="failed"] button[data-action="overwrite"]').title`,
+			&title,
+		),
+	)
+	assert.True(t, disabledAfterReload,
+		"a reload loses installRequests - the button must say so honestly, not silently do nothing when clicked")
+	assert.Contains(t, title, "fresh install attempt")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_SearchPagePaginatesAndFiltersByCategory covers the escape
 // hatch's own two features the inline fan-out never needs: a real second
 // PAGE (Next fetches page 1 from the server, not a client-side slice of

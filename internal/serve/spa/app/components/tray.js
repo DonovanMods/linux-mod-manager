@@ -223,19 +223,24 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
 }
 
 /**
- * FailureNextStep renders a failed job's envelope and the next step it
- * implies (design doc §Jobs: "failures with their next step inline - a
- * conflict shows Overwrite? right in the tray").
+ * OverwriteButton renders nextStepFor's affordance alone (I3/I4, unit 5 fix
+ * wave) - the busy-toggling button without the failure message/details
+ * FailureNextStep always pairs it with in the tray. jobprogress.js's own
+ * inline chip (I4: the search page has no tray to fall back on) needs just
+ * the button beside the row's own "Failed: ..." text, which would otherwise
+ * say the same thing twice.
  *
- * WHICH step is failures.js's decision, taken from the envelope's typed
- * details; this component only renders it. The details themselves are shown
- * in full whether or not they imply an action, because a failure whose
- * reason is hidden is the one thing worse than a failure with no next step.
+ * Disabled, with a title explaining why, when actions.canRetryInstallOverwrite
+ * says the request behind this job can no longer be reconstructed (I3: a
+ * page reload outlives installRequests, main.js's only record of what to
+ * re-plan) - never a button that silently does nothing when clicked.
  */
-function FailureNextStep({ job, actions }) {
-  const envelope = job.error ?? {};
+export function OverwriteButton({ job, actions }) {
   const step = nextStepFor(job);
   const [busy, setBusy] = useState(false);
+  if (!step) return null;
+
+  const retryable = actions.canRetryInstallOverwrite(job.id);
 
   async function fire() {
     setBusy(true);
@@ -247,22 +252,40 @@ function FailureNextStep({ job, actions }) {
   }
 
   return html`
+    <button
+      type="button"
+      class="button button--small"
+      data-action=${step.action}
+      disabled=${busy || !retryable}
+      title=${
+        retryable
+          ? undefined
+          : "This retry must be started from a fresh install attempt"
+      }
+      onClick=${fire}
+    >
+      ${busy ? "Overwriting…" : step.label}
+    </button>
+  `;
+}
+
+/**
+ * FailureNextStep renders a failed job's envelope and the next step it
+ * implies (design doc §Jobs: "failures with their next step inline - a
+ * conflict shows Overwrite? right in the tray").
+ *
+ * WHICH step is failures.js's decision, taken from the envelope's typed
+ * details; this component only renders it. The details themselves are shown
+ * in full whether or not they imply an action, because a failure whose
+ * reason is hidden is the one thing worse than a failure with no next step.
+ */
+function FailureNextStep({ job, actions }) {
+  const envelope = job.error ?? {};
+
+  return html`
     <div class="tray__failure">
       <p class="tray__failure-message">${envelope.error ?? "failed"}</p>
-      ${
-        step &&
-        html`
-          <button
-            type="button"
-            class="button button--small"
-            data-action=${step.action}
-            disabled=${busy}
-            onClick=${fire}
-          >
-            ${busy ? "Overwriting…" : step.label}
-          </button>
-        `
-      }
+      <${OverwriteButton} job=${job} actions=${actions} />
       ${envelope.details && html`<${DocumentView} value=${envelope.details} />`}
     </div>
   `;
