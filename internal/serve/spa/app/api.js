@@ -101,10 +101,13 @@ export const getModVersions = (sourceID, modID, context) =>
  * Runs a search against the game's configured sources: GET /api/v1/search,
  * returning core.SearchReport verbatim. opts.page/pageSize are issue 331's
  * pagination params (the omnibar's fan-out never sets either - a live
- * filter has no "next page"; the dedicated search page does). Category/
- * source filtering and sort are applied CLIENT-SIDE over one page's own
- * Mods (searchresults.js) rather than round-tripping the server again -
- * every hit already carries its own category/source_id/downloads.
+ * filter has no "next page"; the dedicated search page does). opts.category/
+ * source are the search page's own filters, forwarded server-side (Important
+ * 1b, unit 5 fix wave) rather than sliced client-side over one page's own
+ * Mods - a category/source change re-queries page 0 with the new filter, so
+ * the count it renders answers the CATALOG, not one page. Sort stays
+ * client-side (searchpage.js): it only reorders what a page already holds,
+ * which needs no round trip.
  */
 export function search(query, opts, context) {
   const url = new URL(
@@ -116,6 +119,8 @@ export function search(query, opts, context) {
   if (opts?.pageSize != null)
     url.searchParams.set("page_size", String(opts.pageSize));
   if (opts?.limit != null) url.searchParams.set("limit", String(opts.limit));
+  if (opts?.category) url.searchParams.set("category", opts.category);
+  if (opts?.source) url.searchParams.set("source", opts.source);
   return get(url.pathname + url.search);
 }
 

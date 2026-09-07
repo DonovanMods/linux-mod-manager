@@ -1385,3 +1385,50 @@ func newE2EFixtureWithManySearchResults(t *testing.T) e2eFixture {
 	}
 	return newE2EFixtureFromSource(t, src)
 }
+
+// newE2EFixtureWithTwoWorkingSearchSources seeds TWO real (non-failing)
+// sources on one game, both contributing hits to the same "gizmo" query -
+// M4 (unit 5 fix wave): the search page's source filter (sourceIDs.length
+// > 1) had no fixture where it was ever true, so it shipped untested end to
+// end. newE2EFixtureWithSearchableMods's own second source ("flaky")
+// always fails and so never lights it up. No downloads happen against this
+// fixture - a plain catalog is enough.
+func newE2EFixtureWithTwoWorkingSearchSources(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src1 := newFakeSource("fake")
+	src1.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Gizmo One", Version: "1.0"}})
+	src1.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Gizmo Two", Version: "1.0"}})
+	src1.addMod(fakeSourceMod{Mod: domain.Mod{ID: "3", SourceID: "fake", Name: "Gizmo Three", Version: "1.0"}})
+
+	src2 := newFakeSource("fake2")
+	src2.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake2", Name: "Gizmo Four", Version: "1.0"}})
+	src2.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake2", Name: "Gizmo Five", Version: "1.0"}})
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src1)
+	svc.RegisterSource(src2)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{src1.ID(): "", src2.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+		BrowserErrors: browserErrors,
+	}
+}

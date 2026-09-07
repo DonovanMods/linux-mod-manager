@@ -263,6 +263,78 @@ func TestServer_APISearch_AggregateMultiSourcePagination_NoResultsDropped(t *tes
 	assert.Len(t, seen, 30, "every mod from both 15-mod catalogs must be reachable across the two pages")
 }
 
+// TestServer_APISearch_CategoryParam_FiltersServerSide is Important 1b
+// (unit 5 fix wave): the search page's category filter moved server-side -
+// ?category= forwards into SearchOptions.Category (already forwarded to
+// every source's own SearchQuery), narrowing TotalResults to the CATALOG-
+// wide count for that category, not a client-side slice of one page.
+func TestServer_APISearch_CategoryParam_FiltersServerSide(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Alpha", Version: "1.0", Category: "Armor"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Beta", Version: "1.0", Category: "Weapons"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "3", SourceID: "fake", Name: "Boots Gamma", Version: "1.0", Category: "Armor"}})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&category=Armor", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	require.Len(t, report.Mods, 2, "only the two Armor-category mods must match, server-side")
+	assert.Equal(t, 2, report.TotalResults)
+	for _, hit := range report.Mods {
+		assert.Equal(t, "Armor", hit.Category)
+	}
+
+	want, err := svc.Search(context.Background(), game, "default", "boots", core.SearchOptions{Category: "Armor"})
+	require.NoError(t, err)
+	requireEncodesLike(t, rec.Body.Bytes(), want)
+}
+
+// TestServer_APISearch_SourceParam_NarrowsToNamedSource is Important 1b's
+// other half: ?source= forwards into SearchOptions.SourceID, the existing
+// named-source path (`lmm search --source`), narrowing an aggregate of
+// several sources down to exactly the one named.
+func TestServer_APISearch_SourceParam_NarrowsToNamedSource(t *testing.T) {
+	fs1 := newFakeSource("fs1")
+	fs1.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fs1", Name: "Boots From One", Version: "1.0"}})
+	fs2 := newFakeSource("fs2")
+	fs2.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fs2", Name: "Boots From Two", Version: "1.0"}})
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(fs1)
+	svc.RegisterSource(fs2)
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{fs1.ID(): "", fs2.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err = svc.NewProfileManager().Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(context.Background(), game.ID))
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&source=fs2", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	require.Len(t, report.Mods, 1, "only fs2's own mod must appear")
+	assert.Equal(t, "fs2", report.Mods[0].SourceID)
+	assert.Equal(t, "Boots From Two", report.Mods[0].Name)
+}
+
 // TestServer_APISearch_UnresolvedSelection_Renders404 proves the missing-q
 // check only gates a genuinely absent/empty q: once q is present
 // (?q=boots), an unresolvable ?game= still surfaces as the ordinary

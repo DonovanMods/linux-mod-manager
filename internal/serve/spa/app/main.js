@@ -145,7 +145,7 @@ async function hydrate(route) {
     return;
   }
   if (route.view === "search") {
-    await runSearchPage(route.q ?? "", 0);
+    await runSearchPage({ query: route.q ?? "", page: 0 });
     return;
   }
   if (route.view !== "home") return;
@@ -346,14 +346,47 @@ async function searchSources(query) {
 // faster page 2 (or after the user has navigated to a different query).
 let searchPageSeq = 0;
 
+/** emptyFacets is searchPage.facets' shape before anything has loaded - the
+ * category/source SELECTs render no options until a real report answers. */
+const emptyFacets = { categories: [], sourceIDs: [] };
+
+/** facetsFromReport derives the category/source filter SELECTs' own option
+ * lists from a report's hits. Called only for an UNFILTERED report (no
+ * category/source applied) - see runSearchPage's own comment on why. */
+function facetsFromReport(report) {
+  const hits = report.mods ?? [];
+  return {
+    categories: [
+      ...new Set(hits.map((h) => h.category).filter(Boolean)),
+    ].sort(),
+    sourceIDs: [...new Set(hits.map((h) => h.source_id))].sort(),
+  };
+}
+
 /**
  * runSearchPage loads one page of the dedicated /search route (design doc
  * §Search: "a dedicated search page ... pagination"). Called by hydrate()
- * on route entry/deep link and by the page's own Next/Prev controls -
- * neither touches the URL's ?q=, which stays the query alone (pagination is
- * client-driven state, not part of the route).
+ * on route entry/deep link and by the page's own Next/Prev/category/source
+ * controls - none touch the URL's ?q=, which stays the query alone
+ * (pagination and filtering are client-driven state, not part of the
+ * route).
+ *
+ * category/source are Important 1b's own fix (unit 5 fix wave): moved
+ * SERVER-SIDE from a client-side slice of one page's own hits, so the count
+ * this renders answers the CATALOG for that filter, not one page of it. A
+ * filter change always re-queries PAGE 0 (searchPageSetCategory/
+ * searchPageSetSource below) - a filtered page 3 carried over from an
+ * unfiltered browse would be a page number with nothing behind it.
+ *
+ * facets (the category/source SELECTs' own option lists) are derived ONLY
+ * from an UNFILTERED report (no category/source of its own) and then
+ * RETAINED across a filter change for the same query, rather than
+ * recomputed from whatever the filtered report happens to hold: a report
+ * already narrowed to "Armor" carries no "Weapons" hits at all, so
+ * recomputing from it would make every OTHER category vanish from its own
+ * picker the moment one was chosen. Reset only on a genuinely new query.
  */
-async function runSearchPage(query, page) {
+async function runSearchPage({ query, page, category = "", source = "" }) {
   const q = (query ?? "").trim();
   searchPageSeq += 1;
   const seq = searchPageSeq;
@@ -365,31 +398,44 @@ async function runSearchPage(query, page) {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
+  const previous = store.get().searchPage;
+  const facets =
+    previous?.query === q && previous.status !== "error"
+      ? previous.facets
+      : emptyFacets;
+
   store.set({
     searchPage: {
       status: "loading",
       query: q,
       page,
       pageSize: SEARCH_PAGE_SIZE,
+      category,
+      source,
       report: null,
       error: null,
+      facets,
     },
   });
   try {
     const report = await apiSearch(
       q,
-      { page, pageSize: SEARCH_PAGE_SIZE },
+      { page, pageSize: SEARCH_PAGE_SIZE, category, source },
       context,
     );
     if (searchPageSeq !== seq) return;
+    const nextFacets = !category && !source ? facetsFromReport(report) : facets;
     store.set({
       searchPage: {
         status: "ready",
         query: q,
         page,
         pageSize: SEARCH_PAGE_SIZE,
+        category,
+        source,
         report,
         error: null,
+        facets: nextFacets,
       },
     });
   } catch (err) {
@@ -400,19 +446,51 @@ async function runSearchPage(query, page) {
         query: q,
         page,
         pageSize: SEARCH_PAGE_SIZE,
+        category,
+        source,
         report: null,
         error: err instanceof ApiError ? err.message : String(err),
+        facets,
       },
     });
   }
 }
 
-/** searchPageGoTo re-runs the search page at a different page, for the
- * current query - the Next/Prev controls' own action. */
+/** searchPageGoTo re-runs the search page at a different page, keeping the
+ * current query/category/source - the Next/Prev controls' own action. */
 function searchPageGoTo(page) {
   const current = store.get().searchPage;
   if (!current) return;
-  runSearchPage(current.query, page);
+  runSearchPage({
+    query: current.query,
+    page,
+    category: current.category,
+    source: current.source,
+  });
+}
+
+/** searchPageSetCategory/searchPageSetSource apply a new filter at page 0 -
+ * the category/source SELECTs' own onChange (Important 1b). */
+function searchPageSetCategory(category) {
+  const current = store.get().searchPage;
+  if (!current) return;
+  runSearchPage({
+    query: current.query,
+    page: 0,
+    category,
+    source: current.source,
+  });
+}
+
+function searchPageSetSource(source) {
+  const current = store.get().searchPage;
+  if (!current) return;
+  runSearchPage({
+    query: current.query,
+    page: 0,
+    category: current.category,
+    source,
+  });
 }
 
 // modalSeq fences a slow plan against a modal that is no longer open. Each
@@ -828,7 +906,13 @@ function dismissToast(id) {
 function refreshSearchResults() {
   const { omnibarSearch, searchPage } = store.get();
   if (omnibarSearch) searchSources(omnibarSearch.query);
-  if (searchPage) runSearchPage(searchPage.query, searchPage.page);
+  if (searchPage)
+    runSearchPage({
+      query: searchPage.query,
+      page: searchPage.page,
+      category: searchPage.category,
+      source: searchPage.source,
+    });
 }
 
 /**
@@ -900,6 +984,8 @@ const actions = {
   setPlanOptions,
   searchSources,
   searchPageGoTo,
+  searchPageSetCategory,
+  searchPageSetSource,
   startToggle,
   setModLock,
   clearModLock,

@@ -2427,8 +2427,10 @@ func TestE2E_OverwriteButtonAfterReloadIsHonestlyDisabled(t *testing.T) {
 // TestE2E_SearchPagePaginatesAndFiltersByCategory covers the escape
 // hatch's own two features the inline fan-out never needs: a real second
 // PAGE (Next fetches page 1 from the server, not a client-side slice of
-// page 0's own results) and a category filter applied client-side over
-// whatever page is currently on screen.
+// page 0's own results) and a category filter now applied SERVER-SIDE
+// (Important 1b, unit 5 fix wave: it used to slice whatever page was
+// currently on screen, so filtering to Armor read "10" when the catalog
+// actually holds 13 - the "dishonest count" the owner demo found).
 func TestE2E_SearchPagePaginatesAndFiltersByCategory(t *testing.T) {
 	f := newE2EFixtureWithManySearchResults(t)
 
@@ -2443,7 +2445,8 @@ func TestE2E_SearchPagePaginatesAndFiltersByCategory(t *testing.T) {
 		chromedp.Evaluate(`document.querySelector(".search-page__pager button:last-child").disabled`, &nextDisabled),
 	)
 	assert.Equal(t, e2eManyResultsPageSize, page1Count, "page 1 holds exactly SEARCH_PAGE_SIZE hits")
-	assert.Contains(t, page1Header, "(20)", "the header counts the CURRENT page's own hits, not the total catalog")
+	assert.Contains(t, page1Header, "Page 1 · 20 on this page", "the header must say what its number IS (Important 1a)")
+	assert.Contains(t, page1Header, "more available", "25 catalog mods over a page size of 20 must cue that more exist")
 	assert.False(t, nextDisabled, "25 catalog mods over a page size of 20 must offer a next page")
 
 	// design doc §Search's search-PAGE bullet ("source badges, star/download
@@ -2469,13 +2472,61 @@ func TestE2E_SearchPagePaginatesAndFiltersByCategory(t *testing.T) {
 	assert.Equal(t, "Item 21", firstNameOnPage2, "a genuinely DIFFERENT page, not page 1 truncated again")
 
 	var filteredCount int
+	var filteredHeader string
+	var filteredNextDisabled bool
 	f.runInBrowser(t,
 		chromedp.Click(`.search-page__pager button:first-child`, chromedp.ByQuery),
 		chromedp.WaitVisible(`select[name="category"]`, chromedp.ByQuery),
 		chromedp.SetValue(`select[name="category"]`, "Armor", chromedp.ByQuery),
-		chromedp.Evaluate(`document.querySelectorAll(".search-result").length`, &filteredCount),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
 	)
-	assert.Equal(t, 10, filteredCount, "page 1 holds 10 Armor-category hits (odd item numbers 1..19)")
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelectorAll(".search-result").length`, &filteredCount),
+		textContent(`.search-page .section-header`, &filteredHeader),
+		chromedp.Evaluate(`document.querySelector(".search-page__pager button:last-child").disabled`, &filteredNextDisabled),
+	)
+	assert.Equal(t, 13, filteredCount,
+		"the CATALOG holds 13 Armor-category mods (odd item numbers 1..25) - not the 10 that happened to be on page 1")
+	assert.Contains(t, filteredHeader, "Page 1 · 13 on this page")
+	assert.True(t, filteredNextDisabled, "all 13 Armor mods fit on one page - paging still works, it just has nothing left to page to")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SearchPageSourceFilterNarrowsResults is M4 (unit 5 fix wave): the
+// search page's source filter had no fixture where more than one source's
+// own hits ever rendered (sourceIDs.length > 1 was never true in any E2E
+// fixture), so the control shipped untested end to end. Two WORKING
+// sources contribute to the same "gizmo" query; selecting one must narrow
+// the results server-side (Important 1b) to exactly that source's own hits.
+func TestE2E_SearchPageSourceFilterNarrowsResults(t *testing.T) {
+	f := newE2EFixtureWithTwoWorkingSearchSources(t)
+
+	var allCount int
+	var sourceOptionPresent bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/g/"+f.Game.ID+"/"+f.Profile+"/search?q=gizmo"),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".search-result").length`, &allCount),
+		chromedp.Evaluate(`document.querySelector('select[name="source"]') !== null`, &sourceOptionPresent),
+	)
+	require.True(t, sourceOptionPresent, "two sources contributing hits must render the source filter")
+	require.Equal(t, 5, allCount, "both sources' hits appear with no filter applied")
+
+	var filteredCount int
+	var names []string
+	f.runInBrowser(t,
+		chromedp.SetValue(`select[name="source"]`, "fake2", chromedp.ByQuery),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelectorAll(".search-result").length`, &filteredCount),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll(".search-result__name")).map(e => e.textContent)`,
+			&names,
+		),
+	)
+	assert.Equal(t, 2, filteredCount, "only fake2's own two mods must remain")
+	assert.ElementsMatch(t, []string{"Gizmo Four", "Gizmo Five"}, names)
 	assert.Empty(t, f.BrowserErrors())
 }
 

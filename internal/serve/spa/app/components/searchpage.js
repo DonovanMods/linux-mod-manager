@@ -8,10 +8,13 @@
 // fullmodpage.js's own pattern for the same reason.
 //
 // issue 331's own pagination fetches a fresh page from the server
-// (main.js#runSearchPage); category/source filtering and sort are applied
-// CLIENT-SIDE over the CURRENT page's own hits - every SearchHit already
-// carries category/source_id/downloads, so narrowing or reordering what is
-// already on screen needs no round trip.
+// (main.js#runSearchPage). Category/source filtering moved SERVER-SIDE
+// there too (Important 1b, unit 5 fix wave): a filter change re-queries
+// page 0 with that option, so the count this page renders answers the
+// CATALOG for that filter, not a client-side slice of one page. Sort stays
+// client-side and page-local - it only reorders what a page already holds
+// (every SearchHit already carries its own downloads/name), which needs no
+// round trip; its own label says so (Important 1c).
 
 import { html, useMemo, useState } from "../render.js";
 import { navigate, contextPath } from "../router.js";
@@ -35,9 +38,9 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   // Hooks run unconditionally, before any of the branches below return -
   // missioncontrol.js's own rule, for the same reason: a component that
   // calls fewer hooks on one render than another corrupts Preact's hook
-  // order on every subsequent render.
-  const [category, setCategory] = useState("");
-  const [source, setSource] = useState("");
+  // order on every subsequent render. Sort is the only filter still LOCAL
+  // to this component - category/source live in state.searchPage, since a
+  // filter change now re-fetches (main.js#runSearchPage).
   const [sort, setSort] = useState("relevance");
 
   const searchPage = state.searchPage;
@@ -45,32 +48,17 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   const matches = searchPage && searchPage.query === query;
   const report = matches ? searchPage.report : null;
   const hits = report?.mods ?? [];
+  const facets = matches ? searchPage.facets : null;
 
-  const categories = useMemo(
-    () => [...new Set(hits.map((h) => h.category).filter(Boolean))].sort(),
-    [hits],
-  );
-  const sourceIDs = useMemo(
-    () => [...new Set(hits.map((h) => h.source_id))].sort(),
-    [hits],
-  );
-  const filtered = useMemo(() => {
-    let out = hits;
-    if (category) out = out.filter((h) => h.category === category);
-    if (source) out = out.filter((h) => h.source_id === source);
-    return out;
-  }, [hits, category, source]);
   const sorted = useMemo(() => {
     if (sort === "downloads") {
-      return [...filtered].sort(
-        (a, b) => (b.downloads ?? 0) - (a.downloads ?? 0),
-      );
+      return [...hits].sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0));
     }
     if (sort === "name") {
-      return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+      return [...hits].sort((a, b) => a.name.localeCompare(b.name));
     }
-    return filtered;
-  }, [filtered, sort]);
+    return hits;
+  }, [hits, sort]);
 
   const home = contextPath(route.game, route.profile);
   const header = html`
@@ -115,25 +103,33 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     `;
   }
 
+  // The header names what its own number IS (Important 1a): a page's own
+  // hit count, never a bare "(n)" that reads as the catalog's total - there
+  // is no catalog total on the wire (TotalResults is this page's own
+  // pre-cap merge). "more available" is the has_more cue a reader needs to
+  // know a Next page exists at all.
+  const pageSummary = `Page ${searchPage.page + 1} · ${sorted.length} on this page${report.has_more ? " · more available" : ""}`;
+
   return html`
     ${header}
     <main class="app-main search-page" data-hydrated="true">
       <div class="search-page__toolbar">
         <p class="section-header">
-          Results for “${searchPage.query}” (${sorted.length})
+          Results for “${searchPage.query}” — ${pageSummary}
         </p>
         ${
-          categories.length > 0 &&
+          (facets?.categories.length ?? 0) > 0 &&
           html`
             <label class="library__control">
               Category
               <select
                 name="category"
-                value=${category}
-                onChange=${(e) => setCategory(e.currentTarget.value)}
+                value=${searchPage.category}
+                onChange=${(e) =>
+                  actions.searchPageSetCategory(e.currentTarget.value)}
               >
                 <option value="">All</option>
-                ${categories.map(
+                ${facets.categories.map(
                   (c) => html`<option key=${c} value=${c}>${c}</option>`,
                 )}
               </select>
@@ -141,17 +137,18 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           `
         }
         ${
-          sourceIDs.length > 1 &&
+          (facets?.sourceIDs.length ?? 0) > 1 &&
           html`
             <label class="library__control">
               Source
               <select
                 name="source"
-                value=${source}
-                onChange=${(e) => setSource(e.currentTarget.value)}
+                value=${searchPage.source}
+                onChange=${(e) =>
+                  actions.searchPageSetSource(e.currentTarget.value)}
               >
                 <option value="">All</option>
-                ${sourceIDs.map(
+                ${facets.sourceIDs.map(
                   (s) => html`<option key=${s} value=${s}>${s}</option>`,
                 )}
               </select>
@@ -159,7 +156,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
           `
         }
         <label class="library__control">
-          Sort
+          Sort (on this page)
           <select
             name="sort"
             value=${sort}
