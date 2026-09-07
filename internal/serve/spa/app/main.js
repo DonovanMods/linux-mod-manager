@@ -477,6 +477,21 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
 // to click a second time.
 const bindingJobs = new Map();
 
+// Exposed for the E2E overlap test's own introspection only (Important 2,
+// unit 5 fix wave review): TestE2E_OverlappingInstallAndToggleBothTrack
+// Correctly's END-STATE assertions (which mod ends up enabled, which job's
+// failure lands on which row) pass identically whether bindingJobs is this
+// Map or Unit 3's single module-level slot - a scenario timed so the
+// install's start is slow and the toggle's is fast never puts a check in
+// the window where the two implementations actually disagree (the review's
+// own finding, reverting this Map and re-running got 6/6 green). The one
+// thing that DOES discriminate them is how many starts are tracked at once
+// while both are genuinely still in flight, which no rendered DOM state
+// exposes on its own.
+if (typeof window !== "undefined") {
+  window.__lmmBindingJobsSize = () => bindingJobs.size;
+}
+
 /** startBinding runs work (an async fn returning nothing) as origin's
  * binding: recorded in bindingJobs until it settles, keyed so a concurrent
  * binding for a DIFFERENT origin is never disturbed. Shared by confirmPlan

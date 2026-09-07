@@ -2364,8 +2364,18 @@ func TestE2E_SearchPageRowClickOpensSlideOverAndCloseReturnsToResults(t *testing
 // HTTP round trips - for the whole window in which the toggle starts and
 // finishes. The proof is END STATE, not timing: each origin's own outcome
 // must land on ITS OWN mod, not be lost or attributed to the other.
+//
+// That end-state proof alone does NOT discriminate main.js's Map from Unit
+// 3's single module-level slot (Important 2, unit 5 fix wave review): with
+// the install's start slow and the toggle's fast, every assertion below
+// passes unchanged under either implementation - verified by reverting
+// bindingJobs to a single slot in a scratch copy and re-running, 6/6 green.
+// The toggle's own start is now ALSO delayed (startE2EServerWithDelayedJob
+// Start), and window.__lmmBindingJobsSize() (main.js, test-only
+// introspection) is sampled while both starts are genuinely still
+// in-flight at once - the one thing a single slot cannot ever report as 2.
 func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
-	f := newE2EFixtureWithSearchableModsAndDelayedJobStart(t, 600*time.Millisecond)
+	f := newE2EFixtureWithSearchableModsAndDelayedJobStart(t, 600*time.Millisecond, 200*time.Millisecond)
 
 	row := searchResultRow("fake", e2eSearchInstallModID)
 	f.runInBrowser(t,
@@ -2405,6 +2415,22 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 		// bindingJobs' overlap, not about whether a modal's scrim can be
 		// clicked through - a separate, real UX question of its own.
 		chromedp.Evaluate(`document.querySelector(".slide-over__actions button").click()`, nil),
+	)
+
+	// Both starts are now genuinely in flight: the install's from its own
+	// slow POST /api/v1/jobs, the toggle's own start just issued and (like
+	// the install's) sleeping server-side behind the same delaying proxy.
+	// This is the window Important 2's fix targets - sampled immediately,
+	// before either can possibly have resolved.
+	var concurrentBindings int
+	f.runInBrowser(t,
+		chromedp.Evaluate(`window.__lmmBindingJobsSize()`, &concurrentBindings),
+	)
+	assert.Equal(t, 2, concurrentBindings,
+		"both the install's and the toggle's own starts must be tracked while genuinely overlapping - "+
+			"a single module-level slot can never report more than 1 here")
+
+	f.runInBrowser(t,
 		chromedp.WaitVisible(`.slide-over .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector(".slide-over__close").click()`, nil),
 	)

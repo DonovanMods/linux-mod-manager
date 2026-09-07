@@ -1204,7 +1204,8 @@ func (f e2eSearchFixture) SearchPagePath(query string) string {
 const e2eManyResultsPageSize = 20
 
 // startE2EServerWithDelayedJobStart is startE2EServer plus a reverse proxy
-// that sleeps for delay before forwarding every POST /api/v1/jobs - #331's
+// that sleeps for delay before forwarding every POST /api/v1/jobs OR
+// POST .../enable|disable (the toggle's own plan-free start) - #331's
 // bindingJob carry-in ("installs can now start from multiple search rows
 // while a modal is open elsewhere - re-check the single-slot assumption
 // ... make it a map keyed by origin, with a test proving the overlap
@@ -1214,7 +1215,18 @@ const e2eManyResultsPageSize = 20
 // - a toggle, which needs no modal at all) is a real overlap rather than a
 // race against microsecond-fast local HTTP round trips that would pass or
 // fail on machine speed alone.
-func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay time.Duration) string {
+//
+// Delaying the TOGGLE's own start too, by its own shorter toggleDelay (unit
+// 5 fix wave, Important 2), is what makes the overlap OBSERVABLE rather
+// than merely real: without it the toggle's start resolves in microseconds,
+// so by the time anything reads bindingJobs' size the toggle's own entry is
+// already gone and the window where both starts are genuinely tracked at
+// once has closed before a test could ever sample it. toggleDelay must stay
+// SHORTER than delay: the scenario's own staleness conflict depends on the
+// toggle's disable genuinely finishing (not just starting) before the
+// install's own Apply runs, which only holds if the toggle, started AFTER
+// the install, still resolves first.
+func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay, toggleDelay time.Duration) string {
 	t.Helper()
 	backend := startE2EServer(t, svc)
 	backendURL, err := url.Parse(backend)
@@ -1241,10 +1253,22 @@ func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay ti
 		},
 	}
 
+	sleepThenProxy := func(d time.Duration) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(d)
+			proxy.ServeHTTP(w, r)
+		}
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(delay)
-		proxy.ServeHTTP(w, r)
+	mux.HandleFunc("POST /api/v1/jobs", sleepThenProxy(delay))
+	mux.HandleFunc("POST /api/v1/mods/{source}/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("action") {
+		case "enable", "disable":
+			sleepThenProxy(toggleDelay)(w, r)
+		default:
+			proxy.ServeHTTP(w, r)
+		}
 	})
 	mux.Handle("/", proxy)
 
@@ -1266,10 +1290,13 @@ func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay ti
 // newE2EFixtureWithSearchableModsAndDelayedJobStart is
 // newE2EFixtureWithSearchableMods, routed through the job-start-delaying
 // proxy above, plus one extra ALREADY-INSTALLED, ENABLED mod ("Gamma Mod") -
-// the fast-toggling other half of the overlap scenario, reachable through
-// the slide-over (no modal, no lock) while the install's own confirm modal
-// sits "starting" for the whole delay window.
-func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay time.Duration) e2eSearchFixture {
+// the other half of the overlap scenario, reachable through the slide-over
+// (no modal, no lock) while the install's own confirm modal sits "starting"
+// for the whole delay window. toggleDelay is the SAME proxy's own shorter
+// delay on the toggle's start (see startE2EServerWithDelayedJobStart) - both
+// starts genuinely overlap, but the toggle still resolves (and finishes
+// disabling Gamma) before the install's own Apply runs.
+func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay, toggleDelay time.Duration) e2eSearchFixture {
 	t.Helper()
 	sandboxE2EEnv(t)
 
@@ -1312,7 +1339,7 @@ func newE2EFixtureWithSearchableModsAndDelayedJobStart(t *testing.T, delay time.
 	seedInstalledMod(t, svc, game,
 		domain.Mod{ID: "gamma", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: game.ID}, true, nil)
 
-	baseURL := startE2EServerWithDelayedJobStart(t, svc, delay)
+	baseURL := startE2EServerWithDelayedJobStart(t, svc, delay, toggleDelay)
 	ctx, browserErrors := newE2EBrowser(t)
 	return e2eSearchFixture{
 		e2eFixture: e2eFixture{
