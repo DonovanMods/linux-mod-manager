@@ -2509,6 +2509,62 @@ func TestE2E_SearchPageRowClickOpensSlideOverAndCloseReturnsToResults(t *testing
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ProfileSwitchClearsStaleOmnibarSearch is I5 (unit 5 fix wave):
+// neither the omnibar's own text (MissionControl's local state) nor
+// state.omnibarSearch (main.js) were ever cleared on a game/profile switch -
+// the pickers navigate() rather than reload, so both survived it, leaving
+// the PREVIOUS profile's "From sources" rows (with a live, wrongly-scoped
+// Install button) sitting under the new profile's own library.
+func TestE2E_ProfileSwitchClearsStaleOmnibarSearch(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
+	)
+
+	f.runInBrowser(t,
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu .picker__item"))
+				.find((b) => b.textContent === "other")
+				.click()
+		`, nil),
+	)
+
+	var url, omnibarValue string
+	var fanoutPresent bool
+	f.runInBrowser(t,
+		// "other" is seeded with no mods at all (an empty-state, not a
+		// table) - the universal hydrated marker, not the table itself.
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Location(&url),
+		chromedp.Evaluate(`document.querySelector(".omnibar").value`, &omnibarValue),
+		chromedp.Evaluate(`document.querySelector(".omnibar-results") !== null`, &fanoutPresent),
+	)
+	require.Contains(t, url, "/other", "the picker must have actually switched profiles")
+	assert.Empty(t, omnibarValue, "the omnibar's own text must not survive a profile switch")
+	assert.False(t, fanoutPresent, "the previous profile's fan-out rows must not survive a profile switch")
+
+	// Retyping the SAME query "boots" (without pressing Enter/fanout again)
+	// must not resurrect the stale report either: if state.omnibarSearch
+	// itself had merely been HIDDEN by the fresh MissionControl's own reset
+	// local text (rather than actually cleared, main.js#go), its query would
+	// still read "boots" and immediately re-match the moment the text does,
+	// rendering the OLD profile's rows in the NEW one with no fetch at all.
+	f.runInBrowser(t,
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".omnibar-results") !== null`, &fanoutPresent),
+	)
+	assert.False(t, fanoutPresent,
+		"retyping the previous query must not immediately re-match a stale, uncleared omnibarSearch")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_OverlappingInstallAndToggleBothTrackCorrectly is #331's carry-in
 // proof: main.js's single module-level bindingJob slot was correct only
 // while one modal implied one in-flight job start; Unit 5's inline

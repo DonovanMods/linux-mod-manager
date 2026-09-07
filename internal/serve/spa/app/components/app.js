@@ -36,8 +36,15 @@ export function App({ state, onThemeChange, actions }) {
   `;
 
   if (route.view === "home") {
+    // key forces a fresh MissionControl (and its own local omnibar-text
+    // state) on every game/profile switch (I5, unit 5 fix wave): the
+    // pickers navigate() rather than reload, which would otherwise keep the
+    // SAME instance mounted across the switch, along with a previous
+    // profile's omnibar text long after its own fan-out had been cleared by
+    // main.js#go.
     return html`
       <${MissionControl}
+        key=${`${route.game}:${route.profile}`}
         state=${state}
         onThemeChange=${onThemeChange}
         actions=${actions}

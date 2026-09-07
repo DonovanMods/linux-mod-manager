@@ -1170,6 +1170,11 @@ func newE2EFixtureWithSearchableMods(t *testing.T) e2eSearchFixture {
 	require.NoError(t, svc.SaveGame(t.Context(), game))
 	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
 	require.NoError(t, err)
+	// "other" is I5's own profile-switch scenario's target - an empty
+	// sibling profile that never fanned anything out, so a stale
+	// omnibarSearch/searchPage surviving the switch is unambiguous.
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "other")
+	require.NoError(t, err)
 	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
 
 	seedInstalledMod(t, svc, game,

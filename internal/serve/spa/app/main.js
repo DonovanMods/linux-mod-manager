@@ -923,7 +923,30 @@ function contextKey(route) {
 // chooser (whose route is otherwise identical to store.js's initial state).
 let lastHydratedContext;
 
+// lastGameProfile is contextKey's own game/profile half, tracked separately
+// (I5, unit 5 fix wave): omnibarSearch/searchPage/installRequests answer a
+// SPECIFIC game+profile, not a route, so they must clear on a switch between
+// two HOME routes just as much as on a switch away from one - a case
+// contextKey's own comparison (which also folds in view/mod/query, and so
+// changes on plenty of same-context navigations that must NOT clear these)
+// cannot answer by itself. undefined never equals a real "game:profile"
+// pair, so the very first go() call never clears anything there is nothing
+// in yet.
+let lastGameProfile;
+
 function go(route) {
+  const gameProfile = `${route.game}:${route.profile}`;
+  if (lastGameProfile !== undefined && gameProfile !== lastGameProfile) {
+    // Neither slice is scoped to game/profile on the wire - they are
+    // client-only caches of a report that answered a DIFFERENT context's
+    // question (which sources, which installed set). Left alone, a stale
+    // omnibarSearch/searchPage kept rendering the previous profile's "From
+    // sources" rows, with a live Install button, over the new one.
+    store.set({ omnibarSearch: null, searchPage: null });
+    installRequests.clear();
+  }
+  lastGameProfile = gameProfile;
+
   store.set({ route });
   const key = contextKey(route);
   if (key !== lastHydratedContext) {
