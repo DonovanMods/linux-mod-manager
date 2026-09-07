@@ -2330,6 +2330,12 @@ func TestE2E_SearchPageRowClickOpensSlideOverAndCloseReturnsToResults(t *testing
 	assert.Contains(t, url, "q=boots", "opening the panel must preserve the search page's own query")
 
 	f.runInBrowser(t,
+		// waitForPanelFocus (see its own doc comment / TestE2E_SlideOver_
+		// EscapeClosesAndOutsideClickCloses): ModPanel's Escape listener
+		// attaches from a useEffect, deferred past the synchronous render
+		// WaitVisible(".slide-over") observes - sending Escape before that
+		// effect has actually run reaches no listener at all.
+		waitForPanelFocus(),
 		chromedp.KeyEvent(kb.Escape),
 		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.search-results`, chromedp.ByQuery),
