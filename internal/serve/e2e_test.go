@@ -2052,7 +2052,11 @@ func TestE2E_OmnibarFanOutAppendsSourceRows(t *testing.T) {
 		chromedp.Location(&url),
 	)
 
-	assert.Equal(t, "From sources (1)", heading)
+	// The fixture's second source ("flaky") always fails Search regardless of
+	// query, so the heading's own caption (M3) is part of this heading's
+	// honest count too - see TestE2E_FailingSourceRendersWarningRowNotSwallowed
+	// for that caption pinned in isolation.
+	assert.Equal(t, "From sources (1) · 1 source failed", heading)
 	assert.Contains(t, names, "Better Boots")
 	assert.Contains(t, url, f.HomePath(), "the fan-out must never navigate away from Mission Control")
 	assert.Empty(t, f.BrowserErrors())
@@ -2062,12 +2066,16 @@ func TestE2E_OmnibarFanOutAppendsSourceRows(t *testing.T) {
 // explicit rule: "Source failures surface as a warning row, never
 // swallowed." The fixture's second source ("flaky") always fails Search -
 // its failure must appear ALONGSIDE the working source's real hit, not
-// instead of it.
+// instead of it - AFTER it (M3, unit 5 fix wave: a warning ahead of the real
+// hits it sits beside read as the headline result, not a footnote), and the
+// heading's own count must caption the failure rather than leave it
+// uncounted.
 func TestE2E_FailingSourceRendersWarningRowNotSwallowed(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 
-	var warning string
+	var warning, heading string
 	var hitNames []string
+	var rowClasses []string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
@@ -2075,15 +2083,25 @@ func TestE2E_FailingSourceRendersWarningRowNotSwallowed(t *testing.T) {
 		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.omnibar-results .search-result--warning`, chromedp.ByQuery),
 		textContent(`.omnibar-results .search-result--warning`, &warning),
+		textContent(`.omnibar-results .section-header`, &heading),
 		chromedp.Evaluate(
 			`Array.from(document.querySelectorAll(".omnibar-results .search-result__name")).map(e => e.textContent)`,
 			&hitNames,
+		),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll(".omnibar-results .search-result")).map(e => e.className)`,
+			&rowClasses,
 		),
 	)
 
 	assert.Contains(t, warning, "flaky")
 	assert.Contains(t, warning, "upstream unavailable")
 	assert.Contains(t, hitNames, "Better Boots", "the working source's hit must still render beside the warning")
+	assert.Equal(t, "From sources (1) · 1 source failed", heading,
+		"the heading must caption the failure, not just count the hits")
+	require.Len(t, rowClasses, 2)
+	assert.NotContains(t, rowClasses[0], "search-result--warning", "the real hit must render FIRST")
+	assert.Contains(t, rowClasses[1], "search-result--warning", "the warning must render AFTER the hits, not ahead of them")
 	assert.Empty(t, f.BrowserErrors())
 }
 

@@ -9,7 +9,7 @@
 // gate does it for free.
 
 import { html } from "../render.js";
-import { SourceResultsList } from "./searchresults.js";
+import { SourceResultsList, warningsCaption } from "./searchresults.js";
 
 export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   const q = (query ?? "").trim();
@@ -40,7 +40,9 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
 
   return html`
     <section class="library omnibar-results">
-      <p class="section-header">From sources (${hits.length})</p>
+      <p class="section-header">
+        From sources (${hits.length})${warningsCaption(warnings)}
+      </p>
       ${
         report.attempted_count === 0 &&
         html`<p class="empty-state__hint">

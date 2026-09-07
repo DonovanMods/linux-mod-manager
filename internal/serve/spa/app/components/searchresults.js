@@ -5,7 +5,10 @@
 //
 // Source failures surface as a warning row, never swallowed (design doc
 // §Search) - core.SearchReport.Warnings renders alongside the hits, not
-// instead of them.
+// instead of them. AFTER them (M3, unit 5 fix wave): a warning ahead of a
+// real hit reads as the headline result rather than a footnote, and the
+// heading beside this list captions the count with warningsCaption below
+// rather than leaving a failed source silently uncounted.
 
 import { html } from "../render.js";
 import { navigate } from "../router.js";
@@ -119,8 +122,22 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
   `;
 }
 
-/** SourceResultsList renders every hit plus per-source warnings. detailed
- * forwards to SourceResultRow - see its own doc comment. */
+/** warningsCaption is the short " · N source(s) failed" suffix a heading
+ * appends beside its hit count (M3, unit 5 fix wave): the count alone
+ * ("From sources (1)") counts hits only, leaving a warning row silently
+ * uncounted - a caller renders this next to that count so failed sources are
+ * never just an uncaptioned row a reader has to notice on their own. Empty
+ * when there is nothing to caption. */
+export function warningsCaption(warnings) {
+  const n = (warnings ?? []).length;
+  if (n === 0) return "";
+  return ` · ${n} source${n === 1 ? "" : "s"} failed`;
+}
+
+/** SourceResultsList renders every hit, THEN per-source warnings (M3: a
+ * warning ahead of the real hits it sits beside read as the headline result,
+ * not a footnote about one source among several). detailed forwards to
+ * SourceResultRow - see its own doc comment. */
 export function SourceResultsList({
   hits,
   warnings,
@@ -130,17 +147,6 @@ export function SourceResultsList({
 }) {
   return html`
     <ul class="search-results">
-      ${(warnings ?? []).map(
-        (w) => html`
-          <li
-            key=${`warn-${w.source_id}`}
-            class="search-result search-result--warning"
-          >
-            <span class="badge badge--warn">${w.source_id}</span>
-            ${w.error}
-          </li>
-        `,
-      )}
       ${hits.map(
         (hit) => html`
           <${SourceResultRow}
@@ -150,6 +156,17 @@ export function SourceResultsList({
             actions=${actions}
             detailed=${detailed}
           />
+        `,
+      )}
+      ${(warnings ?? []).map(
+        (w) => html`
+          <li
+            key=${`warn-${w.source_id}`}
+            class="search-result search-result--warning"
+          >
+            <span class="badge badge--warn">${w.source_id}</span>
+            ${w.error}
+          </li>
         `,
       )}
     </ul>
