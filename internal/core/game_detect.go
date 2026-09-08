@@ -199,7 +199,7 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 	out := make([]domain.DetectedGame, 0, len(selectors))
 	for _, sel := range selectors {
 		sel = strings.TrimSpace(sel)
-		idx := -1
+		var idx int
 		if n, err := strconv.Atoi(sel); err == nil {
 			if n < 1 || n > len(games) {
 				return nil, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(games))

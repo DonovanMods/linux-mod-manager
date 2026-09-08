@@ -229,20 +229,23 @@ func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) er
 		return fmt.Errorf("API key cannot be empty")
 	}
 
-	validator, hasValidator := src.(source.KeyValidator)
-	if hasValidator {
-		if !jsonOutput {
-			fmt.Print("Validating... ")
+	// app owns the live check (app.ValidateSourceKey), shared with `lmm
+	// serve`'s POST /api/v1/auth/{source}, so the two frontends cannot
+	// disagree about when a key was really validated. HasKeyValidator is
+	// asked first because the "Validating... " line has to be printed
+	// BEFORE the call it describes.
+	hasValidator := app.HasKeyValidator(service, sourceID)
+	if hasValidator && !jsonOutput {
+		fmt.Print("Validating... ")
+	}
+	if _, err := app.ValidateSourceKey(ctx, service, sourceID, apiKey); err != nil {
+		if hasValidator && !jsonOutput {
+			fmt.Println("failed")
 		}
-		if err := validator.ValidateKey(ctx, apiKey); err != nil {
-			if !jsonOutput {
-				fmt.Println("failed")
-			}
-			return fmt.Errorf("invalid API key: %w", err)
-		}
-		if !jsonOutput {
-			fmt.Println("done")
-		}
+		return fmt.Errorf("invalid API key: %w", err)
+	}
+	if hasValidator && !jsonOutput {
+		fmt.Println("done")
 	}
 
 	if err := service.SaveSourceToken(ctx, sourceID, apiKey); err != nil {

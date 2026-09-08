@@ -41,9 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flagless walk-through is unchanged - but the decisions inside it moved
   into core (`SearchGameCatalog`, `AddGame`, `GameDetectListing`,
   `SelectDetectedGames`), which is what lets `lmm serve` do the same things
-  the same way rather than growing a second implementation. `game add
-  --json` prints `core.GameListEntry` (the row `game list --json` already
-  prints) or `core.GameCatalogReport`; `auth login --json` prints
+  the same way rather than growing a second implementation.
+  `game add --json` prints `core.GameListEntry` (the row
+  `game list --json` already prints) or `core.GameCatalogReport`;
+  `auth login --json` prints
   `app.AuthStatusReport` (the document `auth status --json` already
   prints).
 
@@ -58,8 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validated live where the source supports it and is never stored if that
   check refuses it (400) or could not be performed at all (502), and never
   reaches a log line, an error message, or a response - only its masked
-  form does. A key stored through the web UI applies at the next `lmm
-  serve` start.
+  form does. A key stored through the web UI applies at the next
+  `lmm serve` start.
 
   Two deliberate behaviour changes come with the shared core path: a game's
   install path must now EXIST (a typo used to save silently and fail at the

@@ -29,7 +29,6 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
 
 // authKeyRequest is POST /api/v1/auth/{source}'s body: the API key to
@@ -89,20 +88,21 @@ func (s *Server) handleAPIAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sourceID := r.PathValue("source")
-	src, ok := s.authCapableSource(sourceID)
-	if !ok {
-		s.writeAPIError(w, http.StatusNotFound, fmt.Errorf("%q is not a registered auth-capable source", sourceID))
-		return
-	}
-
 	ctx := r.Context()
-	if validator, has := src.(source.KeyValidator); has {
-		if err := validator.ValidateKey(ctx, req.APIKey); err != nil {
-			// The validator's message, never the key: the envelope is what
-			// the SPA renders next to the field.
-			s.writeAPIError(w, authValidationStatus(err), fmt.Errorf("invalid API key: %w", err))
+
+	// app owns the live check: it is the layer that may name
+	// source.KeyValidator (internal/serve may not - boundary_test.go), and
+	// it is the same seam `lmm auth login` validates through, so the two
+	// frontends cannot disagree about when a key was really checked.
+	if _, err := app.ValidateSourceKey(ctx, s.svc, sourceID, req.APIKey); err != nil {
+		if errors.Is(err, app.ErrSourceNotAuthCapable) {
+			s.writeAPIError(w, http.StatusNotFound, err)
 			return
 		}
+		// The validator's message, never the key: the envelope is what
+		// the SPA renders next to the field.
+		s.writeAPIError(w, authValidationStatus(err), fmt.Errorf("invalid API key: %w", err))
+		return
 	}
 
 	if err := s.svc.SaveSourceToken(ctx, sourceID, req.APIKey); err != nil {
@@ -125,7 +125,7 @@ func (s *Server) handleAPIAuthLogout(w http.ResponseWriter, r *http.Request) {
 	sourceID := r.PathValue("source")
 	ctx := r.Context()
 
-	if _, ok := s.authCapableSource(sourceID); !ok {
+	if !app.IsAuthCapableSource(s.svc, sourceID) {
 		token, err := s.svc.GetSourceToken(ctx, sourceID)
 		if err != nil {
 			s.writeAPIError(w, http.StatusInternalServerError, err)
@@ -142,19 +142,6 @@ func (s *Server) handleAPIAuthLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeAuthStatus(w, ctx, http.StatusOK)
-}
-
-// authCapableSource returns the registered source with this id when it
-// declares auth. It draws from app.AuthCapableSources - the same query
-// `lmm auth login`'s picker and app.AuthStatus use - so the three can
-// never disagree about which sources are auth-capable.
-func (s *Server) authCapableSource(sourceID string) (source.ModSource, bool) {
-	for _, src := range app.AuthCapableSources(s.svc) {
-		if src.ID() == sourceID {
-			return src, true
-		}
-	}
-	return nil, false
 }
 
 // writeAuthStatus assembles and writes app.AuthStatusReport, the one
