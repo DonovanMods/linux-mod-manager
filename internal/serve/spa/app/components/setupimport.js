@@ -128,12 +128,28 @@ export function SetupImportArchive({ state, actions }) {
   // outcome is dismissed (InlineJob's own onDismiss clears it) - Cancel
   // must not delete the staged upload out from under a job that is
   // currently applying it (or has already consumed it on success).
-  const jobActive = Boolean(state.origins?.[IMPORT_ORIGIN]);
+  const jobID = state.origins?.[IMPORT_ORIGIN];
+  const jobActive = Boolean(jobID);
+
+  // #333 Minor #13(a): the server already deletes a SUCCESSFUL import's
+  // staged upload (applyImportArchiveKind's own s.uploads.Remove), but
+  // this panel kept describing it as still staged - "discarded
+  // automatically after 30 minutes if not imported" for a file that no
+  // longer exists. Clearing `upload` the moment the job succeeds drops
+  // that sentence (and the now-meaningless source/mod-id fields) while
+  // jobActive keeps the InlineJob outcome itself on screen until
+  // dismissed (N7's completion affordance, unaffected: it never read
+  // `upload`, only state.origins).
+  useEffect(() => {
+    const summary = (state.jobsIndex ?? []).find((row) => row.id === jobID);
+    if (summary?.state === "succeeded") setUpload(null);
+  }, [jobID, state.jobsIndex]);
 
   return html`
     <div class="setup-section" data-testid="setup-import-archive">
       ${
         !upload &&
+        !jobActive &&
         html`
           <label class="button button--small">
             ${uploading ? "Uploading…" : "Choose archive…"}
@@ -171,39 +187,44 @@ export function SetupImportArchive({ state, actions }) {
       }
       ${error && html`<p class="modal__error">${error}</p>`}
       ${
-        upload &&
+        (upload || jobActive) &&
         html`
           <div class="setup-import__staged" data-testid="staged-upload">
-            <p>
-              <span class="mono">${upload.filename}</span>${" "}
-              (${formatBytes(upload.size)}) staged - discarded
-              automatically${" "} after ${uploadExpiryMinutes} minutes if not
-              imported.
-            </p>
-
-            <label class="plan__control">
-              Link to a source (optional)
-              <select
-                value=${sourceID}
-                disabled=${jobActive}
-                onChange=${(e) => setSourceID(e.currentTarget.value)}
-              >
-                <option value="">None - unlinked import</option>
-                ${sources.map((s) => html`<option key=${s.id} value=${s.id}>${s.name}</option>`)}
-              </select>
-            </label>
             ${
-              sourceID &&
+              upload &&
               html`
+                <p>
+                  <span class="mono">${upload.filename}</span>${" "}
+                  (${formatBytes(upload.size)}) staged - discarded
+                  automatically${" "} after ${uploadExpiryMinutes} minutes if
+                  not imported.
+                </p>
+
                 <label class="plan__control">
-                  Mod ID on that source
-                  <input
-                    type="text"
-                    value=${modID}
+                  Link to a source (optional)
+                  <select
+                    value=${sourceID}
                     disabled=${jobActive}
-                    onInput=${(e) => setModID(e.currentTarget.value)}
-                  />
+                    onChange=${(e) => setSourceID(e.currentTarget.value)}
+                  >
+                    <option value="">None - unlinked import</option>
+                    ${sources.map((s) => html`<option key=${s.id} value=${s.id}>${s.name}</option>`)}
+                  </select>
                 </label>
+                ${
+                  sourceID &&
+                  html`
+                    <label class="plan__control">
+                      Mod ID on that source
+                      <input
+                        type="text"
+                        value=${modID}
+                        disabled=${jobActive}
+                        onInput=${(e) => setModID(e.currentTarget.value)}
+                      />
+                    </label>
+                  `
+                }
               `
             }
 
@@ -222,15 +243,20 @@ export function SetupImportArchive({ state, actions }) {
                   Import…
                 </button>
               <//>
-              <button
-                type="button"
-                class="button button--small"
-                disabled=${jobActive}
-                title=${jobActive ? "This upload is already being imported" : undefined}
-                onClick=${cancelUpload}
-              >
-                Cancel
-              </button>
+              ${
+                upload &&
+                html`
+                  <button
+                    type="button"
+                    class="button button--small"
+                    disabled=${jobActive}
+                    title=${jobActive ? "This upload is already being imported" : undefined}
+                    onClick=${cancelUpload}
+                  >
+                    Cancel
+                  </button>
+                `
+              }
             </div>
           </div>
         `

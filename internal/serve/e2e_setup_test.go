@@ -678,6 +678,46 @@ func TestE2E_ArchiveImport_ConfirmModalRendersReadableUnlinkedSummary(t *testing
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ArchiveImport_SuccessDropsTheStaleDiscardSentence pins Minor
+// #13(a): the server already deletes a SUCCESSFUL import's staged upload
+// (kind_import_archive.go's applyImportArchiveKind), but the panel kept
+// telling the user it was "still staged - discarded automatically after
+// 30 minutes" for a file that no longer existed. A successful import must
+// drop the sentence (and the now-meaningless source/mod-id fields) while
+// the job's own outcome stays visible until dismissed (N7's completion
+// affordance).
+func TestE2E_ArchiveImport_SuccessDropsTheStaleDiscardSentence(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	zipPath := filepath.Join(t.TempDir(), "GammaMod-1.0.zip")
+	require.NoError(t, os.WriteFile(zipPath, e2eZipWith("GammaMod/data.txt", "gamma content"), 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("archive")),
+		chromedp.WaitVisible(`[data-testid="setup-import-archive"]`, chromedp.ByQuery),
+		chromedp.SetUploadFiles(`[data-testid="setup-import-archive"] input[type="file"]`, []string{zipPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="staged-upload"]`, chromedp.ByQuery),
+	)
+
+	var beforeText string
+	f.runInBrowser(t, chromedp.Text(`[data-testid="staged-upload"]`, &beforeText, chromedp.ByQuery))
+	assert.Contains(t, beforeText, "discarded", "sanity: the sentence renders before the import runs")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="import-archive"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="import_archive"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-import-archive"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	var afterText string
+	f.runInBrowser(t, chromedp.Text(`[data-testid="staged-upload"]`, &afterText, chromedp.ByQuery))
+	assert.NotContains(t, afterText, "discarded", "the stale sentence must not survive a successful import")
+	assert.NotContains(t, afterText, "Link to a source", "the now-meaningless source/mod-id fields must go with it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_Adopt_SeededUntrackedModBecomesTracked seeds a hand-placed,
 // untracked mod directory in the game's own mod path, scans for it from the
 // Setup page's Adopt section, and confirms - the same "Import untracked
