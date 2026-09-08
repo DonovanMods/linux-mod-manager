@@ -390,6 +390,16 @@ func TestServeJSONGoldens(t *testing.T) {
 			verifyFixPlanRequest{ModFilter: "42"},
 		},
 		{
+			// #333's upload receipt: the opaque handle a plan request names
+			// the archive by, and what was actually staged.
+			"upload_response",
+			uploadResponse{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				Filename: "SomeMod-1.2.zip",
+				Size:     418209792,
+			},
+		},
+		{
 			// #333's custom-source editor bodies: the draft a validate
 			// request carries (with `lmm source validate`'s two probe
 			// flags), and the definition text a save carries. The id a save

@@ -76,6 +76,13 @@ type Server struct {
 	plans *planStore
 	jobs  *jobRegistry
 
+	// uploads indexes the archives a browser has streamed into the
+	// service's staging directory, awaiting an import (uploads.go). Like
+	// plans it is process-lifetime state with a TTL; unlike plans each
+	// entry owns a real directory on disk, which is why every removal path
+	// goes through the store rather than deleting a map entry.
+	uploads *uploadStore
+
 	// heartbeat is the clock seam every SSE stream's comment heartbeat
 	// runs on (see sse.go). Production is realHeartbeatTicker; an internal
 	// test swaps in a channel it sends on by hand so a heartbeat assertion
@@ -123,6 +130,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		shutdownGrace: grace,
 		csrf:          newCSRFGuard(),
 		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
+		uploads:       newUploadStore(defaultUploadTTL, defaultUploadStoreCap, time.Now),
 		jobs:          newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
 		heartbeat:     realHeartbeatTicker,
 		draining:      make(chan struct{}),
@@ -185,7 +193,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.ln == nil {
 		return errors.New("serve: Listen must be called before Serve")
 	}
-	return serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
+	err := serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
+	// Staged uploads are large; an orderly shutdown takes them with it
+	// rather than leaving them for a future start to wonder about. A hard
+	// kill still leaves them, exactly as it does an interrupted download.
+	s.uploads.PurgeAll()
+	return err
 }
 
 // ListenAndServe binds Server's configured address and serves until ctx is

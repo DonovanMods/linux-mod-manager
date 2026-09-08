@@ -70,6 +70,12 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/auth", s.wrap(s.handleAPIAuth))
 	s.mux.Handle("POST /api/v1/auth/{source}", s.wrap(s.handleAPIAuthLogin))
 	s.mux.Handle("DELETE /api/v1/auth/{source}", s.wrap(s.handleAPIAuthLogout))
+	// Archive uploads (api_uploads.go): the one endpoint that takes a body
+	// that is not JSON. The handle it issues is what the "import_archive"
+	// plan kind names the archive by - a browser cannot hand a server a
+	// path, and a server must not take one from a browser.
+	s.mux.Handle("POST /api/v1/uploads", s.wrap(s.handleAPIUploadCreate))
+	s.mux.Handle("DELETE /api/v1/uploads/{id}", s.wrap(s.handleAPIUploadDelete))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
 	// The activity tray's index (api_activity.go). GET and POST on the same
