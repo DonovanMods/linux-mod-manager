@@ -285,6 +285,69 @@ func TestAPIGameDetectApply_RequiresCSRF(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+// TestAPIGameSetDefault_WritesTheCoreDocument pins the Setup page's
+// default-game affordance (#333, added on top of task A1's wire): the
+// response is byte-identical to `lmm game set-default --json`'s own
+// core.SettingsResult, so no new golden is needed for it.
+func TestAPIGameSetDefault_WritesTheCoreDocument(t *testing.T) {
+	s := newGamesServer(t)
+	install := t.TempDir()
+	require.Equal(t, http.StatusOK, doAPI(s, http.MethodPost, "/api/v1/games",
+		`{"source_id":"nexusmods","identifier":"acme","name":"Acme","install_path":`+jsonString(install)+`}`).Code)
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/acme/set-default", "")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	requireEncodesLikeInternal(t, rec.Body.Bytes(), &core.SettingsResult{DefaultGame: "acme"})
+
+	got, err := s.svc.DefaultGame(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "acme", got)
+}
+
+// TestAPIGameSetDefault_UnknownGameIs404 pins that a game the caller could
+// not have known was gone (a stale row, a typo) is refused rather than
+// silently writing an unresolvable default into config.yaml.
+func TestAPIGameSetDefault_UnknownGameIs404(t *testing.T) {
+	s := newGamesServer(t)
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/nope/set-default", "")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+}
+
+// TestAPIGameSetDefault_RequiresCSRF pins the state-changing route's own
+// gate, like every other write in this file.
+func TestAPIGameSetDefault_RequiresCSRF(t *testing.T) {
+	s := newGamesServer(t)
+	rec := doAPIWithoutCSRF(s, http.MethodPost, "/api/v1/games/acme/set-default", "")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// TestAPIGameClearDefault_WritesTheCoreDocument pins the clear half: the
+// same document, DefaultGame empty, and unconditional - clearing an
+// already-unset default is still a 200, matching the CLI.
+func TestAPIGameClearDefault_WritesTheCoreDocument(t *testing.T) {
+	s := newGamesServer(t)
+	install := t.TempDir()
+	require.Equal(t, http.StatusOK, doAPI(s, http.MethodPost, "/api/v1/games",
+		`{"source_id":"nexusmods","identifier":"acme","name":"Acme","install_path":`+jsonString(install)+`}`).Code)
+	require.Equal(t, http.StatusOK, doAPI(s, http.MethodPost, "/api/v1/games/acme/set-default", "").Code)
+
+	rec := doAPI(s, http.MethodDelete, "/api/v1/games/default", "")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	requireEncodesLikeInternal(t, rec.Body.Bytes(), &core.SettingsResult{})
+
+	got, err := s.svc.DefaultGame(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestAPIGameClearDefault_RequiresCSRF pins the state-changing route's own
+// gate.
+func TestAPIGameClearDefault_RequiresCSRF(t *testing.T) {
+	s := newGamesServer(t)
+	rec := doAPIWithoutCSRF(s, http.MethodDelete, "/api/v1/games/default", "")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
 // TestAPIGamesUnknownSubpath pins that a path under /api/v1/games that no
 // route claims still gets the JSON 404 envelope, not net/http's
 // text/plain one.

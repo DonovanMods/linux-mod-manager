@@ -54,6 +54,13 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
 	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))
 	s.mux.Handle("POST /api/v1/games/detect", s.wrap(s.handleAPIGameDetectApply))
+	// The Setup page's default-game set/clear (#333, added on top of task
+	// A1's wire at the coordinator's direction - see api_games.go's own doc
+	// comments): thin wrappers over core.Service.SetDefaultGame/
+	// ClearDefaultGame, answering the same core.SettingsResult
+	// `lmm game set-default`/`clear-default --json` already emit.
+	s.mux.Handle("POST /api/v1/games/{id}/set-default", s.wrap(s.handleAPIGameSetDefault))
+	s.mux.Handle("DELETE /api/v1/games/default", s.wrap(s.handleAPIGameClearDefault))
 	// The Setup surface's custom-source half (api_sources.go): the editor's
 	// list, one definition's raw YAML, a draft's validation, and the two
 	// writes - which answer with the SAME list document the GET returns,

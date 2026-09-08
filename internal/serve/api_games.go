@@ -243,3 +243,43 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 	}
 	s.writeJSON(w, http.StatusOK, result)
 }
+
+// handleAPIGameSetDefault answers POST /api/v1/games/{id}/set-default with
+// the core.SettingsResult document `lmm game set-default --json` emits -
+// added on top of task A1's wire (coordinator direction, #333): the Setup
+// page's Games table needs this and the clear route below, and both are
+// thin wrappers over the CLI's own seams (core.Service.SetDefaultGame,
+// domain.ErrGameNotFound), so no new wire TYPE and no new golden are
+// needed - the response is byte-identical to a document already goldened
+// under internal/core/testdata/json.
+//
+// An unknown game id is 404, matching `lmm game set-default`'s own
+// "game not found" refusal (cmd/lmm/game.go's doGameSetDefault) rather than
+// silently writing a default nothing in games.yaml resolves to.
+func (s *Server) handleAPIGameSetDefault(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+
+	if _, err := s.svc.GetGame(id); err != nil {
+		s.writeAPIError(w, http.StatusNotFound, err)
+		return
+	}
+	if err := s.svc.SetDefaultGame(ctx, id); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, &core.SettingsResult{DefaultGame: id})
+}
+
+// handleAPIGameClearDefault answers DELETE /api/v1/games/default with the
+// re-read core.SettingsResult (DefaultGame empty) `lmm game clear-default
+// --json` emits. Unconditional, like the CLI: clearing an already-unset
+// default is a no-op that still answers 200, not a 404 - there is no
+// "which default" to have gotten wrong.
+func (s *Server) handleAPIGameClearDefault(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.ClearDefaultGame(r.Context()); err != nil {
+		s.writeAPIError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, &core.SettingsResult{})
+}
