@@ -59,8 +59,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validated live where the source supports it and is never stored if that
   check refuses it (400) or could not be performed at all (502), and never
   reaches a log line, an error message, or a response - only its masked
-  form does. A key stored through the web UI applies at the next
-  `lmm serve` start.
+  form does. A key stored or removed through the web UI takes effect
+  immediately: the affected source is rebuilt with the newly resolved
+  credential (the same env-var-then-stored-token precedence startup uses)
+  and swapped into the running registry under core's mutation gate, so the
+  next search or install uses it with no restart. Re-keying the live source
+  object in place was never an option - sources set their key through an
+  unsynchronised field write - which is why `source.Registry` gains
+  `Unregister`/`Replace` and `core.Service` gains gated wrappers for them.
+  The swap is best-effort: it waits a few seconds for any in-flight
+  mutation, and if it cannot get in the key is still stored (and picked up
+  at the next start), which is what the response already reports.
+  `GET /api/v1/games/catalog` also splits 401 out of what used to be one
+  502, so a search refused for want of a credential can be answered with
+  "authenticate this source first" rather than a generic upstream error.
+
+  The Setup surface's remaining half lands with it: the CUSTOM-SOURCE
+  EDITOR, ARCHIVE IMPORT and ADOPT.
+
+  Five source routes - `GET /api/v1/sources` (the `lmm source list --json`
+  document: the full registry plus every definition that failed to load or
+  construct), `GET /api/v1/sources/{id}/definition` (a user-defined
+  source's raw YAML as `text/yaml`, comments intact),
+  `POST /api/v1/sources/validate` (a draft that has no file yet, with
+  `--probe`'s live smoke test), and `PUT`/`DELETE /api/v1/sources/{id}`,
+  both answering the source list re-read. A save writes the file
+  atomically and REGISTERS the source on the running server; the path id
+  must equal the document's id, a built-in id is 409, and a delete is
+  refused with 409 while any configured game still maps the source, naming
+  those games (`core.SourceInUseError`). All of it lives in `internal/app`,
+  so `lmm source add <file>` and `lmm source remove <id>` - new, and the
+  CLI's answer to "edit the YAML yourself" - enforce exactly the same
+  rules.
+
+  Archive import travels as an upload, because `lmm import <archive>` takes
+  a path and a browser cannot hand a server one (and a server must not
+  accept one from a browser): `POST /api/v1/uploads` streams one
+  multipart file part into the same staging directory downloads already
+  use, capped at 2 GiB, accepted only for an extension the extractor
+  handles, and answers with an opaque `{"upload_id","filename","size"}`
+  handle that is never a path. Uploads expire after 30 minutes,
+  `DELETE /api/v1/uploads/{id}` cancels one, a successful import reclaims
+  it and a failed one keeps it for the retry. The `import_archive` plan
+  kind then previews it as `core.ImportArchivePlan` and applies it with
+  `{"accept_conflicts","force","skip_hooks"}` - `accept_conflicts` being
+  the Overwrite answer (`ImportArchiveOptions.AcceptConflicts`), which is a
+  different question from `force`.
+
+  `adopt` is `lmm import`'s scan mode as a plan kind, previewing
+  `core.AdoptPlan` (the whole local scan, one match entry per untracked
+  mod, the duplicate list) with no options on the apply: previewing without
+  confirming IS the dry run. Because a browser decides between the plan and
+  the job, its job runs the metadata backfill and the adoption together and
+  reports both in one document - `core.AdoptResult` gains an additive,
+  omitzero `backfilled` member for the count, which no core method sets
+  (composing the two applies in core would be the convenience wrapper v2
+  Phase 3 forbids).
 
   Two deliberate behaviour changes come with the shared core path: a game's
   install path must now EXIST (a typo used to save silently and fail at the
