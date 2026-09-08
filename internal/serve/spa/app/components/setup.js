@@ -11,8 +11,8 @@
 // home" pattern) and the section switcher, seeded from ?section= for a deep
 // link (router.js) and otherwise defaulting to Games.
 
-import { html, useEffect, useState } from "../render.js";
-import { navigate, contextPath } from "../router.js";
+import { html, useEffect, useRef, useState } from "../render.js";
+import { navigate, contextPath, setupPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { SetupGames } from "./setupgames.js";
 import { SetupAuth } from "./setupauth.js";
@@ -44,6 +44,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
   const [section, setSection] = useState(
     SECTIONS.some((s) => s.key === route.section) ? route.section : "games",
   );
+  const tabRefs = useRef([]);
 
   // A deep link's own ?section= wins even when this page is already
   // mounted (the empty-library links can point here twice in a row with a
@@ -53,6 +54,37 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
     if (SECTIONS.some((s) => s.key === route.section))
       setSection(route.section);
   }, [route.section]);
+
+  // selectSection is every way a tab becomes active: a click, or a
+  // keyboard move (selectSection below). It writes ?section= (Minor
+  // #13b - a reload used to always land back on Games, since setSection
+  // alone never touched the URL) with replace: true, the same convention
+  // main.js's own chooser redirect uses - a tab switch is not a
+  // genuinely new place, just an edit to where this one already is.
+  function selectSection(key) {
+    setSection(key);
+    navigate(setupPath(route.game, route.profile, key), { replace: true });
+  }
+
+  // onTabKeyDown implements the WAI-ARIA tabs pattern's arrow-key
+  // navigation (Minor #13c): ArrowLeft/ArrowRight move and activate the
+  // adjacent tab (wrapping), Home/End jump to the first/last. Automatic
+  // activation - moving focus also switches the panel - is what makes
+  // sense here: aria-selected already tracks `section`, and a roving
+  // tabindex (below) means only the active tab is ever a Tab stop, so a
+  // keyboard user's Tab key always lands on it.
+  function onTabKeyDown(e, index) {
+    let target = -1;
+    if (e.key === "ArrowRight") target = (index + 1) % SECTIONS.length;
+    else if (e.key === "ArrowLeft")
+      target = (index - 1 + SECTIONS.length) % SECTIONS.length;
+    else if (e.key === "Home") target = 0;
+    else if (e.key === "End") target = SECTIONS.length - 1;
+    else return;
+    e.preventDefault();
+    selectSection(SECTIONS[target].key);
+    tabRefs.current[target]?.focus();
+  }
 
   const home = contextPath(route.game, route.profile);
   const header = html`
@@ -88,21 +120,33 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
       <p class="section-header">Setup</p>
       <nav class="setup-nav" role="tablist" aria-label="Setup sections">
         ${SECTIONS.map(
-          (s) => html`
+          (s, i) => html`
             <button
               type="button"
+              id=${`setup-tab-${s.key}`}
+              ref=${(el) => {
+                tabRefs.current[i] = el;
+              }}
               role="tab"
               aria-selected=${section === s.key ? "true" : "false"}
+              aria-controls="setup-panel"
+              tabindex=${section === s.key ? "0" : "-1"}
               data-section=${s.key}
               class="setup-nav__tab ${section === s.key ? "setup-nav__tab--active" : ""}"
-              onClick=${() => setSection(s.key)}
+              onClick=${() => selectSection(s.key)}
+              onKeyDown=${(e) => onTabKeyDown(e, i)}
             >
               ${s.label}
             </button>
           `,
         )}
       </nav>
-      <div class="setup-page__body" role="tabpanel">
+      <div
+        id="setup-panel"
+        class="setup-page__body"
+        role="tabpanel"
+        aria-labelledby=${`setup-tab-${section}`}
+      >
         ${
           section === "games" &&
           html`<${SetupGames}

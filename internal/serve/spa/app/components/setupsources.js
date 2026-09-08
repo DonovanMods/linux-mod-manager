@@ -248,6 +248,11 @@ function SourceEditor({ id, onSaved, onCancel }) {
   const [validated, setValidated] = useState(false);
   const [busy, setBusy] = useState(false);
   const [probe, setProbe] = useState(false);
+  // probeID is app.ProbeSource's third argument (Minor #13d): an `api`
+  // definition whose only endpoint is get_mod has no search to probe, so
+  // it refuses without an explicit mod id - a field this editor had no
+  // way to supply from the UI at all.
+  const [probeID, setProbeID] = useState("");
   const [saveError, setSaveError] = useState(null);
 
   useEffect(() => {
@@ -269,7 +274,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
     setBusy(true);
     setSaveError(null);
     try {
-      const r = await validateSource(yaml, { probe });
+      const r = await validateSource(yaml, { probe, probeID });
       setReport(r);
       setValidated(r.valid);
     } catch (err) {
@@ -327,6 +332,22 @@ function SourceEditor({ id, onSaved, onCancel }) {
         />
         Probe live after validating
       </label>
+      ${
+        probe &&
+        html`
+          <label class="plan__control">
+            Mod ID to probe with
+            <span class="empty-state__hint"
+              >(required for an api source with no search endpoint)</span
+            >
+            <input
+              type="text"
+              value=${probeID}
+              onInput=${(e) => setProbeID(e.currentTarget.value)}
+            />
+          </label>
+        `
+      }
 
       <div class="setup-section__actions">
         <button

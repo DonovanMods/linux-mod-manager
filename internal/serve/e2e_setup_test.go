@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -577,6 +578,125 @@ func TestE2E_Sources_InUseNamesTheGameNotItsID(t *testing.T) {
 	)
 	assert.Contains(t, refusalText, f.Game.Name, "the delete refusal must name the game, not its id")
 	assert.NotContains(t, refusalText, f.Game.ID)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_Setup_TabsDeepLinkAndAreKeyboardNavigable pins Minor #13(b) and
+// #13(c): switching a Setup tab must write ?section= (a reload otherwise
+// always lands back on Games), and the tablist must implement the WAI-ARIA
+// tabs pattern completely - a roving tabindex (only the active tab is a
+// Tab stop) and ArrowLeft/ArrowRight/Home/End - rather than the partial
+// role="tablist"/role="tab" markup the review found worse for a screen
+// reader than plain buttons would have been.
+func TestE2E_Setup_TabsDeepLinkAndAreKeyboardNavigable(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("")),
+		chromedp.WaitVisible(`[data-testid="setup-page"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-section="sources"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
+	)
+
+	var search string
+	f.runInBrowser(t, chromedp.Evaluate(`window.location.search`, &search))
+	assert.Equal(t, "?section=sources", search, "switching tabs must write ?section=")
+
+	f.runInBrowser(t,
+		chromedp.Reload(),
+		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
+	)
+	var selectedAfterReload string
+	f.runInBrowser(t, chromedp.AttributeValue(
+		`[data-section="sources"]`, "aria-selected", &selectedAfterReload, nil, chromedp.ByQuery))
+	assert.Equal(t, "true", selectedAfterReload, "a reload must keep the deep-linked tab active")
+
+	// Roving tabindex: only the active tab ("sources") is a Tab stop.
+	var activeTabIndex, inactiveTabIndex string
+	f.runInBrowser(t,
+		chromedp.AttributeValue(`[data-section="sources"]`, "tabindex", &activeTabIndex, nil, chromedp.ByQuery),
+		chromedp.AttributeValue(`[data-section="games"]`, "tabindex", &inactiveTabIndex, nil, chromedp.ByQuery),
+	)
+	assert.Equal(t, "0", activeTabIndex)
+	assert.Equal(t, "-1", inactiveTabIndex)
+
+	// ArrowRight from "sources" moves to and activates "archive" (the next
+	// tab in SECTIONS' own order: games, auth, sources, archive, adopt).
+	f.runInBrowser(t,
+		chromedp.Focus(`[data-section="sources"]`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.ArrowRight),
+		chromedp.WaitVisible(`[data-testid="setup-import-archive"]`, chromedp.ByQuery),
+	)
+	var focused string
+	f.runInBrowser(t, chromedp.Evaluate(`document.activeElement.dataset.section`, &focused))
+	assert.Equal(t, "archive", focused, "ArrowRight must move focus to the next tab, not just activate it")
+
+	// Home jumps to the first tab ("games") from wherever focus is.
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Home),
+		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Evaluate(`document.activeElement.dataset.section`, &focused))
+	assert.Equal(t, "games", focused)
+
+	// End jumps to the last tab ("adopt").
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.End),
+		chromedp.WaitVisible(`[data-testid="setup-adopt"]`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Evaluate(`document.activeElement.dataset.section`, &focused))
+	assert.Equal(t, "adopt", focused)
+
+	// The single tabpanel's aria-labelledby tracks whichever tab is active.
+	var labelledBy string
+	f.runInBrowser(t, chromedp.AttributeValue(
+		`[role="tabpanel"]`, "aria-labelledby", &labelledBy, nil, chromedp.ByQuery))
+	assert.Equal(t, "setup-tab-adopt", labelledBy)
+
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_Sources_ProbeIDFieldReachesTheServer pins Minor #13(d): probing
+// an `api` definition with no search endpoint requires an explicit mod id
+// (app.ProbeSource's own "no search endpoint" guard), which the source
+// editor had no field for at all.
+func TestE2E_Sources_ProbeIDFieldReachesTheServer(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	yaml := `id: probe-api
+name: Probe API
+type: api
+api:
+  base_url: https://api.example.test
+  endpoints:
+    get_mod:
+      path: /mods/{mod_id}
+  mappings:
+    mod:
+      id: id
+      name: name
+`
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("sources")),
+		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
+		chromedp.SetValue(`.source-editor__textarea`, yaml, chromedp.ByQuery),
+		chromedp.Click(`.plan__control--inline input[type="checkbox"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.source-editor input[type="text"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`.source-editor input[type="text"]`, "some-mod-id", chromedp.ByQuery),
+		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.source-editor__report`, chromedp.ByQuery),
+	)
+
+	var reportText string
+	f.runInBrowser(t, chromedp.Text(`.source-editor__report`, &reportText, chromedp.ByQuery))
+	// The fake api.example.test base URL can never actually answer, so the
+	// live probe fails - but reaching THAT failure (a network/transport
+	// error) rather than ProbeSource's own "pass --id" refusal proves the
+	// mod id this field supplies made it onto the wire.
+	assert.NotContains(t, reportText, "--id", "the probe_id field must reach the server, not fall back to the CLI's own guard message")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
