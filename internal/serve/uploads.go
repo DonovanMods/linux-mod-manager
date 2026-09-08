@@ -43,6 +43,16 @@ import (
 // worse failure than holding it a little longer.
 const defaultUploadTTL = 30 * time.Minute
 
+// uploadInUseGrace bounds how long MarkInUse protects an upload from a
+// sweep or an eviction without ClearInUse ever being called (#333 Minor
+// #2b): a planned-then-cancelled import never calls it (cancelling a
+// confirm modal is purely client-side), so an unbounded "in use" flag
+// would pin the upload - and its staging directory - for the life of the
+// process. Generous well past any real import's own runtime (a local
+// copy+extract, not a network transfer) while still eventually reclaiming
+// an abandoned one.
+const uploadInUseGrace = 2 * time.Hour
+
 // defaultUploadStoreCap bounds how many staged archives are held at once.
 // Deliberately small - each entry is a real file of up to maxUploadBytes -
 // and the oldest is evicted (and deleted) when a new upload would exceed
@@ -82,15 +92,29 @@ type stagedUpload struct {
 	Path string
 	// StoredAt is when Put accepted it, by the store's clock.
 	StoredAt time.Time
-	// inUse is set by MarkInUse for the span between a plan naming this
-	// upload and the apply that follows it (planImportArchiveKind /
-	// applyImportArchiveKind), and cleared by ClearInUse once that apply
-	// finishes either way. A sweep skips it regardless of age (#333 Minor
-	// #2): an import can run long enough for the 30-minute TTL to pass
-	// while it is still reading the file, and Get sweeping expired entries
-	// on every lookup could otherwise reclaim the archive - and the
-	// directory it lives in - out from under a job still using it.
-	inUse bool
+	// inUseUntil is set by MarkInUse to the store's clock plus
+	// uploadInUseGrace, for the span between a plan naming this upload and
+	// the apply that follows it (planImportArchiveKind /
+	// applyImportArchiveKind), and cleared (zeroed) by ClearInUse once that
+	// apply finishes either way. A sweep or an eviction skips a live
+	// deadline regardless of the entry's own age (#333 Minor #2): an import
+	// can run long enough for the 30-minute TTL to pass while it is still
+	// reading the file, and Get sweeping expired entries on every lookup
+	// could otherwise reclaim the archive - and the directory it lives in -
+	// out from under a job still using it.
+	//
+	// The deadline itself (not just a bare bool) is what closes the OTHER
+	// half of Minor #2: cancelling a confirm modal is purely client-side,
+	// so ClearInUse is never called for a planned-then-cancelled upload,
+	// and an unconditional "skip while inUse" would then pin it against
+	// every sweep for the life of the process. uploadInUseGrace bounds
+	// that instead of ClearInUse being the only way out.
+	inUseUntil time.Time
+}
+
+// inUse reports whether u's in-use deadline has not yet passed, by now.
+func (u *stagedUpload) inUse(now time.Time) bool {
+	return now.Before(u.inUseUntil)
 }
 
 // uploadStore is the in-memory, TTL'd index of staged archives. Safe for
@@ -130,7 +154,7 @@ func (s *uploadStore) Put(u *stagedUpload) uploadID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sweepLocked(now)
-	s.evictOldestLocked()
+	s.evictOldestLocked(now)
 	s.uploads[u.ID] = u
 	return u.ID
 }
@@ -151,15 +175,16 @@ func (s *uploadStore) Get(id uploadID) (*stagedUpload, bool) {
 	return u, ok
 }
 
-// MarkInUse flags id so a sweep (Put's or Get's) skips it regardless of
-// age, until ClearInUse un-flags it. An unknown id is a no-op - the upload
-// may already have been removed or never existed, and there is nothing
-// left to protect either way.
+// MarkInUse flags id so a sweep or an eviction (Put's or Get's) skips it
+// until ClearInUse un-flags it, or until uploadInUseGrace passes -
+// whichever comes first. An unknown id is a no-op - the upload may already
+// have been removed or never existed, and there is nothing left to protect
+// either way.
 func (s *uploadStore) MarkInUse(id uploadID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if u, ok := s.uploads[id]; ok {
-		u.inUse = true
+		u.inUseUntil = s.now().Add(uploadInUseGrace)
 	}
 }
 
@@ -169,7 +194,7 @@ func (s *uploadStore) ClearInUse(id uploadID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if u, ok := s.uploads[id]; ok {
-		u.inUse = false
+		u.inUseUntil = time.Time{}
 	}
 }
 
@@ -216,26 +241,38 @@ func (s *uploadStore) len() int {
 
 // evictOldestLocked drops (and deletes) the oldest-stored entries until the
 // store holds fewer than cap, leaving room for the one Put is about to
-// insert. The caller must hold mu.
-func (s *uploadStore) evictOldestLocked() {
+// insert - skipping any entry still inUse (#333 Minor #2a: the exact
+// failure M2 closed on the sweep side, reached instead through the cap).
+// If every surviving entry is inUse, the store is left over cap rather
+// than deleting an archive a job is mid-Apply on; the next Put or Get
+// tries again once one of them clears or its grace passes. The caller
+// must hold mu.
+func (s *uploadStore) evictOldestLocked(now time.Time) {
 	for len(s.uploads) >= s.cap {
 		var oldestID uploadID
 		var oldest *stagedUpload
 		for id, u := range s.uploads {
+			if u.inUse(now) {
+				continue
+			}
 			if oldest == nil || u.StoredAt.Before(oldest.StoredAt) {
 				oldestID, oldest = id, u
 			}
+		}
+		if oldest == nil {
+			return
 		}
 		delete(s.uploads, oldestID)
 		removeStagingDir(oldest)
 	}
 }
 
-// sweepLocked drops (and deletes) every expired entry, skipping any marked
-// inUse (see stagedUpload.inUse) regardless of age. The caller must hold mu.
+// sweepLocked drops (and deletes) every expired entry, skipping any entry
+// still inUse (see stagedUpload.inUseUntil) regardless of age. The caller
+// must hold mu.
 func (s *uploadStore) sweepLocked(now time.Time) {
 	for id, u := range s.uploads {
-		if u.inUse {
+		if u.inUse(now) {
 			continue
 		}
 		if !now.Before(u.StoredAt.Add(s.ttl)) {

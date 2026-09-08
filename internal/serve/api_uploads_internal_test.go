@@ -295,6 +295,76 @@ func TestUploadStore_MarkInUseSurvivesASweep(t *testing.T) {
 	assert.NoDirExists(t, dir)
 }
 
+// TestUploadStore_EvictionSkipsAnInUseEntry pins #333 Minor #2a: the exact
+// failure M2 closed on the SWEEP side (a job mid-Apply losing its staged
+// file to unrelated traffic) is reachable through the CAP instead - a
+// store at capacity used to pick the oldest entry regardless of inUse, so
+// a fifth Put at cap 4 could RemoveAll an archive a job is still reading.
+func TestUploadStore_EvictionSkipsAnInUseEntry(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	store := newUploadStore(time.Hour, 2, func() time.Time { return now })
+
+	oldest := t.TempDir()
+	oldestID := store.Put(&stagedUpload{Filename: "a.zip", Dir: oldest})
+	store.MarkInUse(oldestID)
+	now = now.Add(time.Minute)
+	secondID := store.Put(&stagedUpload{Filename: "b.zip", Dir: t.TempDir()})
+	now = now.Add(time.Minute)
+
+	// The store is at its cap of 2, and the OLDEST entry is inUse: a third
+	// Put must skip it and evict the second-oldest instead.
+	store.Put(&stagedUpload{Filename: "c.zip", Dir: t.TempDir()})
+
+	_, ok := store.Get(oldestID)
+	assert.True(t, ok, "an in-use entry must survive eviction even as the oldest")
+	assert.DirExists(t, oldest)
+	_, ok = store.Get(secondID)
+	assert.False(t, ok, "the next-oldest non-in-use entry is evicted instead")
+	assert.Equal(t, 2, store.len())
+}
+
+// TestUploadStore_EvictionOverCapWhenEverySurvivorIsInUse pins the other
+// half: when every entry a Put's eviction pass could otherwise pick is
+// inUse, the store is left over cap rather than deleting an active
+// import's archive.
+func TestUploadStore_EvictionOverCapWhenEverySurvivorIsInUse(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	store := newUploadStore(time.Hour, 1, func() time.Time { return now })
+
+	dir := t.TempDir()
+	id := store.Put(&stagedUpload{Filename: "a.zip", Dir: dir})
+	store.MarkInUse(id)
+
+	store.Put(&stagedUpload{Filename: "b.zip", Dir: t.TempDir()})
+
+	assert.Equal(t, 2, store.len(), "over cap rather than reclaiming the in-use entry's file")
+	_, ok := store.Get(id)
+	assert.True(t, ok)
+	assert.DirExists(t, dir)
+}
+
+// TestUploadStore_MarkInUseHasItsOwnDeadline pins #333 Minor #2b:
+// cancelling a confirm modal is purely client-side, so a planned-then-
+// cancelled upload's ClearInUse is never called. MarkInUse's own grace
+// window (uploadInUseGrace), not ClearInUse, is what eventually reclaims
+// it - proved here by advancing the clock past the grace without ever
+// calling ClearInUse.
+func TestUploadStore_MarkInUseHasItsOwnDeadline(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	store := newUploadStore(30*time.Minute, defaultUploadStoreCap, func() time.Time { return now })
+
+	dir := t.TempDir()
+	id := store.Put(&stagedUpload{Filename: "a.zip", Dir: dir, Path: filepath.Join(dir, "a.zip")})
+	store.MarkInUse(id)
+
+	now = now.Add(uploadInUseGrace + time.Minute)
+	store.Put(&stagedUpload{Filename: "b.zip", Dir: t.TempDir()})
+
+	_, ok := store.Get(id)
+	assert.False(t, ok, "the in-use grace period itself must expire even though ClearInUse was never called")
+	assert.NoDirExists(t, dir)
+}
+
 // TestClose_PurgesStagedUploadsWithoutServe pins #333 Minor #6: Close
 // purges staged uploads the same as a completed Serve does, so a
 // New+Listen+Close sequence that never reaches Serve - a caller that fails
