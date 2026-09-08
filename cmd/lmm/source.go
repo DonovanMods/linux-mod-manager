@@ -280,6 +280,21 @@ Examples:
 			return fmt.Errorf("reading definition: %w", err)
 		}
 		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+			// Peeked BEFORE the write: SaveSourceDefinition is an upsert
+			// (#333 Minor #5 - a definition whose id already exists
+			// overwrites that definition's file, correctly, but the
+			// message always said "added"), and by the time it returns the
+			// file exists either way, so there is no "did this replace
+			// something" bit left to ask for afterwards. A parse failure
+			// here is not reported here; SaveSourceDefinition below
+			// re-validates and is the one whose error the caller sees.
+			replacing := false
+			if _, def, err := app.ValidateSourceContent(data); err == nil {
+				if _, err := app.SourceDefinitionFile(svc.ConfigDir(), def.ID); err == nil {
+					replacing = true
+				}
+			}
+
 			// expectID "" - the id comes FROM the document here; it is the
 			// web UI's route, which names a source in its path, that has an
 			// id to hold the definition to.
@@ -293,8 +308,12 @@ Examples:
 			if jsonOutput {
 				return emitSourceList(ctx, svc)
 			}
+			verb := "added"
+			if replacing {
+				verb = "replaced"
+			}
 			//nolint:errcheck // best-effort console write
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added: %s source %q\n", report.Type, report.ID)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s source %q\n", verb, report.Type, report.ID)
 			return nil
 		})
 	},

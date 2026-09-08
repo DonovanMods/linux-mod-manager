@@ -77,6 +77,24 @@ func TestSourceAdd_InstallsTheDefinition(t *testing.T) {
 	assert.FileExists(t, filepath.Join(cfg, "sources", "my-mods.yaml"))
 }
 
+// TestSourceAdd_ExistingIDSaysReplaced pins #333 Minor #5: a second `source
+// add` naming an id that already has a definition overwrites it (an
+// upsert - correct), and now says so rather than claiming "added".
+func TestSourceAdd_ExistingIDSaysReplaced(t *testing.T) {
+	cfg := setupSourceManageTest(t)
+
+	_, err := runSourceCmd(t, "source", "add", writeDefinitionFile(t, "my-mods", "My Mods"))
+	require.NoError(t, err)
+
+	out, err := runSourceCmd(t, "source", "add", writeDefinitionFile(t, "my-mods", "My Mods Renamed"))
+	require.NoError(t, err)
+	assert.Equal(t, "replaced: directory source \"my-mods\"\n", out)
+
+	def, loadErr := config.LoadSourceDefinitionFile(filepath.Join(cfg, "sources", "my-mods.yaml"))
+	require.NoError(t, loadErr)
+	assert.Equal(t, "My Mods Renamed", def.Name, "the file was actually overwritten, not left alone")
+}
+
 func TestSourceAdd_JSONEmitsTheSourceList(t *testing.T) {
 	setupSourceManageTest(t)
 	withJSONOutput(t)
