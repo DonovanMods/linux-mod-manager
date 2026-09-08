@@ -26,20 +26,23 @@ import { DeployPlanView } from "./plan_deploy.js";
 import { UninstallPlanView } from "./plan_uninstall.js";
 import { RollbackPlanView } from "./plan_rollback.js";
 import { InstallPlanView } from "./plan_install.js";
+import { UpdatesBatchPlanView } from "./plan_updates.js";
+import { VerifyFixPlanView } from "./plan_verify_fix.js";
+import { ProfileImportPlanView } from "./plan_profile_import.js";
 
-// issue 330 carry-2: "the first unit wiring a kind without a renderer adds
-// an explicit [E2E] scenario." "updates" is that kind here, deliberately:
-// its plan document (updatesBatchPlan, kind_updates.go) is a SELECTION, not
-// a per-mod preview worth a bespoke renderer of its own, and the batch UI
-// that would actually want one - checkboxes, a running per-item tally - is
-// Unit 6's (the update-batch modal). Wiring it through GenericPlanView now,
-// honestly, is better than either leaving it unwired or building a
-// throwaway renderer this unit would just delete again.
+// issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
+// "profile_import" each get their real renderer here, replacing the
+// GenericPlanView fallback they ran on since the units that first wired
+// their own kind (updates: issue 330; verify_fix, profile_import: this
+// unit's own kind_verify_fix.go/kind_profile_import.go).
 const renderers = {
   deploy: DeployPlanView,
   uninstall: UninstallPlanView,
   rollback: RollbackPlanView,
   install: InstallPlanView,
+  updates: UpdatesBatchPlanView,
+  verify_fix: VerifyFixPlanView,
+  profile_import: ProfileImportPlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */
