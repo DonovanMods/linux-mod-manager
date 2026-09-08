@@ -44,6 +44,11 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
       title: modal.title,
       confirmLabel: modal.confirmLabel,
       options: { mods: remaining },
+      // Forwarded, not lost: a drop's own re-plan replaces this modal in
+      // place (same slot, fresh plan_id), and the caller's own "clear my
+      // selection once this is actually confirmed" (m4/I2) must survive
+      // that just as it survives every other re-render of this modal.
+      onConfirmed: modal.onConfirmed,
     });
   }
 

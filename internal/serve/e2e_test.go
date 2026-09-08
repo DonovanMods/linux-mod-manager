@@ -3057,6 +3057,229 @@ func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape is m2's own scenario
+// (unit 6 gate review): the ⋯ row menu used to close only by re-clicking
+// ⋯, leaving it open over the rest of the page once the user had clearly
+// moved on.
+func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	openMenu := chromedp.Tasks{
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector("td.col--menu button").click();
+		`, nil),
+		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		openMenu,
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.Click(`.section-header`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
+	)
+
+	f.runInBrowser(t,
+		openMenu,
+		// The listener this closes through is attached by an EFFECT, which
+		// (per this suite's own established pattern - see
+		// TestE2E_ProfilesModal_CRUDExportImport's settle()) can lag the
+		// menu's own DOM appearance by a handful of animation frames in a
+		// headless browser; WaitVisible above only proves the DOM is there,
+		// not that the effect has run yet.
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
+	)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryBatchBar_UpdateFiltersToRowsWithAnUpdate is m5's own
+// scenario (unit 6 gate review): "Update" on a selection with no update at
+// all used to open a live Confirm over an empty plan, and a MIXED selection
+// used to send every row - including ones with nothing to update - straight
+// into kind_updates.go's own NotFound bucket.
+func TestE2E_LibraryBatchBar_UpdateFiltersToRowsWithAnUpdate(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fa", Version: "2.0", IsPrimary: true}},
+	})
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0"},
+		Files: []domain.DownloadableFile{{ID: "fb", Version: "1.0", IsPrimary: true}},
+	})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"beta.esp": []byte("beta")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "b", Version: "1.0"}))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		// Beta ALONE first: no update at all - the batch bar's own Update
+		// must refuse to open anything.
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod"))
+				.querySelector("td.col--select input").click();
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+	)
+	var betaOnlyDisabled bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-action="batch-update"]').disabled`, &betaOnlyDisabled))
+	assert.True(t, betaOnlyDisabled, "Update must be disabled when none of the selection has an update")
+
+	// Add Alpha (which DOES have one) to the selection: the button enables,
+	// and opening it shows ONLY Alpha - Beta silently dropped rather than
+	// landing in NotFound.
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+			.querySelector("td.col--select input").click();
+	`, nil))
+	var mixedEnabled bool
+	f.runInBrowser(t, chromedp.Evaluate(`!document.querySelector('[data-action="batch-update"]').disabled`, &mixedEnabled))
+	assert.True(t, mixedEnabled, "a MIXED selection with at least one update must enable the button")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="batch-update"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="updates-batch-rows"]`, chromedp.ByQuery),
+	)
+	var rowsText string
+	f.runInBrowser(t, textContent(`[data-testid="updates-batch-rows"]`, &rowsText))
+	assert.Contains(t, rowsText, "Alpha Mod")
+	assert.NotContains(t, rowsText, "Beta Mod", "a selected row with no update must be filtered out before the plan is even opened")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus is m4/I2's
+// own scenario (unit 6 gate review, folded together per the review's own
+// note: "the same edit fixes half of I2"): library.js used to clear the
+// multi-select the INSTANT the batch modal opened, which discarded the
+// user's work on a mere Cancel and - because that removed the batch bar's
+// own Uninstall button from the DOM in the same render the modal mounted -
+// left modal.js's captured-at-mount activeElement already stale, so focus
+// fell through to <body> instead of back to that button.
+func TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector("td.col--select input").click();
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+
+	var activeAction string
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? document.activeElement?.tagName`, &activeAction),
+	)
+	assert.Equal(t, "batch-uninstall", activeAction, "I2: focus must return to the batch bar's own Uninstall control, not <body>")
+
+	var alphaStillSelected bool
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+			.querySelector("td.col--select input").checked
+	`, &alphaStillSelected))
+	assert.True(t, alphaStillSelected, "m4: the selection must survive a Cancel, cleared only on Confirm")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger is I2's own
+// profiles scenario (unit 6 gate review): the actual clicked opener
+// ("Manage profiles…") lives inside a dropdown that must close for the
+// modal to make sense on screen, so the shell's own captured-at-mount
+// activeElement is always stale for this one modal - modal.js's own
+// openerSelector (queried FRESH at close time) is the fix, pointed at the
+// picker's own trigger button, which is always mounted.
+func TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".profile-picker__menu button"))
+			.find((b) => b.textContent.includes("Manage profiles"))?.click();
+	`, nil))
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+
+	var activeClass string
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &activeClass),
+	)
+	assert.Contains(t, activeClass, "profile-picker__trigger", "focus must return to the picker's own trigger, not <body>")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryRowMenu_RefusedLockSurfacesAsAToast is I1's own scenario
+// (unit 6 gate review): the ⋯ menu's Lock/Unlock used to call
+// actions.setModLock/clearModLock fire-and-forget, so a rejected ApiError
+// surfaced only as an unhandled promise rejection in the console - the menu
+// had already closed, leaving nothing on screen to say what went wrong.
+// Charlie is installed under "default" (so ListMods/the library shows it)
+// but never added to the profile's own Mods list (seedInstalledMod's own
+// contract - no pm.AddMod call), which is exactly what
+// ProfileManager.SetModLock refuses ("mod fake:charlie not found in profile
+// \"default\"").
+func TestE2E_LibraryRowMenu_RefusedLockSurfacesAsAToast(t *testing.T) {
+	f := newE2EFixture(t)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "charlie", SourceID: "fake", Name: "Charlie Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"charlie.pak": []byte("charlie")})
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Charlie Mod"))
+				.querySelector("td.col--menu button").click();
+		`, nil),
+		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Lock").click();
+		`, nil),
+		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
+	)
+
+	var toastText string
+	f.runInBrowser(t, textContent(`.toast--failure`, &toastText))
+	assert.Contains(t, toastText, "Charlie Mod", "the toast must name what it was trying to do")
+	assert.Contains(t, toastText, "not found in profile", "the toast must carry the real ApiError message, not a generic one")
+
+	// The 500 itself still logs as a network-level browser entry (Chrome's
+	// own behavior for any non-2xx fetch, independent of whether the page's
+	// own JS handled it) - assertNoUncaughtErrors is this suite's own way of
+	// separating that from what I1 actually guards against: an UNCAUGHT
+	// promise rejection, which library.js's previous fire-and-forget call
+	// would have produced here.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
 // newE2EFixtureWithTwoFixableFindings seeds two mods each recording a
 // version_mismatch the boots pattern (newE2EFixtureWithAttention) already
 // proves is fixable and network-free: the DB row is stamped at "1.0" while

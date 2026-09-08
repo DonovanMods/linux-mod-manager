@@ -26,8 +26,27 @@ import { html, useEffect, useRef } from "../render.js";
  * every route out of a modal that isn't one of the caller's own footer
  * actions. A caller with work in flight passes a no-op to hold the modal
  * open; nothing here decides that for it.
+ *
+ * openerSelector (I2, unit 6 fix wave) names a STABLE, always-mounted
+ * control to restore focus to on close, queried FRESH at that moment
+ * instead of the activeElement this shell captures at mount. Most callers
+ * don't need it - their own opener (the library's "Reorder…" button, a
+ * single-mod plan's row control) stays on screen for the modal's whole
+ * life, so the captured activeElement is still valid when this unmounts.
+ * A caller whose actual clicked element lives inside something that MUST
+ * close before (or the instant) the modal opens - the profiles modal's own
+ * opener is a menu item inside a dropdown that cannot stay open behind a
+ * modal - names a selector for a control that survives that teardown
+ * instead (the profile picker's own trigger button, not the menu item).
  */
-export function Modal({ kind, title, onClose, footer, children }) {
+export function Modal({
+  kind,
+  title,
+  onClose,
+  footer,
+  children,
+  openerSelector,
+}) {
   const panelRef = useRef(null);
 
   // The handler is read through a ref rather than captured, so the listener
@@ -57,12 +76,20 @@ export function Modal({ kind, title, onClose, footer, children }) {
       // shell's own exits fired (Escape, scrim click, ✕, or the caller's own
       // Cancel/Confirm) - every one of them tears this component down, so
       // one cleanup covers all of them rather than each caller having to
-      // remember to give focus back itself. A guard against an opener that
-      // is no longer in the document (the row it belonged to was removed by
-      // the very mutation this modal just confirmed) - focus() on a detached
-      // element is a silent no-op in every browser, but isConnected makes
-      // the intent explicit rather than relying on that.
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      // remember to give focus back itself. openerSelector is queried FRESH
+      // here (not at mount) when given - the whole point is that it names a
+      // control that only re-exists in its normal place once whatever had
+      // to close to let this modal open (a dropdown menu) is gone again,
+      // which is exactly the state the page is back in by the time this
+      // runs. A guard against a target that is no longer in the document
+      // (the row it belonged to was removed by the very mutation this modal
+      // just confirmed) - focus() on a detached element is a silent no-op
+      // in every browser, but isConnected makes the intent explicit rather
+      // than relying on that.
+      const target = openerSelector
+        ? document.querySelector(openerSelector)
+        : opener;
+      if (target instanceof HTMLElement && target.isConnected) target.focus();
     };
   }, []);
 

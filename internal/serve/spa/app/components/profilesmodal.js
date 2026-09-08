@@ -68,7 +68,12 @@ export function ProfilesModal({ modal, state, actions }) {
   }
 
   return html`
-    <${Modal} kind="profiles" title="Manage profiles" onClose=${close}>
+    <${Modal}
+      kind="profiles"
+      title="Manage profiles"
+      onClose=${close}
+      openerSelector=".profile-picker__trigger"
+    >
       ${error && html`<p class="modal__error">Couldn't load profiles: ${error}</p>`}
 
       <ul class="profiles-list" data-testid="profiles-list">

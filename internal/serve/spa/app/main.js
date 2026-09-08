@@ -545,7 +545,14 @@ let modalSeq = 0;
  * key the initiating control morphs on once the job starts; title and
  * confirmLabel are that control's own words for what it is about to do.
  */
-async function openPlan({ kind, origin, title, confirmLabel, options }) {
+async function openPlan({
+  kind,
+  origin,
+  title,
+  confirmLabel,
+  options,
+  onConfirmed,
+}) {
   modalSeq += 1;
   const seq = modalSeq;
   const context = {
@@ -561,6 +568,13 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
   // (store.js's own doc comment): confirmplan.js, reordermodal.js and
   // profilesmodal.js each self-guard on it, so app.js can mount all three
   // as siblings without a switch statement of its own.
+  //
+  // onConfirmed (m4/I2, unit 6 fix wave) is an optional callback run once
+  // this plan's job has actually STARTED (confirmPlan, below) - the
+  // library batch bar's own way of clearing its multi-select only once the
+  // mutation is truly underway, never at open time, which used to tear the
+  // very control the user just clicked out of the DOM before the modal
+  // even finished mounting (the same removal that broke focus-return, I2).
   const base = {
     type: "plan",
     kind,
@@ -569,6 +583,7 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
     confirmLabel,
     seq,
     options,
+    onConfirmed,
   };
 
   store.set({ modal: { ...base, status: "planning" } });
@@ -622,9 +637,11 @@ function openProfilesModal() {
  * selected" (issue 332): ONE confirm modal over N selected mods' own uninstall
  * plans, never a second modal per mod ("modals stack at most one deep",
  * design doc §Modals). uninstallbatchmodal.js plans every mod itself once
- * mounted; this only records WHICH mods. */
-function openUninstallBatchModal(mods) {
-  store.set({ modal: { type: "uninstall-batch", mods } });
+ * mounted; this only records WHICH mods. onConfirmed mirrors openPlan's own
+ * (m4/I2, unit 6 fix wave) - run once the batch has actually started, not
+ * at open time, so the caller's own selection/opener survives a Cancel. */
+function openUninstallBatchModal(mods, onConfirmed) {
+  store.set({ modal: { type: "uninstall-batch", mods, onConfirmed } });
 }
 
 // bindingJobs is every in-flight POST /api/v1/jobs (or plan-free toggle
@@ -844,6 +861,7 @@ async function confirmPlan() {
         modal: null,
         origins: { ...store.get().origins, [modal.origin]: jobID },
       });
+      modal.onConfirmed?.();
     } catch (err) {
       if (store.get().modal?.seq !== modal.seq) return;
       store.set({ modal: { ...modal, status: "error", ...describe(err) } });
@@ -1221,6 +1239,11 @@ const actions = {
   setModUpdatePolicy,
   clearOrigin,
   dismissToast,
+  // pushToast is exposed directly (I1, unit 6 fix wave): the row menu's own
+  // Lock/Unlock has no control left on screen to show its own error once it
+  // closes (unlike modpanel.js's ModSettingsControls, which stays open and
+  // renders one inline) - a toast is the only honest place left to put it.
+  pushToast,
   retryInstallOverwrite,
   canRetryInstallOverwrite,
   openReorderModal,

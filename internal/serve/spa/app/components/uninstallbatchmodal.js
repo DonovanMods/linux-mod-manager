@@ -87,6 +87,11 @@ export function UninstallBatchModal({ modal, state, actions }) {
     // show their own inline/toast outcome, not a modal sitting open over a
     // multi-job sequence with nothing left for it to say.
     actions.closeModal();
+    // modal.onConfirmed (m4/I2, unit 6 fix wave): the caller's own "clear
+    // the selection" - deferred to here, not to open, so a Cancel leaves
+    // the multi-select (and the batch bar it lives on) exactly as the user
+    // left it.
+    modal.onConfirmed?.();
     await actions.startUninstallBatch(ready);
   }
 

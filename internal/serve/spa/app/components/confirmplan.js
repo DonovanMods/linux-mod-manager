@@ -50,6 +50,18 @@ export function ConfirmPlanModal({ modal, actions }) {
   const busy = status === "starting";
   const PlanView = planRendererFor(kind);
 
+  // m5, unit 6 fix wave: an "updates" plan with nothing in it (every
+  // selected mod dropped no update to offer, kind_updates.go's own
+  // planUpdatesKind puts them in NotFound instead) has nothing for Confirm
+  // to apply - library.js/cards.js both filter their own selection before
+  // opening this modal, but Confirm staying disabled here too is what makes
+  // that a belt-and-braces guarantee rather than a UI convention this modal
+  // itself has to trust.
+  const emptyUpdatesPlan =
+    kind === "updates" &&
+    status === "ready" &&
+    (plan?.updates?.length ?? 0) === 0;
+
   const footer =
     status === "error"
       ? html`
@@ -76,7 +88,7 @@ export function ConfirmPlanModal({ modal, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready"}
+            disabled=${status !== "ready" || emptyUpdatesPlan}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (confirmLabel ?? "Confirm")}

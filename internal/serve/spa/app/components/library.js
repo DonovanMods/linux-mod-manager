@@ -11,8 +11,9 @@
 // exact list this table is showing, so this component now renders `visible`
 // rather than computing it.
 
-import { html, useState } from "../render.js";
+import { html, useEffect, useState } from "../render.js";
 import { navigate } from "../router.js";
+import { ApiError } from "../api.js";
 import { formatDate, FILTER_NAMES, SORT_NAMES } from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
 
@@ -57,6 +58,28 @@ export function Library({
   const [menuKey, setMenuKey] = useState(null);
   const [togglingKey, setTogglingKey] = useState(null);
 
+  // m2, unit 6 fix wave: the ⋯ row menu used to close only by re-clicking
+  // ⋯, which left it sitting open over the rest of the page once the user
+  // had clearly moved on. modal.js's own outside-click/Escape pattern,
+  // applied here - a document-level listener while a menu is actually open,
+  // torn down the instant it closes so a hidden menu never leaves a
+  // listener attached for the rest of the session.
+  useEffect(() => {
+    if (menuKey === null) return;
+    function handleClick(e) {
+      if (!e.target.closest(".row-menu-cell")) setMenuKey(null);
+    }
+    function handleKeyDown(e) {
+      if (e.key === "Escape") setMenuKey(null);
+    }
+    document.addEventListener("click", handleClick);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("click", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuKey]);
+
   function toggleSelect(key) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -93,6 +116,27 @@ export function Library({
     }
   }
 
+  // toggleLock is the ⋯ menu's own Lock/Unlock (I1, unit 6 fix wave): the
+  // menu closes the instant this is clicked, unlike modpanel.js's
+  // ModSettingsControls (which stays on screen and renders its own inline
+  // error) - a rejected ApiError here has no control left to show it on, so
+  // it becomes a toast instead, mirroring modpanel.js's own await/try/catch
+  // rather than the previous fire-and-forget call that left a failure as
+  // nothing but an unhandled promise rejection in the console.
+  async function toggleLock(row) {
+    setMenuKey(null);
+    try {
+      if (row.locked) await actions.clearModLock(row.source_id, row.id);
+      else await actions.setModLock(row.source_id, row.id, "");
+    } catch (err) {
+      actions.pushToast({
+        tone: "failure",
+        title: `Couldn't ${row.locked ? "unlock" : "lock"} ${row.name}`,
+        detail: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  }
+
   function openReorder() {
     actions.openReorderModal({ profileName: state.route.profile });
   }
@@ -107,25 +151,39 @@ export function Library({
     );
   }
 
+  // m5: only rows that actually offer an update are worth planning - a
+  // selection with no update at all must not even open a modal (the
+  // toolbar button below is disabled for exactly that case), and a MIXED
+  // selection must silently drop the rows with nothing to update rather
+  // than hand kind_updates.go's own planUpdatesKind a mod it can only file
+  // under `not_found`.
+  function updatableSelectedRows() {
+    return selectedRows().filter((r) => r.hasUpdate);
+  }
+
   function batchUpdate() {
-    const rows = selectedRows();
+    const rows = updatableSelectedRows();
     if (rows.length === 0) return;
-    setSelected(new Set());
+    // m4/I2: the selection is cleared once this batch is actually
+    // confirmed (onConfirmed), not here at open time - a Cancel must leave
+    // the batch bar (and its own focus) exactly as the user left it.
     actions.openPlan({
       kind: "updates",
       origin: "library:batch-update",
       title: `Update ${rows.length} mod${rows.length === 1 ? "" : "s"}`,
       confirmLabel: "Update",
       options: { mods: rows.map((r) => r.key) },
+      onConfirmed: () => setSelected(new Set()),
     });
   }
 
   function batchUninstall() {
     const rows = selectedRows();
     if (rows.length === 0) return;
-    setSelected(new Set());
+    // m4/I2: see batchUpdate's own note - cleared on confirm, not on open.
     actions.openUninstallBatchModal(
       rows.map((r) => ({ source_id: r.source_id, id: r.id, name: r.name })),
+      () => setSelected(new Set()),
     );
   }
 
@@ -171,11 +229,7 @@ export function Library({
         <button
           type="button"
           class="row-menu__item"
-          onClick=${() => {
-            setMenuKey(null);
-            if (row.locked) actions.clearModLock(row.source_id, row.id);
-            else actions.setModLock(row.source_id, row.id, "");
-          }}
+          onClick=${() => toggleLock(row)}
         >
           ${row.locked ? "Unlock" : "Lock"}
         </button>
@@ -448,6 +502,12 @@ export function Library({
               type="button"
               class="button"
               data-action="batch-update"
+              disabled=${updatableSelectedRows().length === 0}
+              title=${
+                updatableSelectedRows().length === 0
+                  ? "None of the selected mods offer an update"
+                  : undefined
+              }
               onClick=${batchUpdate}
             >
               Update
