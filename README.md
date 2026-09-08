@@ -1041,25 +1041,25 @@ shows up as a diff in review.
 Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
 that run would have applied:
 
-| Command                                  | Document                                                                                                  |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `lmm install`                            | `core.InstallResult` — `{installed[], skipped[], failed[], …}`                                            |
-| `lmm import <archive>`                   | `core.ImportArchiveResult` / `core.ImportArchivePlan` under `--dry-run` (conflicts need `--force`, above) |
-| `lmm import` (scan)                      | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`                                             |
-| `lmm import --dry-run` (scan)            | `core.AdoptPlan`                                                                                          |
-| `lmm deploy`                             | `core.DeployResult` / `core.DeployPlan` under `--dry-run`                                                 |
-| `lmm uninstall <mod-id>`                 | `core.UninstallResult` / `core.UninstallPlan`                                                             |
-| `lmm purge`                              | `core.PurgeResult` / `core.PurgePlan`                                                                     |
-| `lmm profile apply`                      | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                       |
-| `lmm profile switch <name>`              | `core.SwitchResult` / `core.SwitchPlan`                                                                   |
-| `lmm profile sync`                       | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                         |
-| `lmm profile import <file>`              | `core.ProfileImportResult`                                                                                |
-| `lmm profile create/delete/rename/reorder` | `core.ProfileResult` — `{profile{…}}`                                                                   |
-| `lmm mod enable/disable`                 | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                               |
-| `lmm mod lock/unlock/set-update/convert` | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                             |
-| `lmm mod edit <mod-id>`                  | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                    |
-| `lmm game detect --all` / `--select`     | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`                                             |
-| `lmm game set-default` / `clear-default` | `core.SettingsResult` — `{default_game}`                                                                  |
+| Command                                    | Document                                                                                                  |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `lmm install`                              | `core.InstallResult` — `{installed[], skipped[], failed[], …}`                                            |
+| `lmm import <archive>`                     | `core.ImportArchiveResult` / `core.ImportArchivePlan` under `--dry-run` (conflicts need `--force`, above) |
+| `lmm import` (scan)                        | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`                                             |
+| `lmm import --dry-run` (scan)              | `core.AdoptPlan`                                                                                          |
+| `lmm deploy`                               | `core.DeployResult` / `core.DeployPlan` under `--dry-run`                                                 |
+| `lmm uninstall <mod-id>`                   | `core.UninstallResult` / `core.UninstallPlan`                                                             |
+| `lmm purge`                                | `core.PurgeResult` / `core.PurgePlan`                                                                     |
+| `lmm profile apply`                        | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                       |
+| `lmm profile switch <name>`                | `core.SwitchResult` / `core.SwitchPlan`                                                                   |
+| `lmm profile sync`                         | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                         |
+| `lmm profile import <file>`                | `core.ProfileImportResult`                                                                                |
+| `lmm profile create/delete/rename/reorder` | `core.ProfileResult` — `{profile{…}}`                                                                     |
+| `lmm mod enable/disable`                   | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                               |
+| `lmm mod lock/unlock/set-update/convert`   | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                             |
+| `lmm mod edit <mod-id>`                    | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                    |
+| `lmm game detect --all` / `--select`       | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`                                             |
+| `lmm game set-default` / `clear-default`   | `core.SettingsResult` — `{default_game}`                                                                  |
 
 **`--json` never prompts.** Every confirmation has a flag that decides it
 (`-y`/`--yes`, or `--force` where that is the existing meaning); without it

@@ -39,8 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one winner rule instead of the browser re-deriving it. Profile management
   lands as four more synchronous mutations returning the `core.ProfileResult`
   document their CLI twins print - `POST /api/v1/profiles` (create),
-  `DELETE /api/v1/profiles/{name}`, `POST .../rename`, `POST
-  .../set-default` - plus `GET /api/v1/profiles/{name}/export`
+  `DELETE /api/v1/profiles/{name}`, `POST .../rename` and
+  `POST .../set-default` - plus `GET /api/v1/profiles/{name}/export`
   (`domain.ExportedProfile`, served as an attachment) and a new
   `profile_import` plan kind over the existing `PlanImport`/`ApplyImport`
   pair. Health repair gains an additive `mod_filter` on the `verify_fix`
