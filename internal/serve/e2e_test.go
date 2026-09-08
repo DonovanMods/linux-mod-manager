@@ -3415,3 +3415,195 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelection
+// is C1's own destructive reproduction (unit 6 gate review): ReorderModal
+// and UninstallBatchModal used to call useState/useEffect AFTER a
+// conditional `return null`, mounted PERMANENTLY as siblings in app.js -
+// and Preact does not discard a component's hook list on a null render, so
+// a hook slot filled during the FIRST open is REUSED, untouched, on every
+// later one. For this modal that meant `entries` (the previous open's own
+// computed uninstall plans) survived a close and leaked into the next
+// open's confirm - selecting Alpha, cancelling, then selecting ONLY Beta
+// would still uninstall Alpha, because `entries` was never recomputed for
+// Beta's plan. Reproduced here exactly as the review found it live.
+func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelection(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	selectByName := func(name string) chromedp.Action {
+		return chromedp.Evaluate(fmt.Sprintf(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes(%q))
+				.querySelector("td.col--select input").click();
+		`, name), nil)
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		selectByName("Alpha Mod"),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		// Wait for Alpha's own preview plan to actually land - otherwise
+		// there is nothing stale yet for the bug below to replay.
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+	)
+
+	// Cancel via Escape - the design's own "Cancel restores".
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+
+	// Change the selection to Beta ONLY (re-selecting from scratch, since
+	// this test's own concern is C1 alone - m4/I2's own "does Cancel keep
+	// the selection" is a separate scenario), then open and confirm.
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input:checked").forEach((cb) => cb.click());
+		`, nil),
+		selectByName("Beta Mod"),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+	)
+	var modalBody string
+	f.runInBrowser(t, textContent(`.modal[data-kind="uninstall-batch"]`, &modalBody))
+	assert.Contains(t, modalBody, "Beta Mod", "the modal must plan the CURRENT selection")
+	assert.NotContains(t, modalBody, "Alpha Mod", "a stale plan from the previous open must not leak into this one")
+
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		_, err := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
+		return errors.Is(err, domain.ErrModNotFound)
+	}, 5*time.Second, 20*time.Millisecond, "Beta - the mod actually selected at confirm time - must be uninstalled")
+
+	alpha, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+	require.NoError(t, err, "Alpha - never selected the second time around - must NOT have been uninstalled")
+	assert.Equal(t, "1.0", alpha.Version)
+	gameCache := f.Svc.GetGameCache(f.Game)
+	assert.True(t, gameCache.Exists(f.Game.ID, "fake", "a", "1.0"), "Alpha's own cache entry must be untouched")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen is C1's other
+// reproduction: Cancel is supposed to restore, but the same stale-hook-list
+// bug (see the uninstall-batch scenario above) meant `order` and the
+// preview's own state survived a close, so re-opening replayed the
+// abandoned edit instead of the saved order, and Save then committed it.
+func TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var moved bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			(() => {
+				const btn = Array.from(document.querySelectorAll(".reorder-row")).find((r) => r.textContent.includes("Mod X"))
+					?.querySelector('[aria-label="Move Mod X to highest priority"]');
+				if (!btn || btn.disabled) return false;
+				btn.click();
+				return true;
+			})()
+		`, &moved),
+	)
+	require.True(t, moved, `"Move Mod X to highest priority" must be found, enabled, and clicked`)
+
+	// Cancel via Escape ("Cancel restores" - design doc §Modals).
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	// Re-open and read the list back BEFORE touching anything: it must show
+	// the SAVED order (Y then X), never the abandoned edit (X then Y).
+	f.runInBrowser(t,
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+	var reopenedOrder []string
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".reorder-row__name")).map((n) => n.textContent)
+	`, &reopenedOrder))
+	require.Equal(t, []string{"Mod X", "Mod Y"}, reopenedOrder, "a fresh open must re-seed from the SAVED order (X then Y - X added first, lowest priority), not the cancelled edit that moved X to the end")
+
+	// Save without touching anything: this must be a no-op against the
+	// saved order, never a silent commit of the abandoned edit.
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		report, err := f.Svc.GetProfileConflictsForOrder(t.Context(), f.Game, "default", nil)
+		return err == nil && len(report) == 1 && report[0].LoadOrderWinner.Key == "fake:y"
+	}, 5*time.Second, 50*time.Millisecond, "Y, the ORIGINAL winner, must still win - Cancel must have actually discarded the edit")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename audits
+// ProfilesModal for C1's own pattern (unit 6 gate review: "ProfilesModal
+// gets away with it because it calls its one hook BEFORE the guard").
+// ProfileRow's own rename-in-progress state lives in a child component that
+// unmounts along with everything else under the modal's `if (!open) return
+// null`, so this is expected to pass even before the app.js mount fix -
+// kept as the shared slot's third regression case, per the review's own
+// "EVERY shape in the shared slot".
+func TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	// See TestE2E_ProfilesModal_CRUDExportImport's own settle(): the
+	// picker's outside-click/Escape state and this modal's own mount effect
+	// both flush on requestAnimationFrame, up to a handful of frames in a
+	// headless browser - real insurance, not superstition, once observed.
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+	openProfilesModal := func() {
+		f.runInBrowser(t,
+			chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		)
+		settle()
+		f.runInBrowser(t, chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil))
+		settle()
+		f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+		settle()
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+	)
+	openProfilesModal()
+	f.runInBrowser(t,
+		clickInRow(".profiles-row", "default", "Rename"),
+		chromedp.WaitVisible(`.profiles-row__rename-form`, chromedp.ByQuery),
+		chromedp.SetValue(`.profiles-row__rename-form input`, "half-typed", chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+	)
+	settle()
+
+	openProfilesModal()
+
+	var stillRenaming bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector(".profiles-row__rename-form") !== null`, &stillRenaming))
+	assert.False(t, stillRenaming, "a fresh open must not resume a half-typed rename left over from a previous session")
+
+	_, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err, "Escape must not have renamed the profile")
+	assert.Empty(t, f.BrowserErrors())
+}

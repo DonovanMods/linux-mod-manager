@@ -29,15 +29,51 @@ export function App({ state, onThemeChange, actions }) {
   // The overlays every route carries. Rendered as a Fragment beside the
   // screen rather than inside it, so switching screens cannot take a
   // running job's modal or a pending toast down with it.
+  //
+  // Each modal is mounted ONLY when the shared slot actually holds its own
+  // shape (C1, unit 6 fix wave) - never as a permanent sibling that renders
+  // `null` for every other shape. Preact does not discard a component's own
+  // hook list on a null render: mounted permanently, ReorderModal and
+  // UninstallBatchModal's hooks (called AFTER their own internal
+  // `modal?.type !== "..."` guard) kept the PREVIOUS open's state - a stale
+  // `entries`/`order` that the next open's fresh `modal` prop never
+  // recomputed, which is what let "Cancel" on the reorder modal commit an
+  // abandoned edit and let the uninstall batch modal uninstall a mod that
+  // was never (re-)selected. Conditionally mounting here means Preact tears
+  // the WHOLE component - hook list included - down on close and builds a
+  // genuinely fresh one on the next open, no matter what shape it is next
+  // time. Each component's own internal guard stays in place as
+  // belt-and-braces, not as the only line of defense.
+  const modalType = state.modal?.type;
   const overlays = html`
-    <${ConfirmPlanModal} modal=${state.modal} actions=${actions} />
-    <${ReorderModal} modal=${state.modal} state=${state} actions=${actions} />
-    <${ProfilesModal} modal=${state.modal} state=${state} actions=${actions} />
-    <${UninstallBatchModal}
-      modal=${state.modal}
-      state=${state}
-      actions=${actions}
-    />
+    ${
+      modalType === "plan" &&
+      html`<${ConfirmPlanModal} modal=${state.modal} actions=${actions} />`
+    }
+    ${
+      modalType === "reorder" &&
+      html`<${ReorderModal}
+        modal=${state.modal}
+        state=${state}
+        actions=${actions}
+      />`
+    }
+    ${
+      modalType === "profiles" &&
+      html`<${ProfilesModal}
+        modal=${state.modal}
+        state=${state}
+        actions=${actions}
+      />`
+    }
+    ${
+      modalType === "uninstall-batch" &&
+      html`<${UninstallBatchModal}
+        modal=${state.modal}
+        state=${state}
+        actions=${actions}
+      />`
+    }
     <${Toasts}
       toasts=${state.toasts}
       route=${route}
