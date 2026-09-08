@@ -171,6 +171,19 @@ function authRequiredMessage(sourceName, game, profile) {
     >.`;
 }
 
+// KNOWN_FIELD_ERRORS is every GameSpecError.Field errorFor() below actually
+// renders an input for. "game_id" is a real wire field (core.GameSpec.ID,
+// set only from a catalog match's own game_id) this form has no input
+// for - a rejection naming it must fall back to the form-wide banner
+// rather than silently marking nothing (Minor 2).
+const KNOWN_FIELD_ERRORS = new Set([
+  "source_id",
+  "identifier",
+  "name",
+  "install_path",
+  "mod_path",
+]);
+
 function emptySpec() {
   return {
     sourceID: "",
@@ -278,7 +291,16 @@ export function GameAddForm({ onAdded, game, profile }) {
       setSpec(emptySpec());
       onAdded?.(entry);
     } catch (err) {
-      if (err instanceof ApiError && err.details?.field) {
+      // A field this form has no input for (e.g. "game_id", when a
+      // catalog-derived id fails GameSpecError's path-safety check) must
+      // still tell the user SOMETHING rather than silently un-busying the
+      // button (Minor 2): fall back to the form-wide banner whenever no
+      // input matches the named field.
+      if (
+        err instanceof ApiError &&
+        err.details?.field &&
+        KNOWN_FIELD_ERRORS.has(err.details.field)
+      ) {
         setFieldError(err.details);
       } else {
         setFormError(err instanceof ApiError ? err.message : String(err));

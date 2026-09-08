@@ -314,6 +314,43 @@ func TestE2E_FirstRunManualAdd_CatalogAuthRequiredNamesTheSourceNotADeadEnd(t *t
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
+// TestE2E_ManualAdd_UnrenderableFieldErrorFallsBackToFormBanner pins Minor 2
+// (unit7-review.md): a GameSpecError naming a field this form has no input
+// for (Field: "game_id" - only ever set from a catalog match's own
+// game_id, never typed directly) used to un-busy the button with nothing
+// shown at all. A catalog whose slug derives to a path-unsafe game id
+// (DeriveGameID lower-cases and dashes spaces, but does not strip "/")
+// reproduces it from the browser.
+func TestE2E_ManualAdd_UnrenderableFieldErrorFallsBackToFormBanner(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	cat := newE2EGameCatalogSource("catalogsrc")
+	cat.entries = []source.GameEntry{{ID: "1", Name: "Weird Game", Slug: "weird/slug"}}
+	f.Svc.RegisterSource(cat)
+
+	install := t.TempDir()
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
+		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="add-query"]`, "weird", chromedp.ByQuery),
+		chromedp.Click(`.setup-add__catalog button.button--small`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.setup-add__matches button`, chromedp.ByQuery),
+		chromedp.Click(`.setup-add__matches button`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"] .modal__error`, chromedp.ByQuery),
+	)
+
+	var errorText string
+	f.runInBrowser(t, chromedp.Text(`[data-testid="setup-add-game"] .modal__error`, &errorText, chromedp.ByQuery))
+	assert.Contains(t, errorText, "game_id", "the form-wide banner must carry the server's own message when no input matches the field")
+
+	_, err := f.Svc.GetGame("weird/slug")
+	require.Error(t, err, "an id that failed validation must never be written")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
 // TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds drives the
 // manual-identifier path (a source with no catalog: the search box never
 // even renders) and pins the field-error round trip: a bad install path

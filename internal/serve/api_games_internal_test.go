@@ -217,6 +217,10 @@ func TestAPIGameAdd_FieldErrorsNameTheirField(t *testing.T) {
 		{"missing name", `{"source_id":"nexusmods","identifier":"a","install_path":` + jsonString(install) + `}`, "name"},
 		{"missing install path", `{"source_id":"nexusmods","identifier":"a","name":"A"}`, "install_path"},
 		{"install path does not exist", `{"source_id":"nexusmods","identifier":"a","name":"A","install_path":"/definitely/not/here"}`, "install_path"},
+		// #333 Minor #2: an explicit game_id (the WIRE key - core.GameSpec.ID)
+		// containing a path separator is rejected as "game_id", not the old
+		// "id" that named no member of the request body at all.
+		{"game_id has a path separator", `{"source_id":"nexusmods","identifier":"a","name":"A","game_id":"a/b","install_path":` + jsonString(install) + `}`, "game_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

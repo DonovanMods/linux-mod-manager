@@ -320,7 +320,7 @@ func TestAddGame_FieldErrors(t *testing.T) {
 		{"install path missing", core.GameSpec{SourceID: "nexusmods", Identifier: "acme", Name: "Acme", InstallPath: filepath.Join(install, "nope")}, "install_path"},
 		{"install path is a file", core.GameSpec{SourceID: "nexusmods", Identifier: "acme", Name: "Acme", InstallPath: notADir}, "install_path"},
 		{"mod path is a file", core.GameSpec{SourceID: "nexusmods", Identifier: "acme", Name: "Acme", InstallPath: install, ModPath: notADir}, "mod_path"},
-		{"id has a path separator", core.GameSpec{SourceID: "nexusmods", Identifier: "acme", ID: "a/b", Name: "Acme", InstallPath: install}, "id"},
+		{"id has a path separator", core.GameSpec{SourceID: "nexusmods", Identifier: "acme", ID: "a/b", Name: "Acme", InstallPath: install}, "game_id"},
 		{"identifier slugifies to nothing", core.GameSpec{SourceID: "nexusmods", Identifier: "   ", Name: "Acme", InstallPath: install}, "identifier"},
 	}
 	for _, tt := range tests {

@@ -49,7 +49,7 @@ var ErrNoGameCatalog = errors.New("source has no searchable game catalog")
 // `Details() any` extension point).
 type GameSpecError struct {
 	// Field is the GameSpec member at fault, named as the WIRE key POST
-	// /api/v1/games takes: "source_id", "identifier", "name", "id",
+	// /api/v1/games takes: "source_id", "identifier", "name", "game_id",
 	// "install_path", "mod_path" - plus "query" for SearchGameCatalog,
 	// which shares this type rather than defining a second one-field error.
 	Field string `json:"field"`
@@ -286,7 +286,7 @@ func (spec GameSpec) game() (*domain.Game, error) {
 	// An explicit id is taken as given (only slug-normalised); an absent one
 	// is derived from the identifier, which is the manual path's rule.
 	gameID := DeriveGameID(spec.ID)
-	field := "id"
+	field := "game_id"
 	if spec.ID == "" {
 		gameID, field = DeriveGameID(identifier), "identifier"
 	}
