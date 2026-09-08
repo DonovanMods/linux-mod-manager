@@ -97,19 +97,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used to print an unconditional "Done". (#332, epic #326)
 
 - The `lmm serve` backend's profile management (above) is now fully gated
-  and honest about failure. `POST /api/v1/profiles`, `DELETE
-/api/v1/profiles/{name}` and `POST .../set-default` now run behind the
-  same mutation-serialising gate every other write in the service already
-  does, instead of racing an in-flight deploy or install. A profile name
-  already in use - on disk, or still claimed by database rows a prior
-  Delete only ever removed the file for - answers `409` from a typed
-  `core.ErrProfileExists` detected inside that gate, and a rename that
-  fails partway through now compensates instead of leaving two profile
-  files behind: a database-write failure removes the file the rename had
-  already written, and an old-file-removal failure strips the orphan's
-  default flag so it can never read as a second default. A `profile_import`
-  document with no profile name is refused as bad input (`400`) rather than
-  planned and only failing once applied. (#332)
+  and honest about failure. `POST /api/v1/profiles`,
+  `DELETE /api/v1/profiles/{name}` and `POST .../set-default` now run
+  behind the same mutation-serialising gate every other write in the
+  service already does, instead of racing an in-flight deploy or install.
+  A profile name already in use - on disk, or still claimed by database
+  rows a prior Delete only ever removed the file for - answers `409` from
+  a typed `core.ErrProfileExists` detected inside that gate, and a rename
+  that fails partway through now compensates instead of leaving two
+  profile files behind: a database-write failure removes the file the
+  rename had already written, and an old-file-removal failure strips the
+  orphan's default flag so it can never read as a second default. A
+  `profile_import` document with no profile name is refused as bad input
+  (`400`) rather than planned and only failing once applied. (#332)
 
 - The `lmm serve` SPA's omnibar now searches, and installing works.
   Typing narrows the library in place ("In your library (n)", unchanged
