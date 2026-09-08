@@ -357,6 +357,13 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileApplyPlanRequest{Profile: "modded"},
 		},
 		{
+			// #332's reorder request: the new load order as the same mod
+			// identifiers `lmm profile reorder` takes, lowest priority
+			// first (api_profiles.go).
+			"profile_reorder_request",
+			profileReorderRequest{IDs: []string{"fake:m2", "fake:m1"}},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",

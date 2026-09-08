@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // apiContentType is every /api/v1 response's Content-Type, success or
@@ -392,18 +394,62 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 // beyond the design doc's original api-route list - see handleAPIHealth's
 // doc comment for the ruling that put conflicts here instead of folded into
 // /api/v1/health.
+//
+// ?order= (#332) is the reorder modal's live preview: a comma-separated
+// list of mod identifiers - the same ones POST /profiles/{name}/reorder
+// takes, resolved through the same core.Service.ResolveReorder - asking
+// "which mod would win each contested path if I committed THIS order".
+// Absent, the report describes the order the profile currently holds,
+// which is this endpoint's original and unchanged behaviour. The answer
+// comes from core.GetProfileConflictsForOrder, so the preview and the
+// commit share one winner rule rather than the frontend re-deriving it;
+// nothing is written either way. A bad identifier is bad input (400), the
+// same classification the reorder route itself gives it.
 func (s *Server) handleAPIConflicts(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
 		return
 	}
 
-	conflicts, err := s.svc.GetProfileConflicts(r.Context(), sel.Game, sel.Profile)
+	order, ok := s.parseConflictOrderParam(w, r, sel)
+	if !ok {
+		return
+	}
+
+	conflicts, err := s.svc.GetProfileConflictsForOrder(r.Context(), sel.Game, sel.Profile, order)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, &core.ConflictReport{GameID: sel.Game.ID, Profile: sel.Profile, Conflicts: conflicts})
+}
+
+// parseConflictOrderParam resolves ?order= into the load order
+// GetProfileConflictsForOrder previews against: nil/true when the param is
+// absent (the saved order), the resolved refs/true when it names mods the
+// profile holds, or nil/false with the 400 envelope already written when it
+// does not. An empty entry ("a,,b") is refused rather than silently
+// dropped - it is the shape a client that joined an array containing a
+// blank produces, and quietly ignoring it would preview an order the caller
+// did not describe.
+func (s *Server) parseConflictOrderParam(w http.ResponseWriter, r *http.Request, sel selection) ([]domain.ModReference, bool) {
+	raw := r.URL.Query().Get("order")
+	if raw == "" {
+		return nil, true
+	}
+	ids := strings.Split(raw, ",")
+	for _, id := range ids {
+		if id == "" {
+			s.writeAPIError(w, http.StatusBadRequest, errors.New(`invalid query parameter "order": empty mod id`))
+			return nil, false
+		}
+	}
+	order, err := s.svc.ResolveReorder(r.Context(), sel.Game, sel.Profile, ids)
+	if err != nil {
+		s.writeAPIError(w, s.reorderErrorStatus(err), err)
+		return nil, false
+	}
+	return order, true
 }
 
 // handleAPIStatus answers GET /api/v1/status with exactly the

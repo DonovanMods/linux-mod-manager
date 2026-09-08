@@ -34,6 +34,12 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/lock", s.wrap(s.handleAPIModLock))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unlock", s.wrap(s.handleAPIModUnlock))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/update-policy", s.wrap(s.handleAPIModUpdatePolicy))
+	// The profiles modal's write half (api_profiles.go). Each is a
+	// sanctioned single-step mutation answering with the same
+	// core.ProfileResult document its `lmm profile ...` twin emits; the
+	// profile is named in the PATH, never taken from ?profile= (see that
+	// file's doc comment).
+	s.mux.Handle("POST /api/v1/profiles/{name}/reorder", s.wrap(s.handleAPIProfileReorder))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
 	// The activity tray's index (api_activity.go). GET and POST on the same
