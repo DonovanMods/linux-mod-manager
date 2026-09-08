@@ -54,6 +54,15 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
 	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))
 	s.mux.Handle("POST /api/v1/games/detect", s.wrap(s.handleAPIGameDetectApply))
+	// The Setup surface's custom-source half (api_sources.go): the editor's
+	// list, one definition's raw YAML, a draft's validation, and the two
+	// writes - which answer with the SAME list document the GET returns,
+	// re-read. Not game-scoped, like every other Setup route.
+	s.mux.Handle("GET /api/v1/sources", s.wrap(s.handleAPISources))
+	s.mux.Handle("POST /api/v1/sources/validate", s.wrap(s.handleAPISourceValidate))
+	s.mux.Handle("GET /api/v1/sources/{id}/definition", s.wrap(s.handleAPISourceDefinition))
+	s.mux.Handle("PUT /api/v1/sources/{id}", s.wrap(s.handleAPISourceSave))
+	s.mux.Handle("DELETE /api/v1/sources/{id}", s.wrap(s.handleAPISourceDelete))
 	// The Setup surface's credential half (api_auth.go). All three answer
 	// the same app.AuthStatusReport document `lmm auth status --json`
 	// emits - the writes with it RE-READ, so a mutation never needs a

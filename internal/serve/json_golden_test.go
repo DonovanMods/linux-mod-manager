@@ -390,6 +390,24 @@ func TestServeJSONGoldens(t *testing.T) {
 			verifyFixPlanRequest{ModFilter: "42"},
 		},
 		{
+			// #333's custom-source editor bodies: the draft a validate
+			// request carries (with `lmm source validate`'s two probe
+			// flags), and the definition text a save carries. The id a save
+			// targets is in the PATH, never here - "save THIS source" must
+			// not be able to retarget another one, the same rule the
+			// profile and auth routes follow.
+			"source_validate_request",
+			sourceValidateRequest{
+				YAML:    "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n",
+				Probe:   true,
+				ProbeID: "12345",
+			},
+		},
+		{
+			"source_save_request",
+			sourceSaveRequest{YAML: "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",
