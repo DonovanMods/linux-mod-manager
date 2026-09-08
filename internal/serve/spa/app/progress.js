@@ -190,6 +190,64 @@ export function jobStateLabel(summary, frame) {
 }
 
 /**
+ * resultTally reads a finished BATCH job's own RESULT document for an
+ * honest outcome count (I3, unit 6 fix wave). A batch job's own `state` is
+ * "succeeded" the instant its Apply returns without an ERROR - true for
+ * "updates" (kind_updates.go's applyUpdatesKind) and "profile_import"
+ * (core.ApplyImport) even when EVERY item inside them failed, because both
+ * record per-item outcomes in their own result rather than returning one.
+ * Two result shapes exist on the wire today and both collapse to the same
+ * two-number tally: updates' `{applied: [...], failed: [...]}` and
+ * profile_import's `{installed, failed, skipped}` (all counts -
+ * core.ProfileImportResult; Skipped rolls into "failed" here too, since
+ * neither outcome actually applied the mod). A kind with neither shape (a
+ * plain deploy, an enable/disable/uninstall, a single install) returns
+ * null, which every caller below reads as "say Done, not a tally" - this
+ * is deliberately narrow rather than inferred from field COUNT, so it never
+ * misreads an unrelated result that happens to carry similarly-named
+ * fields (core.InstallResult's own `installed`/`failed` are ARRAYS, not
+ * this shape, and are left alone on purpose).
+ */
+export function resultTally(result) {
+  if (!result) return null;
+  if (Array.isArray(result.applied) && Array.isArray(result.failed)) {
+    return { applied: result.applied.length, failed: result.failed.length };
+  }
+  if (
+    typeof result.installed === "number" &&
+    typeof result.failed === "number"
+  ) {
+    return {
+      applied: result.installed,
+      failed: result.failed + (result.skipped ?? 0),
+    };
+  }
+  return null;
+}
+
+/** resultTallyLabel is resultTally's own words - the design's "n applied /
+ * m failed" read off a finished batch's real outcome, replacing the bare
+ * "Done" a job's mere `state` would otherwise print over a batch that
+ * applied nothing at all. */
+export function resultTallyLabel(tally) {
+  return `${tally.applied} applied / ${tally.failed} failed`;
+}
+
+/**
+ * resultTallyTone says how alarmed the tally should look, in the same
+ * three words a job's own `state` already uses ("succeeded"/"failed") plus
+ * "mixed" for the case neither word is honest about: some items applied,
+ * some did not. Never "succeeded" when anything failed, and never "failed"
+ * outright when at least one item DID apply - a batch that partially
+ * worked is not the same failure as one that achieved nothing (the design's
+ * own "tone = failure when applied is empty; mixed tone otherwise").
+ */
+export function resultTallyTone(tally) {
+  if (tally.failed === 0) return "succeeded";
+  return tally.applied === 0 ? "failed" : "mixed";
+}
+
+/**
  * Normalizes one RAW core event from the per-job stream into the same flat
  * shape a jobProgressFrame has, so both streams render through the one
  * vocabulary above.

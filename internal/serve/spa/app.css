@@ -433,6 +433,12 @@ select {
   color: var(--danger);
 }
 
+/* A batch job's own tally disagreeing with its bare state - see
+ * .job-progress--mixed's identical rationale (I3, unit 6 fix wave). */
+.tray__state--mixed {
+  color: var(--warn);
+}
+
 /* ---------------------------------------------------------------------- */
 /* Attention cards.                                                       */
 /* ---------------------------------------------------------------------- */
@@ -1231,6 +1237,13 @@ select {
 
 .job-progress--failed .job-progress__text {
   color: var(--danger);
+}
+
+/* A batch job whose own state is "succeeded" but whose result tally says
+ * some items failed and some did not (I3, unit 6 fix wave) - neither the
+ * clean-success nor the total-failure color is honest here. */
+.job-progress--mixed .job-progress__text {
+  color: var(--warn);
 }
 
 .job-progress__dismiss {

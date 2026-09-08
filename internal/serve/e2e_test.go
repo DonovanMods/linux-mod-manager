@@ -3162,6 +3162,59 @@ func TestE2E_LibraryBatchBar_UpdateFiltersToRowsWithAnUpdate(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally is I3's own scenario
+// (unit 6 gate review): an "updates" job whose Apply loop could not
+// download anything still finishes with job STATE "succeeded" - only its
+// own result document says every item failed (kind_updates.go's
+// applyUpdatesKind returns (result, nil) even when result.Failed is every
+// item) - so before this fix the Updates card kept showing the bare "Done"
+// over a still-pending update, and the tray read "updates succeeded". The
+// fixture's shared fakeSource.GetDownloadURL always answers
+// source.ErrNotSupported (testhelpers_test.go), which is what makes the
+// download - and the whole update - fail deterministically.
+func TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fa", Version: "2.0", IsPrimary: true}},
+	})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			document.querySelector(".card--updates .card__row input[type=checkbox]").click();
+		`, nil),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="updates"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="updates"]`, chromedp.ByQuery),
+	)
+
+	var cardText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.card--updates`, &cardText))
+		return strings.Contains(cardText, "0 applied / 1 failed")
+	}, 5*time.Second, 100*time.Millisecond, `the Updates card must report the batch's own honest outcome, not "Done" over a still-pending update`)
+	assert.Contains(t, cardText, "1.0 → 2.0", "the update must still be listed as pending - it was never actually applied")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	f.runInBrowser(t, textContent(`.tray`, &trayText))
+	assert.Contains(t, trayText, "0 applied / 1 failed", `the tray must not read "updates succeeded" over a batch that applied nothing`)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus is m4/I2's
 // own scenario (unit 6 gate review, folded together per the review's own
 // note: "the same edit fixes half of I2"): library.js used to clear the

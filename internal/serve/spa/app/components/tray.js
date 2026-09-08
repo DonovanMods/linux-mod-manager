@@ -22,7 +22,10 @@ import {
   jobStateLabel,
   progressText,
   progressFraction,
+  resultTallyLabel,
+  resultTallyTone,
 } from "../progress.js";
+import { useJobResultTally } from "../jobresult.js";
 import { DocumentView } from "./documentview.js";
 import { nextStepFor } from "../failures.js";
 
@@ -179,6 +182,14 @@ function ActivityTray({ state, jobs, deepLinkJob, actions }) {
 function TrayRow({ job, frame, expanded, onToggle, actions }) {
   const label = jobStateLabel(job, frame);
   const fraction = progressFraction(frame);
+  // I3, unit 6 fix wave: called unconditionally (C1's own rule) - see
+  // jobprogress.js's identical use for why "succeeded" alone can lie about
+  // a batch that applied nothing.
+  const tally = useJobResultTally(job.id, job.state);
+  const tone =
+    job.state === "succeeded" && tally ? resultTallyTone(tally) : job.state;
+  const stateText =
+    job.state === "succeeded" && tally ? resultTallyLabel(tally) : label;
 
   return html`
     <li class="tray__row" data-job=${job.id} data-state=${label}>
@@ -189,7 +200,7 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         onClick=${onToggle}
       >
         <span class="tray__kind">${job.kind}</span>
-        <span class="tray__state tray__state--${job.state}">${label}</span>
+        <span class="tray__state tray__state--${tone}">${stateText}</span>
         <span class="tray__caret">${expanded ? "▾" : "▸"}</span>
       </button>
 
