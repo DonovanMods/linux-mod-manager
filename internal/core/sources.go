@@ -68,6 +68,13 @@ func (s *Service) UnregisterSource(ctx context.Context, id string) (bool, error)
 // down - so this is the complete answer, and it is the list
 // SourceInUseError puts in front of the user.
 func (s *Service) GamesUsingSource(sourceID string) []string {
+	return s.gamesUsingSource(sourceID)
+}
+
+// gamesUsingSource is GamesUsingSource's unexported implementation, shared
+// with UnregisterSourceIfUnused so the gated re-check runs the exact same
+// answer the ungated query does.
+func (s *Service) gamesUsingSource(sourceID string) []string {
 	var ids []string
 	for _, g := range s.gamesSnapshot() {
 		if _, mapped := g.SourceIDs[sourceID]; mapped {
@@ -76,6 +83,28 @@ func (s *Service) GamesUsingSource(sourceID string) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// UnregisterSourceIfUnused removes the source registered under id, refusing
+// with *SourceInUseError when a configured game still maps it - id
+// unchanged either way. The check and the removal run under ONE beginOp,
+// closing the TOCTOU app.DeleteSourceDefinition's separate
+// GamesUsingSource-then-UnregisterSource calls left open (#333 Minor #1):
+// a POST /api/v1/games mapping this source could land in the gap between
+// an ungated check and a later-gated unregister. Re-checking INSIDE the
+// same gate AddGame's write takes means the two can no longer interleave -
+// whichever caller's beginOp wins the slot decides the outcome for both.
+func (s *Service) UnregisterSourceIfUnused(ctx context.Context, id string) (bool, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+
+	if games := s.gamesUsingSource(id); len(games) > 0 {
+		return false, &SourceInUseError{SourceID: id, Games: games}
+	}
+	return s.registry.Unregister(id), nil
 }
 
 // SourceInUseError refuses a source removal because configured games still

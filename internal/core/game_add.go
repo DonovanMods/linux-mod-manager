@@ -225,18 +225,6 @@ func (s *Service) AddGame(ctx context.Context, spec GameSpec) (*GameListEntry, e
 	if err != nil {
 		return nil, err
 	}
-	// Checked here, before the gate: spec.game() validates every field
-	// EXCEPT that SourceID actually resolves, so without this a serve
-	// caller could park an unusable game in games.yaml with no error to
-	// render (#333 Important #1). The CLI's own registry pre-check
-	// (cmd/lmm/game_add.go) stays - it prints the nicer "registered: ..."
-	// hint - but is now redundant rather than the only thing enforcing it.
-	if _, err := s.GetSource(strings.TrimSpace(spec.SourceID)); err != nil {
-		return nil, &GameSpecError{
-			Field: "source_id", Value: spec.SourceID,
-			Reason: "no source is registered with that id", Err: err,
-		}
-	}
 
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -244,6 +232,24 @@ func (s *Service) AddGame(ctx context.Context, spec GameSpec) (*GameListEntry, e
 	}
 	defer release()
 
+	// Checked INSIDE the gate, not before it: spec.game() validates every
+	// field EXCEPT that SourceID actually resolves, so without this a
+	// serve caller could park an unusable game in games.yaml with no error
+	// to render (#333 Important #1). It has to share AddGame's own beginOp
+	// rather than run as an early pre-check, or it would race
+	// UnregisterSourceIfUnused's OWN gated re-check the same way the
+	// pre-#333 CLI-only version raced nothing (#333 Minor #1): a check run
+	// before the gate could pass, then lose the gate to an unregister that
+	// removes the source, and still write a game mapping it. The CLI's own
+	// registry pre-check (cmd/lmm/game_add.go) stays - it prints the nicer
+	// "registered: ..." hint - but is now redundant rather than the only
+	// thing enforcing it.
+	if _, err := s.GetSource(strings.TrimSpace(spec.SourceID)); err != nil {
+		return nil, &GameSpecError{
+			Field: "source_id", Value: spec.SourceID,
+			Reason: "no source is registered with that id", Err: err,
+		}
+	}
 	if _, exists := s.game(game.ID); exists {
 		return nil, fmt.Errorf("%w: %s", ErrGameExists, game.ID)
 	}

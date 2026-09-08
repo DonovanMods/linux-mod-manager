@@ -199,12 +199,14 @@ func SaveSourceDefinition(ctx context.Context, svc *core.Service, expectID strin
 // half-applied. The re-registration runs under context.WithoutCancel for
 // the same reason core's completion writes do - a compensation that
 // inherits the cancellation that caused it is no compensation.
+//
+// The in-use check is svc.UnregisterSourceIfUnused's, not a separate call
+// here (#333 Minor #1): checking and removing under the SAME beginOp is
+// what stops a POST /api/v1/games mapping this source from landing in the
+// gap between an ungated check and a later-gated unregister.
 func DeleteSourceDefinition(ctx context.Context, svc *core.Service, sourceID string) error {
 	if IsBuiltinSourceID(sourceID) {
 		return fmt.Errorf("%w: %s", ErrBuiltinSourceID, sourceID)
-	}
-	if games := svc.GamesUsingSource(sourceID); len(games) > 0 {
-		return &core.SourceInUseError{SourceID: sourceID, Games: games}
 	}
 	path, err := SourceDefinitionFile(svc.ConfigDir(), sourceID)
 	if err != nil {
@@ -216,7 +218,7 @@ func DeleteSourceDefinition(ctx context.Context, svc *core.Service, sourceID str
 	// an error (see Registry.Unregister).
 	previous, lookupErr := svc.GetSource(sourceID)
 	wasRegistered := lookupErr == nil
-	if _, err := svc.UnregisterSource(ctx, sourceID); err != nil {
+	if _, err := svc.UnregisterSourceIfUnused(ctx, sourceID); err != nil {
 		return err
 	}
 	if err := os.Remove(path); err != nil {

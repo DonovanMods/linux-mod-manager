@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,4 +148,69 @@ func TestUnregisterSource_RefusesWhileAMutationHoldsTheGate(t *testing.T) {
 	assert.False(t, removed)
 	_, err = svc.GetSource("demo")
 	require.NoError(t, err, "a refused removal leaves the registry untouched")
+}
+
+// TestUnregisterSourceIfUnused_RefusesAGameMappedBetweenCheckAndDelete pins
+// #333 Minor #1's fix: the in-use check and the removal share ONE beginOp,
+// so a game mapping the source cannot land in a gap between them the way it
+// could when app.DeleteSourceDefinition ran an ungated GamesUsingSource
+// before a separately-gated UnregisterSource.
+//
+// It races a real AddGame (which maps "demo") against a real
+// UnregisterSourceIfUnused rather than asserting one fixed interleaving,
+// because the whole point of gating both under the same slot is that
+// whichever wins the slot decides the outcome for BOTH callers - there is
+// no window left for a mapping to appear only to one of them. Run under
+// -race (make check's gate), this only stays green if that is actually
+// true:
+//   - AddGame's beginOp wins: the game gets added, and
+//     UnregisterSourceIfUnused - checking under the SAME gate slot AddGame
+//     just held - must see the mapping and refuse.
+//   - UnregisterSourceIfUnused's beginOp wins: nothing was mapped yet, so
+//     it removes the source; AddGame then finds no such source registered
+//     and fails on its own gated check (#333 Important #1), never landing
+//     a game that maps a source which no longer exists.
+func TestUnregisterSourceIfUnused_RefusesAGameMappedBetweenCheckAndDelete(t *testing.T) {
+	svc := newSwapTestService(t)
+	svc.RegisterSource(&swapTestSource{id: "demo", name: "before"})
+	install := t.TempDir()
+
+	var addErr, unregErr error
+	var removed bool
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, addErr = svc.AddGame(context.Background(), GameSpec{
+			SourceID: "demo", Identifier: "g1", Name: "G1", InstallPath: install,
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		removed, unregErr = svc.UnregisterSourceIfUnused(context.Background(), "demo")
+	}()
+	wg.Wait()
+
+	_, getErr := svc.GetSource("demo")
+	if getErr == nil {
+		// AddGame's beginOp ran first: the mapping it wrote must be visible
+		// to the unregister that checked under the same gate afterwards.
+		require.NoError(t, addErr)
+		require.Error(t, unregErr, "the mapping AddGame just wrote must not be missed")
+		var inUse *SourceInUseError
+		require.ErrorAs(t, unregErr, &inUse)
+		assert.Equal(t, []string{"g1"}, inUse.Games)
+		assert.False(t, removed)
+	} else {
+		// UnregisterSourceIfUnused's beginOp ran first: nothing was mapped
+		// yet, so it succeeded, and AddGame must then refuse - never park a
+		// game mapping a source that no longer exists.
+		require.NoError(t, unregErr)
+		assert.True(t, removed)
+		require.Error(t, addErr)
+		var specErr *GameSpecError
+		require.ErrorAs(t, addErr, &specErr)
+		assert.Equal(t, "source_id", specErr.Field)
+	}
 }
