@@ -78,7 +78,16 @@ func LoadSourceDefinitionFile(path string) (source.SourceDefinition, error) {
 	if err != nil {
 		return source.SourceDefinition{}, fmt.Errorf("reading definition: %w", err)
 	}
+	return ParseSourceDefinition(data)
+}
 
+// ParseSourceDefinition parses and validates a source definition from its
+// YAML BYTES, with no file involved - the same parse+validate step
+// LoadSourceDefinitionFile performs once it has read a file, and the same
+// error wording, so a definition typed into an editor is judged exactly as
+// the file on disk would be (#333: the web UI validates a draft before it
+// is ever written anywhere).
+func ParseSourceDefinition(data []byte) (source.SourceDefinition, error) {
 	var def source.SourceDefinition
 	if err := yaml.Unmarshal(data, &def); err != nil {
 		return source.SourceDefinition{}, fmt.Errorf("parsing YAML: %w", err)
