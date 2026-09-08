@@ -851,9 +851,18 @@ GET  /api/v1/mods/{source}/{id}/versions
 GET  /api/v1/search?q=&page=&page_size=&limit=
 GET  /api/v1/updates
 GET  /api/v1/profiles
+GET  /api/v1/profiles/{name}/export
 GET  /api/v1/health
-GET  /api/v1/conflicts
+GET  /api/v1/conflicts?order=
 ```
+
+`GET /api/v1/conflicts?order=` is the reorder preview: a comma-separated
+list of mod ids (`source:modid`, or a bare mod id where it is unambiguous)
+answers "which mod would win each contested path under THIS load order",
+from the same rule a real reorder applies. Leaving it off describes the
+order the profile currently holds. `GET /api/v1/profiles/{name}/export`
+serves the same document `lmm profile export --json` prints, as a
+downloadable attachment.
 
 Most mutations run as a Plan, then a background job:
 
@@ -871,6 +880,26 @@ the UI's activity tray is built on:
 GET  /api/v1/jobs               -> every retained job, newest first
 GET  /api/v1/events             -> Server-Sent Events: every job's lifecycle
 ```
+
+Profile management is the other set of synchronous mutations - a create, a
+delete, a set-default, a rename and a reorder each write once with nothing
+to preview, so like lock/policy they answer immediately with the same
+document their `lmm profile ...  --json` twin prints:
+
+```text
+POST   /api/v1/profiles                     {"name"}   -> the profile created
+DELETE /api/v1/profiles/{name}                         -> the profile deleted
+POST   /api/v1/profiles/{name}/rename       {"name"}   -> under its new name
+POST   /api/v1/profiles/{name}/set-default             -> the new default
+POST   /api/v1/profiles/{name}/reorder      {"ids"}    -> the new load order
+```
+
+The profile is named in the path rather than taken from `?profile=`: these
+routinely act on a profile other than the selected one. Profile IMPORT is
+the exception that stays a plan (`POST /api/v1/plans/profile_import`,
+body `{"data": "<the exported document>"}`), because it has a real preview:
+which of its mods are already installed, which need re-downloading and which
+are missing entirely.
 
 (Enable/disable are an exception: with no options and nothing to preview,
 they skip the plan step entirely — `POST /api/v1/mods/{source}/{id}/enable`
@@ -996,7 +1025,7 @@ shows up as a diff in review.
 | `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                                                                                                  |
 | `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                                                                                                 |
 | `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count, page?, page_size?, has_more?}` (the last three are omitted unless a caller pages — `lmm serve`'s search page does, the CLI's single-page call doesn't) |
-| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`                                                                                                                                                                |
+| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`; each finding carries `fixable` when `verify --fix` would attempt a repair for it                                                                              |
 | `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                                                                                          |
 | `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                                                                                       |
 | `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                       |
@@ -1025,7 +1054,7 @@ that run would have applied:
 | `lmm profile switch <name>`              | `core.SwitchResult` / `core.SwitchPlan`                                                                   |
 | `lmm profile sync`                       | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                         |
 | `lmm profile import <file>`              | `core.ProfileImportResult`                                                                                |
-| `lmm profile create/delete/reorder`      | `core.ProfileResult` — `{profile{…}}`                                                                     |
+| `lmm profile create/delete/rename/reorder` | `core.ProfileResult` — `{profile{…}}`                                                                   |
 | `lmm mod enable/disable`                 | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                               |
 | `lmm mod lock/unlock/set-update/convert` | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                             |
 | `lmm mod edit <mod-id>`                  | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                    |
@@ -1168,6 +1197,7 @@ under its issue number:
 | `lmm profile switch <name>`                        | Switch to a profile (installs missing mods)                                                                                                          |
 | `lmm profile switch <name> -y`                     | Skip the confirmation prompt; required under `--json`                                                                                                |
 | `lmm profile delete <name>`                        | Delete a profile                                                                                                                                     |
+| `lmm profile rename <old> <new>`                   | Rename a profile (its mods, load order, hooks, overrides and default status move with it)                                                            |
 | `lmm profile export <name>`                        | Export profile to YAML                                                                                                                               |
 | `lmm profile import <file>`                        | Import profile from YAML                                                                                                                             |
 | `lmm profile import <file> --force`                | Import and overwrite existing                                                                                                                        |

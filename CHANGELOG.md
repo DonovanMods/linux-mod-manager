@@ -29,6 +29,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `lmm serve` SPA's modal surfaces get their backend: reorder, profile
+  management, health repair. `POST /api/v1/profiles/{name}/reorder` commits
+  a load order (the same `ResolveReorder` identifiers `lmm profile reorder`
+  takes) and `GET /api/v1/conflicts?order=` previews one - a new read-only
+  core query, `GetProfileConflictsForOrder`, answering "which mod wins each
+  contested path under THIS order" with the same `ConflictReport` document a
+  real reorder produces, so the drag-and-drop preview and the commit share
+  one winner rule instead of the browser re-deriving it. Profile management
+  lands as four more synchronous mutations returning the `core.ProfileResult`
+  document their CLI twins print - `POST /api/v1/profiles` (create),
+  `DELETE /api/v1/profiles/{name}`, `POST .../rename`, `POST
+  .../set-default` - plus `GET /api/v1/profiles/{name}/export`
+  (`domain.ExportedProfile`, served as an attachment) and a new
+  `profile_import` plan kind over the existing `PlanImport`/`ApplyImport`
+  pair. Health repair gains an additive `mod_filter` on the `verify_fix`
+  plan request (`lmm verify --mod`'s own option, set on both halves from the
+  one request) so a single finding can be repaired on its own, and
+  `core.VerifyFinding` gains an additive `fixable` field saying whether
+  `verify --fix` would attempt a repair for that row at all - computed from
+  the same decision points the repairs are gated on (a locked ref's
+  `version_mismatch` and every `version_unverifiable` are never fixable),
+  so no frontend has to reimplement the rule. `lmm verify --json` reports it
+  too. (#332, epic #326)
+
+- **`lmm profile rename <old> <new>`.** Renames a profile and everything
+  that names it: the profile file, its mods and load order, its hooks and
+  config overrides, its default-profile status, and every database row keyed
+  by profile (install records, their file rows, and the deployed-file
+  ownership map) - moved as one completion chain, so a cancelled rename
+  never leaves the config directory and the database disagreeing. Nothing is
+  re-downloaded and nothing already deployed changes. Renaming onto a name
+  another profile holds is refused. `--json` prints `core.ProfileResult`.
+  (#332)
+
 - The `lmm serve` SPA's omnibar now searches, and installing works.
   Typing narrows the library in place ("In your library (n)", unchanged
   from Mission Control's first cut); pressing Enter (or the "search
