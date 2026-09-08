@@ -87,14 +87,25 @@ export function ReorderModal({ modal, state, actions }) {
     setOrder(buildInitialOrder(mods));
   }, [state.mods]);
 
-  // The library's own ⋯ menu offers "Reorder here" per row (issue 332) - modal.
-  // focusKey carries which one, so opening the modal from a specific row
-  // lands the user on it instead of the top of a possibly long list.
+  // The library's own ⋯ menu offers "Reorder here" per row, and the
+  // Conflicts card's own "Resolve…" does the same for the conflict's
+  // deployed owner (demo item 9, unit 6 gate review) - modal.focusKey
+  // carries which one, so opening the modal from a specific row or
+  // conflict lands the user on it instead of the top of a possibly long
+  // list. Scoped to THIS list, not the whole document - the library table
+  // behind the modal stamps the identical data-mod on its own rows, so an
+  // unscoped query silently found whichever the DOM happened to list
+  // first (the library's, not the modal's - never actually this row).
+  // tabindex="-1" (on the row below) makes the row a legitimate focus()
+  // target without adding it to the page's own Tab order - it is a scroll
+  // destination, not a control.
   useEffect(() => {
     if (!modal.focusKey) return;
-    document
-      .querySelector(`[data-mod="${CSS.escape(modal.focusKey)}"]`)
-      ?.scrollIntoView({ block: "center" });
+    const row = document.querySelector(
+      `[data-testid="reorder-list"] [data-mod="${CSS.escape(modal.focusKey)}"]`,
+    );
+    row?.scrollIntoView({ block: "center" });
+    row?.focus();
   }, []);
 
   const [dragKey, setDragKey] = useState(null);
@@ -259,6 +270,7 @@ export function ReorderModal({ modal, state, actions }) {
               key=${key}
               class="reorder-row ${dragKey === key ? "reorder-row--dragging" : ""}"
               data-mod=${key}
+              tabindex="-1"
               onMouseEnter=${() => onRowMouseEnter(key)}
             >
               <span

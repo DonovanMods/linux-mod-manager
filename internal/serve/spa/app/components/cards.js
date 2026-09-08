@@ -18,6 +18,40 @@ const UPDATES_BATCH_ORIGIN = "updates:batch";
 // HEALTH_REPAIR_ALL_ORIGIN is the Health card's "Repair all" control.
 const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
 
+// NOT_FIXABLE_REASONS maps a not-fixable finding's own Status to the stock
+// reason a person would need to hear (m3, unit 6 fix wave: core.
+// VerifyFinding's Fixable field says only THAT a row won't be repaired, not
+// WHY - the doc comment on it names the closed table this mirrors). Every
+// status not in this table (a version_mismatch from a LOCAL source, say -
+// notFixableReason below handles the locked/unlocked split separately) or
+// with an entry that has nothing useful to add falls back to the plain
+// sentence this used to always show.
+const NOT_FIXABLE_REASONS = {
+  version_unverifiable: "Nothing to check it against",
+  file_count_mismatch: "Nothing to repair it with",
+  conversion_failed: "Reinstall to retry the conversion",
+};
+
+/** notFixableReason names why a finding's own Repair is absent.
+ * version_mismatch is split on whether the mod is LOCKED, read off the
+ * already-fetched library rows (mods) rather than the finding itself:
+ * VerifyFinding.Note only ever carries "locked" on a --fix RUN's own
+ * output (verify.go's resolveLast), never on the plain read this card
+ * shows (task-A's own review note) - a version_mismatch can just as well
+ * be not-fixable because its source is local, which this table has no
+ * honest word for, so that case (and anything else this table doesn't
+ * name) keeps the generic sentence rather than guessing. */
+function notFixableReason(f, mods) {
+  if (f.status === "version_mismatch") {
+    const mod = (mods ?? []).find((m) => m.id === f.mod_id);
+    if (mod?.locked) return "Locked to a version - unlock it first";
+  }
+  return (
+    NOT_FIXABLE_REASONS[f.status] ??
+    "A verify --fix run would not attempt a repair for this finding"
+  );
+}
+
 /** repairOrigin is one finding's own per-mod "Repair" control - shared by
  * every finding ROW for the same mod (a mod can carry more than one
  * finding), which is deliberate: they name the same repair operation, so
@@ -243,8 +277,9 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                             <//>`
                           : html`<span
                               class="card__row-detail"
-                              title="A verify --fix run would not attempt a repair for this finding"
-                              >Not fixable</span
+                              title=${notFixableReason(f, state.mods?.mods)}
+                              >Not fixable:
+                              ${notFixableReason(f, state.mods?.mods)}</span
                             >`
                       }
                     </li>
@@ -309,8 +344,18 @@ function conflictLabel(c) {
 }
 
 function ConflictsCard({ state, rows, error, onRetry, actions }) {
-  function resolve() {
-    actions.openReorderModal({ profileName: state.route.profile });
+  // Demo item 9 (unit 6 gate review): "Resolve…" used to always land the
+  // reorder modal at the top of the list, same as the library's own plain
+  // "Reorder…" - on a long profile the owner had to hunt for the two mods
+  // they just clicked about. c.owner is the file's CURRENT deployed
+  // provider (this row's own label lists it first, "owner ↔ also_in"),
+  // which is what "Reorder here" already scrolls to for a single mod's own
+  // row menu (library.js) - the same focusKey here.
+  function resolve(c) {
+    actions.openReorderModal({
+      profileName: state.route.profile,
+      focusKey: c.owner.key,
+    });
   }
 
   return html`
@@ -338,7 +383,7 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
                         type="button"
                         class="button button--small"
                         data-action="resolve"
-                        onClick=${resolve}
+                        onClick=${() => resolve(c)}
                       >
                         Resolve…
                       </button>

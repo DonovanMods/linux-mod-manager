@@ -3162,6 +3162,31 @@ func TestE2E_LibraryBatchBar_UpdateFiltersToRowsWithAnUpdate(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ConflictsCard_ResolveOpensReorderFocusedOnTheConflict is demo
+// item 9 (unit 6 gate review): "Resolve…" used to always land the reorder
+// modal at the top of a possibly long list; it now passes a focusKey - the
+// conflict's own deployed owner - the same way the row menu's own "Reorder
+// here" already does.
+func TestE2E_ConflictsCard_ResolveOpensReorderFocusedOnTheConflict(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var focusedMod string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, chromedp.Evaluate(`document.activeElement?.getAttribute("data-mod") ?? ""`, &focusedMod))
+		return focusedMod != ""
+	}, 2*time.Second, 50*time.Millisecond, "the reorder modal must land focus on a row, not the panel or <body>")
+	assert.Equal(t, "fake:y", focusedMod, `"Resolve…" must focus the conflict's own deployed owner (Y, the winner at deploy time), not the top of the list`)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally is I3's own scenario
 // (unit 6 gate review): an "updates" job whose Apply loop could not
 // download anything still finishes with job STATE "succeeded" - only its
@@ -3331,6 +3356,52 @@ func TestE2E_LibraryRowMenu_RefusedLockSurfacesAsAToast(t *testing.T) {
 	// promise rejection, which library.js's previous fire-and-forget call
 	// would have produced here.
 	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_HealthCard_NotFixableRowNamesTheReason is m3's own scenario (unit
+// 6 gate review): "Not fixable" used to say only that, with a tooltip that
+// restated the same bare sentence. A LOCKED ref's version_mismatch is the
+// most common not-fixable case in practice (verify.go's own Fixable table:
+// "a non-local source AND an UNLOCKED ref"), and it is exactly the one the
+// read path (GET /api/v1/health) can decide FOR ITSELF - unlike the
+// "locked" note, which is only ever written by a --fix RUN - by cross-
+// referencing the finding's own mod_id against the already-fetched library
+// rows' own `locked` flag.
+func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, svc.NewProfileManager().AddMod(t.Context(), game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "boots", Version: "1.0", FileIDs: []string{"f1"}, Locked: true}))
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	f := e2eFixture{Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default", BrowserErrors: browserErrors}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
+	)
+	var rowText string
+	f.runInBrowser(t, textContent(`.card--health .card__row`, &rowText))
+	assert.Contains(t, rowText, "Not fixable", "a locked ref's version_mismatch must still say it is not fixable")
+	assert.Contains(t, rowText, "Locked to a version", "and now say WHY - the finding IS a locked version_mismatch")
+	assert.NotContains(t, rowText, "Repair", "no Repair control may render for a not-fixable row")
+
+	assert.Empty(t, f.BrowserErrors())
 }
 
 // newE2EFixtureWithTwoFixableFindings seeds two mods each recording a
