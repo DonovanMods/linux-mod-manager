@@ -390,6 +390,24 @@ func TestServeJSONGoldens(t *testing.T) {
 			verifyFixPlanRequest{ModFilter: "42"},
 		},
 		{
+			// #333's import_archive halves. The plan request names a STAGED
+			// UPLOAD, never a path; the apply request's accept_conflicts is
+			// the Overwrite affordance, which maps to
+			// ImportArchiveOptions.AcceptConflicts rather than Force (see
+			// kind_import_archive.go for why the two are not the same
+			// question).
+			"import_archive_plan_request",
+			importArchivePlanRequest{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				SourceID: "nexusmods",
+				ModID:    "1234",
+			},
+		},
+		{
+			"import_archive_apply_request",
+			importArchiveApplyRequest{AcceptConflicts: true, Force: true, SkipHooks: true},
+		},
+		{
 			// #333's upload receipt: the opaque handle a plan request names
 			// the archive by, and what was actually staged.
 			"upload_response",
