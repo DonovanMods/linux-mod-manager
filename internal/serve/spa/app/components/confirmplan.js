@@ -41,11 +41,26 @@ import { planRendererFor } from "./planrenderers.js";
  * as an all-clear.
  */
 export function ConfirmPlanModal({ modal, actions }) {
-  if (!modal) return null;
+  // type: "plan" self-guards this modal against the shared slot's other two
+  // shapes (reorder/profiles, main.js#openReorderModal/openProfilesModal) -
+  // store.js's own doc comment: "another shape in this same slot".
+  if (modal?.type !== "plan") return null;
 
   const { kind, title, status, plan, error, details, confirmLabel } = modal;
   const busy = status === "starting";
   const PlanView = planRendererFor(kind);
+
+  // m5, unit 6 fix wave: an "updates" plan with nothing in it (every
+  // selected mod dropped no update to offer, kind_updates.go's own
+  // planUpdatesKind puts them in NotFound instead) has nothing for Confirm
+  // to apply - library.js/cards.js both filter their own selection before
+  // opening this modal, but Confirm staying disabled here too is what makes
+  // that a belt-and-braces guarantee rather than a UI convention this modal
+  // itself has to trust.
+  const emptyUpdatesPlan =
+    kind === "updates" &&
+    status === "ready" &&
+    (plan?.updates?.length ?? 0) === 0;
 
   const footer =
     status === "error"
@@ -73,7 +88,7 @@ export function ConfirmPlanModal({ modal, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready"}
+            disabled=${status !== "ready" || emptyUpdatesPlan}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (confirmLabel ?? "Confirm")}
@@ -97,7 +112,11 @@ export function ConfirmPlanModal({ modal, actions }) {
                   ${details && html`<${DocumentView} value=${details} />`}
                 </div>
               `
-            : html`<${PlanView} plan=${plan} actions=${actions} />`
+            : html`<${PlanView}
+                plan=${plan}
+                modal=${modal}
+                actions=${actions}
+              />`
       }
     <//>
   `;

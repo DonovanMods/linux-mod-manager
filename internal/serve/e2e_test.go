@@ -15,11 +15,14 @@ package serve_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -652,7 +655,12 @@ func TestE2E_LibraryCheckboxColumnsAreLabelled(t *testing.T) {
 	assert.Equal(t, "Enabled", enabledHead)
 	assert.Contains(t, selectBox, "batch",
 		"the select checkbox must name what it selects FOR, not just repeat the heading")
-	assert.Contains(t, enabledBox, "Enable")
+	// issue 332: the enabled checkbox is now LIVE (library.js's row toggle),
+	// so its aria-label names the ACTION it would take next ("Enable"/
+	// "Disable" - whichever the row's current state implies), not a fixed
+	// placeholder word every row shared while it was still disabled.
+	assert.True(t, strings.Contains(enabledBox, "Enable") || strings.Contains(enabledBox, "Disable"),
+		"expected an Enable/Disable label, got %q", enabledBox)
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -1811,38 +1819,106 @@ func TestE2E_FullModPage_JobHistoryListsFinishedJobs(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_UpdatesKind_RendersThroughGenericPlanView is issue 330 carry-2's
-// explicit scenario: "updates" is wired (the slide-over's Update action)
-// with no dedicated renderer of its own (planrenderers.js's own comment
-// explains why - the batch UI it deserves is Unit 6's), so this is the
-// first kind an E2E scenario proves reaches GenericPlanView rather than a
-// bespoke one.
-func TestE2E_UpdatesKind_RendersThroughGenericPlanView(t *testing.T) {
+// TestE2E_UpdatesBatch_DropsARowAndAppliesTheRest replaces the retired
+// TestE2E_UpdatesKind_RendersThroughGenericPlanView (issue 330 carry-2's own
+// placeholder): "updates" now gets its real renderer (plan_updates.js,
+// issue 332) instead of the GenericPlanView fallback that placeholder
+// pinned - checkboxes to drop a row, not raw DocumentView. The library
+// batch bar selects two mods with an update each; the modal opens with both
+// checked, unchecking one re-plans down to the other, and Confirm applies
+// only the mod that stayed checked - the drop is real, not cosmetic.
+func TestE2E_UpdatesBatch_DropsARowAndAppliesTheRest(t *testing.T) {
 	src := newFakeSource("fake")
-	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"}})
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fa", Version: "2.0", IsPrimary: true}},
+	})
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fb", Version: "2.0", IsPrimary: true}},
+	})
 	f := newE2EFixtureFromSource(t, src)
 	seedInstalledMod(t, f.Svc, f.Game,
-		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID}, true, nil)
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"beta.esp": []byte("beta")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "b", Version: "1.0"}))
 
-	var body string
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		clickModRow("Alpha Mod"),
-		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		// Select every row's own batch checkbox - two mods, two boxes.
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input")
+				.forEach((cb) => cb.click());
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-update"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="updates-batch-rows"]`, chromedp.ByQuery),
 	)
-	// The update button carries no data-action of its own (only the modal's
-	// footer buttons do) - it is found by its own text instead.
+
+	var rowsText string
+	var rendererPresent bool
+	f.runInBrowser(t,
+		textContent(`[data-testid="updates-batch-rows"]`, &rowsText),
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="updates"] .plan--updates') !== null`, &rendererPresent),
+	)
+	assert.Contains(t, rowsText, "Alpha Mod")
+	assert.Contains(t, rowsText, "Beta Mod")
+	assert.True(t, rendererPresent, "UpdatesBatchPlanView, not GenericPlanView, must be what's registered for this kind")
+
+	// Drop Beta by unchecking ITS OWN row - the re-plan this fires must
+	// leave the modal open with only Alpha's row left.
 	f.runInBrowser(t,
 		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll(".slide-over__actions button"))
-				.find((b) => b.textContent.trim() === "Update").click();
+			Array.from(document.querySelectorAll('[data-testid="updates-batch-rows"] input[type=checkbox]'))
+				.find((cb) => cb.closest("li").textContent.includes("Beta Mod")).click();
 		`, nil),
-		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan--generic`, chromedp.ByQuery),
-		textContent(`.modal[data-kind="updates"]`, &body),
+		// Null-safe: the row list briefly unmounts while the re-plan this
+		// click fires is in flight (confirmplan.js renders "Computing the
+		// plan…" during that window), so a bare .textContent read here would
+		// throw against a null element mid-transition rather than just
+		// polling again.
+		chromedp.Poll(`(() => {
+			const el = document.querySelector('[data-testid="updates-batch-rows"]');
+			return el !== null && !el.textContent.includes("Beta Mod");
+		})()`, nil),
 	)
-	assert.Contains(t, body, "no dedicated preview yet", "GenericPlanView's own note")
-	assert.Contains(t, body, "Alpha Mod", "the raw plan document is still rendered, via DocumentView")
+	f.runInBrowser(t,
+		textContent(`[data-testid="updates-batch-rows"]`, &rowsText),
+	)
+	assert.Contains(t, rowsText, "Alpha Mod")
+	assert.NotContains(t, rowsText, "Beta Mod", "the dropped row must actually leave the re-planned document")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="updates"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="updates"]`, chromedp.ByQuery),
+	)
+
+	// The end state is asserted on the job's own RESULT document, not the
+	// installed mod's version: this suite's shared fakeSource.GetDownloadURL
+	// (testhelpers_test.go) always answers source.ErrNotSupported, so the
+	// attempt this fixture can genuinely prove is "was Alpha the only mod
+	// the batch TRIED" - Beta's own exclusion (never attempted, so it
+	// appears in neither applied nor failed) IS the drop mechanic this test
+	// exists to prove, independent of whether the download itself succeeds.
+	var jobDetail string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, chromedp.Evaluate(`
+			fetch('/api/v1/jobs').then(r=>r.json())
+				.then(j => fetch('/api/v1/jobs/'+j.jobs[0].id))
+				.then(r=>r.text())
+		`, &jobDetail, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+		return strings.Contains(jobDetail, `"state": "succeeded"`) || strings.Contains(jobDetail, `"state": "failed"`)
+	}, 5*time.Second, 100*time.Millisecond, "the batch job must reach a terminal state")
+
+	assert.Contains(t, jobDetail, "fake:a", "the row that stayed checked must have been attempted")
+	assert.NotContains(t, jobDetail, "fake:b", "the dropped row must appear in neither applied nor failed - it was never attempted")
 	assert.Empty(t, f.BrowserErrors())
 }
 
@@ -2780,5 +2856,1388 @@ func TestE2E_OverlappingInstallAndToggleBothTrackCorrectly(t *testing.T) {
 
 	require.NoFileExists(t, filepath.Join(f.Game.ModPath, "Mods", "boots.pak"),
 		"a refused (stale) install must not have installed anything")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// --- issue 332 (Unit 6): reorder, profiles, health repair, updates batch,
+// and the library batch bar / row menu. ---
+
+// clickInRow finds the .profiles-row/.mod-row whose own text contains
+// rowText and clicks the button inside it whose text is exactly
+// buttonText - the row-scoped sibling of clickModRow, needed once a table
+// has more than one button per row (Rename/Delete/Set default/Export, or
+// the ⋯ menu's own items).
+// profilesListContains/profilesListNotContains poll the profiles modal's
+// own list null-safely: the list briefly unmounts while a mutation's own
+// afterMutation() re-fetch is in flight (the same transient "Computing
+// plan…"-style gap the updates-batch renderer's own drop poll already
+// guards against), so a bare .textContent read races a null element
+// mid-transition instead of just polling again.
+func profilesListContains(text string) string {
+	return fmt.Sprintf(`(() => {
+		const el = document.querySelector('[data-testid="profiles-list"]');
+		return el !== null && el.textContent.includes(%q);
+	})()`, text)
+}
+
+func profilesListNotContains(text string) string {
+	return fmt.Sprintf(`(() => {
+		const el = document.querySelector('[data-testid="profiles-list"]');
+		return el !== null && !el.textContent.includes(%q);
+	})()`, text)
+}
+
+func clickInRow(rowSelector, rowText, buttonText string) chromedp.Action {
+	return chromedp.Evaluate(fmt.Sprintf(`
+		Array.from(document.querySelectorAll(%q))
+			.find((r) => r.textContent.includes(%q))
+			.querySelectorAll("button, a")
+			.forEach((b) => { if (b.textContent.trim() === %q) b.click(); });
+	`, rowSelector, rowText, buttonText), nil)
+}
+
+// TestE2E_LibraryRow_ToggleAndMenu proves the row's own enabled checkbox is
+// LIVE (no longer NOT_YET) and the ⋯ menu's Lock/Unlock/Uninstall actually
+// reach core, not just render.
+func TestE2E_LibraryRow_ToggleAndMenu(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector("td.col--enabled input").click();
+		`, nil),
+	)
+	require.Eventually(t, func() bool {
+		m, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+		return err == nil && !m.Enabled
+	}, 5*time.Second, 20*time.Millisecond, "the row toggle must actually disable the mod")
+
+	openBetaMenu := chromedp.Tasks{
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod"))
+				.querySelector("td.col--menu button").click();
+		`, nil),
+		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+	}
+
+	// A row's own lock badge (🔒) only appears once the reload that follows
+	// setModLock/clearModLock has landed - polled on the BROWSER'S state
+	// (not just the service's) before reopening the menu, since the click
+	// handler fires the mutation without awaiting it (library.js) and a
+	// same-instant re-open would otherwise race the reload that updates
+	// which label ("Lock" vs "Unlock") the menu is about to show.
+	betaLockBadge := `Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod")).querySelector('.badge[title^="Locked"]')`
+
+	f.runInBrowser(t, openBetaMenu,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Lock").click();
+		`, nil),
+		chromedp.Poll(betaLockBadge+` !== null`, nil),
+	)
+	p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err)
+	var betaLocked bool
+	for _, ref := range p.Mods {
+		if ref.ModID == "b" {
+			betaLocked = ref.Locked
+		}
+	}
+	assert.True(t, betaLocked, "the menu's Lock action must actually lock the ref")
+
+	f.runInBrowser(t, openBetaMenu,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Unlock").click();
+		`, nil),
+		chromedp.Poll(betaLockBadge+` === null`, nil),
+	)
+	p, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err)
+	for _, ref := range p.Mods {
+		if ref.ModID == "b" {
+			assert.False(t, ref.Locked, "the menu's Unlock action must actually unlock the ref")
+		}
+	}
+
+	// The menu's own Uninstall reaches the SAME single-mod confirm modal
+	// the slide-over's own Uninstall button opens.
+	f.runInBrowser(t, openBetaMenu,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Uninstall").click();
+		`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan--uninstall`, chromedp.ByQuery),
+	)
+	var body string
+	f.runInBrowser(t, textContent(`.modal[data-kind="uninstall"]`, &body))
+	assert.Contains(t, body, "Beta Mod")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk drives the batch bar
+// through all three of its wired-to-jobs actions on real, deployed mods:
+// disable-selected clears the deployed symlinks, enable-selected restores
+// them, and uninstall-selected removes the mods (and their files) for good.
+// The wire's own sequencing caveat (task-A report §8: "start the next only
+// after the previous job's job_done frame") is exercised implicitly - two
+// mods selected at once, asserted on the END STATE of both.
+func TestE2E_LibraryBatchBar_EnableDisableUninstallToDisk(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+	_, err := f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	alphaPath := filepath.Join(f.Game.ModPath, "alpha.pak")
+	betaPath := filepath.Join(f.Game.ModPath, "beta.pak")
+	require.FileExists(t, alphaPath)
+	require.FileExists(t, betaPath)
+
+	selectBoth := chromedp.Tasks{
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input").forEach((cb) => cb.click());
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		selectBoth,
+		chromedp.Click(`[data-action="batch-disable"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		a, errA := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+		b, errB := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
+		return errA == nil && errB == nil && !a.Enabled && !b.Enabled
+	}, 5*time.Second, 20*time.Millisecond, "batch disable must reach both mods")
+	_, err = f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.NoFileExists(t, alphaPath, "a disabled mod must not stay deployed")
+	assert.NoFileExists(t, betaPath, "a disabled mod must not stay deployed")
+
+	f.runInBrowser(t,
+		selectBoth,
+		chromedp.Click(`[data-action="batch-enable"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		a, errA := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+		b, errB := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
+		return errA == nil && errB == nil && a.Enabled && b.Enabled
+	}, 5*time.Second, 20*time.Millisecond, "batch enable must reach both mods")
+
+	// Batch uninstall: ONE confirm modal listing both mods' own uninstall
+	// plans (design doc §Modals: "modals stack at most one deep").
+	f.runInBrowser(t,
+		selectBoth,
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		// Each mod's own uninstall plan is computed asynchronously
+		// (uninstallbatchmodal.js's own mount effect) - wait for both to
+		// settle (Confirm's own label names the ready count) before reading
+		// the modal's content.
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+	)
+	var batchBody string
+	f.runInBrowser(t, textContent(`.modal[data-kind="uninstall-batch"]`, &batchBody))
+	assert.Contains(t, batchBody, "Alpha Mod")
+	assert.Contains(t, batchBody, "Beta Mod")
+
+	// A plain chromedp.Click misses this button (the modal body's own
+	// scroll, with two full uninstall plans in it, leaves the footer
+	// outside the click target chromedp computes) - a raw DOM click sends
+	// the identical trusted event Preact's handler needs without that
+	// coordinate dependency.
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		_, errA := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+		_, errB := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
+		return errors.Is(errA, domain.ErrModNotFound) && errors.Is(errB, domain.ErrModNotFound)
+	}, 5*time.Second, 20*time.Millisecond, "batch uninstall must remove both mods")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape is m2's own scenario
+// (unit 6 gate review): the ⋯ row menu used to close only by re-clicking
+// ⋯, leaving it open over the rest of the page once the user had clearly
+// moved on.
+func TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	openMenu := chromedp.Tasks{
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector("td.col--menu button").click();
+		`, nil),
+		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		openMenu,
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.Click(`.section-header`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
+	)
+
+	f.runInBrowser(t,
+		openMenu,
+		// The listener this closes through is attached by an EFFECT, which
+		// (per this suite's own established pattern - see
+		// TestE2E_ProfilesModal_CRUDExportImport's settle()) can lag the
+		// menu's own DOM appearance by a handful of animation frames in a
+		// headless browser; WaitVisible above only proves the DOM is there,
+		// not that the effect has run yet.
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
+	)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryBatchBar_UpdateFiltersToRowsWithAnUpdate is m5's own
+// scenario (unit 6 gate review): "Update" on a selection with no update at
+// all used to open a live Confirm over an empty plan, and a MIXED selection
+// used to send every row - including ones with nothing to update - straight
+// into kind_updates.go's own NotFound bucket.
+func TestE2E_LibraryBatchBar_UpdateFiltersToRowsWithAnUpdate(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fa", Version: "2.0", IsPrimary: true}},
+	})
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0"},
+		Files: []domain.DownloadableFile{{ID: "fb", Version: "1.0", IsPrimary: true}},
+	})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"beta.esp": []byte("beta")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "b", Version: "1.0"}))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		// Beta ALONE first: no update at all - the batch bar's own Update
+		// must refuse to open anything.
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Beta Mod"))
+				.querySelector("td.col--select input").click();
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+	)
+	var betaOnlyDisabled bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-action="batch-update"]').disabled`, &betaOnlyDisabled))
+	assert.True(t, betaOnlyDisabled, "Update must be disabled when none of the selection has an update")
+
+	// Add Alpha (which DOES have one) to the selection: the button enables,
+	// and opening it shows ONLY Alpha - Beta silently dropped rather than
+	// landing in NotFound.
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+			.querySelector("td.col--select input").click();
+	`, nil))
+	var mixedEnabled bool
+	f.runInBrowser(t, chromedp.Evaluate(`!document.querySelector('[data-action="batch-update"]').disabled`, &mixedEnabled))
+	assert.True(t, mixedEnabled, "a MIXED selection with at least one update must enable the button")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="batch-update"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="updates-batch-rows"]`, chromedp.ByQuery),
+	)
+	var rowsText string
+	f.runInBrowser(t, textContent(`[data-testid="updates-batch-rows"]`, &rowsText))
+	assert.Contains(t, rowsText, "Alpha Mod")
+	assert.NotContains(t, rowsText, "Beta Mod", "a selected row with no update must be filtered out before the plan is even opened")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ConflictsCard_ResolveOpensReorderFocusedOnTheConflict is demo
+// item 9 (unit 6 gate review): "Resolve…" used to always land the reorder
+// modal at the top of a possibly long list; it now passes a focusKey - the
+// conflict's own deployed owner - the same way the row menu's own "Reorder
+// here" already does.
+func TestE2E_ConflictsCard_ResolveOpensReorderFocusedOnTheConflict(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var focusedMod string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, chromedp.Evaluate(`document.activeElement?.getAttribute("data-mod") ?? ""`, &focusedMod))
+		return focusedMod != ""
+	}, 2*time.Second, 50*time.Millisecond, "the reorder modal must land focus on a row, not the panel or <body>")
+	assert.Equal(t, "fake:y", focusedMod, `"Resolve…" must focus the conflict's own deployed owner (Y, the winner at deploy time), not the top of the list`)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally is I3's own scenario
+// (unit 6 gate review): an "updates" job whose Apply loop could not
+// download anything still finishes with job STATE "succeeded" - only its
+// own result document says every item failed (kind_updates.go's
+// applyUpdatesKind returns (result, nil) even when result.Failed is every
+// item) - so before this fix the Updates card kept showing the bare "Done"
+// over a still-pending update, and the tray read "updates succeeded". The
+// fixture's shared fakeSource.GetDownloadURL always answers
+// source.ErrNotSupported (testhelpers_test.go), which is what makes the
+// download - and the whole update - fail deterministically.
+func TestE2E_UpdatesCard_FailedBatchReportsAnHonestTally(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fa", Version: "2.0", IsPrimary: true}},
+	})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			document.querySelector(".card--updates .card__row input[type=checkbox]").click();
+		`, nil),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="updates"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="updates"]`, chromedp.ByQuery),
+	)
+
+	var cardText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.card--updates`, &cardText))
+		return strings.Contains(cardText, "0 applied / 1 failed")
+	}, 5*time.Second, 100*time.Millisecond, `the Updates card must report the batch's own honest outcome, not "Done" over a still-pending update`)
+	assert.Contains(t, cardText, "1.0 → 2.0", "the update must still be listed as pending - it was never actually applied")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	f.runInBrowser(t, textContent(`.tray`, &trayText))
+	assert.Contains(t, trayText, "0 applied / 1 failed", `the tray must not read "updates succeeded" over a batch that applied nothing`)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus is m4/I2's
+// own scenario (unit 6 gate review, folded together per the review's own
+// note: "the same edit fixes half of I2"): library.js used to clear the
+// multi-select the INSTANT the batch modal opened, which discarded the
+// user's work on a mere Cancel and - because that removed the batch bar's
+// own Uninstall button from the DOM in the same render the modal mounted -
+// left modal.js's captured-at-mount activeElement already stale, so focus
+// fell through to <body> instead of back to that button.
+func TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector("td.col--select input").click();
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+
+	var activeAction string
+	f.runInBrowser(t,
+		// modal.js's own Escape listener is attached by an effect, which can
+		// lag the modal's own DOM appearance by a handful of animation
+		// frames in a headless browser (this suite's own established
+		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape).
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? document.activeElement?.tagName`, &activeAction),
+	)
+	assert.Equal(t, "batch-uninstall", activeAction, "I2: focus must return to the batch bar's own Uninstall control, not <body>")
+
+	var alphaStillSelected bool
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
+			.querySelector("td.col--select input").checked
+	`, &alphaStillSelected))
+	assert.True(t, alphaStillSelected, "m4: the selection must survive a Cancel, cleared only on Confirm")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger is I2's own
+// profiles scenario (unit 6 gate review): the actual clicked opener
+// ("Manage profiles…") lives inside a dropdown that must close for the
+// modal to make sense on screen, so the shell's own captured-at-mount
+// activeElement is always stale for this one modal - modal.js's own
+// openerSelector (queried FRESH at close time) is the fix, pointed at the
+// picker's own trigger button, which is always mounted.
+func TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".profile-picker__menu button"))
+			.find((b) => b.textContent.includes("Manage profiles"))?.click();
+	`, nil))
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+
+	var activeClass string
+	f.runInBrowser(t,
+		// modal.js's own Escape listener is attached by an effect, which can
+		// lag the modal's own DOM appearance by a handful of animation
+		// frames in a headless browser (this suite's own established
+		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape's
+		// identical note); WaitVisible above only proves the DOM is there.
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &activeClass),
+	)
+	assert.Contains(t, activeClass, "profile-picker__trigger", "focus must return to the picker's own trigger, not <body>")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryRowMenu_RefusedLockSurfacesAsAToast is I1's own scenario
+// (unit 6 gate review): the ⋯ menu's Lock/Unlock used to call
+// actions.setModLock/clearModLock fire-and-forget, so a rejected ApiError
+// surfaced only as an unhandled promise rejection in the console - the menu
+// had already closed, leaving nothing on screen to say what went wrong.
+// Charlie is installed under "default" (so ListMods/the library shows it)
+// but never added to the profile's own Mods list (seedInstalledMod's own
+// contract - no pm.AddMod call), which is exactly what
+// ProfileManager.SetModLock refuses ("mod fake:charlie not found in profile
+// \"default\"").
+func TestE2E_LibraryRowMenu_RefusedLockSurfacesAsAToast(t *testing.T) {
+	f := newE2EFixture(t)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "charlie", SourceID: "fake", Name: "Charlie Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"charlie.pak": []byte("charlie")})
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Charlie Mod"))
+				.querySelector("td.col--menu button").click();
+		`, nil),
+		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Lock").click();
+		`, nil),
+		chromedp.WaitVisible(`.toast--failure`, chromedp.ByQuery),
+	)
+
+	var toastText string
+	f.runInBrowser(t, textContent(`.toast--failure`, &toastText))
+	assert.Contains(t, toastText, "Charlie Mod", "the toast must name what it was trying to do")
+	assert.Contains(t, toastText, "not found in profile", "the toast must carry the real ApiError message, not a generic one")
+
+	// The 500 itself still logs as a network-level browser entry (Chrome's
+	// own behavior for any non-2xx fetch, independent of whether the page's
+	// own JS handled it) - assertNoUncaughtErrors is this suite's own way of
+	// separating that from what I1 actually guards against: an UNCAUGHT
+	// promise rejection, which library.js's previous fire-and-forget call
+	// would have produced here.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime is m6's own
+// property test (unit 6 gate review): the existing batch-bar scenario only
+// ever asserted the END state, which a downstream stale-plan symptom can
+// fail even when nothing measures concurrency directly (m6's own finding -
+// removing the sequencing wait broke a DIFFERENT assertion, not this one).
+// Here a concurrent poller samples GET /api/v1/jobs throughout a real
+// four-mod uninstall batch (slowed by a hook so the window is wide enough
+// to sample more than once or twice) and asserts running jobs never
+// exceeds 1 - the wire's own sequencing caveat, and core's own beginOp
+// serialisation, pinned directly rather than through a side effect of it.
+func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
+	f := newE2EFixtureWithSlowUninstallAndFourMods(t)
+
+	stop := make(chan struct{})
+	var samples, maxRunning int64
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			// N4 (unit 6 re-review): this poller used to busy-spin with no
+			// pause at all - 256,782 requests over one ~10s batch, measured
+			// live - which burns a core and adds server load to every suite
+			// run for no benefit: the assertion below only needs "sampled
+			// more than once or twice", not tens of thousands of samples a
+			// second.
+			time.Sleep(5 * time.Millisecond)
+			resp, err := http.Get(f.BaseURL + "/api/v1/jobs")
+			if err != nil {
+				continue
+			}
+			var index struct {
+				Jobs []struct {
+					State string `json:"state"`
+				} `json:"jobs"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&index)
+			_ = resp.Body.Close()
+			if decodeErr != nil {
+				continue
+			}
+			atomic.AddInt64(&samples, 1)
+			var running int64
+			for _, j := range index.Jobs {
+				if j.State == "running" {
+					running++
+				}
+			}
+			for {
+				current := atomic.LoadInt64(&maxRunning)
+				if running <= current || atomic.CompareAndSwapInt64(&maxRunning, current, running) {
+					break
+				}
+			}
+		}
+	}()
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input").forEach((cb) => cb.click());
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+
+	// N3 (unit 6 re-review): this end-state check used to be a require, which
+	// FailNows before the concurrency assertion below ever runs - so a real
+	// sequencing regression would report only this check's downstream
+	// symptom ("all four mods must actually be uninstalled"), never the
+	// property m6 exists to pin (maxRunning). assert.Eventually lets
+	// execution reach that assertion regardless, so a future reader sees the
+	// actual measured maxRunning rather than having to make this check
+	// non-fatal by hand to find it, the way this re-review did.
+	assert.Eventually(t, func() bool {
+		for _, id := range []string{"a", "b", "c", "d"} {
+			if _, err := f.Svc.GetInstalledMod(t.Context(), "fake", id, f.Game.ID, "default"); !errors.Is(err, domain.ErrModNotFound) {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 50*time.Millisecond, "all four mods must actually be uninstalled")
+
+	close(stop)
+	require.Greater(t, atomic.LoadInt64(&samples), int64(2), "the poller must have actually sampled the jobs index more than once or twice during the batch")
+	assert.LessOrEqual(t, atomic.LoadInt64(&maxRunning), int64(1), "the batch must never run more than one job at a time")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_HealthCard_NotFixableRowNamesTheReason is m3's own scenario (unit
+// 6 gate review): "Not fixable" used to say only that, with a tooltip that
+// restated the same bare sentence. A LOCKED ref's version_mismatch is the
+// most common not-fixable case in practice (verify.go's own Fixable table:
+// "a non-local source AND an UNLOCKED ref"), and it is exactly the one the
+// read path (GET /api/v1/health) can decide FOR ITSELF - unlike the
+// "locked" note, which is only ever written by a --fix RUN - by cross-
+// referencing the finding's own mod_id against the already-fetched library
+// rows' own `locked` flag.
+func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, svc.NewProfileManager().AddMod(t.Context(), game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "boots", Version: "1.0", FileIDs: []string{"f1"}, Locked: true}))
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	f := e2eFixture{Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default", BrowserErrors: browserErrors}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
+	)
+	var rowText string
+	f.runInBrowser(t, textContent(`.card--health .card__row`, &rowText))
+	assert.Contains(t, rowText, "Not fixable", "a locked ref's version_mismatch must still say it is not fixable")
+	assert.Contains(t, rowText, "Locked to a version", "and now say WHY - the finding IS a locked version_mismatch")
+	assert.NotContains(t, rowText, "Repair", "no Repair control may render for a not-fixable row")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// newE2EFixtureWithTwoFixableFindings seeds two mods each recording a
+// version_mismatch the boots pattern (newE2EFixtureWithAttention) already
+// proves is fixable and network-free: the DB row is stamped at "1.0" while
+// the matched cache entry's own content is stored under that same version,
+// but the SOURCE's catalog reports "2.0" for the matched file - so
+// EffectiveInstalledVersion disagrees with the recorded version without a
+// download ever being involved (repairModVersion just renames the cache
+// dir and rewrites the DB/profile record, verify_repair.go's own doc
+// comment). Two independent mods, so a per-finding Repair on one leaves the
+// other's own finding untouched - the scope this test exists to prove.
+func newE2EFixtureWithTwoFixableFindings(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "alpha", SourceID: "fake", Name: "Alpha Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fa", Version: "2.0", IsPrimary: true}},
+	})
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "beta", SourceID: "fake", Name: "Beta Mod", Version: "2.0"},
+		Files: []domain.DownloadableFile{{ID: "fb", Version: "2.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	for _, m := range []struct{ id, name, fileID string }{
+		{"alpha", "Alpha Mod", "fa"}, {"beta", "Beta Mod", "fb"},
+	} {
+		gameCache := svc.GetGameCache(game)
+		require.NoError(t, gameCache.Store(game.ID, "fake", m.id, "1.0", m.fileID, []byte("content")))
+		require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+			Mod:          domain.Mod{ID: m.id, SourceID: "fake", Name: m.name, Version: "1.0", GameID: game.ID},
+			ProfileName:  "default",
+			Enabled:      true,
+			FileIDs:      []string{m.fileID},
+			UpdatePolicy: domain.UpdateNotify,
+		}))
+		require.NoError(t, svc.NewProfileManager().AddMod(t.Context(), game.ID, "default",
+			domain.ModReference{SourceID: "fake", ModID: m.id, Version: "1.0", FileIDs: []string{m.fileID}}))
+	}
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+		BrowserErrors: browserErrors,
+	}
+}
+
+// TestE2E_HealthCard_PerFindingRepairScopesToOneMod is #332's own health
+// repair scenario: Repair on Alpha's own finding must fix Alpha and leave
+// Beta's version_mismatch exactly as it was.
+func TestE2E_HealthCard_PerFindingRepairScopesToOneMod(t *testing.T) {
+	f := newE2EFixtureWithTwoFixableFindings(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
+	)
+	var cardBody string
+	f.runInBrowser(t, textContent(`.card--health`, &cardBody))
+	assert.Contains(t, cardBody, "Alpha")
+	assert.Contains(t, cardBody, "Beta")
+
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".card--health .card__row"))
+				.find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector('[data-action="repair"]').click();
+		`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="verify_fix"] .plan--verify-fix`, chromedp.ByQuery),
+	)
+	var planBody string
+	f.runInBrowser(t, textContent(`.modal[data-kind="verify_fix"]`, &planBody))
+	assert.Contains(t, planBody, "alpha", "the scope line must name the mod this Repair was opened for")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="verify_fix"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="verify_fix"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		alpha, err := f.Svc.GetInstalledMod(t.Context(), "fake", "alpha", f.Game.ID, "default")
+		return err == nil && alpha.Version == "2.0"
+	}, 5*time.Second, 20*time.Millisecond, "the repaired mod must actually move to the effective version")
+
+	beta, err := f.Svc.GetInstalledMod(t.Context(), "fake", "beta", f.Game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", beta.Version, "an untouched finding must NOT be repaired by another mod's scoped Repair")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ReorderModal_KeyboardAndDragFlipTheWinnerAndPersist is #332's own
+// reorder scenario: Mod Y starts as the winner of a real file conflict
+// (added to the profile after X); moving X below Y with the KEYBOARD/button
+// path flips the live preview to X, saving commits it, and re-reading
+// conflicts confirms the persisted order actually changed who wins - then
+// the same round trip runs again the OTHER direction via a DRAG.
+func TestE2E_ReorderModal_KeyboardAndDragFlipTheWinnerAndPersist(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+	)
+	var conflictBody string
+	f.runInBrowser(t, textContent(`.card--conflicts`, &conflictBody))
+	assert.Contains(t, conflictBody, "wins: Mod Y", "Y (added second, higher priority) must start as the winner")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	// --- Keyboard/button path: move X to the bottom (highest priority). ---
+	var moved bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			(() => {
+				const btn = Array.from(document.querySelectorAll(".reorder-row")).find((r) => r.textContent.includes("Mod X"))
+					?.querySelector('[aria-label="Move Mod X to highest priority"]');
+				if (!btn || btn.disabled) return false;
+				btn.click();
+				return true;
+			})()
+		`, &moved),
+	)
+	require.True(t, moved, `"Move Mod X to highest priority" must be found, enabled, and clicked`)
+
+	var proposedWinner string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, chromedp.Evaluate(`
+			(() => {
+				const row = Array.from(document.querySelectorAll(".reorder-preview tbody tr")).find((r) => r.textContent.includes("shared.esp"));
+				return row ? row.children[2].textContent.trim() : "";
+			})()
+		`, &proposedWinner))
+		return proposedWinner == "Mod X"
+	}, 5*time.Second, 100*time.Millisecond, "the live preview must flip to X once it is moved below Y")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		report, err := f.Svc.GetProfileConflictsForOrder(t.Context(), f.Game, "default", nil)
+		return err == nil && len(report) == 1 && report[0].LoadOrderWinner.Key == "fake:x"
+	}, 5*time.Second, 50*time.Millisecond, "the saved order must persist through the API - X now wins")
+
+	// --- Drag path: reopen and drag Y back below X, flipping it again. ---
+	f.runInBrowser(t,
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		dragRowTo("Mod Y", "Mod X"),
+	)
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, chromedp.Evaluate(`
+			(() => {
+				const row = Array.from(document.querySelectorAll(".reorder-preview tbody tr")).find((r) => r.textContent.includes("shared.esp"));
+				return row ? row.children[2].textContent.trim() : "";
+			})()
+		`, &proposedWinner))
+		return proposedWinner == "Mod Y"
+	}, 5*time.Second, 100*time.Millisecond, "dragging Y below X must flip the preview back to Y")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		report, err := f.Svc.GetProfileConflictsForOrder(t.Context(), f.Game, "default", nil)
+		return err == nil && len(report) == 1 && report[0].LoadOrderWinner.Key == "fake:y"
+	}, 5*time.Second, 50*time.Millisecond, "the drag's own save must persist through the API too")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_CRUDExportImport is issue 332's own profiles
+// scenario: create/rename/set-default/delete inline in the modal, the
+// export route's own document fetched through the literal link the row
+// renders, and an import that lands a new profile with real, version-
+// matched mod references, already Installed (both mods are pre-cached, so
+// the plan's pending set is empty and no Install checkbox even renders).
+func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+	)
+
+	// A short real (Go-level) pause between browser round trips below, on
+	// top of this file's usual chromedp.Poll-for-settled-state pattern:
+	// Preact/hooks' own effect flush runs on requestAnimationFrame,
+	// measured elsewhere in this suite (the picker's own outside-click
+	// scenario) at up to a handful of frames in a headless browser, and
+	// this modal's own mount effect additionally kicks off an async
+	// reloadProfiles() fetch. Cheap insurance once the ACTUAL bug this
+	// scenario tripped over (below) was found and fixed.
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	openProfilesModal := func() {
+		f.runInBrowser(t,
+			chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		)
+		settle()
+		f.runInBrowser(t,
+			chromedp.Evaluate(`
+				Array.from(document.querySelectorAll(".profile-picker__menu button"))
+					.find((b) => b.textContent.includes("Manage profiles"))?.click();
+			`, nil),
+		)
+		settle()
+		f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+		settle()
+	}
+	openProfilesModal()
+
+	// Create "survival".
+	f.runInBrowser(t,
+		chromedp.SetValue(`.profiles-create input`, "survival", chromedp.ByQuery),
+		// A real submit-button CLICK, not chromedp.Submit: that action calls
+		// the native HTMLFormElement.submit() directly, which bypasses
+		// Preact's onSubmit handler entirely (the DOM spec's own submit()
+		// method does not fire a "submit" event) and - since this form has
+		// no action/method - performs a real page navigation to the
+		// current URL, invalidating the execution context every action
+		// after it needs (observed: "Cannot find context with specified
+		// id" on the very next command, every time).
+		chromedp.Click(`.profiles-create button[type="submit"]`, chromedp.ByQuery),
+		chromedp.Poll(profilesListContains("survival"), nil),
+	)
+	_, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "survival")
+	require.NoError(t, err, "the create form must actually create the profile")
+	settle()
+
+	// Rename survival -> outpost.
+	f.runInBrowser(t,
+		clickInRow(".profiles-row", "survival", "Rename"),
+		chromedp.WaitVisible(`.profiles-row__rename-form`, chromedp.ByQuery),
+		chromedp.SetValue(`.profiles-row__rename-form input`, "outpost", chromedp.ByQuery),
+		chromedp.Click(`.profiles-row__rename-form button[type="submit"]`, chromedp.ByQuery),
+		chromedp.Poll(profilesListContains("outpost"), nil),
+	)
+	_, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "outpost")
+	require.NoError(t, err, "the rename must actually rename the profile")
+	settle()
+
+	// Set outpost as default.
+	f.runInBrowser(t,
+		clickInRow(".profiles-row", "outpost", "Set default"),
+		chromedp.Poll(`Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("outpost")).textContent.includes("default")`, nil),
+	)
+	require.Eventually(t, func() bool {
+		listing, err := f.Svc.ListProfiles(t.Context(), f.Game.ID)
+		if err != nil {
+			return false
+		}
+		for _, p := range listing.Profiles {
+			if p.Name == "outpost" {
+				return p.IsDefault
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond, "set-default must actually flip the default")
+	settle()
+
+	// Delete outpost (inline confirm - no nested modal).
+	f.runInBrowser(t,
+		clickInRow(".profiles-row", "outpost", "Delete"),
+		chromedp.WaitVisible(`.profiles-row--confirm`, chromedp.ByQuery),
+		chromedp.Click(`.profiles-row--confirm button.button--danger`, chromedp.ByQuery),
+		chromedp.Poll(profilesListNotContains("outpost"), nil),
+	)
+	_, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "outpost")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "the inline confirm must actually delete the profile")
+	settle()
+
+	// Export "default": a plain <a href> to the real GET route (the server
+	// sets Content-Disposition itself - api_profiles.go's own doc comment:
+	// "no blob, no synthesized filename"), asserted here by reading exactly
+	// the href the row renders and fetching it - the same request a click
+	// on that literal anchor issues, without headless Chrome's own download
+	// manager (a real but separate mechanism this reaches through, not
+	// around) in the loop.
+	var exportHref string
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("default"))
+			.querySelector('a[href*="/export"]').getAttribute("href")
+	`, &exportHref))
+	require.NotEmpty(t, exportHref, "the Export control must be a real link to the export route")
+	assert.Contains(t, exportHref, "/api/v1/profiles/default/export")
+
+	var exported string
+	f.runInBrowser(t, chromedp.Evaluate(fmt.Sprintf(`fetch(%q).then((r) => r.text())`, exportHref), &exported,
+		func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+	assert.Contains(t, exported, `"a"`, "the export must carry the profile's own mods")
+	assert.Contains(t, exported, `"b"`)
+
+	// Doctor the export into a NEW profile's document and import it -
+	// both mods are already fully cached (newE2EFixtureWithDeployableMods),
+	// so Install triggers no network at all; ApplyImport just saves the
+	// profile (kind_profile_import.go's own doc comment: "nothing to do
+	// for these").
+	restoredDoc := strings.Replace(string(exported), `"name": "default"`, `"name": "restored"`, 1)
+	require.NotEqual(t, string(exported), restoredDoc, "the exported document's own name field must actually be found and replaced")
+	importPath := filepath.Join(t.TempDir(), "restored.json")
+	require.NoError(t, os.WriteFile(importPath, []byte(restoredDoc), 0o644))
+
+	// The profiles modal is still open from the CRUD steps above (nothing
+	// closed it) - reused here rather than reopened, which also avoids
+	// clicking the top bar's own picker trigger through the still-open
+	// modal's scrim (that click would land on the scrim, not the trigger,
+	// and close the modal instead of opening a picker menu).
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+	)
+	var importPlanBody string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &importPlanBody))
+	assert.Contains(t, importPlanBody, "restored")
+	assert.Contains(t, importPlanBody, "Already installed")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+	)
+	// Both mods land in the imported profile as real, version-matched
+	// references - core.ProfileImportResult's own bucket (Installed, since
+	// both are already cached at the imported version: api_profiles.go/
+	// kind_profile_import.go's own doc comment, "nothing to do for these")
+	// rather than skipped or missing - proving the import produced usable
+	// references, not just names that happen to parse.
+	var restored *domain.Profile
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "restored")
+		if err != nil || len(p.Mods) != 2 {
+			return false
+		}
+		restored = p
+		return true
+	}, 5*time.Second, 20*time.Millisecond, "the import job must actually create the new profile with both mods")
+
+	byID := map[string]domain.ModReference{}
+	for _, ref := range restored.Mods {
+		byID[ref.ModID] = ref
+	}
+	require.Contains(t, byID, "a")
+	require.Contains(t, byID, "b")
+	assert.Equal(t, "fake", byID["a"].SourceID)
+	assert.Equal(t, "1.0", byID["a"].Version)
+	assert.Equal(t, "fake", byID["b"].SourceID)
+	assert.Equal(t, "1.0", byID["b"].Version)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed is N1's
+// own scenario (unit 6 re-review of the fix wave): the I3 fix folded
+// core.ProfileImportResult.Skipped into "failed", so a profile_import that
+// leaves the plan's own "Download and install" checkbox unchecked - the
+// flow's documented default (plan_profile_import.js's own note: "Left
+// unchecked, the profile is still saved and every pending mod is recorded
+// as skipped") - used to render as a total failure ("0 applied / 2 failed"
+// in the failure tone) even though the job succeeds and the profile is
+// created. Skipped is not failed.
+func TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed(t *testing.T) {
+	f := newE2EFixture(t)
+
+	doc := fmt.Sprintf(`name: imported
+game_id: %s
+mods:
+  - source_id: fake
+    mod_id: newmod1
+    version: "1.0"
+  - source_id: fake
+    mod_id: newmod2
+    version: "1.0"
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "imported.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+	)
+	var planText string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &planText))
+	require.Contains(t, planText, "Download and install", "the plan must offer the install checkbox - the one this scenario deliberately leaves unchecked")
+
+	// The install checkbox is left UNCHECKED - the flow's own default.
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "imported")
+		return err == nil && len(p.Mods) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile even though nothing was installed")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.tray`, &trayText))
+		return strings.Contains(trayText, "profile_import") &&
+			(strings.Contains(trayText, "skipped") || strings.Contains(trayText, "failed"))
+	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job's own tally")
+
+	var toneClass string
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector(".tray__row .tray__state")?.className ?? ""`, &toneClass))
+
+	assert.NotContains(t, trayText, "failed", `a fully successful import must never say "failed" - Skipped is not a failure`)
+	assert.Contains(t, trayText, "skipped", "the tray must name the skipped count honestly")
+	assert.Contains(t, toneClass, "tray__state--succeeded", "the tone must be success, not failure or mixed, when nothing actually failed")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone is N2's own
+// scenario (unit 6 re-review): a profile_import whose every mod is already
+// installed (the plan's Installed bucket, pending == 0) returns a
+// core.ProfileImportResult that is all zeroes - {installed: 0, failed: 0,
+// skipped: 0} - which resultTally used to still read as a tally-shaped
+// result, replacing the tray's usual bare state word with an honest-looking
+// but empty "0 installed · 0 skipped" - worse copy for a batch that did
+// not, in truth, batch anything. resultTally now returns null for an
+// all-zero result, same as a kind with no tally shape at all, so every
+// caller's own existing "no tally" fallback applies - the tray's own bare
+// state word here (jobprogress.js's InlineJob, the only surface that
+// renders the literal word "Done", never mounts for profile_import: it has
+// no owning mod row to attach to).
+func TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	doc := fmt.Sprintf(`name: reimport
+game_id: %s
+mods:
+  - source_id: fake
+    mod_id: a
+    version: "1.0"
+  - source_id: fake
+    mod_id: b
+    version: "1.0"
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "reimport.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+	)
+	var planText string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &planText))
+	require.NotContains(t, planText, "Download and install", "both mods are already installed - there is nothing pending to offer a checkbox for")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "reimport")
+		return err == nil && len(p.Mods) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.tray`, &trayText))
+		return strings.Contains(trayText, "profile_import")
+	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job")
+
+	assert.Contains(t, trayText, "succeeded", "an all-zero tally must fall back to the tray's own bare state word, not an honest-looking but empty tally")
+	assert.NotContains(t, trayText, "installed ·", "no zero-count tally text may leak through")
+
+	var toneClass string
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector(".tray__row .tray__state")?.className ?? ""`, &toneClass))
+	assert.Contains(t, toneClass, "tray__state--succeeded")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelection
+// is C1's own destructive reproduction (unit 6 gate review): ReorderModal
+// and UninstallBatchModal used to call useState/useEffect AFTER a
+// conditional `return null`, mounted PERMANENTLY as siblings in app.js -
+// and Preact does not discard a component's hook list on a null render, so
+// a hook slot filled during the FIRST open is REUSED, untouched, on every
+// later one. For this modal that meant `entries` (the previous open's own
+// computed uninstall plans) survived a close and leaked into the next
+// open's confirm - selecting Alpha, cancelling, then selecting ONLY Beta
+// would still uninstall Alpha, because `entries` was never recomputed for
+// Beta's plan. Reproduced here exactly as the review found it live.
+func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelection(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	selectByName := func(name string) chromedp.Action {
+		return chromedp.Evaluate(fmt.Sprintf(`
+			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes(%q))
+				.querySelector("td.col--select input").click();
+		`, name), nil)
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		selectByName("Alpha Mod"),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		// Wait for Alpha's own preview plan to actually land - otherwise
+		// there is nothing stale yet for the bug below to replay.
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+	)
+
+	// Cancel via Escape - the design's own "Cancel restores". A settle
+	// before it (this suite's own established pattern against modal.js's
+	// effect-attached Escape listener lagging the DOM by a frame or two)
+	// even though the WaitVisible above already did real async work.
+	f.runInBrowser(t,
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+
+	// Change the selection to Beta ONLY (re-selecting from scratch, since
+	// this test's own concern is C1 alone - m4/I2's own "does Cancel keep
+	// the selection" is a separate scenario), then open and confirm.
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input:checked").forEach((cb) => cb.click());
+		`, nil),
+		selectByName("Beta Mod"),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+	)
+	var modalBody string
+	f.runInBrowser(t, textContent(`.modal[data-kind="uninstall-batch"]`, &modalBody))
+	assert.Contains(t, modalBody, "Beta Mod", "the modal must plan the CURRENT selection")
+	assert.NotContains(t, modalBody, "Alpha Mod", "a stale plan from the previous open must not leak into this one")
+
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		_, err := f.Svc.GetInstalledMod(t.Context(), "fake", "b", f.Game.ID, "default")
+		return errors.Is(err, domain.ErrModNotFound)
+	}, 5*time.Second, 20*time.Millisecond, "Beta - the mod actually selected at confirm time - must be uninstalled")
+
+	alpha, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
+	require.NoError(t, err, "Alpha - never selected the second time around - must NOT have been uninstalled")
+	assert.Equal(t, "1.0", alpha.Version)
+	gameCache := f.Svc.GetGameCache(f.Game)
+	assert.True(t, gameCache.Exists(f.Game.ID, "fake", "a", "1.0"), "Alpha's own cache entry must be untouched")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen is C1's other
+// reproduction: Cancel is supposed to restore, but the same stale-hook-list
+// bug (see the uninstall-batch scenario above) meant `order` and the
+// preview's own state survived a close, so re-opening replayed the
+// abandoned edit instead of the saved order, and Save then committed it.
+func TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var moved bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			(() => {
+				const btn = Array.from(document.querySelectorAll(".reorder-row")).find((r) => r.textContent.includes("Mod X"))
+					?.querySelector('[aria-label="Move Mod X to highest priority"]');
+				if (!btn || btn.disabled) return false;
+				btn.click();
+				return true;
+			})()
+		`, &moved),
+	)
+	require.True(t, moved, `"Move Mod X to highest priority" must be found, enabled, and clicked`)
+
+	// Cancel via Escape ("Cancel restores" - design doc §Modals). A settle
+	// first - this suite's own established pattern against modal.js's
+	// effect-attached Escape listener lagging the DOM by a frame or two.
+	f.runInBrowser(t,
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	// Re-open and read the list back BEFORE touching anything: it must show
+	// the SAVED order (Y then X), never the abandoned edit (X then Y).
+	f.runInBrowser(t,
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+	var reopenedOrder []string
+	f.runInBrowser(t, chromedp.Evaluate(`
+		Array.from(document.querySelectorAll(".reorder-row__name")).map((n) => n.textContent)
+	`, &reopenedOrder))
+	require.Equal(t, []string{"Mod X", "Mod Y"}, reopenedOrder, "a fresh open must re-seed from the SAVED order (X then Y - X added first, lowest priority), not the cancelled edit that moved X to the end")
+
+	// Save without touching anything: this must be a no-op against the
+	// saved order, never a silent commit of the abandoned edit.
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+	require.Eventually(t, func() bool {
+		report, err := f.Svc.GetProfileConflictsForOrder(t.Context(), f.Game, "default", nil)
+		return err == nil && len(report) == 1 && report[0].LoadOrderWinner.Key == "fake:y"
+	}, 5*time.Second, 50*time.Millisecond, "Y, the ORIGINAL winner, must still win - Cancel must have actually discarded the edit")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename audits
+// ProfilesModal for C1's own pattern (unit 6 gate review: "ProfilesModal
+// gets away with it because it calls its one hook BEFORE the guard").
+// ProfileRow's own rename-in-progress state lives in a child component that
+// unmounts along with everything else under the modal's `if (!open) return
+// null`, so this is expected to pass even before the app.js mount fix -
+// kept as the shared slot's third regression case, per the review's own
+// "EVERY shape in the shared slot".
+func TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	// See TestE2E_ProfilesModal_CRUDExportImport's own settle(): the
+	// picker's outside-click/Escape state and this modal's own mount effect
+	// both flush on requestAnimationFrame, up to a handful of frames in a
+	// headless browser - real insurance, not superstition, once observed.
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+	openProfilesModal := func() {
+		f.runInBrowser(t,
+			chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		)
+		settle()
+		f.runInBrowser(t, chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil))
+		settle()
+		f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+		settle()
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+	)
+	openProfilesModal()
+	f.runInBrowser(t,
+		clickInRow(".profiles-row", "default", "Rename"),
+		chromedp.WaitVisible(`.profiles-row__rename-form`, chromedp.ByQuery),
+		chromedp.SetValue(`.profiles-row__rename-form input`, "half-typed", chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+	)
+	settle()
+
+	openProfilesModal()
+
+	var stillRenaming bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector(".profiles-row__rename-form") !== null`, &stillRenaming))
+	assert.False(t, stillRenaming, "a fresh open must not resume a half-typed rename left over from a previous session")
+
+	_, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err, "Escape must not have renamed the profile")
 	assert.Empty(t, f.BrowserErrors())
 }

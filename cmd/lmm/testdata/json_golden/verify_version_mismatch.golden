@@ -8,7 +8,8 @@
         "mod_name": "Mod One",
         "status": "version_mismatch",
         "recorded": "1.5",
-        "effective": "1.0"
+        "effective": "1.0",
+        "fixable": true
       },
       {
         "mod_id": "mod1",

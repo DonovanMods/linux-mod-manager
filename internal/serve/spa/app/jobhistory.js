@@ -49,6 +49,26 @@ function resultNamesMod(kind, result, sourceID, modID) {
 }
 
 /**
+ * candidateJobKey collapses jobsIndex to the one thing JobHistorySection's
+ * effect (fullmodpage.js) actually depends on: WHICH finished
+ * updates/rollback jobs exist, not jobsIndex's own array identity (issue
+ * 330 carry-4, unit 6). jobsIndex gets a new reference on every
+ * job_started/job_done frame in the WHOLE session (activity.js's
+ * upsertSummary) - with the batch modals this unit adds, that includes
+ * every enable/disable/uninstall/updates-batch job too, none of which this
+ * section can ever attribute to a mod (modHistoryKinds). Keying the effect
+ * on this string instead of the raw array means it only re-fires (and only
+ * re-fetches) when a job THIS section could actually use appears or
+ * finishes, not on every other kind's job the session happens to run.
+ */
+export function candidateJobKey(jobsIndex) {
+  return (jobsIndex ?? [])
+    .filter((j) => modHistoryKinds.has(j.kind) && j.state !== "running")
+    .map((j) => `${j.id}:${j.state}`)
+    .join(",");
+}
+
+/**
  * loadModJobHistory resolves jobsIndex to the FINISHED jobs that concerned
  * sourceID/modID, newest first (jobsIndex's own order) - one jobStatus
  * fetch per candidate (a non-running job whose kind is in

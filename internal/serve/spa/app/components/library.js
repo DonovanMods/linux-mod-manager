@@ -2,23 +2,20 @@
 // controls, multi-select and the batch-bar shell
 // (docs/plans/2026-08-31-serve-spa-design.md §Mission Control: "Library").
 // Row click navigates into the ?mod= slide-over, wired for real in issue
-// 330 (Unit 4); its own multi-mod batch actions and the row-level enable
-// toggle stay disabled - the batch bar is Unit 6's (reorder/profiles/health
-// repair/update-batch), and moving a single-row enable/disable/uninstall
-// action onto this table too would duplicate the slide-over's own affordance
-// for no reader-visible benefit yet, in a unit already touching every mod-
-// mutation surface once.
+// 330 (Unit 4). The batch bar, the row-level enable toggle and the ⋯ menu
+// are issue 332's own (Unit 6): every multi-mod batch action, the live enabled
+// toggle, and per-row update/uninstall/lock-unlock/reorder-here.
 //
 // The row join (buildRows) and the filter/sort STATE both moved up to
 // missioncontrol.js in issue 330: the slide-over's ←/→ stepping needs the
 // exact list this table is showing, so this component now renders `visible`
 // rather than computing it.
 
-import { html, useState } from "../render.js";
+import { html, useEffect, useState } from "../render.js";
 import { navigate } from "../router.js";
+import { ApiError } from "../api.js";
 import { formatDate, FILTER_NAMES, SORT_NAMES } from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
-import { NOT_YET } from "../ui.js";
 
 const FILTER_LABELS = {
   all: "All",
@@ -33,7 +30,17 @@ const SORT_LABELS = {
   recent: "Recently installed",
 };
 
+/** modOrigin builds the "mod:{source}/{id}:{action}" origin every per-mod
+ * control in this application shares (modrows.js#modOriginPattern) - the
+ * row toggle, the ⋯ menu's Update/Uninstall, and the batch bar's own
+ * per-mod jobs all key off it, which is what lets one row show the SAME
+ * inline progress no matter which control started the job it is showing. */
+function modOrigin(row, action) {
+  return `mod:${row.source_id}/${row.id}:${action}`;
+}
+
 export function Library({
+  state,
   mods,
   visible,
   filter,
@@ -45,8 +52,33 @@ export function Library({
   query,
   error,
   onRetry,
+  actions,
 }) {
   const [selected, setSelected] = useState(() => new Set());
+  const [menuKey, setMenuKey] = useState(null);
+  const [togglingKey, setTogglingKey] = useState(null);
+
+  // m2, unit 6 fix wave: the ⋯ row menu used to close only by re-clicking
+  // ⋯, which left it sitting open over the rest of the page once the user
+  // had clearly moved on. modal.js's own outside-click/Escape pattern,
+  // applied here - a document-level listener while a menu is actually open,
+  // torn down the instant it closes so a hidden menu never leaves a
+  // listener attached for the rest of the session.
+  useEffect(() => {
+    if (menuKey === null) return;
+    function handleClick(e) {
+      if (!e.target.closest(".row-menu-cell")) setMenuKey(null);
+    }
+    function handleKeyDown(e) {
+      if (e.key === "Escape") setMenuKey(null);
+    }
+    document.addEventListener("click", handleClick);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("click", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuKey]);
 
   function toggleSelect(key) {
     setSelected((prev) => {
@@ -64,6 +96,158 @@ export function Library({
     const url = new URL(window.location.href);
     url.searchParams.set("mod", `${row.source_id}/${row.id}`);
     navigate(url.pathname + url.search);
+  }
+
+  function selectedRows() {
+    return visible.filter((r) => selected.has(r.key));
+  }
+
+  async function toggleEnabled(row) {
+    setTogglingKey(row.key);
+    try {
+      await actions.startToggle({
+        action: row.enabled ? "disable" : "enable",
+        sourceID: row.source_id,
+        modID: row.id,
+        origin: modOrigin(row, "toggle"),
+      });
+    } finally {
+      setTogglingKey(null);
+    }
+  }
+
+  // toggleLock is the ⋯ menu's own Lock/Unlock (I1, unit 6 fix wave): the
+  // menu closes the instant this is clicked, unlike modpanel.js's
+  // ModSettingsControls (which stays on screen and renders its own inline
+  // error) - a rejected ApiError here has no control left to show it on, so
+  // it becomes a toast instead, mirroring modpanel.js's own await/try/catch
+  // rather than the previous fire-and-forget call that left a failure as
+  // nothing but an unhandled promise rejection in the console.
+  async function toggleLock(row) {
+    setMenuKey(null);
+    try {
+      if (row.locked) await actions.clearModLock(row.source_id, row.id);
+      else await actions.setModLock(row.source_id, row.id, "");
+    } catch (err) {
+      actions.pushToast({
+        tone: "failure",
+        title: `Couldn't ${row.locked ? "unlock" : "lock"} ${row.name}`,
+        detail: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  }
+
+  function openReorder() {
+    actions.openReorderModal({ profileName: state.route.profile });
+  }
+
+  function batchEnable(action) {
+    const rows = selectedRows();
+    if (rows.length === 0) return;
+    setSelected(new Set());
+    actions.startBatchToggle(
+      action,
+      rows.map((r) => ({ source_id: r.source_id, id: r.id, name: r.name })),
+    );
+  }
+
+  // m5: only rows that actually offer an update are worth planning - a
+  // selection with no update at all must not even open a modal (the
+  // toolbar button below is disabled for exactly that case), and a MIXED
+  // selection must silently drop the rows with nothing to update rather
+  // than hand kind_updates.go's own planUpdatesKind a mod it can only file
+  // under `not_found`.
+  function updatableSelectedRows() {
+    return selectedRows().filter((r) => r.hasUpdate);
+  }
+
+  function batchUpdate() {
+    const rows = updatableSelectedRows();
+    if (rows.length === 0) return;
+    // m4/I2: the selection is cleared once this batch is actually
+    // confirmed (onConfirmed), not here at open time - a Cancel must leave
+    // the batch bar (and its own focus) exactly as the user left it.
+    actions.openPlan({
+      kind: "updates",
+      origin: "library:batch-update",
+      title: `Update ${rows.length} mod${rows.length === 1 ? "" : "s"}`,
+      confirmLabel: "Update",
+      options: { mods: rows.map((r) => r.key) },
+      onConfirmed: () => setSelected(new Set()),
+    });
+  }
+
+  function batchUninstall() {
+    const rows = selectedRows();
+    if (rows.length === 0) return;
+    // m4/I2: see batchUpdate's own note - cleared on confirm, not on open.
+    actions.openUninstallBatchModal(
+      rows.map((r) => ({ source_id: r.source_id, id: r.id, name: r.name })),
+      () => setSelected(new Set()),
+    );
+  }
+
+  function rowMenu(row) {
+    const origin = (action) => modOrigin(row, action);
+    return html`
+      <div class="row-menu">
+        ${
+          row.hasUpdate &&
+          html`<button
+            type="button"
+            class="row-menu__item"
+            onClick=${() => {
+              setMenuKey(null);
+              actions.openPlan({
+                kind: "updates",
+                origin: origin("update"),
+                title: `Update ${row.name}`,
+                confirmLabel: "Update",
+                options: { mods: [row.key] },
+              });
+            }}
+          >
+            Update
+          </button>`
+        }
+        <button
+          type="button"
+          class="row-menu__item"
+          onClick=${() => {
+            setMenuKey(null);
+            actions.openPlan({
+              kind: "uninstall",
+              origin: origin("uninstall"),
+              title: `Uninstall ${row.name}`,
+              confirmLabel: "Uninstall",
+              options: { source_id: row.source_id, mod_id: row.id },
+            });
+          }}
+        >
+          Uninstall
+        </button>
+        <button
+          type="button"
+          class="row-menu__item"
+          onClick=${() => toggleLock(row)}
+        >
+          ${row.locked ? "Unlock" : "Lock"}
+        </button>
+        <button
+          type="button"
+          class="row-menu__item"
+          onClick=${() => {
+            setMenuKey(null);
+            actions.openReorderModal({
+              profileName: state.route.profile,
+              focusKey: row.key,
+            });
+          }}
+        >
+          Reorder here
+        </button>
+      </div>
+    `;
   }
 
   if (mods === null) {
@@ -143,6 +327,14 @@ export function Library({
             ${SORT_NAMES.map((s) => html`<option value=${s}>${SORT_LABELS[s]}</option>`)}
           </select>
         </label>
+        <button
+          type="button"
+          class="button button--small"
+          data-action="reorder"
+          onClick=${openReorder}
+        >
+          Reorder…
+        </button>
       </div>
 
       ${
@@ -176,6 +368,7 @@ export function Library({
                     return html`
                       <tr
                         key=${row.key}
+                        data-mod=${row.key}
                         class="mod-row ${selected.has(row.key) ? "mod-row--selected" : ""}"
                       >
                         <td class="col--select">
@@ -190,10 +383,11 @@ export function Library({
                         <td class="col--enabled">
                           <input
                             type="checkbox"
-                            aria-label=${`Enable ${row.name}`}
+                            aria-label=${`${row.enabled ? "Disable" : "Enable"} ${row.name}`}
                             checked=${row.enabled}
-                            disabled
-                            title=${NOT_YET}
+                            disabled=${Boolean(mutation) || togglingKey === row.key}
+                            onClick=${(e) => e.stopPropagation()}
+                            onChange=${() => toggleEnabled(row)}
                           />
                         </td>
                         <td>
@@ -263,15 +457,18 @@ export function Library({
                         <td class="col--installed">
                           ${formatDate(row.installed_at)}
                         </td>
-                        <td class="col--menu">
+                        <td class="col--menu row-menu-cell">
                           <button
                             type="button"
                             class="button button--small"
-                            disabled
-                            title=${NOT_YET}
+                            aria-label=${`Actions for ${row.name}`}
+                            aria-expanded=${menuKey === row.key ? "true" : "false"}
+                            onClick=${() =>
+                              setMenuKey(menuKey === row.key ? null : row.key)}
                           >
                             ⋯
                           </button>
+                          ${menuKey === row.key && rowMenu(row)}
                         </td>
                       </tr>
                     `;
@@ -285,20 +482,41 @@ export function Library({
         html`
           <div class="batch-bar">
             <span>${selected.size} selected</span>
-            <button type="button" class="button" disabled title=${NOT_YET}>
+            <button
+              type="button"
+              class="button"
+              data-action="batch-enable"
+              onClick=${() => batchEnable("enable")}
+            >
               Enable
             </button>
-            <button type="button" class="button" disabled title=${NOT_YET}>
+            <button
+              type="button"
+              class="button"
+              data-action="batch-disable"
+              onClick=${() => batchEnable("disable")}
+            >
               Disable
             </button>
-            <button type="button" class="button" disabled title=${NOT_YET}>
+            <button
+              type="button"
+              class="button"
+              data-action="batch-update"
+              disabled=${updatableSelectedRows().length === 0}
+              title=${
+                updatableSelectedRows().length === 0
+                  ? "None of the selected mods offer an update"
+                  : undefined
+              }
+              onClick=${batchUpdate}
+            >
               Update
             </button>
             <button
               type="button"
               class="button button--danger"
-              disabled
-              title=${NOT_YET}
+              data-action="batch-uninstall"
+              onClick=${batchUninstall}
             >
               Uninstall
             </button>

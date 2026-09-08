@@ -15,7 +15,14 @@
 
 import { html, useEffect } from "../render.js";
 import { registerOrigin } from "../activity.js";
-import { progressText, progressFraction, jobStateLabel } from "../progress.js";
+import {
+  progressText,
+  progressFraction,
+  jobStateLabel,
+  resultTallyLabel,
+  resultTallyTone,
+} from "../progress.js";
+import { useJobResultTally } from "../jobresult.js";
 import { OverwriteButton } from "./tray.js";
 
 /**
@@ -61,6 +68,10 @@ export function InlineJob({ origin, state, actions, children }) {
  */
 export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   const state = summary?.state ?? "running";
+  // Called unconditionally, before either branch below - C1 (unit 6 fix
+  // wave)'s own rule applies here too: a hook called only on one side of a
+  // conditional is exactly the pattern that let a stale value survive.
+  const tally = useJobResultTally(jobID, state);
 
   if (state === "running") {
     const fraction = progressFraction(frame);
@@ -86,15 +97,26 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   }
 
   const failed = state === "failed";
+  // I3, unit 6 fix wave: a batch job's own `state` is "succeeded" even when
+  // every item inside it failed (progress.js#resultTally's own doc
+  // comment) - the tone class follows the TALLY, not the bare state, for
+  // exactly the cases that disagree with it.
+  const tone = !failed && tally ? resultTallyTone(tally) : state;
   return html`
     <div
-      class="job-progress job-progress--${state}"
+      class="job-progress job-progress--${tone}"
       data-job=${jobID}
       data-state=${state}
       role="status"
     >
       <span class="job-progress__text">
-        ${failed ? `Failed: ${summary?.error?.error ?? "unknown error"}` : "Done"}
+        ${
+          failed
+            ? `Failed: ${summary?.error?.error ?? "unknown error"}`
+            : tally
+              ? resultTallyLabel(tally)
+              : "Done"
+        }
       </span>
       ${
         failed &&

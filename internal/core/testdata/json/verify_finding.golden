@@ -6,5 +6,6 @@
   "note": "recorded version does not match effective",
   "recorded": "1.2.2",
   "effective": "1.2.3",
-  "version": "1.2.3"
+  "version": "1.2.3",
+  "fixable": true
 }

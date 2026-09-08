@@ -357,6 +357,39 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileApplyPlanRequest{Profile: "modded"},
 		},
 		{
+			// #332's profile-import halves: the exported document arrives
+			// as TEXT (the SPA reads the picked file and posts its
+			// contents), and the apply half is core.ProfileImportOptions'
+			// three fields - `lmm profile import`'s own flags.
+			"profile_import_plan_request",
+			profileImportPlanRequest{Data: "name: survival\ngame_id: g1\nmods: []\n"},
+		},
+		{
+			"profile_import_apply_request",
+			profileImportApplyRequest{Install: true, Force: true, NoInstall: true},
+		},
+		{
+			// #332's one-member profile body, shared by POST
+			// /api/v1/profiles (the name to create) and POST
+			// /api/v1/profiles/{name}/rename (the name to rename TO).
+			"profile_name_request",
+			profileNameRequest{Name: "survival"},
+		},
+		{
+			// #332's reorder request: the new load order as the same mod
+			// identifiers `lmm profile reorder` takes, lowest priority
+			// first (api_profiles.go).
+			"profile_reorder_request",
+			profileReorderRequest{IDs: []string{"fake:m2", "fake:m1"}},
+		},
+		{
+			// #332's per-finding Repair: `lmm verify --mod <id>`'s own
+			// filter, set on both halves of the flow from this one request
+			// (kind_verify_fix.go).
+			"verify_fix_plan_request",
+			verifyFixPlanRequest{ModFilter: "42"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",

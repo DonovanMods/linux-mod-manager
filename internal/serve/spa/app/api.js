@@ -59,6 +59,7 @@ export function scoped(path, { game, profile } = {}) {
 
 export const get = (path) => request("GET", path);
 export const post = (path, body) => request("POST", path, body);
+export const del = (path) => request("DELETE", path);
 
 /**
  * Computes a mutation's plan and returns {plan_id, kind, plan}. The plan
@@ -150,3 +151,64 @@ export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
   post(scoped(`${modPath(sourceID, modID)}/update-policy`, context), {
     policy,
   });
+
+// profilePath builds one profile's /api/v1/profiles/{name} base path -
+// shared by every named-profile route below (api_profiles.go's own doc
+// comment: the profile is named in the PATH, never ?profile=).
+function profilePath(name) {
+  return `/api/v1/profiles/${encodeURIComponent(name)}`;
+}
+
+/** Reads the game's core.ProfileListing document (the profiles modal's own
+ * list - name, mod count, default marker) - only the game half of context
+ * resolves (api_profiles.go). */
+export const listProfiles = (context) =>
+  get(scoped("/api/v1/profiles", context));
+
+/** Creates a profile. Returns core.ProfileResult; 409 if the name is taken. */
+export const createProfile = (name, context) =>
+  post(scoped("/api/v1/profiles", context), { name });
+
+/** Deletes a profile. Returns core.ProfileResult (the profile as it stood
+ * immediately before the delete). */
+export const deleteProfile = (name, context) =>
+  del(scoped(profilePath(name), context));
+
+/** Renames a profile. Returns core.ProfileResult under the new name; 409 if
+ * newName is taken. */
+export const renameProfile = (name, newName, context) =>
+  post(scoped(`${profilePath(name)}/rename`, context), { name: newName });
+
+/** Marks a profile as the game's default. Returns core.ProfileResult,
+ * re-read after the write - callers should refetch listProfiles too, since
+ * SetDefault clears the flag on every OTHER profile server-side. */
+export const setDefaultProfile = (name, context) =>
+  post(scoped(`${profilePath(name)}/set-default`, context), {});
+
+/** The profile export download's URL - a plain GET the browser downloads
+ * via <a download>, never fetched through this module: the server sets
+ * Content-Disposition itself (api_profiles.go), so there is no blob to
+ * build and no filename to invent. */
+export const profileExportURL = (name, context) =>
+  scoped(`${profilePath(name)}/export`, context);
+
+/** Commits a new load order. Returns core.ProfileResult, re-read after the
+ * write, so profile.mods IS the persisted order. ids are lowest-priority
+ * first (api_profiles.go); a partial order is fine - what is left unnamed
+ * keeps its existing relative order after everything named. */
+export const reorderProfile = (name, ids, context) =>
+  post(scoped(`${profilePath(name)}/reorder`, context), { ids });
+
+/** Previews a proposed load order without committing it: GET
+ * /api/v1/conflicts?order=... - the same core.ConflictReport shape the
+ * unordered read returns, so the reorder modal renders it with the exact
+ * same component. order omitted/empty previews the profile's SAVED order
+ * (today's plain conflicts read). */
+export function conflictsForOrder(order, context) {
+  const url = new URL(
+    scoped("/api/v1/conflicts", context),
+    window.location.origin,
+  );
+  if (order && order.length > 0) url.searchParams.set("order", order.join(","));
+  return get(url.pathname + url.search);
+}

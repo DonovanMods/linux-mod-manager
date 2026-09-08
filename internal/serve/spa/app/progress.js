@@ -72,6 +72,7 @@ const mutationKindLabels = {
   switch: "Switching profile",
   profile_apply: "Applying profile",
   verify_fix: "Repairing",
+  profile_import: "Importing profile",
   enable: "Enabling",
   disable: "Disabling",
 };
@@ -186,6 +187,106 @@ export function jobStateLabel(summary, frame) {
     return working ? "running" : "queued";
   }
   return summary.state;
+}
+
+/**
+ * resultTally reads a finished BATCH job's own RESULT document for an
+ * honest outcome count (I3, unit 6 fix wave). A batch job's own `state` is
+ * "succeeded" the instant its Apply returns without an ERROR - true for
+ * "updates" (kind_updates.go's applyUpdatesKind) and "profile_import"
+ * (core.ApplyImport) even when EVERY item inside them failed, because both
+ * record per-item outcomes in their own result rather than returning one.
+ * Two result shapes exist on the wire today, kept SEPARATE (N1, unit 6
+ * re-review) rather than collapsed into one two-number tally: updates'
+ * `{applied: [...], failed: [...]}` becomes `{kind: "updates", applied,
+ * failed}`, and profile_import's `{installed, failed, skipped, warnings}`
+ * (core.ProfileImportResult) becomes `{kind: "profile_import", installed,
+ * failed, skipped, warnings}` - Skipped stays its OWN term rather than
+ * rolling into "failed", because core.ApplyImport sets it for the flow's
+ * own documented default (leaving the plan's "Download and install"
+ * checkbox unchecked - plan_profile_import.js's own note), not for
+ * anything that went wrong. A kind with neither shape (a plain deploy, an
+ * enable/disable/uninstall, a single install) returns null, which every
+ * caller below reads as "say Done, not a tally" - this is deliberately
+ * narrow rather than inferred from field COUNT, so it never misreads an
+ * unrelated result that happens to carry similarly-named fields
+ * (core.InstallResult's own `installed`/`failed` are ARRAYS, not this
+ * shape, and are left alone on purpose).
+ *
+ * An all-zero tally also returns null (N2, unit 6 re-review): a
+ * profile_import whose every mod was already installed (Plan.Installed,
+ * pending == 0) applies nothing and skips nothing, so its result is
+ * {installed: 0, failed: 0, skipped: 0} - tally-shaped, but with nothing
+ * honest left to report over the bare "Done" a job with no batch at all
+ * would otherwise read.
+ */
+export function resultTally(result) {
+  if (!result) return null;
+  if (Array.isArray(result.applied) && Array.isArray(result.failed)) {
+    const applied = result.applied.length;
+    const failed = result.failed.length;
+    if (applied === 0 && failed === 0) return null;
+    return { kind: "updates", applied, failed };
+  }
+  if (
+    typeof result.installed === "number" &&
+    typeof result.failed === "number"
+  ) {
+    const skipped = result.skipped ?? 0;
+    if (result.installed === 0 && result.failed === 0 && skipped === 0) {
+      return null;
+    }
+    return {
+      kind: "profile_import",
+      installed: result.installed,
+      failed: result.failed,
+      skipped,
+      warnings: Array.isArray(result.warnings) ? result.warnings.length : 0,
+    };
+  }
+  return null;
+}
+
+/** resultTallyLabel is resultTally's own words, read off a finished batch's
+ * real outcome - replacing the bare "Done" a job's mere `state` would
+ * otherwise print over a batch that applied nothing at all.
+ *
+ * "updates" keeps the original two-number "n applied / m failed" (N1, unit
+ * 6 re-review: this shape is untouched). profile_import instead reads "n
+ * installed · m skipped", since skipped is the flow's own documented
+ * outcome, not a failure - with " · k failed" appended only when failed is
+ * non-empty, and " · j warnings" appended only when the result actually
+ * carries any (core.ProfileImportResult.Warnings, one entry per failed
+ * mod). */
+export function resultTallyLabel(tally) {
+  if (tally.kind === "profile_import") {
+    const parts = [`${tally.installed} installed`, `${tally.skipped} skipped`];
+    if (tally.failed > 0) parts.push(`${tally.failed} failed`);
+    if (tally.warnings > 0) parts.push(`${tally.warnings} warnings`);
+    return parts.join(" · ");
+  }
+  return `${tally.applied} applied / ${tally.failed} failed`;
+}
+
+/**
+ * resultTallyTone says how alarmed the tally should look, in the same
+ * three words a job's own `state` already uses ("succeeded"/"failed") plus
+ * "mixed" for the case neither word is honest about: some items applied,
+ * some did not. Never "succeeded" when anything failed, and never "failed"
+ * outright when at least one item DID apply - a batch that partially
+ * worked is not the same failure as one that achieved nothing (the design's
+ * own "tone = failure when applied is empty; mixed tone otherwise").
+ *
+ * For profile_import (N1, unit 6 re-review) the same rule applies to
+ * `installed`, not to `skipped` - a fully successful import that installs
+ * nothing (the flow's own default, every pending mod counted as Skipped)
+ * has failed === 0 and is "succeeded", never "failed".
+ */
+export function resultTallyTone(tally) {
+  if (tally.failed === 0) return "succeeded";
+  const applied =
+    tally.kind === "profile_import" ? tally.installed : tally.applied;
+  return applied === 0 ? "failed" : "mixed";
 }
 
 /**

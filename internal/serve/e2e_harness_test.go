@@ -49,6 +49,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
@@ -697,6 +698,35 @@ func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
 		require.NoError(t, pm.AddMod(t.Context(), game.ID, "default",
 			domain.ModReference{SourceID: "fake", ModID: id, Version: "1.0"}))
 	}
+}
+
+// newE2EFixtureWithSlowUninstallAndFourMods is m6's own fixture (unit 6
+// gate review): four enabled, cached mods - wider than seedDeployableMods'
+// usual two, since the sequencing property this exists to pin needs a
+// window a concurrent poller can actually sample more than once or twice
+// in - plus an uninstall.before_each hook that sleeps briefly per mod, the
+// same deterministic lever newE2EFixtureWithSlowDeploy uses for install.
+func newE2EFixtureWithSlowUninstallAndFourMods(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	script := filepath.Join(t.TempDir(), "slow-uninstall-before-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 0.2\n"), 0o755))
+	f.Game.Hooks.Uninstall.BeforeEach = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	pm := f.Svc.NewProfileManager()
+	for _, m := range []struct{ id, name string }{
+		{"a", "Alpha Mod"}, {"b", "Beta Mod"}, {"c", "Gamma Mod"}, {"d", "Delta Mod"},
+	} {
+		seedInstalledMod(t, f.Svc, f.Game,
+			domain.Mod{ID: m.id, SourceID: "fake", Name: m.name, Version: "1.0", GameID: f.Game.ID},
+			true, map[string][]byte{m.id + ".pak": []byte(m.id)})
+		require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default",
+			domain.ModReference{SourceID: "fake", ModID: m.id, Version: "1.0"}))
+	}
+
+	return f
 }
 
 // csrfMetaPattern lifts the shell's CSRF token out of the served document -
@@ -1431,4 +1461,80 @@ func newE2EFixtureWithTwoWorkingSearchSources(t *testing.T) e2eFixture {
 		Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
 		BrowserErrors: browserErrors,
 	}
+}
+
+// --- issue 332 (Unit 6): reorder/profiles/health-repair/updates-batch. ---
+
+// newE2EFixtureWithReorderableConflict seeds two mods that both deploy the
+// same path ("shared.esp") - a real load-order conflict the reorder
+// modal's own preview can flip, deployed once up front so the "stale"
+// comparison the preview renders starts honest. X is added to the profile
+// BEFORE Y, so Y (the higher position) starts as the winner.
+func newE2EFixtureWithReorderableConflict(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "x", SourceID: "fake", Name: "Mod X", Version: "1.0", GameID: f.Game.ID}, true,
+		map[string][]byte{"shared.esp": []byte("X-content")})
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "y", SourceID: "fake", Name: "Mod Y", Version: "1.0", GameID: f.Game.ID}, true,
+		map[string][]byte{"shared.esp": []byte("Y-content")})
+
+	pm := f.Svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "x", Version: "1.0"}))
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "y", Version: "1.0"}))
+	_, err := f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	return f
+}
+
+// dragRowTo drags the reorder modal's row named fromText onto the row named
+// toText, via PLAIN mouse events - the same events reordermodal.js's own
+// mousedown/mouseenter/mouseup handlers are built on (its own header
+// comment explains why: native HTML5 Drag and Drop's dragstart/dragover
+// events are only ever raised by the browser's own gesture recognizer, and
+// a synthetic mousedown/mousemove/mouseup sequence - what this dispatches -
+// never triggers them). Three intermediate points, not just the two
+// endpoints: a single mousemove straight to the target can land inside the
+// target row without ever entering it from the handler's point of view in
+// some layouts, where a midpoint first primes the same mouseenter chain a
+// real drag produces.
+func dragRowTo(fromText, toText string) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		center := func(text string) (x, y float64, err error) {
+			var box []float64
+			js := fmt.Sprintf(`(() => {
+				const row = Array.from(document.querySelectorAll(".reorder-row")).find((r) => r.textContent.includes(%q));
+				const handle = row.querySelector(".reorder-row__handle");
+				const r = handle.getBoundingClientRect();
+				return [r.x + r.width / 2, r.y + r.height / 2];
+			})()`, text)
+			if err := chromedp.Evaluate(js, &box).Do(ctx); err != nil {
+				return 0, 0, err
+			}
+			return box[0], box[1], nil
+		}
+
+		fx, fy, err := center(fromText)
+		if err != nil {
+			return err
+		}
+		tx, ty, err := center(toText)
+		if err != nil {
+			return err
+		}
+		mid := func(a, b float64) float64 { return a + (b-a)/2 }
+
+		if err := input.DispatchMouseEvent(input.MousePressed, fx, fy).WithButton(input.Left).WithClickCount(1).Do(ctx); err != nil {
+			return err
+		}
+		for _, pt := range [][2]float64{{mid(fx, tx), mid(fy, ty)}, {tx, ty}} {
+			if err := input.DispatchMouseEvent(input.MouseMoved, pt[0], pt[1]).WithButton(input.Left).Do(ctx); err != nil {
+				return err
+			}
+		}
+		return input.DispatchMouseEvent(input.MouseReleased, tx, ty).WithButton(input.Left).WithClickCount(1).Do(ctx)
+	})
 }

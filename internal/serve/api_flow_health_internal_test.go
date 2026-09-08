@@ -17,6 +17,7 @@ package serve
 // the same facts from.
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -140,4 +141,137 @@ func TestFlowHealthFix_HealthyFilesAreNotClaimedAsRepaired(t *testing.T) {
 	assert.Equal(t, 1, repaired,
 		"exactly the stray's fix is a repair, not one repair row per healthy file")
 	assert.Equal(t, "fixed_stale_deployment", statusOf["stray.pak"])
+}
+
+// --- #332: the per-finding repair's mod filter, and the fixable flag ---
+
+// healthFilterFixture seeds two broken mods so a filtered repair has
+// something to leave alone: m1 keeps its healthy file and gains one with no
+// recorded checksum (a no_checksum row, repairable by redownload), and m2 is
+// installed with nothing in the cache at all (a missing row, likewise
+// repairable). A stray dangling deployment supplies the profile-scoped
+// stale_deployment row that no filter narrows.
+func healthFilterFixture(t *testing.T, s *Server, svc *core.Service, game *domain.Game) {
+	t.Helper()
+	ctx := t.Context()
+
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: fixtureSourceID, Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{deployFixtureFile, "Mods/extra.pak"},
+	}))
+	require.NoError(t, svc.SaveFileChecksum(ctx, fixtureSourceID, "m1", game.ID, "default", deployFixtureFile, "deadbeef"))
+	require.NoError(t, svc.SaveFileChecksum(ctx, fixtureSourceID, "m1", game.ID, "default", "Mods/extra.pak", ""))
+
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m2", SourceID: fixtureSourceID, Name: "Mod Two", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"Mods/two.pak"},
+	}))
+	require.NoError(t, svc.SaveFileChecksum(ctx, fixtureSourceID, "m2", game.ID, "default", "Mods/two.pak", "cafebabe"))
+
+	strayDeployment(t, s, game, "stray.pak")
+}
+
+// perModStatuses indexes a report's per-mod findings by "modID/fileID".
+func perModStatuses(findings []core.VerifyFinding) map[string]core.VerifyFinding {
+	out := make(map[string]core.VerifyFinding, len(findings))
+	for _, f := range findings {
+		if f.ModID == "" {
+			continue
+		}
+		out[f.ModID+"/"+f.FileID] = f
+	}
+	return out
+}
+
+// planVerifyReport plans a verify_fix with the given options body and
+// returns the plan document.
+func planVerifyReport(t *testing.T, s *Server, game *domain.Game, body string) core.VerifyReport {
+	t.Helper()
+	_, raw := planFlow(t, s, game, "verify_fix", body)
+	var resp struct {
+		Plan core.VerifyReport `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.NotNil(t, resp.Plan.Result)
+	return resp.Plan
+}
+
+// TestFlowVerifyFix_ModFilterNarrowsBothHalves is the per-finding *Repair*
+// the health card offers: the plan previews only the named mod's findings,
+// and the apply - which takes the filter from the STORED plan, never from a
+// second request - repairs only that mod.
+func TestFlowVerifyFix_ModFilterNarrowsBothHalves(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	healthFilterFixture(t, s, svc, game)
+
+	unfiltered := planVerifyReport(t, s, game, "")
+	require.Contains(t, perModStatuses(unfiltered.Result.Findings), "m2/Mods/two.pak",
+		"the unfiltered plan sees both mods")
+
+	filtered := planVerifyReport(t, s, game, `{"mod_filter":"m1"}`)
+	for key, f := range perModStatuses(filtered.Result.Findings) {
+		assert.Equal(t, "m1", f.ModID, "a filtered plan must preview only the named mod: %s", key)
+	}
+
+	j := runFlow(t, s, game, "verify_fix", `{"mod_filter":"m1"}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	report, ok := j.status().Result.(*core.VerifyReport)
+	require.True(t, ok, "the stored result must be the core document")
+	for key, f := range perModStatuses(report.Result.Findings) {
+		assert.Equal(t, "m1", f.ModID, "a filtered repair must act on only the named mod: %s", key)
+	}
+
+	// m2 was never touched: an unfiltered re-plan still reports it broken.
+	after := planVerifyReport(t, s, game, "")
+	assert.Equal(t, "missing", perModStatuses(after.Result.Findings)["m2/Mods/two.pak"].Status,
+		"a filtered repair must leave every other mod exactly as it was")
+}
+
+// TestFlowVerifyFix_PlanDisclosesWhichFindingsAreFixable is carry-in 1: the
+// plan document says, per finding, whether a repair would even be attempted
+// - so the health card can offer *Repair* on exactly the rows that have one.
+func TestFlowVerifyFix_PlanDisclosesWhichFindingsAreFixable(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	healthFilterFixture(t, s, svc, game)
+
+	plan := planVerifyReport(t, s, game, "")
+	byKey := perModStatuses(plan.Result.Findings)
+
+	require.Contains(t, byKey, "m1/Mods/extra.pak")
+	assert.Equal(t, "no_checksum", byKey["m1/Mods/extra.pak"].Status)
+	assert.True(t, byKey["m1/Mods/extra.pak"].Fixable, "--fix redownloads to populate a checksum")
+
+	require.Contains(t, byKey, "m2/Mods/two.pak")
+	assert.Equal(t, "missing", byKey["m2/Mods/two.pak"].Status)
+	assert.True(t, byKey["m2/Mods/two.pak"].Fixable, "--fix redownloads a missing cache entry")
+
+	require.Contains(t, byKey, "m1/"+deployFixtureFile)
+	assert.Equal(t, "ok", byKey["m1/"+deployFixtureFile].Status)
+	assert.False(t, byKey["m1/"+deployFixtureFile].Fixable, "a healthy row has nothing to repair")
+
+	var stale *core.VerifyFinding
+	for i, f := range plan.Result.Findings {
+		if f.Status == "stale_deployment" {
+			stale = &plan.Result.Findings[i]
+		}
+	}
+	require.NotNil(t, stale, "the stray deployment must be reported")
+	assert.True(t, stale.Fixable, "convergence removes a stale deployment under --fix")
+}
+
+// TestFlowVerifyFix_ModFilterRejectsUnknownMembers: the request stays
+// strictly decoded, so a misspelled option is a 400 rather than a silently
+// unfiltered repair of the whole profile.
+func TestFlowVerifyFix_ModFilterRejectsUnknownMembers(t *testing.T) {
+	s, _, game := newFlowFixtureServer(t)
+
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/verify_fix", game), `{"mod_filtr":"m1"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }

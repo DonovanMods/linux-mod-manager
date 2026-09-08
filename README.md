@@ -806,11 +806,34 @@ hatch for heavier browsing: source badges, download counts, summaries,
 category/source filters, sort, and real pagination. Installing that hits a
 file already on disk from another mod surfaces the conflict right in the
 confirm flow's activity entry, with a live "Overwrite?" that re-runs the
-install accepting it. **Deploy, Enable/Disable, Uninstall, per-mod Update,
-Rollback, and Search + Install** are wired end to end. The remaining
-actions (batch update, reorder, profiles, health repair, admin) are
-present but disabled, each waiting on its own unit; the CLI does all of
-them today.
+install accepting it.
+
+Unit 6 landed the modal/batch surfaces: the **reorder modal**, reachable
+from the library's own "Reorder…" or any Conflicts-card row's "Resolve…"
+(which opens it already scrolled to that row's own contested file) — drag
+the handle, or use the ↑/↓/First/Last buttons, with a live "current vs
+proposed winner" preview per contested path (`GET /api/v1/conflicts?order=`,
+debounced as you move rows) before Save commits it; the **profiles modal**
+("Manage profiles…" in the top bar) — list, create, rename, delete and
+set-default inline (no nested confirm dialog), export a profile as a real
+download, and import one through the confirm-plan framework's own preview
+of what would install, need re-downloading, or is missing; the **Health
+card**'s per-finding Repair (only offered where a finding is actually
+fixable — an unfixable row now says why: nothing to check it against,
+nothing to repair it with, locked to a version, or a conversion that only a
+reinstall retries) alongside "Repair all"; the **Updates card**'s batch —
+tick rows, drop any before confirming, and apply the rest through a
+renderer built for a batch rather than one mutation; and the **library's
+own batch bar** (multi-select → Enable/Disable/Uninstall/Update, each
+sequenced one job at a time) plus the row-level live enabled toggle and a
+⋯ menu (Update/Uninstall/Lock-Unlock/Reorder-here). A batch's own result is
+read honestly rather than through its bare job state — "3 applied / 1
+failed" where core reports the items it could not update or import, tallied
+in the same place a bare "Done" used to sit unconditionally. **Deploy,
+Enable/Disable, Uninstall, per-mod Update, Rollback, Search + Install,
+Reorder, Profiles, Health repair, and the Updates/Library batch surfaces**
+are all wired end to end; only server-side admin (source auth, game
+management) remains CLI-only, waiting on a later unit.
 
 ### URLs
 
@@ -851,9 +874,18 @@ GET  /api/v1/mods/{source}/{id}/versions
 GET  /api/v1/search?q=&page=&page_size=&limit=
 GET  /api/v1/updates
 GET  /api/v1/profiles
+GET  /api/v1/profiles/{name}/export
 GET  /api/v1/health
-GET  /api/v1/conflicts
+GET  /api/v1/conflicts?order=
 ```
+
+`GET /api/v1/conflicts?order=` is the reorder preview: a comma-separated
+list of mod ids (`source:modid`, or a bare mod id where it is unambiguous)
+answers "which mod would win each contested path under THIS load order",
+from the same rule a real reorder applies. Leaving it off describes the
+order the profile currently holds. `GET /api/v1/profiles/{name}/export`
+serves the same document `lmm profile export --json` prints, as a
+downloadable attachment.
 
 Most mutations run as a Plan, then a background job:
 
@@ -871,6 +903,26 @@ the UI's activity tray is built on:
 GET  /api/v1/jobs               -> every retained job, newest first
 GET  /api/v1/events             -> Server-Sent Events: every job's lifecycle
 ```
+
+Profile management is the other set of synchronous mutations - a create, a
+delete, a set-default, a rename and a reorder each write once with nothing
+to preview, so like lock/policy they answer immediately with the same
+document their `lmm profile ...  --json` twin prints:
+
+```text
+POST   /api/v1/profiles                     {"name"}   -> the profile created
+DELETE /api/v1/profiles/{name}                         -> the profile deleted
+POST   /api/v1/profiles/{name}/rename       {"name"}   -> under its new name
+POST   /api/v1/profiles/{name}/set-default             -> the new default
+POST   /api/v1/profiles/{name}/reorder      {"ids"}    -> the new load order
+```
+
+The profile is named in the path rather than taken from `?profile=`: these
+routinely act on a profile other than the selected one. Profile IMPORT is
+the exception that stays a plan (`POST /api/v1/plans/profile_import`,
+body `{"data": "<the exported document>"}`), because it has a real preview:
+which of its mods are already installed, which need re-downloading and which
+are missing entirely.
 
 (Enable/disable are an exception: with no options and nothing to preview,
 they skip the plan step entirely — `POST /api/v1/mods/{source}/{id}/enable`
@@ -996,7 +1048,7 @@ shows up as a diff in review.
 | `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                                                                                                  |
 | `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                                                                                                 |
 | `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count, page?, page_size?, has_more?}` (the last three are omitted unless a caller pages — `lmm serve`'s search page does, the CLI's single-page call doesn't) |
-| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`                                                                                                                                                                |
+| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`; each finding carries `fixable` when `verify --fix` would attempt a repair for it                                                                              |
 | `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                                                                                          |
 | `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                                                                                       |
 | `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                       |
@@ -1012,25 +1064,25 @@ shows up as a diff in review.
 Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
 that run would have applied:
 
-| Command                                  | Document                                                                                                  |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `lmm install`                            | `core.InstallResult` — `{installed[], skipped[], failed[], …}`                                            |
-| `lmm import <archive>`                   | `core.ImportArchiveResult` / `core.ImportArchivePlan` under `--dry-run` (conflicts need `--force`, above) |
-| `lmm import` (scan)                      | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`                                             |
-| `lmm import --dry-run` (scan)            | `core.AdoptPlan`                                                                                          |
-| `lmm deploy`                             | `core.DeployResult` / `core.DeployPlan` under `--dry-run`                                                 |
-| `lmm uninstall <mod-id>`                 | `core.UninstallResult` / `core.UninstallPlan`                                                             |
-| `lmm purge`                              | `core.PurgeResult` / `core.PurgePlan`                                                                     |
-| `lmm profile apply`                      | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                       |
-| `lmm profile switch <name>`              | `core.SwitchResult` / `core.SwitchPlan`                                                                   |
-| `lmm profile sync`                       | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                         |
-| `lmm profile import <file>`              | `core.ProfileImportResult`                                                                                |
-| `lmm profile create/delete/reorder`      | `core.ProfileResult` — `{profile{…}}`                                                                     |
-| `lmm mod enable/disable`                 | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                               |
-| `lmm mod lock/unlock/set-update/convert` | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                             |
-| `lmm mod edit <mod-id>`                  | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                    |
-| `lmm game detect --all` / `--select`     | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`                                             |
-| `lmm game set-default` / `clear-default` | `core.SettingsResult` — `{default_game}`                                                                  |
+| Command                                    | Document                                                                                                  |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `lmm install`                              | `core.InstallResult` — `{installed[], skipped[], failed[], …}`                                            |
+| `lmm import <archive>`                     | `core.ImportArchiveResult` / `core.ImportArchivePlan` under `--dry-run` (conflicts need `--force`, above) |
+| `lmm import` (scan)                        | `core.AdoptResult` — `{adopted, skipped, failed, warnings[]}`                                             |
+| `lmm import --dry-run` (scan)              | `core.AdoptPlan`                                                                                          |
+| `lmm deploy`                               | `core.DeployResult` / `core.DeployPlan` under `--dry-run`                                                 |
+| `lmm uninstall <mod-id>`                   | `core.UninstallResult` / `core.UninstallPlan`                                                             |
+| `lmm purge`                                | `core.PurgeResult` / `core.PurgePlan`                                                                     |
+| `lmm profile apply`                        | `core.ProfileApplyResult` / `core.ProfileApplyPlan`                                                       |
+| `lmm profile switch <name>`                | `core.SwitchResult` / `core.SwitchPlan`                                                                   |
+| `lmm profile sync`                         | `core.ProfileSyncResult` / `core.ProfileSyncPlan`                                                         |
+| `lmm profile import <file>`                | `core.ProfileImportResult`                                                                                |
+| `lmm profile create/delete/rename/reorder` | `core.ProfileResult` — `{profile{…}}`                                                                     |
+| `lmm mod enable/disable`                   | `core.EnableResult` / `core.DisableResult` — `{changed, …}`                                               |
+| `lmm mod lock/unlock/set-update/convert`   | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                             |
+| `lmm mod edit <mod-id>`                    | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                    |
+| `lmm game detect --all` / `--select`       | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`                                             |
+| `lmm game set-default` / `clear-default`   | `core.SettingsResult` — `{default_game}`                                                                  |
 
 **`--json` never prompts.** Every confirmation has a flag that decides it
 (`-y`/`--yes`, or `--force` where that is the existing meaning); without it
@@ -1168,6 +1220,7 @@ under its issue number:
 | `lmm profile switch <name>`                        | Switch to a profile (installs missing mods)                                                                                                          |
 | `lmm profile switch <name> -y`                     | Skip the confirmation prompt; required under `--json`                                                                                                |
 | `lmm profile delete <name>`                        | Delete a profile                                                                                                                                     |
+| `lmm profile rename <old> <new>`                   | Rename a profile (its mods, load order, hooks, overrides and default status move with it)                                                            |
 | `lmm profile export <name>`                        | Export profile to YAML                                                                                                                               |
 | `lmm profile import <file>`                        | Import profile from YAML                                                                                                                             |
 | `lmm profile import <file> --force`                | Import and overwrite existing                                                                                                                        |

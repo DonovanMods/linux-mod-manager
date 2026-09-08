@@ -56,6 +56,22 @@ Examples:
 	RunE: runProfileDelete,
 }
 
+var profileRenameCmd = &cobra.Command{
+	Use:   "rename <old> <new>",
+	Short: "Rename a profile",
+	Long: `Rename a profile, moving its configuration and every record that names it.
+
+The profile's mods, load order, hooks, config overrides and default-profile
+status all move with it; nothing is re-downloaded and nothing already
+deployed to the game directory changes. Renaming onto a name another profile
+already uses is refused.
+
+Examples:
+  lmm profile rename default survival --game skyrim-se`,
+	Args: cobra.ExactArgs(2),
+	RunE: runProfileRename,
+}
+
 var profileSwitchCmd = &cobra.Command{
 	Use:   "switch <name>",
 	Short: "Switch to a different profile",
@@ -177,6 +193,7 @@ func init() {
 	profileCmd.AddCommand(profileListCmd)
 	profileCmd.AddCommand(profileCreateCmd)
 	profileCmd.AddCommand(profileDeleteCmd)
+	profileCmd.AddCommand(profileRenameCmd)
 	profileCmd.AddCommand(profileSwitchCmd)
 	profileCmd.AddCommand(profileExportCmd)
 	profileCmd.AddCommand(profileImportCmd)
@@ -318,6 +335,30 @@ func doProfileDelete(ctx context.Context, service *core.Service, game *domain.Ga
 	}
 
 	fmt.Printf("✓ Deleted profile: %s\n", name)
+	return nil
+}
+
+func runProfileRename(cmd *cobra.Command, args []string) error {
+	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+		return doProfileRename(ctx, service, game, args[0], args[1])
+	})
+}
+
+// doProfileRename renames oldName to newName through the gated core seam
+// (core.Service.RenameProfile), which moves the profile file and every DB
+// row keyed by profile as one completion chain.
+func doProfileRename(ctx context.Context, service *core.Service, game *domain.Game, oldName, newName string) error {
+	result, err := service.RenameProfile(ctx, game.ID, oldName, newName)
+	if err != nil {
+		return fmt.Errorf("renaming profile: %w", err)
+	}
+
+	// Ruling 15: the ProfileResult document - the profile under its new name.
+	if jsonOutput {
+		return emitJSON(result)
+	}
+
+	fmt.Printf("✓ Renamed profile: %s → %s\n", oldName, newName)
 	return nil
 }
 

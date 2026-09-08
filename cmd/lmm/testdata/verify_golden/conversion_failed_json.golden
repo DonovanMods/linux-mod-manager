@@ -23,13 +23,15 @@
         "mod_id": "bear-mount",
         "mod_name": "Bear Mount",
         "file_id": "exmodz-file-id",
-        "status": "no_checksum"
+        "status": "no_checksum",
+        "fixable": true
       },
       {
         "mod_id": "raw-pak-mod",
         "mod_name": "raw-pak-mod",
         "file_id": "modfile.pak",
-        "status": "no_checksum"
+        "status": "no_checksum",
+        "fixable": true
       }
     ],
     "issues": 0,

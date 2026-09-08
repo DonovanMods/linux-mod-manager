@@ -37,10 +37,10 @@
 // hidden - the row still names why) whenever the mod is locked, mirroring
 // what ApplyRollback/ApplyUpdate would refuse server-side anyway.
 
-import { html, useEffect, useState } from "../render.js";
+import { html, useEffect, useMemo, useState } from "../render.js";
 import { navigate, contextPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
-import { loadModJobHistory } from "../jobhistory.js";
+import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -460,6 +460,13 @@ function VersionsTable({
 function JobHistorySection({ state, sourceID, modID }) {
   const [history, setHistory] = useState({ status: "loading", jobs: [] });
 
+  // issue 330 carry-4 (unit 6): depend on the CANDIDATE set, not jobsIndex's
+  // own reference - see jobhistory.js#candidateJobKey's own doc comment.
+  const candidateKey = useMemo(
+    () => candidateJobKey(state.jobsIndex),
+    [state.jobsIndex],
+  );
+
   useEffect(() => {
     let cancelled = false;
     setHistory({ status: "loading", jobs: [] });
@@ -469,7 +476,7 @@ function JobHistorySection({ state, sourceID, modID }) {
     return () => {
       cancelled = true;
     };
-  }, [state.jobsIndex, sourceID, modID]);
+  }, [candidateKey, sourceID, modID]);
 
   return html`
     <section class="mod-page__section">
