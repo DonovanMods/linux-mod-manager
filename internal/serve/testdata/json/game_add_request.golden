@@ -1,0 +1,8 @@
+{
+  "source_id": "curseforge",
+  "identifier": "432",
+  "name": "Minecraft",
+  "game_id": "minecraft",
+  "install_path": "/games/minecraft",
+  "mod_path": "/games/minecraft/mods"
+}

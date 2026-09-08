@@ -420,6 +420,29 @@ func TestServeJSONGoldens(t *testing.T) {
 				Profiles: []string{"default", "modded"},
 			},
 		},
+		{
+			// #307/#333's game-add body: core.GameSpec's wire fields, so a
+			// core.GameSpecError's "field" member points straight at the
+			// input that produced it. game_id and mod_path are the two
+			// optional members - both populated here, since the golden's
+			// job is to pin every key's shape, not one plausible request.
+			"game_add_request",
+			gameAddRequest{
+				SourceID:    "curseforge",
+				Identifier:  "432",
+				Name:        "Minecraft",
+				GameID:      "minecraft",
+				InstallPath: "/games/minecraft",
+				ModPath:     "/games/minecraft/mods",
+			},
+		},
+		{
+			// The detect apply's body: which listing rows to add, named by
+			// 1-based index or slug (core.SelectDetectedGames resolves
+			// both, so the golden carries one of each).
+			"game_detect_select_request",
+			gameDetectSelectRequest{Select: []string{"1", "valheim"}},
+		},
 	}
 
 	for _, tc := range tests {

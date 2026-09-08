@@ -45,6 +45,15 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/profiles/{name}/rename", s.wrap(s.handleAPIProfileRename))
 	s.mux.Handle("POST /api/v1/profiles/{name}/set-default", s.wrap(s.handleAPIProfileSetDefault))
 	s.mux.Handle("POST /api/v1/profiles/{name}/reorder", s.wrap(s.handleAPIProfileReorder))
+	// The Setup surface's game half (api_games.go): the chooser's listing,
+	// the add form's catalog search and its write, and the Steam detect
+	// scan in its two halves. None is game-scoped - they are how a game
+	// comes to exist - so none resolves a ?game= selection.
+	s.mux.Handle("GET /api/v1/games", s.wrap(s.handleAPIGames))
+	s.mux.Handle("POST /api/v1/games", s.wrap(s.handleAPIGameAdd))
+	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
+	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))
+	s.mux.Handle("POST /api/v1/games/detect", s.wrap(s.handleAPIGameDetectApply))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
 	// The activity tray's index (api_activity.go). GET and POST on the same
