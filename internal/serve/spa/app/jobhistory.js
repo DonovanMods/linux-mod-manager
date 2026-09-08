@@ -49,15 +49,6 @@ function resultNamesMod(kind, result, sourceID, modID) {
 }
 
 /**
- * loadModJobHistory resolves jobsIndex to the FINISHED jobs that concerned
- * sourceID/modID, newest first (jobsIndex's own order) - one jobStatus
- * fetch per candidate (a non-running job whose kind is in
- * modHistoryKinds), run in parallel. A fetch that fails (the job was
- * evicted between the index read and this one, jobs.go's retention limit)
- * is dropped rather than thrown - a gap in history is honest, a blank page
- * over one missing job is not.
- */
-/**
  * candidateJobKey collapses jobsIndex to the one thing JobHistorySection's
  * effect (fullmodpage.js) actually depends on: WHICH finished
  * updates/rollback jobs exist, not jobsIndex's own array identity (issue
@@ -77,6 +68,15 @@ export function candidateJobKey(jobsIndex) {
     .join(",");
 }
 
+/**
+ * loadModJobHistory resolves jobsIndex to the FINISHED jobs that concerned
+ * sourceID/modID, newest first (jobsIndex's own order) - one jobStatus
+ * fetch per candidate (a non-running job whose kind is in
+ * modHistoryKinds), run in parallel. A fetch that fails (the job was
+ * evicted between the index read and this one, jobs.go's retention limit)
+ * is dropped rather than thrown - a gap in history is honest, a blank page
+ * over one missing job is not.
+ */
 export async function loadModJobHistory(jobsIndex, sourceID, modID) {
   const candidates = (jobsIndex ?? []).filter(
     (j) => modHistoryKinds.has(j.kind) && j.state !== "running",
