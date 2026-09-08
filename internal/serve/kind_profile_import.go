@@ -96,8 +96,19 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 	// PlanImport parses again for itself; a second parse of a small YAML
 	// document is cheaper than a plan API that cannot tell a bad upload
 	// from a broken server.
-	if _, err := s.svc.NewProfileManager().ParseProfile([]byte(req.Data)); err != nil {
+	//
+	// ParseProfile (config.ImportProfile) accepts any YAML mapping,
+	// nameless ones included - it never checks Name itself. A document
+	// with no name parses "successfully" into an empty-named profile that
+	// PlanImport would then plan and the job would necessarily fail at
+	// SaveProfile, so the empty name is refused here too: it is
+	// parseable YAML/JSON, but not a profile export (#332 M2).
+	parsed, err := s.svc.NewProfileManager().ParseProfile([]byte(req.Data))
+	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+	}
+	if parsed.Name == "" {
+		return nil, nil, fmt.Errorf("%w: the document has no profile name - it is not a profile export", errBadPlanRequest)
 	}
 
 	plan, err := s.svc.PlanImport(ctx, sel.Game, []byte(req.Data))

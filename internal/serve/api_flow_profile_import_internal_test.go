@@ -169,6 +169,10 @@ func TestFlowProfileImport_PlanRefusals(t *testing.T) {
 		{"empty data", `{"data":""}`},
 		{"unknown member", `{"data":"name: x","nope":1}`},
 		{"unparseable document", `{"data":"\t: not yaml ["}`},
+		// #332 M2: config.ImportProfile never checks Name, so a
+		// parseable-but-nameless mapping used to plan 200 and only fail
+		// once the job reached SaveProfile.
+		{"nameless document", `{"data":"foo: bar"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
