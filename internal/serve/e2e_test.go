@@ -3268,6 +3268,11 @@ func TestE2E_LibraryBatchBar_CancelKeepsTheSelectionAndReturnsFocus(t *testing.T
 
 	var activeAction string
 	f.runInBrowser(t,
+		// modal.js's own Escape listener is attached by an effect, which can
+		// lag the modal's own DOM appearance by a handful of animation
+		// frames in a headless browser (this suite's own established
+		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape).
+		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
 		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? document.activeElement?.tagName`, &activeAction),
@@ -3886,8 +3891,12 @@ func TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelec
 		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
 	)
 
-	// Cancel via Escape - the design's own "Cancel restores".
+	// Cancel via Escape - the design's own "Cancel restores". A settle
+	// before it (this suite's own established pattern against modal.js's
+	// effect-attached Escape listener lagging the DOM by a frame or two)
+	// even though the WaitVisible above already did real async work.
 	f.runInBrowser(t,
+		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
 		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
 	)
@@ -3957,8 +3966,11 @@ func TestE2E_ReorderModal_EscapeDiscardsTheEditOnReopen(t *testing.T) {
 	)
 	require.True(t, moved, `"Move Mod X to highest priority" must be found, enabled, and clicked`)
 
-	// Cancel via Escape ("Cancel restores" - design doc §Modals).
+	// Cancel via Escape ("Cancel restores" - design doc §Modals). A settle
+	// first - this suite's own established pattern against modal.js's
+	// effect-attached Escape listener lagging the DOM by a frame or two.
 	f.runInBrowser(t,
+		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
 		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
 	)
