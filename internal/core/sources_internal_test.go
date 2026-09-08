@@ -8,7 +8,6 @@ package core
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -156,85 +155,105 @@ func TestUnregisterSource_RefusesWhileAMutationHoldsTheGate(t *testing.T) {
 // could when app.DeleteSourceDefinition ran an ungated GamesUsingSource
 // before a separately-gated UnregisterSource.
 //
-// It races a real AddGame (which maps "demo") against a real
-// UnregisterSourceIfUnused rather than asserting one fixed interleaving,
-// because the whole point of gating both under the same slot is that
-// whichever wins the slot decides the outcome for BOTH callers - there is
-// no window left for a mapping to appear only to one of them:
-//   - AddGame's beginOp wins: the game gets added, and
-//     UnregisterSourceIfUnused - checking under the SAME gate slot AddGame
-//     just held - must see the mapping and refuse.
-//   - UnregisterSourceIfUnused's beginOp wins: nothing was mapped yet, so
-//     it removes the source; AddGame then finds no such source registered
-//     and fails on its own gated check (#333 Important #1), never landing
-//     a game that maps a source which no longer exists.
+// #333 fix-wave N1: the original version of this test raced a real AddGame
+// against a real UnregisterSourceIfUnused over 30 iterations and asserted
+// that BOTH branches (AddGame's beginOp wins / UnregisterSourceIfUnused's
+// beginOp wins) fired at least once - which made it load-bearing (it goes
+// RED when the in-use check is deleted) but also genuinely flaky: on this
+// machine AddGame has enough extra setup work before it reaches beginOp
+// that, run alone, its branch frequently never won across 30 attempts
+// (measured 4/12 alone, 2/6 file-scoped; only reliable under full-package
+// load). A flaky test cannot merge, so this forces both properties the old
+// test HOPED scheduling would demonstrate, deterministically:
 //
-// #333 Minor #10 (whole-branch gate review): asserting only "one of these
-// two branches happened" is not load-bearing, because removing the
-// in-use check steers EVERY run into the second branch regardless of
-// which beginOp call actually won - Unregister always succeeds once the
-// check is gone, so the mapping written by an add that ran first is
-// simply deleted out from under it too, landing on the exact same
-// "unregErr == nil" shape the second branch already asserts. 25 runs of
-// the pre-fix race against a tree with the check deleted came back
-// 25/25 on that branch. Racing the SAME goroutines runN times and
-// requiring that BOTH branches actually fire at least once closes that:
-// with the check present, real scheduling non-determinism produces both
-// outcomes across enough runs; with it removed, the first branch can
-// never fire again, and this test goes RED instead of silently staying
-// green under -race.
+//   - "mapped_before_the_gate_is_acquired" proves the check sees a mapping
+//     that was written (by a real, completed AddGame) before
+//     UnregisterSourceIfUnused ever ran - no race required, since
+//     gamesUsingSource always reads the live snapshot at check time.
+//   - "check_runs_inside_the_gate" proves the check cannot be pried apart
+//     from the gate that also serializes AddGame's write, using the
+//     unregisterSourceIfUnusedBeforeCheck test hook to pause
+//     UnregisterSourceIfUnused at the exact program point between
+//     acquiring the gate and running the check, then asserting - by a
+//     non-blocking send on the real semaphore, not a sleep - that the gate
+//     is held at that instant. That is the structural property the old
+//     app.DeleteSourceDefinition bug violated (an ungated check followed
+//     by a separately-gated delete): if the check ever moves outside the
+//     gate again, this assertion fails immediately, with no dependence on
+//     scheduler luck.
+//
+// Both subtests are fully deterministic: run alone, file-scoped, or under
+// -count=30, they cannot flake, and the first goes RED the moment the
+// in-use check is deleted (Unregister would then always succeed).
 func TestUnregisterSourceIfUnused_RefusesAGameMappedBetweenCheckAndDelete(t *testing.T) {
-	const runs = 30
-	var addWon, unregWon int
-
-	for i := 0; i < runs; i++ {
+	t.Run("mapped_before_the_gate_is_acquired", func(t *testing.T) {
 		svc := newSwapTestService(t)
 		svc.RegisterSource(&swapTestSource{id: "demo", name: "before"})
 		install := t.TempDir()
 
-		var addErr, unregErr error
-		var removed bool
+		_, err := svc.AddGame(context.Background(), GameSpec{
+			SourceID: "demo", Identifier: "g1", Name: "G1", InstallPath: install,
+		})
+		require.NoError(t, err, "the mapping must land before Unregister ever runs")
 
-		var wg sync.WaitGroup
-		wg.Add(2)
+		removed, err := svc.UnregisterSourceIfUnused(context.Background(), "demo")
+		require.Error(t, err, "a mapping that landed before the gate was acquired must still be seen")
+		var inUse *SourceInUseError
+		require.ErrorAs(t, err, &inUse)
+		assert.Equal(t, []string{"g1"}, inUse.Games)
+		assert.False(t, removed)
+
+		_, err = svc.GetSource("demo")
+		require.NoError(t, err, "a refused removal leaves the registry untouched")
+	})
+
+	t.Run("check_runs_inside_the_gate", func(t *testing.T) {
+		svc := newSwapTestService(t)
+		svc.RegisterSource(&swapTestSource{id: "demo", name: "before"})
+		install := t.TempDir()
+
+		gateHeld := make(chan struct{})
+		proceed := make(chan struct{})
+		unregisterSourceIfUnusedBeforeCheck = func() {
+			close(gateHeld)
+			<-proceed
+		}
+		t.Cleanup(func() { unregisterSourceIfUnusedBeforeCheck = nil })
+
+		unregDone := make(chan struct{})
+		var removed bool
+		var unregErr error
 		go func() {
-			defer wg.Done()
-			_, addErr = svc.AddGame(context.Background(), GameSpec{
-				SourceID: "demo", Identifier: "g1", Name: "G1", InstallPath: install,
-			})
-		}()
-		go func() {
-			defer wg.Done()
+			defer close(unregDone)
 			removed, unregErr = svc.UnregisterSourceIfUnused(context.Background(), "demo")
 		}()
-		wg.Wait()
 
-		_, getErr := svc.GetSource("demo")
-		if getErr == nil {
-			// AddGame's beginOp ran first: the mapping it wrote must be
-			// visible to the unregister that checked under the same gate
-			// afterwards.
-			addWon++
-			require.NoError(t, addErr)
-			require.Error(t, unregErr, "the mapping AddGame just wrote must not be missed")
-			var inUse *SourceInUseError
-			require.ErrorAs(t, unregErr, &inUse)
-			assert.Equal(t, []string{"g1"}, inUse.Games)
-			assert.False(t, removed)
-		} else {
-			// UnregisterSourceIfUnused's beginOp ran first: nothing was
-			// mapped yet, so it succeeded, and AddGame must then refuse -
-			// never park a game mapping a source that no longer exists.
-			unregWon++
-			require.NoError(t, unregErr)
-			assert.True(t, removed)
-			require.Error(t, addErr)
-			var specErr *GameSpecError
-			require.ErrorAs(t, addErr, &specErr)
-			assert.Equal(t, "source_id", specErr.Field)
+		<-gateHeld // Unregister has the gate and is paused just before the check.
+
+		// Prove the gate is actually held right now, structurally: the
+		// semaphore (capacity 1) must refuse a second sender. This is what
+		// would let a concurrent AddGame slip a mapping in during the old
+		// ungated-check-then-gated-delete bug; it must not be possible here.
+		select {
+		case svc.opSem <- struct{}{}:
+			t.Fatal("the op semaphore accepted a second holder while paused before the check - the check does not run inside the gate")
+		default:
 		}
-	}
 
-	assert.Positive(t, addWon, "AddGame's beginOp never won the gate across %d runs - this branch is untested", runs)
-	assert.Positive(t, unregWon, "UnregisterSourceIfUnused's beginOp never won the gate across %d runs - this branch is untested", runs)
+		close(proceed)
+		<-unregDone
+
+		require.NoError(t, unregErr)
+		assert.True(t, removed, "nothing was mapped while the gate was held, so the unused source is removed")
+
+		// The gate is released now: AddGame must find the source gone,
+		// never parking a game that maps a source which no longer exists.
+		_, err := svc.AddGame(context.Background(), GameSpec{
+			SourceID: "demo", Identifier: "g1", Name: "G1", InstallPath: install,
+		})
+		require.Error(t, err)
+		var specErr *GameSpecError
+		require.ErrorAs(t, err, &specErr)
+		assert.Equal(t, "source_id", specErr.Field)
+	})
 }

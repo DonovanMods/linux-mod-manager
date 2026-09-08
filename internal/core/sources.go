@@ -85,6 +85,15 @@ func (s *Service) gamesUsingSource(sourceID string) []string {
 	return ids
 }
 
+// unregisterSourceIfUnusedBeforeCheck, when non-nil, runs once inside
+// UnregisterSourceIfUnused after the gate is acquired but strictly before
+// the in-use check - a test-only synchronization point (#333 fix-wave N1)
+// letting a test force a specific interleaving against a concurrent
+// mutator (e.g. AddGame) instead of hoping -race scheduling produces one,
+// the way the probabilistic race test it replaced had to. Production
+// leaves this nil, so it costs the hot path one nil check.
+var unregisterSourceIfUnusedBeforeCheck func()
+
 // UnregisterSourceIfUnused removes the source registered under id, refusing
 // with *SourceInUseError when a configured game still maps it - id
 // unchanged either way. The check and the removal run under ONE beginOp,
@@ -100,6 +109,10 @@ func (s *Service) UnregisterSourceIfUnused(ctx context.Context, id string) (bool
 		return false, err
 	}
 	defer release()
+
+	if unregisterSourceIfUnusedBeforeCheck != nil {
+		unregisterSourceIfUnusedBeforeCheck()
+	}
 
 	if games := s.gamesUsingSource(id); len(games) > 0 {
 		return false, &SourceInUseError{SourceID: id, Games: games}
