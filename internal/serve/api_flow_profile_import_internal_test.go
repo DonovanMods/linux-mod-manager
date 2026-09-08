@@ -173,6 +173,16 @@ func TestFlowProfileImport_PlanRefusals(t *testing.T) {
 		// parseable-but-nameless mapping used to plan 200 and only fail
 		// once the job reached SaveProfile.
 		{"nameless document", `{"data":"foo: bar"}`},
+		// #332 M2 sibling (unit 6 re-review): config.ImportProfile never
+		// checks GameID either, so a document with a name but no game_id -
+		// or one for a DIFFERENT game than the one selected - used to plan
+		// 200 too, and only fail once the job reached SaveProfile
+		// ("importing profile: invalid game ID: value is empty"), or worse,
+		// silently save under the WRONG game's directory (ImportWithOptions
+		// saves profile.GameID from the document verbatim, never the
+		// selected game's own ID).
+		{"missing game_id", `{"data":"name: x"}`},
+		{"mismatched game_id", `{"data":"name: x\ngame_id: some-other-game"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

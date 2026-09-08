@@ -110,6 +110,22 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 	if parsed.Name == "" {
 		return nil, nil, fmt.Errorf("%w: the document has no profile name - it is not a profile export", errBadPlanRequest)
 	}
+	// #332 M2 sibling (unit 6 re-review): ParseProfile never checks GameID
+	// either. A document naming no game ID plans 200 and only fails once
+	// the job reaches SaveProfile ("importing profile: invalid game ID:
+	// value is empty" - validateProfilePath, config/profiles.go). Worse, a
+	// document naming a DIFFERENT game's ID doesn't fail at all: ApplyImport
+	// (via ProfileManager.ImportWithOptions) saves profile.GameID from the
+	// document verbatim, never sel.Game.ID, so the import would silently
+	// land under the wrong game's directory - never even touching the game
+	// the caller selected. Both are refused here, the same way the nameless
+	// case above is.
+	if parsed.GameID == "" {
+		return nil, nil, fmt.Errorf("%w: the document has no game ID - it is not a profile export", errBadPlanRequest)
+	}
+	if parsed.GameID != sel.Game.ID {
+		return nil, nil, fmt.Errorf("%w: the document is for game %q, not the selected game %q", errBadPlanRequest, parsed.GameID, sel.Game.ID)
+	}
 
 	plan, err := s.svc.PlanImport(ctx, sel.Game, []byte(req.Data))
 	if err != nil {
