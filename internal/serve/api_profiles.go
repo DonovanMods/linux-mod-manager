@@ -165,13 +165,16 @@ func (s *Server) decodeProfileName(w http.ResponseWriter, r *http.Request) (stri
 
 // handleAPIProfileCreate answers POST /api/v1/profiles with the
 // core.ProfileResult document `lmm profile create --json` emits - the
-// profile as created, which is empty apart from its identity.
+// profile as created, which is empty apart from its identity, via the
+// gated core.Service.CreateProfile so a create cannot interleave with a
+// deploy or install racing to write the same game's state (#332 I1).
 //
 // A name another profile already uses answers 409: it is neither bad input
 // (the request was well formed and the name is legal) nor a missing thing,
 // but a collision with state the caller could not have known about. The
-// check is explicit rather than inferred from Create's untyped "profile
-// already exists" error, so the status never depends on error wording.
+// collision is detected INSIDE the gate as the typed core.ErrProfileExists
+// (#332 M6), so the status never depends on an untyped error's wording or
+// on an un-gated pre-check that could itself race the write.
 func (s *Server) handleAPIProfileCreate(w http.ResponseWriter, r *http.Request) {
 	name, ok := s.decodeProfileName(w, r)
 	if !ok {
@@ -182,19 +185,12 @@ func (s *Server) handleAPIProfileCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx := r.Context()
-	pm := s.svc.NewProfileManager()
-	if _, err := pm.Get(ctx, sel.Game.ID, name); err == nil {
-		s.writeAPIError(w, http.StatusConflict, fmt.Errorf("profile already exists: %s", name))
-		return
-	}
-
-	profile, err := pm.Create(ctx, sel.Game.ID, name)
+	result, err := s.svc.CreateProfile(r.Context(), sel.Game.ID, name)
 	if err != nil {
 		s.writeAPIError(w, s.profileErrorStatus(err), err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, &core.ProfileResult{Profile: *profile})
+	s.writeJSON(w, http.StatusOK, result)
 }
 
 // handleAPIProfileDelete answers DELETE /api/v1/profiles/{name} with the
@@ -205,6 +201,12 @@ func (s *Server) handleAPIProfileCreate(w http.ResponseWriter, r *http.Request) 
 // then names it and nothing else - but unlike the CLI, a profile that is
 // not there at all is a 404 rather than a plain error, because a
 // name-in-the-path route has a status for exactly that.
+//
+// Goes through the gated core.Service.DeleteProfile (#332 I1): unlike the
+// CLI, `lmm serve` runs Applies in background goroutines, so an un-gated
+// delete could remove a profile's file while a deploy job for that very
+// profile is mid-flight, leaving deployed_files rows for a profile that no
+// longer exists.
 func (s *Server) handleAPIProfileDelete(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveGameAPISelection(w, r)
 	if !ok {
@@ -212,25 +214,21 @@ func (s *Server) handleAPIProfileDelete(w http.ResponseWriter, r *http.Request) 
 	}
 	name := r.PathValue("name")
 
-	ctx := r.Context()
-	pm := s.svc.NewProfileManager()
-	deleted := domain.Profile{Name: name, GameID: sel.Game.ID}
-	if p, err := pm.Get(ctx, sel.Game.ID, name); err == nil {
-		deleted = *p
-	}
-
-	if err := pm.Delete(ctx, sel.Game.ID, name); err != nil {
+	result, err := s.svc.DeleteProfile(r.Context(), sel.Game.ID, name)
+	if err != nil {
 		s.writeAPIError(w, s.profileErrorStatus(err), err)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, &core.ProfileResult{Profile: deleted})
+	s.writeJSON(w, http.StatusOK, result)
 }
 
 // handleAPIProfileSetDefault answers POST /api/v1/profiles/{name}/set-default
 // with the ProfileResult of the profile that is now the default - re-read
 // after the write, so the document carries the is_default flag as
 // persisted rather than as requested. SetDefault clears the flag on every
-// other profile itself.
+// other profile itself. Goes through the gated core.Service.
+// SetDefaultProfile so it cannot interleave with a deploy or install
+// racing to write the same game's profiles (#332 I1).
 func (s *Server) handleAPIProfileSetDefault(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveGameAPISelection(w, r)
 	if !ok {
@@ -238,19 +236,12 @@ func (s *Server) handleAPIProfileSetDefault(w http.ResponseWriter, r *http.Reque
 	}
 	name := r.PathValue("name")
 
-	ctx := r.Context()
-	pm := s.svc.NewProfileManager()
-	if err := pm.SetDefault(ctx, sel.Game.ID, name); err != nil {
+	result, err := s.svc.SetDefaultProfile(r.Context(), sel.Game.ID, name)
+	if err != nil {
 		s.writeAPIError(w, s.profileErrorStatus(err), err)
 		return
 	}
-
-	profile, err := pm.Get(ctx, sel.Game.ID, name)
-	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
-		return
-	}
-	s.writeJSON(w, http.StatusOK, &core.ProfileResult{Profile: *profile})
+	s.writeJSON(w, http.StatusOK, result)
 }
 
 // handleAPIProfileRename answers POST /api/v1/profiles/{name}/rename with
@@ -259,7 +250,9 @@ func (s *Server) handleAPIProfileSetDefault(w http.ResponseWriter, r *http.Reque
 // row keyed by profile as one completion chain (core/profile.go's Rename).
 //
 // An occupied target name is a 409, the same classification the create
-// route gives the same collision.
+// route gives the same collision - detected INSIDE the gate as the typed
+// core.ErrProfileExists (#332 M6), never by an un-gated pre-check that
+// could itself race the write.
 func (s *Server) handleAPIProfileRename(w http.ResponseWriter, r *http.Request) {
 	newName, ok := s.decodeProfileName(w, r)
 	if !ok {
@@ -271,13 +264,7 @@ func (s *Server) handleAPIProfileRename(w http.ResponseWriter, r *http.Request) 
 	}
 	name := r.PathValue("name")
 
-	ctx := r.Context()
-	if _, err := s.svc.NewProfileManager().Get(ctx, sel.Game.ID, newName); err == nil {
-		s.writeAPIError(w, http.StatusConflict, fmt.Errorf("profile already exists: %s", newName))
-		return
-	}
-
-	result, err := s.svc.RenameProfile(ctx, sel.Game.ID, name, newName)
+	result, err := s.svc.RenameProfile(r.Context(), sel.Game.ID, name, newName)
 	if err != nil {
 		s.writeAPIError(w, s.profileErrorStatus(err), err)
 		return
@@ -314,14 +301,16 @@ func (s *Server) handleAPIProfileExport(w http.ResponseWriter, r *http.Request) 
 }
 
 // profileErrorStatus classifies a profile CRUD failure: a profile that is
-// not there answers 404, a name no profile file could carry answers 400,
-// and anything else is a genuine I/O failure (500). "Already exists" never
-// reaches here - both routes that can hit it check for it explicitly, so
-// the 409 never depends on an untyped error's wording.
+// not there answers 404, a name already taken (core.ErrProfileExists,
+// detected inside the gated Create/Rename seams - #332 M6) answers 409, a
+// name no profile file could carry answers 400, and anything else is a
+// genuine I/O failure (500).
 func (s *Server) profileErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, domain.ErrProfileNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, core.ErrProfileExists):
+		return http.StatusConflict
 	case errors.Is(err, domain.ErrInvalidProfileName), errors.Is(err, domain.ErrInvalidGameID):
 		return http.StatusBadRequest
 	default:

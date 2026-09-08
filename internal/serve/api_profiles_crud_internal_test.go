@@ -7,8 +7,10 @@ package serve
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -84,6 +86,49 @@ func TestAPIProfileDelete_ReportsThePreDeletionProfile(t *testing.T) {
 
 	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, switchTargetProfile)
 	require.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+// TestAPIProfileDelete_QueuesBehindAnInFlightDeploy pins #332 I1's headline
+// claim through the real handler and the real job registry, mirroring
+// jobs_internal_test.go's TestJobRegistry_SecondJobQueuesBehindCoreMutation
+// Slot: `lmm serve` runs Applies in background goroutines, so a click that
+// deletes a profile must queue behind whatever mutation - a deploy included
+// - currently holds core's single beginOp slot, never race it. The
+// blocking mutation here is an install (the same injectable hold point
+// jobs_internal_test.go uses), which is representative of a deploy for
+// this purpose: beginOp is one service-wide slot that does not distinguish
+// by operation kind, so anything that holds it blocks DeleteProfile
+// identically.
+func TestAPIProfileDelete_QueuesBehindAnInFlightDeploy(t *testing.T) {
+	s, svc, game := newProfilesFixtureServer(t)
+	src := newBlockingSource()
+	svc.RegisterSource(src)
+
+	plan, err := svc.PlanInstall(t.Context(), game, activeProfile, blockingSourceID, "m2", false)
+	require.NoError(t, err)
+
+	blockerID, err := s.jobs.Start("deploy", func(ctx context.Context, sink core.EventSink) (any, error) {
+		return svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, sink)
+	})
+	require.NoError(t, err)
+	waitFor(t, src.reached, "the blocking mutation to reach the download")
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- doAPI(s, http.MethodDelete, scoped("/api/v1/profiles/"+switchTargetProfile, game), "")
+	}()
+	requireNotYet(t, done, "the delete while another mutation holds core's mutation slot")
+
+	close(src.release)
+
+	blockerJob, ok := s.jobs.job(blockerID)
+	require.True(t, ok)
+	waitFor(t, blockerJob.done(), "the blocking mutation to finish")
+
+	rec := <-done
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	_, err = svc.NewProfileManager().Get(t.Context(), game.ID, switchTargetProfile)
+	require.ErrorIs(t, err, domain.ErrProfileNotFound, "the delete must have gone through once the slot freed")
 }
 
 // TestAPIProfileDelete_UnknownProfileAnswers404

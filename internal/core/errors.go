@@ -117,6 +117,15 @@ func (e *GameDetectPartialError) Unwrap() error { return e.Err }
 // failure - for a frontend's error envelope's "details" field.
 func (e *GameDetectPartialError) Details() any { return e.Result }
 
+// ErrProfileExists is returned by ProfileManager.Create and ProfileManager.
+// Rename when the target profile name is already taken - either a profile
+// file already answers to it, or (Rename only) DB rows still name it after
+// a Delete that only ever removed the file (ProfileManager.Delete's own doc
+// comment; see refuseOccupiedName). It is detected INSIDE the gated
+// CreateProfile/RenameProfile seams, before either writes anything, so a
+// frontend's 409 never depends on an untyped error's wording (#332 M6).
+var ErrProfileExists = errors.New("profile already exists")
+
 // ErrConfirmationRequired is returned by a frontend-facing entry point that
 // would have to prompt but cannot - the CLI's --json mode, which never reads
 // stdin (Ruling 2). The decision must come from a flag instead.

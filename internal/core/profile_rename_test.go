@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -209,6 +210,133 @@ func TestProfileRename_AlreadyCancelledContextWritesNothing(t *testing.T) {
 	_, err = pm.Get(fresh, game.ID, "survival")
 	require.ErrorIs(t, err, domain.ErrProfileNotFound)
 	require.NoFileExists(t, filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles", "survival.yaml"))
+}
+
+// TestProfileRename_OrphanedRowsUnderTheTargetNameAreRefused reproduces the
+// review's exact scenario (#332 I2, unit6a-review.md's "orphaned rows under
+// the deleted name" repro): ProfileManager.Delete only ever removes the
+// profile FILE (its own doc comment), so a profile deleted while it still
+// held installed_mods rows leaves those rows behind under its name. Before
+// the fix, renaming a DIFFERENT profile onto that freed-looking name hit
+// installed_mods' UNIQUE constraint INSIDE db.RenameProfile, AFTER
+// config.SaveProfile had already written the new file - leaving a
+// duplicate profile the caller's error return gave no hint of.
+// refuseOccupiedName now checks the DB too, so the rename is refused
+// before anything is written at all.
+func TestProfileRename_OrphanedRowsUnderTheTargetNameAreRefused(t *testing.T) {
+	svc, game := renameFixture(t)
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "default"))
+
+	// A second profile, "survival", holding its own installed mod - then
+	// deleted, leaving its installed_mods (and installed_mod_files/
+	// deployed_files) rows orphaned under a name no profile file claims.
+	// seedNamedInstalledMod hardcodes ProfileName "default", so the row is
+	// written directly here instead.
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "modY", SourceID: "src", Name: "Mod Y", Version: "1.0", GameID: game.ID},
+		ProfileName:  "survival",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	seedProfileWithMod(t, svc, game.ID, "survival", "src", "modY", "1.0")
+	require.NoError(t, pm.Delete(ctx, game.ID, "survival"))
+
+	orphaned, err := svc.GetInstalledMods(ctx, game.ID, "survival")
+	require.NoError(t, err)
+	require.Len(t, orphaned, 1, "the repro's premise: rows really do survive the delete")
+
+	_, err = pm.Rename(ctx, game.ID, "default", "survival")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, core.ErrProfileExists)
+
+	// Nothing moved: exactly one profile exists, still under its original
+	// name, still carrying its mod and its default flag - no duplicate.
+	names, err := pm.ListNames(ctx, game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"default"}, names, "the profile set must be unchanged")
+
+	profile, err := pm.Get(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, profile.Mods, 1)
+	assert.True(t, profile.IsDefault, "the refusal must not have disturbed the default flag")
+}
+
+// installUpdateBlockingTrigger opens a second raw connection to dbPath and
+// installs a BEFORE UPDATE trigger that aborts every UPDATE on table -
+// installDeleteBlockingTrigger's (purge_test.go) UPDATE-side sibling, used
+// here to force db.RenameProfile's very first UPDATE to fail
+// deterministically. A same-table orphaned row would also fail that UPDATE
+// via its UNIQUE constraint, but refuseOccupiedName already refuses those
+// before Rename ever writes (see the test above) - this is the seam for
+// the step-2 failure the DB precheck cannot see coming.
+func installUpdateBlockingTrigger(t *testing.T, dbPath, table string) {
+	t.Helper()
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	_, err = conn.Exec(`
+		CREATE TRIGGER block_` + table + `_updates
+		BEFORE UPDATE ON ` + table + `
+		BEGIN
+			SELECT RAISE(ABORT, 'blocked for test');
+		END;
+	`)
+	require.NoError(t, err)
+}
+
+// TestProfileRename_Step2Failure_CompensatesByRemovingTheNewFile is #332
+// I2's step-2 failure-injection test: before the fix, a step-2 (DB)
+// failure left the profile file Rename had ALREADY written under the new
+// name in place, alongside the untouched old one - a duplicate profile the
+// caller's error return gave no hint of. The fix removes the file step 1
+// wrote when step 2 fails, so the world looks exactly like the rename
+// never started, and the error names what was compensated.
+func TestProfileRename_Step2Failure_CompensatesByRemovingTheNewFile(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	// The trigger below only fires for an UPDATE that actually touches a
+	// row, so db.RenameProfile's UPDATE on installed_mods needs one to
+	// touch.
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "modX", SourceID: "src", Name: "Mod X", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	installUpdateBlockingTrigger(t, filepath.Join(dataDir, "lmm.db"), "installed_mods")
+
+	_, err = pm.Rename(context.Background(), game.ID, "default", "survival")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "compensated", "the error must name what was compensated")
+	t.Logf("rename error: %v", err)
+
+	profilesDir := filepath.Join(svc.ConfigDir(), "games", game.ID, "profiles")
+	require.NoFileExists(t, filepath.Join(profilesDir, "survival.yaml"),
+		"a step-2 failure must remove the file step 1 wrote")
+	require.FileExists(t, filepath.Join(profilesDir, "default.yaml"),
+		"the source profile must be untouched")
+
+	profile, err := pm.Get(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "default", profile.Name)
+
+	names, err := pm.ListNames(context.Background(), game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"default"}, names, "no duplicate profile may survive the failed rename")
 }
 
 // TestServiceRenameProfile_ReturnsTheProfileResultDocument covers the gated

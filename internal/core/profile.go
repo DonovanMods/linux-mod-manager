@@ -11,12 +11,12 @@ import (
 )
 
 // ProfileResult reports the profile a profile-management mutation acted on:
-// the profile as it stands AFTER the mutation for `lmm profile create` and
-// `lmm profile reorder`, and as it stood immediately BEFORE it for `lmm
-// profile delete` (there is nothing left to report afterwards). It is the
-// document those three commands emit under --json (v2 Phase 3 Ruling 15);
-// domain.Profile already carries the name, the game and the ordered mod
-// refs, which is everything their plain-text output states.
+// the profile as it stands AFTER the mutation for `lmm profile create`,
+// `reorder`, `rename` and `set-default`, and as it stood immediately BEFORE
+// it for `lmm profile delete` (there is nothing left to report afterwards).
+// It is the document those five commands emit under --json (v2 Phase 3
+// Ruling 15); domain.Profile already carries the name, the game and the
+// ordered mod refs, which is everything their plain-text output states.
 type ProfileResult struct {
 	Profile domain.Profile `json:"profile"`
 }
@@ -56,7 +56,7 @@ func (pm *ProfileManager) Create(ctx context.Context, gameID, name string) (*dom
 	// Check if profile already exists
 	_, err := config.LoadProfile(pm.configDir, gameID, name)
 	if err == nil {
-		return nil, fmt.Errorf("profile already exists: %s", name)
+		return nil, fmt.Errorf("%w: %s", ErrProfileExists, name)
 	}
 	// The validation error is the user-facing message; don't bury it under
 	// the existence-check wrapping.
@@ -212,9 +212,22 @@ func (pm *ProfileManager) Delete(ctx context.Context, gameID, name string) error
 //
 // Refusals happen before anything is written: an unknown oldName is
 // domain.ErrProfileNotFound, an already-taken newName (oldName == newName
-// included) is refused, and an unusable newName fails config's own path
-// validation. Once the first write lands, the whole chain completes even if
-// ctx is cancelled - see completeRename.
+// included, and a name orphaned DB rows still claim - see
+// refuseOccupiedName) is core.ErrProfileExists, and an unusable newName
+// fails config's own path validation.
+//
+// Once the first write lands, ctx cancellation can no longer stop the
+// chain (completeRename), but an I/O FAILURE still can, and is met with
+// best-effort compensation rather than left to draw two files: a step-2
+// (db.RenameProfile) failure removes the file step 1 just wrote, so the
+// world looks exactly like the rename never started; a step-3
+// (config.DeleteProfile(oldName)) failure is different in kind, because by
+// then the DB half is already committed - the rename DID take effect, so
+// undoing step 1 would leave the DB naming a profile with no file behind
+// it. The new name wins: the old file is left in place (reported, not
+// silently dropped) but stripped of IsDefault if the source profile carried
+// it, so it can never read as a second default alongside the one that just
+// moved. Either failure's error names what was compensated.
 func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName string) (*domain.Profile, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -224,8 +237,8 @@ func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName s
 	if err != nil {
 		return nil, err
 	}
-	if _, err := config.LoadProfile(pm.configDir, gameID, newName); err == nil {
-		return nil, fmt.Errorf("profile already exists: %s", newName)
+	if err := pm.refuseOccupiedName(ctx, gameID, newName); err != nil {
+		return nil, err
 	}
 
 	renamed := *profile
@@ -235,14 +248,55 @@ func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName s
 			return err
 		}
 		if err := pm.db.RenameProfile(ctx, gameID, oldName, newName); err != nil {
-			return err
+			if rmErr := config.DeleteProfile(pm.configDir, gameID, newName); rmErr != nil {
+				return fmt.Errorf("renaming profile: %w (compensation also failed: could not remove %s: %v)", err, newName, rmErr)
+			}
+			return fmt.Errorf("renaming profile: %w (compensated: removed the newly written %s)", err, newName)
 		}
-		return config.DeleteProfile(pm.configDir, gameID, oldName)
+		if err := config.DeleteProfile(pm.configDir, gameID, oldName); err != nil {
+			compensated := ""
+			if profile.IsDefault {
+				stale := *profile
+				stale.IsDefault = false
+				if saveErr := config.SaveProfile(pm.configDir, &stale); saveErr == nil {
+					compensated = " (compensated: cleared is_default on the old file so it cannot be mistaken for a second default)"
+				} else {
+					compensated = fmt.Sprintf(" (compensation also failed: could not clear is_default on the old file: %v)", saveErr)
+				}
+			}
+			return fmt.Errorf("renamed %s to %s, but could not remove the old profile file: %w%s", oldName, newName, err, compensated)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &renamed, nil
+}
+
+// refuseOccupiedName refuses name if a profile already claims it for
+// gameID - either on disk (config.LoadProfile succeeds) or, orphaned from a
+// Delete that only ever removed the file (ProfileManager.Delete's own doc
+// comment), in the DB's installed_mods rows. Checking both closes a
+// reproducible gap (#332 I2): a name can be free on disk and still occupied
+// in the DB, where installed_mods' UNIQUE(source_id, mod_id, game_id,
+// profile_name) constraint (migrations.go) would otherwise reject
+// db.RenameProfile's UPDATE AFTER config.SaveProfile has already written
+// the new profile file. Checking both refusals up front, before Rename's
+// first write, keeps that failure from ever being reachable through this
+// path.
+func (pm *ProfileManager) refuseOccupiedName(ctx context.Context, gameID, name string) error {
+	if _, err := config.LoadProfile(pm.configDir, gameID, name); err == nil {
+		return fmt.Errorf("%w: %s", ErrProfileExists, name)
+	}
+	rows, err := pm.db.GetInstalledMods(ctx, gameID, name)
+	if err != nil {
+		return fmt.Errorf("checking %q for orphaned rows: %w", name, err)
+	}
+	if len(rows) > 0 {
+		return fmt.Errorf("%w: %s (installed_mods rows remain from a deleted profile of that name)", ErrProfileExists, name)
+	}
+	return nil
 }
 
 // SetDefault sets a profile as the default for a game
@@ -567,6 +621,86 @@ func (s *Service) RenameProfile(ctx context.Context, gameID, oldName, newName st
 	defer release()
 
 	profile, err := s.NewProfileManager().Rename(ctx, gameID, oldName, newName)
+	if err != nil {
+		return nil, err
+	}
+	return &ProfileResult{Profile: *profile}, nil
+}
+
+// CreateProfile is the gated Service seam over ProfileManager.Create: the
+// same one-slot mutation semaphore every other mutating flow takes, so a
+// create cannot interleave with a deploy or an install racing to write the
+// same game's state. Returns the ProfileResult document `lmm profile create
+// --json` emits - the profile as created, empty apart from its identity.
+//
+// It is one of the sanctioned single-step mutations rather than a
+// Plan/Apply pair: there is nothing to preview. A name already taken
+// surfaces as the typed ErrProfileExists, detected INSIDE this gate by
+// ProfileManager.Create itself (#332 M6) rather than by an un-gated
+// pre-check that could race the write.
+func (s *Service) CreateProfile(ctx context.Context, gameID, name string) (*ProfileResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	profile, err := s.NewProfileManager().Create(ctx, gameID, name)
+	if err != nil {
+		return nil, err
+	}
+	return &ProfileResult{Profile: *profile}, nil
+}
+
+// DeleteProfile is the gated Service seam over ProfileManager.Delete: the
+// same one-slot mutation semaphore every other mutating flow takes, so a
+// delete cannot race a deploy that is mid-flight for the very profile being
+// removed (#332 I1) - ProfileManager.Delete only ever removes the profile
+// FILE, so an un-gated delete racing a deploy job left deployed_files rows
+// naming a profile that no longer existed. Returns the ProfileResult
+// document `lmm profile delete --json` emits: the profile as it stood
+// immediately BEFORE the delete (core.ProfileResult's own doc comment) - a
+// readable profile is read first, an unreadable-but-present one still
+// deletes and the document then names it and nothing else, mirroring the
+// CLI's own fallback (cmd/lmm/profile.go's doProfileDelete).
+func (s *Service) DeleteProfile(ctx context.Context, gameID, name string) (*ProfileResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	pm := s.NewProfileManager()
+	deleted := domain.Profile{Name: name, GameID: gameID}
+	if p, err := pm.Get(ctx, gameID, name); err == nil {
+		deleted = *p
+	}
+
+	if err := pm.Delete(ctx, gameID, name); err != nil {
+		return nil, err
+	}
+	return &ProfileResult{Profile: deleted}, nil
+}
+
+// SetDefaultProfile is the gated Service seam over ProfileManager.
+// SetDefault: the same one-slot mutation semaphore every other mutating
+// flow takes, so a set-default cannot interleave with a deploy or install
+// racing to write the same game's profiles. Returns the ProfileResult of
+// the profile that is now the default, re-read after the write so the
+// document carries is_default as persisted rather than as requested -
+// SetDefault clears the flag on every other profile itself.
+func (s *Service) SetDefaultProfile(ctx context.Context, gameID, name string) (*ProfileResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	pm := s.NewProfileManager()
+	if err := pm.SetDefault(ctx, gameID, name); err != nil {
+		return nil, err
+	}
+	profile, err := pm.Get(ctx, gameID, name)
 	if err != nil {
 		return nil, err
 	}
