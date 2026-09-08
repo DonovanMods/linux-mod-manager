@@ -31,6 +31,8 @@ func TestSourceCmd_Structure(t *testing.T) {
 	}
 	assert.Contains(t, names, "list")
 	assert.Contains(t, names, "validate")
+	assert.Contains(t, names, "add")
+	assert.Contains(t, names, "remove")
 }
 
 // runSourceCmd executes the source command tree with args against a fresh

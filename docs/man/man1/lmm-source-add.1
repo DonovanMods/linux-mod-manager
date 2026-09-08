@@ -2,26 +2,33 @@
 .TH "LMM" "1" "Jul 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm-source - Manage mod sources
+lmm-source-add - Add a user-defined source from a definition file
 
 
 .SH SYNOPSIS
-\fBlmm source [flags]\fP
+\fBlmm source add <file> [flags]\fP
 
 
 .SH DESCRIPTION
-List registered mod sources; add, validate and remove user-defined source definitions.
+Validate a source definition file and install it under the config
+directory's sources/ folder, where it is loaded at every start.
 
 .PP
-Custom sources (directory scans, static manifests, or REST APIs) are
-defined as YAML files in the sources/ directory under the config dir
-(see the FILES section of 'lmm --help' for the config directory) - see
-the Custom Sources section of the project README for the file format.
+The definition's own id names the file it is written as. An id already
+taken by a built-in source is refused (a definition reusing one would
+lose the collision at startup and never take effect), as is a definition
+that validates but cannot be constructed - a directory source pointing
+at a path that does not exist, say.
+
+.PP
+Examples:
+  lmm source add ./my-mods.yaml
+  lmm source add ./my-mods.yaml --json
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for source
+	help for add
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -58,7 +65,7 @@ the Custom Sources section of the project README for the file format.
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP, \fBlmm-source-add(1)\fP, \fBlmm-source-list(1)\fP, \fBlmm-source-remove(1)\fP, \fBlmm-source-validate(1)\fP
+\fBlmm-source(1)\fP
 
 
 .SH HISTORY

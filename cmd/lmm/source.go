@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
@@ -17,7 +18,7 @@ import (
 var sourceCmd = &cobra.Command{
 	Use:   "source",
 	Short: "Manage mod sources",
-	Long: `List registered mod sources and validate user-defined source definitions.
+	Long: `List registered mod sources; add, validate and remove user-defined source definitions.
 
 Custom sources (directory scans, static manifests, or REST APIs) are
 defined as YAML files in the sources/ directory under the config dir
@@ -257,6 +258,89 @@ func (e *sourceValidationError) Unwrap() error { return e.err }
 // envelope's "details" field.
 func (e *sourceValidationError) Details() any { return e.report }
 
+var sourceAddCmd = &cobra.Command{
+	Use:   "add <file>",
+	Short: "Add a user-defined source from a definition file",
+	Long: `Validate a source definition file and install it under the config
+directory's sources/ folder, where it is loaded at every start.
+
+The definition's own id names the file it is written as. An id already
+taken by a built-in source is refused (a definition reusing one would
+lose the collision at startup and never take effect), as is a definition
+that validates but cannot be constructed - a directory source pointing
+at a path that does not exist, say.
+
+Examples:
+  lmm source add ./my-mods.yaml
+  lmm source add ./my-mods.yaml --json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		data, err := os.ReadFile(args[0])
+		if err != nil {
+			return fmt.Errorf("reading definition: %w", err)
+		}
+		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+			// expectID "" - the id comes FROM the document here; it is the
+			// web UI's route, which names a source in its path, that has an
+			// id to hold the definition to.
+			report, err := app.SaveSourceDefinition(ctx, svc, "", data)
+			if err != nil {
+				// The same envelope `source validate --json` fails with, so
+				// a client parses one shape for "this definition is bad"
+				// wherever it hit it. report is never nil.
+				return &sourceValidationError{err: err, report: report}
+			}
+			if jsonOutput {
+				return emitSourceList(ctx, svc)
+			}
+			//nolint:errcheck // best-effort console write
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added: %s source %q\n", report.Type, report.ID)
+			return nil
+		})
+	},
+}
+
+var sourceRemoveCmd = &cobra.Command{
+	Use:   "remove <id>",
+	Short: "Remove a user-defined source",
+	Long: `Delete a user-defined source's definition file and stop using it.
+
+Built-in sources cannot be removed. A source any configured game still
+maps is refused with the list of those games - remove it from their
+sources first, otherwise they would be left naming a source that no
+longer resolves.
+
+Examples:
+  lmm source remove my-mods
+  lmm source remove my-mods --json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return withService(cmd, func(ctx context.Context, svc *core.Service) error {
+			if err := app.DeleteSourceDefinition(ctx, svc, args[0]); err != nil {
+				return err
+			}
+			if jsonOutput {
+				return emitSourceList(ctx, svc)
+			}
+			//nolint:errcheck // best-effort console write
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed: source %q\n", args[0])
+			return nil
+		})
+	},
+}
+
+// emitSourceList emits the FULL registry as the `lmm source list --json`
+// document - what `source add`/`source remove` answer with under --json.
+// Full rather than game-scoped: the command just changed the registry, and
+// what it changed is what the caller wants to see.
+func emitSourceList(ctx context.Context, svc *core.Service) error {
+	infos, err := app.SourceInfos(ctx, svc, nil, false)
+	if err != nil {
+		return err
+	}
+	return emitJSON(infos)
+}
+
 func init() {
 	sourceValidateCmd.Flags().BoolVar(&sourceProbe, "probe", false, "perform a live smoke test after validation")
 	sourceValidateCmd.Flags().StringVar(&sourceProbeID, "id", "", "mod id to probe with (api definitions without a search endpoint)")
@@ -265,5 +349,7 @@ func init() {
 
 	sourceCmd.AddCommand(sourceListCmd)
 	sourceCmd.AddCommand(sourceValidateCmd)
+	sourceCmd.AddCommand(sourceAddCmd)
+	sourceCmd.AddCommand(sourceRemoveCmd)
 	rootCmd.AddCommand(sourceCmd)
 }

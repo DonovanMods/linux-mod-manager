@@ -2,26 +2,31 @@
 .TH "LMM" "1" "Jul 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm-source - Manage mod sources
+lmm-source-remove - Remove a user-defined source
 
 
 .SH SYNOPSIS
-\fBlmm source [flags]\fP
+\fBlmm source remove <id> [flags]\fP
 
 
 .SH DESCRIPTION
-List registered mod sources; add, validate and remove user-defined source definitions.
+Delete a user-defined source's definition file and stop using it.
 
 .PP
-Custom sources (directory scans, static manifests, or REST APIs) are
-defined as YAML files in the sources/ directory under the config dir
-(see the FILES section of 'lmm --help' for the config directory) - see
-the Custom Sources section of the project README for the file format.
+Built-in sources cannot be removed. A source any configured game still
+maps is refused with the list of those games - remove it from their
+sources first, otherwise they would be left naming a source that no
+longer resolves.
+
+.PP
+Examples:
+  lmm source remove my-mods
+  lmm source remove my-mods --json
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for source
+	help for remove
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -58,7 +63,7 @@ the Custom Sources section of the project README for the file format.
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP, \fBlmm-source-add(1)\fP, \fBlmm-source-list(1)\fP, \fBlmm-source-remove(1)\fP, \fBlmm-source-validate(1)\fP
+\fBlmm-source(1)\fP
 
 
 .SH HISTORY
