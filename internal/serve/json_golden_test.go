@@ -390,6 +390,14 @@ func TestServeJSONGoldens(t *testing.T) {
 			verifyFixPlanRequest{ModFilter: "42"},
 		},
 		{
+			// #333's adopt plan request. Its apply half is an empty struct
+			// with no json tags - every choice the flow offers is made at
+			// plan time or IS the decision, which a frontend expresses by
+			// starting the job or not - so it pins nothing.
+			"adopt_plan_request",
+			adoptPlanRequest{SkipMatch: true},
+		},
+		{
 			// #333's import_archive halves. The plan request names a STAGED
 			// UPLOAD, never a path; the apply request's accept_conflicts is
 			// the Overwrite affordance, which maps to
