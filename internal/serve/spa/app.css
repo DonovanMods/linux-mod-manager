@@ -1823,7 +1823,21 @@ select {
   padding: var(--space-1) 0;
 }
 
+/* First-run readiness item 9: the game name must never wrap mid-word to
+   make room for the path beside it - it gets its own natural width and
+   the path (usually much longer) truncates instead, with the full value
+   still available via its own `title` attribute. */
+.setup-detect__name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .setup-detect__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-muted);
   font-size: 0.85em;
 }

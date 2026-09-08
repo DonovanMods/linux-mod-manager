@@ -125,12 +125,25 @@ export function SetupSources() {
 
       ${
         editing !== null &&
-        html`<${SourceEditor}
-          key=${editing}
-          id=${editing}
-          onSaved=${afterSave}
-          onCancel=${() => setEditing(null)}
-        />`
+        html`
+          <p class="empty-state__hint">
+            A custom source is a YAML file describing how to reach a mod
+            repository lmm has no built-in support for - directory, manifest, or
+            api.${" "}
+            <a
+              href="https://github.com/DonovanMods/linux-mod-manager#custom-sources"
+              target="_blank"
+              rel="noopener noreferrer"
+              >What is a custom source?</a
+            >
+          </p>
+          <${SourceEditor}
+            key=${editing}
+            id=${editing}
+            onSaved=${afterSave}
+            onCancel=${() => setEditing(null)}
+          />
+        `
       }
     </div>
   `;

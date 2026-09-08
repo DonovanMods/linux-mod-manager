@@ -234,6 +234,20 @@ func TestE2E_FirstRunDetect_AddsTheGameAndLandsOnMissionControl(t *testing.T) {
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-testid="first-run-setup"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.setup-detect__row`, chromedp.ByQuery),
+	)
+
+	// First-run readiness item 9: the game name must get its own room
+	// (never wrap mid-word) and the path - the full value still available
+	// via `title` - is what truncates instead.
+	var nameWhiteSpace, pathTitle string
+	f.runInBrowser(t,
+		chromedp.Evaluate(`getComputedStyle(document.querySelector('.setup-detect__name')).whiteSpace`, &nameWhiteSpace),
+		chromedp.AttributeValue(`.setup-detect__path`, "title", &pathTitle, nil, chromedp.ByQuery),
+	)
+	assert.Equal(t, "nowrap", nameWhiteSpace, "the game name must never wrap mid-word")
+	assert.NotEmpty(t, pathTitle, "the truncated path must carry its full value via title")
+
+	f.runInBrowser(t,
 		chromedp.Click(`.setup-detect__row input[type="checkbox"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="add-detected"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
@@ -314,6 +328,38 @@ func TestE2E_FirstRunManualAdd_CatalogAuthRequiredNamesTheSourceNotADeadEnd(t *t
 	// entry independently of the SPA's own handling of it - expected, not
 	// a bug (the same rule TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds
 	// applies to its own rejected submit).
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_ManualAdd_IdentifierHintsPerSourceType pins first-run readiness
+// item 4: the "Identifier with that source" field had no placeholder, no
+// example and no per-source hint, so a first-run user who cannot use
+// detect had to guess what it even looks like. Nexus and CurseForge are
+// both built-ins with no wire-level distinction (source.TypeLabelOf
+// reports both "built-in"), so the id itself is what selects the hint.
+func TestE2E_ManualAdd_IdentifierHintsPerSourceType(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	f.Svc.RegisterSource(newFakeSource("nexusmods"))
+	f.Svc.RegisterSource(newFakeSource("unknown-source"))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		retrySetValue(`select[name="add-source"]`, "nexusmods"),
+	)
+	var placeholder, hint string
+	f.runInBrowser(t,
+		chromedp.AttributeValue(`input[name="add-identifier"]`, "placeholder", &placeholder, nil, chromedp.ByQuery),
+		chromedp.Text(`.setup-add__identifier-hint`, &hint, chromedp.ByQuery),
+	)
+	assert.Equal(t, "skyrimspecialedition", placeholder)
+	assert.Contains(t, hint, "NexusMods")
+
+	f.runInBrowser(t, retrySetValue(`select[name="add-source"]`, "unknown-source"))
+	var noHintCount int
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.querySelectorAll('.setup-add__identifier-hint').length`, &noHintCount))
+	assert.Zero(t, noHintCount, "a source with no known hint must not show a stale one")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -449,17 +495,28 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 		chromedp.WaitVisible(`[data-source="authy"] .modal__error`, chromedp.ByQuery),
 	)
 	assertKeyNeverRendered(t, badKey)
-	// #333 Minor #11: OuterHTML never carries an input's live `value`
-	// property (markup serialisation does not include it), so
-	// assertKeyNeverRendered above cannot see a value api.js's own
-	// setApiKey("") failed to clear - it would only ever fail via a
-	// cascade, from a SECOND SendKeys appending to a retained value. Read
-	// the DOM property directly instead.
+	// #333 Minor #11 + first-run readiness item 6: OuterHTML never
+	// carries an input's live `value` property (markup serialisation does
+	// not include it), so assertKeyNeverRendered above cannot prove
+	// anything about it either way - read the DOM property directly. A
+	// 400 (the validator's own verdict) now KEEPS the typed value rather
+	// than clearing it, so a single-character typo in a long key does not
+	// cost retyping the whole thing.
 	var valueAfterRejection string
 	f.runInBrowser(t, chromedp.Value(`[data-source="authy"] input[type="password"]`, &valueAfterRejection, chromedp.ByQuery))
-	assert.Empty(t, valueAfterRejection, "the field must be cleared after a rejected submit, not merely absent from the markup")
+	assert.Equal(t, badKey, valueAfterRejection, "a 400 (the validator's own verdict) must keep the typed value for an easy retry")
 
 	f.runInBrowser(t,
+		// Reset the retained bad key by hand before typing the good one -
+		// SendKeys appends to whatever the field already holds, and this
+		// is a controlled input (Preact tracks it via onInput), so the
+		// native value setter plus a real "input" event is what actually
+		// clears it rather than only the DOM attribute.
+		chromedp.Evaluate(`(() => {
+			const el = document.querySelector('[data-source="authy"] input[type="password"]');
+			Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, "");
+			el.dispatchEvent(new Event("input", { bubbles: true }));
+		})()`, nil),
 		chromedp.SendKeys(`[data-source="authy"] input[type="password"]`, goodKey, chromedp.ByQuery),
 		chromedp.Click(`[data-source="authy"] button[type="submit"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-source="authy"] .badge--good`, chromedp.ByQuery),
@@ -498,6 +555,18 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 	)
+
+	// First-run readiness item 10: a one-line "what is a custom source?"
+	// with a link to the README's own section, shown above the editor -
+	// the previous state dropped the user straight into a YAML textarea
+	// with no explanation at all.
+	var docsHref, docsText string
+	f.runInBrowser(t,
+		chromedp.AttributeValue(`[data-testid="setup-sources"] a[target="_blank"]`, "href", &docsHref, nil, chromedp.ByQuery),
+		chromedp.Text(`[data-testid="setup-sources"] a[target="_blank"]`, &docsText, chromedp.ByQuery),
+	)
+	assert.Contains(t, docsHref, "custom-sources")
+	assert.Contains(t, docsText, "custom source")
 
 	// An invalid id (uppercase) - the draft Validate must refuse.
 	invalid := "id: BAD ID\nname: My Mods\ntype: directory\ndirectory:\n  path: " + dir + "\n"

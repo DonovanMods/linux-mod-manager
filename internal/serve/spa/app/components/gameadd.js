@@ -114,7 +114,7 @@ export function GameDetectSection({ onAdded }) {
             ${listing.games.map(
               (g) => html`
                 <li key=${g.index} class="setup-detect__row">
-                  <label>
+                  <label class="setup-detect__name">
                     <input
                       type="checkbox"
                       checked=${selected.has(g.index)}
@@ -127,7 +127,9 @@ export function GameDetectSection({ onAdded }) {
                       html`<span class="badge">already configured</span>`
                     }
                   </label>
-                  <span class="mono setup-detect__path">${g.install_path}</span>
+                  <span class="mono setup-detect__path" title=${g.install_path}
+                    >${g.install_path}</span
+                  >
                 </li>
               `,
             )}
@@ -183,6 +185,24 @@ const KNOWN_FIELD_ERRORS = new Set([
   "install_path",
   "mod_path",
 ]);
+
+// identifierHints names the per-source example/placeholder the "Identifier
+// with that source" field otherwise gave no clue about at all (first-run
+// readiness item 4): a first-run user who cannot use detect had to guess
+// what an "identifier" even looks like. Keyed by the two built-in source
+// ids - source.TypeLabelOf reports both as the same "built-in" type
+// (app.SourceInfo carries no per-built-in distinction), so the id itself
+// is the only signal the SPA has to tell them apart.
+const identifierHints = {
+  nexusmods: {
+    placeholder: "skyrimspecialedition",
+    hint: "The URL slug from this game's NexusMods page.",
+  },
+  curseforge: {
+    placeholder: "432",
+    hint: 'The numeric game id - use "Search this source\'s catalog" above to find it.',
+  },
+};
 
 function emptySpec() {
   return {
@@ -397,10 +417,17 @@ export function GameAddForm({ onAdded, game, profile }) {
         <input
           type="text"
           name="add-identifier"
+          placeholder=${identifierHints[spec.sourceID]?.placeholder}
           value=${spec.identifier}
           onInput=${(e) => patch({ identifier: e.currentTarget.value, gameID: undefined })}
         />
       </label>
+      ${
+        identifierHints[spec.sourceID] &&
+        html`<p class="empty-state__hint setup-add__identifier-hint">
+          ${identifierHints[spec.sourceID].hint}
+        </p>`
+      }
       ${errorFor("identifier") && html`<p class="modal__error">${errorFor("identifier")}</p>`}
 
       <label class="plan__control">

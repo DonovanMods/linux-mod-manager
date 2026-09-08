@@ -4,12 +4,16 @@
 //
 // SECRET HANDLING mirrors the backend's own rule (api_auth.go's file
 // comment): the typed key never leaves the password input except in the
-// POST body itself. The field is cleared immediately after every submit -
-// success or failure - and nothing here ever reads report.sources[].api_key
-// (the wire has no such member; only key_masked comes back). A key that a
-// validator refuses, or that could not be checked at all (502), is left in
-// no state here to re-display - only the field, already blank, and the
-// message beside it.
+// POST body itself, and nothing here ever reads report.sources[].api_key
+// (the wire has no such member; only key_masked comes back). The field is
+// cleared on SUCCESS, and on a 502 (the check could not run at all -
+// nothing here to fix by editing the key); a 400 (the VALIDATOR's own
+// verdict - the key itself was wrong) keeps the typed value instead, so a
+// single-character typo in a long key does not cost retyping the whole
+// thing (first-run readiness item 6, unit7 gate review). Either way, the
+// field is a live DOM property no rendered markup ever carries the value
+// of - keeping it visible only in the one input the user is looking at
+// is not the same as it appearing anywhere ELSE in the page.
 
 import { html, useEffect, useState } from "../render.js";
 import { ApiError, getAuthStatus, authLogin, authLogout } from "../api.js";
@@ -93,16 +97,21 @@ function AuthSourceRow({ source, onChanged }) {
   async function login(e) {
     e.preventDefault();
     const key = apiKey;
-    setApiKey("");
     setBusy(true);
     setError(null);
     try {
       await authLogin(source.id, key);
+      // Cleared only on success - a 400 keeps the typed value (see this
+      // file's own SECRET HANDLING comment, first-run readiness item 6).
+      setApiKey("");
       await onChanged();
     } catch (err) {
-      // 400 (the validator's own verdict) vs 502 (the check never ran) -
-      // the message already distinguishes them; this UI adds no branch of
-      // its own beyond rendering it (api_auth.go's own doc comment).
+      // 400 (the validator's own verdict, worth fixing and resubmitting -
+      // keep the value) vs 502 (the check never ran at all - nothing here
+      // to fix by editing the key, so clear it like every other failure).
+      if (!(err instanceof ApiError) || err.status !== 400) {
+        setApiKey("");
+      }
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setBusy(false);
