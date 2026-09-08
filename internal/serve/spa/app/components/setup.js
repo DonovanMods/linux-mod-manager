@@ -57,7 +57,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
 
   // selectSection is every way a tab becomes active: a click, or a
   // keyboard move (selectSection below). It writes ?section= (Minor
-  // #13b - a reload used to always land back on Games, since setSection
+  // Minor 13(b) - a reload used to always land back on Games, since setSection
   // alone never touched the URL) with replace: true, the same convention
   // main.js's own chooser redirect uses - a tab switch is not a
   // genuinely new place, just an edit to where this one already is.
@@ -67,7 +67,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
   }
 
   // onTabKeyDown implements the WAI-ARIA tabs pattern's arrow-key
-  // navigation (Minor #13c): ArrowLeft/ArrowRight move and activate the
+  // navigation (Minor 13c): ArrowLeft/ArrowRight move and activate the
   // adjacent tab (wrapping), Home/End jump to the first/last. Automatic
   // activation - moving focus also switches the panel - is what makes
   // sense here: aria-selected already tracks `section`, and a roving

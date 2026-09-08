@@ -261,7 +261,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
   const [validated, setValidated] = useState(false);
   const [busy, setBusy] = useState(false);
   const [probe, setProbe] = useState(false);
-  // probeID is app.ProbeSource's third argument (Minor #13d): an `api`
+  // probeID is app.ProbeSource's third argument (Minor 13d): an `api`
   // definition whose only endpoint is get_mod has no search to probe, so
   // it refuses without an explicit mod id - a field this editor had no
   // way to supply from the UI at all.

@@ -131,7 +131,7 @@ export function SetupImportArchive({ state, actions }) {
   const jobID = state.origins?.[IMPORT_ORIGIN];
   const jobActive = Boolean(jobID);
 
-  // #333 Minor #13(a): the server already deletes a SUCCESSFUL import's
+  // issue 333 Minor 13(a): the server already deletes a SUCCESSFUL import's
   // staged upload (applyImportArchiveKind's own s.uploads.Remove), but
   // this panel kept describing it as still staged - "discarded
   // automatically after 30 minutes if not imported" for a file that no
