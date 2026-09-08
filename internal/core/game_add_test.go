@@ -62,6 +62,10 @@ var (
 	_ source.GameCatalog = (*catalogSource)(nil)
 )
 
+// newGameAddService builds a Service with the two source ids every test
+// below spends as SourceID registered - AddGame refuses an unregistered
+// one (#333 Important #1), and these tests are exercising everything else
+// about the spec, not the registry check.
 func newGameAddService(t *testing.T) *core.Service {
 	t.Helper()
 	svc, err := core.NewService(core.ServiceConfig{
@@ -69,6 +73,8 @@ func newGameAddService(t *testing.T) *core.Service {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(&catalogLessSource{id: "nexusmods", name: "NexusMods"})
+	svc.RegisterSource(&catalogSource{catalogLessSource: catalogLessSource{id: "curseforge", name: "CurseForge"}})
 	return svc
 }
 
@@ -255,6 +261,27 @@ func TestAddGame_ExplicitModPathAndLinkMethod(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, mods, entry.ModPath)
 	assert.Equal(t, domain.LinkHardlink, entry.LinkMethod)
+}
+
+// TestAddGame_UnregisteredSourceIsTyped pins #333 Important #1: an id no
+// registered source claims is refused with a field-named GameSpecError
+// BEFORE anything is written, not a 200 that parks an unusable game in
+// games.yaml.
+func TestAddGame_UnregisteredSourceIsTyped(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "no-such-source", Identifier: "acme", Name: "Acme", InstallPath: install,
+	})
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "source_id", specErr.Field)
+
+	games, err := config.LoadGames(svc.ConfigDir())
+	require.NoError(t, err)
+	assert.Empty(t, games, "no games.yaml row for a game whose source was refused")
 }
 
 // TestAddGame_DuplicateIsTyped pins the typed collision serve answers 409

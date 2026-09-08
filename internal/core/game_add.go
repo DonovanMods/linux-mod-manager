@@ -225,6 +225,18 @@ func (s *Service) AddGame(ctx context.Context, spec GameSpec) (*GameListEntry, e
 	if err != nil {
 		return nil, err
 	}
+	// Checked here, before the gate: spec.game() validates every field
+	// EXCEPT that SourceID actually resolves, so without this a serve
+	// caller could park an unusable game in games.yaml with no error to
+	// render (#333 Important #1). The CLI's own registry pre-check
+	// (cmd/lmm/game_add.go) stays - it prints the nicer "registered: ..."
+	// hint - but is now redundant rather than the only thing enforcing it.
+	if _, err := s.GetSource(strings.TrimSpace(spec.SourceID)); err != nil {
+		return nil, &GameSpecError{
+			Field: "source_id", Value: spec.SourceID,
+			Reason: "no source is registered with that id", Err: err,
+		}
+	}
 
 	release, err := s.beginOp(ctx)
 	if err != nil {

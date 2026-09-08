@@ -39,8 +39,23 @@ func (g *gamesCatalogSource) ListGames(context.Context) ([]source.GameEntry, err
 
 var _ source.GameCatalog = (*gamesCatalogSource)(nil)
 
+// namedFixtureSource is fixtureSource with a settable id/name, for the
+// add-game fixtures below that need "nexusmods"/"curseforge" specifically
+// registered - AddGame refuses an id no registered source claims (#333
+// Important #1), and these tests are exercising the add flow, not that
+// check.
+type namedFixtureSource struct {
+	fixtureSource
+	id, name string
+}
+
+func (n *namedFixtureSource) ID() string   { return n.id }
+func (n *namedFixtureSource) Name() string { return n.name }
+
 // newGamesServer builds a Server over a Service with no games configured -
-// the first-run state the Setup surface exists for.
+// the first-run state the Setup surface exists for - but with "nexusmods"
+// and "curseforge" pre-registered, since the add-game tests below spend
+// those two ids as SourceID.
 func newGamesServer(t *testing.T) *Server {
 	t.Helper()
 	sandboxEnv(t)
@@ -50,6 +65,8 @@ func newGamesServer(t *testing.T) *Server {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(&namedFixtureSource{id: "nexusmods", name: "NexusMods"})
+	svc.RegisterSource(&namedFixtureSource{id: "curseforge", name: "CurseForge"})
 	return New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: internalTestAddr})
 }
 
@@ -216,6 +233,28 @@ func TestAPIGameAdd_FieldErrorsNameTheirField(t *testing.T) {
 			assert.NotEmpty(t, env.Details.Reason)
 		})
 	}
+}
+
+// TestAPIGameAdd_UnregisteredSourceIs400 pins #333 Important #1: a
+// source_id no registered source claims is a 400 naming that field, and no
+// games.yaml row is written for it.
+func TestAPIGameAdd_UnregisteredSourceIs400(t *testing.T) {
+	s := newGamesServer(t)
+	body := `{"source_id":"no-such-source","identifier":"acme","name":"Acme","install_path":` + jsonString(t.TempDir()) + `}`
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games", body)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+
+	var env struct {
+		Error   string             `json:"error"`
+		Details core.GameSpecError `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Equal(t, "source_id", env.Details.Field)
+
+	games, err := s.svc.ListGameEntries(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, games, "no games.yaml row for a game whose source was refused")
 }
 
 // TestAPIGameAdd_DuplicateIs409 pins the collision status: neither bad
