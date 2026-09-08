@@ -431,6 +431,16 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SetupPath("auth")),
 		chromedp.WaitVisible(`[data-source="authy"]`, chromedp.ByQuery),
+	)
+	// #333 Minor #5: the environment-variable hint must show for a row
+	// that has NEVER been authenticated, not only one authenticated via
+	// env - app.AuthStatus now fills EnvVar for every auth-capable row.
+	var placeholder string
+	f.runInBrowser(t, chromedp.AttributeValue(
+		`[data-source="authy"] input[type="password"]`, "placeholder", &placeholder, nil, chromedp.ByQuery))
+	assert.Equal(t, "or set LMM_AUTHY_API_KEY", placeholder)
+
+	f.runInBrowser(t,
 		chromedp.SendKeys(`[data-source="authy"] input[type="password"]`, badKey, chromedp.ByQuery),
 		chromedp.Click(`[data-source="authy"] button[type="submit"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-source="authy"] .modal__error`, chromedp.ByQuery),
