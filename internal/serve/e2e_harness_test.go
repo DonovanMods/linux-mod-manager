@@ -700,6 +700,35 @@ func seedDeployableMods(t *testing.T, svc *core.Service, game *domain.Game) {
 	}
 }
 
+// newE2EFixtureWithSlowUninstallAndFourMods is m6's own fixture (unit 6
+// gate review): four enabled, cached mods - wider than seedDeployableMods'
+// usual two, since the sequencing property this exists to pin needs a
+// window a concurrent poller can actually sample more than once or twice
+// in - plus an uninstall.before_each hook that sleeps briefly per mod, the
+// same deterministic lever newE2EFixtureWithSlowDeploy uses for install.
+func newE2EFixtureWithSlowUninstallAndFourMods(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	script := filepath.Join(t.TempDir(), "slow-uninstall-before-each")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 0.2\n"), 0o755))
+	f.Game.Hooks.Uninstall.BeforeEach = script
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	pm := f.Svc.NewProfileManager()
+	for _, m := range []struct{ id, name string }{
+		{"a", "Alpha Mod"}, {"b", "Beta Mod"}, {"c", "Gamma Mod"}, {"d", "Delta Mod"},
+	} {
+		seedInstalledMod(t, f.Svc, f.Game,
+			domain.Mod{ID: m.id, SourceID: "fake", Name: m.name, Version: "1.0", GameID: f.Game.ID},
+			true, map[string][]byte{m.id + ".pak": []byte(m.id)})
+		require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default",
+			domain.ModReference{SourceID: "fake", ModID: m.id, Version: "1.0"}))
+	}
+
+	return f
+}
+
 // csrfMetaPattern lifts the shell's CSRF token out of the served document -
 // the same place the SPA reads it from (spa/index.html's meta tag).
 var csrfMetaPattern = regexp.MustCompile(`name="csrf-token" content="([^"]+)"`)

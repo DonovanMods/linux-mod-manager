@@ -15,11 +15,14 @@ package serve_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -3356,6 +3359,87 @@ func TestE2E_LibraryRowMenu_RefusedLockSurfacesAsAToast(t *testing.T) {
 	// promise rejection, which library.js's previous fire-and-forget call
 	// would have produced here.
 	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime is m6's own
+// property test (unit 6 gate review): the existing batch-bar scenario only
+// ever asserted the END state, which a downstream stale-plan symptom can
+// fail even when nothing measures concurrency directly (m6's own finding -
+// removing the sequencing wait broke a DIFFERENT assertion, not this one).
+// Here a concurrent poller samples GET /api/v1/jobs throughout a real
+// four-mod uninstall batch (slowed by a hook so the window is wide enough
+// to sample more than once or twice) and asserts running jobs never
+// exceeds 1 - the wire's own sequencing caveat, and core's own beginOp
+// serialisation, pinned directly rather than through a side effect of it.
+func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
+	f := newE2EFixtureWithSlowUninstallAndFourMods(t)
+
+	stop := make(chan struct{})
+	var samples, maxRunning int64
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			resp, err := http.Get(f.BaseURL + "/api/v1/jobs")
+			if err != nil {
+				continue
+			}
+			var index struct {
+				Jobs []struct {
+					State string `json:"state"`
+				} `json:"jobs"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&index)
+			_ = resp.Body.Close()
+			if decodeErr != nil {
+				continue
+			}
+			atomic.AddInt64(&samples, 1)
+			var running int64
+			for _, j := range index.Jobs {
+				if j.State == "running" {
+					running++
+				}
+			}
+			for {
+				current := atomic.LoadInt64(&maxRunning)
+				if running <= current || atomic.CompareAndSwapInt64(&maxRunning, current, running) {
+					break
+				}
+			}
+		}
+	}()
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input").forEach((cb) => cb.click());
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="batch-uninstall"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall-batch"] [data-action="confirm"]:not([disabled])`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="uninstall-batch"] [data-action="confirm"]').click()`, nil),
+		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		for _, id := range []string{"a", "b", "c", "d"} {
+			if _, err := f.Svc.GetInstalledMod(t.Context(), "fake", id, f.Game.ID, "default"); !errors.Is(err, domain.ErrModNotFound) {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 50*time.Millisecond, "all four mods must actually be uninstalled")
+
+	close(stop)
+	require.Greater(t, atomic.LoadInt64(&samples), int64(2), "the poller must have actually sampled the jobs index more than once or twice during the batch")
+	assert.LessOrEqual(t, atomic.LoadInt64(&maxRunning), int64(1), "the batch must never run more than one job at a time")
+
+	assert.Empty(t, f.BrowserErrors())
 }
 
 // TestE2E_HealthCard_NotFixableRowNamesTheReason is m3's own scenario (unit
