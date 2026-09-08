@@ -3858,6 +3858,90 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed is N1's
+// own scenario (unit 6 re-review of the fix wave): the I3 fix folded
+// core.ProfileImportResult.Skipped into "failed", so a profile_import that
+// leaves the plan's own "Download and install" checkbox unchecked - the
+// flow's documented default (plan_profile_import.js's own note: "Left
+// unchecked, the profile is still saved and every pending mod is recorded
+// as skipped") - used to render as a total failure ("0 applied / 2 failed"
+// in the failure tone) even though the job succeeds and the profile is
+// created. Skipped is not failed.
+func TestE2E_ProfilesModal_ImportWithoutInstallReportsSkippedNotFailed(t *testing.T) {
+	f := newE2EFixture(t)
+
+	doc := fmt.Sprintf(`name: imported
+game_id: %s
+mods:
+  - source_id: fake
+    mod_id: newmod1
+    version: "1.0"
+  - source_id: fake
+    mod_id: newmod2
+    version: "1.0"
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "imported.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+	)
+	var planText string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &planText))
+	require.Contains(t, planText, "Download and install", "the plan must offer the install checkbox - the one this scenario deliberately leaves unchecked")
+
+	// The install checkbox is left UNCHECKED - the flow's own default.
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "imported")
+		return err == nil && len(p.Mods) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile even though nothing was installed")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.tray`, &trayText))
+		return strings.Contains(trayText, "profile_import") &&
+			(strings.Contains(trayText, "skipped") || strings.Contains(trayText, "failed"))
+	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job's own tally")
+
+	var toneClass string
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector(".tray__row .tray__state")?.className ?? ""`, &toneClass))
+
+	assert.NotContains(t, trayText, "failed", `a fully successful import must never say "failed" - Skipped is not a failure`)
+	assert.Contains(t, trayText, "skipped", "the tray must name the skipped count honestly")
+	assert.Contains(t, toneClass, "tray__state--succeeded", "the tone must be success, not failure or mixed, when nothing actually failed")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelection
 // is C1's own destructive reproduction (unit 6 gate review): ReorderModal
 // and UninstallBatchModal used to call useState/useEffect AFTER a
