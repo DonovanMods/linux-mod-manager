@@ -1065,6 +1065,70 @@ func TestJSONGoldens(t *testing.T) {
 				CacheMissing:  true,
 			},
 		},
+		{
+			// The catalog match row: every key populated, including the
+			// derived local game_id that keeps a CurseForge add keyed
+			// "minecraft" rather than its numeric identifier (#307).
+			"game_catalog_match",
+			core.GameCatalogMatch{Identifier: "432", Name: "Minecraft", Slug: "minecraft", GameID: "minecraft"},
+		},
+		{
+			// `lmm game add --query`'s document: the query echoed back
+			// beside its matches, so a stored response is self-describing.
+			"game_catalog_report",
+			core.GameCatalogReport{
+				SourceID: "curseforge",
+				Query:    "mine",
+				Matches: []core.GameCatalogMatch{
+					{Identifier: "432", Name: "Minecraft", Slug: "minecraft", GameID: "minecraft"},
+				},
+			},
+		},
+		{
+			// The field-named rejection an SPA form renders against the
+			// offending input. Err is deliberately absent from the wire
+			// (json:"-"): it exists for errors.Is, not for a client.
+			"game_spec_error",
+			core.GameSpecError{
+				Field:  "install_path",
+				Value:  "/games/nope",
+				Reason: "path does not exist",
+				Err:    domain.ErrInvalidGameID,
+			},
+		},
+		{
+			// One detect listing row: the embedded DetectedGame flat (as
+			// every whole-record wire type in this file embeds its record),
+			// plus the 1-based index a selection names and the
+			// already-configured marker.
+			"game_detect_entry",
+			core.GameDetectEntry{
+				DetectedGame: domain.DetectedGame{
+					SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+					InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
+					NexusID: "skyrimspecialedition",
+				},
+				Index:             1,
+				AlreadyConfigured: true,
+			},
+		},
+		{
+			// The pre-selection listing GET /api/v1/games/detect answers
+			// with: rows plus the scan's own warnings, carried in the
+			// document rather than written to stderr (Ruling 15).
+			"game_detect_listing",
+			core.GameDetectListing{
+				Games: []core.GameDetectEntry{{
+					DetectedGame: domain.DetectedGame{
+						SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+						InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
+						NexusID: "skyrimspecialedition",
+					},
+					Index: 1,
+				}},
+				Warnings: []string{"steam library /mnt/games could not be read"},
+			},
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))
