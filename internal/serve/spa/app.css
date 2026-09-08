@@ -1493,3 +1493,207 @@ select {
   padding: var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
 }
+
+/* ---------------------------------------------------------------------- */
+/* The ⋯ row menu (library.js) and the batch bar's own buttons - issue 332.     */
+/* The batch bar itself (.batch-bar) is styled already (Library section).  */
+/* ---------------------------------------------------------------------- */
+
+.row-menu-cell {
+  position: relative;
+}
+
+.row-menu {
+  position: absolute;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 10rem;
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-raised);
+}
+
+.row-menu__item {
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-menu__item:hover {
+  background: var(--surface-sunken);
+}
+
+/* ---------------------------------------------------------------------- */
+/* The reorder modal (issue 332): drag-and-drop + a keyboard/button path, and   */
+/* its live conflict preview.                                              */
+/* ---------------------------------------------------------------------- */
+
+.reorder-list {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.reorder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.reorder-row:last-child {
+  border-bottom: none;
+}
+
+.reorder-row--dragging {
+  background: var(--surface-sunken);
+  opacity: 0.7;
+}
+
+.reorder-row__handle {
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.reorder-row__position {
+  min-width: 2ch;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.reorder-row__name {
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.reorder-row__controls {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.reorder-preview {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.reorder-preview th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.reorder-preview td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.reorder-preview__changed {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The profiles modal (issue 332): list/create/rename/delete/export/import/     */
+/* set-default.                                                            */
+/* ---------------------------------------------------------------------- */
+
+.profiles-list {
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.profiles-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.profiles-row:last-child {
+  border-bottom: none;
+}
+
+.profiles-row--confirm {
+  color: var(--danger);
+}
+
+.profiles-row__name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.profiles-row__count {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.profiles-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.profiles-row__rename-form {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.profiles-create,
+.profiles-import {
+  margin-top: var(--space-4);
+}
+
+.profiles-create__row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.profiles-import label.button {
+  display: inline-block;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The uninstall-batch modal (issue 332): one UninstallPlanView per selected     */
+/* mod.                                                                     */
+/* ---------------------------------------------------------------------- */
+
+.uninstall-batch__entry {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.uninstall-batch__entry:last-child {
+  border-bottom: none;
+}

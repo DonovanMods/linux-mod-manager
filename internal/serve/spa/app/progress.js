@@ -72,6 +72,7 @@ const mutationKindLabels = {
   switch: "Switching profile",
   profile_apply: "Applying profile",
   verify_fix: "Repairing",
+  profile_import: "Importing profile",
   enable: "Enabling",
   disable: "Disabling",
 };

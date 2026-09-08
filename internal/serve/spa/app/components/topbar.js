@@ -20,7 +20,6 @@ import { resolveGamePath } from "../navigation.js";
 import { countUndeployed } from "../modrows.js";
 import { InlineJob } from "./jobprogress.js";
 import { ActivityBell } from "./tray.js";
-import { NOT_YET } from "../ui.js";
 
 // DEPLOY_ORIGIN is the key the top bar's Deploy control morphs on. Origins
 // are stable strings, one per control (jobprogress.js) - a later unit's
@@ -91,6 +90,7 @@ export function TopBar({
         open=${openPicker === "profile"}
         onOpen=${() => setOpenPicker("profile")}
         onClose=${() => setOpenPicker(null)}
+        actions=${actions}
       />
       <span
         class="deploy-indicator ${undeployed > 0 ? "deploy-indicator--pending" : ""}"
@@ -209,7 +209,7 @@ function GamePicker({ status, games, open, onOpen, onClose }) {
 /** ProfilePicker switches profiles within the CURRENT game - a plain route
  * change, since the profile's own name (unlike a game switch) is already
  * known without another round trip. */
-function ProfilePicker({ status, route, open, onOpen, onClose }) {
+function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
   const profiles = status.profiles ?? [];
 
   function pick(name) {
@@ -249,8 +249,10 @@ function ProfilePicker({ status, route, open, onOpen, onClose }) {
               <button
                 type="button"
                 class="picker__item"
-                disabled
-                title=${NOT_YET}
+                onClick=${() => {
+                  onClose();
+                  actions.openProfilesModal();
+                }}
               >
                 Manage profiles…
               </button>

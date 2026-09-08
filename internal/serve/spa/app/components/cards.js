@@ -1,12 +1,32 @@
 // cards.js - the attention cards: Updates, Health, Conflicts
 // (docs/plans/2026-08-31-serve-spa-design.md §Mission Control: "Attention
 // cards"). Each renders only when it has something to say - a card absent
-// entirely is itself the "nothing needs you here" signal - and every
-// per-row and batch action is present but disabled: Unit 3 wires the
-// confirm-modal framework they submit through.
+// entirely is itself the "nothing needs you here" signal. Unit 3 landed the
+// confirm-modal framework every mutation below submits through; this unit
+// (issue 332) wires the per-row and batch actions themselves.
 
-import { html } from "../render.js";
-import { NOT_YET } from "../ui.js";
+import { html, useState } from "../render.js";
+import { findingLabel } from "../verify.js";
+import { InlineJob } from "./jobprogress.js";
+import { modKey } from "../modrows.js";
+
+// UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
+// distinct from a single-mod update's own "mod:{source}/{id}:update"
+// (modpanel.js/fullmodpage.js), which this card's own checkboxes never use.
+const UPDATES_BATCH_ORIGIN = "updates:batch";
+
+// HEALTH_REPAIR_ALL_ORIGIN is the Health card's "Repair all" control.
+const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
+
+/** repairOrigin is one finding's own per-mod "Repair" control - shared by
+ * every finding ROW for the same mod (a mod can carry more than one
+ * finding), which is deliberate: they name the same repair operation, so
+ * clicking any of them and having every one of that mod's rows morph
+ * together is the honest picture of what a mod_filter repair actually
+ * does. */
+function repairOrigin(modID) {
+  return `health:${modID}:repair`;
+}
 
 /** AttentionCards reads the three already-fetched report documents (core.
  * UpdateCheckReport, core.VerifyReport, core.ConflictReport) and renders
@@ -17,6 +37,7 @@ import { NOT_YET } from "../ui.js";
  * renders with an explicit error and a retry, even though the document
  * behind it is null. */
 export function AttentionCards({
+  state,
   updates,
   health,
   conflicts,
@@ -44,33 +65,61 @@ export function AttentionCards({
       ${
         (updateRows.length > 0 || errors.updates) &&
         html`<${UpdatesCard}
+          state=${state}
           rows=${updateRows}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
+          actions=${actions}
         />`
       }
       ${
         (findings.length > 0 || errors.health) &&
         html`<${HealthCard}
+          state=${state}
           findings=${findings}
           result=${health?.result}
           error=${errors.health}
           onReverify=${actions.reloadHealth}
+          actions=${actions}
         />`
       }
       ${
         (conflictRows.length > 0 || errors.conflicts) &&
         html`<${ConflictsCard}
+          state=${state}
           rows=${conflictRows}
           error=${errors.conflicts}
           onRetry=${actions.reloadConflicts}
+          actions=${actions}
         />`
       }
     </section>
   `;
 }
 
-function UpdatesCard({ rows, error, onRetry }) {
+function UpdatesCard({ state, rows, error, onRetry, actions }) {
+  const [selected, setSelected] = useState(() => new Set());
+
+  function toggle(key) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function updateSelected() {
+    if (selected.size === 0) return;
+    actions.openPlan({
+      kind: "updates",
+      origin: UPDATES_BATCH_ORIGIN,
+      title: `Update ${selected.size} mod${selected.size === 1 ? "" : "s"}`,
+      confirmLabel: "Update",
+      options: { mods: [...selected] },
+    });
+  }
+
   return html`
     <div class="card card--updates">
       <p class="card__title">⬆ Updates (${rows.length})</p>
@@ -83,13 +132,16 @@ function UpdatesCard({ rows, error, onRetry }) {
             />`
           : html`
               <ul class="card__list">
-                ${rows.map(
-                  (u) => html`
-                    <li
-                      key=${u.installed_mod.source_id + "/" + u.installed_mod.id}
-                      class="card__row"
-                    >
-                      <input type="checkbox" disabled title=${NOT_YET} />
+                ${rows.map((u) => {
+                  const key = modKey(u.installed_mod);
+                  return html`
+                    <li key=${key} class="card__row">
+                      <input
+                        type="checkbox"
+                        aria-label=${`Select ${u.installed_mod.name} for update`}
+                        checked=${selected.has(key)}
+                        onChange=${() => toggle(key)}
+                      />
                       <span class="card__row-name"
                         >${u.installed_mod.name}</span
                       >
@@ -97,12 +149,24 @@ function UpdatesCard({ rows, error, onRetry }) {
                         >${u.installed_mod.version} → ${u.new_version}</span
                       >
                     </li>
-                  `,
-                )}
+                  `;
+                })}
               </ul>
-              <button type="button" class="button" disabled title=${NOT_YET}>
-                Update selected
-              </button>
+              <${InlineJob}
+                origin=${UPDATES_BATCH_ORIGIN}
+                state=${state}
+                actions=${actions}
+              >
+                <button
+                  type="button"
+                  class="button"
+                  data-action="update-selected"
+                  disabled=${selected.size === 0}
+                  onClick=${updateSelected}
+                >
+                  Update selected
+                </button>
+              <//>
             `
       }
     </div>
@@ -116,7 +180,27 @@ function UpdatesCard({ rows, error, onRetry }) {
 // change (core/testdata JSON goldens, the serve JSON-contract ratchet) this
 // unit's gate explicitly keeps frozen - filed as a follow-up core change
 // rather than silently dropped.
-function HealthCard({ findings, result, error, onReverify }) {
+function HealthCard({ state, findings, result, error, onReverify, actions }) {
+  function repair(modID, name) {
+    actions.openPlan({
+      kind: "verify_fix",
+      origin: repairOrigin(modID),
+      title: `Repair ${name || modID}`,
+      confirmLabel: "Repair",
+      options: { mod_filter: modID },
+    });
+  }
+
+  function repairAll() {
+    actions.openPlan({
+      kind: "verify_fix",
+      origin: HEALTH_REPAIR_ALL_ORIGIN,
+      title: "Repair all findings",
+      confirmLabel: "Repair all",
+      options: {},
+    });
+  }
+
   return html`
     <div class="card card--health">
       <p class="card__title">
@@ -140,15 +224,29 @@ function HealthCard({ findings, result, error, onReverify }) {
                       <span class="card__row-name"
                         >${f.mod_name || f.mod_id}</span
                       >
-                      <span class="card__row-detail">${healthLabel(f)}</span>
-                      <button
-                        type="button"
-                        class="button button--small"
-                        disabled
-                        title=${NOT_YET}
-                      >
-                        Repair
-                      </button>
+                      <span class="card__row-detail">${findingLabel(f)}</span>
+                      ${
+                        f.fixable
+                          ? html`<${InlineJob}
+                              origin=${repairOrigin(f.mod_id)}
+                              state=${state}
+                              actions=${actions}
+                            >
+                              <button
+                                type="button"
+                                class="button button--small"
+                                data-action="repair"
+                                onClick=${() => repair(f.mod_id, f.mod_name)}
+                              >
+                                Repair
+                              </button>
+                            <//>`
+                          : html`<span
+                              class="card__row-detail"
+                              title="A verify --fix run would not attempt a repair for this finding"
+                              >Not fixable</span
+                            >`
+                      }
                     </li>
                   `,
                 )}
@@ -161,9 +259,21 @@ function HealthCard({ findings, result, error, onReverify }) {
                 >
                   Re-verify
                 </button>
-                <button type="button" class="button" disabled title=${NOT_YET}>
-                  Repair all
-                </button>
+                <${InlineJob}
+                  origin=${HEALTH_REPAIR_ALL_ORIGIN}
+                  state=${state}
+                  actions=${actions}
+                >
+                  <button
+                    type="button"
+                    class="button"
+                    data-action="repair-all"
+                    disabled=${!findings.some((f) => f.fixable)}
+                    onClick=${repairAll}
+                  >
+                    Repair all
+                  </button>
+                <//>
               </div>
             `
       }
@@ -186,21 +296,6 @@ function CardError({ message, detail, onRetry }) {
   `;
 }
 
-/** healthLabel prefers the finding's own note (already human-worded, e.g. a
- * repair failure's reason) and falls back to the status verbatim. */
-/** healthLabel prefers the finding's own note (already human-worded, e.g. a
- * repair failure's reason), falls back to the status verbatim, and - for
- * version_mismatch, the most common finding - appends the recorded/source
- * versions VerifyFinding actually carries (verify.go), matching the CLI's
- * own "AlphaMod - VERSION MISMATCH (recorded 1.0, source reports 2.0)". */
-function healthLabel(f) {
-  const label = f.note || f.status.replaceAll("_", " ");
-  if (f.recorded && f.effective) {
-    return `${label} (recorded ${f.recorded}, source reports ${f.effective})`;
-  }
-  return label;
-}
-
 /** conflictLabel names the contenders AND the winning rule (design doc:
  * "each conflict names the contenders and the winning rule") - built as one
  * plain string rather than split across template-literal lines, which
@@ -213,7 +308,11 @@ function conflictLabel(c) {
   return c.stale ? `${label} (stale)` : label;
 }
 
-function ConflictsCard({ rows, error, onRetry }) {
+function ConflictsCard({ state, rows, error, onRetry, actions }) {
+  function resolve() {
+    actions.openReorderModal({ profileName: state.route.profile });
+  }
+
   return html`
     <div class="card card--conflicts">
       <p class="card__title">⇄ Conflicts (${rows.length})</p>
@@ -238,8 +337,8 @@ function ConflictsCard({ rows, error, onRetry }) {
                       <button
                         type="button"
                         class="button button--small"
-                        disabled
-                        title=${NOT_YET}
+                        data-action="resolve"
+                        onClick=${resolve}
                       >
                         Resolve…
                       </button>

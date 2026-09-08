@@ -148,6 +148,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
       }
       <main class="mission-control__body">
         <${AttentionCards}
+          state=${state}
           updates=${updates}
           health=${health}
           conflicts=${conflicts}
@@ -155,6 +156,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
           actions=${actions}
         />
         <${Library}
+          state=${state}
           mods=${mods}
           visible=${visible}
           filter=${filter}
@@ -166,6 +168,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
           query=${query}
           error=${fetchErrors?.mods}
           onRetry=${actions.reloadMods}
+          actions=${actions}
         />
         <${OmnibarResults}
           omnibarSearch=${state.omnibarSearch}
