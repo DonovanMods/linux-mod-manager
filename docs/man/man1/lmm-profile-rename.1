@@ -2,24 +2,30 @@
 .TH "LMM" "1" "Jul 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm-profile - Manage mod profiles
+lmm-profile-rename - Rename a profile
 
 
 .SH SYNOPSIS
-\fBlmm profile [flags]\fP
+\fBlmm profile rename <old> <new> [flags]\fP
 
 
 .SH DESCRIPTION
-Manage mod profiles for organizing different mod configurations.
+Rename a profile, moving its configuration and every record that names it.
 
 .PP
-Profiles allow you to maintain different sets of mods for the same game.
-For example, you might have a "vanilla plus" profile and a "total conversion" profile.
+The profile's mods, load order, hooks, config overrides and default-profile
+status all move with it; nothing is re-downloaded and nothing already
+deployed to the game directory changes. Renaming onto a name another profile
+already uses is refused.
+
+.PP
+Examples:
+  lmm profile rename default survival --game skyrim-se
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
-	help for profile
+	help for rename
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
@@ -56,7 +62,7 @@ For example, you might have a "vanilla plus" profile and a "total conversion" pr
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP, \fBlmm-profile-apply(1)\fP, \fBlmm-profile-create(1)\fP, \fBlmm-profile-delete(1)\fP, \fBlmm-profile-export(1)\fP, \fBlmm-profile-import(1)\fP, \fBlmm-profile-list(1)\fP, \fBlmm-profile-rename(1)\fP, \fBlmm-profile-reorder(1)\fP, \fBlmm-profile-switch(1)\fP, \fBlmm-profile-sync(1)\fP
+\fBlmm-profile(1)\fP
 
 
 .SH HISTORY

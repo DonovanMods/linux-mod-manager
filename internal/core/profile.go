@@ -190,6 +190,61 @@ func (pm *ProfileManager) Delete(ctx context.Context, gameID, name string) error
 	return config.DeleteProfile(pm.configDir, gameID, name)
 }
 
+// Rename renames gameID's profile oldName to newName, moving everything
+// that names it: the profile file itself (the filename AND the name inside
+// it), and every DB row keyed by profile - installed_mods,
+// installed_mod_files and deployed_files (db.RenameProfile). It returns the
+// profile as it now stands, under its new name.
+//
+// Everything else that could conceivably reference a profile was checked
+// and needs nothing (#332):
+//
+//   - The DEFAULT-profile setting is not stored outside the profile: it is
+//     the is_default flag INSIDE the profile file (SetDefault/GetDefault),
+//     so it travels with the rename and a renamed default stays default.
+//   - Hooks and config overrides likewise live inside the profile file.
+//   - games.yaml carries no profile field at all.
+//   - Cache paths are keyed by game/source/mod/version, never by profile.
+//   - The merged pak's fingerprint marker lives at a per-GAME cache path;
+//     its deployed-file ownership rows move with deployed_files above.
+//   - Deployed files themselves live under the game directory at paths
+//     that never contain the profile name, so nothing on disk moves.
+//
+// Refusals happen before anything is written: an unknown oldName is
+// domain.ErrProfileNotFound, an already-taken newName (oldName == newName
+// included) is refused, and an unusable newName fails config's own path
+// validation. Once the first write lands, the whole chain completes even if
+// ctx is cancelled - see completeRename.
+func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName string) (*domain.Profile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	profile, err := config.LoadProfile(pm.configDir, gameID, oldName)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := config.LoadProfile(pm.configDir, gameID, newName); err == nil {
+		return nil, fmt.Errorf("profile already exists: %s", newName)
+	}
+
+	renamed := *profile
+	renamed.Name = newName
+	err = completeRename(ctx, func(ctx context.Context) error {
+		if err := config.SaveProfile(pm.configDir, &renamed); err != nil {
+			return err
+		}
+		if err := pm.db.RenameProfile(ctx, gameID, oldName, newName); err != nil {
+			return err
+		}
+		return config.DeleteProfile(pm.configDir, gameID, oldName)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &renamed, nil
+}
+
 // SetDefault sets a profile as the default for a game
 func (pm *ProfileManager) SetDefault(ctx context.Context, gameID, name string) error {
 	if err := ctx.Err(); err != nil {
@@ -493,4 +548,27 @@ func (pm *ProfileManager) ImportWithOptions(ctx context.Context, data []byte, fo
 // ParseProfile parses profile data without saving (for preview)
 func (pm *ProfileManager) ParseProfile(data []byte) (*domain.Profile, error) {
 	return config.ImportProfile(data)
+}
+
+// RenameProfile is the gated Service seam over ProfileManager.Rename: it
+// takes the same one-slot mutation semaphore every other mutating flow does
+// (a rename moves DB rows and profile files, so it must not interleave with
+// an install or a deploy) and returns the ProfileResult document `lmm
+// profile rename --json` emits - the profile under its new name.
+//
+// It is one of the sanctioned single-step mutations rather than a
+// Plan/Apply pair: there is nothing to preview. A rename's effect is
+// entirely described by the two names the caller already typed.
+func (s *Service) RenameProfile(ctx context.Context, gameID, oldName, newName string) (*ProfileResult, error) {
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	profile, err := s.NewProfileManager().Rename(ctx, gameID, oldName, newName)
+	if err != nil {
+		return nil, err
+	}
+	return &ProfileResult{Profile: *profile}, nil
 }

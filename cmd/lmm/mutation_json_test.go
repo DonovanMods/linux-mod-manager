@@ -485,6 +485,16 @@ func TestJSONGolden_ProfileManagement(t *testing.T) {
 		assertJSONCLIGolden(t, "profile_delete_result", out)
 	})
 
+	t.Run("rename", func(t *testing.T) {
+		svc, game := setupDoProfileSwitchTest(t)
+		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
+
+		out := runJSONCommand(t, func() error {
+			return doProfileRename(context.Background(), svc, game, "default", "survival")
+		})
+		assertJSONCLIGolden(t, "profile_rename_result", out)
+	})
+
 	// `profile reorder` with no arguments is the load-order READOUT, and
 	// profile.Mods is that order - so it emits the same document a reorder
 	// does, rather than a second shape for the same data.
