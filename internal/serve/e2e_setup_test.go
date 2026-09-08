@@ -448,6 +448,15 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 		chromedp.WaitVisible(`[data-source="authy"] .modal__error`, chromedp.ByQuery),
 	)
 	assertKeyNeverRendered(t, badKey)
+	// #333 Minor #11: OuterHTML never carries an input's live `value`
+	// property (markup serialisation does not include it), so
+	// assertKeyNeverRendered above cannot see a value api.js's own
+	// setApiKey("") failed to clear - it would only ever fail via a
+	// cascade, from a SECOND SendKeys appending to a retained value. Read
+	// the DOM property directly instead.
+	var valueAfterRejection string
+	f.runInBrowser(t, chromedp.Value(`[data-source="authy"] input[type="password"]`, &valueAfterRejection, chromedp.ByQuery))
+	assert.Empty(t, valueAfterRejection, "the field must be cleared after a rejected submit, not merely absent from the markup")
 
 	f.runInBrowser(t,
 		chromedp.SendKeys(`[data-source="authy"] input[type="password"]`, goodKey, chromedp.ByQuery),
@@ -465,6 +474,9 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 		chromedp.WaitVisible(`[data-source="authy"] input[type="password"]`, chromedp.ByQuery),
 	)
 	assertKeyNeverRendered(t, goodKey)
+	var valueAfterLogout string
+	f.runInBrowser(t, chromedp.Value(`[data-source="authy"] input[type="password"]`, &valueAfterLogout, chromedp.ByQuery))
+	assert.Empty(t, valueAfterLogout, "a freshly re-rendered login form must start with an empty field")
 	// The rejected login is a real network 400 - expected, not a bug (see
 	// assertNoUncaughtErrors' own doc comment).
 	assertNoUncaughtErrors(t, f.BrowserErrors())
