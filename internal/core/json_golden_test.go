@@ -518,9 +518,14 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Backfilled is #333's additive, omitzero member: a caller that
+			// ran ApplyAdoptBackfill as part of the same user-level adopt
+			// folds its count in here (`lmm serve` does; the CLI reports it
+			// separately and leaves this zero, in which case the document
+			// is byte-identical to what it was before the field existed).
 			"adopt_result",
 			core.AdoptResult{
-				Adopted: 2, Skipped: 1, Failed: 1,
+				Adopted: 2, Skipped: 1, Failed: 1, Backfilled: 3,
 				Warnings: []string{"merge sync produced 1 raw fallback"},
 			},
 		},
@@ -1063,6 +1068,76 @@ func TestJSONGoldens(t *testing.T) {
 				LockedVersion: "1.2.3",
 				Refusal:       "Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
 				CacheMissing:  true,
+			},
+		},
+		{
+			// The catalog match row: every key populated, including the
+			// derived local game_id that keeps a CurseForge add keyed
+			// "minecraft" rather than its numeric identifier (#307).
+			"game_catalog_match",
+			core.GameCatalogMatch{Identifier: "432", Name: "Minecraft", Slug: "minecraft", GameID: "minecraft"},
+		},
+		{
+			// `lmm game add --query`'s document: the query echoed back
+			// beside its matches, so a stored response is self-describing.
+			"game_catalog_report",
+			core.GameCatalogReport{
+				SourceID: "curseforge",
+				Query:    "mine",
+				Matches: []core.GameCatalogMatch{
+					{Identifier: "432", Name: "Minecraft", Slug: "minecraft", GameID: "minecraft"},
+				},
+			},
+		},
+		{
+			// #333's source-removal refusal: the games that still map the
+			// source, so a frontend names them instead of saying "in use".
+			"source_in_use_error",
+			core.SourceInUseError{SourceID: "my-mods", Games: []string{"alpha", "zeta"}},
+		},
+		{
+			// The field-named rejection an SPA form renders against the
+			// offending input. Err is deliberately absent from the wire
+			// (json:"-"): it exists for errors.Is, not for a client.
+			"game_spec_error",
+			core.GameSpecError{
+				Field:  "install_path",
+				Value:  "/games/nope",
+				Reason: "path does not exist",
+				Err:    domain.ErrInvalidGameID,
+			},
+		},
+		{
+			// One detect listing row: the embedded DetectedGame flat (as
+			// every whole-record wire type in this file embeds its record),
+			// plus the 1-based index a selection names and the
+			// already-configured marker.
+			"game_detect_entry",
+			core.GameDetectEntry{
+				DetectedGame: domain.DetectedGame{
+					SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+					InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
+					NexusID: "skyrimspecialedition",
+				},
+				Index:             1,
+				AlreadyConfigured: true,
+			},
+		},
+		{
+			// The pre-selection listing GET /api/v1/games/detect answers
+			// with: rows plus the scan's own warnings, carried in the
+			// document rather than written to stderr (Ruling 15).
+			"game_detect_listing",
+			core.GameDetectListing{
+				Games: []core.GameDetectEntry{{
+					DetectedGame: domain.DetectedGame{
+						SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+						InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
+						NexusID: "skyrimspecialedition",
+					},
+					Index: 1,
+				}},
+				Warnings: []string{"steam library /mnt/games could not be read"},
 			},
 		},
 	}

@@ -49,10 +49,30 @@ entirely and set an environment variable instead: LMM_MYSOURCE_API_KEY
 for a source with id "mysource" (id uppercased, dashes become
 underscores) - lmm reads that on every run.
 
+.PP
+Non-interactive (#307): --key-from-env reads the source's own environment
+variable (NEXUSMODS_API_KEY, CURSEFORGE_API\fIKEY, or the derived
+LMM\fP_API_KEY), and --key-stdin reads exactly one line from stdin with
+no prompt. Either works under --json, which then emits the same
+authentication report 'lmm auth status --json' does. The two are mutually
+exclusive, and both require the source to be named positionally.
+
+.PP
+lmm auth login nexusmods --key-from-env
+  printf '%s\\n' "$KEY" | lmm auth login curseforge --key-stdin --json
+
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
 	help for login
+
+.PP
+\fB--key-from-env\fP[=false]
+	read the API key from the source's environment variable instead of prompting
+
+.PP
+\fB--key-stdin\fP[=false]
+	read the API key as one line from stdin, with no prompt
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

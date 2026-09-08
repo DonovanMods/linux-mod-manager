@@ -18,7 +18,7 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   if (omnibarSearch.status === "loading") {
     return html`
       <section class="library omnibar-results">
-        <p class="app-booting">Searching sources&#8230;</p>
+        <p class="app-booting">Searching sources…</p>
       </section>
     `;
   }

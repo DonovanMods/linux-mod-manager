@@ -29,11 +29,15 @@ func AuthCapableSources(svc *core.Service) []source.ModSource {
 }
 
 // AuthSourceStatus is one row of an AuthStatusReport: a registered
-// auth-capable source and how (if at all) it is authenticated. Via
-// distinguishes a stored token ("stored", from `lmm auth login`) from an
-// environment variable ("env") - EnvVar and KeyMasked are populated
-// alongside it. Authenticated is false and the other three fields are
-// empty for a source with no key from either place.
+// auth-capable source and how (if at all) it is authenticated. EnvVar
+// names the environment variable this source honours - filled for every
+// row, whether or not it is the ACTIVE credential (#333 Minor #5: the web
+// UI's Auth section needs it to show the "or set <ENV_VAR>" hint on a row
+// that has never been authenticated, not only one that already is via
+// env). Via distinguishes which credential is ACTIVE: a stored token
+// ("stored", from `lmm auth login`) or the environment variable
+// ("env") - KeyMasked is populated alongside Via. Authenticated is false
+// and Via/KeyMasked are empty for a source with no key from either place.
 type AuthSourceStatus struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -80,7 +84,8 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 		id := src.ID()
 		registered[id] = true
 
-		row := AuthSourceStatus{ID: id, Name: src.Name()}
+		envKey := EnvKeyFor(src)
+		row := AuthSourceStatus{ID: id, Name: src.Name(), EnvVar: envKey}
 		token, err := svc.GetSourceToken(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("checking %s: %w", id, err)
@@ -91,11 +96,9 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 			row.Via = "stored"
 			row.KeyMasked = MaskAPIKey(token.APIKey)
 		default:
-			envKey := EnvKeyFor(src)
 			if apiKey := os.Getenv(envKey); apiKey != "" {
 				row.Authenticated = true
 				row.Via = "env"
-				row.EnvVar = envKey
 				row.KeyMasked = MaskAPIKey(apiKey)
 			}
 		}

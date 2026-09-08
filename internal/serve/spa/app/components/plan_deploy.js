@@ -52,7 +52,7 @@ export function DeployPlanView({ plan }) {
                 key=${`${mod.ref.source_id}/${mod.ref.mod_id}`}
                 class="plan__mod ${mod.skipped ? "plan__mod--skipped" : ""}"
               >
-                <span class="plan__mod-name">${mod.name}</span>
+                <span class="plan__mod-name">${mod.name}</span>${" "}
                 ${
                   // Conditional rather than unconditional: issue 330 carry-4
                   // taught planDeploy to stamp Ref.Version from the
@@ -66,9 +66,11 @@ export function DeployPlanView({ plan }) {
                   html`<span class="mono plan__mod-version"
                     >${mod.ref.version}</span
                   >`
-                }
+                }${" "}
                 <span class="plan__mod-detail">${modDetail(mod)}</span>
                 ${
+                  // htm-ws-ok: a block-level <ul> follows - no inline text
+                  // join is needed at this boundary.
                   (mod.link ?? []).length > 0 &&
                   html`
                     <ul class="plan__paths">

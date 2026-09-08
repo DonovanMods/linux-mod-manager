@@ -29,6 +29,8 @@ import { InstallPlanView } from "./plan_install.js";
 import { UpdatesBatchPlanView } from "./plan_updates.js";
 import { VerifyFixPlanView } from "./plan_verify_fix.js";
 import { ProfileImportPlanView } from "./plan_profile_import.js";
+import { ImportArchivePlanView } from "./plan_import_archive.js";
+import { AdoptPlanView } from "./plan_adopt.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
 // "profile_import" each get their real renderer here, replacing the
@@ -43,6 +45,11 @@ const renderers = {
   updates: UpdatesBatchPlanView,
   verify_fix: VerifyFixPlanView,
   profile_import: ProfileImportPlanView,
+  // issue 333's two Setup-surface kinds - GenericPlanView's own fallback
+  // list (docs/plans/unit7-carry.md m8) narrows to "switch"/"profile_apply"
+  // now that both of these have a real renderer.
+  import_archive: ImportArchivePlanView,
+  adopt: AdoptPlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */

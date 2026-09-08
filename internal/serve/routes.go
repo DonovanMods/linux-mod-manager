@@ -45,6 +45,44 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/profiles/{name}/rename", s.wrap(s.handleAPIProfileRename))
 	s.mux.Handle("POST /api/v1/profiles/{name}/set-default", s.wrap(s.handleAPIProfileSetDefault))
 	s.mux.Handle("POST /api/v1/profiles/{name}/reorder", s.wrap(s.handleAPIProfileReorder))
+	// The Setup surface's game half (api_games.go): the chooser's listing,
+	// the add form's catalog search and its write, and the Steam detect
+	// scan in its two halves. None is game-scoped - they are how a game
+	// comes to exist - so none resolves a ?game= selection.
+	s.mux.Handle("GET /api/v1/games", s.wrap(s.handleAPIGames))
+	s.mux.Handle("POST /api/v1/games", s.wrap(s.handleAPIGameAdd))
+	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
+	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))
+	s.mux.Handle("POST /api/v1/games/detect", s.wrap(s.handleAPIGameDetectApply))
+	// The Setup page's default-game set/clear (#333, added on top of task
+	// A1's wire at the coordinator's direction - see api_games.go's own doc
+	// comments): thin wrappers over core.Service.SetDefaultGame/
+	// ClearDefaultGame, answering the same core.SettingsResult
+	// `lmm game set-default`/`clear-default --json` already emit.
+	s.mux.Handle("POST /api/v1/games/{id}/set-default", s.wrap(s.handleAPIGameSetDefault))
+	s.mux.Handle("DELETE /api/v1/games/default", s.wrap(s.handleAPIGameClearDefault))
+	// The Setup surface's custom-source half (api_sources.go): the editor's
+	// list, one definition's raw YAML, a draft's validation, and the two
+	// writes - which answer with the SAME list document the GET returns,
+	// re-read. Not game-scoped, like every other Setup route.
+	s.mux.Handle("GET /api/v1/sources", s.wrap(s.handleAPISources))
+	s.mux.Handle("POST /api/v1/sources/validate", s.wrap(s.handleAPISourceValidate))
+	s.mux.Handle("GET /api/v1/sources/{id}/definition", s.wrap(s.handleAPISourceDefinition))
+	s.mux.Handle("PUT /api/v1/sources/{id}", s.wrap(s.handleAPISourceSave))
+	s.mux.Handle("DELETE /api/v1/sources/{id}", s.wrap(s.handleAPISourceDelete))
+	// The Setup surface's credential half (api_auth.go). All three answer
+	// the same app.AuthStatusReport document `lmm auth status --json`
+	// emits - the writes with it RE-READ, so a mutation never needs a
+	// follow-up request to see its effect.
+	s.mux.Handle("GET /api/v1/auth", s.wrap(s.handleAPIAuth))
+	s.mux.Handle("POST /api/v1/auth/{source}", s.wrap(s.handleAPIAuthLogin))
+	s.mux.Handle("DELETE /api/v1/auth/{source}", s.wrap(s.handleAPIAuthLogout))
+	// Archive uploads (api_uploads.go): the one endpoint that takes a body
+	// that is not JSON. The handle it issues is what the "import_archive"
+	// plan kind names the archive by - a browser cannot hand a server a
+	// path, and a server must not take one from a browser.
+	s.mux.Handle("POST /api/v1/uploads", s.wrap(s.handleAPIUploadCreate))
+	s.mux.Handle("DELETE /api/v1/uploads/{id}", s.wrap(s.handleAPIUploadDelete))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
 	// The activity tray's index (api_activity.go). GET and POST on the same

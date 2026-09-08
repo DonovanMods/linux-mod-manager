@@ -1710,3 +1710,247 @@ select {
 .uninstall-batch__entry:last-child {
   border-bottom: none;
 }
+
+/* ---------------------------------------------------------------------- */
+/* The Setup page (issue 333): games, auth, custom sources, archive import, */
+/* adopt - a whole page, like the search/full-mod pages, since the admin   */
+/* surface earns one (design doc §Scope).                                  */
+/* ---------------------------------------------------------------------- */
+
+.setup-page {
+  max-width: 60rem;
+  margin: 0 auto;
+}
+
+.game-chooser--first-run {
+  max-width: 40rem;
+  margin: 0 auto;
+}
+
+.setup-page__sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.setup-nav {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.setup-nav__tab {
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.setup-nav__tab:hover {
+  color: var(--text-primary);
+}
+
+.setup-nav__tab--active {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.setup-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.setup-section__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setup-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.setup-table th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.setup-table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.setup-table__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.plan__control--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.empty-state__actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* Games: detect + manual add (gameadd.js), shared by the first-run flow. */
+.setup-detect__list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.setup-detect__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+
+/* First-run readiness item 9: the game name must never wrap mid-word to
+   make room for the path beside it - it gets its own natural width and
+   the path (usually much longer) truncates instead, with the full value
+   still available via its own `title` attribute. */
+.setup-detect__name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.setup-detect__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.setup-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 30rem;
+}
+
+.setup-add__catalog {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.setup-add__matches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Authentication. */
+.setup-auth__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-auth__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.setup-auth__row:last-child {
+  border-bottom: none;
+}
+
+.setup-auth__name {
+  flex: 0 0 10rem;
+  font-weight: 700;
+}
+
+.setup-auth__login {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* Custom sources: the YAML editor (setupsources.js). No editor library
+ * (task brief's own call) - line numbers are a plain CSS counter column
+ * beside a bare <textarea>. */
+.source-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.source-editor__frame {
+  display: flex;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.source-editor__gutter {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-1);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.5;
+  text-align: right;
+  user-select: none;
+}
+
+.source-editor__textarea {
+  flex: 1;
+  min-height: 16rem;
+  padding: var(--space-2);
+  border: none;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.source-editor__textarea:focus {
+  outline: none;
+}
+
+.source-editor__report {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+/* Archive import: the upload progress bar reuses .job-progress (jobprogress.js). */
+.setup-import__staged {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}

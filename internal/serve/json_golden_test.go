@@ -390,6 +390,60 @@ func TestServeJSONGoldens(t *testing.T) {
 			verifyFixPlanRequest{ModFilter: "42"},
 		},
 		{
+			// #333's adopt plan request. Its apply half is an empty struct
+			// with no json tags - every choice the flow offers is made at
+			// plan time or IS the decision, which a frontend expresses by
+			// starting the job or not - so it pins nothing.
+			"adopt_plan_request",
+			adoptPlanRequest{SkipMatch: true},
+		},
+		{
+			// #333's import_archive halves. The plan request names a STAGED
+			// UPLOAD, never a path; the apply request's accept_conflicts is
+			// the Overwrite affordance, which maps to
+			// ImportArchiveOptions.AcceptConflicts rather than Force (see
+			// kind_import_archive.go for why the two are not the same
+			// question).
+			"import_archive_plan_request",
+			importArchivePlanRequest{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				SourceID: "nexusmods",
+				ModID:    "1234",
+			},
+		},
+		{
+			"import_archive_apply_request",
+			importArchiveApplyRequest{AcceptConflicts: true, Force: true, SkipHooks: true},
+		},
+		{
+			// #333's upload receipt: the opaque handle a plan request names
+			// the archive by, and what was actually staged.
+			"upload_response",
+			uploadResponse{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				Filename: "SomeMod-1.2.zip",
+				Size:     418209792,
+			},
+		},
+		{
+			// #333's custom-source editor bodies: the draft a validate
+			// request carries (with `lmm source validate`'s two probe
+			// flags), and the definition text a save carries. The id a save
+			// targets is in the PATH, never here - "save THIS source" must
+			// not be able to retarget another one, the same rule the
+			// profile and auth routes follow.
+			"source_validate_request",
+			sourceValidateRequest{
+				YAML:    "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n",
+				Probe:   true,
+				ProbeID: "12345",
+			},
+		},
+		{
+			"source_save_request",
+			sourceSaveRequest{YAML: "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",
@@ -419,6 +473,37 @@ func TestServeJSONGoldens(t *testing.T) {
 				}},
 				Profiles: []string{"default", "modded"},
 			},
+		},
+		{
+			// #307/#333's game-add body: core.GameSpec's wire fields, so a
+			// core.GameSpecError's "field" member points straight at the
+			// input that produced it. game_id and mod_path are the two
+			// optional members - both populated here, since the golden's
+			// job is to pin every key's shape, not one plausible request.
+			"game_add_request",
+			gameAddRequest{
+				SourceID:    "curseforge",
+				Identifier:  "432",
+				Name:        "Minecraft",
+				GameID:      "minecraft",
+				InstallPath: "/games/minecraft",
+				ModPath:     "/games/minecraft/mods",
+			},
+		},
+		{
+			// The detect apply's body: which listing rows to add, named by
+			// 1-based index or slug (core.SelectDetectedGames resolves
+			// both, so the golden carries one of each).
+			"game_detect_select_request",
+			gameDetectSelectRequest{Select: []string{"1", "valheim"}},
+		},
+		{
+			// The credential body (api_auth.go). One member: the source is
+			// named in the PATH, never here, so "authenticate THIS source"
+			// cannot be retargeted by the body. The value is a dummy - a
+			// golden is a committed file, and no real key belongs in one.
+			"auth_key_request",
+			authKeyRequest{APIKey: "example-api-key"},
 		},
 	}
 

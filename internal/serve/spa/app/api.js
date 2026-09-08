@@ -61,6 +61,10 @@ export const get = (path) => request("GET", path);
 export const post = (path, body) => request("POST", path, body);
 export const del = (path) => request("DELETE", path);
 
+/** put issues a PUT with a JSON body - the Setup surface's source editor is
+ * this module's only PUT (api_sources.go's PUT /api/v1/sources/{id}). */
+export const put = (path, body) => request("PUT", path, body);
+
 /**
  * Computes a mutation's plan and returns {plan_id, kind, plan}. The plan
  * DOCUMENT is the frozen core type the CLI's --dry-run --json emits; the
@@ -212,3 +216,168 @@ export function conflictsForOrder(order, context) {
   if (order && order.length > 0) url.searchParams.set("order", order.join(","));
   return get(url.pathname + url.search);
 }
+
+// -- Setup surface (issue 333): games, auth, custom sources, uploads. None
+// of these routes is game-scoped (task-A's own wire note - "they are how a
+// game comes to exist"), so none takes `scoped()`/context.
+
+/** Reads every configured game: []core.GameListEntry, the game chooser's
+ * first-run signal (an empty array) and the Setup page's Games table. */
+export const listGames = () => get("/api/v1/games");
+
+/** Searches sourceID's game catalog for query: core.GameCatalogReport.
+ * core.ErrNoGameCatalog surfaces as a 400 the add form reads to swap its
+ * search box for a plain identifier field (api_games.go). */
+export const gameCatalog = (sourceID, query) => {
+  const url = new URL("/api/v1/games/catalog", window.location.origin);
+  url.searchParams.set("source", sourceID);
+  url.searchParams.set("q", query);
+  return get(url.pathname + url.search);
+};
+
+/** Creates a game from a gameAddRequest-shaped spec: core.GameListEntry, the
+ * same row listGames() returns - splice it straight in rather than
+ * re-reading. */
+export const addGame = (spec) => post("/api/v1/games", spec);
+
+/** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing. */
+export const detectGames = () => get("/api/v1/games/detect");
+
+/** Applies a detect selection (1-based indices or slugs): core.GameDetectResult. */
+export const applyGameDetect = (select) =>
+  post("/api/v1/games/detect", { select });
+
+/** Reads every auth-capable source's state plus any orphaned token:
+ * app.AuthStatusReport (`lmm auth status --json`'s document). */
+export const getAuthStatus = () => get("/api/v1/auth");
+
+/** Stores sourceID's API key, live-validated where the source has a
+ * validator, and answers with the re-read app.AuthStatusReport. The key
+ * itself never comes back - only report.sources[].key_masked does. */
+export const authLogin = (sourceID, apiKey) =>
+  post(`/api/v1/auth/${encodeURIComponent(sourceID)}`, { api_key: apiKey });
+
+/** Removes sourceID's stored credential (or an orphaned token with no
+ * source), answering with the re-read app.AuthStatusReport. */
+export const authLogout = (sourceID) =>
+  del(`/api/v1/auth/${encodeURIComponent(sourceID)}`);
+
+/** Reads the full source registry, including load/construction errors:
+ * []app.SourceInfo (`lmm source list --json`'s document, unscoped). */
+export const listSources = () => get("/api/v1/sources");
+
+/** Reads one custom source's raw YAML definition as text (never JSON - the
+ * editor wants the file's own bytes, comments and key order included). A
+ * built-in source has no definition and 404s. */
+export const getSourceDefinition = async (id) => {
+  const response = await fetch(
+    `/api/v1/sources/${encodeURIComponent(id)}/definition`,
+  );
+  const text = await response.text();
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      // A non-JSON body (a plain 404) - the status text is all there is.
+    }
+    throw new ApiError(
+      response.status,
+      payload?.error || `couldn't load the definition (${response.status})`,
+      payload?.details,
+    );
+  }
+  return text;
+};
+
+/** The definition download's own URL - a plain GET the browser downloads
+ * via <a download>, the same convention profileExportURL follows. */
+export const sourceDefinitionURL = (id) =>
+  `/api/v1/sources/${encodeURIComponent(id)}/definition`;
+
+/** Validates a draft definition (and optionally probes it live):
+ * app.SourceValidationReport. A validation or probe failure is an ApiError
+ * whose `details` IS the report - callers render it the same way either
+ * side of that split. */
+export const validateSource = (yaml, { probe, probeID } = {}) =>
+  post("/api/v1/sources/validate", {
+    yaml,
+    ...(probe ? { probe: true } : {}),
+    ...(probeID ? { probe_id: probeID } : {}),
+  });
+
+/** Saves id's definition (the yaml's own "id" must equal it) and swaps the
+ * constructed source into the running registry with no restart. Answers
+ * with the re-read []app.SourceInfo. */
+export const saveSource = (id, yaml) =>
+  put(`/api/v1/sources/${encodeURIComponent(id)}`, { yaml });
+
+/** Deletes id's definition. 409 (core.SourceInUseError) when a game still
+ * maps it. Answers with the re-read []app.SourceInfo. */
+export const deleteSource = (id) =>
+  del(`/api/v1/sources/${encodeURIComponent(id)}`);
+
+// maxUploadBytes mirrors the server's own cap (uploads.go's maxUploadBytes)
+// so an oversized file is refused before a multi-gigabyte upload even
+// starts, rather than after streaming it all the way to a 413.
+export const maxUploadBytes = 2 * 1024 * 1024 * 1024;
+
+/**
+ * Uploads an archive via XHR (fetch has no upload-progress events, which is
+ * the one thing this form needs to show for a multi-hundred-megabyte file).
+ * onProgress(loaded, total) fires as the browser reports it; total is 0
+ * when the browser can't compute it (rare for a same-origin POST with a
+ * known Content-Length, kept anyway for honesty).
+ *
+ * Resolves with the uploadResponse document ({upload_id, filename, size});
+ * rejects with an ApiError built from the response the same way request()
+ * builds one, so a caller renders either failure identically.
+ */
+export function uploadArchive(file, { onProgress, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/v1/uploads");
+    xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+
+    if (signal) {
+      if (signal.aborted) {
+        reject(new DOMException("aborted", "AbortError"));
+        return;
+      }
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+
+    xhr.upload.onprogress = (e) => {
+      onProgress?.(e.loaded, e.lengthComputable ? e.total : 0);
+    };
+    xhr.onabort = () => reject(new DOMException("aborted", "AbortError"));
+    xhr.onerror = () => reject(new ApiError(0, "the upload failed", null));
+    xhr.onload = () => {
+      let payload = null;
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        // Fall through to the envelope-less rejection below.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+        return;
+      }
+      reject(
+        new ApiError(
+          xhr.status,
+          payload?.error || `upload failed (${xhr.status})`,
+          payload?.details,
+        ),
+      );
+    };
+
+    const form = new FormData();
+    form.append("file", file, file.name);
+    xhr.send(form);
+  });
+}
+
+/** Cancels a staged upload nobody imported: 204, no document. */
+export const deleteUpload = (uploadID) =>
+  del(`/api/v1/uploads/${encodeURIComponent(uploadID)}`);

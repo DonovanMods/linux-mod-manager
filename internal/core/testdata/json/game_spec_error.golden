@@ -1,0 +1,5 @@
+{
+  "field": "install_path",
+  "value": "/games/nope",
+  "reason": "path does not exist"
+}

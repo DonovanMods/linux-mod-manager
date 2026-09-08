@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -70,7 +71,17 @@ For CurseForge:
 For a custom source, either enter the key at the prompt, or skip login
 entirely and set an environment variable instead: LMM_MYSOURCE_API_KEY
 for a source with id "mysource" (id uppercased, dashes become
-underscores) - lmm reads that on every run.`,
+underscores) - lmm reads that on every run.
+
+Non-interactive (#307): --key-from-env reads the source's own environment
+variable (NEXUSMODS_API_KEY, CURSEFORGE_API_KEY, or the derived
+LMM_<ID>_API_KEY), and --key-stdin reads exactly one line from stdin with
+no prompt. Either works under --json, which then emits the same
+authentication report 'lmm auth status --json' does. The two are mutually
+exclusive, and both require the source to be named positionally.
+
+  lmm auth login nexusmods --key-from-env
+  printf '%s\n' "$KEY" | lmm auth login curseforge --key-stdin --json`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAuthLogin,
 }
@@ -101,7 +112,16 @@ var authStatusCmd = &cobra.Command{
 	RunE:  runAuthStatus,
 }
 
+var (
+	authKeyFromEnv bool
+	authKeyStdin   bool
+)
+
 func init() {
+	authLoginCmd.Flags().BoolVar(&authKeyFromEnv, "key-from-env", false, "read the API key from the source's environment variable instead of prompting")
+	authLoginCmd.Flags().BoolVar(&authKeyStdin, "key-stdin", false, "read the API key as one line from stdin, with no prompt")
+	authLoginCmd.MarkFlagsMutuallyExclusive("key-from-env", "key-stdin")
+
 	authCmd.AddCommand(authLoginCmd)
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authStatusCmd)
@@ -134,11 +154,11 @@ func promptForSource(service *core.Service) (string, error) {
 		return "", fmt.Errorf("no auth-capable sources are registered")
 	}
 
-	// Non-interactive rule (Ruling 2): 'auth login' never reaches this (it
-	// rejects --json outright in runAuthLogin, since readAPIKey has no
-	// non-interactive form either) - only 'auth logout' with no positional
-	// source argument can land here under --json, and its way out is to
-	// name the source directly instead.
+	// Non-interactive rule (Ruling 2): whichever of 'auth login'/'auth
+	// logout' reaches here under --json did so with no positional source
+	// argument, and the source is the one value neither command has a flag
+	// for (#307 gave 'login' its --key-from-env/--key-stdin, not a
+	// --source). Naming the source directly is the way out for both.
 	if jsonOutput {
 		return "", confirmationRequiredVia("pass the source ID as a positional argument (e.g. lmm auth logout <source>)")
 	}
@@ -165,16 +185,13 @@ func promptForSource(service *core.Service) (string, error) {
 	return sources[choice-1].ID(), nil
 }
 
-// runAuthLogin is interactive-only in Phase 3 (v2 Phase 3 Ruling 2 - a
-// flag-driven form is a follow-up issue): even with a source named
-// positionally, doAuthLogin still has to read the API key from the
-// terminal (readAPIKey), so --json rejects up front with
-// core.ErrInteractiveOnly before opening a service or prompting for
-// anything.
+// runAuthLogin resolves the source, then hands off to doAuthLogin. Since
+// #307 it no longer rejects --json up front: --key-from-env and
+// --key-stdin both supply the key without a terminal, so a flagged run is
+// fully non-interactive. Only the SOURCE still has no flag - it is the
+// positional argument - so a --json run that omits it refuses at
+// selectAuthSource rather than opening the picker.
 func runAuthLogin(cmd *cobra.Command, args []string) error {
-	if jsonOutput {
-		return core.ErrInteractiveOnly
-	}
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
 		sourceID, err := selectAuthSource(service, args)
 		if err != nil {
@@ -197,32 +214,103 @@ func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) er
 		return fmt.Errorf("looking up source %s: %w", sourceID, err)
 	}
 
-	printAuthInstructions(src)
+	// Only the interactive path prints instructions: they tell a human
+	// where to get a key, which is noise for a --key-from-env run and
+	// forbidden output beside a --json document (Ruling 15).
+	if !authKeyFromEnv && !authKeyStdin && !jsonOutput {
+		printAuthInstructions(src)
+	}
 
-	apiKey, err := readAPIKey()
+	apiKey, err := acquireAPIKey(src)
 	if err != nil {
-		return fmt.Errorf("reading API key: %w", err)
+		return err
 	}
 	if apiKey == "" {
 		return fmt.Errorf("API key cannot be empty")
 	}
 
-	validator, hasValidator := src.(source.KeyValidator)
-	if hasValidator {
+	// app owns the live check (app.ValidateSourceKey), shared with `lmm
+	// serve`'s POST /api/v1/auth/{source}, so the two frontends cannot
+	// disagree about when a key was really validated. HasKeyValidator is
+	// asked first because the "Validating... " line has to be printed
+	// BEFORE the call it describes.
+	hasValidator := app.HasKeyValidator(service, sourceID)
+	if hasValidator && !jsonOutput {
 		fmt.Print("Validating... ")
-		if err := validator.ValidateKey(ctx, apiKey); err != nil {
+	}
+	if _, err := app.ValidateSourceKey(ctx, service, sourceID, apiKey); err != nil {
+		if hasValidator && !jsonOutput {
 			fmt.Println("failed")
-			return fmt.Errorf("invalid API key: %w", err)
 		}
+		return fmt.Errorf("invalid API key: %w", err)
+	}
+	if hasValidator && !jsonOutput {
 		fmt.Println("done")
 	}
 
 	if err := service.SaveSourceToken(ctx, sourceID, apiKey); err != nil {
 		return fmt.Errorf("saving token: %w", err)
 	}
+
+	if jsonOutput {
+		// The whole app.AuthStatusReport, not just this source's row: it is
+		// the document `lmm auth status --json` already emits (so a client
+		// parses one shape for "what is authenticated"), and a login can
+		// change more than one row - storing a key for a source that had an
+		// orphaned token moves it out of "orphaned" in the same read.
+		// `lmm serve`'s POST /api/v1/auth/{source} answers with the same
+		// document, for the same reason.
+		return doAuthStatus(ctx, service)
+	}
 	printLoginResult(os.Stdout, hasValidator)
 	printAuthLoginSuccess(os.Stdout, src, hasValidator)
 	return nil
+}
+
+// acquireAPIKey obtains the key for src: from its own environment variable
+// (--key-from-env, resolved through app.EnvKeyFor so a built-in's legacy
+// name and a custom source's derived LMM_<ID>_API_KEY are found the same
+// way), from exactly one line of stdin (--key-stdin, no prompt), or from
+// the interactive terminal prompt.
+//
+// The prompt is the only path that reads stdin without being asked to, so
+// it is the only one --json refuses (Ruling 2), naming the two flags that
+// answer it.
+func acquireAPIKey(src source.ModSource) (string, error) {
+	switch {
+	case authKeyFromEnv:
+		envKey := app.EnvKeyFor(src)
+		key := strings.TrimSpace(os.Getenv(envKey))
+		if key == "" {
+			return "", fmt.Errorf("%s is not set (or is empty); export it, or pass --key-stdin instead", envKey)
+		}
+		return key, nil
+	case authKeyStdin:
+		key, err := readOneLine(os.Stdin)
+		if err != nil {
+			return "", fmt.Errorf("reading API key from stdin: %w", err)
+		}
+		return key, nil
+	case jsonOutput:
+		return "", fmt.Errorf("%w: pass --key-from-env or --key-stdin", core.ErrInteractiveOnly)
+	}
+	key, err := readAPIKey()
+	if err != nil {
+		return "", fmt.Errorf("reading API key: %w", err)
+	}
+	return key, nil
+}
+
+// readOneLine reads exactly one line from r, trim-spaced, treating EOF as
+// the end of that line (a `printf '%s' "$KEY" |` pipe with no trailing
+// newline is a legitimate way to supply it). It does NOT lower-case, which
+// is why it is not readPromptLineFrom: an API key is case-sensitive.
+func readOneLine(r io.Reader) (string, error) {
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
 }
 
 // printLoginResult reports the outcome of storing credentials, for the case

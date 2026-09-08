@@ -74,7 +74,8 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
                       aria-label=${`Drop ${u.installed_mod.name} from this batch`}
                       onChange=${() => drop(key)}
                     />
-                    <span class="plan__mod-name">${u.installed_mod.name}</span>
+                    <span class="plan__mod-name">${u.installed_mod.name}</span
+                    >${" "}
                     <span class="plan__mod-detail mono"
                       >${u.installed_mod.version} → ${u.new_version}</span
                     >

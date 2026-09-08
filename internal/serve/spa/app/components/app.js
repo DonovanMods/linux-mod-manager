@@ -14,6 +14,7 @@ import { GameChooser } from "./gamechooser.js";
 import { MissionControl } from "./missioncontrol.js";
 import { FullModPage } from "./fullmodpage.js";
 import { SearchPage } from "./searchpage.js";
+import { SetupPage } from "./setup.js";
 import { ConfirmPlanModal } from "./confirmplan.js";
 import { ReorderModal } from "./reordermodal.js";
 import { ProfilesModal } from "./profilesmodal.js";
@@ -114,6 +115,18 @@ export function App({ state, onThemeChange, actions }) {
   if (route.view === "search") {
     return html`
       <${SearchPage}
+        state=${state}
+        route=${route}
+        onThemeChange=${onThemeChange}
+        actions=${actions}
+      />
+      ${overlays}
+    `;
+  }
+
+  if (route.view === "setup") {
+    return html`
+      <${SetupPage}
         state=${state}
         route=${route}
         onThemeChange=${onThemeChange}

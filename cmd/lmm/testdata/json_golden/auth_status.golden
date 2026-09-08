@@ -5,6 +5,7 @@
       "name": "Nexus Mods",
       "authenticated": true,
       "via": "stored",
+      "env_var": "NEXUSMODS_API_KEY",
       "key_masked": "sto...345"
     }
   ],

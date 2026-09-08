@@ -90,7 +90,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     (!modPage.filesReport && !modPage.error)
   ) {
     return html`${header}
-      <main class="app-main"><p class="app-booting">Loading&#8230;</p></main>`;
+      <main class="app-main"><p class="app-booting">Loading…</p></main>`;
   }
 
   if (modPage.error) {
@@ -374,7 +374,7 @@ function VersionsTable({
     `;
   }
   if (modPage.versions === null) {
-    return html`<p class="app-booting">Loading versions&#8230;</p>`;
+    return html`<p class="app-booting">Loading versions…</p>`;
   }
   if (!modPage.versions.supported) {
     return html`<p class="empty-state__hint">
@@ -483,7 +483,7 @@ function JobHistorySection({ state, sourceID, modID }) {
       <p class="plan__heading">Job history</p>
       ${
         history.status === "loading"
-          ? html`<p class="app-booting">Loading job history&#8230;</p>`
+          ? html`<p class="app-booting">Loading job history…</p>`
           : history.jobs.length === 0
             ? html`<p class="empty-state__hint">
                 No update or rollback jobs recorded for this mod yet.

@@ -90,7 +90,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   if (!matches || searchPage.status === "loading") {
     return html`${header}
       <main class="app-main search-page">
-        <p class="app-booting">Searching&#8230;</p>
+        <p class="app-booting">Searching…</p>
       </main>`;
   }
 

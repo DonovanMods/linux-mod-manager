@@ -600,14 +600,23 @@ func (s *Service) ListGameEntries(ctx context.Context) ([]GameListEntry, error) 
 	games := s.ListGames()
 	entries := make([]GameListEntry, len(games))
 	for i, game := range games {
-		entry := GameListEntry{Game: *game, Default: game.ID == defaultGame}
-		if game.DeployMode == domain.DeployCompile {
-			v := game.ConvertPaks
-			entry.ConvertPaks = &v
-		}
-		entries[i] = entry
+		entries[i] = newGameListEntry(game, defaultGame)
 	}
 	return entries, nil
+}
+
+// newGameListEntry builds one `lmm game list` row for game, marking it
+// default when it is defaultGameID and attaching the ConvertPaks pointer
+// only for a DeployCompile game (GameListEntry's own doc comment). Shared
+// with AddGame (game_add.go), which answers with the identical row shape
+// so a frontend can splice an add's response straight into its list.
+func newGameListEntry(game *domain.Game, defaultGameID string) GameListEntry {
+	entry := GameListEntry{Game: *game, Default: game.ID == defaultGameID}
+	if game.DeployMode == domain.DeployCompile {
+		v := game.ConvertPaks
+		entry.ConvertPaks = &v
+	}
+	return entry
 }
 
 // VerifyReport is a VerifyResult plus the game/profile it describes - the
