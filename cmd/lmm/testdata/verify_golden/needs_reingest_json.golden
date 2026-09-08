@@ -7,7 +7,8 @@
         "mod_id": "merged-pak",
         "mod_name": "Icarus Merged Pak",
         "status": "stale_compile",
-        "note": "base pak updated"
+        "note": "base pak updated",
+        "fixable": true
       },
       {
         "mod_id": "bear-mount",
@@ -18,14 +19,16 @@
         "mod_id": "bear-mount",
         "mod_name": "Bear Mount",
         "file_id": "exmodz-file-id",
-        "status": "no_checksum"
+        "status": "no_checksum",
+        "fixable": true
       },
       {
         "mod_id": "legacy-pak-mod",
         "mod_name": "legacy-pak-mod",
         "file_id": "LegacyMod.pak",
         "status": "needs_reingest",
-        "note": "pak predates conversion support - run 'lmm verify --fix' to re-ingest"
+        "note": "pak predates conversion support - run 'lmm verify --fix' to re-ingest",
+        "fixable": true
       }
     ],
     "issues": 0,

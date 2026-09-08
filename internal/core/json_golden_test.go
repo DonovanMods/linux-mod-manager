@@ -579,10 +579,16 @@ func TestJSONGoldens(t *testing.T) {
 			core.VerifyOptions{Tier: core.VerifyFull, Fix: true, ModFilter: "Sample Mod"},
 		},
 		{
+			// Fixable true here on purpose (#332): version_mismatch on an
+			// unlocked, source-backed mod is exactly the case --fix acts
+			// on, so this golden pins the field PRESENT. verify_report's
+			// own "ok" finding below pins the other half - omitzero, so a
+			// non-fixable row carries no key at all.
 			"verify_finding",
 			core.VerifyFinding{
 				ModID: "42", ModName: "Sample Mod", FileID: "file-1", Status: "version_mismatch",
 				Note: "recorded version does not match effective", Recorded: "1.2.2", Effective: "1.2.3", Version: "1.2.3",
+				Fixable: true,
 			},
 		},
 		{

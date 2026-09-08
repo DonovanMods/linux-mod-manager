@@ -141,8 +141,8 @@ func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 	// walks the rows in DB order, same as the CLI's own loop does today).
 	byFileID := map[string]core.VerifyFinding{
 		"ok-file":          {ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
-		"missing-file":     {ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing", Version: "1.0"},
-		"no-checksum-file": {ModID: "mod-no-checksum", ModName: "Mod No Checksum", FileID: "no-checksum-file", Status: "no_checksum"},
+		"missing-file":     {ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing", Version: "1.0", Fixable: true},
+		"no-checksum-file": {ModID: "mod-no-checksum", ModName: "Mod No Checksum", FileID: "no-checksum-file", Status: "no_checksum", Fixable: true},
 		"gone-file":        {ModID: "mod-gone", FileID: "gone-file", Status: "skipped"},
 	}
 	var wantFindings []core.VerifyFinding
@@ -392,7 +392,7 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 		// --- version pass (runs before the per-file walk) ---
 		{ModID: "unreachable-mod", ModName: "Unreachable", Status: "skipped", Note: "could not check version: boom"},
 		{ModID: "unverifiable-mod", ModName: "Unverifiable", Status: "version_unverifiable"},
-		{ModID: "mismatch-mod", ModName: "Mismatch", Status: "version_mismatch", Recorded: "1.0", Effective: "2.0"},
+		{ModID: "mismatch-mod", ModName: "Mismatch", Status: "version_mismatch", Recorded: "1.0", Effective: "2.0", Fixable: true},
 		{ModID: "locked-mod", ModName: "Locked", Status: "ok", Note: "lock pending convergence (installed v1.0, locked v2.0)"},
 		// --- per-file walk (DB/checksum insertion order) ---
 		{ModID: "reachable-mod", ModName: "Reachable", FileID: "f1", Status: "ok"},
@@ -1505,7 +1505,7 @@ func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
 	require.Equal(t, 0, result.Issues)
 	require.Equal(t, 1, result.Warnings)
 	require.Equal(t, []core.VerifyFinding{
-		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"},
+		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache", Fixable: true},
 	}, result.Findings)
 
 	require.Len(t, events, 2, "Begin, then the one convergence finding - nothing else runs on this path")
@@ -1575,7 +1575,7 @@ func TestVerify_MainPath_ConvergenceAfterFileWalk(t *testing.T) {
 
 	require.Equal(t, []core.VerifyFinding{
 		{ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
-		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"},
+		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache", Fixable: true},
 	}, result.Findings)
 	require.Equal(t, 1, result.Warnings)
 }
@@ -1739,11 +1739,11 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	// GetFilesWithChecksums' own (fetched-here) row order.
 	byModAndFile := map[string]core.VerifyFinding{
 		"fc-mod:fc-file":           {ModID: "fc-mod", ModName: "FC Mod", FileID: "fc-file", Status: "ok"},
-		"goodmod:exmodz-file":      {ModID: "goodmod", ModName: "goodmod", FileID: "exmodz-file", Status: "no_checksum"},
-		"wolfmod:exmodz-file":      {ModID: "wolfmod", ModName: "wolfmod", FileID: "exmodz-file", Status: "no_checksum"},
-		"badpak:pak":               {ModID: "badpak", ModName: "badpak", FileID: "pak", Status: "no_checksum"},
-		"legacypak:pak":            {ModID: "legacypak", ModName: "Legacy Pak", FileID: "pak", Status: "needs_reingest", Note: "pak predates conversion support - run 'lmm verify --fix' to re-ingest"},
-		"missing-mod:missing-file": {ModID: "missing-mod", ModName: "Missing Mod", FileID: "missing-file", Status: "missing", Version: "1.0"},
+		"goodmod:exmodz-file":      {ModID: "goodmod", ModName: "goodmod", FileID: "exmodz-file", Status: "no_checksum", Fixable: true},
+		"wolfmod:exmodz-file":      {ModID: "wolfmod", ModName: "wolfmod", FileID: "exmodz-file", Status: "no_checksum", Fixable: true},
+		"badpak:pak":               {ModID: "badpak", ModName: "badpak", FileID: "pak", Status: "no_checksum", Fixable: true},
+		"legacypak:pak":            {ModID: "legacypak", ModName: "Legacy Pak", FileID: "pak", Status: "needs_reingest", Note: "pak predates conversion support - run 'lmm verify --fix' to re-ingest", Fixable: true},
+		"missing-mod:missing-file": {ModID: "missing-mod", ModName: "Missing Mod", FileID: "missing-file", Status: "missing", Version: "1.0", Fixable: true},
 	}
 	var perFileRows []core.VerifyFinding
 	for _, f := range files {
@@ -1754,11 +1754,11 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 
 	want := []core.VerifyFinding{
 		{ModID: "fc-mod", ModName: "FC Mod", Status: "file_count_mismatch"},
-		{ModID: "merged-pak", ModName: "Icarus Merged Pak", Status: "stale_compile", Note: "base pak updated"},
+		{ModID: "merged-pak", ModName: "Icarus Merged Pak", Status: "stale_compile", Note: "base pak updated", Fixable: true},
 		{ModID: "badpak", ModName: "badpak", Status: "conversion_failed", Note: "irreconcilable pak layout"},
 	}
 	want = append(want, perFileRows...)
-	want = append(want, core.VerifyFinding{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"})
+	want = append(want, core.VerifyFinding{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache", Fixable: true})
 
 	require.Equal(t, want, result.Findings)
 }
