@@ -8,6 +8,8 @@ package core_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -201,4 +203,129 @@ func TestVerifyFixable_FixRunReportsNothingFixable(t *testing.T) {
 		assert.False(t, f.Fixable,
 			"a --fix run's own row must not claim a repair is still pending: %+v", f)
 	}
+}
+
+// TestVerifyFixable_CompileGameStatuses is M7's completeness fix: the CLI
+// verify goldens already pinned stale_compile/needs_reingest/
+// file_count_mismatch/conversion_failed correctly (unit6a-review.md
+// confirmed each by hand), but this package's own table tests never
+// exercised them - this test closes that gap directly against the table in
+// VerifyFinding.Fixable's doc comment, reusing the DeployCompile fixture
+// TestVerify_CompileGameStatuses (verify_test.go) built for the same four
+// statuses, plus the file_count_mismatch shape from
+// TestVerify_FullOrder_Integration.
+func TestVerifyFixable_CompileGameStatuses(t *testing.T) {
+	installDir := t.TempDir()
+	basePak := filepath.Join(installDir, "Icarus", "Content", "Data", "data.pak")
+	require.NoError(t, os.MkdirAll(filepath.Dir(basePak), 0o755))
+	writeFakeBasePak(t, basePak)
+
+	svc := newFlowsTestService(t)
+	src := &pakConversionOutcomeSource{
+		fakeCompilerSource: &fakeCompilerSource{},
+		failRefs:           map[string]string{"fake-compiler:badpak": "irreconcilable pak layout"},
+	}
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "icarus", InstallPath: installDir, ModPath: t.TempDir(),
+		DeployMode: domain.DeployCompile, LinkMethod: domain.LinkCopy, ConvertPaks: true,
+		SourceIDs: map[string]string{"fake-compiler": "external-icarus-id"},
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+
+	// file_count_mismatch: a cache version directory that still exists but
+	// holds none of its recorded files (TestVerify_FullOrder_Integration's
+	// own fixture).
+	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file", []byte("x")))
+	require.NoError(t, os.Remove(gameCache.GetFilePath(game.ID, "fake-compiler", "fc-mod", "1.0", "fc-file")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "fc-mod", SourceID: "fake-compiler", Name: "FC Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"fc-file"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "fc-mod", Version: "1.0", FileIDs: []string{"fc-file"}}))
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "fake-compiler", "fc-mod", game.ID, "default", "fc-file", "checksum-fc"))
+
+	// goodmod converts cleanly; badpak's conversion is scripted to fail -
+	// the conversion_failed fixture.
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "goodmod", "1.0", "exmodz-file", []byte("good-bytes"))
+	seedEnabledPakMod(t, svc, game, "fake-compiler", "badpak", "1.0", "pak", []byte("bad-bytes"))
+
+	// legacypak (source-backed) and locallegacy (SourceLocal): both
+	// pre-#221 pak cache entries - a deployable member on disk, no
+	// retained source - so both produce needs_reingest, but only the
+	// source-backed one is fixable.
+	require.NoError(t, gameCache.Store(game.ID, "fake-compiler", "legacypak", "1.0", "legacypak.pak", []byte("legacy-bytes")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "legacypak", SourceID: "fake-compiler", Name: "Legacy Pak", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"pak"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "fake-compiler", ModID: "legacypak", Version: "1.0", FileIDs: []string{"pak"}}))
+
+	require.NoError(t, gameCache.Store(game.ID, domain.SourceLocal, "locallegacy", "1.0", "locallegacy.pak", []byte("local-legacy-bytes")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "locallegacy", SourceID: domain.SourceLocal, Name: "Local Legacy Pak", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"pak"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: domain.SourceLocal, ModID: "locallegacy", Version: "1.0", FileIDs: []string{"pak"}}))
+
+	// First (only) sync: stamps MergedPakOutcomes with badpak's conversion
+	// failure and establishes an up-to-date fingerprint.
+	_, err = svc.SyncMergedPak(context.Background(), game, "default")
+	require.NoError(t, err)
+
+	// Go stale: enable a third exmodz mod WITHOUT syncing again - the
+	// stale_compile fixture.
+	seedEnabledExmodzMod(t, svc, game, "fake-compiler", "wolfmod", "1.0", "exmodz-file", []byte("wolf-bytes"))
+
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	require.NoError(t, err)
+
+	byModID := map[string]core.VerifyFinding{}
+	for _, f := range result.Findings {
+		if f.FileID == "" {
+			byModID[f.ModID] = f
+		}
+	}
+
+	require.Contains(t, byModID, "fc-mod")
+	assert.Equal(t, "file_count_mismatch", byModID["fc-mod"].Status)
+	assert.False(t, byModID["fc-mod"].Fixable, "file_count_mismatch is never fixable")
+
+	require.Contains(t, byModID, "merged-pak")
+	assert.Equal(t, "stale_compile", byModID["merged-pak"].Status)
+	assert.True(t, byModID["merged-pak"].Fixable, "--fix's merged-pak resync regenerates it")
+
+	require.Contains(t, byModID, "badpak")
+	assert.Equal(t, "conversion_failed", byModID["badpak"].Status)
+	assert.False(t, byModID["badpak"].Fixable, "conversion_failed is never fixable")
+
+	var reingest []core.VerifyFinding
+	for _, f := range result.Findings {
+		if f.Status == "needs_reingest" {
+			reingest = append(reingest, f)
+		}
+	}
+	require.Len(t, reingest, 2)
+	byReingestModID := map[string]core.VerifyFinding{reingest[0].ModID: reingest[0], reingest[1].ModID: reingest[1]}
+
+	require.Contains(t, byReingestModID, "legacypak")
+	assert.True(t, byReingestModID["legacypak"].Fixable, "a source-backed needs_reingest row can be redownloaded")
+
+	require.Contains(t, byReingestModID, "locallegacy")
+	assert.False(t, byReingestModID["locallegacy"].Fixable, "a SourceLocal mod has no source to redownload from")
 }
