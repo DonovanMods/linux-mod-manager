@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/chromedp/chromedp"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,29 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 )
+
+// retrySetValue is chromedp.SetValue with a few retries: setting a
+// controlled <select>'s value dispatches input+change synchronously
+// (chromedp's own js/setAttribute.js), which can run this application's
+// onChange handler - and its re-render - INSIDE that same call, before
+// chromedp reads the value back to confirm it stuck. Occasionally (observed
+// under `-race`, where everything runs slower) that re-render lands between
+// the write and the read-back and chromedp reports "could not set value on
+// node N" even though the click that follows would have worked fine a beat
+// later. A plain retry is the honest fix: the interaction itself is not
+// flaky, only this one JS round trip's timing is.
+func retrySetValue(sel, value string) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		var err error
+		for attempt := 0; attempt < 5; attempt++ {
+			if err = chromedp.SetValue(sel, value, chromedp.ByQuery).Do(ctx); err == nil {
+				return nil
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		return err
+	})
+}
 
 // SetupPath is the Setup page's own route, optionally deep-linked to a
 // section - router.js's setupPath mirrored for the browser side.
@@ -216,7 +240,7 @@ func TestE2E_FirstRunManualAdd_CatalogPickLandsOnMissionControl(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
-		chromedp.SetValue(`select[name="add-source"]`, "catalogsrc", chromedp.ByQuery),
+		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
 		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-query"]`, "mine", chromedp.ByQuery),
 		chromedp.Click(`.setup-add__catalog button.button--small`, chromedp.ByQuery),
@@ -246,7 +270,7 @@ func TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
 		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
-		chromedp.SetValue(`select[name="add-source"]`, "plain", chromedp.ByQuery),
+		retrySetValue(`select[name="add-source"]`, "plain"),
 		chromedp.SendKeys(`input[name="add-identifier"]`, "acme", chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-name"]`, "Acme Game", chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-install-path"]`, "/definitely/not/a/real/path", chromedp.ByQuery),
