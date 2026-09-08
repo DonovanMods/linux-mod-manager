@@ -839,8 +839,24 @@ failed" where core reports the items it could not update or import, tallied
 in the same place a bare "Done" used to sit unconditionally. **Deploy,
 Enable/Disable, Uninstall, per-mod Update, Rollback, Search + Install,
 Reorder, Profiles, Health repair, and the Updates/Library batch surfaces**
-are all wired end to end; only server-side admin (source auth, game
-management) remains CLI-only, waiting on a later unit.
+are all wired end to end.
+
+Unit 7 lands the **Setup page** (`/g/{game}/{profile}/setup`, reached from
+the top bar's **⚙** button or the empty-library state's links) — a whole
+page rather than a modal, with five sections: **Games** (the configured
+games table, the same detect/manual-add flow the first-run chooser uses for
+a game added later, and default set/clear), **Authentication** (per-source
+status, log in/out, an environment-variable hint, and orphaned-token
+removal), **Custom sources** (list, a line-numbered YAML editor for a new or
+existing definition with validate-then-save and an optional live probe,
+delete with an inline confirm, download), **Archive import** (upload an
+archive, optionally link it to a source/mod id, then the same confirm-plan
+framework every other mutation uses, including the conflict/Overwrite round
+trip), and **Adopt** (scan for untracked mods already in the game folder,
+preview, confirm). The first-run flow at `/` — no games configured yet —
+shares its detect/manual-add components with this page's own Games section,
+so "first run" and "add another game later" cannot drift into two different
+forms. Hook script editing and raw settings mutation remain CLI-only.
 
 ### URLs
 
@@ -938,6 +954,8 @@ takes `?game=`:
 POST   /api/v1/games          {"source_id","identifier","name",
                                "install_path"[,"game_id","mod_path"]}
                                           -> the new game's `lmm game list` row
+POST   /api/v1/games/{id}/set-default     -> the new default (core.SettingsResult)
+DELETE /api/v1/games/default              -> the default cleared (core.SettingsResult)
 POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
 POST   /api/v1/auth/{source}  {"api_key"} -> the authentication report
 DELETE /api/v1/auth/{source}              -> the authentication report

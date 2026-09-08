@@ -29,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The `lmm serve` Setup page (#333).** A whole page at
+  `/g/{game}/{profile}/setup` rather than a modal, reached from the top
+  bar's **⚙** button or the empty-library state's links, with five
+  sections: **Games** (the configured games table, detect/manual-add, and
+  default set/clear via two new routes,
+  `POST /api/v1/games/{id}/set-default` and `DELETE /api/v1/games/default`,
+  both answering `core.SettingsResult`), **Authentication** (per-source
+  status, log in/out, an environment-variable hint, orphaned-token
+  removal), **Custom sources** (list, a line-numbered YAML editor with
+  validate-then-save and an optional live probe, delete with an inline
+  confirm, download), **Archive import** (upload, optional source/mod-id
+  link, the confirm-plan framework, conflict/Overwrite), and **Adopt**
+  (scan, preview, confirm). The first-run flow at `/` (no games configured
+  yet) shares its detect/manual-add components with the Games section, so
+  first-run and "add another game later" cannot drift into two different
+  forms. (#333, epic #326)
+
 - **Non-interactive `lmm game add` and `lmm auth login` (#307), and the
   `lmm serve` Setup surface's backend (#333).** Every prompt those two
   commands had gained a flag, so both now run with no terminal and under
