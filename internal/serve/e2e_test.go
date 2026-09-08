@@ -3437,7 +3437,15 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 		chromedp.WaitNotPresent(`.modal[data-kind="uninstall-batch"]`, chromedp.ByQuery),
 	)
 
-	require.Eventually(t, func() bool {
+	// N3 (unit 6 re-review): this end-state check used to be a require, which
+	// FailNows before the concurrency assertion below ever runs - so a real
+	// sequencing regression would report only this check's downstream
+	// symptom ("all four mods must actually be uninstalled"), never the
+	// property m6 exists to pin (maxRunning). assert.Eventually lets
+	// execution reach that assertion regardless, so a future reader sees the
+	// actual measured maxRunning rather than having to make this check
+	// non-fatal by hand to find it, the way this re-review did.
+	assert.Eventually(t, func() bool {
 		for _, id := range []string{"a", "b", "c", "d"} {
 			if _, err := f.Svc.GetInstalledMod(t.Context(), "fake", id, f.Game.ID, "default"); !errors.Is(err, domain.ErrModNotFound) {
 				return false
