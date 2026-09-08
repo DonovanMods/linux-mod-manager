@@ -3394,6 +3394,13 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 				return
 			default:
 			}
+			// N4 (unit 6 re-review): this poller used to busy-spin with no
+			// pause at all - 256,782 requests over one ~10s batch, measured
+			// live - which burns a core and adds server load to every suite
+			// run for no benefit: the assertion below only needs "sampled
+			// more than once or twice", not tens of thousands of samples a
+			// second.
+			time.Sleep(5 * time.Millisecond)
 			resp, err := http.Get(f.BaseURL + "/api/v1/jobs")
 			if err != nil {
 				continue
