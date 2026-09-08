@@ -160,9 +160,7 @@ func TestUnregisterSource_RefusesWhileAMutationHoldsTheGate(t *testing.T) {
 // UnregisterSourceIfUnused rather than asserting one fixed interleaving,
 // because the whole point of gating both under the same slot is that
 // whichever wins the slot decides the outcome for BOTH callers - there is
-// no window left for a mapping to appear only to one of them. Run under
-// -race (make check's gate), this only stays green if that is actually
-// true:
+// no window left for a mapping to appear only to one of them:
 //   - AddGame's beginOp wins: the game gets added, and
 //     UnregisterSourceIfUnused - checking under the SAME gate slot AddGame
 //     just held - must see the mapping and refuse.
@@ -170,47 +168,73 @@ func TestUnregisterSource_RefusesWhileAMutationHoldsTheGate(t *testing.T) {
 //     it removes the source; AddGame then finds no such source registered
 //     and fails on its own gated check (#333 Important #1), never landing
 //     a game that maps a source which no longer exists.
+//
+// #333 Minor #10 (whole-branch gate review): asserting only "one of these
+// two branches happened" is not load-bearing, because removing the
+// in-use check steers EVERY run into the second branch regardless of
+// which beginOp call actually won - Unregister always succeeds once the
+// check is gone, so the mapping written by an add that ran first is
+// simply deleted out from under it too, landing on the exact same
+// "unregErr == nil" shape the second branch already asserts. 25 runs of
+// the pre-fix race against a tree with the check deleted came back
+// 25/25 on that branch. Racing the SAME goroutines runN times and
+// requiring that BOTH branches actually fire at least once closes that:
+// with the check present, real scheduling non-determinism produces both
+// outcomes across enough runs; with it removed, the first branch can
+// never fire again, and this test goes RED instead of silently staying
+// green under -race.
 func TestUnregisterSourceIfUnused_RefusesAGameMappedBetweenCheckAndDelete(t *testing.T) {
-	svc := newSwapTestService(t)
-	svc.RegisterSource(&swapTestSource{id: "demo", name: "before"})
-	install := t.TempDir()
+	const runs = 30
+	var addWon, unregWon int
 
-	var addErr, unregErr error
-	var removed bool
+	for i := 0; i < runs; i++ {
+		svc := newSwapTestService(t)
+		svc.RegisterSource(&swapTestSource{id: "demo", name: "before"})
+		install := t.TempDir()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, addErr = svc.AddGame(context.Background(), GameSpec{
-			SourceID: "demo", Identifier: "g1", Name: "G1", InstallPath: install,
-		})
-	}()
-	go func() {
-		defer wg.Done()
-		removed, unregErr = svc.UnregisterSourceIfUnused(context.Background(), "demo")
-	}()
-	wg.Wait()
+		var addErr, unregErr error
+		var removed bool
 
-	_, getErr := svc.GetSource("demo")
-	if getErr == nil {
-		// AddGame's beginOp ran first: the mapping it wrote must be visible
-		// to the unregister that checked under the same gate afterwards.
-		require.NoError(t, addErr)
-		require.Error(t, unregErr, "the mapping AddGame just wrote must not be missed")
-		var inUse *SourceInUseError
-		require.ErrorAs(t, unregErr, &inUse)
-		assert.Equal(t, []string{"g1"}, inUse.Games)
-		assert.False(t, removed)
-	} else {
-		// UnregisterSourceIfUnused's beginOp ran first: nothing was mapped
-		// yet, so it succeeded, and AddGame must then refuse - never park a
-		// game mapping a source that no longer exists.
-		require.NoError(t, unregErr)
-		assert.True(t, removed)
-		require.Error(t, addErr)
-		var specErr *GameSpecError
-		require.ErrorAs(t, addErr, &specErr)
-		assert.Equal(t, "source_id", specErr.Field)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, addErr = svc.AddGame(context.Background(), GameSpec{
+				SourceID: "demo", Identifier: "g1", Name: "G1", InstallPath: install,
+			})
+		}()
+		go func() {
+			defer wg.Done()
+			removed, unregErr = svc.UnregisterSourceIfUnused(context.Background(), "demo")
+		}()
+		wg.Wait()
+
+		_, getErr := svc.GetSource("demo")
+		if getErr == nil {
+			// AddGame's beginOp ran first: the mapping it wrote must be
+			// visible to the unregister that checked under the same gate
+			// afterwards.
+			addWon++
+			require.NoError(t, addErr)
+			require.Error(t, unregErr, "the mapping AddGame just wrote must not be missed")
+			var inUse *SourceInUseError
+			require.ErrorAs(t, unregErr, &inUse)
+			assert.Equal(t, []string{"g1"}, inUse.Games)
+			assert.False(t, removed)
+		} else {
+			// UnregisterSourceIfUnused's beginOp ran first: nothing was
+			// mapped yet, so it succeeded, and AddGame must then refuse -
+			// never park a game mapping a source that no longer exists.
+			unregWon++
+			require.NoError(t, unregErr)
+			assert.True(t, removed)
+			require.Error(t, addErr)
+			var specErr *GameSpecError
+			require.ErrorAs(t, addErr, &specErr)
+			assert.Equal(t, "source_id", specErr.Field)
+		}
 	}
+
+	assert.Positive(t, addWon, "AddGame's beginOp never won the gate across %d runs - this branch is untested", runs)
+	assert.Positive(t, unregWon, "UnregisterSourceIfUnused's beginOp never won the gate across %d runs - this branch is untested", runs)
 }
