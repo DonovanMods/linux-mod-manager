@@ -357,6 +357,13 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileApplyPlanRequest{Profile: "modded"},
 		},
 		{
+			// #332's one-member profile body, shared by POST
+			// /api/v1/profiles (the name to create) and POST
+			// /api/v1/profiles/{name}/rename (the name to rename TO).
+			"profile_name_request",
+			profileNameRequest{Name: "survival"},
+		},
+		{
 			// #332's reorder request: the new load order as the same mod
 			// identifiers `lmm profile reorder` takes, lowest priority
 			// first (api_profiles.go).

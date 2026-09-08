@@ -39,6 +39,11 @@ func (s *Server) routes() {
 	// core.ProfileResult document its `lmm profile ...` twin emits; the
 	// profile is named in the PATH, never taken from ?profile= (see that
 	// file's doc comment).
+	s.mux.Handle("POST /api/v1/profiles", s.wrap(s.handleAPIProfileCreate))
+	s.mux.Handle("DELETE /api/v1/profiles/{name}", s.wrap(s.handleAPIProfileDelete))
+	s.mux.Handle("GET /api/v1/profiles/{name}/export", s.wrap(s.handleAPIProfileExport))
+	s.mux.Handle("POST /api/v1/profiles/{name}/rename", s.wrap(s.handleAPIProfileRename))
+	s.mux.Handle("POST /api/v1/profiles/{name}/set-default", s.wrap(s.handleAPIProfileSetDefault))
 	s.mux.Handle("POST /api/v1/profiles/{name}/reorder", s.wrap(s.handleAPIProfileReorder))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
