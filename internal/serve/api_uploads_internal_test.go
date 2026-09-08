@@ -295,6 +295,34 @@ func TestUploadStore_MarkInUseSurvivesASweep(t *testing.T) {
 	assert.NoDirExists(t, dir)
 }
 
+// TestClose_PurgesStagedUploadsWithoutServe pins #333 Minor #6: Close
+// purges staged uploads the same as a completed Serve does, so a
+// New+Listen+Close sequence that never reaches Serve - a caller that fails
+// between the two, or one that simply never calls it - does not leave a
+// staging directory behind.
+func TestClose_PurgesStagedUploadsWithoutServe(t *testing.T) {
+	sandboxEnv(t)
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	s := New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: ":0"})
+	_, err = s.Listen()
+	require.NoError(t, err)
+
+	dir, err := svc.NewStagingDir("upload-*")
+	require.NoError(t, err)
+	s.uploads.Put(&stagedUpload{Filename: "a.zip", Dir: dir, Path: filepath.Join(dir, "a.zip")})
+
+	require.NoError(t, s.Close())
+
+	assert.Equal(t, 0, s.uploads.len())
+	assert.NoDirExists(t, dir, "Close reclaims a staged upload's directory, not just its index entry")
+}
+
 // TestUploadStore_PurgeAllReclaimsEverything pins the shutdown path.
 func TestUploadStore_PurgeAllReclaimsEverything(t *testing.T) {
 	store := newUploadStore(time.Hour, defaultUploadStoreCap, time.Now)

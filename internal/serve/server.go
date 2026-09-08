@@ -195,9 +195,16 @@ func (s *Server) Listen() (net.Addr, error) {
 // Close closes the listener bound by Listen, if any, without starting a
 // shutdown. It's for a caller that fails between Listen and Serve (e.g. a
 // startup-print error) and needs to release the socket instead of leaking
-// it (task-3 review Minor 7); it is a no-op if Listen was never called or
-// Serve is already draining the listener itself.
+// it (task-3 review Minor 7); it is a no-op on the listener if Listen was
+// never called or Serve is already draining it itself.
+//
+// It also purges staged uploads (#333 Minor #6), the same as Serve does on
+// its own return: a New+Listen+Close sequence that never reaches Serve - or
+// a Serve that never runs at all - used to leave any staged archives behind
+// for no reason. PurgeAll is idempotent (an empty store purges to nothing),
+// so calling it here as well as at the end of a completed Serve is safe.
 func (s *Server) Close() error {
+	s.uploads.PurgeAll()
 	if s.ln == nil {
 		return nil
 	}
