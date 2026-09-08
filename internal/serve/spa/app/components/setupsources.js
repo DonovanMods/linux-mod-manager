@@ -24,7 +24,8 @@ import {
 const newSourceTemplate = `id: my-source
 name: My Source
 type: directory
-path: /path/to/mods
+directory:
+  path: /path/to/mods
 `;
 
 export function SetupSources() {
@@ -104,6 +105,7 @@ export function SetupSources() {
         <button
           type="button"
           class="button button--small"
+          data-action="new-source"
           onClick=${() => setEditing((v) => (v === "" ? null : ""))}
         >
           ${editing === "" ? "Cancel" : "New source…"}
@@ -161,6 +163,7 @@ function SourceRow({ source, inUseBy, onEdit, onChanged }) {
           <button
             type="button"
             class="button button--danger button--small"
+            data-action="confirm-delete-source"
             disabled=${busy}
             onClick=${confirmDelete}
           >
@@ -201,6 +204,7 @@ function SourceRow({ source, inUseBy, onEdit, onChanged }) {
             <button
               type="button"
               class="button button--small"
+              data-action="edit-source"
               onClick=${onEdit}
             >
               Edit
@@ -208,6 +212,7 @@ function SourceRow({ source, inUseBy, onEdit, onChanged }) {
             <button
               type="button"
               class="button button--small button--danger"
+              data-action="delete-source"
               onClick=${() => setConfirming(true)}
             >
               Delete
@@ -313,6 +318,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
         <button
           type="button"
           class="button button--small"
+          data-action="validate-source"
           disabled=${busy}
           onClick=${runValidate}
         >
@@ -321,12 +327,18 @@ function SourceEditor({ id, onSaved, onCancel }) {
         <button
           type="button"
           class="button button--small button--primary"
+          data-action="save-source"
           disabled=${busy || !validated}
           onClick=${save}
         >
           Save
         </button>
-        <button type="button" class="button button--small" onClick=${onCancel}>
+        <button
+          type="button"
+          class="button button--small"
+          data-action="cancel-source-edit"
+          onClick=${onCancel}
+        >
           Cancel
         </button>
       </div>

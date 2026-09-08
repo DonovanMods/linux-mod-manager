@@ -107,6 +107,11 @@ export function SetupImportArchive({ state, actions }) {
   }
 
   function startPlan() {
+    // Deliberately does NOT clear `upload` on confirm: this panel - and the
+    // InlineJob inside it - must stay mounted for the job's own progress
+    // and outcome to render HERE rather than only as a toast (unit7-carry.md
+    // N7's "completion affordance"; InlineJob unmounting the instant it
+    // starts would defeat the whole point of wrapping the button in it).
     actions.openPlan({
       kind: "import_archive",
       origin: IMPORT_ORIGIN,
@@ -116,13 +121,14 @@ export function SetupImportArchive({ state, actions }) {
         upload_id: upload.upload_id,
         ...(sourceID ? { source_id: sourceID, mod_id: modID } : {}),
       },
-      onConfirmed: () => {
-        setUpload(null);
-        setSourceID("");
-        setModID("");
-      },
     });
   }
+
+  // jobActive is true from the moment this origin's job starts until its
+  // outcome is dismissed (InlineJob's own onDismiss clears it) - Cancel
+  // must not delete the staged upload out from under a job that is
+  // currently applying it (or has already consumed it on success).
+  const jobActive = Boolean(state.origins?.[IMPORT_ORIGIN]);
 
   return html`
     <div class="setup-section" data-testid="setup-import-archive">
@@ -178,6 +184,7 @@ export function SetupImportArchive({ state, actions }) {
               Link to a source (optional)
               <select
                 value=${sourceID}
+                disabled=${jobActive}
                 onChange=${(e) => setSourceID(e.currentTarget.value)}
               >
                 <option value="">None - unlinked import</option>
@@ -192,6 +199,7 @@ export function SetupImportArchive({ state, actions }) {
                   <input
                     type="text"
                     value=${modID}
+                    disabled=${jobActive}
                     onInput=${(e) => setModID(e.currentTarget.value)}
                   />
                 </label>
@@ -216,6 +224,8 @@ export function SetupImportArchive({ state, actions }) {
               <button
                 type="button"
                 class="button button--small"
+                disabled=${jobActive}
+                title=${jobActive ? "This upload is already being imported" : undefined}
                 onClick=${cancelUpload}
               >
                 Cancel
