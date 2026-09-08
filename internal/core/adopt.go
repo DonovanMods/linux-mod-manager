@@ -165,9 +165,35 @@ type AdoptBackfillResult struct {
 // NOT print Warnings as well, or every warning appears twice. The field is
 // for callers that take the result and never watched the stream.
 type AdoptResult struct {
-	Adopted  int      `json:"adopted"`
-	Skipped  int      `json:"skipped"`
-	Failed   int      `json:"failed"`
+	Adopted int `json:"adopted"`
+	Skipped int `json:"skipped"`
+	Failed  int `json:"failed"`
+
+	// Backfilled is how many EXISTING installed rows had their metadata
+	// re-fetched by the ApplyAdoptBackfill that ran as part of the same
+	// user-level adopt (AdoptBackfillResult.Backfilled, folded in).
+	//
+	// ApplyAdopt never sets it, and that is deliberate rather than an
+	// oversight: the backfill is its own Apply (see the file's shape note -
+	// the pre-lift engine ran it BEFORE the "import these mods?" prompt, so
+	// declining kept it), and a convenience wrapper that ran both would be
+	// exactly the kind of thing v2 Phase 3 forbids. What varies is whether
+	// a frontend reports the two separately or together, so the field is
+	// the caller's to fill: the CLI prints the backfill line while
+	// rendering the scan and leaves this zero, while `lmm serve` runs both
+	// applies inside ONE job and folds the count in here, because a job has
+	// exactly one result document to answer with.
+	//
+	// It is NOT foldable into Adopted/Skipped/Failed: those three count
+	// UNTRACKED ENTRIES the adopt considered, and every such entry lands in
+	// exactly one of them. A backfilled row is an already-installed mod
+	// that was never a candidate for adoption at all; adding it to any of
+	// the three would make all three lie.
+	//
+	// omitzero, so a document that carries no backfill is byte-identical to
+	// what it was before this field existed.
+	Backfilled int `json:"backfilled,omitzero"`
+
 	Warnings []string `json:"warnings,omitempty"`
 }
 

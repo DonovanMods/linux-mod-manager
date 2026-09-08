@@ -518,9 +518,14 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Backfilled is #333's additive, omitzero member: a caller that
+			// ran ApplyAdoptBackfill as part of the same user-level adopt
+			// folds its count in here (`lmm serve` does; the CLI reports it
+			// separately and leaves this zero, in which case the document
+			// is byte-identical to what it was before the field existed).
 			"adopt_result",
 			core.AdoptResult{
-				Adopted: 2, Skipped: 1, Failed: 1,
+				Adopted: 2, Skipped: 1, Failed: 1, Backfilled: 3,
 				Warnings: []string{"merge sync produced 1 raw fallback"},
 			},
 		},
