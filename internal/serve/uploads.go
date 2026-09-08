@@ -82,6 +82,15 @@ type stagedUpload struct {
 	Path string
 	// StoredAt is when Put accepted it, by the store's clock.
 	StoredAt time.Time
+	// inUse is set by MarkInUse for the span between a plan naming this
+	// upload and the apply that follows it (planImportArchiveKind /
+	// applyImportArchiveKind), and cleared by ClearInUse once that apply
+	// finishes either way. A sweep skips it regardless of age (#333 Minor
+	// #2): an import can run long enough for the 30-minute TTL to pass
+	// while it is still reading the file, and Get sweeping expired entries
+	// on every lookup could otherwise reclaim the archive - and the
+	// directory it lives in - out from under a job still using it.
+	inUse bool
 }
 
 // uploadStore is the in-memory, TTL'd index of staged archives. Safe for
@@ -142,6 +151,28 @@ func (s *uploadStore) Get(id uploadID) (*stagedUpload, bool) {
 	return u, ok
 }
 
+// MarkInUse flags id so a sweep (Put's or Get's) skips it regardless of
+// age, until ClearInUse un-flags it. An unknown id is a no-op - the upload
+// may already have been removed or never existed, and there is nothing
+// left to protect either way.
+func (s *uploadStore) MarkInUse(id uploadID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if u, ok := s.uploads[id]; ok {
+		u.inUse = true
+	}
+}
+
+// ClearInUse un-flags id, so the next sweep reclaims it once its TTL has
+// passed. An unknown id is a no-op, for the same reason MarkInUse's is.
+func (s *uploadStore) ClearInUse(id uploadID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if u, ok := s.uploads[id]; ok {
+		u.inUse = false
+	}
+}
+
 // Remove deletes the entry under id and its staging directory, reporting
 // whether there was one. It is what DELETE /api/v1/uploads/{id} calls, and
 // what a successful import calls once the archive has been ingested.
@@ -200,9 +231,13 @@ func (s *uploadStore) evictOldestLocked() {
 	}
 }
 
-// sweepLocked drops (and deletes) every expired entry. The caller must hold mu.
+// sweepLocked drops (and deletes) every expired entry, skipping any marked
+// inUse (see stagedUpload.inUse) regardless of age. The caller must hold mu.
 func (s *uploadStore) sweepLocked(now time.Time) {
 	for id, u := range s.uploads {
+		if u.inUse {
+			continue
+		}
 		if !now.Before(u.StoredAt.Add(s.ttl)) {
 			delete(s.uploads, id)
 			removeStagingDir(u)

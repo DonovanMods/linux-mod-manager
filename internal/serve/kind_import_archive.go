@@ -123,12 +123,19 @@ func planImportArchiveKind(ctx context.Context, s *Server, sel selection, opts a
 		// fix - a 400, not a 500.
 		return nil, nil, fmt.Errorf("%w: no staged upload %q (it expired or was cancelled)", errBadPlanRequest, req.UploadID)
 	}
+	// Marked in-use from here through the apply that follows (cleared by
+	// applyImportArchiveKind either way): an import can run past the
+	// upload's 30-minute TTL while still reading the staged file, and
+	// without this a sweep triggered by unrelated traffic could reclaim it
+	// - and the directory it lives in - mid-read (#333 Minor #2).
+	s.uploads.MarkInUse(req.UploadID)
 
 	plan, err := s.svc.PlanImportArchive(ctx, sel.Game, sel.Profile, staged.Path, core.ImportArchiveOptions{
 		SourceID: req.SourceID,
 		ModID:    req.ModID,
 	})
 	if err != nil {
+		s.uploads.ClearInUse(req.UploadID)
 		return nil, nil, err
 	}
 	return plan, &pendingImportArchive{
@@ -153,6 +160,11 @@ func applyImportArchiveKind(ctx context.Context, s *Server, pending, opts any, s
 	if !ok {
 		return nil, fmt.Errorf("import_archive apply: unexpected options type %T", opts)
 	}
+	// Whatever happens below, this upload's in-use window (opened by
+	// planImportArchiveKind) ends here - a successful apply removes the
+	// entry outright, and a failed one is just an ordinary TTL'd upload
+	// again, eligible for the next sweep like any other.
+	defer s.uploads.ClearInUse(p.UploadID)
 
 	result, err := s.svc.ApplyImportArchive(ctx, p.Game, p.Profile, p.Plan, core.ImportArchiveOptions{
 		SourceID:        p.SourceID,

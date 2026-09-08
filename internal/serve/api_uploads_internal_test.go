@@ -266,6 +266,35 @@ func TestUploadStore_EvictsTheOldestAtCapacity(t *testing.T) {
 	assert.NoDirExists(t, first)
 }
 
+// TestUploadStore_MarkInUseSurvivesASweep pins #333 Minor #2: an entry
+// flagged in-use is skipped by a sweep even once its TTL has passed - the
+// window an in-flight import (kind_import_archive.go) needs to survive
+// traffic to OTHER uploads that would otherwise reclaim its file mid-read.
+// Once ClearInUse lifts the flag, the next sweep reclaims it exactly as
+// before.
+func TestUploadStore_MarkInUseSurvivesASweep(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	store := newUploadStore(30*time.Minute, defaultUploadStoreCap, func() time.Time { return now })
+
+	dir := t.TempDir()
+	id := store.Put(&stagedUpload{Filename: "a.zip", Dir: dir, Path: filepath.Join(dir, "a.zip")})
+	store.MarkInUse(id)
+
+	now = now.Add(time.Hour) // well past the 30-minute TTL
+	// Put's own sweep runs first, over an unrelated upload - the traffic
+	// that could otherwise reclaim "a.zip" mid-import.
+	store.Put(&stagedUpload{Filename: "b.zip", Dir: t.TempDir()})
+
+	_, ok := store.Get(id)
+	assert.True(t, ok, "an in-use entry survives a sweep no matter how expired it is")
+	assert.DirExists(t, dir)
+
+	store.ClearInUse(id)
+	_, ok = store.Get(id)
+	assert.False(t, ok, "once cleared, the next sweep reclaims it like any other expired entry")
+	assert.NoDirExists(t, dir)
+}
+
 // TestUploadStore_PurgeAllReclaimsEverything pins the shutdown path.
 func TestUploadStore_PurgeAllReclaimsEverything(t *testing.T) {
 	store := newUploadStore(time.Hour, defaultUploadStoreCap, time.Now)
