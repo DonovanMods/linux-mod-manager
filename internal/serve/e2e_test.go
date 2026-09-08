@@ -3942,6 +3942,92 @@ mods:
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone is N2's own
+// scenario (unit 6 re-review): a profile_import whose every mod is already
+// installed (the plan's Installed bucket, pending == 0) returns a
+// core.ProfileImportResult that is all zeroes - {installed: 0, failed: 0,
+// skipped: 0} - which resultTally used to still read as a tally-shaped
+// result, replacing the tray's usual bare state word with an honest-looking
+// but empty "0 installed · 0 skipped" - worse copy for a batch that did
+// not, in truth, batch anything. resultTally now returns null for an
+// all-zero result, same as a kind with no tally shape at all, so every
+// caller's own existing "no tally" fallback applies - the tray's own bare
+// state word here (jobprogress.js's InlineJob, the only surface that
+// renders the literal word "Done", never mounts for profile_import: it has
+// no owning mod row to attach to).
+func TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	doc := fmt.Sprintf(`name: reimport
+game_id: %s
+mods:
+  - source_id: fake
+    mod_id: a
+    version: "1.0"
+  - source_id: fake
+    mod_id: b
+    version: "1.0"
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "reimport.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+	)
+	var planText string
+	f.runInBrowser(t, textContent(`.modal[data-kind="profile_import"]`, &planText))
+	require.NotContains(t, planText, "Download and install", "both mods are already installed - there is nothing pending to offer a checkbox for")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "reimport")
+		return err == nil && len(p.Mods) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the import job must succeed and save the profile")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.tray`, &trayText))
+		return strings.Contains(trayText, "profile_import")
+	}, 5*time.Second, 100*time.Millisecond, "the tray must show the finished profile_import job")
+
+	assert.Contains(t, trayText, "succeeded", "an all-zero tally must fall back to the tray's own bare state word, not an honest-looking but empty tally")
+	assert.NotContains(t, trayText, "installed ·", "no zero-count tally text may leak through")
+
+	var toneClass string
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector(".tray__row .tray__state")?.className ?? ""`, &toneClass))
+	assert.Contains(t, toneClass, "tray__state--succeeded")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_UninstallBatchModal_ReselectingAfterCancelUninstallsOnlyTheNewSelection
 // is C1's own destructive reproduction (unit 6 gate review): ReorderModal
 // and UninstallBatchModal used to call useState/useEffect AFTER a

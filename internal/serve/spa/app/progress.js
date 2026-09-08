@@ -212,25 +212,35 @@ export function jobStateLabel(summary, frame) {
  * unrelated result that happens to carry similarly-named fields
  * (core.InstallResult's own `installed`/`failed` are ARRAYS, not this
  * shape, and are left alone on purpose).
+ *
+ * An all-zero tally also returns null (N2, unit 6 re-review): a
+ * profile_import whose every mod was already installed (Plan.Installed,
+ * pending == 0) applies nothing and skips nothing, so its result is
+ * {installed: 0, failed: 0, skipped: 0} - tally-shaped, but with nothing
+ * honest left to report over the bare "Done" a job with no batch at all
+ * would otherwise read.
  */
 export function resultTally(result) {
   if (!result) return null;
   if (Array.isArray(result.applied) && Array.isArray(result.failed)) {
-    return {
-      kind: "updates",
-      applied: result.applied.length,
-      failed: result.failed.length,
-    };
+    const applied = result.applied.length;
+    const failed = result.failed.length;
+    if (applied === 0 && failed === 0) return null;
+    return { kind: "updates", applied, failed };
   }
   if (
     typeof result.installed === "number" &&
     typeof result.failed === "number"
   ) {
+    const skipped = result.skipped ?? 0;
+    if (result.installed === 0 && result.failed === 0 && skipped === 0) {
+      return null;
+    }
     return {
       kind: "profile_import",
       installed: result.installed,
       failed: result.failed,
-      skipped: result.skipped ?? 0,
+      skipped,
       warnings: Array.isArray(result.warnings) ? result.warnings.length : 0,
     };
   }
