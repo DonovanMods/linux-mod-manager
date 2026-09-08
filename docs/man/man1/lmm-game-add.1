@@ -35,6 +35,12 @@ source directly via --id - for NexusMods, the slug from its URL (e.g.
 https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
 
 .PP
+The LOCAL games.yaml key defaults to a slug derived from the catalog
+match (the catalog path) or from --id (the manual path); --game-id sets
+it explicitly on either path, e.g. to avoid a collision with an existing
+game.
+
+.PP
 The install path must already exist. The mod path is not created here;
 deploy creates it on demand.
 
@@ -55,6 +61,10 @@ lmm game add --source curseforge --query minecraft --json
 
 
 .SH OPTIONS
+\fB--game-id\fP=""
+	the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for add
 

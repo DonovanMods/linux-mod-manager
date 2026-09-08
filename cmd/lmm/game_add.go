@@ -41,6 +41,11 @@ any custom source without a catalog) take the game's identifier with that
 source directly via --id - for NexusMods, the slug from its URL (e.g.
 https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
 
+The LOCAL games.yaml key defaults to a slug derived from the catalog
+match (the catalog path) or from --id (the manual path); --game-id sets
+it explicitly on either path, e.g. to avoid a collision with an existing
+game.
+
 The install path must already exist. The mod path is not created here;
 deploy creates it on demand.
 
@@ -65,6 +70,7 @@ var (
 	gameAddQuery   string
 	gameAddPick    int
 	gameAddName    string
+	gameAddGameID  string
 	gameAddPath    string
 	gameAddModPath string
 )
@@ -77,6 +83,7 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddQuery, "query", "", "search the source's game catalog instead of naming an identifier")
 	gameAddCmd.Flags().IntVar(&gameAddPick, "pick", 0, "1-based choice among --query's matches (without it the matches are printed)")
 	gameAddCmd.Flags().StringVar(&gameAddName, "name", "", "display name (defaults to the catalog match's name)")
+	gameAddCmd.Flags().StringVar(&gameAddGameID, "game-id", "", "the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)")
 	gameAddCmd.Flags().StringVar(&gameAddPath, "path", "", "game install path (must exist)")
 	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory (default: <install path>/mods)")
 	gameAddCmd.MarkFlagsMutuallyExclusive("id", "query")
@@ -107,7 +114,13 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 		return err
 	}
 
-	spec := core.GameSpec{SourceID: selected.ID(), Name: gameAddName}
+	// --game-id sets the LOCAL games.yaml key on either path (#333 Minor
+	// #4 - the manual path had no flag for it at all, a one-way parity
+	// hole against POST /api/v1/games' game_id member). The catalog path
+	// below still derives its own default from the match's slug when this
+	// is empty; core.GameSpec.game() derives one from the identifier when
+	// BOTH are empty.
+	spec := core.GameSpec{SourceID: selected.ID(), Name: gameAddName, ID: gameAddGameID}
 	_, hasCatalog := selected.(source.GameCatalog)
 
 	switch {
@@ -255,8 +268,11 @@ func resolveGameAddFromCatalog(ctx context.Context, cmd *cobra.Command, reader *
 	match := report.Matches[pick-1]
 	spec.Identifier = match.Identifier
 	// The local games.yaml key core derived from the match's SLUG - passing
-	// it is what keeps a CurseForge add keyed "minecraft" rather than "432".
-	spec.ID = match.GameID
+	// it is what keeps a CurseForge add keyed "minecraft" rather than
+	// "432" - unless --game-id already named one explicitly.
+	if spec.ID == "" {
+		spec.ID = match.GameID
+	}
 	if spec.Name == "" {
 		spec.Name = match.Name
 	}

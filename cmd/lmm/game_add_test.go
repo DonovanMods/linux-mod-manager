@@ -98,13 +98,13 @@ func setupGameAddTest(t *testing.T) *core.Service {
 func resetGameAddFlags(t *testing.T) {
 	t.Helper()
 	src, id, query, pick := gameAddSource, gameAddID, gameAddQuery, gameAddPick
-	name, path, modPath := gameAddName, gameAddPath, gameAddModPath
+	name, gameID, path, modPath := gameAddName, gameAddGameID, gameAddPath, gameAddModPath
 	t.Cleanup(func() {
 		gameAddSource, gameAddID, gameAddQuery, gameAddPick = src, id, query, pick
-		gameAddName, gameAddPath, gameAddModPath = name, path, modPath
+		gameAddName, gameAddGameID, gameAddPath, gameAddModPath = name, gameID, path, modPath
 	})
 	gameAddSource, gameAddID, gameAddQuery, gameAddPick = "", "", "", 0
-	gameAddName, gameAddPath, gameAddModPath = "", "", ""
+	gameAddName, gameAddGameID, gameAddPath, gameAddModPath = "", "", "", ""
 }
 
 func newGameAddCmd() (*cobra.Command, *bytes.Buffer) {
@@ -213,6 +213,30 @@ func TestDoGameAdd_FullyFlagged_ManualPath(t *testing.T) {
 	assert.Equal(t, map[string]string{"acme-manual": "acme-quest-slug"}, entry.SourceIDs)
 }
 
+// TestDoGameAdd_GameIDFlag_ManualPath pins #333 Minor #4: --game-id sets
+// the LOCAL games.yaml key on the manual path, distinct from --id (the
+// SOURCE identifier) - the one-way parity hole against POST
+// /api/v1/games' game_id member, which could already do this.
+func TestDoGameAdd_GameIDFlag_ManualPath(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	withJSONOutput(t)
+	installDir := t.TempDir()
+	gameAddSource, gameAddID, gameAddName = "acme-manual", "acme-quest-slug", "Acme Quest"
+	gameAddGameID, gameAddPath = "my-local-key", installDir
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal([]byte(out), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "my-local-key", entry.ID, "the LOCAL key is --game-id, not derived from --id")
+	assert.Equal(t, map[string]string{"acme-manual": "acme-quest-slug"}, entry.SourceIDs,
+		"the SOURCE identifier is still --id, stored verbatim")
+}
+
 // TestDoGameAdd_QueryWithoutPick_EmitsTheCatalogDocument pins the two-step
 // catalog flow a non-interactive caller uses: --query alone answers with
 // the matches (core.GameCatalogReport) and adds nothing, so the caller can
@@ -268,6 +292,32 @@ func TestDoGameAdd_QueryWithPick_AddsTheMatch(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &entry, json.RejectUnknownMembers(true)))
 	assert.Equal(t, "minecraft", entry.ID)
 	assert.Equal(t, "Minecraft", entry.Name, "the match's name is the default display name")
+	assert.Equal(t, map[string]string{"curseforge": "432"}, entry.SourceIDs)
+}
+
+// TestDoGameAdd_GameIDFlag_OverridesCatalogMatch pins that an explicit
+// --game-id wins over the catalog match's own slug-derived suggestion -
+// the flag is the caller's decision, not just a manual-path-only escape
+// hatch.
+func TestDoGameAdd_GameIDFlag_OverridesCatalogMatch(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "curseforge", name: "CurseForge"},
+		entries:           []source.GameEntry{{ID: "432", Name: "Minecraft", Slug: "minecraft"}},
+	})
+	withJSONOutput(t)
+	installDir := t.TempDir()
+	gameAddSource, gameAddQuery, gameAddPick, gameAddPath = "curseforge", "mine", 1, installDir
+	gameAddGameID = "my-minecraft"
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal([]byte(out), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "my-minecraft", entry.ID)
 	assert.Equal(t, map[string]string{"curseforge": "432"}, entry.SourceIDs)
 }
 
