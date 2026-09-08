@@ -277,14 +277,17 @@ func (pm *ProfileManager) Rename(ctx context.Context, gameID, oldName, newName s
 // refuseOccupiedName refuses name if a profile already claims it for
 // gameID - either on disk (config.LoadProfile succeeds) or, orphaned from a
 // Delete that only ever removed the file (ProfileManager.Delete's own doc
-// comment), in the DB's installed_mods rows. Checking both closes a
-// reproducible gap (#332 I2): a name can be free on disk and still occupied
-// in the DB, where installed_mods' UNIQUE(source_id, mod_id, game_id,
-// profile_name) constraint (migrations.go) would otherwise reject
-// db.RenameProfile's UPDATE AFTER config.SaveProfile has already written
-// the new profile file. Checking both refusals up front, before Rename's
-// first write, keeps that failure from ever being reachable through this
-// path.
+// comment), in the DB's installed_mods rows specifically - not every table
+// a profile name can appear in (deployed_files and installed_mod_files
+// both key on it too, unchecked here; see the doc comment where this is
+// called from Rename for what still catches an orphan in either of THOSE).
+// Checking disk and installed_mods closes a reproducible gap (#332 I2): a
+// name can be free on disk and still occupied in the DB, where
+// installed_mods' UNIQUE(source_id, mod_id, game_id, profile_name)
+// constraint (migrations.go) would otherwise reject db.RenameProfile's
+// UPDATE AFTER config.SaveProfile has already written the new profile
+// file. Checking both refusals up front, before Rename's first write,
+// keeps THAT failure from ever being reachable through this path.
 func (pm *ProfileManager) refuseOccupiedName(ctx context.Context, gameID, name string) error {
 	if _, err := config.LoadProfile(pm.configDir, gameID, name); err == nil {
 		return fmt.Errorf("%w: %s", ErrProfileExists, name)
