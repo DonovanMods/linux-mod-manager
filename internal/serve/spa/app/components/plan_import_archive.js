@@ -30,15 +30,23 @@ export function ImportArchivePlanView({ plan }) {
   return html`
     <div class="plan plan--import-archive">
       <p class="plan__summary">
-        Importing <span class="mono">${archiveName}</span> as
-        <span class="mono">${plan.mod.name}</span>
+        Importing <span class="mono">${archiveName}</span>${" "}as${" "}
+        <span class="mono">${plan.mod.name}</span>${" "}
         <span class="mono">${plan.mod.version}</span>${" "}
         ${
           plan.auto_detected
             ? "(identity parsed from the file name)."
-            : `(linked to ${plan.linked_source}).`
+            : plan.linked_source === "local"
+              ? "(unlinked)."
+              : `(linked to ${plan.linked_source}).`
         }
       </p>
+      ${
+        plan.linked_source === "local" &&
+        html`<p class="plan__note">
+          Local mods won't receive update notifications.
+        </p>`
+      }
 
       <section class="plan__section">
         <p class="plan__heading">Files (${files.length})</p>

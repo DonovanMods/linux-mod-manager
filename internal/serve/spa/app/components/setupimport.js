@@ -175,9 +175,10 @@ export function SetupImportArchive({ state, actions }) {
         html`
           <div class="setup-import__staged" data-testid="staged-upload">
             <p>
-              <span class="mono">${upload.filename}</span>
-              (${formatBytes(upload.size)}) staged - discarded automatically
-              after ${uploadExpiryMinutes} minutes if not imported.
+              <span class="mono">${upload.filename}</span>${" "}
+              (${formatBytes(upload.size)}) staged - discarded
+              automatically${" "} after ${uploadExpiryMinutes} minutes if not
+              imported.
             </p>
 
             <label class="plan__control">

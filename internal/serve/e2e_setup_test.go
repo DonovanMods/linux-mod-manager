@@ -537,6 +537,50 @@ func TestE2E_ArchiveImport_ConflictOverwriteRoundTrip(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ArchiveImport_ConfirmModalRendersReadableUnlinkedSummary pins
+// Minor 1 (unit7-review.md): the import confirm modal's headline used to
+// fuse words together with no space ("BetaMod-1.0.zip asBetaMod-1.01.0")
+// because htm drops whitespace-only text between interpolations, and an
+// unlinked import ("None - unlinked import" in the Setup page's own
+// dropdown) rendered the nonsensical "(linked to local)" instead of saying
+// what actually happened. "BetaMod-1.0.zip" deliberately does not match
+// the NexusMods filename pattern (filename_parser.go), so this exercises
+// the minted-uuid unlinked path (LinkedSource == "local", AutoDetected ==
+// false) rather than the auto-detected one.
+func TestE2E_ArchiveImport_ConfirmModalRendersReadableUnlinkedSummary(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	zipPath := filepath.Join(t.TempDir(), "BetaMod-1.0.zip")
+	require.NoError(t, os.WriteFile(zipPath, e2eZipWith("BetaMod/data.txt", "beta content"), 0o644))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("archive")),
+		chromedp.WaitVisible(`[data-testid="setup-import-archive"]`, chromedp.ByQuery),
+		chromedp.SetUploadFiles(`[data-testid="setup-import-archive"] input[type="file"]`, []string{zipPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="staged-upload"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="import-archive"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="import_archive"] .plan`, chromedp.ByQuery),
+	)
+
+	var summary, note string
+	f.runInBrowser(t,
+		chromedp.Text(`.modal .plan__summary`, &summary, chromedp.ByQuery),
+		chromedp.Text(`.modal .plan__note`, &note, chromedp.ByQuery),
+	)
+	assert.Contains(t, summary, "BetaMod-1.0.zip as", "the archive name and \"as\" must not fuse together")
+	assert.NotContains(t, summary, "asBetaMod", "\"as\" and the mod name must not fuse together")
+	assert.NotContains(t, summary, "(linked to local)", "an unlinked import must never say it is linked to \"local\"")
+	assert.Contains(t, note, "Local mods won't receive update notifications.", "the CLI's own note must survive to the SPA")
+
+	var stagedText string
+	f.runInBrowser(t,
+		chromedp.Click(`.modal button[data-action="cancel"]`, chromedp.ByQuery),
+		chromedp.Text(`[data-testid="staged-upload"]`, &stagedText, chromedp.ByQuery),
+	)
+	assert.NotContains(t, stagedText, ".zip(", "the filename and its size must not fuse together")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_Adopt_SeededUntrackedModBecomesTracked seeds a hand-placed,
 // untracked mod directory in the game's own mod path, scans for it from the
 // Setup page's Adopt section, and confirms - the same "Import untracked
