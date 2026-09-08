@@ -73,6 +73,35 @@ type ConflictReport struct {
 // caller cancelling mid-query gets ctx.Err() promptly instead of paying for
 // the remaining walks.
 func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, profileName string) ([]ProfileConflict, error) {
+	return s.profileConflicts(ctx, game, profileName, nil)
+}
+
+// GetProfileConflictsForOrder is GetProfileConflicts computed against a
+// PROPOSED load order rather than the one currently saved in the profile -
+// the read-only preview the web UI's reorder modal renders while a row is
+// being dragged (#332), and the reason the winner rule is never re-derived
+// in a frontend: the answer to "which mod wins this contested path if I
+// commit this order" is the same document, from the same code, as the
+// answer after the reorder really lands.
+//
+// order is a full load order in the shape ResolveReorder returns (every
+// mentioned ref first, then every unmentioned profile mod) - exactly what
+// ReorderProfileMods would persist, so the preview and the commit agree by
+// construction. A nil order means "use the profile's saved order", making
+// this call identical to GetProfileConflicts; a non-nil but EMPTY order
+// means "nothing is listed", which sorts every provider as unlisted (by
+// key), mirroring orderByProfile's own handling.
+//
+// Nothing is written: the proposed order is used only to build the ordering
+// index, never saved.
+func (s *Service) GetProfileConflictsForOrder(ctx context.Context, game *domain.Game, profileName string, order []domain.ModReference) ([]ProfileConflict, error) {
+	return s.profileConflicts(ctx, game, profileName, order)
+}
+
+// profileConflicts is the shared implementation of the two queries above.
+// order, when non-nil, replaces the saved profile's own Mods for ordering
+// purposes and for nothing else.
+func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profileName string, order []domain.ModReference) ([]ProfileConflict, error) {
 	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
@@ -134,6 +163,12 @@ func (s *Service) GetProfileConflicts(ctx context.Context, game *domain.Game, pr
 	profile, err := s.NewProfileManager().Get(ctx, game.ID, profileName)
 	if err != nil {
 		profile = nil
+	}
+	if order != nil {
+		// The proposed-order preview: an in-memory stand-in whose Mods are
+		// the order being previewed. Only orderByProfile reads it, and it
+		// reads nothing but Mods.
+		profile = &domain.Profile{Name: profileName, GameID: game.ID, Mods: order}
 	}
 	orderIndex := make(map[string]int, len(enabled))
 	for i, m := range orderByProfile(profile, enabled) {

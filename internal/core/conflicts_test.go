@@ -293,3 +293,58 @@ func TestProfileConflicts_IgnoresUnclaimedCacheFiles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, conflicts, "mod A's unclaimed shared.pak must not be reported as a conflict provider")
 }
+
+// TestGetProfileConflictsForOrder_MatchesARealReorder is the reorder
+// modal's whole premise (#332): the preview a proposed load order produces
+// must be the SAME document a real reorder followed by a re-read produces,
+// so the winner rule stays core's and is never re-derived in the frontend.
+func TestGetProfileConflictsForOrder_MatchesARealReorder(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedTwinConflict(t, svc,
+		map[string][]byte{"shared.esp": []byte("X-content")},
+		map[string][]byte{"shared.esp": []byte("Y-content")},
+	)
+	ctx := context.Background()
+
+	proposed := []domain.ModReference{
+		{SourceID: "src", ModID: "modY", Version: "1.0"},
+		{SourceID: "src", ModID: "modX", Version: "1.0"},
+	}
+
+	preview, err := svc.GetProfileConflictsForOrder(ctx, game, "default", proposed)
+	require.NoError(t, err)
+	require.Len(t, preview, 1)
+	assert.Equal(t, core.ConflictModRef{Key: "src:modX", Name: "Mod X"}, preview[0].LoadOrderWinner,
+		"the proposed order must move the winner without touching the profile")
+	assert.True(t, preview[0].Stale, "the DB owner still disagrees with the proposed winner")
+
+	// The profile itself must be untouched by a preview.
+	stored, err := svc.NewProfileManager().Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "modX", stored.Mods[0].ModID, "a preview must not persist the proposed order")
+
+	// ...and once the reorder really happens, the re-read document is
+	// byte-for-byte what the preview promised.
+	require.NoError(t, svc.NewProfileManager().ReorderMods(ctx, "g1", "default", proposed))
+	after, err := svc.GetProfileConflicts(ctx, game, "default")
+	require.NoError(t, err)
+	assert.Equal(t, preview, after)
+}
+
+// TestGetProfileConflictsForOrder_NilOrderIsTheStoredOrder: passing no
+// proposed order is exactly today's behaviour, so the one query serves both
+// callers.
+func TestGetProfileConflictsForOrder_NilOrderIsTheStoredOrder(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := seedTwinConflict(t, svc,
+		map[string][]byte{"shared.esp": []byte("X-content")},
+		map[string][]byte{"shared.esp": []byte("Y-content")},
+	)
+	ctx := context.Background()
+
+	stored, err := svc.GetProfileConflicts(ctx, game, "default")
+	require.NoError(t, err)
+	preview, err := svc.GetProfileConflictsForOrder(ctx, game, "default", nil)
+	require.NoError(t, err)
+	assert.Equal(t, stored, preview)
+}
