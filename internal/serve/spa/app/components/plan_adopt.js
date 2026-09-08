@@ -42,8 +42,9 @@ export function AdoptPlanView({ plan }) {
   return html`
     <div class="plan plan--adopt">
       <p class="plan__summary">
-        ${untracked.length} untracked mod${untracked.length === 1 ? "" : "s"}
-        found (${tracked.length} already tracked).
+        ${untracked.length} untracked
+        mod${untracked.length === 1 ? "" : "s"}${" "} found (${tracked.length}
+        already tracked).
       </p>
 
       ${
@@ -60,7 +61,8 @@ export function AdoptPlanView({ plan }) {
           ${matches.map(
             (m) => html`
               <li key=${m.untracked.file_name}>
-                <span class="plan__mod-name">${m.untracked.file_name}</span>
+                <span class="plan__mod-name">${m.untracked.file_name}</span
+                >${" "}
                 <span class="plan__mod-detail">${matchDetail(m)}</span>
               </li>
             `,

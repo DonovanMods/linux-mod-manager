@@ -8,7 +8,7 @@ export function RollbackPlanView({ plan }) {
   return html`
     <div class="plan plan--rollback">
       <p class="plan__summary">
-        Rolling back <span class="mono">${plan.mod.name}</span>
+        Rolling back <span class="mono">${plan.mod.name}</span>${" "}
         <span class="mono">${plan.from_version} → ${plan.to_version}</span>.
       </p>
 

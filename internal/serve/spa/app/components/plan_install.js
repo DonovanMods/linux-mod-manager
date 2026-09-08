@@ -96,7 +96,11 @@ export function InstallPlanView({ plan, actions }) {
       <p class="plan__summary">
         Installing <span class="mono">${plan.mod.name}</span>${" "}
         <span class="mono">${version}</span>
-        ${plan.replaces && html` (replacing the installed version)`}.
+        ${
+          // htm-ws-ok: the nested template already opens with its own
+          // leading space when it renders.
+          plan.replaces && html` (replacing the installed version)`
+        }.
       </p>
 
       ${

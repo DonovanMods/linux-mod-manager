@@ -14,8 +14,8 @@ export function UninstallPlanView({ plan }) {
   return html`
     <div class="plan plan--uninstall">
       <p class="plan__summary">
-        Uninstalling <span class="mono">${plan.mod.name}</span>
-        <span class="mono">${plan.mod.version}</span> from profile
+        Uninstalling <span class="mono">${plan.mod.name}</span>${" "}
+        <span class="mono">${plan.mod.version}</span> from profile${" "}
         <span class="mono">${plan.mod.profile_name}</span>.
       </p>
 

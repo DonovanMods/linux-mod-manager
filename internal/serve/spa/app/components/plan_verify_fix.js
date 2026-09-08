@@ -48,9 +48,11 @@ export function VerifyFixPlanView({ plan, modal }) {
                     <li key=${f.mod_id + "/" + (f.file_id || i)}>
                       <span class="plan__mod-name"
                         >${f.mod_name || f.mod_id}</span
-                      >
+                      >${" "}
                       <span class="plan__mod-detail">${findingLabel(f)}</span>
                       ${
+                        // htm-ws-ok: "(not fixable)" already opens with its
+                        // own leading space when this renders.
                         !f.fixable &&
                         html`<span class="plan__mod-detail plan__note--warn">
                           (not fixable)</span

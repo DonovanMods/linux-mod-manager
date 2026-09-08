@@ -924,6 +924,24 @@ func TestE2E_Adopt_SeededUntrackedModBecomesTracked(t *testing.T) {
 		chromedp.WaitVisible(`[data-testid="setup-adopt"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="plan-adopt"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="adopt"] .plan`, chromedp.ByQuery),
+	)
+
+	// #333 fix-wave N2: the same htm whitespace-dropping defect Minor 1 fixed
+	// in the import-archive modal ("BetaMod-1.0.zip asBetaMod") also reached
+	// this modal ("1 untracked modfound (0 already tracked)." and
+	// "HandPlacedModno source match"), because htm drops a whitespace-only
+	// text chunk sitting between two interpolations or adjacent elements.
+	var summary, row string
+	f.runInBrowser(t,
+		chromedp.Text(`.modal .plan__summary`, &summary, chromedp.ByQuery),
+		chromedp.Text(`.modal .plan__mods li`, &row, chromedp.ByQuery),
+	)
+	assert.Contains(t, summary, "mod found (", "the plural suffix and \"found\" must not fuse together")
+	assert.NotContains(t, summary, "modfound", "the plural suffix and \"found\" must not fuse together")
+	assert.NotContains(t, row, "HandPlacedModno", "the mod name and its match detail must not fuse together")
+	assert.Contains(t, row, "HandPlacedMod no source match", "the mod name and its match detail must be space-separated")
+
+	f.runInBrowser(t,
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="setup-adopt"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
