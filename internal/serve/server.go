@@ -43,6 +43,14 @@ type Options struct {
 	// ShutdownGrace bounds how long a cancelled Serve waits for in-flight
 	// requests to finish before returning. Zero uses defaultShutdownGrace.
 	ShutdownGrace time.Duration
+
+	// MaxUploadBytes caps a single POST /api/v1/uploads body. Zero (the
+	// production default) takes maxUploadBytes; a test shrinks this to
+	// drive the real 413 path with a body it can actually afford to build,
+	// the same seam newUploadStore's ttl/cap parameters already give the
+	// upload store's OTHER two limits (#333 Important #2 - the constant
+	// itself had no seam a test could exercise the removal of).
+	MaxUploadBytes int64
 }
 
 // Server is the lmm serve HTTP server: an *http.Server wired to a
@@ -82,6 +90,11 @@ type Server struct {
 	// entry owns a real directory on disk, which is why every removal path
 	// goes through the store rather than deleting a map entry.
 	uploads *uploadStore
+	// maxUploadBytes is the cap handleAPIUploadCreate enforces on a single
+	// upload body - Options.MaxUploadBytes, defaulted. A field rather than
+	// the maxUploadBytes constant read directly, so a test can shrink it
+	// without shrinking the production default (see Options.MaxUploadBytes).
+	maxUploadBytes int64
 
 	// heartbeat is the clock seam every SSE stream's comment heartbeat
 	// runs on (see sse.go). Production is realHeartbeatTicker; an internal
@@ -120,20 +133,26 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		grace = defaultShutdownGrace
 	}
 
+	maxUpload := opts.MaxUploadBytes
+	if maxUpload <= 0 {
+		maxUpload = maxUploadBytes
+	}
+
 	allowedHosts, wildcardPort := allowedHostsFor(opts.Addr)
 	s := &Server{
-		svc:           svc,
-		log:           log,
-		mux:           http.NewServeMux(),
-		allowedHosts:  allowedHosts,
-		wildcardPort:  wildcardPort,
-		shutdownGrace: grace,
-		csrf:          newCSRFGuard(),
-		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
-		uploads:       newUploadStore(defaultUploadTTL, defaultUploadStoreCap, time.Now),
-		jobs:          newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
-		heartbeat:     realHeartbeatTicker,
-		draining:      make(chan struct{}),
+		svc:            svc,
+		log:            log,
+		mux:            http.NewServeMux(),
+		allowedHosts:   allowedHosts,
+		wildcardPort:   wildcardPort,
+		shutdownGrace:  grace,
+		csrf:           newCSRFGuard(),
+		plans:          newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
+		uploads:        newUploadStore(defaultUploadTTL, defaultUploadStoreCap, time.Now),
+		maxUploadBytes: maxUpload,
+		jobs:           newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
+		heartbeat:      realHeartbeatTicker,
+		draining:       make(chan struct{}),
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,

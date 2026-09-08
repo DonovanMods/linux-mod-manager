@@ -53,7 +53,7 @@ type uploadResponse struct {
 func (s *Server) handleAPIUploadCreate(w http.ResponseWriter, r *http.Request) {
 	// The cap goes on the raw body, so it bounds the WHOLE multipart
 	// stream - a client cannot get past it with extra parts.
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUploadBytes)
 
 	reader, err := r.MultipartReader()
 	if err != nil {

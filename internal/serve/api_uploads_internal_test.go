@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +44,49 @@ func postUpload(t *testing.T, s *Server, filename string, content []byte) *httpt
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 	return rec
+}
+
+// newUploadCapFixtureServer builds a Server with the upload cap shrunk to
+// capBytes via Options.MaxUploadBytes (#333 Important #2's seam - the
+// production maxUploadBytes constant, 2 GiB, is impractical for a test to
+// exceed), and returns the staging root so a test can assert nothing was
+// left under it.
+func newUploadCapFixtureServer(t *testing.T, capBytes int64) (s *Server, stagingRoot string) {
+	t.Helper()
+	sandboxEnv(t)
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	s = New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{Addr: internalTestAddr, MaxUploadBytes: capBytes})
+	return s, filepath.Join(dataDir, "downloads")
+}
+
+// TestAPIUploadCreate_RefusesOverTheConfiguredCap drives the REAL 413 path
+// end to end - unlike TestAPIUploadCreate_RefusesAnOverLongBody, which only
+// unit-tests the status classifier - by shrinking the cap instead of trying
+// to build a 2 GiB body: an over-cap part is refused with 413, no entry
+// survives in the store, and nothing is left under the staging root.
+//
+// #333 Important #2: this is the test the review found missing. Proof it
+// pins the real mechanism, not just the classifier: replacing
+// handleAPIUploadCreate's `r.Body = http.MaxBytesReader(...)` line with
+// `_ = w` (a no-op) turns this test RED - reported alongside this fix.
+func TestAPIUploadCreate_RefusesOverTheConfiguredCap(t *testing.T) {
+	s, stagingRoot := newUploadCapFixtureServer(t, 4096)
+
+	rec := postUpload(t, s, "SomeMod.zip", bytes.Repeat([]byte("x"), 64*1024))
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, 0, s.uploads.len(), "no entry survives a refused upload")
+
+	entries, err := os.ReadDir(stagingRoot)
+	if !os.IsNotExist(err) {
+		require.NoError(t, err)
+	}
+	assert.Empty(t, entries, "nothing left under the staging root")
 }
 
 // decodeUpload decodes an upload receipt.
