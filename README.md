@@ -877,6 +877,10 @@ GET  /api/v1/profiles
 GET  /api/v1/profiles/{name}/export
 GET  /api/v1/health
 GET  /api/v1/conflicts?order=
+GET  /api/v1/games
+GET  /api/v1/games/catalog?source=&q=
+GET  /api/v1/games/detect
+GET  /api/v1/auth
 ```
 
 `GET /api/v1/conflicts?order=` is the reorder preview: a comma-separated
@@ -916,6 +920,40 @@ POST   /api/v1/profiles/{name}/rename       {"name"}   -> under its new name
 POST   /api/v1/profiles/{name}/set-default             -> the new default
 POST   /api/v1/profiles/{name}/reorder      {"ids"}    -> the new load order
 ```
+
+The Setup surface — how a game and its credentials come to exist — is the
+other set of synchronous mutations. None of these is game-scoped, so none
+takes `?game=`:
+
+```text
+POST   /api/v1/games          {"source_id","identifier","name",
+                               "install_path"[,"game_id","mod_path"]}
+                                          -> the new game's `lmm game list` row
+POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
+POST   /api/v1/auth/{source}  {"api_key"} -> the authentication report
+DELETE /api/v1/auth/{source}              -> the authentication report
+```
+
+`GET /api/v1/games` answers with the rows `lmm game list --json` prints —
+an empty array is the first-run signal. `GET /api/v1/games/catalog` is the
+game-add form's search, over any source with a searchable catalog
+(CurseForge today); a source without one answers 400, which is the signal
+to ask for an identifier instead. `POST /api/v1/games` answers 400 with a
+`{"field","value","reason"}` details payload naming the input at fault,
+and 409 when the game id is already taken; the install path must exist.
+`game_id` is the local games.yaml key — omit it and it is derived from the
+identifier, or pass the `game_id` a catalog match carries so a CurseForge
+game is keyed `minecraft` rather than `432`.
+
+`GET /api/v1/games/detect` lists what a Steam scan found, each row with its
+1-based index and an `already_configured` flag; the POST re-runs the scan
+itself and applies the rows the request names, so the paths written to
+games.yaml always come from the machine. The three auth routes all answer
+the document `lmm auth status --json` prints — the writes with it re-read.
+A key is validated live where the source supports it and is never stored if
+that check refuses it (400) or could not be performed at all (502); it never
+appears in a log line, an error, or a response. A key stored here applies at
+the next `lmm serve` start.
 
 The profile is named in the path rather than taken from `?profile=`: these
 routinely act on a profile other than the selected one. Profile IMPORT is
@@ -1082,6 +1120,9 @@ that run would have applied:
 | `lmm mod lock/unlock/set-update/convert`   | `core.ModSettingResult` — `{mod{}, locked, update_policy, …}`                                             |
 | `lmm mod edit <mod-id>`                    | `core.RelinkResult` — `{mod{}, changes[], no_changes}`                                                    |
 | `lmm game detect --all` / `--select`       | `core.GameDetectResult` — `{saved[], profiles[], warnings[]}`                                             |
+| `lmm game add` (flag-driven)               | `core.GameListEntry` — the same row `lmm game list --json` prints for it                                  |
+| `lmm game add --query` (no `--pick`)       | `core.GameCatalogReport` — `{source_id, query, matches[]}`                                                |
+| `lmm auth login --key-from-env`/`--key-stdin` | `app.AuthStatusReport` — the same document `lmm auth status --json` prints                             |
 | `lmm game set-default` / `clear-default`   | `core.SettingsResult` — `{default_game}`                                                                  |
 
 **`--json` never prompts.** Every confirmation has a flag that decides it
@@ -1091,8 +1132,10 @@ the run fails **before mutating anything** with the error envelope
 needs `--all` or `--select`; an `lmm install --json` or
 `lmm import <archive> --json` that hits file conflicts needs `--force`, and
 without it the envelope's `details.conflicts` names every conflicting file.
-`lmm game add` and `lmm auth login` are interactive-only and reject `--json`
-outright. Progress and per-mod status lines are suppressed under `--json`, so
+`lmm game add` and `lmm auth login` gained a flag for every prompt they had
+(#307), so both now run fully non-interactively and under `--json`; a value
+neither a flag nor a prompt supplied fails with an error naming the flag
+that answers it. Progress and per-mod status lines are suppressed under `--json`, so
 stdout holds the document and nothing else and stderr stays empty (except for
 `--log-level` diagnostics, which are always stderr).
 
@@ -1207,12 +1250,17 @@ under its issue number:
 | `lmm game set-default <game-id>`                   | Set the default game                                                                                                                                 |
 | `lmm game show-default`                            | Show current default game                                                                                                                            |
 | `lmm game clear-default`                           | Clear the default game setting                                                                                                                       |
-| `lmm game add`                                     | Interactively add a new game configuration                                                                                                           |
+| `lmm game add`                                     | Add a game — prompts for anything a flag did not supply                                                                                              |
+| `lmm game add --source <id> --id <identifier>`     | Name the mod source and this game's identifier with it (a NexusMods slug, a CurseForge game id, a custom source's key) instead of being prompted      |
+| `lmm game add --query <q> [--pick <n>]`            | Search a source's game catalog instead of naming an identifier; without `--pick` the matches are printed (`core.GameCatalogReport` under `--json`)     |
+| `lmm game add --name <n> --path <dir> [--mod-path <dir>]` | Display name, install path (must exist) and mod directory (default `<install>/mods`)                                                          |
 | `lmm game list`                                    | List configured games (ID, name, paths, deploy mode, sources; marks the default)                                                                     |
 | `lmm game detect`                                  | Scan Steam libraries for known moddable games (extend the known-games list via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)) |
 | `lmm game detect --all`                            | Non-interactively select every not-yet-configured detected game (same set the "all" prompt answer picks); required under `--json`                    |
 | `lmm game detect --select <indices>`               | Non-interactively select detected games by their 1-based prompt index (e.g. `1,3`); required under `--json`                                          |
 | `lmm auth login [source]`                          | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live)                                                          |
+| `lmm auth login <source> --key-from-env`           | Read the key from the source's own environment variable (`NEXUSMODS_API_KEY`, `CURSEFORGE_API_KEY`, or the derived `LMM_<ID>_API_KEY`) — no prompt   |
+| `lmm auth login <source> --key-stdin`              | Read the key as exactly one line from stdin — no prompt                                                                                              |
 | `lmm auth logout [source]`                         | Remove stored credentials                                                                                                                            |
 | `lmm auth status`                                  | Show authentication status                                                                                                                           |
 | `lmm profile list`                                 | List profiles                                                                                                                                        |

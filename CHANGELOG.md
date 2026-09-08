@@ -29,6 +29,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Non-interactive `lmm game add` and `lmm auth login` (#307), and the
+  `lmm serve` Setup surface's backend (#333).** Every prompt those two
+  commands had gained a flag, so both now run with no terminal and under
+  `--json`: `game add` takes `--source`, `--id`, `--name`, `--path`,
+  `--mod-path`, and `--query`/`--pick` to search a source's game catalog
+  (without `--pick` it just prints the matches, so a caller searches first
+  and picks second); `auth login` takes `--key-from-env` (the source's own
+  environment variable) and `--key-stdin` (one line, no prompt). A flag
+  always wins and only the unanswered values are prompted for, so the
+  flagless walk-through is unchanged - but the decisions inside it moved
+  into core (`SearchGameCatalog`, `AddGame`, `GameDetectListing`,
+  `SelectDetectedGames`), which is what lets `lmm serve` do the same things
+  the same way rather than growing a second implementation. `game add
+  --json` prints `core.GameListEntry` (the row `game list --json` already
+  prints) or `core.GameCatalogReport`; `auth login --json` prints
+  `app.AuthStatusReport` (the document `auth status --json` already
+  prints).
+
+  On the web side that becomes eight additive routes, all answering those
+  same frozen documents: `GET/POST /api/v1/games`,
+  `GET /api/v1/games/catalog`, `GET/POST /api/v1/games/detect`, and
+  `GET /api/v1/auth` with `POST`/`DELETE /api/v1/auth/{source}`. An add
+  answers 400 with a `{"field","value","reason"}` payload naming the input
+  at fault and 409 when the game id is taken; a detect apply re-runs the
+  scan itself and applies only the rows the request names, so the paths
+  written to games.yaml always come from the machine. An API key is
+  validated live where the source supports it and is never stored if that
+  check refuses it (400) or could not be performed at all (502), and never
+  reaches a log line, an error message, or a response - only its masked
+  form does. A key stored through the web UI applies at the next `lmm
+  serve` start.
+
+  Two deliberate behaviour changes come with the shared core path: a game's
+  install path must now EXIST (a typo used to save silently and fail at the
+  first deploy), and `game add` refuses an id that is already configured
+  instead of overwriting it - `lmm game detect`'s repair path remains the
+  sanctioned way to overwrite. `core.ErrInteractiveOnly` narrows to match:
+  it no longer means "this command has no `--json` form" but "this VALUE
+  was supplied by neither a flag nor a prompt", and names the flag that
+  answers it. (#307, #333, epic #326)
+
 - The `lmm serve` SPA's modal surfaces get their backend: reorder, profile
   management, health repair. `POST /api/v1/profiles/{name}/reorder` commits
   a load order (the same `ResolveReorder` identifiers `lmm profile reorder`
