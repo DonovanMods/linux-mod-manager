@@ -1085,6 +1085,12 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #333's source-removal refusal: the games that still map the
+			// source, so a frontend names them instead of saying "in use".
+			"source_in_use_error",
+			core.SourceInUseError{SourceID: "my-mods", Games: []string{"alpha", "zeta"}},
+		},
+		{
 			// The field-named rejection an SPA form renders against the
 			// offending input. Err is deliberately absent from the wire
 			// (json:"-"): it exists for errors.Is, not for a client.

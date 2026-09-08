@@ -25,6 +25,7 @@ var detailsCoverage = map[string]string{
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
 	"core.GameSpecError":          "TestReportError_JSON_GameSpecError",
 	"core.ProfileWarningsError":   "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
+	"core.SourceInUseError":       "TestReportError_JSON_SourceInUseError",
 	"sourceValidationError":       "TestReportError_JSON_SourceValidationError",
 }
 
