@@ -41,7 +41,10 @@ import { planRendererFor } from "./planrenderers.js";
  * as an all-clear.
  */
 export function ConfirmPlanModal({ modal, actions }) {
-  if (!modal) return null;
+  // type: "plan" self-guards this modal against the shared slot's other two
+  // shapes (reorder/profiles, main.js#openReorderModal/openProfilesModal) -
+  // store.js's own doc comment: "another shape in this same slot".
+  if (modal?.type !== "plan") return null;
 
   const { kind, title, status, plan, error, details, confirmLabel } = modal;
   const busy = status === "starting";
@@ -97,7 +100,11 @@ export function ConfirmPlanModal({ modal, actions }) {
                   ${details && html`<${DocumentView} value=${details} />`}
                 </div>
               `
-            : html`<${PlanView} plan=${plan} actions=${actions} />`
+            : html`<${PlanView}
+                plan=${plan}
+                modal=${modal}
+                actions=${actions}
+              />`
       }
     <//>
   `;

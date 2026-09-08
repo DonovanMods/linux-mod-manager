@@ -49,8 +49,21 @@ export function Modal({ kind, title, onClose, footer, children }) {
     // the panel is neither inert nor aria-hidden), so Tab can still walk out
     // of the dialog once it starts. Full keyboard containment is Unit 8's
     // a11y pass.
+    const opener = document.activeElement;
     panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      // Focus returns to the opener on unmount (issue 332), whichever of the
+      // shell's own exits fired (Escape, scrim click, ✕, or the caller's own
+      // Cancel/Confirm) - every one of them tears this component down, so
+      // one cleanup covers all of them rather than each caller having to
+      // remember to give focus back itself. A guard against an opener that
+      // is no longer in the document (the row it belonged to was removed by
+      // the very mutation this modal just confirmed) - focus() on a detached
+      // element is a silent no-op in every browser, but isConnected makes
+      // the intent explicit rather than relying on that.
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
   }, []);
 
   return html`

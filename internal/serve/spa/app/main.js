@@ -25,7 +25,11 @@ import {
   ApiError,
 } from "./api.js";
 import { resolveGamePath } from "./navigation.js";
-import { connectActivity, isOriginMounted } from "./activity.js";
+import {
+  connectActivity,
+  isOriginMounted,
+  registerOrigin,
+} from "./activity.js";
 
 const store = createStore();
 const root = document.getElementById("app");
@@ -283,6 +287,38 @@ async function reload(key, path) {
   }
 }
 
+/**
+ * reloadStatus re-fetches the scoped and unscoped core.StatusReport
+ * documents (issue 332) - the same pair hydrate() fetches on a route change,
+ * exposed as its own action for the profiles modal: TopBar's game/profile
+ * pickers read status.profiles/games (main.js#GamePicker, ProfilePicker),
+ * a document the profiles modal never itself fetches, so a create/rename/
+ * delete/set-default there would otherwise leave the top bar stale until
+ * the next unrelated re-hydrate. Always treated as a RE-load (fetchErrors,
+ * never the fatal `error` slice) - this action only ever runs from a modal
+ * that could not be open unless Mission Control had already loaded once.
+ */
+async function reloadStatus() {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  try {
+    const [status, allStatus] = await Promise.all([
+      get(scoped("/api/v1/status", context)),
+      get("/api/v1/status"),
+    ]);
+    store.set({
+      status,
+      games: allStatus.games,
+      fetchErrors: { ...store.get().fetchErrors, status: null },
+    });
+  } catch (err) {
+    const message = err instanceof ApiError ? err.message : String(err);
+    store.set({ fetchErrors: { ...store.get().fetchErrors, status: message } });
+  }
+}
+
 // SEARCH_PAGE_SIZE is the dedicated search page's per-page request size -
 // the issue 331 pagination the omnibar's own live filter never needs.
 const SEARCH_PAGE_SIZE = 20;
@@ -521,7 +557,19 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
   // re-plan the identical mutation once a job it started fails with
   // *core.ConflictError, and nothing else remembers what was asked for
   // after planMutation's request has already gone out.
-  const base = { kind, origin, title, confirmLabel, seq, options };
+  // type: "plan" marks this modal's shape in the shared modal slot
+  // (store.js's own doc comment): confirmplan.js, reordermodal.js and
+  // profilesmodal.js each self-guard on it, so app.js can mount all three
+  // as siblings without a switch statement of its own.
+  const base = {
+    type: "plan",
+    kind,
+    origin,
+    title,
+    confirmLabel,
+    seq,
+    options,
+  };
 
   store.set({ modal: { ...base, status: "planning" } });
   try {
@@ -539,6 +587,44 @@ async function openPlan({ kind, origin, title, confirmLabel, options }) {
     if (modalSeq !== seq) return;
     store.set({ modal: { ...base, status: "error", ...describe(err) } });
   }
+}
+
+/** closeModal closes whatever the shared modal slot currently holds -
+ * generic over every shape it can carry (store.js's own doc comment), not
+ * just the confirm-plan kind openPlan/confirmPlan manage. modalSeq still
+ * advances even for a non-plan modal: it costs nothing, and it means a
+ * plan that happened to be mid-flight when a DIFFERENT modal type closed
+ * (there is at most one open at a time, so this can only be this same
+ * modal) is fenced the same way Cancel has always fenced it. */
+function closeModal() {
+  modalSeq += 1;
+  store.set({ modal: null });
+}
+
+/** openReorderModal opens the reorder modal over profileName - reachable
+ * from the library's own "Reorder…" control and every Conflicts-card row's
+ * "Resolve…" (design doc §Modals, issue 332). Not a Plan/Apply mutation
+ * (reordermodal.js's own header comment), so there is no plan to compute
+ * here - the modal fetches its own live preview once mounted. */
+function openReorderModal({ profileName, focusKey }) {
+  store.set({ modal: { type: "reorder", profileName, focusKey } });
+}
+
+/** openProfilesModal opens the profiles modal - the top bar's own "Manage
+ * profiles…" (design doc §Modals, issue 332). profilesmodal.js reloads its own
+ * listing (actions.reloadProfiles) once mounted; nothing to precompute
+ * here either. */
+function openProfilesModal() {
+  store.set({ modal: { type: "profiles" } });
+}
+
+/** openUninstallBatchModal opens the library batch bar's "Uninstall
+ * selected" (issue 332): ONE confirm modal over N selected mods' own uninstall
+ * plans, never a second modal per mod ("modals stack at most one deep",
+ * design doc §Modals). uninstallbatchmodal.js plans every mod itself once
+ * mounted; this only records WHICH mods. */
+function openUninstallBatchModal(mods) {
+  store.set({ modal: { type: "uninstall-batch", mods } });
 }
 
 // bindingJobs is every in-flight POST /api/v1/jobs (or plan-free toggle
@@ -601,6 +687,135 @@ async function startBinding(origin, work) {
  * call began is a different job's concern, not this completion's. */
 function awaitBindings() {
   return Promise.allSettled([...bindingJobs.values()]);
+}
+
+// jobDoneWaiters lets one caller await a SPECIFIC job id's terminal summary
+// (issue 332's sequenced batches - the library batch bar's enable/disable/
+// uninstall, and every per-mod job kind_toggle.go and kind_uninstall.go's
+// docs name: "sequence per-mod batch jobs... start the next only after the
+// previous job's job_done frame", the wire's own caveat against the 8-job
+// running cap AND core's own beginOp serialisation). bindingJobs above
+// answers a different question ("is ANY start still in flight") for the
+// single global onJobDone toast decision; this answers "has THIS ONE job
+// finished" for code that needs to run its own next step only after it has.
+const jobDoneWaiters = new Map();
+
+/** waitForJobDone resolves with jobID's own terminal summary. Checks
+ * jobsIndex FIRST, synchronously, before ever registering a waiter: the
+ * activity stream can deliver a job's job_started AND job_done frames
+ * before the POST /api/v1/jobs response that names it has even been read
+ * (bindingJobs' own doc comment - "observed, not hypothetical"), so a naive
+ * "subscribe, then wait" would miss a job that was already finished by the
+ * time this is called. */
+function waitForJobDone(jobID) {
+  const existing = (store.get().jobsIndex ?? []).find((j) => j.id === jobID);
+  if (existing && existing.state !== "running")
+    return Promise.resolve(existing);
+  return new Promise((resolve) => jobDoneWaiters.set(jobID, resolve));
+}
+
+/**
+ * startSequencedBatch runs one job per item in `items`, strictly one at a
+ * time - the wire's own sequencing caveat - registering every item's origin
+ * as "on screen" for the WHOLE batch (activity.js#registerOrigin) so no
+ * individual job's completion produces its own toast; a single END-OF-BATCH
+ * toast is pushed once every item has settled (design doc's "a single
+ * end-of-batch toast" applied to this unit's batch bar). Each item's own
+ * origin is left in state.origins afterwards (not cleared), so a row still
+ * on screen keeps showing that job's own inline Done/Failed outcome - the
+ * "per-row inline progress" half of the same sentence - until the row's own
+ * InlineJob is dismissed.
+ *
+ * `run(item)` starts one item's job and returns its job id; `labelOf(item)`
+ * names it for the failure list; `verb` is the toast's own past-tense word
+ * ("Enabled", "Disabled", "Uninstalled").
+ */
+async function startSequencedBatch(
+  items,
+  { run, originOf: itemOrigin, labelOf, verb },
+) {
+  const unregisters = items.map((item) => registerOrigin(itemOrigin(item)));
+  const failed = [];
+  try {
+    for (const item of items) {
+      const origin = itemOrigin(item);
+      try {
+        const jobID = await run(item);
+        store.set({ origins: { ...store.get().origins, [origin]: jobID } });
+        const summary = await waitForJobDone(jobID);
+        if (summary.state === "failed") failed.push(labelOf(item));
+      } catch (err) {
+        failed.push(labelOf(item));
+      }
+    }
+  } finally {
+    unregisters.forEach((unregister) => unregister());
+  }
+  const ok = items.length - failed.length;
+  pushToast({
+    tone: failed.length > 0 ? "failure" : "success",
+    title: `${verb} ${ok}/${items.length} mod${items.length === 1 ? "" : "s"}`,
+    detail: failed.length > 0 ? `Failed: ${failed.join(", ")}` : "",
+  });
+}
+
+/** startBatchToggle sequences an enable/disable job per mod (the library
+ * batch bar's Enable/Disable, issue 332) - the same per-mod origin
+ * ("mod:{source}/{id}:toggle") the row's own toggle and the slide-over's
+ * Enable/Disable button already use (modrows.js#modOriginPattern), so a
+ * visible row shows the SAME inline progress whichever control started it. */
+async function startBatchToggle(action, mods) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await startSequencedBatch(mods, {
+    run: (mod) =>
+      startToggleJob(action, mod.source_id, mod.id, context).then(
+        (r) => r.job_id,
+      ),
+    originOf: (mod) => `mod:${mod.source_id}/${mod.id}:toggle`,
+    labelOf: (mod) => mod.name ?? `${mod.source_id}:${mod.id}`,
+    verb: action === "enable" ? "Enabled" : "Disabled",
+  });
+}
+
+/**
+ * startUninstallBatch sequences an uninstall job per mod - never a
+ * server-side loop over them (the wire's own "deliberately NOT a new batch
+ * endpoint" ruling, task-A report §8).
+ *
+ * Each mod is RE-PLANNED immediately before its own apply, exactly the same
+ * rule kind_updates.go's own Apply loop follows (Ruling 5: a plan is a
+ * contract about a world that has not moved). uninstallbatchmodal.js's own
+ * preview plans every selected mod UP FRONT so the confirm screen has
+ * something to show - but a plan computed before the batch even started is
+ * STALE by the time the SECOND mod's turn comes, because the FIRST mod's
+ * own uninstall already changed "installed mods" (observed: core's
+ * installedSnapshot check refused exactly this with "plan is stale" the
+ * first time this was wired straight to the preview's own plan ids).
+ * Redeeming the preview's plan_id would only ever work for the batch's
+ * first item; re-planning here is what makes every item after it safe.
+ */
+async function startUninstallBatch(mods) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await startSequencedBatch(mods, {
+    run: async (mod) => {
+      const response = await planMutation(
+        "uninstall",
+        { mod_id: mod.id, source_id: mod.source_id },
+        context,
+      );
+      const { job_id: jobID } = await startJob(response.plan_id, {});
+      return jobID;
+    },
+    originOf: (mod) => `mod:${mod.source_id}/${mod.id}:uninstall`,
+    labelOf: (mod) => mod.name ?? `${mod.source_id}:${mod.id}`,
+    verb: "Uninstalled",
+  });
 }
 
 /** Redeems the open modal's plan handle, starting its Apply as a job
@@ -926,6 +1141,16 @@ function refreshSearchResults() {
  * user something they are already looking at (design doc §Jobs).
  */
 async function onJobDone(summary) {
+  // Resolve any startSequencedBatch step waiting on THIS job specifically,
+  // before anything else - a batch's next item must be able to start the
+  // instant this one is known done, not after the (slower) whole-route
+  // re-hydrate below.
+  const waiter = jobDoneWaiters.get(summary.id);
+  if (waiter) {
+    jobDoneWaiters.delete(summary.id);
+    waiter(summary);
+  }
+
   hydrate(store.get().route);
   refreshSearchResults();
 
@@ -975,11 +1200,15 @@ const actions = {
   },
   reloadModDetail: () => reloadModPageSlice("detail", getModDetail),
   reloadModVersions: () => reloadModPageSlice("versions", getModVersions),
+  reloadProfiles: () => reload("profiles", "/api/v1/profiles"),
+  reloadStatus,
   openPlan,
-  closePlan: () => {
-    modalSeq += 1;
-    store.set({ modal: null });
-  },
+  // closeModal is generic over every shape the shared modal slot can hold
+  // (store.js: "another shape in this same slot, not another slot") -
+  // reorder/profiles/uninstall-batch close through it directly; closePlan
+  // is the same function under the name confirmplan.js already calls it by.
+  closeModal,
+  closePlan: closeModal,
   confirmPlan,
   setPlanOptions,
   searchSources,
@@ -994,6 +1223,11 @@ const actions = {
   dismissToast,
   retryInstallOverwrite,
   canRetryInstallOverwrite,
+  openReorderModal,
+  openProfilesModal,
+  openUninstallBatchModal,
+  startBatchToggle,
+  startUninstallBatch,
 };
 
 // contextKey identifies the data a route needs, not the route itself: the

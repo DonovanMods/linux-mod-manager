@@ -15,6 +15,9 @@ import { MissionControl } from "./missioncontrol.js";
 import { FullModPage } from "./fullmodpage.js";
 import { SearchPage } from "./searchpage.js";
 import { ConfirmPlanModal } from "./confirmplan.js";
+import { ReorderModal } from "./reordermodal.js";
+import { ProfilesModal } from "./profilesmodal.js";
+import { UninstallBatchModal } from "./uninstallbatchmodal.js";
 import { Toasts } from "./toasts.js";
 
 /** The application root: reads the route and dispatches to its screen. The
@@ -28,6 +31,13 @@ export function App({ state, onThemeChange, actions }) {
   // running job's modal or a pending toast down with it.
   const overlays = html`
     <${ConfirmPlanModal} modal=${state.modal} actions=${actions} />
+    <${ReorderModal} modal=${state.modal} state=${state} actions=${actions} />
+    <${ProfilesModal} modal=${state.modal} state=${state} actions=${actions} />
+    <${UninstallBatchModal}
+      modal=${state.modal}
+      state=${state}
+      actions=${actions}
+    />
     <${Toasts}
       toasts=${state.toasts}
       route=${route}
