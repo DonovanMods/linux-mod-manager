@@ -54,6 +54,13 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
 	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))
 	s.mux.Handle("POST /api/v1/games/detect", s.wrap(s.handleAPIGameDetectApply))
+	// The Setup surface's credential half (api_auth.go). All three answer
+	// the same app.AuthStatusReport document `lmm auth status --json`
+	// emits - the writes with it RE-READ, so a mutation never needs a
+	// follow-up request to see its effect.
+	s.mux.Handle("GET /api/v1/auth", s.wrap(s.handleAPIAuth))
+	s.mux.Handle("POST /api/v1/auth/{source}", s.wrap(s.handleAPIAuthLogin))
+	s.mux.Handle("DELETE /api/v1/auth/{source}", s.wrap(s.handleAPIAuthLogout))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
 	// The activity tray's index (api_activity.go). GET and POST on the same

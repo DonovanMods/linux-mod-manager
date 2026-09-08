@@ -443,6 +443,14 @@ func TestServeJSONGoldens(t *testing.T) {
 			"game_detect_select_request",
 			gameDetectSelectRequest{Select: []string{"1", "valheim"}},
 		},
+		{
+			// The credential body (api_auth.go). One member: the source is
+			// named in the PATH, never here, so "authenticate THIS source"
+			// cannot be retargeted by the body. The value is a dummy - a
+			// golden is a committed file, and no real key belongs in one.
+			"auth_key_request",
+			authKeyRequest{APIKey: "example-api-key"},
+		},
 	}
 
 	for _, tc := range tests {
