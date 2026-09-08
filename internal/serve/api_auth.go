@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -68,14 +69,10 @@ func (s *Server) handleAPIAuth(w http.ResponseWriter, r *http.Request) {
 // 502, because nothing was learned about the key and calling it invalid
 // would be a lie.
 //
-// NOTE (documented limitation, not a bug being hidden): storing a key does
-// not re-key the ALREADY-REGISTERED source object in this process. Source
-// implementations set their key through a plain unsynchronised field write
-// (e.g. custom.API.SetAPIKey), so calling it from a request handler while
-// another request is mid-search would be a data race. The stored key is
-// therefore picked up at the next `lmm serve` start, exactly as it is by
-// the next CLI invocation. A concurrency-safe re-key belongs in the source
-// layer.
+// A stored key takes effect IMMEDIATELY: rekeySource swaps a freshly
+// constructed source carrying the new credential into the registry, so the
+// next search or install uses it with no restart (see rekeySource for the
+// one case that still needs one).
 func (s *Server) handleAPIAuthLogin(w http.ResponseWriter, r *http.Request) {
 	var req authKeyRequest
 	if err := decodeAPIBody(w, r, &req); err != nil {
@@ -109,6 +106,7 @@ func (s *Server) handleAPIAuthLogin(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, errors.New("storing the credential failed"))
 		return
 	}
+	s.rekeySource(ctx, sourceID)
 	s.writeAuthStatus(w, ctx, http.StatusOK)
 }
 
@@ -141,7 +139,45 @@ func (s *Server) handleAPIAuthLogout(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.rekeySource(ctx, sourceID)
 	s.writeAuthStatus(w, ctx, http.StatusOK)
+}
+
+// rekeyGrace bounds how long a credential write waits for the mutation
+// gate before giving up on the live swap. core's beginOp serialises
+// mutations by BLOCKING, so a re-key attempted during a long install would
+// otherwise hold the HTTP request open for the length of that install.
+// Five seconds is far longer than an idle server ever needs and far
+// shorter than a download.
+const rekeyGrace = 5 * time.Second
+
+// rekeySource makes a credential change take effect on the running
+// service, best-effort.
+//
+// The credential itself is already stored (or deleted) by the time this
+// runs - that write is the durable effect and the response document
+// reflects it either way. What this adds is the live swap: a freshly
+// constructed source carrying the new key, put into the registry under the
+// mutation gate (app.RekeySource), so nothing has to restart.
+//
+// A failure is logged, not surfaced. The two ways it can fail are a source
+// that cannot be rebuilt (a definition file deleted underneath us) and the
+// gate not coming free within rekeyGrace, and in BOTH the honest answer to
+// the caller is the one it already has - the key is stored - with the same
+// "picked up at the next start" behaviour lmm had before #333. Turning
+// either into an HTTP failure would report a credential write that did
+// happen as one that did not.
+func (s *Server) rekeySource(ctx context.Context, sourceID string) {
+	ctx, cancel := context.WithTimeout(ctx, rekeyGrace)
+	defer cancel()
+
+	switch swapped, err := app.RekeySource(ctx, s.svc, sourceID); {
+	case err != nil:
+		s.log.Warn("serve: credential stored, but the running source was not re-keyed; restart lmm serve to pick it up",
+			"source", sourceID, "err", err)
+	case swapped:
+		s.log.Debug("serve: re-keyed the running source", "source", sourceID)
+	}
 }
 
 // writeAuthStatus assembles and writes app.AuthStatusReport, the one
