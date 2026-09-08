@@ -23,6 +23,7 @@ import (
 var detailsCoverage = map[string]string{
 	"core.ConflictError":          "TestReportError_JSON_ConflictError",
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
+	"core.GameSpecError":          "TestReportError_JSON_GameSpecError",
 	"core.ProfileWarningsError":   "TestDoProfileSwitch_JSON_FatalAfterWarning_EnvelopeCarriesWarnings",
 	"sourceValidationError":       "TestReportError_JSON_SourceValidationError",
 }

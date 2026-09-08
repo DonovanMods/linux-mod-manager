@@ -36,11 +36,12 @@ func TestDoGameAdd_OverwritesExistingDefaultProfileMods(t *testing.T) {
 		},
 	}))
 
+	installDir := t.TempDir()
 	input := strings.Join([]string{
 		"1", // select nexusmods (only registered source)
 		"Skyrim Special Edition",
 		"skyrimspecialedition",
-		"/opt/games/skyrim",
+		installDir,
 		"",
 	}, "\n") + "\n"
 
@@ -77,11 +78,12 @@ func TestDoGameAdd_ProfileWriteFailureNotDoubleWrapped(t *testing.T) {
 	require.NoError(t, os.Chmod(gamesDir, 0555))
 	t.Cleanup(func() { _ = os.Chmod(gamesDir, 0755) })
 
+	installDir := t.TempDir()
 	input := strings.Join([]string{
 		"1", // select nexusmods (only registered source)
 		"Skyrim Special Edition",
 		"skyrimspecialedition",
-		"/opt/games/skyrim",
+		installDir,
 		"",
 	}, "\n") + "\n"
 

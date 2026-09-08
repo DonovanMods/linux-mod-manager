@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Jul 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm-game-add - Add a game interactively
+lmm-game-add - Add a game
 
 
 .SH SYNOPSIS
@@ -10,31 +10,81 @@ lmm-game-add - Add a game interactively
 
 
 .SH DESCRIPTION
-Interactively add a new game configuration.
+Add a new game configuration.
 
 .PP
-Prompts for a mod source (every registered source, built-in or custom,
-sorted by ID), then its install path and mod path (defaulting to the
-install path plus "/mods"), and saves the result to games.yaml along with
-an empty default profile.
+With no flags this prompts for a mod source (every registered source,
+built-in or custom, sorted by ID), then the game's identity and its
+install path and mod path (defaulting to the install path plus "/mods"),
+and saves the result to games.yaml along with an empty default profile.
+
+.PP
+Every prompt also has a flag, so the whole command runs non-interactively
+- and therefore under --json (#307). A flag always wins; only the values
+no flag supplied are prompted for, and under --json a missing value is an
+error naming the flag rather than a prompt.
 
 .PP
 Sources with a searchable game catalog (CurseForge today; any future
-source that implements one) offer interactive search. All other
-registered sources (NexusMods today; any custom source without a catalog)
-prompt for the game's identifier with that source directly - for
-NexusMods, the slug from its URL (e.g.
+source that implements one) accept --query to search it, with --pick to
+choose from the matches by number. Without --pick the matches are simply
+printed (as the catalog document under --json), so a caller can search
+first and choose second. All other registered sources (NexusMods today;
+any custom source without a catalog) take the game's identifier with that
+source directly via --id - for NexusMods, the slug from its URL (e.g.
 https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
+
+.PP
+The install path must already exist. The mod path is not created here;
+deploy creates it on demand.
 
 .PP
 Examples:
   lmm game add
   # Select source, then search/enter game details
 
+.PP
+lmm game add --source nexusmods --id skyrimspecialedition \\
+    --name "Skyrim Special Edition" --path ~/games/skyrim
+
+.PP
+lmm game add --source curseforge --query minecraft --json
+  # Prints the matches; re-run with --pick to choose one
+  lmm game add --source curseforge --query minecraft --pick 1 \\
+    --path ~/games/minecraft
+
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
 	help for add
+
+.PP
+\fB--id\fP=""
+	the game's identifier with that source (NexusMods slug, CurseForge game ID, ...)
+
+.PP
+\fB--mod-path\fP=""
+	mod directory (default: /mods)
+
+.PP
+\fB--name\fP=""
+	display name (defaults to the catalog match's name)
+
+.PP
+\fB--path\fP=""
+	game install path (must exist)
+
+.PP
+\fB--pick\fP=0
+	1-based choice among --query's matches (without it the matches are printed)
+
+.PP
+\fB--query\fP=""
+	search the source's game catalog instead of naming an identifier
+
+.PP
+\fB--source\fP=""
+	mod source ID (skips the source prompt)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

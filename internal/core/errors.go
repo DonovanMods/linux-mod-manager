@@ -131,7 +131,14 @@ var ErrProfileExists = errors.New("profile already exists")
 // stdin (Ruling 2). The decision must come from a flag instead.
 var ErrConfirmationRequired = errors.New("confirmation required: pass --yes (or --force where documented) in non-interactive mode")
 
-// ErrInteractiveOnly marks a command that has no non-interactive form yet
-// (Ruling 2: `game add`, `auth login`) and therefore rejects --json outright
-// rather than half-running.
-var ErrInteractiveOnly = errors.New("this command is interactive-only and does not support --json")
+// ErrInteractiveOnly marks a value a frontend could only obtain by
+// prompting, in a mode that forbids reading stdin (the CLI's --json,
+// Ruling 2).
+//
+// Before #307 it meant something coarser - `game add` and `auth login` had
+// no flag-driven form at all and rejected --json outright, before doing
+// anything. Both now take flags for every prompt they had, so the refusal
+// narrowed from "this command" to "this value": it is returned only when a
+// specific value was supplied by neither a flag nor an interactive prompt,
+// wrapped with the flag that would have answered it.
+var ErrInteractiveOnly = errors.New("this value can only be supplied interactively; pass the matching flag instead")
