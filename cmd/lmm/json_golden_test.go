@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"os"
@@ -427,6 +428,49 @@ func TestJSONGolden_GameList(t *testing.T) {
 		out := captureStdout(t, func() error { return doGameList(&cobra.Command{}, svc) })
 		assertJSONCLIGolden(t, "game_list_empty", out)
 	})
+}
+
+// --- game add (#333 Minor #4) ---
+
+// TestJSONGolden_GameAdd pins `lmm game add --json`'s CLI-facing document.
+// The wire itself is already goldened at the core level
+// (internal/core/testdata/json/game_list_entry*.golden, via
+// core.GameListEntry) - this is the convention gap the review found (Minor
+// #4): nothing pinned that the COMMAND still emits it, only that the type
+// itself round-trips.
+func TestJSONGolden_GameAdd(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	withJSONOutput(t)
+	installDir, modDir := t.TempDir(), t.TempDir()
+	gameAddSource, gameAddID, gameAddName = "acme-manual", "acme-quest-slug", "Acme Quest"
+	gameAddPath, gameAddModPath = installDir, modDir
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+	assertJSONCLIGolden(t, "game_add", out, installDir, "/GOLDEN/install", modDir, "/GOLDEN/mods")
+}
+
+// --- auth login (#333 Minor #4) ---
+
+// TestJSONGolden_AuthLogin pins `lmm auth login --key-from-env --json`'s
+// CLI-facing document - the same convention gap TestJSONGolden_GameAdd
+// closes, for #307's other new non-interactive command. The wire itself
+// (app.AuthStatusReport) is already goldened at internal/app/testdata/json/.
+func TestJSONGolden_AuthLogin(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "golden-env-key-1234567890")
+	withJSONOutput(t)
+	authKeyFromEnv = true
+	t.Cleanup(func() { authKeyFromEnv = false })
+
+	out := captureStdout(t, func() error {
+		return doAuthLogin(context.Background(), svc, "acme-mods")
+	})
+	assertJSONCLIGolden(t, "auth_login", out)
 }
 
 // --- update ---

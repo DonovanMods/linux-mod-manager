@@ -1,0 +1,13 @@
+{
+  "sources": [
+    {
+      "id": "acme-mods",
+      "name": "Acme Mods",
+      "authenticated": true,
+      "via": "stored",
+      "env_var": "LMM_ACME_MODS_API_KEY",
+      "key_masked": "gol...890"
+    }
+  ],
+  "orphaned": []
+}
