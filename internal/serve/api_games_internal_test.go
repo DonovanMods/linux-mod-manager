@@ -8,6 +8,8 @@ package serve
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -103,8 +105,11 @@ func TestAPIGamesCatalog_ReturnsTheCoreReport(t *testing.T) {
 
 // TestAPIGamesCatalog_Refusals pins every failure's status: a missing
 // parameter and a catalog-less source are the caller's (400), an
-// unregistered source is 404, and a source whose own call failed is 502 -
-// this server proxied that call, it did not itself fail.
+// unregistered source is 404, a source that refused for want of a
+// credential is 401 (#333 - the SPA's answer to that one is "authenticate
+// <source> first", not "the upstream broke"), and any OTHER failure of the
+// source's own call is 502 - this server proxied that call, it did not
+// itself fail.
 func TestAPIGamesCatalog_Refusals(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -116,7 +121,9 @@ func TestAPIGamesCatalog_Refusals(t *testing.T) {
 		{"no query param", "/api/v1/games/catalog?source=fakecat", &gamesCatalogSource{}, http.StatusBadRequest},
 		{"unknown source", "/api/v1/games/catalog?source=nope&q=x", nil, http.StatusNotFound},
 		{"source has no catalog", "/api/v1/games/catalog?source=fake&q=x", &fixtureSource{}, http.StatusBadRequest},
-		{"source call failed", "/api/v1/games/catalog?source=fakecat&q=x", &gamesCatalogSource{listErr: domain.ErrAuthRequired}, http.StatusBadGateway},
+		{"source needs a credential", "/api/v1/games/catalog?source=fakecat&q=x", &gamesCatalogSource{listErr: domain.ErrAuthRequired}, http.StatusUnauthorized},
+		{"source needs a credential, wrapped", "/api/v1/games/catalog?source=fakecat&q=x", &gamesCatalogSource{listErr: fmt.Errorf("listing games: %w", domain.ErrAuthRequired)}, http.StatusUnauthorized},
+		{"source call failed for another reason", "/api/v1/games/catalog?source=fakecat&q=x", &gamesCatalogSource{listErr: errors.New("connection reset")}, http.StatusBadGateway},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

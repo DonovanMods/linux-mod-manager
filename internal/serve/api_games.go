@@ -22,6 +22,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // handleAPIGames answers GET /api/v1/games with the array `lmm game list
@@ -63,13 +64,25 @@ func (s *Server) handleAPIGamesCatalog(w http.ResponseWriter, r *http.Request) {
 
 // catalogErrorStatus classifies a SearchGameCatalog failure: an
 // unregistered source is 404, a bad query or a source that cannot be
-// searched is 400, and a source's own failure (auth, network) is 502 -
-// this server is a proxy for that call and did not itself fail.
+// searched is 400, a source that refused for want of a credential is 401,
+// and any other failure of the source's own call is 502 - this server is a
+// proxy for that call and did not itself fail.
+//
+// The 401 is #333's split of what used to be one 502. Every reason a
+// catalog call can fail looked alike on the wire, so a CurseForge search
+// run before `auth login` reached the SPA as a generic upstream error with
+// no next step in it. domain.ErrAuthRequired survives core's wrapping, so
+// errors.Is can tell that one case apart and the SPA can offer the thing
+// that actually fixes it - authenticate this source - the same way the
+// CLI's authPromptError does. The message is core's own, which already
+// names the source.
 func (s *Server) catalogErrorStatus(sourceID string, err error) int {
 	var specErr *core.GameSpecError
 	switch {
 	case errors.As(err, &specErr), errors.Is(err, core.ErrNoGameCatalog):
 		return http.StatusBadRequest
+	case errors.Is(err, domain.ErrAuthRequired):
+		return http.StatusUnauthorized
 	default:
 		if _, lookupErr := s.svc.GetSource(sourceID); lookupErr != nil {
 			return http.StatusNotFound
