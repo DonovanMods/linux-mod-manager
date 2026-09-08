@@ -410,4 +410,10 @@ func TestSelectDetectedGames_Rejections(t *testing.T) {
 		_, err := core.SelectDetectedGames(games, sel)
 		assert.Error(t, err, "selection %v must be refused", sel)
 	}
+
+	// A scan that found nothing says so, rather than offering the
+	// nonsensical range "use 1-0".
+	_, err := core.SelectDetectedGames(nil, []string{"1"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no games were detected")
 }

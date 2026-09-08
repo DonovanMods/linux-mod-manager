@@ -190,6 +190,11 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 	if len(selectors) == 0 {
 		return nil, errors.New("no games selected")
 	}
+	if len(games) == 0 {
+		// Without this the range hint below reads "use 1-0", which is not a
+		// range and buries the real answer: the scan found nothing at all.
+		return nil, errors.New("no games were detected, so there is nothing to select")
+	}
 	bySlug := make(map[string]int, len(games))
 	for i, g := range games {
 		bySlug[strings.ToLower(g.Slug)] = i
