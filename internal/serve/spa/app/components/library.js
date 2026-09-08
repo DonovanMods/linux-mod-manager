@@ -270,7 +270,7 @@ export function Library({
     }
     return html`
       <section class="library">
-        <p class="app-booting">Loading library&#8230;</p>
+        <p class="app-booting">Loading library…</p>
       </section>
     `;
   }

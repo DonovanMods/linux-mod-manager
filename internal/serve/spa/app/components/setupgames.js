@@ -73,7 +73,7 @@ export function SetupGames({ actions, game, profile }) {
     `;
   }
   if (games === null) {
-    return html`<p class="app-booting">Loading&#8230;</p>`;
+    return html`<p class="app-booting">Loading…</p>`;
   }
 
   return html`

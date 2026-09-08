@@ -126,7 +126,7 @@ export function UninstallBatchModal({ modal, state, actions }) {
     >
       ${
         loading
-          ? html`<p class="modal__pending">Computing plans&#8230;</p>`
+          ? html`<p class="modal__pending">Computing plans…</p>`
           : html`
               ${
                 failedCount > 0 &&

@@ -79,7 +79,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
   }
   if (state.status === null) {
     return html`${header}
-      <p class="app-booting">Loading&#8230;</p>`;
+      <p class="app-booting">Loading…</p>`;
   }
 
   return html`

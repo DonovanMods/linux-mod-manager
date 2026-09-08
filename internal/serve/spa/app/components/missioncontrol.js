@@ -97,7 +97,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
   }
 
   if (status === null) {
-    return html`<p class="app-booting">Loading&#8230;</p>`;
+    return html`<p class="app-booting">Loading…</p>`;
   }
 
   // The live line the library's own header carries while a job is running

@@ -104,7 +104,7 @@ export function ConfirmPlanModal({ modal, actions }) {
     >
       ${
         status === "planning"
-          ? html`<p class="modal__pending">Computing the plan&#8230;</p>`
+          ? html`<p class="modal__pending">Computing the plan…</p>`
           : status === "error"
             ? html`
                 <div class="modal__error">

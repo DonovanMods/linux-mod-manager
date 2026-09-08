@@ -90,9 +90,7 @@ export function GameDetectSection({ onAdded }) {
         `
       }
       ${
-        listing === null &&
-        !error &&
-        html`<p class="app-booting">Scanning&#8230;</p>`
+        listing === null && !error && html`<p class="app-booting">Scanning…</p>`
       }
       ${
         listing &&

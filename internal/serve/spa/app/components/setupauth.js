@@ -42,7 +42,7 @@ export function SetupAuth() {
     `;
   }
   if (report === null) {
-    return html`<p class="app-booting">Loading&#8230;</p>`;
+    return html`<p class="app-booting">Loading…</p>`;
   }
 
   const sources = report.sources ?? [];
