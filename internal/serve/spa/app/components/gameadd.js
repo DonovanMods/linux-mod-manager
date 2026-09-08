@@ -20,6 +20,7 @@ import {
   gameCatalog,
   listSources,
 } from "../api.js";
+import { navigate, setupPath } from "../router.js";
 
 /**
  * GameDetectSection scans for Steam installs and offers to add the ones not
@@ -152,6 +153,26 @@ export function GameDetectSection({ onAdded }) {
 // emptySpec is GameAddForm's own local state shape - the gameAddRequest
 // members plus the UI-only "mode" (catalog search vs. a manual identifier)
 // and the picked catalog match, if any.
+/** authRequiredMessage is the catalog-401 message (Important 1): a live
+ * link to the Authentication section when this form has a game/profile to
+ * build one from (rendered inside the Setup page), plain text naming the
+ * section when it does not (first-run, before any game exists). */
+function authRequiredMessage(sourceName, game, profile) {
+  if (!game || !profile) {
+    return `Authenticate ${sourceName} first - see the Authentication section.`;
+  }
+  const href = setupPath(game, profile, "auth");
+  return html`Authenticate ${sourceName} first - see the${" "}
+    <a
+      href=${href}
+      onClick=${(e) => {
+        e.preventDefault();
+        navigate(href);
+      }}
+      >Authentication section</a
+    >.`;
+}
+
 function emptySpec() {
   return {
     sourceID: "",
@@ -172,8 +193,15 @@ function emptySpec() {
  * used to fall back to the identifier field, never the message text), then
  * the display name and paths. A field-named 400 (core.GameSpecError) marks
  * the matching input rather than a generic banner.
+ *
+ * game/profile are optional: they are set when this form renders inside an
+ * already-established Setup page (setupgames.js), and let a 401 from the
+ * catalog search (Important 1) link straight to the Authentication
+ * section. First-run (gamechooser.js) has no game yet - there is nothing
+ * to build that link from - so the same 401 there falls back to naming the
+ * section in plain text.
  */
-export function GameAddForm({ onAdded }) {
+export function GameAddForm({ onAdded, game, profile }) {
   const [sources, setSources] = useState(null);
   const [spec, setSpec] = useState(emptySpec);
   const [searching, setSearching] = useState(false);
@@ -195,12 +223,25 @@ export function GameAddForm({ onAdded }) {
   async function search(e) {
     e.preventDefault();
     if (!spec.sourceID || !spec.query.trim()) return;
+    const sourceName =
+      (sources ?? []).find((s) => s.id === spec.sourceID)?.name ??
+      spec.sourceID;
     setSearching(true);
     setSearchError(null);
     try {
       const report = await gameCatalog(spec.sourceID, spec.query.trim());
       patch({ matches: report.matches, noCatalog: false });
     } catch (err) {
+      // Status is read BEFORE `details.field` (Important 1): a 401 - the
+      // source refused for want of a credential (domain.ErrAuthRequired) -
+      // has no Details() of its own, so it would otherwise fall into the
+      // "no searchable catalog" branch below and tell the user the wrong
+      // thing entirely.
+      if (err instanceof ApiError && err.status === 401) {
+        patch({ matches: null, noCatalog: false });
+        setSearchError(authRequiredMessage(sourceName, game, profile));
+        return;
+      }
       if (err instanceof ApiError && err.details?.field) {
         setSearchError(err.details.reason || err.message);
       } else {

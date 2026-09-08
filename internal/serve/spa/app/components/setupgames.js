@@ -13,7 +13,7 @@ const setDefaultGame = (id) =>
   post(`/api/v1/games/${encodeURIComponent(id)}/set-default`);
 const clearDefaultGame = () => del("/api/v1/games/default");
 
-export function SetupGames({ actions }) {
+export function SetupGames({ actions, game, profile }) {
   const [games, setGames] = useState(null);
   const [error, setError] = useState(null);
   const [showDetect, setShowDetect] = useState(false);
@@ -134,7 +134,14 @@ export function SetupGames({ actions }) {
       </div>
 
       ${showDetect && html`<${GameDetectSection} onAdded=${afterAdd} />`}
-      ${showAdd && html`<${GameAddForm} onAdded=${afterAdd} />`}
+      ${
+        showAdd &&
+        html`<${GameAddForm}
+          onAdded=${afterAdd}
+          game=${game}
+          profile=${profile}
+        />`
+      }
     </div>
   `;
 }

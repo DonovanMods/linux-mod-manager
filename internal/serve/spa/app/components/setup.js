@@ -103,7 +103,14 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
         )}
       </nav>
       <div class="setup-page__body" role="tabpanel">
-        ${section === "games" && html`<${SetupGames} actions=${actions} />`}
+        ${
+          section === "games" &&
+          html`<${SetupGames}
+            actions=${actions}
+            game=${route.game}
+            profile=${route.profile}
+          />`
+        }
         ${section === "auth" && html`<${SetupAuth} />`}
         ${section === "sources" && html`<${SetupSources} />`}
         ${

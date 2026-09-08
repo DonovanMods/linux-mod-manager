@@ -102,6 +102,25 @@ func (s *e2eGameCatalogSource) ListGames(context.Context) ([]source.GameEntry, e
 
 var _ source.GameCatalog = (*e2eGameCatalogSource)(nil)
 
+// e2eAuthRequiredCatalogSource is a fake source.GameCatalog whose
+// ListGames always answers domain.ErrAuthRequired - exactly what
+// CurseForge does before `auth login` - for Important 1's regression: a
+// catalog search behind this source must render "authenticate ... first",
+// never "this source has no searchable catalog".
+type e2eAuthRequiredCatalogSource struct {
+	*fakeSource
+}
+
+func newE2EAuthRequiredCatalogSource(id string) *e2eAuthRequiredCatalogSource {
+	return &e2eAuthRequiredCatalogSource{fakeSource: newFakeSource(id)}
+}
+
+func (s *e2eAuthRequiredCatalogSource) ListGames(context.Context) ([]source.GameEntry, error) {
+	return nil, domain.ErrAuthRequired
+}
+
+var _ source.GameCatalog = (*e2eAuthRequiredCatalogSource)(nil)
+
 // e2eAuthSource is a fake auth-capable source with a LIVE key validator
 // (source.KeyValidator) - the Auth section's login/logout scenario needs a
 // source that actually accepts or rejects a submitted key, the way
@@ -255,6 +274,44 @@ func TestE2E_FirstRunManualAdd_CatalogPickLandsOnMissionControl(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"catalogsrc": "432"}, got.SourceIDs)
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FirstRunManualAdd_CatalogAuthRequiredNamesTheSourceNotADeadEnd
+// pins Important 1 (unit7-review.md): a 401 from GET /api/v1/games/catalog
+// (the source needs a credential) must render "Authenticate ... first",
+// never the "no searchable catalog" fallback meant for a source with no
+// catalog at all - the single most likely first-run path the review found
+// broken.
+func TestE2E_FirstRunManualAdd_CatalogAuthRequiredNamesTheSourceNotADeadEnd(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	cat := newE2EAuthRequiredCatalogSource("catalogsrc")
+	f.Svc.RegisterSource(cat)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		retrySetValue(`select[name="add-source"]`, "catalogsrc"),
+		chromedp.WaitVisible(`input[name="add-query"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="add-query"]`, "mine", chromedp.ByQuery),
+		chromedp.Click(`.setup-add__catalog button.button--small`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.setup-add__catalog .modal__error`, chromedp.ByQuery),
+	)
+
+	var text string
+	f.runInBrowser(t, chromedp.Text(`.setup-add__catalog .modal__error`, &text, chromedp.ByQuery))
+	assert.Contains(t, text, "Authenticate")
+	assert.Contains(t, text, "Authentication section")
+	assert.NotContains(t, text, "no searchable catalog")
+
+	var noCatalogHint int
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.querySelectorAll('.setup-add__catalog .plan__note').length`, &noCatalogHint))
+	assert.Zero(t, noCatalogHint, "the noCatalog identifier-field hint must not also render")
+	// The rejected search is a real network 401 Chrome logs as an error
+	// entry independently of the SPA's own handling of it - expected, not
+	// a bug (the same rule TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds
+	// applies to its own rejected submit).
+	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
 // TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds drives the
