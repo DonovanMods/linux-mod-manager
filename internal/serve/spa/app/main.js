@@ -854,8 +854,13 @@ async function confirmPlan() {
         modal.applyOptions,
       );
       if (store.get().modal?.seq !== modal.seq) return;
-      if (modal.kind === "install") {
-        rememberInstallRequest(modal.origin, modal.options, modal.applyOptions);
+      if (overwriteRetryKinds.has(modal.kind)) {
+        rememberInstallRequest(
+          modal.origin,
+          modal.kind,
+          modal.options,
+          modal.applyOptions,
+        );
       }
       store.set({
         modal: null,
@@ -869,19 +874,26 @@ async function confirmPlan() {
   });
 }
 
-// installRequests remembers the exact (plan-time, apply-time) request pair
-// behind each install origin that has successfully STARTED a job - the
-// conflict round trip's (failures.js/tray.js) only source for what to
-// re-plan once that job fails with *core.ConflictError: the failed job's own
-// summary carries the typed envelope, never the request that produced it
-// (activity.go's jobSummary has no such field - it is the tray's job to
-// offer the next step, not the registry's to remember why). Overwritten on
-// every (re-)start of the same origin, so a retry-after-retry always answers
-// from the MOST RECENT attempt.
+// overwriteRetryKinds is every plan kind whose *core.ConflictError
+// failures.js's nextStepFor implies an Overwrite affordance for - see that
+// file's own conflictKinds. install and import_archive (issue 333) both
+// take the identical "accept_conflicts" apply-time field, so one retry path
+// serves both.
+const overwriteRetryKinds = new Set(["install", "import_archive"]);
+
+// installRequests remembers the exact (kind, plan-time, apply-time) request
+// behind each ORIGIN that has successfully STARTED a job whose kind is in
+// overwriteRetryKinds - the conflict round trip's (failures.js/tray.js) only
+// source for what to re-plan once that job fails with *core.ConflictError:
+// the failed job's own summary carries the typed envelope, never the
+// request that produced it (activity.go's jobSummary has no such field - it
+// is the tray's job to offer the next step, not the registry's to remember
+// why). Overwritten on every (re-)start of the same origin, so a
+// retry-after-retry always answers from the MOST RECENT attempt.
 const installRequests = new Map();
 
-function rememberInstallRequest(origin, planOptions, applyOptions) {
-  installRequests.set(origin, { planOptions, applyOptions });
+function rememberInstallRequest(origin, kind, planOptions, applyOptions) {
+  installRequests.set(origin, { kind, planOptions, applyOptions });
 }
 
 /**
@@ -937,12 +949,17 @@ async function retryInstallOverwrite(jobID) {
   };
   await startBinding(origin, async () => {
     try {
-      const response = await planMutation("install", req.planOptions, context);
+      const response = await planMutation(req.kind, req.planOptions, context);
       const { job_id: newJobID } = await startJob(response.plan_id, {
         ...req.applyOptions,
         accept_conflicts: true,
       });
-      rememberInstallRequest(origin, req.planOptions, req.applyOptions);
+      rememberInstallRequest(
+        origin,
+        req.kind,
+        req.planOptions,
+        req.applyOptions,
+      );
       store.set({ origins: { ...store.get().origins, [origin]: newJobID } });
     } catch (err) {
       pushToast({

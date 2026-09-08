@@ -1,0 +1,391 @@
+// gameadd.js - the two ways a game comes to exist (issue 333, design doc
+// §Scope: "first-run flow in the game chooser, game add/detect UI"):
+// GameDetectSection ("Detect games") and GameAddForm ("Add a game
+// manually"). Both are used TWICE - by the first-run flow at "/"
+// (gamechooser.js, when GET /api/v1/games answers empty) and by the Setup
+// page's Games section (setupgames.js, for a game added later) - which is
+// exactly why they live in their own file rather than either caller's.
+//
+// Neither goes through the confirm-plan framework: POST /api/v1/games and
+// POST /api/v1/games/detect are sanctioned single-step writes with nothing
+// to preview beforehand (the same class enable/disable and the profile CRUD
+// routes are) - there is no Plan for "add a game", only a form and a write.
+
+import { html, useEffect, useState } from "../render.js";
+import {
+  ApiError,
+  addGame,
+  applyGameDetect,
+  detectGames,
+  gameCatalog,
+  listSources,
+} from "../api.js";
+
+/**
+ * GameDetectSection scans for Steam installs and offers to add the ones not
+ * already configured. Already-configured rows are shown but their checkbox
+ * is disabled - `lmm game detect --select` can still repair one from the
+ * CLI, but a checklist offering to silently overwrite an existing game's
+ * default profile is not this surface's first-run job.
+ */
+export function GameDetectSection({ onAdded }) {
+  const [listing, setListing] = useState(null); // {games, warnings} | "error"
+  const [error, setError] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [applyError, setApplyError] = useState(null);
+
+  async function scan() {
+    setListing(null);
+    setError(null);
+    setSelected(new Set());
+    try {
+      setListing(await detectGames());
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  }
+
+  useEffect(() => {
+    scan();
+  }, []);
+
+  function toggle(index) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  async function addSelected() {
+    setBusy(true);
+    setApplyError(null);
+    try {
+      const result = await applyGameDetect([...selected].map(String));
+      setSelected(new Set());
+      await scan();
+      onAdded?.(result);
+    } catch (err) {
+      setApplyError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <div class="setup-detect" data-testid="setup-detect">
+      <p class="plan__heading">Detect games</p>
+      ${
+        error &&
+        html`
+          <div class="empty-state empty-state--error">
+            <p>Couldn't scan for Steam installs: ${error}</p>
+            <button type="button" class="button button--small" onClick=${scan}>
+              Retry
+            </button>
+          </div>
+        `
+      }
+      ${
+        listing === null &&
+        !error &&
+        html`<p class="app-booting">Scanning&#8230;</p>`
+      }
+      ${
+        listing &&
+        (listing.games ?? []).length === 0 &&
+        html`<p class="empty-state__hint">
+          No moddable Steam games were found on this machine.
+        </p>`
+      }
+      ${
+        listing &&
+        (listing.warnings ?? []).length > 0 &&
+        html`<p class="plan__note plan__note--warn">
+          ${listing.warnings.join(" · ")}
+        </p>`
+      }
+      ${
+        listing &&
+        (listing.games ?? []).length > 0 &&
+        html`
+          <ul class="setup-detect__list">
+            ${listing.games.map(
+              (g) => html`
+                <li key=${g.index} class="setup-detect__row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked=${selected.has(g.index)}
+                      disabled=${g.already_configured}
+                      onChange=${() => toggle(g.index)}
+                    />
+                    ${g.name}
+                    ${
+                      g.already_configured &&
+                      html`<span class="badge">already configured</span>`
+                    }
+                  </label>
+                  <span class="mono setup-detect__path">${g.install_path}</span>
+                </li>
+              `,
+            )}
+          </ul>
+          <button
+            type="button"
+            class="button button--primary button--small"
+            data-action="add-detected"
+            disabled=${busy || selected.size === 0}
+            onClick=${addSelected}
+          >
+            ${busy ? "Adding…" : `Add selected (${selected.size})`}
+          </button>
+          ${applyError && html`<p class="modal__error">${applyError}</p>`}
+        `
+      }
+    </div>
+  `;
+}
+
+// emptySpec is GameAddForm's own local state shape - the gameAddRequest
+// members plus the UI-only "mode" (catalog search vs. a manual identifier)
+// and the picked catalog match, if any.
+function emptySpec() {
+  return {
+    sourceID: "",
+    query: "",
+    matches: null, // null = not searched yet; [] = searched, nothing found
+    noCatalog: false,
+    identifier: "",
+    name: "",
+    installPath: "",
+    modPath: "",
+  };
+}
+
+/**
+ * GameAddForm collects a GameSpec by hand: a source, then either a catalog
+ * pick or a manual identifier (core.ErrNoGameCatalog's own 400 has no
+ * `details.field` - unlike a bad query - which is the structural signal
+ * used to fall back to the identifier field, never the message text), then
+ * the display name and paths. A field-named 400 (core.GameSpecError) marks
+ * the matching input rather than a generic banner.
+ */
+export function GameAddForm({ onAdded }) {
+  const [sources, setSources] = useState(null);
+  const [spec, setSpec] = useState(emptySpec);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [fieldError, setFieldError] = useState(null); // {field, reason}
+  const [formError, setFormError] = useState(null);
+
+  useEffect(() => {
+    listSources()
+      .then((rows) => setSources(rows.filter((r) => r.type !== "error")))
+      .catch(() => setSources([]));
+  }, []);
+
+  function patch(fields) {
+    setSpec((prev) => ({ ...prev, ...fields }));
+  }
+
+  async function search(e) {
+    e.preventDefault();
+    if (!spec.sourceID || !spec.query.trim()) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const report = await gameCatalog(spec.sourceID, spec.query.trim());
+      patch({ matches: report.matches, noCatalog: false });
+    } catch (err) {
+      if (err instanceof ApiError && err.details?.field) {
+        setSearchError(err.details.reason || err.message);
+      } else {
+        // No `details.field` on a 400 from this endpoint means the source
+        // itself has no searchable catalog (core.ErrNoGameCatalog) -
+        // structural, not a message match (game_add.go's own rule).
+        patch({ matches: null, noCatalog: true });
+      }
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function pickMatch(m) {
+    patch({
+      identifier: m.identifier,
+      name: spec.name || m.name,
+      gameID: m.game_id,
+    });
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setFieldError(null);
+    setFormError(null);
+    try {
+      const entry = await addGame({
+        source_id: spec.sourceID,
+        identifier: spec.identifier,
+        name: spec.name,
+        game_id: spec.gameID || undefined,
+        install_path: spec.installPath,
+        mod_path: spec.modPath || undefined,
+      });
+      setSpec(emptySpec());
+      onAdded?.(entry);
+    } catch (err) {
+      if (err instanceof ApiError && err.details?.field) {
+        setFieldError(err.details);
+      } else {
+        setFormError(err instanceof ApiError ? err.message : String(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const errorFor = (field) =>
+    fieldError?.field === field ? fieldError.reason : null;
+
+  return html`
+    <form class="setup-add" data-testid="setup-add-game" onSubmit=${submit}>
+      <p class="plan__heading">Add a game manually</p>
+
+      <label class="plan__control">
+        Source
+        <select
+          name="add-source"
+          value=${spec.sourceID}
+          onChange=${(e) =>
+            patch({
+              sourceID: e.currentTarget.value,
+              matches: null,
+              noCatalog: false,
+              identifier: "",
+            })}
+        >
+          <option value="">Choose a source…</option>
+          ${(sources ?? []).map(
+            (s) => html`<option key=${s.id} value=${s.id}>${s.name}</option>`,
+          )}
+        </select>
+      </label>
+      ${errorFor("source_id") && html`<p class="modal__error">${errorFor("source_id")}</p>`}
+      ${
+        spec.sourceID &&
+        html`
+          <div class="setup-add__catalog">
+            <label class="plan__control">
+              Search this source's catalog
+              <input
+                type="text"
+                name="add-query"
+                value=${spec.query}
+                onInput=${(e) => patch({ query: e.currentTarget.value })}
+              />
+            </label>
+            <button
+              type="button"
+              class="button button--small"
+              disabled=${searching || !spec.query.trim()}
+              onClick=${search}
+            >
+              ${searching ? "Searching…" : "Search"}
+            </button>
+            ${searchError && html`<p class="modal__error">${searchError}</p>`}
+            ${
+              spec.noCatalog &&
+              html`<p class="plan__note">
+                This source has no searchable catalog - enter the identifier
+                directly below.
+              </p>`
+            }
+            ${
+              spec.matches &&
+              (spec.matches.length === 0
+                ? html`<p class="empty-state__hint">No matches.</p>`
+                : html`
+                    <ul class="setup-add__matches">
+                      ${spec.matches.map(
+                        (m) => html`
+                          <li key=${m.identifier}>
+                            <button
+                              type="button"
+                              class="button button--small ${spec.identifier === m.identifier ? "button--primary" : ""}"
+                              onClick=${() => pickMatch(m)}
+                            >
+                              ${m.name}
+                            </button>
+                          </li>
+                        `,
+                      )}
+                    </ul>
+                  `)
+            }
+          </div>
+        `
+      }
+
+      <label class="plan__control">
+        Identifier with that source
+        <input
+          type="text"
+          name="add-identifier"
+          value=${spec.identifier}
+          onInput=${(e) => patch({ identifier: e.currentTarget.value, gameID: undefined })}
+        />
+      </label>
+      ${errorFor("identifier") && html`<p class="modal__error">${errorFor("identifier")}</p>`}
+
+      <label class="plan__control">
+        Display name
+        <input
+          type="text"
+          name="add-name"
+          value=${spec.name}
+          onInput=${(e) => patch({ name: e.currentTarget.value })}
+        />
+      </label>
+      ${errorFor("name") && html`<p class="modal__error">${errorFor("name")}</p>`}
+
+      <label class="plan__control">
+        Install path
+        <input
+          type="text"
+          name="add-install-path"
+          value=${spec.installPath}
+          onInput=${(e) => patch({ installPath: e.currentTarget.value })}
+        />
+      </label>
+      ${errorFor("install_path") && html`<p class="modal__error">${errorFor("install_path")}</p>`}
+
+      <label class="plan__control">
+        Mod path
+        <span class="empty-state__hint">(default: install path + "/mods")</span>
+        <input
+          type="text"
+          name="add-mod-path"
+          value=${spec.modPath}
+          placeholder=${spec.installPath ? `${spec.installPath}/mods` : ""}
+          onInput=${(e) => patch({ modPath: e.currentTarget.value })}
+        />
+      </label>
+      ${errorFor("mod_path") && html`<p class="modal__error">${errorFor("mod_path")}</p>`}
+      ${formError && html`<p class="modal__error">${formError}</p>`}
+
+      <button
+        type="submit"
+        class="button button--primary"
+        data-action="add-game"
+        disabled=${busy || !spec.sourceID || !spec.identifier || !spec.name || !spec.installPath}
+      >
+        ${busy ? "Adding…" : "Add game"}
+      </button>
+    </form>
+  `;
+}

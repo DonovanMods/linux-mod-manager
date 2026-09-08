@@ -14,7 +14,7 @@
 // the pre-flight forbids forking the framework early to land it sooner.
 
 import { html, useEffect, useRef, useState } from "../render.js";
-import { navigate, contextPath } from "../router.js";
+import { navigate, contextPath, setupPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { resolveGamePath } from "../navigation.js";
 import { countUndeployed } from "../modrows.js";
@@ -149,6 +149,16 @@ export function TopBar({
         onClose=${() => setOpenPicker(null)}
         actions=${actions}
       />
+      <button
+        type="button"
+        class="button button--small"
+        data-action="setup"
+        title="Setup"
+        aria-label="Setup"
+        onClick=${() => navigate(setupPath(route.game, route.profile))}
+      >
+        ⚙ Setup
+      </button>
       <button
         type="button"
         class="theme-toggle"

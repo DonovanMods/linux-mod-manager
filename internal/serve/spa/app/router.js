@@ -4,10 +4,13 @@
 // The scheme (docs/plans/2026-08-31-serve-spa-design.md §Information
 // architecture):
 //
-//   /                                        game chooser
+//   /                                        game chooser (first-run setup
+//                                             flow when no games exist)
 //   /g/{game}/{profile}                      Mission Control
 //   /g/{game}/{profile}/mod/{source}/{id}    full mod page
 //   /g/{game}/{profile}/search?q=            search page
+//   /g/{game}/{profile}/setup?section=       the Setup page (issue 333):
+//                                             games/auth/sources/import
 //
 // The game and profile live in the PATH on purpose: context cannot be lost
 // or silently defaulted between views, which is what makes the audit's
@@ -53,12 +56,29 @@ export function parseLocation(url = window.location) {
     route.modID = decodeURIComponent(rest.slice(2).join("/"));
     return route;
   }
+  if (rest[0] === "setup") {
+    route.view = "setup";
+    // section is a plain deep-link hint (Mission Control's empty-library
+    // links, the top bar's Setup entry point) - the page itself owns which
+    // section is showing and does not round-trip a change back into the URL.
+    route.section = params.get("section") || "";
+    return route;
+  }
   return route;
 }
 
 /** Builds the /g/{game}/{profile} prefix every scoped URL hangs off. */
 export function contextPath(game, profile) {
   return `/g/${encodeURIComponent(game)}/${encodeURIComponent(profile)}`;
+}
+
+/** Builds the Setup page's URL for game/profile, optionally deep-linked to
+ * one section - the top bar's ⚙ entry point and the empty-library links
+ * (missioncontrol.js) both hang off this rather than string-building it
+ * themselves. */
+export function setupPath(game, profile, section = "") {
+  const base = `${contextPath(game, profile)}/setup`;
+  return section ? `${base}?section=${encodeURIComponent(section)}` : base;
 }
 
 /**
