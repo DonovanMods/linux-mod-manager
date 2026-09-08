@@ -3308,6 +3308,12 @@ func TestE2E_ProfilesModal_EscapeReturnsFocusToThePickerTrigger(t *testing.T) {
 
 	var activeClass string
 	f.runInBrowser(t,
+		// modal.js's own Escape listener is attached by an effect, which can
+		// lag the modal's own DOM appearance by a handful of animation
+		// frames in a headless browser (this suite's own established
+		// pattern - see TestE2E_LibraryRowMenu_ClosesOnOutsideClickAndEscape's
+		// identical note); WaitVisible above only proves the DOM is there.
+		chromedp.Sleep(300*time.Millisecond),
 		chromedp.KeyEvent(kb.Escape),
 		chromedp.WaitNotPresent(`[data-testid="profiles-list"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &activeClass),
