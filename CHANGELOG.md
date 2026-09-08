@@ -63,6 +63,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another profile holds is refused. `--json` prints `core.ProfileResult`.
   (#332)
 
+- The `lmm serve` SPA gets its modal/batch surfaces (Unit 6B), consuming the
+  backend above. A **reorder modal**, reachable from the library's own
+  "Reorder…" and from any Conflicts-card row's "Resolve…" (which now opens
+  it scrolled to that row's own contested file), moves the load order by
+  drag or by keyboard (move up/down, first/last - never pointer-only) with a
+  live "current vs proposed winner" preview per contested path, debounced
+  and sequence-fenced against `GET /api/v1/conflicts?order=` so a slow
+  response for an order the user has since moved past is dropped rather
+  than landing late; the winner itself is never recomputed in JS. A
+  **profiles modal** ("Manage profiles…") lists every profile (default
+  marked, mod counts), with create/rename/delete/set-default confirmed
+  inline (no nested modal) and export as a real `<a download>` to the
+  export route; import reads the picked file as text and hands it to the
+  confirm-plan framework's own `profile_import` renderer, showing which
+  mods would install, need re-downloading, or are missing before anything
+  runs. The **Health card** gains per-finding Repair (shown only when a
+  finding is `fixable`, with the row otherwise saying why it is not -
+  nothing to check it against, nothing to repair it with, locked to a
+  version, or a conversion only a reinstall retries) alongside "Repair all".
+  The **Updates card** gains its own batch: tick rows, drop any before
+  confirming, and apply the rest through `plan_updates.js` - a renderer
+  built for a batch (per-row drop, a tally, `NotFound` rows named) that
+  replaces the framework's generic fallback for this one kind. The
+  **library** gains a batch bar (multi-select → Enable/Disable/Uninstall/
+  Update, each batch sequenced one job at a time so core's own
+  serialisation is never raced) and, per row, a live enabled toggle and a
+  ⋯ menu (Update/Uninstall/Lock-Unlock/Reorder-here). A finished batch job
+  is read honestly rather than through its own bare `state`: a job that
+  downloaded nothing still reports `state: "succeeded"` (its Apply returned
+  without an error - only its own result says every item failed), so the
+  UI now reads that result and renders "n applied / m failed" wherever it
+  used to print an unconditional "Done". (#332, epic #326)
+
+- The `lmm serve` backend's profile management (above) is now fully gated
+  and honest about failure. `POST /api/v1/profiles`, `DELETE
+/api/v1/profiles/{name}` and `POST .../set-default` now run behind the
+  same mutation-serialising gate every other write in the service already
+  does, instead of racing an in-flight deploy or install. A profile name
+  already in use - on disk, or still claimed by database rows a prior
+  Delete only ever removed the file for - answers `409` from a typed
+  `core.ErrProfileExists` detected inside that gate, and a rename that
+  fails partway through now compensates instead of leaving two profile
+  files behind: a database-write failure removes the file the rename had
+  already written, and an old-file-removal failure strips the orphan's
+  default flag so it can never read as a second default. A `profile_import`
+  document with no profile name is refused as bad input (`400`) rather than
+  planned and only failing once applied. (#332)
+
 - The `lmm serve` SPA's omnibar now searches, and installing works.
   Typing narrows the library in place ("In your library (n)", unchanged
   from Mission Control's first cut); pressing Enter (or the "search

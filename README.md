@@ -806,11 +806,34 @@ hatch for heavier browsing: source badges, download counts, summaries,
 category/source filters, sort, and real pagination. Installing that hits a
 file already on disk from another mod surfaces the conflict right in the
 confirm flow's activity entry, with a live "Overwrite?" that re-runs the
-install accepting it. **Deploy, Enable/Disable, Uninstall, per-mod Update,
-Rollback, and Search + Install** are wired end to end. The remaining
-actions (batch update, reorder, profiles, health repair, admin) are
-present but disabled, each waiting on its own unit; the CLI does all of
-them today.
+install accepting it.
+
+Unit 6 landed the modal/batch surfaces: the **reorder modal**, reachable
+from the library's own "Reorder…" or any Conflicts-card row's "Resolve…"
+(which opens it already scrolled to that row's own contested file) — drag
+the handle, or use the ↑/↓/First/Last buttons, with a live "current vs
+proposed winner" preview per contested path (`GET /api/v1/conflicts?order=`,
+debounced as you move rows) before Save commits it; the **profiles modal**
+("Manage profiles…" in the top bar) — list, create, rename, delete and
+set-default inline (no nested confirm dialog), export a profile as a real
+download, and import one through the confirm-plan framework's own preview
+of what would install, need re-downloading, or is missing; the **Health
+card**'s per-finding Repair (only offered where a finding is actually
+fixable — an unfixable row now says why: nothing to check it against,
+nothing to repair it with, locked to a version, or a conversion that only a
+reinstall retries) alongside "Repair all"; the **Updates card**'s batch —
+tick rows, drop any before confirming, and apply the rest through a
+renderer built for a batch rather than one mutation; and the **library's
+own batch bar** (multi-select → Enable/Disable/Uninstall/Update, each
+sequenced one job at a time) plus the row-level live enabled toggle and a
+⋯ menu (Update/Uninstall/Lock-Unlock/Reorder-here). A batch's own result is
+read honestly rather than through its bare job state — "3 applied / 1
+failed" where core reports the items it could not update or import, tallied
+in the same place a bare "Done" used to sit unconditionally. **Deploy,
+Enable/Disable, Uninstall, per-mod Update, Rollback, Search + Install,
+Reorder, Profiles, Health repair, and the Updates/Library batch surfaces**
+are all wired end to end; only server-side admin (source auth, game
+management) remains CLI-only, waiting on a later unit.
 
 ### URLs
 
