@@ -6,10 +6,10 @@
 //
 // One entry describes one mutation flow end to end - how its request body
 // decodes, how its Plan is computed, what is stored server-side between
-// Plan and Apply, and how its Apply runs. Ten kinds are registered today:
-// the eight plan kinds - deploy, install, uninstall, updates, rollback,
-// switch, profile_apply and verify_fix - here, plus the two plan-free
-// toggles in kind_toggle.go.
+// Plan and Apply, and how its Apply runs. Eleven kinds are registered
+// today: the nine plan kinds - deploy, install, uninstall, updates,
+// rollback, switch, profile_apply, profile_import and verify_fix - here,
+// plus the two plan-free toggles in kind_toggle.go.
 //
 // The table used to carry a browser-form half as well (planKind.Form, the
 // confirm-page decoders and display types). That went with the
@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -105,6 +106,20 @@ func supportedPlanKinds() []string {
 	sort.Strings(names)
 	return names
 }
+
+// errBadPlanRequest marks a plan failure that is the CALLER's fault rather
+// than the server's: input a kind could only reject once it had looked at
+// it, which no amount of retrying will fix. handleAPIPlan answers it 400
+// instead of the default 500.
+//
+// It exists because some input cannot be judged by the options decoder
+// alone. profile_import's document is the case in point: whether the text
+// the caller posted is a parseable exported profile is not a question the
+// JSON shape can answer, and a frontend that gets a 500 for a file the user
+// picked cannot tell them what is actually wrong with it. Kinds opt in by
+// wrapping - fmt.Errorf("%w: %w", errBadPlanRequest, err) - so the
+// underlying error still reaches the envelope verbatim.
+var errBadPlanRequest = errors.New("invalid plan request")
 
 // validatingOptions is implemented by a kind's options type that needs
 // checking beyond "it was valid JSON of the right shape" - an enum that
