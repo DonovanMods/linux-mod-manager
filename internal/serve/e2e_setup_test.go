@@ -10,6 +10,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -527,6 +529,42 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 		chromedp.Click(`tr[data-source="my-mods"] [data-action="confirm-delete-source"]`, chromedp.ByQuery),
 		chromedp.WaitNotPresent(`tr[data-source="my-mods"]`, chromedp.ByQuery),
 	)
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_Sources_InUseNamesTheGameNotItsID pins Minor 8 (unit7-review.md):
+// core.SourceInUseError.Games carries ids by design, but a user knows their
+// games by title - both the "In use" column and the delete refusal must
+// translate id -> name via the SPA's own listGames(), not print the id
+// back at the user.
+func TestE2E_Sources_InUseNamesTheGameNotItsID(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	dir := t.TempDir()
+	yaml := []byte("id: inuse-src\nname: In Use Source\ntype: directory\ndirectory:\n  path: " + dir + "\n")
+	_, err := app.SaveSourceDefinition(f.Ctx, f.Svc, "", yaml)
+	require.NoError(t, err)
+	f.Game.SourceIDs["inuse-src"] = ""
+	require.NoError(t, f.Svc.SaveGame(f.Ctx, f.Game))
+
+	var inUseCell string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("sources")),
+		chromedp.WaitVisible(`tr[data-source="inuse-src"]`, chromedp.ByQuery),
+		chromedp.Text(`tr[data-source="inuse-src"] td:nth-child(4)`, &inUseCell, chromedp.ByQuery),
+	)
+	assert.Equal(t, f.Game.Name, strings.TrimSpace(inUseCell), `the "In use" column must name the game, not its id`)
+	assert.NotContains(t, inUseCell, f.Game.ID)
+
+	var refusalText string
+	f.runInBrowser(t,
+		chromedp.Click(`tr[data-source="inuse-src"] [data-action="delete-source"]`, chromedp.ByQuery),
+		chromedp.Click(`tr[data-source="inuse-src"] [data-action="confirm-delete-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`tr[data-source="inuse-src"] .modal__error`, chromedp.ByQuery),
+		chromedp.Text(`tr[data-source="inuse-src"] .modal__error`, &refusalText, chromedp.ByQuery),
+	)
+	assert.Contains(t, refusalText, f.Game.Name, "the delete refusal must name the game, not its id")
+	assert.NotContains(t, refusalText, f.Game.ID)
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 

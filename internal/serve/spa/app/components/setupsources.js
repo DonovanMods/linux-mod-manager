@@ -31,6 +31,13 @@ directory:
 export function SetupSources() {
   const [sources, setSources] = useState(null);
   const [inUseBy, setInUseBy] = useState({}); // {sourceID: [gameID, ...]}
+  // gameNames maps a game id to its display name (Minor 8: the in-use
+  // refusal and the "In use" column both name games by ID -
+  // core.SourceInUseError.Games carries ids by design - while the user
+  // knows them by title; the SPA already holds listGames() here and can
+  // translate, falling back to the bare id for one this list doesn't
+  // (deleted between the read and the refusal, however unlikely).
+  const [gameNames, setGameNames] = useState({});
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null); // "" = new, or an id
 
@@ -39,12 +46,15 @@ export function SetupSources() {
       const [rows, games] = await Promise.all([listSources(), listGames()]);
       setSources(rows);
       const byID = {};
+      const names = {};
       for (const g of games) {
+        names[g.id] = g.name;
         for (const sourceID of Object.keys(g.source_ids ?? {})) {
           (byID[sourceID] ??= []).push(g.id);
         }
       }
       setInUseBy(byID);
+      setGameNames(names);
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -93,6 +103,7 @@ export function SetupSources() {
                 key=${s.id}
                 source=${s}
                 inUseBy=${inUseBy[s.id] ?? []}
+                gameNames=${gameNames}
                 onEdit=${() => setEditing(s.id)}
                 onChanged=${reload}
               />
@@ -131,12 +142,13 @@ export function SetupSources() {
 // all three, api_sources.go) or an "error" row of its own.
 const customSourceTypes = new Set(["directory", "manifest", "api"]);
 
-function SourceRow({ source, inUseBy, onEdit, onChanged }) {
+function SourceRow({ source, inUseBy, gameNames, onEdit, onChanged }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const isError = source.type === "error";
   const isCustom = customSourceTypes.has(source.type);
+  const nameFor = (gameID) => gameNames[gameID] ?? gameID;
 
   async function confirmDelete() {
     setBusy(true);
@@ -146,7 +158,9 @@ function SourceRow({ source, inUseBy, onEdit, onChanged }) {
       await onChanged();
     } catch (err) {
       if (err instanceof ApiError && err.details?.games) {
-        setError(`Configured for: ${err.details.games.join(", ")}`);
+        setError(
+          `Configured for: ${err.details.games.map(nameFor).join(", ")}`,
+        );
       } else {
         setError(err instanceof ApiError ? err.message : String(err));
       }
@@ -189,7 +203,7 @@ function SourceRow({ source, inUseBy, onEdit, onChanged }) {
         ${isError ? html`<span class="badge badge--danger">error</span> ${source.error}` : source.name}
       </td>
       <td>${source.type}</td>
-      <td>${inUseBy.length > 0 ? inUseBy.join(", ") : "—"}</td>
+      <td>${inUseBy.length > 0 ? inUseBy.map(nameFor).join(", ") : "—"}</td>
       <td class="setup-table__actions">
         ${
           (isCustom || isError) &&
