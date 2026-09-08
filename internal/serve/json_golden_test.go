@@ -383,6 +383,13 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileReorderRequest{IDs: []string{"fake:m2", "fake:m1"}},
 		},
 		{
+			// #332's per-finding Repair: `lmm verify --mod <id>`'s own
+			// filter, set on both halves of the flow from this one request
+			// (kind_verify_fix.go).
+			"verify_fix_plan_request",
+			verifyFixPlanRequest{ModFilter: "42"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",
