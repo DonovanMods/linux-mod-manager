@@ -313,6 +313,44 @@ func TestServeJSONGoldens(t *testing.T) {
 			rollbackApplyRequest{Force: true, SkipHooks: true},
 		},
 		{
+			// #326's three parity kinds (epic live review C-3). purge
+			// carries the same three options at plan and apply time for the
+			// reason #226 gives for uninstall's: the plan is computed with
+			// them so the preview tells the truth, and the apply carries
+			// what the confirm modal finally chose.
+			"purge_plan_request",
+			purgePlanRequest{Uninstall: true, SkipHooks: true},
+		},
+		{
+			"purge_apply_request",
+			purgeApplyRequest{Uninstall: true, Force: true, SkipHooks: true},
+		},
+		{
+			// profile_sync names its target profile in the body, like its
+			// two siblings; ApplyProfileSync takes no options, so its apply
+			// struct has no json tags and pins nothing (the same shape
+			// switch and profile_apply have).
+			"profile_sync_plan_request",
+			profileSyncPlanRequest{Profile: "survival"},
+		},
+		{
+			// mod_relink's split follows core's own: the RE-LINK is plan
+			// time (it is what the plan describes - From, To, the lock
+			// refusal), the metadata overrides are apply time
+			// (core.RelinkOptions is what ApplyRelinkMod reads them from).
+			"mod_relink_plan_request",
+			modRelinkPlanRequest{
+				ModID:       "m1",
+				SourceID:    "fake",
+				NewSourceID: "curseforge",
+				NewModID:    "999",
+			},
+		},
+		{
+			"mod_relink_apply_request",
+			modRelinkApplyRequest{Name: "Renamed", Version: "2.0", Author: "Somebody"},
+		},
+		{
 			// The two profile flows' plan requests. Neither has an apply
 			// request with anything in it - ApplyProfileSwitch and
 			// ProfileApplyOptions both take no options - so their empty
