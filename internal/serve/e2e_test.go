@@ -5595,6 +5595,41 @@ func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
 	assert.Empty(t, chooser.BrowserErrors())
 }
 
+// TestE2E_TheYAMLEditorReallyHasSpellcheckOff is IMP-3 of the closing
+// wave's gate review.
+//
+// setupsources.js has carried spellcheck="false" since #333 and the epic
+// reviewer still saw red squiggles under every YAML key. Reading the source
+// says the attribute is there; reading the DOM says what it became. Preact
+// assigns spellcheck as a PROPERTY, and the non-empty string "false" is
+// truthy, so the element ended up with spellcheck === true and
+// getAttribute("spellcheck") === "true" - the exact opposite of what the
+// markup appeared to ask for.
+//
+// So this asserts what a BROWSER computed, not what the file says: an
+// earlier fix-wave item was closed as "does not reproduce" on a source read
+// alone, and this is the class of bug only the DOM can settle.
+func TestE2E_TheYAMLEditorReallyHasSpellcheckOff(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var attribute string
+	var property bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=sources"),
+		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-editor"] textarea`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('[data-testid="source-editor"] textarea').getAttribute("spellcheck") ?? "(absent)"`, &attribute),
+		chromedp.Evaluate(`document.querySelector('[data-testid="source-editor"] textarea').spellcheck`, &property),
+	)
+
+	assert.Equal(t, "false", attribute,
+		"the YAML editor's rendered spellcheck attribute must be \"false\"")
+	assert.False(t, property,
+		"and the DOM property with it - the string \"false\" is truthy, which is how this got missed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp is I-6 of the
 // epic live review.
 //

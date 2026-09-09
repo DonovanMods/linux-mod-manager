@@ -342,6 +342,15 @@ function SourceEditor({ id, onSaved, onCancel }) {
     yaml.split("\n").length - (yaml.endsWith("\n") ? 1 : 0),
   );
 
+  // spellcheck is written as a BOOLEAN below, not as the string "false"
+  // (IMP-3, the closing wave's gate review). Preact assigns it as a DOM
+  // PROPERTY, and the non-empty string "false" is truthy - so the
+  // spellcheck="false" this file carried since #333 measured in a browser
+  // as getAttribute("spellcheck") === "true", and the YAML editor really
+  // did draw red squiggles under every key. It is the only HTML
+  // boolean/enumerated attribute this application writes literally: every
+  // other "true"/"false" literal under spa/app is a data-* or aria-*
+  // attribute, which ARE strings by spec and are correct as written.
   return html`
     <div class="source-editor" data-testid="source-editor">
       ${loadError && html`<p class="modal__error">${loadError}</p>`}
@@ -351,7 +360,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
         </div>
         <textarea
           class="source-editor__textarea mono"
-          spellcheck="false"
+          spellcheck=${false}
           value=${yaml}
           onInput=${onEdit}
         ></textarea>
