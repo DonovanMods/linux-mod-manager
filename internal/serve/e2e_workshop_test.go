@@ -410,3 +410,27 @@ func TestE2E_Workshop_ModPanelMetaShowsTheRevisionDate(t *testing.T) {
 		"the manifest still appears once, labelled, where the design put it")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_Workshop_FullModPageMetaShowsTheRevisionDate is the same rule on
+// the drill-in page the design names by hand: "lmm mod show and the mod page
+// show the date and, beneath it, the manifest labelled as such". This page
+// builds its own meta line off core.ModFilesReport.Mod rather than a library
+// row, so it printed the content id where a version goes - twice on screen,
+// exactly as the slide-over did.
+func TestE2E_Workshop_FullModPageMetaShowsTheRevisionDate(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	var meta, managed string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+		textContent(`.mod-page__meta`, &meta),
+		textContent(`[data-testid="managed-by-steam"]`, &managed),
+	)
+	assert.Contains(t, meta, e2eWorkshopRevisionDate+" installed")
+	assert.NotContains(t, meta, e2eWorkshopManifest,
+		"the version DISPLAY rule: never the content id in the slot a version goes")
+	assert.Contains(t, managed, "Steam content id: "+e2eWorkshopManifest,
+		"the labelled block underneath is where the manifest belongs")
+	assert.Empty(t, f.BrowserErrors())
+}

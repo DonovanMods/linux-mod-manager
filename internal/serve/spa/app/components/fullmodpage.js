@@ -54,6 +54,7 @@ import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
+import { isoDate } from "../modrows.js";
 import {
   ModSettingsControls,
   ManagedBySteam,
@@ -156,8 +157,21 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         ${installedMod.author ? html`by ${installedMod.author} · ` : ""}
         <span class="mono">${sourceID}/${modID}</span>${" "}
         <span>·</span>${" "}
-        <span class="mono">${installedMod.version}</span> installed
-        ${installed?.locked && " · locked"}
+        <span class="mono"
+          >${
+            // issue 269, the approval note's version DISPLAY rule: the design
+            // names this page by hand - "the mod page show the date and,
+            // beneath it, the manifest labelled as such". An external row's
+            // `version` is Steam's 19-digit content id, so the date goes
+            // here and ManagedBySteam's own labelled block below carries the
+            // manifest. This page builds its own meta line off
+            // core.ModFilesReport.Mod rather than a library row, so it needs
+            // its own call rather than modrows.js's derived field.
+            installedMod.external
+              ? isoDate(installedMod.updated_at) || "—"
+              : installedMod.version
+          }</span
+        >${" "}installed ${installed?.locked && " · locked"}
       </p>
 
       ${
