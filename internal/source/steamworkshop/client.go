@@ -23,7 +23,7 @@ import (
 // DefaultBaseURL is Valve's Web API host. Tests must override it with an
 // httptest server (Options.BaseURL); TestNoTestReachesTheProductionAPI
 // enforces that no test in this package names the real host at all.
-const DefaultBaseURL = "https://" + "api.steampowered.com"
+const DefaultBaseURL = "https://api.steampowered.com"
 
 // publishedFileDetailsPath is the keyless batch-metadata endpoint. It takes
 // a form POST, not a query string, and no key parameter is documented for
