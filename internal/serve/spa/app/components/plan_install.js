@@ -236,7 +236,7 @@ export function InstallPlanView({ plan, modal, actions }) {
           actions=${actions}
           name="force"
           label="Force"
-          hint="lmm install --force. Carry on past a failure that would otherwise stop the flow."
+          hint="lmm install --force: install without conflict prompts. Bypasses the conflict refusal outright and overwrites without the Overwrite round-trip - not just carrying on past an ordinary failure."
         />
         <${ApplyOption}
           modal=${modal}

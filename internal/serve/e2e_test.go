@@ -2333,6 +2333,55 @@ func TestE2E_InlineInstallWithVersionPickWritesToDisk(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ForceHintNamesTheConflictBypassOnInstallAndImport is N-8 of the
+// epic re-review: every kind's Advanced Force option rendered the same
+// generic sentence ("Carry on past a failure that would otherwise stop the
+// flow"), but on install and archive import Force does something a lot
+// louder - it bypasses the conflict refusal outright and overwrites without
+// the Overwrite round-trip (internal/core/install.go's own `if !opts.Force
+// && !opts.AcceptConflicts`) - and the CLI's own help is blunter about it:
+// "install without conflict prompts". Deploy's Force is checked too, to pin
+// that the generic sentence is deliberately unchanged for the kinds it
+// still describes accurately.
+func TestE2E_ForceHintNamesTheConflictBypassOnInstallAndImport(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	var installHint string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		textContent(`.modal label:has(input[name="force"])`, &installHint),
+	)
+
+	assert.Contains(t, installHint, "install without conflict prompts",
+		"install's Force hint must mirror the CLI's own wording")
+	assert.Contains(t, installHint, "Overwrite round-trip",
+		"and name what it actually bypasses, not just \"carry on past a failure\"")
+
+	f.runInBrowser(t, chromedp.Click(`.modal [data-action="cancel"]`, chromedp.ByQuery))
+
+	var deployHint string
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		textContent(`.modal label:has(input[name="force"])`, &deployHint),
+	)
+	assert.Contains(t, deployHint, "Carry on past a failure",
+		"deploy's Force does not bypass a conflict refusal, so the generic sentence must stay")
+	assert.NotContains(t, deployHint, "conflict prompts",
+		"the install-specific wording must not leak into a kind it does not describe")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_SearchRowReadsInstalledAfterItsOwnJobSucceeds is M5 (unit 5 fix
 // wave): a search row's own hit.installed is only as fresh as the report
 // that produced it, and search reports are outside hydrate()'s own
