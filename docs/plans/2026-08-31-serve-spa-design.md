@@ -107,11 +107,20 @@ returns to home exactly as left.
 
 ### Modals (inventory)
 
-Confirm-plan (install/uninstall/update batch/deploy/repair — renders the Plan, the SPA sibling of
-the CLI's confirm), conflict-overwrite, **reorder** (drag-and-drop load order with live conflict
-preview; reachable from Conflicts card and library), **profiles** (list/create/rename/delete/
-export/import/set-default), keyboard-shortcuts help. Modals stack at most one deep; everything
-else is slide-over or page.
+Confirm-plan (one framework, one renderer per kind: install/uninstall/update batch/deploy/
+rollback/switch/profile apply/profile sync/profile import/purge/archive import/adopt/mod re-link/
+repair — renders the Plan, the SPA sibling of the CLI's confirm), conflict-overwrite, **reorder**
+(drag-and-drop load order with live conflict preview; reachable from Conflicts card and library),
+**profiles** (list/create/rename/delete/export/import/set-default, plus per-profile Sync… and
+Purge…), keyboard-shortcuts help. Modals stack at most one deep; everything else is slide-over or
+page.
+
+Two things every confirm-plan modal carries since the closing wave (#326). An **Advanced**
+disclosure holds that kind's own flags, split the way the backend splits its request: a PLAN-time
+option re-computes the plan (so the preview can never describe one mutation while Confirm submits
+another), an APPLY-time one patches the pending job. And a kind may demand a **typed name** before
+Confirm enables — `purge` is the one that does, enforced by the modal rather than by its renderer,
+because the modal owns Confirm.
 
 ## Visual design
 

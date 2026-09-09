@@ -802,35 +802,46 @@ acts in place:
 | **Updates**   | every mod with a newer version                           | tick rows → "Update selected" applies them as one batch                                                                                  |
 | **Health**    | `lmm verify`'s findings, and when it last ran            | per-finding **Repair**, **Repair all**, **Re-verify**; a finding that `verify --fix` would not attempt says so in the engine's own words |
 | **Conflicts** | each contested file, its contenders and the winning rule | **Resolve…** opens the reorder modal scrolled to that file                                                                               |
-| **Profile**   | how many mods the profile lists but nobody installed     | **Apply profile…** runs `lmm profile apply`                                                                                              |
+| **Profile**   | which way the profile and the installed set have drifted | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                           |
 
 The **library** is the spine: an enabled toggle, the name, the installed
 version (with its update target), badges (⬆ update, ⚠ health, ⇄ conflict,
 🔒 lock, update policy), load order, and a ⋯ menu per row
-(Update / Uninstall / Lock / Reorder here). Filter (all/enabled/updatable/
+(Update / Uninstall / Lock / pak conversion / Re-link… / Reorder here).
+Pak conversion appears only where it applies. Filter (all/enabled/updatable/
 unhealthy) and sort (load order/name/recently installed) narrow it, and
 selecting rows raises a batch bar (Enable / Disable / Uninstall / Update
 selected). More columns appear as the display widens: author and install
 date at 1440px, source and link method at 1920px.
 
 Clicking a row opens the **slide-over**: author, installed → available
-version, an editable lock and update policy, that mod's own findings and
-conflicts, a changelog preview, and Update / Enable-or-Disable / Uninstall.
-**More info →** opens the **full mod page**
-(`/g/{game}/{profile}/mod/{source}/{id}`) — full description, complete
-changelog, a files table, a versions table with per-version install and
-rollback, dependencies, and that mod's own job history.
+version, an editable lock, update policy and (where it applies) pak
+conversion, that mod's own findings and conflicts, a changelog preview, and
+Update / Enable-or-Disable / Uninstall. **More info →** opens the **full mod
+page** (`/g/{game}/{profile}/mod/{source}/{id}`), which carries all of that
+plus what only it has room for: full description, complete changelog, a
+files table, a versions table with per-version install and rollback,
+**Re-link…** (`lmm mod edit`), dependencies, and that mod's own job history.
+
+Every confirm-plan modal has an **Advanced** section holding that command's
+own flags — `install --show-archived` / `--no-deps`, `uninstall
+--keep-cache`, `deploy <mod-id>` / `--method` / `--purge`, `--force` and the
+global `--no-hooks`. Flags that change what the plan SAYS re-compute it, so
+the preview always describes the mutation Confirm will submit.
 
 The **Setup page** (`/g/{game}/{profile}/setup`) holds everything
-administrative, in five sections: **Games** (the configured games table,
-Steam detection, manual add, set/clear the default), **Authentication**
+administrative, in five sections: **Games** (the configured games table with
+its sources, **Edit sources…** per row, Steam detection, manual add,
+set/clear the default), **Authentication**
 (per-source status, log in and out, the environment variable each source
 reads shown beside its field, orphaned-token removal), **Custom sources**
 (a line-numbered YAML editor with validate-then-save and an optional live
 probe, delete, download), **Archive import** (upload an archive, optionally link it to a
 source and mod id, then confirm), and **Adopt** (scan the game folder for
 untracked mods, preview, confirm). With no games configured yet, `/` is the
-first-run flow and shares those same detect/add forms.
+first-run flow and shares those same detect/add forms — **and the
+custom-source editor**, because a game can only be added against a source
+that already exists and nothing about defining one is game-scoped.
 
 ### Flows
 
@@ -854,7 +865,8 @@ append the results below your library, installable in place, with a version
 picker where the source offers more than one. A source that fails to answer
 shows a warning row beside whatever did — never in place of it. For heavier
 browsing, the **search page** (`/g/{game}/{profile}/search?q=…`) adds source
-badges, download counts, summaries, category and source filters, sort and
+badges, download counts, summaries, category and source filters, a tag
+filter where a source honours one (`lmm search --tag`), sort and
 pagination.
 
 **Switching profiles**: picking a profile's _name_ in the profile picker
@@ -867,8 +879,13 @@ same plan-and-confirm every other mutation uses.
 modal (drag a row, or use its ↑ ↓ First Last buttons, with a live
 "current vs proposed winner" preview per contested path before Save
 commits), the **profiles** modal (create, rename, delete, set default,
-export, import), the **keyboard shortcuts** help (`?`), and a
-batch-uninstall confirm.
+export, import, plus per-profile **Sync…** and **Purge…**), the **keyboard
+shortcuts** help (`?`), and a batch-uninstall confirm.
+
+**Purge** is the one mutation that asks for more than a click: its confirm
+step keeps **Purge** disabled until you type the profile's own name back,
+because it undeploys the whole profile and, with its own option set,
+removes every mod record behind it.
 
 ### Keyboard
 
