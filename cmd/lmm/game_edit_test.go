@@ -121,6 +121,34 @@ func TestDoGameEdit_RefusesRemovingASourceTheGameDoesNotMap(t *testing.T) {
 	assert.Contains(t, err.Error(), "curseforge")
 }
 
+// TestDoGameEdit_RefusesRemovingASourceStillReferenced is M5's CLI half
+// (epic review M-4): `--remove-source` shows the same GameSourceInUseError
+// refusal PUT /api/v1/games/{id} does - core owns the rule, so the CLI
+// gets it for free by calling the same seam, but nothing pinned that yet.
+func TestDoGameEdit_RefusesRemovingASourceStillReferenced(t *testing.T) {
+	svc := setupGameEditTest(t)
+	_, err := svc.NewProfileManager().Create(context.Background(), "skyrim-se", "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: "nexusmods", Name: "Mod One", Version: "1.0", GameID: "skyrim-se"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	gameEditSources = []string{"local-mods=skyrim"}
+	gameEditRemove = []string{"nexusmods"}
+
+	err = doGameEdit(context.Background(), svc, "skyrim-se")
+	var inUse *core.GameSourceInUseError
+	require.ErrorAs(t, err, &inUse)
+	assert.Equal(t, "nexusmods", inUse.SourceID)
+	assert.Contains(t, err.Error(), "uninstall them first")
+
+	game, err := svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, game.SourceIDs)
+}
+
 // TestDoGameEdit_RefusesAMalformedSourceFlag: the flag's whole contract is
 // the "=" - without it there is no identifier to map.
 func TestDoGameEdit_RefusesAMalformedSourceFlag(t *testing.T) {
@@ -163,6 +191,28 @@ func TestDoGameEdit_UnregisteredSourceIsRefused(t *testing.T) {
 	var specErr *core.GameSpecError
 	require.ErrorAs(t, err, &specErr)
 	assert.Equal(t, "sources", specErr.Field)
+}
+
+// TestReportError_JSON_GameSourceInUseError pins core.GameSourceInUseError's
+// --json error envelope wire shape (M5's Details() any, the
+// detailsCoverage AST ratchet's entry for it - details_coverage_test.go).
+func TestReportError_JSON_GameSourceInUseError(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"1 installed mod(s) still come from \\\"nexusmods\\\"; uninstall them first\",\n"+
+		"  \"details\": {\n"+
+		"    \"source_id\": \"nexusmods\",\n"+
+		"    \"game_id\": \"skyrim-se\",\n"+
+		"    \"count\": 1,\n"+
+		"    \"mods\": [\n"+
+		"      \"nexusmods:m1\"\n"+
+		"    ]\n"+
+		"  }\n"+
+		"}\n", out)
 }
 
 // TestDoGameEdit_JSONEmitsTheGameListRow is Ruling 15: exactly one

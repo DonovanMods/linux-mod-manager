@@ -13,6 +13,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -66,6 +67,10 @@ func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources 
 		return nil, err
 	}
 
+	if err := s.refuseRemovingReferencedSources(ctx, game, cleaned); err != nil {
+		return nil, err
+	}
+
 	// A COPY: s.game returns the pointer the in-memory set holds, which
 	// concurrent readers (GetGame, ListGames, SourcesForGame) are walking
 	// right now. Mutating its map in place would be a data race no lock
@@ -113,3 +118,83 @@ func (s *Service) validatedSourceMap(sources map[string]string) (map[string]stri
 	}
 	return cleaned, nil
 }
+
+// refuseRemovingReferencedSources refuses to drop a source id from game's
+// map while any of game's profiles still has an installed mod that came
+// from it (#326 fix wave, epic review M-4). Silently dropping the mapping
+// left those mods degrading quietly: update checks skip them, a re-link to
+// the source is refused ("source %q is not configured for %s",
+// mod_edit.go), and archive imports warn the source isn't configured for
+// the game. `lmm source remove` already refuses the mirror case
+// (SourceInUseError, a GAME still mapping a source about to be
+// unregistered entirely); this is the same rule one level down, for
+// installed MODS a game's own edit would otherwise orphan.
+//
+// Only ids present in game.SourceIDs but absent from cleaned are checked -
+// an id that stays mapped, or one newly added, references nothing to
+// orphan. Sorted so a removal dropping two still-referenced sources always
+// names the same one first, the same determinism validatedSourceMap's own
+// field selection gives the caller.
+func (s *Service) refuseRemovingReferencedSources(ctx context.Context, game *domain.Game, cleaned map[string]string) error {
+	for _, sourceID := range slices.Sorted(maps.Keys(game.SourceIDs)) {
+		if _, kept := cleaned[sourceID]; kept {
+			continue
+		}
+		mods, err := s.modsReferencingSource(ctx, game.ID, sourceID)
+		if err != nil {
+			return err
+		}
+		if len(mods) > 0 {
+			return &GameSourceInUseError{SourceID: sourceID, GameID: game.ID, Count: len(mods), Mods: mods}
+		}
+	}
+	return nil
+}
+
+// modsReferencingSource returns every distinct "source:mod" key
+// (domain.ModKey) across every profile of gameID whose installed row
+// names sourceID, sorted - the population refuseRemovingReferencedSources
+// refuses to orphan. A mod installed in more than one profile counts once.
+func (s *Service) modsReferencingSource(ctx context.Context, gameID, sourceID string) ([]string, error) {
+	profileNames, err := s.NewProfileManager().ListNames(ctx, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("listing profiles: %w", err)
+	}
+
+	seen := map[string]bool{}
+	for _, profileName := range profileNames {
+		installed, err := s.GetInstalledMods(ctx, gameID, profileName)
+		if err != nil {
+			return nil, fmt.Errorf("getting installed mods: %w", err)
+		}
+		for _, im := range installed {
+			if im.SourceID == sourceID {
+				seen[domain.ModKey(im.SourceID, im.ID)] = true
+			}
+		}
+	}
+
+	keys := slices.Sorted(maps.Keys(seen))
+	return keys, nil
+}
+
+// GameSourceInUseError refuses UpdateGameSources' removal of a source id
+// because at least one profile of GameID still has an installed mod that
+// came from it. Mods names them (ModKey form, "source:mod-id"), so a
+// frontend can say WHICH mods to uninstall rather than "some mod,
+// somewhere".
+type GameSourceInUseError struct {
+	SourceID string   `json:"source_id"`
+	GameID   string   `json:"game_id"`
+	Count    int      `json:"count"`
+	Mods     []string `json:"mods"`
+}
+
+// Error implements error.
+func (e *GameSourceInUseError) Error() string {
+	return fmt.Sprintf("%d installed mod(s) still come from %q; uninstall them first", e.Count, e.SourceID)
+}
+
+// Details returns the error itself for the --json error envelope's
+// "details" field (Ruling 3), the same shape SourceInUseError uses.
+func (e *GameSourceInUseError) Details() any { return e }

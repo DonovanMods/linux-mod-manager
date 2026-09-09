@@ -96,6 +96,43 @@ func TestAPIGameSources_EmptyMapIs400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 }
 
+// TestAPIGameSources_RemovingAReferencedSourceIs409WithItsDetails is M5
+// (epic review M-4): a source an installed mod still comes from cannot be
+// dropped from the map silently - the collision is a 409, and its details
+// name the source, the game and the mods so the Setup form can say what to
+// uninstall first.
+func TestAPIGameSources_RemovingAReferencedSourceIs409WithItsDetails(t *testing.T) {
+	s := newGameSourcesServer(t)
+	_, err := s.svc.NewProfileManager().Create(t.Context(), "skyrim-se", "default")
+	require.NoError(t, err)
+	require.NoError(t, s.svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: "nexusmods", Name: "Mod One", Version: "1.0", GameID: "skyrim-se"},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se", `{"sources":{"curseforge":"1704"}}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+
+	var env struct {
+		Error   string                    `json:"error"`
+		Details core.GameSourceInUseError `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
+	assert.Contains(t, env.Error, "nexusmods")
+	assert.Contains(t, env.Error, "uninstall them first")
+	assert.Equal(t, "nexusmods", env.Details.SourceID)
+	assert.Equal(t, "skyrim-se", env.Details.GameID)
+	assert.Equal(t, 1, env.Details.Count)
+	assert.Equal(t, []string{"nexusmods:m1"}, env.Details.Mods)
+
+	game, err := s.svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, game.SourceIDs,
+		"a refused edit must leave the game exactly as it was")
+}
+
 // TestAPIGameSources_UnknownGameIs404 - the treatment every other
 // game-named route gives a name that resolves to nothing.
 func TestAPIGameSources_UnknownGameIs404(t *testing.T) {

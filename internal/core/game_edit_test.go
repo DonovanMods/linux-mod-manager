@@ -141,6 +141,52 @@ func TestUpdateGameSources_UnknownGameIsNotFound(t *testing.T) {
 	require.ErrorIs(t, err, domain.ErrGameNotFound)
 }
 
+// TestUpdateGameSources_RefusesRemovingASourceWithInstalledMods is M5
+// (epic review M-4): dropping a source mapping while a profile still has
+// an installed mod that came from it used to write silently, leaving that
+// mod degrading quietly (update checks skip it, a re-link to the source is
+// refused, archive imports warn it isn't configured) - the mirror of `lmm
+// source remove`'s own SourceInUseError, one level down.
+func TestUpdateGameSources_RefusesRemovingASourceWithInstalledMods(t *testing.T) {
+	svc := newGameAddService(t)
+	game := seedSourcesGame(t, svc)
+	_, err := svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: "nexusmods", Name: "Mod One", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	_, err = svc.UpdateGameSources(t.Context(), game.ID, map[string]string{"curseforge": "432"})
+	var inUse *core.GameSourceInUseError
+	require.ErrorAs(t, err, &inUse)
+	assert.Equal(t, "nexusmods", inUse.SourceID)
+	assert.Equal(t, game.ID, inUse.GameID)
+	assert.Equal(t, 1, inUse.Count)
+	assert.Equal(t, []string{"nexusmods:m1"}, inUse.Mods)
+	assert.Contains(t, inUse.Error(), "1 installed mod")
+	assert.Contains(t, inUse.Error(), "nexusmods")
+	assert.Contains(t, inUse.Error(), "uninstall them first")
+
+	reloaded, err := svc.GetGame(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "fixturegame"}, reloaded.SourceIDs,
+		"a refused edit must leave the game exactly as it was")
+}
+
+// TestUpdateGameSources_AllowsRemovingAnUnreferencedSource: the refusal is
+// scoped to sources an installed mod actually references, not every
+// removal - a source with nothing installed from it may still be dropped.
+func TestUpdateGameSources_AllowsRemovingAnUnreferencedSource(t *testing.T) {
+	svc := newGameAddService(t)
+	game := seedSourcesGame(t, svc)
+	entry, err := svc.UpdateGameSources(t.Context(), game.ID, map[string]string{"curseforge": "432"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"curseforge": "432"}, entry.SourceIDs)
+}
+
 // TestUpdateGameSources_MarksTheDefaultGame pins that the returned row is
 // the same GameListEntry `lmm game list --json` emits, default flag and
 // all - not a bare domain.Game.

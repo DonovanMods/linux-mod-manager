@@ -1160,6 +1160,13 @@ func TestJSONGoldens(t *testing.T) {
 			core.SourceInUseError{SourceID: "my-mods", Games: []string{"alpha", "zeta"}},
 		},
 		{
+			// #326 fix wave's M5 (epic review M-4): the mirror one level
+			// down - installed mods, not games, still referencing a source
+			// UpdateGameSources was asked to drop from the map.
+			"game_source_in_use_error",
+			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
+		},
+		{
 			// The field-named rejection an SPA form renders against the
 			// offending input. Err is deliberately absent from the wire
 			// (json:"-"): it exists for errors.Is, not for a client.

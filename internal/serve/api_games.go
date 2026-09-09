@@ -214,15 +214,22 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 }
 
 // gameSourcesErrorStatus classifies an UpdateGameSources failure: an
-// unknown game is 404, a rejected map is the caller's input (400), and
+// unknown game is 404, a rejected map is the caller's input (400), a
+// removal a game's own installed mods still depend on is a 409 collision
+// with state the caller could not have known about from the map alone
+// (M5, epic review M-4 - GameSourceInUseError, the mirror of how a game
+// collision on `lmm game add`/POST /api/v1/games is classified), and
 // anything else is a real write failure (500).
 func gameSourcesErrorStatus(err error) int {
 	var specErr *core.GameSpecError
+	var inUseErr *core.GameSourceInUseError
 	switch {
 	case errors.Is(err, domain.ErrGameNotFound):
 		return http.StatusNotFound
 	case errors.As(err, &specErr):
 		return http.StatusBadRequest
+	case errors.As(err, &inUseErr):
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}
