@@ -447,6 +447,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The install conflict block's per-mod groups print in a stable order
+  (#315).** The "From <mod> (<id>):" groups the CLI prints before the
+  overwrite prompt were built in a map and iterated, so the same conflict
+  set listed its owners in a different order on every run. core now sorts a
+  conflict list by owning mod then path (Ruling 4's determinism rule), so
+  the groups fall out of that order — for `--json`'s `details.conflicts`
+  and `lmm import --verbose`'s own conflict list too.
+
 - **A relative `mod_path` in `games.yaml` is resolved against the game's
   install path (#313).** It used to be used verbatim, so
   `mod_path: Data` named a `Data` directory under whatever working

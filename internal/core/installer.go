@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
@@ -590,8 +591,30 @@ func (i *Installer) conflictsForPaths(ctx context.Context, game *domain.Game, mo
 			})
 		}
 	}
+	sortConflicts(conflicts)
 
 	return conflicts, nil
+}
+
+// sortConflicts puts a conflict list in the one order every renderer wants
+// (#315, Ruling 4's determinism rule): OWNING MOD first, path second. The
+// DB answers ordered by path alone, which interleaves two owners' files -
+// and every renderer groups per owning mod (the CLI's "From <mod> (<id>):"
+// block, `--json`'s details.conflicts), so grouping a path-ordered list
+// meant iterating a map, and the group order varied run to run. Sorting
+// here means the group order falls out of the slice order, once, for every
+// caller and every frontend.
+func sortConflicts(conflicts []Conflict) {
+	sort.Slice(conflicts, func(a, b int) bool {
+		x, y := conflicts[a], conflicts[b]
+		if x.CurrentSourceID != y.CurrentSourceID {
+			return x.CurrentSourceID < y.CurrentSourceID
+		}
+		if x.CurrentModID != y.CurrentModID {
+			return x.CurrentModID < y.CurrentModID
+		}
+		return x.RelativePath < y.RelativePath
+	})
 }
 
 // GetDeployedFiles returns the list of files deployed for a mod

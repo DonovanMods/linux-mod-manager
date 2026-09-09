@@ -46,13 +46,29 @@ import (
 func confirmInstallConflicts(ctx context.Context, service *core.Service, game *domain.Game, profileName string, conflicts []core.Conflict) (proceed bool, readErr error) {
 	fmt.Printf("\n⚠ File conflicts detected:\n")
 
-	modConflicts := make(map[string][]string)
+	// Grouping follows the SLICE order, not a map's (#315): core sorts the
+	// list by owning mod then path, so walking it in order yields each
+	// owner's paths contiguously and the group headers come out in the same
+	// order on every run. Iterating a map here is what made them shuffle.
+	type conflictGroup struct {
+		key   string
+		paths []string
+	}
+	var groups []conflictGroup
+	index := make(map[string]int, len(conflicts))
 	for _, c := range conflicts {
 		key := domain.ModKey(c.CurrentSourceID, c.CurrentModID)
-		modConflicts[key] = append(modConflicts[key], c.RelativePath)
+		at, seen := index[key]
+		if !seen {
+			at = len(groups)
+			index[key] = at
+			groups = append(groups, conflictGroup{key: key})
+		}
+		groups[at].paths = append(groups[at].paths, c.RelativePath)
 	}
 
-	for key, paths := range modConflicts {
+	for _, g := range groups {
+		key, paths := g.key, g.paths
 		parts := strings.SplitN(key, ":", 2)
 		sourceID, modID := parts[0], parts[1]
 
