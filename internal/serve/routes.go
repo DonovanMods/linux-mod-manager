@@ -29,11 +29,14 @@ func (s *Server) routes() {
 	// 404 instead of a handler that would have to refuse it itself.
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/enable", s.wrap(s.handleAPIModEnable))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/disable", s.wrap(s.handleAPIModDisable))
-	// The three thin lock/policy mutation routes (api_mod_settings.go) - NOT
-	// jobs, unlike enable/disable above: see that file's doc comment for why.
+	// The four thin lock/policy/convert mutation routes
+	// (api_mod_settings.go) - NOT jobs, unlike enable/disable above: see
+	// that file's doc comment for why. "convert" is #326's C-3 addition,
+	// the Icarus pak-conversion toggle `lmm mod convert` owns.
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/lock", s.wrap(s.handleAPIModLock))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/unlock", s.wrap(s.handleAPIModUnlock))
 	s.mux.Handle("POST /api/v1/mods/{source}/{id}/update-policy", s.wrap(s.handleAPIModUpdatePolicy))
+	s.mux.Handle("POST /api/v1/mods/{source}/{id}/convert", s.wrap(s.handleAPIModConvert))
 	// The profiles modal's write half (api_profiles.go). Each is a
 	// sanctioned single-step mutation answering with the same
 	// core.ProfileResult document its `lmm profile ...` twin emits; the

@@ -313,6 +313,14 @@ func TestServeJSONGoldens(t *testing.T) {
 			rollbackApplyRequest{Force: true, SkipHooks: true},
 		},
 		{
+			// #326's pak-conversion body (epic live review C-3): a REQUIRED
+			// boolean, so the key is always present - `lmm mod convert
+			// <mod-id> <on|off>` makes the caller say which way, and an
+			// omitted member decoding to false would silently mean "off".
+			"mod_convert_request",
+			modConvertRequest{Enabled: true},
+		},
+		{
 			// #326's three parity kinds (epic live review C-3). purge
 			// carries the same three options at plan and apply time for the
 			// reason #226 gives for uninstall's: the plan is computed with
