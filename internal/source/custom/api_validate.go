@@ -40,7 +40,7 @@ var _ source.KeyValidator = apiKeyValidator{}
 // ValidateKey implements source.KeyValidator by running the definition's
 // declared probe with key.
 func (a apiKeyValidator) ValidateKey(ctx context.Context, key string) error {
-	return a.API.validateKey(ctx, key)
+	return a.validateKey(ctx, key)
 }
 
 // validateKey performs one probe request with the candidate key. It never
