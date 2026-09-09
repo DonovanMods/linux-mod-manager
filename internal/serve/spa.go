@@ -83,8 +83,17 @@ func buildContentSecurityPolicy() string {
 		panic(fmt.Sprintf("serve: the SPA shell must hold exactly one inline script, found %d", len(matches)))
 	}
 	sum := sha256.Sum256([]byte(matches[0][1]))
+	// base-uri and form-action are NOT covered by default-src (#326, epic
+	// live review M-8). Without base-uri an injected <base href> would
+	// re-point every relative module URL the shell loads; without
+	// form-action an injected form could post this page's CSRF token to
+	// another origin. There is no injection vector today - every DOM write
+	// goes through Preact, and TestNoUnsafeDOMWrites/
+	// TestNoUnsafeTemplateCasts are ratcheted - so this is defence in
+	// depth, at one directive each.
 	return "default-src 'self'; script-src 'self' 'sha256-" +
-		base64.StdEncoding.EncodeToString(sum[:]) + "'"
+		base64.StdEncoding.EncodeToString(sum[:]) + "'" +
+		"; base-uri 'self'; form-action 'self'"
 }
 
 // handleShell serves the SPA shell. Cache-Control is no-store rather than
