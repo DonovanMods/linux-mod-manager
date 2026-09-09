@@ -540,6 +540,31 @@ func TestAddGame_FromDetectedKnownGame(t *testing.T) {
 	assert.Equal(t, filepath.Join(install, "Data"), entry.ModPath)
 }
 
+// TestAddGame_FromDetectedIcarusPersistsDeployModeCompile is the end-to-end
+// claim Minor 4 of the #206 review found unguarded: GameSpec.DeployMode
+// (judgement call (b), outside the brief's field list but required for
+// correctness) must actually reach the games.yaml `deploy_mode` a
+// from-detected Icarus is configured with, not just the intermediate
+// GameSpec TestGameSpecFromDetected_KnownGameWithSourceMap already pins.
+func TestAddGame_FromDetectedIcarusPersistsDeployModeCompile(t *testing.T) {
+	svc := newGameAddService(t)
+	svc.RegisterSource(&catalogLessSource{id: "icarus", name: "Icarus"})
+	install := t.TempDir()
+
+	detected := domain.DetectedGame{
+		SteamAppID: "1149460", Slug: "icarus", Name: "Icarus",
+		InstallPath: install, ModPath: filepath.Join(install, "Icarus", "Content", "Paks", "mods"),
+		DeployMode: "compile", Sources: map[string]string{"icarus": "icarus"}, Known: true,
+	}
+	_, err := svc.AddGame(context.Background(), core.GameSpecFromDetected(detected, core.GameSpec{}))
+	require.NoError(t, err)
+
+	games, err := config.LoadGames(svc.ConfigDir())
+	require.NoError(t, err)
+	require.Contains(t, games, "icarus")
+	assert.Equal(t, domain.DeployCompile, games["icarus"].DeployMode)
+}
+
 // TestAddGame_SourcesMapAndExplicitSourceMerge pins spec.Sources as the
 // base an explicit SourceID/Identifier is layered onto, which is how a
 // curated multi-source game gains a second source in one add.
