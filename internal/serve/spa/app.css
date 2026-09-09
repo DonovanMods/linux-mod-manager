@@ -344,10 +344,21 @@ select {
 /* Top bar.                                                                */
 /* ---------------------------------------------------------------------- */
 
+/*
+ * The top bar must never push the page wider than the viewport
+ * (issue 334's density pass). It carries nine controls, and a document that
+ * overflows horizontally gets a scrollbar that a position:fixed overlay -
+ * the slide-over, the modal - then sits partly underneath: found by an E2E
+ * whose browser runs at 800px, where the slide-over's own close button
+ * became unclickable because the page had grown to 899px. The baseline for
+ * this UI is 1080p, where none of this binds; wrapping is what keeps a
+ * narrower window merely cramped instead of broken.
+ */
 .app-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-2) var(--space-4);
   padding: var(--space-3) var(--space-6);
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-raised);
@@ -363,9 +374,12 @@ select {
   letter-spacing: 0.08em;
 }
 
+/* The omnibar takes the bar's slack AND gives it back: `min-width: 0`
+ * rather than a floor, so it is the control that shrinks when the bar runs
+ * out of room, instead of the bar overflowing the page. */
 .app-bar .omnibar {
-  flex: 1;
-  min-width: 12rem;
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .app-main {
@@ -752,51 +766,65 @@ select {
 
 /*
  * Column widths (issue 334's density pass). Every column but the name is
- * given the width its CONTENT actually needs, so the name - the one column
- * whose content is unbounded and the one people scan - absorbs all the
- * slack. Before this the browser's auto layout redistributed everything on
- * every re-render: switching a filter, or a mod whose author is one
+ * given the share of the table its content needs, so the name - the one
+ * column whose content is unbounded and the one people scan - absorbs all
+ * the slack. Before this the browser's auto layout redistributed everything
+ * on every re-render: switching a filter, or a mod whose author was one
  * character longer arriving, visibly shifted the checkboxes under the
  * cursor.
  *
- * The widths are minimums (`width` on a table cell is a suggestion, not a
- * clamp) rather than a fixed table-layout, which would truncate a long
- * version string instead of letting its column grow.
+ * PERCENTAGES, not rem. A fixed width is a MINIMUM the table will overflow
+ * its container to satisfy, and the shares below add up differently
+ * depending on which progressive columns are showing - so in rem the table
+ * grew a horizontal scrollbar on a narrow window (found by an E2E whose
+ * browser runs at 800px: the page went 899px wide and the slide-over's own
+ * close button ended up under the scrollbar). A percentage is a share of
+ * whatever width there is, so the same rule holds at every one of the three
+ * column sets below.
  */
 .library__table th.col--select,
-.library__table td.col--select,
+.library__table td.col--select {
+  width: 5%;
+}
+
 .library__table th.col--enabled,
 .library__table td.col--enabled {
-  width: 4rem;
+  width: 6%;
 }
 
 .library__table th.col--order,
 .library__table td.col--order {
-  width: 6rem;
+  width: 6%;
   text-align: right;
 }
 
 .library__table th.col--version,
 .library__table td.col--version,
+.library__table th.col--installed,
+.library__table td.col--installed {
+  width: 8%;
+}
+
 .library__table th.col--author,
-.library__table td.col--author,
+.library__table td.col--author {
+  width: 9%;
+}
+
 .library__table th.col--source,
 .library__table td.col--source,
 .library__table th.col--method,
-.library__table td.col--method,
-.library__table th.col--installed,
-.library__table td.col--installed {
-  width: 9rem;
+.library__table td.col--method {
+  width: 7%;
 }
 
 .library__table th.col--badges,
 .library__table td.col--badges {
-  width: 11rem;
+  width: 10%;
 }
 
 .library__table th.col--menu,
 .library__table td.col--menu {
-  width: 3rem;
+  width: 3%;
 }
 
 .library__table th {
@@ -996,6 +1024,16 @@ select {
   min-width: 22rem;
   padding: var(--space-6);
   overflow-y: auto;
+  /* Reserve the scrollbar's space whether or not one is showing
+   * (issue 334): the panel's own nav is absolutely positioned against this
+   * element's PADDING box, which includes the scrollbar gutter - so on a
+   * panel with enough content to scroll, the close button sat underneath
+   * the scrollbar and a real mouse click landed on the scrollbar instead.
+   * Found by an E2E: a JS .click() on the same button worked while a
+   * synthetic mouse click at its own centre did nothing. Stable also stops
+   * the whole panel shifting sideways the moment its content grows past
+   * one screen. */
+  scrollbar-gutter: stable;
   background: var(--surface-raised);
   box-shadow: var(--shadow-raised);
   animation: panel-in-right var(--motion-base) var(--motion-ease);
@@ -1046,7 +1084,9 @@ select {
 .slide-over__nav {
   position: absolute;
   top: var(--space-3);
-  right: var(--space-3);
+  /* Clear of the reserved scrollbar gutter above, not merely inside the
+   * padding box. */
+  right: var(--space-6);
   display: flex;
   gap: var(--space-2);
 }

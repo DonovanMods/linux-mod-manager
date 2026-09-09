@@ -550,8 +550,18 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	t.Helper()
 	binary := chromeBinary(t)
 
+	// A window the product actually supports (issue 334). Headless Chrome
+	// defaults to 800x600, which is BELOW this UI's own declared baseline -
+	// "desktop only, >= 1080p" (docs/plans/2026-08-31-serve-spa-design.md
+	// §Settled decisions) - so the suite was judging a layout the design
+	// explicitly does not cover: at 800px the top bar cannot fit its nine
+	// controls on one row, and the wrap that keeps them on screen puts the
+	// activity bell at the left, where its right-anchored tray hangs off
+	// the side. 1280 is comfortably inside the supported range and still
+	// below the 1440px step at which the library reveals its extra
+	// columns, so every existing column assertion is unchanged.
 	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
-		chromedp.ExecPath(binary))
+		chromedp.ExecPath(binary), chromedp.WindowSize(1280, 900))
 	// WithoutCancel, same reasoning as startE2EServer:331. t.Context() is
 	// cancelled when the test FUNCTION returns, which is BEFORE t.Cleanup
 	// runs - so deriving the allocator from it directly cancels ctx (below)
@@ -1638,6 +1648,51 @@ func newE2EFixtureWithAnUnappliedProfile(t *testing.T) e2eSearchFixture {
 	return f
 }
 
+// waitGone waits until sel matches nothing, asked of the PAGE rather than
+// of chromedp's own node tracking.
+//
+// chromedp.WaitNotPresent is the natural spelling and works for an element
+// removed synchronously by the action that preceded it. It does NOT
+// reliably notice a removal that happens LATER - the slide-over's, which
+// issue 334 deliberately delays by one animation so its exit has somewhere
+// to play (spa/app/motion.js). Reproduced: the panel is provably gone from
+// the document (its own querySelector says so, and the URL has changed),
+// while WaitNotPresent sits there until the harness's whole 30-second
+// timeout expires.
+//
+// The polling INTERVAL is explicit for a second, independent reason:
+// chromedp.Poll's default mode is requestAnimationFrame, and a headless
+// page that has finished animating stops scheduling frames - so a poll
+// armed while the panel was still playing its exit would evaluate a few
+// times, see it still present, and then never run again once the page went
+// idle, which is the very moment the answer changed. A timer keeps asking.
+func waitGone(sel string) chromedp.Action {
+	return chromedp.Poll(
+		fmt.Sprintf("document.querySelector(%q) === null", sel), nil,
+		chromedp.WithPollingInterval(50*time.Millisecond),
+	)
+}
+
+// settleEffects gives Preact's hook effects time to run before the next
+// action depends on one having been attached.
+//
+// Preact flushes effects after paint - requestAnimationFrame, with a
+// ~100ms setTimeout fallback for a browser that is not painting, which is
+// exactly what a headless one often is not. chromedp's own round trips are
+// single-digit milliseconds, so an action issued straight after a
+// WaitVisible routinely lands BEFORE the effect that installs the listener
+// it depends on. That is not a hypothetical: the picker's Escape handler
+// lives in such an effect, and without this the menu simply stayed open and
+// the wait for it to close ran out the harness's whole 30-second timeout -
+// deterministically under -race, intermittently without it.
+//
+// The same shape (and the same reasoning) as the `settle` closures the
+// profiles-modal scenarios already declare inline; this is that pattern
+// with one name and one explanation.
+func settleEffects() chromedp.Action {
+	return chromedp.Sleep(300 * time.Millisecond)
+}
+
 // focusableSelectorJS mirrors spa/app/focustrap.js's own FOCUSABLE list -
 // the elements a browser hands focus to on Tab. Kept in sync by intent
 // rather than by a ratchet: it is a browser fact, not an application one,
@@ -1704,8 +1759,12 @@ func tabThrough(n int, out *[]string) chromedp.Action {
 func assertKeyboardTraversal(t *testing.T, f e2eFixture, screen string) {
 	t.Helper()
 
+	// The screen has to be SETTLED, not merely visible: a panel whose
+	// content is still arriving (the slide-over fetches its changelog after
+	// mounting) has fewer controls than the screen it is about to be, and
+	// counting then would size the walk to a half-drawn page.
 	var count int
-	f.runInBrowser(t, chromedp.Evaluate(countFocusableJS, &count))
+	f.runInBrowser(t, settleEffects(), chromedp.Evaluate(countFocusableJS, &count))
 	require.Greater(t, count, 3, "%s: too few focusable controls to be a real screen", screen)
 
 	var visited []string

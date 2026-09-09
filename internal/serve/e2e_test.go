@@ -489,7 +489,7 @@ func TestE2E_OpeningSlideOverDoesNotRehydrateMissionControl(t *testing.T) {
 	var afterClose []string
 	f.runInBrowser(t,
 		chromedp.Click(`.slide-over__close`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 		chromedp.Evaluate(`window.__fetchedPaths`, &afterClose),
 	)
 	assert.Equal(t, afterOpen, afterClose, "closing the slide-over must not trigger any further /api/v1 fetch")
@@ -1471,7 +1471,7 @@ func TestE2E_SlideOver_EscapeClosesAndOutsideClickCloses(t *testing.T) {
 		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
 		waitForPanelFocus(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 	)
 
 	f.runInBrowser(t,
@@ -1483,7 +1483,7 @@ func TestE2E_SlideOver_EscapeClosesAndOutsideClickCloses(t *testing.T) {
 		// itself, whose node-center click could land inside the panel on
 		// a narrow viewport.
 		chromedp.MouseClickXY(20, 20),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 	)
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -2059,7 +2059,7 @@ func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
 		// origin is bound (the control has morphed) while it sits queued.
 		chromedp.WaitVisible(`.job-progress`, chromedp.ByQuery),
 		chromedp.Click(`.slide-over__close`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 	)
 
 	var rowLive string
@@ -2658,7 +2658,7 @@ func TestE2E_SearchPageRowClickOpensSlideOverAndCloseReturnsToResults(t *testing
 		// effect has actually run reaches no listener at all.
 		waitForPanelFocus(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 		chromedp.WaitVisible(`.search-results`, chromedp.ByQuery),
 		chromedp.Location(&url),
 	)
@@ -4506,7 +4506,8 @@ mods: []
 	f.runInBrowser(t,
 		chromedp.Click(`.toast [data-action="toast-action"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
-		chromedp.Poll(`document.querySelector('[data-testid="profiles-list"]').textContent.includes("imported")`, nil),
+		chromedp.Poll(`document.querySelector('[data-testid="profiles-list"]')?.textContent.includes("imported") ?? false`, nil,
+			chromedp.WithPollingInterval(50*time.Millisecond)),
 	)
 
 	var listText string
@@ -4576,6 +4577,9 @@ func TestE2E_Keyboard_ModalContainsFocusAndGivesItBack(t *testing.T) {
 		chromedp.Focus(`[data-action="deploy"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		// The trap, like the picker's Escape handler, is installed by an
+		// effect that runs after the dialog is already on screen.
+		settleEffects(),
 		// Comfortably more presses than the dialog has controls, so the
 		// walk goes round its end at least twice.
 		chromedp.ActionFunc(func(ctx context.Context) error {
@@ -4626,19 +4630,14 @@ func TestE2E_Keyboard_EscapeFromAPickerReturnsFocusToItsTrigger(t *testing.T) {
 		chromedp.Evaluate(`document.querySelector(".profile-picker__trigger").getAttribute("aria-expanded")`, &expandedWhileOpen),
 		// Focus a control INSIDE the menu, which is what a keyboard user
 		// would be on when they press Escape - and what the close removes.
-		//
-		// The page's own .focus(), not chromedp.Focus: CDP's DOM.focus
-		// leaves the page in a state where a synthetic Escape never reaches
-		// the document listener at all (reproduced - the menu simply stays
-		// open), which would make this scenario pass or fail on a CDP
-		// detail rather than on the behaviour it is about.
+		// The page's own .focus() rather than chromedp.Focus, which scrolls
+		// and re-queries for a result this scenario does not need.
 		chromedp.Evaluate(`document.querySelector('.picker__row[data-profile="hardcore"] .picker__item').focus()`, nil),
+		// The picker's Escape handler is installed by an effect that runs
+		// after the menu is already on screen (settleEffects).
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
-		// Poll rather than WaitNotPresent: chromedp's own node-tracking
-		// never reports this <ul> gone within the same Run that removed it
-		// (reproduced - it times out at the harness's full 30s), while the
-		// page's own querySelector sees it immediately.
-		chromedp.Poll(`document.querySelector(".profile-picker__menu") === null`, nil),
+		waitGone(`.profile-picker__menu`),
 		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &focusedAfter),
 		chromedp.Evaluate(`document.querySelector(".profile-picker__trigger").getAttribute("aria-expanded")`, &expandedAfter),
 	)
@@ -4698,6 +4697,7 @@ func TestE2E_ReducedMotion_AnimatesNothing(t *testing.T) {
 		}),
 		chromedp.Navigate(f.SlideOverPath("fake", "a")),
 		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+		settleEffects(),
 		chromedp.Evaluate(`getComputedStyle(document.querySelector(".slide-over__panel")).animationDuration`, &panelDuration),
 		chromedp.Evaluate(`getComputedStyle(document.querySelector(".slide-over")).animationDuration`, &scrimDuration),
 		chromedp.ActionFunc(func(ctx context.Context) error {
@@ -4705,8 +4705,7 @@ func TestE2E_ReducedMotion_AnimatesNothing(t *testing.T) {
 			if err := chromedp.KeyEvent(kb.Escape).Do(ctx); err != nil {
 				return err
 			}
-			if err := chromedp.Poll(
-				`document.querySelector(".slide-over") === null`, nil).Do(ctx); err != nil {
+			if err := waitGone(`.slide-over`).Do(ctx); err != nil {
 				return err
 			}
 			closedWithin = time.Since(started)
@@ -4732,12 +4731,14 @@ func TestE2E_Motion_TheSlideOverPlaysItsExitBeforeItGoes(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.SlideOverPath("fake", "a")),
 		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		// The panel is still there, now playing its exit - which is exactly
 		// what would be impossible if the route change had gone straight
 		// through and Preact had unmounted the subtree.
-		chromedp.Poll(`document.querySelector(".slide-over--closing") !== null`, &sawClosing),
-		chromedp.Poll(`document.querySelector(".slide-over") === null`, nil),
+		chromedp.Poll(`document.querySelector(".slide-over--closing") !== null`, &sawClosing,
+			chromedp.WithPollingInterval(20*time.Millisecond)),
+		waitGone(`.slide-over`),
 	)
 
 	assert.True(t, sawClosing, "the panel must wear its closing state before it goes")
