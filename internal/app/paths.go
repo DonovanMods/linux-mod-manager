@@ -111,3 +111,18 @@ func resolveBaseDir(envVar, legacyRel string) (string, error) {
 	}
 	return legacy, nil
 }
+
+// opLockFileName is the advisory lock file every lmm mutation takes,
+// inside the data directory (#317). Dot-prefixed so it does not clutter a
+// directory a user browses, and inside DataDir rather than a temp or
+// runtime directory so it identifies exactly what it protects: one
+// installation's database, cache and deploy bookkeeping.
+const opLockFileName = ".oplock"
+
+// OpLockPath returns the advisory mutation-lock file for a resolved
+// layout - core.ServiceConfig.OpLockPath's value (#317). Exported because
+// a frontend that documents or diagnoses the lock needs to name the same
+// file core takes, without re-deriving the convention.
+func OpLockPath(p Paths) string {
+	return filepath.Join(p.DataDir, opLockFileName)
+}

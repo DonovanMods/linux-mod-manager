@@ -41,6 +41,12 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 		// while another lmm process holds it (#79), and that has to be
 		// visible at the CLI's default --log-level off.
 		WarnWriter: warnWriter(opts),
+		// #317: the cross-process mutation lock, one per installation.
+		// core takes it inside beginOp but never decides WHERE it lives -
+		// path resolution is this package's job, and the data directory is
+		// what an installation is keyed by (two frontends pointed at one
+		// --data must contend; two pointed at different ones must not).
+		OpLockPath: OpLockPath(p),
 	})
 	if err != nil {
 		return nil, err

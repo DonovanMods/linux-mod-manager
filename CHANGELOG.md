@@ -653,6 +653,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two lmm processes can no longer interleave their mutations (#317).**
+  Within one process `beginOp` serialized every mutation; across processes
+  — a CLI command typed while `lmm serve` was mid-job, or two CLIs — only
+  SQLite's own locking applied, and the deploy-tree file operations could
+  interleave. Every mutation now also takes an advisory `flock` on
+  `<data dir>/.oplock` (the path supplied by `internal/app` through
+  `core.ServiceConfig.OpLockPath`; core resolves no paths of its own) for
+  exactly as long as it holds the in-process slot. A contended mutation
+  waits two seconds and then refuses with a new typed
+  `core.OperationInProgressError` naming the holder: `another lmm
+operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
+  `pid`/`started_at` in the `--json` error envelope's `details` and in
+  `lmm serve`'s. Reads never take the lock. The lock lives in the open
+  descriptor, so a killed lmm leaves nothing stale behind. This resolves
+  the cross-process caveat `docs/plans/2026-08-30-serve-design.md`
+  documented.
+
 - **The web UI's "Pick an installed game…" adds a curated game by app id
   alone (#341).** `lmm game add --from-detected 489830` needs nothing else
   for a game in lmm's known-games list — core prefills the name, paths, id

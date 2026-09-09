@@ -1298,10 +1298,18 @@ single trusted user on their own machine:
   Content-Security-Policy). The policy admits exactly one inline script —
   the theme bootstrap — and it does so by the SHA-256 of that script's own
   bytes, not by `'unsafe-inline'`. There is no `'unsafe-eval'`.
-- **Cross-process note:** a CLI mutation and a `serve` mutation running at
-  the same time are guarded only by SQLite's own locking, not a shared
-  lock across processes — avoid running CLI mutations while a `serve`
-  operation is in flight.
+- **Cross-process mutations are serialized** (#317). Every lmm mutation —
+  CLI or `serve` — takes an advisory `flock` on `<data dir>/.oplock` for as
+  long as it holds the in-process mutation slot, so a `lmm deploy` typed
+  while a `serve` job is mid-deploy cannot interleave its file operations
+  with it. The second one waits up to two seconds and then refuses, naming
+  the holder: `another lmm operation is in progress (pid 4242, since
+2026-09-09T12:00:00Z)` — under `--json`, with `pid` and `started_at` in
+  the error envelope's `details`. Reads never take the lock, so `lmm list`,
+  `lmm status` and every `GET /api/v1` route keep working while a mutation
+  runs. The lock is held by an open file descriptor, so a killed lmm
+  releases it immediately: there is never a stale lock to clear by hand.
+  Two installations (different `--data` directories) never contend.
 
 ## CLI Reference
 

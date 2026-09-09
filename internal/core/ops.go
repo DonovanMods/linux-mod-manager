@@ -10,6 +10,21 @@ import (
 // idempotent, so a second call is a no-op rather than consuming the next
 // caller's slot.
 //
+// Since #317 the slot has TWO halves, taken in this order and released
+// together: the in-process semaphore below, then - when the Service was
+// given a ServiceConfig.OpLockPath - an advisory flock on that file, which
+// is what stops a CLI mutation interleaving with a running `lmm serve`'s.
+// Ordering matters: the cheap in-process wait happens first, so a process
+// with several goroutines queues internally instead of every one of them
+// holding an open descriptor and polling the kernel. A contended
+// cross-process lock fails with OperationInProgressError after a bounded
+// wait rather than queueing - a second lmm invocation says who holds it
+// instead of appearing to hang. The Ruling 16 pairing is unchanged: the
+// release func drops both halves, and the completeProfileWrite /
+// completeDBWrite chains still run inside it.
+//
+// Reads never call this, so a query is never blocked by another process.
+//
 // Concurrency contract (see the Service doc comment): query methods may
 // run concurrently with each other and with at most one in-flight
 // mutation; mutating operations are serialized service-wide. Exported
@@ -29,11 +44,26 @@ func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
 	}
 	select {
 	case s.opSem <- struct{}{}:
-		var once sync.Once
-		return func() { once.Do(func() { <-s.opSem }) }, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+
+	var lock *opLock
+	if s.opLockPath != "" {
+		var err error
+		if lock, err = acquireOpLock(ctx, s.opLockPath); err != nil {
+			<-s.opSem // never hold the in-process slot for a mutation that is not happening
+			return nil, err
+		}
+	}
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			lock.release() // nil-safe: no lock path configured
+			<-s.opSem
+		})
+	}, nil
 }
 
 // completeProfileWrite runs write - a profile-file mutation that COMPLETES a

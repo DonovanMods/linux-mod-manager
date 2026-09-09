@@ -48,6 +48,17 @@ type ServiceConfig struct {
 	// straight through to internal/storage/db and is not a logging
 	// channel: diagnostics go to Logger.
 	WarnWriter io.Writer
+	// OpLockPath is the advisory lock file every MUTATION takes, so a CLI
+	// mutation and a running `lmm serve` cannot interleave their deploy-tree
+	// work on one installation (#317). Supplied by the caller rather than
+	// derived here: core resolves no paths of its own, and internal/app is
+	// the one place that knows where an installation lives (it passes
+	// <DataDir>/.oplock).
+	//
+	// Empty disables the cross-process lock entirely, leaving the
+	// in-process semaphore exactly as it was - which is what a test
+	// constructing a Service for one temp directory wants.
+	OpLockPath string
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -86,6 +97,9 @@ type Service struct {
 	configDir string
 	dataDir   string
 	cacheDir  string
+	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
+	// beginOp takes around every mutation, or "" for no cross-process lock.
+	opLockPath string
 
 	// beforeSaveInstalled, when non-nil, runs immediately before the install
 	// flow's SaveInstalledMod call - the only point between a successful
@@ -153,6 +167,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		configDir:  cfg.ConfigDir,
 		dataDir:    cfg.DataDir,
 		cacheDir:   cfg.CacheDir,
+		opLockPath: cfg.OpLockPath,
 	}, nil
 }
 

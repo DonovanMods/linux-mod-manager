@@ -164,6 +164,7 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `<config>/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
 | `<config>/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
 | `<data>/lmm.db`                            | SQLite database (metadata, tokens)                                      |
+| `<data>/.oplock`                           | Advisory mutation lock (#317) — see below                               |
 | `<data>/cache/`                            | Mod file cache (or `cache_path` override)                               |
 | `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
 
@@ -226,3 +227,24 @@ Minecraft has multiple mod sources configured. Select one:
   [2] NexusMods
 Enter choice (1-2):
 ```
+
+## The mutation lock
+
+Every lmm **mutation** — a CLI command or a `lmm serve` job — takes an advisory
+`flock` on `<data>/.oplock` while it runs, so two lmm processes pointed at the same
+data directory cannot interleave their deploy-tree work (#317). A second mutation
+waits up to two seconds and then refuses, naming the holder:
+
+```text
+another lmm operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)
+```
+
+Under `--json` the same refusal carries `pid` and `started_at` in the error
+envelope's `details`. **Reads never take the lock**, so listing, status and every
+`GET /api/v1` route keep working while a mutation is in flight.
+
+The lock lives in the open file descriptor, not in the file's contents, so the
+kernel drops it the moment the process exits — a killed or crashed lmm never leaves
+a stale lock to clear by hand, and the file itself can be deleted safely when no lmm
+is running. Two installations (different `--data` directories) have separate lock
+files and never contend.
