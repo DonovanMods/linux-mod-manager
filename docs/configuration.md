@@ -26,12 +26,24 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 | -------------- | ------ | -------- | --------------------------------------------------------------------- |
 | `name`         | string | yes      | Display name                                                          |
 | `install_path` | string | yes      | Game installation directory (supports `~`)                            |
-| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`)                      |
+| `mod_path`     | string | yes      | Directory where mods are deployed (supports `~`; see below)           |
 | `sources`      | map    | yes      | Source ID to game ID mapping (see below)                              |
 | `link_method`  | string | no       | Override global link method: `symlink`, `hardlink`, `copy`            |
 | `cache_path`   | string | no       | Per-game cache directory override                                     |
 | `hooks`        | object | no       | Scripts to run around install/uninstall (see below)                   |
 | `deploy_mode`  | string | no       | How to handle mod archives: `extract` (default), `copy`, or `compile` |
+
+#### `mod_path` and relative values
+
+`mod_path` is normally an absolute path (`~` is expanded). A **relative**
+value — `mod_path: Data` — is resolved against that game's `install_path`,
+not against the directory you happen to run `lmm` from, so the entry means
+the same thing from every shell.
+
+lmm itself never *writes* a relative `mod_path`: `lmm game add`,
+`lmm game add --from-detected`, `lmm game detect` and the web UI's add-game
+form all refuse one and ask for an absolute path instead. The join above is
+purely for hand-written `games.yaml` entries.
 
 ### Hooks (games.yaml)
 

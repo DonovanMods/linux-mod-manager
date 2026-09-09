@@ -33,6 +33,28 @@ func ExpandPath(path string) string {
 	return path
 }
 
+// ResolveModPath makes a game's mod_path absolute the way #313 settled it:
+// a RELATIVE value is joined onto the game's install path, because that is
+// what a hand-written "mod_path: Data" means to everybody who writes one.
+// Before this it was used verbatim, so every deploy resolved it against
+// whatever directory lmm happened to be run from. An absolute value (and
+// an empty one, which is not a path at all) passes through untouched.
+//
+// Callers pass the ALREADY-EXPANDED install path; expansion is the caller's
+// job so "~" is handled once, at the same place, for both fields.
+func ResolveModPath(installPath, modPath string) string {
+	if modPath == "" || filepath.IsAbs(modPath) || installPath == "" {
+		return modPath
+	}
+	return filepath.Join(installPath, modPath)
+}
+
+// ErrRelativeModPath is the refusal SaveGame makes for a game whose
+// ModPath is relative. Loading tolerates one (ResolveModPath joins it);
+// WRITING one is always a bug, because the value lmm writes is the value
+// every later run - from any working directory - resolves.
+var ErrRelativeModPath = errors.New("mod_path must be an absolute path")
+
 // HookConfigYAML is the YAML representation of hook configuration
 type HookConfigYAML struct {
 	BeforeAll  string `yaml:"before_all"`
@@ -104,11 +126,12 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			convertPaks = *cfg.ConvertPaks
 			convertExplicit = true
 		}
+		installPath := ExpandPath(cfg.InstallPath)
 		games[id] = &domain.Game{
 			ID:                  id,
 			Name:                cfg.Name,
-			InstallPath:         ExpandPath(cfg.InstallPath),
-			ModPath:             ExpandPath(cfg.ModPath),
+			InstallPath:         installPath,
+			ModPath:             ResolveModPath(installPath, ExpandPath(cfg.ModPath)),
 			SourceIDs:           cfg.Sources,
 			LinkMethod:          linkMethod,
 			LinkMethodExplicit:  cfg.LinkMethod != "",
@@ -137,6 +160,9 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 
 // SaveGame adds or updates a game in games.yaml
 func SaveGame(configDir string, game *domain.Game) error {
+	if game.ModPath != "" && !filepath.IsAbs(game.ModPath) {
+		return fmt.Errorf("%w: game %q: got %q", ErrRelativeModPath, game.ID, game.ModPath)
+	}
 	gamesMu.Lock()
 	defer gamesMu.Unlock()
 	games, err := loadGamesLocked(configDir)

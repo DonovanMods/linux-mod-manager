@@ -445,6 +445,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changelog field; a source without it, or a failed live fetch, simply
   omits the section rather than failing the command (#87).
 
+### Fixed
+
+- **A relative `mod_path` in `games.yaml` is resolved against the game's
+  install path (#313).** It used to be used verbatim, so
+  `mod_path: Data` named a `Data` directory under whatever working
+  directory `lmm` happened to be run from — a different directory per
+  shell, and never the game's. It is now joined onto `install_path` at
+  load, and lmm's own writers (`lmm game add`, `game add --from-detected`,
+  `lmm game detect`, the web UI's add-game form and `POST /api/v1/games`)
+  refuse a relative value outright, with a `mod_path`-named field error,
+  rather than writing one.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
