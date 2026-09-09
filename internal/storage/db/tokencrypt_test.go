@@ -83,6 +83,35 @@ func TestSaveToken_UsesAFreshNonceForEveryWrite(t *testing.T) {
 	assert.Len(t, seen, 25)
 }
 
+// TestIsTokenEnvelope_ClassifiesPlaintextAndCiphertext pins the
+// discriminator itself. The cases that matter are the ones the four-byte
+// prefix sniff got wrong (review 3): a plaintext credential that starts with
+// the magic is a credential, not an envelope.
+func TestIsTokenEnvelope_ClassifiesPlaintextAndCiphertext(t *testing.T) {
+	sealed, err := sealToken(mustKey(t), "nexusmods", "secret")
+	require.NoError(t, err)
+	sealedEmpty, err := sealToken(mustKey(t), "nexusmods", "")
+	require.NoError(t, err)
+
+	for name, tc := range map[string]struct {
+		blob []byte
+		want bool
+	}{
+		"a real envelope":                {blob: sealed, want: true},
+		"an envelope over an empty key":  {blob: sealedEmpty, want: true},
+		"an ordinary plaintext key":      {blob: []byte("nexus-abcdef-0123456789-ghijkl"), want: false},
+		"plaintext starting with magic":  {blob: []byte("lmm1abcdefghijklmnopqrstuvwxyz0123456789"), want: false},
+		"plaintext that IS just magic":   {blob: []byte(tokenEnvelopeMagic), want: false},
+		"unicode plaintext, magic first": {blob: []byte("lmm1-ünïcödé-key-🔑-0123456789012345"), want: false},
+		"too short to be an envelope":    {blob: []byte("lmm1\x00\x01\x02"), want: false},
+		"empty":                          {blob: nil, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isTokenEnvelope(tc.blob))
+		})
+	}
+}
+
 func TestOpenToken_WrongKeyFails(t *testing.T) {
 	right := mustKey(t)
 	wrong := mustKey(t)

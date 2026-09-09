@@ -17,8 +17,12 @@ database (`$XDG_DATA_HOME/lmm/lmm.db`, default
 - **Cipher:** AES-256-GCM, from the Go standard library. No third-party
   crypto dependency, in keeping with lmm's minimal-dependency rule.
 - **Envelope:** each row stores `"lmm1"` + a 12-byte nonce + the
-  ciphertext. The `lmm1` prefix is a version marker; a row without it is a
-  plaintext credential from an older lmm.
+  ciphertext. The `lmm1` prefix is a version marker, and lmm tells an
+  encrypted row from a plaintext one from an older lmm by the prefix *and*
+  the shape — an envelope is at least 32 bytes and its body is random
+  binary, where a credential you pasted is printable text. A plaintext key
+  that happens to start with `lmm1` is therefore still recognised as
+  plaintext and re-encrypted.
 - **Nonce:** fresh `crypto/rand` bytes for every write, never reused.
 - **Associated data:** the source id. A ciphertext copied from one row into
   another fails to decrypt rather than quietly authenticating the wrong

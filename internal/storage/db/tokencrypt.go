@@ -7,9 +7,11 @@ package db
 //
 //	"lmm1" || nonce(12) || AES-256-GCM ciphertext(+16-byte tag)
 //
-// The ASCII magic is a version marker AND the legacy discriminator: a row
-// that does not start with it was written by a pre-#79 lmm and is plaintext
-// (migrateTokenEncryption re-encrypts those in place on open). Bumping the
+// The ASCII magic is a version marker AND part of the legacy discriminator:
+// a row that is not an envelope was written by a pre-#79 lmm and is
+// plaintext (migrateTokenEncryption re-encrypts those in place on open).
+// Telling the two apart takes the magic AND the shape - see isTokenEnvelope,
+// whose comment explains why the prefix alone was not enough. Bumping the
 // magic is how a future format change stays distinguishable from both.
 //
 // The nonce is fresh crypto/rand bytes for EVERY write - GCM's one
@@ -30,6 +32,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -45,6 +49,13 @@ const (
 	// tokenFingerprintLen is how much of a key's SHA-256 a status surface
 	// shows: enough to tell two keys apart, far too little to attack.
 	tokenFingerprintLen = 8
+	// tokenTagSize is GCM's authentication tag, appended to every
+	// ciphertext by Seal.
+	tokenTagSize = 16
+	// tokenEnvelopeMinLen is the smallest envelope sealToken can produce -
+	// magic, nonce and tag, with an empty plaintext between them. Anything
+	// shorter cannot be one, whatever it starts with.
+	tokenEnvelopeMinLen = len(tokenEnvelopeMagic) + tokenNonceSize + tokenTagSize
 )
 
 // newTokenKey returns a fresh 32-byte key from the system CSPRNG.
@@ -99,13 +110,41 @@ var errNotAnEnvelope = errors.New("not an encrypted token envelope")
 // isTokenEnvelope reports whether blob was written by sealToken. A blob
 // that fails this is a pre-#79 plaintext row.
 //
-// The one theoretical false positive is a legacy plaintext key of 16+ bytes
-// that itself begins with the four ASCII characters "lmm1"; such a row would
-// be treated as an envelope, fail to authenticate, and be reported as
-// KeyUndecryptable with the "log in again" remedy. No source issues keys in
-// that shape, and the failure is loud and recoverable rather than silent.
+// THREE conditions, not one. The magic alone was not enough: a pre-#79
+// plaintext key that itself began with "lmm1" was taken for an envelope,
+// which left it in the clear forever and reported every read as a missing
+// key (review 3). So the shape is checked too -
+//
+//   - at least tokenEnvelopeMinLen bytes, since a shorter blob cannot hold
+//     a nonce and a tag whatever it starts with; and
+//   - everything after the magic is NOT text. An API key is characters a
+//     user pasted; a nonce followed by a ciphertext and a GCM tag is 28+
+//     bytes of CSPRNG output.
+//
+// That closes the false positive completely: a plaintext key is printable
+// by construction, so no key a user can type is classified as an envelope.
+// The residual is the mirror case - an envelope whose 28+ random bytes are
+// ALL valid, printable UTF-8, which is under one in a trillion per write
+// and would show up at once as a credential that stopped working.
 func isTokenEnvelope(blob []byte) bool {
-	return len(blob) >= len(tokenEnvelopeMagic)+tokenNonceSize && string(blob[:len(tokenEnvelopeMagic)]) == tokenEnvelopeMagic
+	if len(blob) < tokenEnvelopeMinLen || string(blob[:len(tokenEnvelopeMagic)]) != tokenEnvelopeMagic {
+		return false
+	}
+	return !looksLikeText(blob[len(tokenEnvelopeMagic):])
+}
+
+// looksLikeText reports whether b is entirely valid, printable UTF-8 - what
+// a credential a user pasted is, and what a nonce and ciphertext are not.
+func looksLikeText(b []byte) bool {
+	if !utf8.Valid(b) {
+		return false
+	}
+	for _, r := range string(b) {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // openToken decrypts an envelope written by sealToken for sourceID.
