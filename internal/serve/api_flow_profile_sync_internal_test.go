@@ -98,6 +98,20 @@ func TestFlowProfileSync_UnknownProfileNamesAMissingProfile(t *testing.T) {
 	assert.NoError(t, err, "applying a Missing:true plan must create the profile")
 }
 
+// TestFlowProfileSync_UsedPlanIsRefused is M2: the plan store's single-use
+// 409, matching mod_relink/purge's own coverage - profile_sync shares the
+// same generic machinery, but had no test pinning it.
+func TestFlowProfileSync_UsedPlanIsRefused(t *testing.T) {
+	s, _, game := newFlowFixtureServer(t)
+
+	id, _ := planFlow(t, s, game, "profile_sync", `{"profile":"default"}`)
+	j := startFlowJob(t, s, id, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	again := doAPI(s, http.MethodPost, "/api/v1/jobs", `{"plan_id":"`+string(id)+`"}`)
+	assert.Equal(t, http.StatusConflict, again.Code, again.Body.String())
+}
+
 // TestFlowProfileSync_RequiresAProfile pins the request's one validation.
 func TestFlowProfileSync_RequiresAProfile(t *testing.T) {
 	s, _, game := newFlowFixtureServer(t)
