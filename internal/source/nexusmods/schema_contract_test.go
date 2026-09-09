@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -236,6 +238,24 @@ func TestSearchModsFilterMatchesRecordedSchema(t *testing.T) {
 			op, _ := entry[opMember].(string)
 			if op != "" && !allowed[op] {
 				t.Errorf("filter[%s][%d] %s %q is not a member of %s, the enum %s accepts", field, i, opMember, op, opEnum, elem)
+			}
+			// The other direction (re-review N2, the residual half of M4):
+			// reading the operator member by its RECORDED name catches a
+			// rename in the client only if the client's own key is looked
+			// at. It is not - a renamed member simply reads as absent, and
+			// the enum check above is skipped. So every key the client
+			// sends must be one the recorded input object defines. Every
+			// entry SearchMods builds carries op (client.go), so this has
+			// no false positives.
+			known := make(map[string]bool, len(valueObject.InputFields))
+			for _, f := range valueObject.InputFields {
+				known[f.Name] = true
+			}
+			for k := range entry {
+				if !known[k] {
+					t.Errorf("filter[%s][%d] sends %q, which %s does not define (fields: %v)",
+						field, i, k, elem, slices.Sorted(maps.Keys(known)))
+				}
 			}
 		}
 	}
