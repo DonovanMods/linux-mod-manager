@@ -450,7 +450,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`verify --fix` no longer writes the source's current bytes into a locked
   mod's pinned cache slot (#325).** The version repair already refused to
   move a locked record, but the missing-file repair then redownloaded
-  anyway — and every download lands in the *recorded* version's slot, so a
+  anyway — and every download lands in the _recorded_ version's slot, so a
   mod pinned at v1.0 could end up holding v2.0's files while the database
   still said v1.0. The file repairs now fetch a locked ref's file only when
   the source can identify it as the recorded version's own; otherwise they
@@ -491,7 +491,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frontend branches on the datum instead of the sentence.
 
 - **The install conflict block's per-mod groups print in a stable order
-  (#315).** The "From <mod> (<id>):" groups the CLI prints before the
+  (#315).** The `From <mod> (<id>):` groups the CLI prints before the
   overwrite prompt were built in a map and iterated, so the same conflict
   set listed its owners in a different order on every run. core now sorts a
   conflict list by owning mod then path (Ruling 4's determinism rule), so
