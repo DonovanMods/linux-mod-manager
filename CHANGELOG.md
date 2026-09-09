@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remaining rows still get their update, and the failures are named), and
   how a locked ref is refused. The two frontends previously disagreed about
   that last one; both now follow the #97 rule, reporting a locked mod as
-  *skipped*, with the engine's own refusal sentence, rather than as a
+  _skipped_, with the engine's own refusal sentence, rather than as a
   failure. `lmm update --all --json` emits the new
   `core.UpdateBatchResult`.
 

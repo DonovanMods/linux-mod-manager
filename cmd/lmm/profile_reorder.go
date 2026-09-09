@@ -19,7 +19,7 @@
 // result, because for file selection the order the user typed is
 // irrelevant. Here the typed order IS the entire payload: reusing it would
 // turn "1,3,2" back into "1,2,3" and make the command a silent no-op.
-// parseReorderSelection below is its own parser for exactly that reason.
+// reorderPositions below is its own parser for exactly that reason.
 package main
 
 import (
@@ -146,11 +146,6 @@ func printLoadOrderRows(w io.Writer, refs []domain.ModReference, names map[strin
 		}
 	}
 	return tw.Flush()
-}
-
-// promptReorder is promptReorderFrom over os.Stdin.
-func promptReorder(profileName string, refs []domain.ModReference, names map[string]string) ([]string, error) {
-	return promptReorderFrom(os.Stdin, profileName, refs, names)
 }
 
 // promptReorderFrom prints refs as a numbered load order and reads ONE

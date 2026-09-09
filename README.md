@@ -1219,7 +1219,7 @@ that run would have applied:
 | `lmm game add --query` (no `--pick`)          | `core.GameCatalogReport` — `{source_id, query, matches[]}`                                                                                                                                                                           |
 | `lmm auth login --key-from-env`/`--key-stdin` | `app.AuthStatusReport` — the same document `lmm auth status --json` prints                                                                                                                                                           |
 | `lmm auth logout [source]`                    | `app.AuthStatusReport` — the same document, re-read after the removal                                                                                                                                                                |
-| `lmm update --all`                            | `core.UpdateBatchResult` — `{game_id, profile, applied[], failed[], skipped[]}`; without `--all` a bulk run is a CHECK and emits `core.UpdateCheckReport`                                                                             |
+| `lmm update --all`                            | `core.UpdateBatchResult` — `{game_id, profile, applied[], failed[], skipped[]}`; without `--all` a bulk run is a CHECK and emits `core.UpdateCheckReport`                                                                            |
 | `lmm game set-default` / `clear-default`      | `core.SettingsResult` — `{default_game}`                                                                                                                                                                                             |
 
 **`--json` never prompts.** Every confirmation has a flag that decides it
@@ -1328,7 +1328,7 @@ under its issue number:
 | `lmm status`                                              | Show current status                                                                                                                                  |
 | `lmm update`                                              | Check for and apply auto-updates                                                                                                                     |
 | `lmm update <mod-id>`                                     | Update a specific mod                                                                                                                                |
-| `lmm update --all`                                        | Apply all available updates in one batch — locked mods are skipped and reported together, a failure on one mod does not stop the rest                 |
+| `lmm update --all`                                        | Apply all available updates in one batch — locked mods are skipped and reported together, a failure on one mod does not stop the rest                |
 | `lmm update --dry-run`                                    | Preview what would update                                                                                                                            |
 | `lmm update rollback <mod-id>`                            | Rollback to previous version                                                                                                                         |
 | `lmm verify`                                              | Verify cached mod files (see below)                                                                                                                  |
@@ -1358,7 +1358,7 @@ under its issue number:
 | `lmm auth login [source]`                                 | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live)                                                          |
 | `lmm auth login <source> --key-from-env`                  | Read the key from the source's own environment variable (`NEXUSMODS_API_KEY`, `CURSEFORGE_API_KEY`, or the derived `LMM_<ID>_API_KEY`) — no prompt   |
 | `lmm auth login <source> --key-stdin`                     | Read the key as exactly one line from stdin — no prompt                                                                                              |
-| `lmm auth logout [source]`                                | Remove stored credentials (under `--json`, prints the re-read `lmm auth status` document)                                                             |
+| `lmm auth logout [source]`                                | Remove stored credentials (under `--json`, prints the re-read `lmm auth status` document)                                                            |
 | `lmm auth status`                                         | Show authentication status                                                                                                                           |
 | `lmm profile list`                                        | List profiles                                                                                                                                        |
 | `lmm profile create <name>`                               | Create a profile                                                                                                                                     |
@@ -1371,7 +1371,7 @@ under its issue number:
 | `lmm profile import <file> --force`                       | Import and overwrite existing                                                                                                                        |
 | `lmm profile import <file> -y`                            | Answer "Download and install mods?" without a prompt; required under `--json`                                                                        |
 | `lmm profile reorder [mod-id ...]`                        | Show or set load order                                                                                                                               |
-| `lmm profile reorder -i`                                  | Pick the new load order from a numbered list — type positions ("1,3,2", ranges "2-5,1"), no mod IDs needed; Enter keeps it, `q` cancels               |
+| `lmm profile reorder -i`                                  | Pick the new load order from a numbered list — type positions ("1,3,2", ranges "2-5,1"), no mod IDs needed; Enter keeps it, `q` cancels              |
 | `lmm profile sync`                                        | Update profile to match installed mods                                                                                                               |
 | `lmm profile sync -y`                                     | Skip the confirmation prompt; required under `--json`                                                                                                |
 | `lmm profile apply`                                       | Install/enable mods to match profile                                                                                                                 |

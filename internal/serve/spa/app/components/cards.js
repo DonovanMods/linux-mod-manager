@@ -264,8 +264,7 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                           : html`<span
                               class="card__row-detail"
                               title=${notFixableReason(f)}
-                              >Not fixable:
-                              ${notFixableReason(f)}</span
+                              >Not fixable: ${notFixableReason(f)}</span
                             >`
                       }
                     </li>
