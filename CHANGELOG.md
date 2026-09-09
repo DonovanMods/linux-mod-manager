@@ -90,6 +90,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Realm of Lorkhan_), in which case the tie is refused and the entry stays
     untracked rather than being attached to whichever mod sorts first.
 
+- **`lmm search --limit N` fills against a source that reports its page
+  cap (#361).** #109's paging loop stops a source that could not honour the
+  page size it was asked for, because its next offset would skip the rows
+  the clamp left behind. That left the headline symptom in place: the CLI
+  asks for a page the size of `--limit`, CurseForge clamps 100 to 50 and
+  says so, and the search came back with the one page. Core now adopts the
+  size a source REPORTS on its first round as that source's own page size
+  for the rest of the search — by asking for exactly the size the source
+  says it will use, `page × requested` and `page × effective` become the
+  same number, so the next page starts where the last one ended whichever
+  of the two the source multiplies by internally. Guarded: only on a
+  source's first round, only a size smaller than the one requested, and
+  only when the rows returned match the size claimed. A source that clamps
+  without saying so (NexusMods reports neither a clamp nor a total) still
+  answers short and is still asked exactly once.
+
 - **CurseForge update checks are one request per 50 mods, not one per mod
   (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
   posts the whole set to CurseForge's batch `POST /v1/mods` endpoint in
@@ -112,13 +128,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hundreds of matches left. Core now advances each source's OWN page
   cursor, round by round, until the merged hit count reaches the limit,
   every source is exhausted, or a documented max-pages guard trips
-  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only while it
-  honours the page size it was asked for: an API that silently caps the
-  page (CurseForge at 50, NexusMods around 30) computes its next offset
-  from the size that was REQUESTED, so paging it would fetch rows 100–149
+  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only at a page
+  size it has shown it can honour: an API that caps the page (CurseForge at
+  50, NexusMods around 30) computes its next offset from the size that was
+  REQUESTED, so paging it at the requested size would fetch rows 100–149
   while rows 50–99 were never returned — a strided sample with holes, which
-  after ranking is indistinguishable from a complete answer. So `--limit
-100` may still come back with fewer than 100 results, and `has_more` says
+  after ranking is indistinguishable from a complete answer. A source that
+  reports the smaller size it actually served is therefore paged at THAT
+  size instead (#361), which fills the limit with contiguous rows;
+  a source that clamps silently is asked once, so `--limit 100` may still
+  come back with fewer than 100 results, and `has_more` says
   so, but every result really is among the first ones its source had. A
   source that reports no total and hands over its whole catalogue in one
   short page cannot be told apart from one that was clamped, so `has_more`

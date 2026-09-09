@@ -48,6 +48,10 @@ type pagingStubSource struct {
 	// SearchResult.PageSize comes back 0, leaving the short page as the
 	// only signal.
 	hidePageSize bool
+	// reportedPageSize, when > 0, overrides the PageSize the stub reports -
+	// a source claiming an effective page size it does not actually serve
+	// (#361's dishonest-clamp guard).
+	reportedPageSize int
 
 	mu    sync.Mutex
 	pages []int // every page index requested, in call order
@@ -115,6 +119,9 @@ func (p *pagingStubSource) Search(_ context.Context, q source.SearchQuery) (sour
 	}
 	end := min(start+size, len(p.catalog))
 	res := source.SearchResult{Mods: p.catalog[start:end], Page: q.Page, PageSize: size}
+	if p.reportedPageSize > 0 {
+		res.PageSize = p.reportedPageSize
+	}
 	if p.hidePageSize {
 		res.PageSize = 0
 	}
@@ -162,21 +169,27 @@ func TestSearchAllSourcesPagesUntilLimit(t *testing.T) {
 }
 
 // TestSearchAllSourcesNeverSkipsRowsOfAClampingSource is the Track C
-// review's finding 1, in core. Both built-in sources compute their upstream
-// offset from the page size that was REQUESTED while clamping the rows they
-// return, so advancing the cursor after a clamped page asks for rows past
-// the ones the clamp left behind - `lmm search --limit 100` against
-// CurseForge fetched rows 0-49 and then 100-149, handed the user 100 rows
-// presented as the top 100 matches, and rankAggregate reordered them until
-// the holes were invisible. A source is now only asked for another page
-// when it returned a FULL page at the size that was asked for.
+// review's finding 1, in core, plus the #361 rule layered on top of it.
+// Both built-in sources compute their upstream offset from the page size
+// that was REQUESTED while clamping the rows they return, so advancing the
+// cursor at the requested size asks for rows past the ones the clamp left
+// behind - `lmm search --limit 100` against CurseForge fetched rows 0-49
+// and then 100-149, handed the user 100 rows presented as the top 100
+// matches, and rankAggregate reordered them until the holes were invisible.
+//
+// The invariant either way is that the rows returned are CONTIGUOUS. A
+// source that names the size it served is paged at that size, where the two
+// offset arithmetics agree (#361); a source that clamps silently has no
+// safe size to page at and is asked exactly once.
 func TestSearchAllSourcesNeverSkipsRowsOfAClampingSource(t *testing.T) {
 	tests := []struct {
 		name         string
 		hidePageSize bool
+		wantPages    []int
+		wantRows     int
 	}{
-		{"a source that reports its clamp", false},
-		{"a source that clamps silently", true},
+		{"a source that reports its clamp", false, []int{0, 1, 2, 3}, 20},
+		{"a source that clamps silently", true, []int{0}, 5},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,18 +201,20 @@ func TestSearchAllSourcesNeverSkipsRowsOfAClampingSource(t *testing.T) {
 			res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "mod", "", nil, 0, 20, 20)
 			require.NoError(t, err)
 
-			assert.Equal(t, []int{0}, clamping.requestedPages(),
-				"a source that could not honour the requested page size must not be paged on it")
+			assert.Equal(t, tc.wantPages, clamping.requestedPages(),
+				"a source is only paged at a size it has shown it can honour")
 
 			ids := make([]string, 0, len(res.Mods))
 			for _, m := range res.Mods {
 				ids = append(ids, m.ID)
 			}
 			sort.Strings(ids)
-			want := []string{"clamping-01", "clamping-02", "clamping-03", "clamping-04", "clamping-05"}
+			want := make([]string, 0, tc.wantRows)
+			for i := 1; i <= tc.wantRows; i++ {
+				want = append(want, fmt.Sprintf("clamping-%02d", i))
+			}
 			assert.Equal(t, want, ids, "the rows returned must be contiguous, with no strided holes")
-			assert.False(t, res.Exhausted,
-				"stopping because we cannot page safely is not the same as having everything")
+			assert.False(t, res.Exhausted, "40 in the catalogue: there is always more left here")
 		})
 	}
 }
@@ -314,6 +329,53 @@ func TestSearchLimitIsFilledByPaging(t *testing.T) {
 	assert.True(t, report.HasMore)
 }
 
+// TestSearchAllSourcesAdoptsAReportedClamp is #361: a source that clamps
+// AND says so is paged at the size it reported rather than being stopped.
+// CurseForge answers a requested 100 with 50 rows and PageSize: 50, so
+// asking it for page 1 of 100 would start at row 100; asking it for page 1
+// of FIFTY starts at row 50, which is exactly where page 0 ended - whether
+// the source multiplies by the requested size or by its own effective one,
+// the two are now the same number. `lmm search --limit 100` therefore
+// fills.
+func TestSearchAllSourcesAdoptsAReportedClamp(t *testing.T) {
+	clamping := newPagingStub("clamping", 200, 50)
+	clamping.offsetFromRequestedSize = true
+	svc, game := newAggregateTestService(t, map[string]string{"clamping": ""}, clamping)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "mod", "", nil, 0, 100, 100)
+	require.NoError(t, err)
+	assert.Equal(t, []int{0, 1}, clamping.requestedPages(),
+		"a source that reports its clamp is paged again at the size it reported")
+	require.Len(t, res.Mods, 100, "a limit of 100 is filled by two 50-row pages")
+
+	got := make(map[string]bool, len(res.Mods))
+	for _, m := range res.Mods {
+		got[m.ID] = true
+	}
+	for i := 1; i <= 100; i++ {
+		assert.True(t, got[fmt.Sprintf("clamping-%02d", i)],
+			"the two pages must be contiguous rows 1-100, with no strided holes")
+	}
+}
+
+// TestSearchAllSourcesRefusesToAdoptADishonestClamp keeps the guards on
+// #361's rule. A reported page size is only adopted when it is SMALLER than
+// the one requested and equal to the rows actually returned; a source that
+// claims a page size it does not serve would otherwise re-introduce the
+// stride finding 1 removed.
+func TestSearchAllSourcesRefusesToAdoptADishonestClamp(t *testing.T) {
+	lying := newPagingStub("lying", 200, 30)
+	lying.offsetFromRequestedSize = true
+	lying.reportedPageSize = 50 // says 50, serves 30
+	svc, game := newAggregateTestService(t, map[string]string{"lying": ""}, lying)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "mod", "", nil, 0, 100, 100)
+	require.NoError(t, err)
+	assert.Equal(t, []int{0}, lying.requestedPages(),
+		"a page size the source does not actually serve must not be adopted")
+	assert.Len(t, res.Mods, 30)
+}
+
 // TestSearchPagingHasMoreStaysOptimisticWithoutATotal pins the Track C
 // re-review's N4 - a deliberate over-claim, so it does not drift by
 // accident. A source that reports no TotalCount and hands over its ENTIRE
@@ -354,13 +416,17 @@ func TestSearchPagingHasMoreStaysOptimisticWithoutATotal(t *testing.T) {
 // TestSearchLimitStopsShortOfAClampingSource pins the OTHER half of the
 // bargain, and the shape `lmm search --limit N` itself has (the CLI asks
 // for a page size equal to the limit, cmd/lmm/search.go's searchPageSize):
-// a source that cannot answer a page that large is asked once and no more,
-// so the answer is short rather than strided. HasMore says so, and it is
-// the honest report - the rows that came back really are the source's first
-// N (Track C review, finding 1).
+// a source that cannot answer a page that large AND does not say what it
+// served - NexusMods, which reports neither a clamp nor a total - is asked
+// once and no more, so the answer is short rather than strided. HasMore
+// says so, and it is the honest report: the rows that came back really are
+// the source's first N (Track C review, finding 1). A source that NAMES its
+// clamp is paged at that size instead (#361,
+// TestSearchAllSourcesAdoptsAReportedClamp).
 func TestSearchLimitStopsShortOfAClampingSource(t *testing.T) {
 	capped := newPagingStub("capped", 12, 5)
 	capped.offsetFromRequestedSize = true
+	capped.hidePageSize = true
 	svc, game := newAggregateTestService(t, map[string]string{"capped": ""}, capped)
 
 	report, err := svc.Search(context.Background(), game, "default", "mod",
