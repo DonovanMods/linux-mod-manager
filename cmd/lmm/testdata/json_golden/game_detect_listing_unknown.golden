@@ -1,0 +1,25 @@
+{
+  "games": [
+    {
+      "steam_app_id": "1716740",
+      "slug": "starrupture",
+      "name": "Star Rupture",
+      "install_path": "/games/starrupture",
+      "mod_path": "/games/starrupture/Mods",
+      "nexus_id": "starrupture",
+      "known": true,
+      "index": 1
+    },
+    {
+      "steam_app_id": "526870",
+      "slug": "satisfactory",
+      "name": "Satisfactory",
+      "install_path": "/games/satisfactory",
+      "mod_path": "",
+      "index": 0
+    }
+  ],
+  "warnings": [
+    "steam library at /nowhere is unreadable"
+  ]
+}

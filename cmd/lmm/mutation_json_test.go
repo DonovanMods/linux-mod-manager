@@ -346,7 +346,7 @@ func TestJSONGolden_GameDetect(t *testing.T) {
 
 		out := runJSONCommand(t, func() error {
 			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc,
-				[]steam.DetectedGame{{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"}},
+				[]steam.DetectedGame{{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true}},
 				[]string{"steam library at /nowhere is unreadable"})
 		})
 		assertJSONCLIGolden(t, "game_detect_all", out)
@@ -372,7 +372,7 @@ func TestJSONGolden_GameDetect(t *testing.T) {
 
 		stdout, stderr, err := captureStdoutStderrErr(t, func() error {
 			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc,
-				[]steam.DetectedGame{{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture"}}, nil)
+				[]steam.DetectedGame{{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", Known: true}}, nil)
 		})
 
 		require.ErrorIs(t, err, core.ErrConfirmationRequired)
@@ -383,6 +383,33 @@ func TestJSONGolden_GameDetect(t *testing.T) {
 		games, loadErr := config.LoadGames(configDir)
 		require.NoError(t, loadErr)
 		assert.Empty(t, games, "nothing may be saved when the prompt is refused")
+	})
+	// #206: --include-unknown turns that same unanswerable case into a pure
+	// query - the LISTING document, the CLI's counterpart to GET
+	// /api/v1/games/detect?all=1. Still one document on stdout, still
+	// nothing saved.
+	t.Run("include_unknown_listing", func(t *testing.T) {
+		configDir = t.TempDir()
+		svc := newGameDetectTestService(t)
+		oldAll, oldSelect, oldUnknown := gameDetectAll, gameDetectSelect, gameDetectIncludeUnknown
+		gameDetectAll, gameDetectSelect, gameDetectIncludeUnknown = false, "", true
+		t.Cleanup(func() { gameDetectAll, gameDetectSelect, gameDetectIncludeUnknown = oldAll, oldSelect, oldUnknown })
+		cmd := &cobra.Command{}
+		cmd.SetOut(&strings.Builder{})
+
+		out := runJSONCommand(t, func() error {
+			return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc,
+				[]steam.DetectedGame{
+					{SteamAppID: "1716740", Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", ModPath: "/games/starrupture/Mods", NexusID: "starrupture", Known: true},
+					{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
+				},
+				[]string{"steam library at /nowhere is unreadable"})
+		})
+		assertJSONCLIGolden(t, "game_detect_listing_unknown", out)
+
+		games, loadErr := config.LoadGames(configDir)
+		require.NoError(t, loadErr)
+		assert.Empty(t, games, "a listing query saves nothing")
 	})
 }
 
@@ -406,8 +433,8 @@ func TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames(t *te
 	cmd.SetOut(&buf)
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
-		{Slug: "no-source", Name: "No Source Game", InstallPath: "/games/no-source"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{Slug: "no-source", Name: "No Source Game", InstallPath: "/games/no-source", Known: true},
 	}
 
 	var callErr error

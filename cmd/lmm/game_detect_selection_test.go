@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +33,8 @@ func newGameDetectTestService(t *testing.T) *core.Service {
 
 func detectedGamesFixture() []steam.DetectedGame {
 	return []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
-		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true},
 		{Slug: "icarus", Name: "Icarus", InstallPath: "/games/icarus", Sources: map[string]string{"icarus": "icarus"}},
 	}
 }
@@ -112,8 +113,8 @@ func TestDoGameDetect_MarksConfiguredGamesAndExcludesFromAll(t *testing.T) {
 	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition"}))
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
-		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true},
 	}
 
 	svc := newGameDetectTestService(t)
@@ -144,7 +145,7 @@ func TestDoGameDetect_ExplicitSelectionRepairsConfiguredGame(t *testing.T) {
 	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Stale Name"}))
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
 	}
 
 	svc := newGameDetectTestService(t)
@@ -171,7 +172,7 @@ func TestDoGameDetect_AllExcludedPrintsFriendlyMessage(t *testing.T) {
 	require.NoError(t, config.SaveGame(configDir, &domain.Game{ID: "skyrim-se", Name: "Skyrim Special Edition"}))
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
 	}
 
 	svc := newGameDetectTestService(t)
@@ -212,8 +213,8 @@ func TestDoGameDetect_LaterConversionFailureLeavesEarlierGamesPersisted(t *testi
 	configDir = t.TempDir()
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
-		{Slug: "bad-game", Name: "Bad Game", InstallPath: "/games/bad", DeployMode: "bogus"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{Slug: "bad-game", Name: "Bad Game", InstallPath: "/games/bad", DeployMode: "bogus", Known: true},
 	}
 
 	svc := newGameDetectTestService(t)
@@ -250,7 +251,7 @@ func TestDoGameDetect_JSONOutputReturnsConfirmationRequired(t *testing.T) {
 	withJSONOutput(t)
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
 	}
 	svc := newGameDetectTestService(t)
 	var buf strings.Builder
@@ -278,8 +279,8 @@ func TestDoGameDetect_AllFlagSelectsSameSetAsInteractiveAll(t *testing.T) {
 	t.Cleanup(func() { gameDetectAll = oldAll })
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
-		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true},
 	}
 	svc := newGameDetectTestService(t)
 	var buf strings.Builder
@@ -312,8 +313,8 @@ func TestDoGameDetect_AllFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T)
 	t.Cleanup(func() { gameDetectAll = oldAll })
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
-		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true},
 	}
 	svc := newGameDetectTestService(t)
 	var buf strings.Builder
@@ -352,7 +353,7 @@ func TestDoGameDetect_SelectFlagSelectsExplicitIndices(t *testing.T) {
 	t.Cleanup(func() { gameDetectSelect = oldSelect })
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
 	}
 	svc := newGameDetectTestService(t)
 	var buf strings.Builder
@@ -386,7 +387,7 @@ func TestDoGameDetect_SelectFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing
 	t.Cleanup(func() { gameDetectSelect = oldSelect })
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
 	}
 	svc := newGameDetectTestService(t)
 	var buf strings.Builder
@@ -448,7 +449,7 @@ func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.
 	t.Cleanup(func() { _ = os.Chmod(gamesPath, 0644) })
 
 	games := []steam.DetectedGame{
-		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture"},
+		{Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true},
 	}
 	var buf strings.Builder
 	cmd := &cobra.Command{}
@@ -458,4 +459,93 @@ func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.
 	err := doGameDetect(context.Background(), cmd, reader, svc, games, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loading games:")
+}
+
+// --- #206: --include-unknown ---
+
+// TestDoGameDetect_IncludeUnknown_ListsUnknownSection pins the console
+// half: unknown candidates get their own section, keyed by Steam app id
+// (the value `game add --from-detected` takes), and they are NOT numbered
+// into the selectable list - "all" still adds only the known ones.
+func TestDoGameDetect_IncludeUnknown_ListsUnknownSection(t *testing.T) {
+	configDir = t.TempDir()
+
+	games := []steam.DetectedGame{
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
+		{SteamAppID: "1716740", Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true},
+	}
+
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := doGameDetect(context.Background(), cmd, bufio.NewReader(strings.NewReader("all\n")), svc, games, nil)
+	require.NoError(t, err)
+
+	out := buf.String()
+	assert.Contains(t, out, "Found 1 moddable game(s):")
+	assert.Contains(t, out, "  1. Star Rupture (starrupture)")
+	assert.Contains(t, out, "Installed but not in the known-games list")
+	assert.Contains(t, out, "game add --from-detected")
+	assert.Contains(t, lineContaining(out, "Satisfactory"), "526870")
+	assert.Contains(t, out, "Added: Star Rupture (starrupture)")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.NotContains(t, saved, "satisfactory", "an unknown candidate is listed, never auto-added")
+}
+
+// TestDoGameDetect_OnlyUnknownFound_NoPrompt: with nothing selectable there
+// is no question to ask, so the flow prints the section and stops rather
+// than offering a prompt whose every answer is invalid.
+func TestDoGameDetect_OnlyUnknownFound_NoPrompt(t *testing.T) {
+	configDir = t.TempDir()
+
+	games := []steam.DetectedGame{
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
+	}
+
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	// poisonReader fails the test if the flow reads stdin at all.
+	err := doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "Installed but not in the known-games list")
+	assert.NotContains(t, buf.String(), "Add games to config?")
+}
+
+// TestDoGameDetect_ConsoleNumberingMatchesListingIndex is the agreement
+// that makes the two frontends interchangeable: the number the CLI prints
+// for a game is the Index core.GameDetectListing assigns it, whether or
+// not unknown rows are in the scan.
+func TestDoGameDetect_ConsoleNumberingMatchesListingIndex(t *testing.T) {
+	configDir = t.TempDir()
+
+	games := []steam.DetectedGame{
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
+		{SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{SteamAppID: "1716740", Slug: "starrupture", Name: "Star Rupture", InstallPath: "/games/starrupture", NexusID: "starrupture", Known: true},
+	}
+
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := doGameDetect(context.Background(), cmd, bufio.NewReader(strings.NewReader("none\n")), svc, games, nil)
+	require.NoError(t, err)
+
+	listing, err := svc.GameDetectListing(context.Background(), games, nil, core.GameDetectListingOptions{IncludeUnknown: true})
+	require.NoError(t, err)
+	for _, row := range listing.Games {
+		if !row.Known {
+			assert.Equal(t, 0, row.Index)
+			continue
+		}
+		assert.Contains(t, buf.String(), fmt.Sprintf("  %d. %s (%s)", row.Index, row.Name, row.Slug))
+	}
 }

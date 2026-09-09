@@ -35,7 +35,7 @@ func TestDoGameDetect_RepairWipesExistingDefaultProfileMods(t *testing.T) {
 	}))
 
 	games := []steam.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
 	}
 
 	svc := newGameDetectTestService(t)
