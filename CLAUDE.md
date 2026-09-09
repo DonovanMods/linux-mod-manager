@@ -118,7 +118,7 @@ internal/
     ├── adopt.go           # adopt flow: ScanLocal/PlanAdopt/ApplyAdopt (`lmm import` scan mode)
     ├── import_archive.go  # archive-import flow: PlanImportArchive/ApplyImportArchive (`lmm import <archive>`)
     ├── archive_listing.go # archive listing + the member normalisation the plan and the ingest share
-    ├── game_detect.go     # game-detect flow: GameFromDetected/ApplyGameDetect (`lmm game detect`)
+    ├── game_detect.go     # game-detect flow: GameFromDetected/GameSpecFromDetected/ApplyGameDetect (`lmm game detect`, `game add --from-detected`, #206)
     ├── game_edit.go       # UpdateGameSources: the source<->game mapping (`lmm game edit`, PUT /api/v1/games/{id}, #326)
     ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
     ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)
