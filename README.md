@@ -812,7 +812,10 @@ Pak conversion appears only where it applies. Filter (all/enabled/updatable/
 unhealthy) and sort (load order/name/recently installed) narrow it, and
 selecting rows raises a batch bar (Enable / Disable / Uninstall / Update
 selected). More columns appear as the display widens: author and install
-date at 1440px, source and link method at 1920px.
+date at 1440px, source and link method at 1920px. Its toolbar also carries
+**Add mods ▾**: Search sources… (focuses the omnibar), Import an archive…
+and Adopt untracked mods… — the same three flows, and the same component,
+the empty-library state offers before you have installed a first mod.
 
 Clicking a row opens the **slide-over**: author, installed → available
 version, an editable lock, update policy and (where it applies) pak

@@ -289,6 +289,92 @@ func TestE2E_EmptyLibraryShowsInlineHint(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// openAddModsMenu opens the "Add mods ▾" dropdown wherever it currently
+// renders (the library toolbar or the empty-library state - issue 339 puts
+// the SAME component in both) and clicks the menu item whose text contains
+// label.
+func openAddModsMenu(label string) chromedp.Action {
+	return chromedp.Tasks{
+		chromedp.Click(`[data-action="add-mods"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.add-mods-menu__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(`
+			Array.from(document.querySelectorAll(".add-mods-menu__menu button"))
+				.find((b) => b.textContent.includes(%q))?.click();
+		`, label), nil),
+	}
+}
+
+// TestE2E_AddModsMenu_SearchSourcesFocusesTheOmnibar is issue 339 (owner
+// Demo 3): once a library has mods, Archive import and Adopt lived only
+// under ⚙ Setup, and a populated library offered no "add mods" affordance
+// at all - a user with a downloaded archive had to already know to go
+// there. "Add mods ▾"'s own "Search sources…" lands on the design's
+// EXISTING flow (the omnibar's own fan-out) rather than a fourth one, so
+// its whole job is handing the keyboard to that field.
+func TestE2E_AddModsMenu_SearchSourcesFocusesTheOmnibar(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		openAddModsMenu("Search sources"),
+	)
+
+	var focusedIsOmnibar bool
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.activeElement === document.querySelector(".omnibar")`, &focusedIsOmnibar,
+	))
+	assert.True(t, focusedIsOmnibar, `"Search sources…" must focus the omnibar`)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AddModsMenu_ImportAnArchiveOpensSetup covers the second entry,
+// against a POPULATED library (library.js's own toolbar placement).
+func TestE2E_AddModsMenu_ImportAnArchiveOpensSetup(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		openAddModsMenu("Import an archive"),
+		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+		chromedp.Poll(
+			`document.querySelector("#setup-panel h2")?.textContent.trim() === "Archive import"`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+	)
+
+	var heading string
+	f.runInBrowser(t, textContent(`#setup-panel h2`, &heading))
+	assert.Equal(t, "Archive import", heading)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AddModsMenu_AdoptOpensSetup covers the third entry, against the
+// EMPTY library state - issue 339's own "consider the same entries in the
+// empty-library state so both states share one component", proven here by
+// using the identical [data-action="add-mods"]/.add-mods-menu__menu
+// selectors the populated-library scenarios above use.
+func TestE2E_AddModsMenu_AdoptOpensSetup(t *testing.T) {
+	f := newE2EFixture(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library .empty-state`, chromedp.ByQuery),
+		openAddModsMenu("Adopt untracked mods"),
+		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+		chromedp.Poll(
+			`document.querySelector("#setup-panel h2")?.textContent.trim() === "Adopt"`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+	)
+
+	var heading string
+	f.runInBrowser(t, textContent(`#setup-panel h2`, &heading))
+	assert.Equal(t, "Adopt", heading)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_RowNameOpensSlideOverByKeyboard guards Minor 6: the row-open
 // affordance was a bare `<td onClick>` - not focusable, not activatable by
 // keyboard - making the primary navigation on the primary screen

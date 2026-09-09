@@ -12,10 +12,11 @@
 // rather than computing it.
 
 import { html, useEffect, useState } from "../render.js";
-import { navigate, contextPath, setupPath } from "../router.js";
+import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
 import { formatDate, FILTER_NAMES, SORT_NAMES } from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
+import { AddModsMenu } from "./addmodsmenu.js";
 
 const FILTER_LABELS = {
   all: "All",
@@ -366,11 +367,6 @@ export function Library({
   }
 
   if ((mods.mods ?? []).length === 0) {
-    const { game, profile } = state.route;
-    const goTo = (to) => (e) => {
-      e.preventDefault();
-      navigate(to);
-    };
     return html`
       <section class="library">
         <h2 class="section-header">Library</h2>
@@ -380,23 +376,9 @@ export function Library({
             Search for a mod once your sources are configured to add your first
             one, or bring in what you already have:
           </p>
-          <p class="empty-state__actions">
-            <a
-              href=${contextPath(game, profile) + "/search"}
-              onClick=${goTo(contextPath(game, profile) + "/search")}
-              >Search</a
-            >
-            <a
-              href=${setupPath(game, profile, "archive")}
-              onClick=${goTo(setupPath(game, profile, "archive"))}
-              >Import an archive</a
-            >
-            <a
-              href=${setupPath(game, profile, "adopt")}
-              onClick=${goTo(setupPath(game, profile, "adopt"))}
-              >Adopt untracked mods</a
-            >
-          </p>
+          <div class="empty-state__actions">
+            <${AddModsMenu} route=${state.route} actions=${actions} />
+          </div>
         </div>
       </section>
     `;
@@ -439,6 +421,7 @@ export function Library({
             ${SORT_NAMES.map((s) => html`<option value=${s}>${SORT_LABELS[s]}</option>`)}
           </select>
         </label>
+        <${AddModsMenu} route=${state.route} actions=${actions} />
         <button
           type="button"
           class="button button--small"
