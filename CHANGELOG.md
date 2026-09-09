@@ -39,11 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mod sources a game maps could only ever be set when the game was created,
   so a custom source added later (`lmm source add`, or the web UI's Setup →
   Custom sources editor) could not be attached to an existing game without
-  hand-editing `games.yaml`. `lmm game edit <game-id> --source
-<id>=<identifier>` adds or replaces one mapping and `--remove-source <id>`
-  drops one; both are repeatable, removals apply first (so one run can
-  re-point an id), and the identifier may be empty for a source that needs
-  none. `--json` prints the same `core.GameListEntry` row `lmm game list`
+  hand-editing `games.yaml`. `lmm game edit <game-id>` takes a repeatable
+  `--source <id>=<identifier>`, which adds or replaces one mapping, and a
+  repeatable `--remove-source <id>`, which drops one; removals apply first
+  (so one run can re-point an id), and the identifier may be empty for a
+  source that needs none. `--json` prints the same `core.GameListEntry` row `lmm game list`
   does. The web twin is `PUT /api/v1/games/{id}` — a new capability on
   **both** sides, which is why the web UI's first-run flow used to dead-end
   for a directory-source user.
