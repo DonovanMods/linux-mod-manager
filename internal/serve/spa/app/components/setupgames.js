@@ -245,6 +245,7 @@ export function SetupGames({ actions, game, profile }) {
           game=${game}
           profile=${profile}
           detected=${detected}
+          onClearDetected=${() => setDetected(null)}
         />`
       }
     </div>

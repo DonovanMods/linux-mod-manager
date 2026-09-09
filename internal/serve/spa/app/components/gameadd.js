@@ -326,6 +326,9 @@ function exactCatalogMatch(matches, name) {
  * Choosing a source while a detected row is active auto-runs the catalog
  * search by the row's own name (mirroring the CLI's autoPickName) and
  * pre-selects a single exact-name match without submitting anything.
+ * Clearing calls `onClearDetected` so the caller drops its own reference to
+ * the row too - otherwise re-clicking the same "Add with details…" hands
+ * back an identical object and the effect above never re-fires (#206).
  *
  * game/profile are optional: they are set when this form renders inside an
  * already-established Setup page (setupgames.js), and let a 401 from the
@@ -334,7 +337,14 @@ function exactCatalogMatch(matches, name) {
  * to build that link from - so the same 401 there falls back to naming the
  * section in plain text.
  */
-export function GameAddForm({ onAdded, game, profile, refreshKey, detected }) {
+export function GameAddForm({
+  onAdded,
+  game,
+  profile,
+  refreshKey,
+  detected,
+  onClearDetected,
+}) {
   const [sources, setSources] = useState(null);
   const [spec, setSpec] = useState(emptySpec);
   const [detectedRow, setDetectedRow] = useState(null);
@@ -361,6 +371,10 @@ export function GameAddForm({ onAdded, game, profile, refreshKey, detected }) {
   // A `detected` prop applies once per row it is handed - a fresh object
   // from a fresh "Add with details…" click, since this form's own picker
   // (below) applies a row directly without going through the prop at all.
+  // The effect keys on `detected` by object IDENTITY, so clearDetected()
+  // below must also clear the parent's copy (onClearDetected) - otherwise
+  // re-clicking the same row hands back the same reference, the effect
+  // does not re-run, and the click silently does nothing (#206 fix wave).
   useEffect(() => {
     if (detected) applyDetected(detected);
     // eslint-disable-next-line
@@ -384,6 +398,7 @@ export function GameAddForm({ onAdded, game, profile, refreshKey, detected }) {
     setSpec(emptySpec());
     setStaleDetected(false);
     setFormError(null);
+    onClearDetected?.();
   }
 
   async function openPicker() {

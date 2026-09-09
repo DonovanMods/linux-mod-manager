@@ -112,6 +112,7 @@ function FirstRunSetup() {
           onAdded=${onAdded}
           refreshKey=${sourcesVersion}
           detected=${detected}
+          onClearDetected=${() => setDetected(null)}
         />
         ${
           /* C-4, epic live review: the dead end a custom-source user hit.

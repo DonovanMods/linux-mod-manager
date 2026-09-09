@@ -401,6 +401,80 @@ func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills pins
+// Important 1 of the unit9 review: GameAddForm's `detected` prop applied
+// through useEffect(…, [detected]) by object IDENTITY, so clearDetected()
+// resetting only the form's own local state (never the parent's `detected`)
+// left re-clicking the SAME row's "Add with details…" a silently dead
+// control - no prefill, no message, no console error. The fix threads an
+// onClearDetected callback up to the parent.
+func TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	var nameValue string
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Equal(t, fixture.UnknownName, nameValue, "first click must prefill")
+
+	f.runInBrowser(t, chromedp.Click(`[data-action="clear-detected"]`, chromedp.ByQuery))
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Empty(t, nameValue, "Clear must reset the form")
+
+	// Re-clicking the SAME row must prefill again - the defect left this a
+	// no-op with nothing to observe going wrong, so this is checked directly
+	// rather than inferred from an absence.
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	assert.Equal(t, fixture.UnknownName, nameValue, "re-clicking the same row must re-prefill")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupGames_ClearThenReclickSameRowReprefills is the previous
+// test's sibling on the Setup -> Games surface (setupgames.js), which wires
+// the same GameDetectSection/GameAddForm pairing independently of the
+// first-run chooser - Important 1 had to be pinned on both surfaces since
+// each caller owns its own `detected` state.
+func TestE2E_SetupGames_ClearThenReclickSameRowReprefills(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("games")),
+		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll('.setup-section__actions button')).find(b => b.textContent.includes('Detect games')).click()`, nil),
+		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	var nameValue string
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Equal(t, fixture.UnknownName, nameValue, "first click must prefill")
+
+	f.runInBrowser(t, chromedp.Click(`[data-action="clear-detected"]`, chromedp.ByQuery))
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Empty(t, nameValue, "Clear must reset the form")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	assert.Equal(t, fixture.UnknownName, nameValue, "re-clicking the same row must re-prefill")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_ManualAdd_PickInstalledGamePrefillsForm drives the manual add
 // form's OWN "Pick an installed game…" control (independent of
 // GameDetectSection's "Add with details…") - opening it, picking a row,
