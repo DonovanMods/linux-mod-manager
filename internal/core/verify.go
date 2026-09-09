@@ -338,6 +338,17 @@ func (r *verifyRun) resolveLast(status, note string) {
 	}
 }
 
+// lockedSkipDetail renders a repair-refusal error as --fix's sub-line: the
+// refusal sentence behind a "--fix skipped: " lead-in, with the ErrModLocked
+// sentinel trimmed back off. All three file repairs (missing, no_checksum,
+// needs_reingest) refuse through the SAME gate (verify_repair.go's #325
+// check), so they render it the same way rather than three times over -
+// leaving the sentinel on would read "mod is locked: <Name> is locked at
+// v1.0 ...", the stutter lockedRefUnlockOnlyMessage exists to avoid.
+func lockedSkipDetail(err error) string {
+	return "--fix skipped: " + strings.TrimPrefix(err.Error(), ErrModLocked.Error()+": ")
+}
+
 // redownloadRepairs reports whether --fix's redownload repair applies to
 // mod - the ONE gate the missing / no_checksum / needs_reingest repairs
 // share (`r.opts.Fix && mod.SourceID != domain.SourceLocal` at each site):
@@ -701,8 +712,21 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			// far).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID, ref); rerr != nil {
-					r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+					if errors.Is(rerr, ErrModLocked) {
+						// #325 (review I2): the SAME distinction the
+						// missing branch below makes. The lock gate
+						// declined before the download, so nothing failed
+						// and a retry declines identically forever -
+						// calling it a failure tells the user to retry,
+						// and rendering the raw error stutters the
+						// ErrModLocked sentinel against the sentence's own
+						// "<Name> is locked at ..." head.
+						r.resolveLast("needs_reingest", "locked")
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(rerr)})
+					} else {
+						r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+					}
 				} else {
 					// Same convention as MISSING/NO CHECKSUM's own --fix
 					// success path below, and stale_deployment's
@@ -735,7 +759,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 					// refusal already uses; the sentence is the text
 					// surface (VerifyEvRepairDetail).
 					r.resolveLast("missing", "locked")
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "--fix skipped: " + strings.TrimPrefix(err.Error(), ErrModLocked.Error()+": ")})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
 				case err != nil:
 					r.resolveLast("missing", err.Error())
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
@@ -766,6 +790,15 @@ func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) erro
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
 				switch {
+				case errors.Is(err, ErrModLocked):
+					// #325 (review I2): refused, not failed - see the
+					// needs_reingest arm above. The warning stands (the
+					// checksum is still unpopulated) with the short,
+					// machine-checkable note; the sentence is the text
+					// surface.
+					r.result.Warnings++
+					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "locked"}, VerifyEvent{})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
 				case err != nil:
 					r.result.Warnings++
 					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: err.Error()}, VerifyEvent{})

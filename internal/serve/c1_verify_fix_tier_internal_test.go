@@ -289,3 +289,37 @@ func TestFlowHealthFix_LockedFinding_StaysOutstanding(t *testing.T) {
 	require.NotNil(t, refused, "the refusal must name the lock as its reason, not be silently dropped")
 	assert.NotEqual(t, "fixed_version_mismatch", refused.Status, "a refused repair is not a repair")
 }
+
+// TestFlowHealthFix_LockedNoChecksumFinding_ReportsARefusalNotAFailure is
+// #325's review-I2 half at the serve entry point: the Health card's repair
+// runs the same core tier, so the no_checksum repair's locked refusal must
+// arrive on the job's own result document as a REFUSAL - the short "locked"
+// note - and never as a failure sentence carrying the ErrModLocked sentinel.
+// The fixture is newVersionMismatchFixtureServer's mod with the RECORDED
+// version's cache entry present but its checksum row still empty, so the row
+// lands in perFileWalk's no_checksum repair instead of its missing one.
+func TestFlowHealthFix_LockedNoChecksumFinding_ReportsARefusalNotAFailure(t *testing.T) {
+	s, svc, game := newVersionMismatchFixtureServer(t)
+	ctx := t.Context()
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, fixtureSourceID, versionRepairModID, versionRepairRecorded,
+		versionRepairFileID, []byte("recorded bytes")))
+	_, err := svc.SetModLock(ctx, fixtureSourceID, versionRepairModID, game.ID, "default", "")
+	require.NoError(t, err)
+
+	j := runFlow(t, s, game, "verify_fix", "", "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	report, ok := j.status().Result.(*core.VerifyReport)
+	require.True(t, ok, "the stored result must be the core document")
+
+	var noChecksum *core.VerifyFinding
+	for i := range report.Result.Findings {
+		if report.Result.Findings[i].Status == "no_checksum" {
+			noChecksum = &report.Result.Findings[i]
+		}
+	}
+	require.NotNil(t, noChecksum, "expected a no_checksum row: %+v", report.Result.Findings)
+	assert.Equal(t, "locked", noChecksum.Note,
+		"the web UI reads this note; a raw error string here says the repair FAILED and invites a retry that will decline identically")
+	assert.NotContains(t, noChecksum.Note, "mod is locked", "the ErrModLocked sentinel must never reach the wire")
+}

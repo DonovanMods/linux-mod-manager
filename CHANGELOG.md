@@ -471,7 +471,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still said v1.0. The file repairs now fetch a locked ref's file only when
   the source can identify it as the recorded version's own; otherwise they
   refuse, leave the slot untouched, and report the finding as still
-  outstanding with the "unlock it first" remedy. Unlocked mods are
+  outstanding with the "unlock it first" remedy. All three file repairs
+  (missing file, missing checksum, pak re-ingest) report that as a
+  `--fix skipped:` refusal rather than as a repair that _failed_ — nothing
+  failed, and a retry would decline identically — and `--json`'s `note` is
+  the short, machine-checkable `locked` for each. Unlocked mods are
   unchanged. `lmm serve`'s Health repair runs the same core tier and
   inherits this.
 
