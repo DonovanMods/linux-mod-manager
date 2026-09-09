@@ -379,7 +379,7 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return nil
 	}
 	games = known
-	line, err := gameDetectAnswer(cmd, reader)
+	line, err := gameDetectAnswer(cmd, reader, len(games))
 	if err != nil {
 		return err
 	}
@@ -437,8 +437,13 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 // prompt and reads an answer via readPromptLineFrom, the CLI's one choke
 // point for the non-interactive rule (v2 Phase 3 Ruling 2) - under --json
 // with neither flag, that call returns core.ErrConfirmationRequired without
-// ever touching reader.
-func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader) (string, error) {
+// ever touching reader. count is the number of known (selectable) rows the
+// listing above just printed - the prompt's own range must match it (#206
+// review Minor 6: a fixed "[1,2/all/none]" advertised an index that did not
+// exist whenever the count was not exactly 2, most confusingly with
+// --include-unknown's unnumbered rows sitting right above it), using the
+// same "1-N" shape gameDetectSelectionIndices' own error already does.
+func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader, count int) (string, error) {
 	switch {
 	case gameDetectAll:
 		return "all", nil
@@ -446,7 +451,7 @@ func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader) (string, error) 
 		return gameDetectSelect, nil
 	default:
 		if !jsonOutput {
-			cmd.Print("Add games to config? [1,2/all/none]: ")
+			cmd.Printf("Add games to config? [1-%d/all/none]: ", count)
 		}
 		return readPromptLineFrom(reader)
 	}

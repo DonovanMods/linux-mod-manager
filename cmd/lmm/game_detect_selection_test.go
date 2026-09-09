@@ -556,3 +556,29 @@ func TestDoGameDetect_ConsoleNumberingMatchesListingIndex(t *testing.T) {
 		assert.Contains(t, buf.String(), fmt.Sprintf("  %d. %s (%s)", row.Index, row.Name, row.Slug))
 	}
 }
+
+// TestDoGameDetect_PromptRangeMatchesKnownCount pins Minor 6 of the unit9
+// review: the prompt's range must track the number of SELECTABLE (known)
+// rows, not a fixed "[1,2/all/none]" that advertised an index that did not
+// exist whenever the count was not exactly 2 - most confusingly right below
+// --include-unknown's own unnumbered section, where typing the app id the
+// section just printed was rejected as an invalid selection.
+func TestDoGameDetect_PromptRangeMatchesKnownCount(t *testing.T) {
+	configDir = t.TempDir()
+	oldAll, oldSelect := gameDetectAll, gameDetectSelect
+	gameDetectAll, gameDetectSelect = false, ""
+	t.Cleanup(func() { gameDetectAll, gameDetectSelect = oldAll, oldSelect })
+
+	games := []steam.DetectedGame{
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory", Known: true},
+	}
+
+	svc := newGameDetectTestService(t)
+	var buf strings.Builder
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := doGameDetect(context.Background(), cmd, bufio.NewReader(strings.NewReader("none\n")), svc, games, nil)
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "Add games to config? [1-1/all/none]: ")
+}
