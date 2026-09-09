@@ -36,12 +36,14 @@ are marked [installed].
 Use --category and --tag to filter results; support varies by source.
 --category is honored by NexusMods and CurseForge; --tag is currently
 NexusMods only. Custom sources (directory/manifest/API) ignore both.
-The values each source accepts are source-specific.
+The values each source accepts are source-specific: NexusMods takes the
+category NAME as it spells it ("Armour") and a tag name; CurseForge takes
+a numeric category id.
 
 Examples:
   lmm search skyui --game skyrim-se
   lmm search "immersive armor" --game skyrim-se --source nexusmods
-  lmm search "armor" --game skyrim-se --category armor --tag lore-friendly
+  lmm search "armor" --game skyrim-se --category Armour --tag lore-friendly
   lmm search "armor" --game skyrim-se --profile survival`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runSearch,
@@ -51,7 +53,7 @@ func init() {
 	searchCmd.Flags().StringVarP(&searchSource, "source", "s", "", "mod source to search (default: all configured sources)")
 	searchCmd.Flags().IntVarP(&searchLimit, "limit", "l", 10, "maximum number of results")
 	searchCmd.Flags().StringVarP(&searchProfile, "profile", "p", "", "profile to check for installed mods (default: active profile)")
-	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (source-specific ID or name)")
+	searchCmd.Flags().StringVar(&searchCategory, "category", "", "filter by category (NexusMods: the category name; CurseForge: its numeric id)")
 	searchCmd.Flags().StringSliceVar(&searchTags, "tag", nil, "filter by tag (repeatable; source-specific)")
 
 	rootCmd.AddCommand(searchCmd)

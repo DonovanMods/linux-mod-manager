@@ -22,19 +22,21 @@ are marked [installed].
 Use --category and --tag to filter results; support varies by source.
 --category is honored by NexusMods and CurseForge; --tag is currently
 NexusMods only. Custom sources (directory/manifest/API) ignore both.
-The values each source accepts are source-specific.
+The values each source accepts are source-specific: NexusMods takes the
+category NAME as it spells it ("Armour") and a tag name; CurseForge takes
+a numeric category id.
 
 .PP
 Examples:
   lmm search skyui --game skyrim-se
   lmm search "immersive armor" --game skyrim-se --source nexusmods
-  lmm search "armor" --game skyrim-se --category armor --tag lore-friendly
+  lmm search "armor" --game skyrim-se --category Armour --tag lore-friendly
   lmm search "armor" --game skyrim-se --profile survival
 
 
 .SH OPTIONS
 \fB--category\fP=""
-	filter by category (source-specific ID or name)
+	filter by category (NexusMods: the category name; CurseForge: its numeric id)
 
 .PP
 \fB-h\fP, \fB--help\fP[=false]

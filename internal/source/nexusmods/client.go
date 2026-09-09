@@ -230,7 +230,18 @@ type graphqlRequirementsResponse struct {
 }
 
 // SearchMods searches for mods using the NexusMods GraphQL v2 API.
-// category and tags are optional filters (source-specific; NexusMods may support categoryId and tag names).
+//
+// category and tags are optional filters, and their names are a CONTRACT
+// with NexusMods' ModsFilter input object, not free choices: `categoryName`
+// and `tag`, each a list of {value, op} entries, with the ops drawn from
+// FilterComparisonOperator. testdata/modsfilter-schema.json records that
+// input object and schema_contract_test.go checks this very filter map
+// against it offline - which is what #337/#343 lacked, letting `tagNames`
+// and `categoryId` sit here long after NexusMods removed them, failing
+// every filtered search with "Field is not defined on ModsFilter".
+//
+// category is the category NAME as NexusMods spells it ("Armour"): the
+// schema offers no id-keyed category filter.
 func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category string, tags []string, limit, offset int) (mods []ModData, err error) {
 	if limit <= 0 {
 		limit = 20
@@ -245,17 +256,23 @@ func (c *Client) SearchMods(ctx context.Context, gameDomain, query, category str
 		},
 	}
 	if category != "" {
-		filter["categoryId"] = []map[string]interface{}{
+		// categoryNAME, not categoryId (#343): ModsFilter has no id-keyed
+		// category filter at all, so `--category` takes the category's
+		// name as NexusMods spells it ("Armour"). The retired categoryId
+		// made every category-filtered search fail server-side with
+		// "Field is not defined on ModsFilter".
+		filter["categoryName"] = []map[string]interface{}{
 			{"value": category, "op": "EQUALS"},
 		}
 	}
 	if len(tags) > 0 {
-		// Build filter entries for all tags (ANDed - mod must have all specified tags)
+		// Build filter entries for all tags (ANDed - mod must have all specified tags).
+		// `tag`, not the retired tagNames (#337) - same server-side failure.
 		tagFilters := make([]map[string]interface{}, len(tags))
 		for i, tag := range tags {
 			tagFilters[i] = map[string]interface{}{"value": tag, "op": "EQUALS"}
 		}
-		filter["tagNames"] = tagFilters
+		filter["tag"] = tagFilters
 	}
 
 	reqBody := graphqlRequest{

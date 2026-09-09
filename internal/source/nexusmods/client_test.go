@@ -396,8 +396,10 @@ func TestClient_SearchMods_MultipleTagsAllIncluded(t *testing.T) {
 
 	// Verify all tags are in the filter
 	require.NotNil(t, receivedFilter, "filter should be set")
-	tagNames, ok := receivedFilter["tagNames"].([]interface{})
-	require.True(t, ok, "tagNames should be an array")
+	// `tag`, not the retired tagNames (#337) - see
+	// testdata/modsfilter-schema.json and schema_contract_test.go.
+	tagNames, ok := receivedFilter["tag"].([]interface{})
+	require.True(t, ok, "tag should be an array")
 	require.Len(t, tagNames, 3, "all 3 tags should be included, not just the first")
 
 	// Verify each tag is present

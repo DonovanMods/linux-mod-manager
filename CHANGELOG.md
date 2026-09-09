@@ -447,6 +447,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **NexusMods `--tag` and `--category` work again (#337, #343).** The
+  GraphQL client still sent `tagNames` and `categoryId`, neither of which
+  NexusMods' `ModsFilter` defines any more, so **every** tag- or
+  category-filtered NexusMods search failed outright with
+  `Field is not defined on ModsFilter` — on the CLI and in the web UI's
+  search page alike. They are now the schema's own `tag` and
+  `categoryName`. One consequence worth naming: with no id-keyed category
+  filter left in the schema, `lmm search --category` against NexusMods
+  takes the category **name** as NexusMods spells it (`--category Armour`);
+  CurseForge still takes its numeric id, and the flag's help, the man page
+  and the README now say so. A recorded copy of the relevant part of the
+  schema ships under `internal/source/nexusmods/testdata/`, and a new
+  offline contract test checks every key and operator the client actually
+  sends against it — the check whose absence let both fields rot unnoticed.
+  No test contacts NexusMods.
+
 - **`verify --fix` no longer writes the source's current bytes into a locked
   mod's pinned cache slot (#325).** The version repair already refused to
   move a locked record, but the missing-file repair then redownloaded

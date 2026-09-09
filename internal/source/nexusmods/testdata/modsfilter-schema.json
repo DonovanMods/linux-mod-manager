@@ -1,0 +1,511 @@
+{
+  "_provenance": {
+    "recorded": "2026-09-09",
+    "endpoint": "https://api.nexusmods.com/v2/graphql",
+    "auth": "unauthenticated - no API key, no mod data fetched; schema introspection only",
+    "queries": [
+      "query { __type(name: \"ModsFilter\") { name kind inputFields { name type { kind name ofType { kind name ofType { kind name } } } } } }",
+      "query { __type(name: \"BaseFilterValue\") { name kind inputFields { name type { kind name ofType { kind name } } } } }",
+      "query { __type(name: \"BaseFilterValueEqualsWildcard\") { name kind inputFields { name type { kind name ofType { kind name } } } } }",
+      "query { __type(name: \"FilterComparisonOperator\") { enumValues { name } } }",
+      "query { __type(name: \"FilterComparisonOperatorEqualsWildcard\") { enumValues { name } } }"
+    ],
+    "why": "#337/#343: ModsFilter no longer defines tagNames or categoryId. This recording is what the offline schema-contract test checks the client's filter map against; NO test may ever call the live API. Re-record by hand, from the queries above, when the schema is next known to have moved.",
+    "keys": "modsFilter = ModsFilter; base = BaseFilterValue; baseEW = BaseFilterValueEqualsWildcard; ops = FilterComparisonOperator; opsEW = FilterComparisonOperatorEqualsWildcard"
+  },
+  "modsFilter": {
+    "name": "ModsFilter",
+    "kind": "INPUT_OBJECT",
+    "inputFields": [
+      {
+        "name": "filter",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "ModsFilter"
+            }
+          }
+        }
+      },
+      {
+        "name": "op",
+        "type": {
+          "kind": "ENUM",
+          "name": "FilterLogicalOperator",
+          "ofType": null
+        }
+      },
+      {
+        "name": "name",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValueEqualsWildcard"
+            }
+          }
+        }
+      },
+      {
+        "name": "nameStemmed",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "modId",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "id",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "gameId",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "gameDomainName",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "createdAt",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "updatedAt",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "hasUpdated",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BooleanFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "uploaderId",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "adultContent",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BooleanFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "fileSize",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "IntFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "downloads",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "IntFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "endorsements",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "IntFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "tag",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "description",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValueEqualsMatches"
+            }
+          }
+        }
+      },
+      {
+        "name": "author",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "uploader",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "supportsVortex",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BooleanFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "languageName",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "categoryName",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "status",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "gameName",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "primaryImage",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BaseFilterValue"
+            }
+          }
+        }
+      },
+      {
+        "name": "directDownloadEnabled",
+        "type": {
+          "kind": "LIST",
+          "name": null,
+          "ofType": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "INPUT_OBJECT",
+              "name": "BooleanFilterValue"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "base": {
+    "name": "BaseFilterValue",
+    "kind": "INPUT_OBJECT",
+    "inputFields": [
+      {
+        "name": "value",
+        "type": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+            "kind": "SCALAR",
+            "name": "String"
+          }
+        }
+      },
+      {
+        "name": "op",
+        "type": {
+          "kind": "ENUM",
+          "name": "FilterComparisonOperator",
+          "ofType": null
+        }
+      }
+    ]
+  },
+  "baseEW": {
+    "name": "BaseFilterValueEqualsWildcard",
+    "kind": "INPUT_OBJECT",
+    "inputFields": [
+      {
+        "name": "value",
+        "type": {
+          "kind": "NON_NULL",
+          "name": null,
+          "ofType": {
+            "kind": "SCALAR",
+            "name": "String"
+          }
+        }
+      },
+      {
+        "name": "op",
+        "type": {
+          "kind": "ENUM",
+          "name": "FilterComparisonOperatorEqualsWildcard",
+          "ofType": null
+        }
+      }
+    ]
+  },
+  "ops": {
+    "enumValues": [
+      {
+        "name": "EQUALS"
+      },
+      {
+        "name": "NOT_EQUALS"
+      },
+      {
+        "name": "MATCHES"
+      },
+      {
+        "name": "WILDCARD"
+      },
+      {
+        "name": "GT"
+      },
+      {
+        "name": "GTE"
+      },
+      {
+        "name": "LT"
+      },
+      {
+        "name": "LTE"
+      }
+    ]
+  },
+  "opsEW": {
+    "enumValues": [
+      {
+        "name": "EQUALS"
+      },
+      {
+        "name": "NOT_EQUALS"
+      },
+      {
+        "name": "WILDCARD"
+      }
+    ]
+  }
+}
