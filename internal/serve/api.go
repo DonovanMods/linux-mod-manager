@@ -207,6 +207,13 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 // source name is SearchMods' own "source not found" error, the same 500 an
 // unregistered ?source= produces for every other per-source call.
 //
+// ?tag= is #326's parity fix (epic live review C-3: `lmm search --tag` had
+// no API twin at all). It forwards verbatim into SearchOptions.Tags - the
+// same field the flag sets - and is REPEATABLE like the flag, so
+// ?tag=a&tag=b narrows on both. Not validated here, and deliberately not
+// refused for a source that ignores tags: support varies by source
+// (NexusMods honours it today), exactly as `lmm search`'s own help says.
+//
 // ?page_size= is NEVER used to derive an implicit Limit on the AGGREGATE
 // path (SourceID empty; unit 5 fix wave, Important 6 - previously
 // `if limit == 0 && pageSize != 0 { limit = pageSize }` ran unconditionally
@@ -246,6 +253,10 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	}
 	category := r.URL.Query().Get("category")
 	sourceID := r.URL.Query().Get("source")
+	// REPEATABLE, like the flag it mirrors: ?tag=a&tag=b is `--tag a --tag
+	// b`. Absent, Query()["tag"] is nil - never a one-element slice holding
+	// "", which a source would treat as a tag named "" (#326).
+	tags := r.URL.Query()["tag"]
 	if limit == 0 && pageSize != 0 && sourceID != "" {
 		limit = pageSize
 	}
@@ -256,7 +267,7 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query,
-		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize, Category: category, SourceID: sourceID})
+		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize, Category: category, SourceID: sourceID, Tags: tags})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
