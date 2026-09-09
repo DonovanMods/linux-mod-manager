@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -472,4 +474,67 @@ func TestCheckpointWALOnce_ADatabaseWithNoWALHasNothingToCheckpoint(t *testing.T
 	assert.Negative(t, logFrames, "a database with no WAL reports a negative frame count")
 
 	assert.NoError(t, d.checkpointWALOnce(ctx))
+}
+
+// TestOpen_AContendedScrubSaysSoWhileItWaits is the regression for the
+// re-review's N1. A contended open spends up to scrubBudget waiting, and
+// everything it used to say about that went to log.Debug - which the CLI
+// discards at its default --log-level off. The user got half a minute of
+// silence and then an error, which is indistinguishable from a hang.
+//
+// The obligation is therefore on the always-on channel (Options.WarnWriter,
+// the composition root's stderr) as well as the diagnostics log: one line
+// when the wait starts, naming the cap, and one when it resolves or is
+// given up on.
+func TestOpen_AContendedScrubSaysSoWhileItWaits(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	const legacyKey = "legacy-nexus-key-announced-1234567890"
+
+	seeder, release := holdContention(t, dbPath, legacyKey)
+
+	var contendedNotices bytes.Buffer
+	logs := &bytes.Buffer{}
+	contendedLog := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	_, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath, WarnWriter: &contendedNotices, Logger: contendedLog})
+	require.Error(t, err)
+
+	assert.Contains(t, contendedNotices.String(), "waiting for another lmm process to release the database",
+		"the stall must be explained on the always-on channel while it happens")
+	assert.Contains(t, contendedNotices.String(), scrubBudget.String(), "and must name the cap it will wait up to")
+	assert.Contains(t, contendedNotices.String(), "gave up waiting", "and must close the pair when it gives up")
+	assert.Contains(t, logs.String(), "the database is in use", "the diagnostic record is kept too, at Warn")
+
+	release()
+	require.NoError(t, seeder.Close())
+}
+
+// TestScrubBudget_CoversEveryRetryWithRoomToSpare pins the documented cap
+// against the retries it has to cover, so neither can move without the
+// other being reconsidered: too small and the deadline preempts a retry
+// that would have succeeded, too large and it stops being a cap.
+func TestScrubBudget_CoversEveryRetryWithRoomToSpare(t *testing.T) {
+	// Two steps, scrubAttempts each, every attempt waiting out the 5 s
+	// busy_timeout, plus the doubling backoff between them.
+	const busyTimeout = 5 * time.Second
+	worstCase := 2 * (scrubAttempts*busyTimeout + scrubRetryPause + 2*scrubRetryPause)
+
+	assert.Greater(t, scrubBudget, worstCase, "the cap must not preempt a retry that would have succeeded")
+	assert.Less(t, scrubBudget, time.Minute, "but it is a cap, not a licence to wait")
+}
+
+// TestScrubTokenPlaintext_HonoursItsDeadline pins that the budget actually
+// reaches the steps: a parent context that expires cuts the scrub short
+// with its own error instead of waiting out the retries.
+func TestScrubTokenPlaintext_HonoursItsDeadline(t *testing.T) {
+	d, _, _ := openFileDB(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := d.scrubTokenPlaintext(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
 }

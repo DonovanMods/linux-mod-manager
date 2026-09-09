@@ -40,6 +40,14 @@ type ServiceConfig struct {
 	// itself, so a caller that only supplies the three directories still
 	// gets encryption rather than a plaintext fallback.
 	KeyPath string
+
+	// WarnWriter is the always-on user-facing channel for an operational
+	// wait that happens during construction and would otherwise look like
+	// a hang - today only the contended credential scrub (#79). The
+	// composition root passes its stderr; nil means silent. It is passed
+	// straight through to internal/storage/db and is not a logging
+	// channel: diagnostics go to Logger.
+	WarnWriter io.Writer
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -113,7 +121,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 
 	// Open database
 	dbPath := filepath.Join(cfg.DataDir, "lmm.db")
-	database, err := db.OpenWithOptions(dbPath, db.Options{Logger: log, KeyPath: cfg.KeyPath})
+	database, err := db.OpenWithOptions(dbPath, db.Options{Logger: log, KeyPath: cfg.KeyPath, WarnWriter: cfg.WarnWriter})
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}

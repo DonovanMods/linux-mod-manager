@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/url"
@@ -24,6 +25,13 @@ const secureFileMode = 0600
 type DB struct {
 	*sql.DB
 	log *slog.Logger
+
+	// warn is the always-on channel for the ONE class of message a user
+	// has to see whatever their --log-level: an operational wait that
+	// holds the open for tens of seconds (the contended credential scrub,
+	// #79). nil means silent. It is deliberately not a second logger -
+	// anything diagnostic belongs in log.
+	warn io.Writer
 
 	// path is the database file this handle opened, absolute, or
 	// ":memory:". Kept so an error can name the file the user has to act
@@ -51,6 +59,15 @@ type DB struct {
 type Options struct {
 	Logger  *slog.Logger
 	KeyPath string
+
+	// WarnWriter receives the handful of lines a user must see even at the
+	// CLI's default --log-level off, because they explain a wait that is
+	// happening right now: today, only the contended credential scrub
+	// (#79, re-review N1). The composition root supplies stderr. nil means
+	// silent, which is what every test and every in-process caller that has
+	// no console gets. Scope is deliberate - this is not a logging
+	// channel, and diagnostics go to Logger.
+	WarnWriter io.Writer
 }
 
 // dsnFor builds the modernc.org/sqlite DSN. Pragmas passed as _pragma= query
@@ -131,7 +148,7 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 	if keyPath == "" {
 		keyPath = defaultKeyPath(dsnPath)
 	}
-	database := &DB{DB: sqlDB, log: log, path: dsnPath, keyPath: keyPath}
+	database := &DB{DB: sqlDB, log: log, warn: opts.WarnWriter, path: dsnPath, keyPath: keyPath}
 
 	// One root context for the whole open sequence: the schema migrations
 	// and the credential re-encryption below share it, so this package keeps

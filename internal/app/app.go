@@ -36,6 +36,11 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 		// neither has to know the XDG layout to encrypt a credential.
 		KeyPath: filepath.Join(p.DataDir, db.TokenKeyFileName),
 		Logger:  opts.Logger,
+		// The same channel the source warnings below use: opening the
+		// database can stall for tens of seconds re-encrypting credentials
+		// while another lmm process holds it (#79), and that has to be
+		// visible at the CLI's default --log-level off.
+		WarnWriter: warnWriter(opts),
 	})
 	if err != nil {
 		return nil, err

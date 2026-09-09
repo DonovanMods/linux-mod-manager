@@ -24,6 +24,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -191,11 +192,74 @@ func (d *DB) legacyTokenRows(ctx context.Context) (map[string]string, error) {
 // So each step is retried against the 5 s busy_timeout, and the checkpoint's
 // result columns are checked rather than discarded.
 func (d *DB) scrubTokenPlaintext(ctx context.Context) error {
-	if err := d.retryUntilUncontended(ctx, "rebuilding the database", d.vacuumOnce); err != nil {
-		return err
+	ctx, cancel := context.WithTimeout(ctx, scrubBudget)
+	defer cancel()
+
+	notice := &scrubNotice{w: d.warn}
+	for _, step := range []struct {
+		name string
+		once func(context.Context) error
+	}{
+		{"rebuilding the database", d.vacuumOnce},
+		{"truncating the write-ahead log", d.checkpointWALOnce},
+	} {
+		if err := d.retryUntilUncontended(ctx, notice, step.name, step.once); err != nil {
+			notice.gaveUp()
+			return err
+		}
 	}
-	return d.retryUntilUncontended(ctx, "truncating the write-ahead log", d.checkpointWALOnce)
+	notice.resolved()
+	return nil
 }
+
+// scrubNotice writes the one pair of lines a user must see whatever their
+// --log-level: the scrub is waiting on another process, and then how that
+// ended. It brackets the WHOLE scrub rather than each step, so a run that
+// waits for the VACUUM and then again for the checkpoint still reads as one
+// wait. A nil writer - every test, every caller with no console - makes all
+// three methods no-ops, and nothing is written at all unless the wait
+// actually happened.
+type scrubNotice struct {
+	w       io.Writer
+	started bool
+}
+
+// waiting announces the stall, once, naming the cap so the reader knows how
+// long this can go on for.
+func (n *scrubNotice) waiting() {
+	if n.w == nil || n.started {
+		return
+	}
+	n.started = true
+	_, _ = fmt.Fprintf(n.w, "lmm: waiting for another lmm process to release the database (up to %s)...\n", scrubBudget) //nolint:errcheck // best-effort notice
+}
+
+// resolved closes the pair on success.
+func (n *scrubNotice) resolved() {
+	if n.w == nil || !n.started {
+		return
+	}
+	_, _ = fmt.Fprintln(n.w, "lmm: the database was released; the pre-encryption credentials have been removed.") //nolint:errcheck // best-effort notice
+}
+
+// gaveUp closes the pair on failure. It says only that the wait is over -
+// what it means, and what to do about it, is the error the open returns,
+// which the frontend prints on this same stream.
+func (n *scrubNotice) gaveUp() {
+	if n.w == nil || !n.started {
+		return
+	}
+	_, _ = fmt.Fprintln(n.w, "lmm: gave up waiting for the database.") //nolint:errcheck // best-effort notice
+}
+
+// scrubBudget is the documented cap on how long an open may be held up by
+// the scrub - both steps, every attempt, and the pauses between them. The
+// retries alone come to about 31.5 s (2 steps x 3 attempts x the 5 s
+// busy_timeout, plus 0.25 s + 0.5 s of backoff per step), so 45 s leaves
+// room for an attempt that blocks past its busy_timeout without letting a
+// pathological lock hold `lmm` open indefinitely. Exceeding it fails the
+// open with the context error rather than waiting on.
+const scrubBudget = 45 * time.Second
 
 // scrubAttempts is how many times each scrub step is tried before the open
 // fails. Each attempt already waits out the 5 s busy_timeout, so this is a
@@ -208,7 +272,12 @@ const scrubRetryPause = 250 * time.Millisecond
 // retryUntilUncontended runs step until it succeeds, giving a transient
 // reader time to finish, and turns a persistent failure into the error that
 // fails the open - naming the database, the step, and the remedy.
-func (d *DB) retryUntilUncontended(ctx context.Context, step string, once func(context.Context) error) error {
+//
+// The whole wait is bounded twice over: scrubAttempts caps the tries, and
+// the ctx scrubTokenPlaintext hands down caps the wall clock at
+// scrubBudget. The first retry is announced at Warn, because everything
+// between here and the error is silent otherwise.
+func (d *DB) retryUntilUncontended(ctx context.Context, notice *scrubNotice, step string, once func(context.Context) error) error {
 	pause := scrubRetryPause
 	var err error
 	for attempt := 1; attempt <= scrubAttempts; attempt++ {
@@ -218,7 +287,19 @@ func (d *DB) retryUntilUncontended(ctx context.Context, step string, once func(c
 		if attempt == scrubAttempts {
 			break
 		}
-		d.log.Debug("retrying the credential scrub", "step", step, "attempt", attempt, "err", err)
+		if attempt == 1 {
+			notice.waiting()
+			// The first attempt has already waited out the 5 s
+			// busy_timeout by the time we get here, and the rest of the
+			// budget is spent the same way. Say so while it happens: an
+			// unexplained half-minute pause during `lmm auth status` is
+			// indistinguishable from a hang (re-review N1). Warn, not
+			// Debug - Debug is off at every level a user runs.
+			d.log.Warn("the database is in use; waiting to finish encrypting stored credentials",
+				"database", d.path, "step", step, "giving_up_after", scrubBudget, "err", err)
+		} else {
+			d.log.Debug("retrying the credential scrub", "step", step, "attempt", attempt, "err", err)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
