@@ -15,8 +15,9 @@ BepInEx is a smaller change to lmm than it looks, and Thunderstore is a
 bigger one than it looks.
 
 The framework installs into the game **root**, which lmm can already express
-(`mod_path: ""`), and the overwhelmingly common plugin archive is already
-laid out **game-root-relative** (`BepInEx/plugins/Foo.dll`) — so the existing
+— by setting the game's `mod_path` to its `install_path`, the same absolute
+path twice — and the overwhelmingly common plugin archive is already laid
+out **game-root-relative** (`BepInEx/plugins/Foo.dll`), so the existing
 linker deploys it with no new deploy-rule type at all. What genuinely does
 not exist yet is (a) a way to say "this mod requires the framework, at this
 version, and the framework is not a mod you found on a source", (b) the
@@ -103,10 +104,31 @@ Downloaded from Thunderstore and listed:
 Every package also carries `icon.png`, `manifest.json` and `README.md` at
 the archive root — metadata, never deployable.
 
-**Shape A is the common case and needs nothing new.** With
-`mod_path: ""` (deploy relative to the game root, which lmm already
-supports), `BepInEx/plugins/Foo.dll` lands exactly where it belongs through
-the existing linker. Shape C is the same wrapper-strip problem lmm already
+**Shape A is the common case and needs nothing new.** With the game's
+`mod_path` pointed at its own install directory,
+`BepInEx/plugins/Foo.dll` lands exactly where it belongs through the
+existing linker:
+
+```yaml
+install_path: /home/you/.steam/steam/steamapps/common/Lethal Company
+mod_path: /home/you/.steam/steam/steamapps/common/Lethal Company
+```
+
+**Not `mod_path: ""`.** An earlier draft of this document said that, and it
+is wrong in a way that would ship a broken Tier 1. `mod_path` is never
+joined with `install_path`: `internal/storage/config/games.go:111` takes
+the YAML value verbatim (`ExpandPath(cfg.ModPath)`), and the deploy path is
+`filepath.Join(game.ModPath, file)` (`internal/core/installer.go:70`) — so
+an empty `mod_path` yields a RELATIVE path and deploys into the process's
+working directory. Elsewhere an empty value is not "the root" either:
+`scanModPath` refuses it outright (`internal/core/importer.go:571`), and
+`game add`/`game detect` default it to `<install_path>/mods`
+(`game_add.go:213`, `game_detect.go:94-98`). The conclusion survives — a
+game-root deploy is expressible today and needs no new deploy-rule type —
+but the mechanism is the install path, not the empty string. Tier 1 should
+carry a test that a game-root `mod_path` round-trips through `games.yaml`.
+
+Shape C is the same wrapper-strip problem lmm already
 solved for `.EXMODZ` assets in #237. Shape B is the only one needing a new
 rule, and it is a small one: an archive whose root is `plugins/`,
 `patchers/`, `monomod/` or `config/` is BepInEx-relative and gets a
@@ -198,10 +220,10 @@ string leaves the door open at zero cost.
 **Answer: the existing linker already covers the common case. One new
 normalisation rule, no new deploy-rule type.**
 
-Per [§1.3](#13-archive-layouts--three-shapes-observed): with
-`mod_path: ""`, shape A deploys correctly today, and lmm's per-file
-deployed-files table gives conflict detection between two plugins that ship
-the same file for free.
+Per [§1.3](#13-archive-layouts--three-shapes-observed): with the game's
+`mod_path` set to its install path, shape A deploys correctly today, and
+lmm's per-file deployed-files table gives conflict detection between two
+plugins that ship the same file for free.
 
 What is needed is an **archive-root normaliser** for BepInEx games, run at
 ingest, the same place #237's `.EXMODZ` wrapper strip runs:
@@ -350,7 +372,9 @@ the owner before anything is filed (per #267's ruling).
 > ingest, dropping the `manifest.json`/`icon.png`/`README.md` metadata every
 > Thunderstore package carries, and refuse a full framework pack as a mod.
 > **Seam:** `archive_listing.go`'s member normalisation, beside #237's
-> `.EXMODZ` wrapper strip. No new deploy-rule type — with `mod_path: ""` the
+> `.EXMODZ` wrapper strip. No new deploy-rule type — with the game's
+> `mod_path` set to its own `install_path` (the same absolute path twice,
+> NOT `mod_path: ""`, which deploys relative to the working directory) the
 > existing linker already places the normalised paths correctly.
 
 > **`feat(core): route BepInEx/config/** through profile config overrides`**
