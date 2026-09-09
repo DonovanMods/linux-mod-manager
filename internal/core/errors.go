@@ -28,6 +28,15 @@ import (
 // overwritten - the data a frontend needs to render its own prompt.
 type ConflictError struct {
 	Conflicts []Conflict
+
+	// CleanupWarnings names anything the refusal could not undo. Today
+	// that is ImportArchive's own promise: the refusal removes the cache
+	// entry it created, and a removal that FAILS used to disappear into a
+	// Debug log, leaving an orphaned entry with no user-visible signal
+	// (#310). Empty on every ordinary refusal - including every install
+	// refusal, which has nothing to undo - so an `omitempty` member on the
+	// envelope, not a field a frontend has to render.
+	CleanupWarnings []string
 }
 
 // Error reports domain.ErrFileConflict's text plus how many files the
@@ -45,11 +54,14 @@ func (e *ConflictError) Unwrap() error { return domain.ErrFileConflict }
 // The returned type is unexported deliberately - it is a wire shape for the
 // envelope, not a core contract type of its own.
 func (e *ConflictError) Details() any {
-	return conflictErrorDetails{Conflicts: e.Conflicts}
+	return conflictErrorDetails{Conflicts: e.Conflicts, CleanupWarnings: e.CleanupWarnings}
 }
 
 type conflictErrorDetails struct {
 	Conflicts []Conflict `json:"conflicts"`
+	// Additive and omitted when empty (#310), so an ordinary refusal's
+	// envelope is byte-identical to the one it emitted before.
+	CleanupWarnings []string `json:"cleanup_warnings,omitempty"`
 }
 
 // ProfileWarningsError carries the diagnostics `ApplyProfileSwitch`/

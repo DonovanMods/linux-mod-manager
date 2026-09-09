@@ -624,6 +624,10 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 	// consistent (and the profile file is only read once).
 	linkMethod, err := s.GetEffectiveLinkMethod(ctx, game, profileName)
 	if err != nil {
+		// #310 item 2: this hard error sits BETWEEN the cache write and the
+		// conflict gate, so returning bare leaked the entry this call
+		// created - the one thing every other return from here undoes.
+		result.Warnings = append(result.Warnings, s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)...)
 		return result, err
 	}
 	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
@@ -640,11 +644,13 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 			// What was actually ingested conflicts differently from what the
 			// plan promised, so the decision the caller made (or is about to
 			// make) was made about a different set. Re-plan (#314, R-B3).
-			s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)
+			// A stale plan carries no typed payload, so a failed cleanup
+			// rides the Result's own Warnings (#310).
+			result.Warnings = append(result.Warnings, s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)...)
 			return result, fmt.Errorf("%w: file conflicts changed since the plan was computed", ErrStalePlan)
 		case len(conflicts) > 0 && !opts.AcceptConflicts:
-			s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)
-			return result, &ConflictError{Conflicts: conflicts}
+			cleanup := s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)
+			return result, &ConflictError{Conflicts: conflicts, CleanupWarnings: cleanup}
 		}
 	}
 
@@ -789,20 +795,32 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 // nothing behind, and a FAILED one left it exactly where Import put it with
 // the destination still holding whatever made the rename fail - which this
 // call did not create and must not remove.
-func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion string, entryPreExisted bool) {
+//
+// It RETURNS what it could not remove (#310 item 1). A failed cleanup used
+// to disappear into a Debug log, so the one thing the caller was promised -
+// "a refusal leaves nothing behind" - could quietly not hold, leaving an
+// orphaned copy of the whole archive with no user-visible signal. Each
+// failure is now also logged at Warn, and the caller attaches the returned
+// warnings to whatever it is about to return (the *ConflictError's
+// CleanupWarnings, or the Result's own Warnings).
+func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion string, entryPreExisted bool) []string {
 	if entryPreExisted || result.Mod == nil {
-		return
+		return nil
 	}
+	var warnings []string
 	gameCache := s.GetGameCache(game)
 	if err := gameCache.Delete(game.ID, result.Mod.SourceID, preEnrichID, preEnrichVersion); err != nil {
-		s.logger().Debug("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
+		s.logger().Warn("removing refused import's cache entry", "mod", preEnrichID, "version", preEnrichVersion, "err", err)
+		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", preEnrichID, preEnrichVersion, err))
 	}
 	if !result.Renamed {
-		return
+		return warnings
 	}
 	if err := gameCache.Delete(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version); err != nil {
-		s.logger().Debug("removing refused import's renamed cache entry", "mod", result.Mod.ID, "version", result.Mod.Version, "err", err)
+		s.logger().Warn("removing refused import's renamed cache entry", "mod", result.Mod.ID, "version", result.Mod.Version, "err", err)
+		warnings = append(warnings, fmt.Sprintf("could not remove the refused import's cache entry %s@%s: %v", result.Mod.ID, result.Mod.Version, err))
 	}
+	return warnings
 }
 
 // enrichImportedMod folds the source's metadata into imported when the

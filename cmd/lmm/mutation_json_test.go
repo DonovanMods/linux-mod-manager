@@ -1165,6 +1165,34 @@ func TestDoImport_JSON_ConflictWithoutForce_SurfacesEnvelopeWithDetails(t *testi
 	assert.Contains(t, envelope, "\"conflicts\"")
 }
 
+// TestDoImport_JSON_ConflictWithForce_EmitsExactlyOneDocument is the
+// forced-accept twin of the test above (#310 item 4, the recorded test
+// gap): --force skips the conflict CHECK entirely, so this path never
+// reaches the refusal guard at all - it must import, and it must hold the
+// --json framing invariants (exactly one document on stdout, nothing on
+// stderr, stdin never read) while overwriting another mod's file.
+func TestDoImport_JSON_ConflictWithForce_EmitsExactlyOneDocument(t *testing.T) {
+	svc, game, archiveBPath := setupImportConflictTest(t)
+	importForce = true
+	t.Cleanup(func() { importForce = false })
+	withJSONOutput(t)
+
+	out := runJSONCommand(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archiveBPath})
+		})
+	})
+
+	var result core.ImportArchiveResult
+	decodeSingleDoc(t, out, &result)
+	require.NotNil(t, result.Mod)
+	assert.Equal(t, "B1", result.Mod.ID)
+
+	data, rErr := os.ReadFile(filepath.Join(game.ModPath, "shared.txt"))
+	require.NoError(t, rErr)
+	assert.Equal(t, "from-B", string(data), "--force accepts the overwrite rather than refusing it")
+}
+
 // TestDoInstall_JSON_SearchPath_EmitsExactlyOneDocument covers the install
 // forms that reach searchAndSelectMods - every form but `--id` (unit P
 // review, Important 2). setupDoInstallTest pins installModID = "mod1", so
