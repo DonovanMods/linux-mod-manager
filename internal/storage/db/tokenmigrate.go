@@ -16,7 +16,10 @@ package db
 //
 // It is idempotent by construction: a row that already carries the lmm1
 // envelope is skipped, so repeated opens do not re-seal (and therefore do
-// not churn the ciphertext) - only rows still in the clear are touched.
+// not churn the ciphertext) - only rows still in the clear are touched. The
+// scrub that removes the old bytes from the FILES is governed separately,
+// by a durable db_meta marker rather than by what the rows now look like;
+// see migrateTokenEncryption.
 
 import (
 	"context"
@@ -34,15 +37,45 @@ import (
 // again. A key file that cannot be used is fatal to the open, because the
 // alternative - carrying on - is silently leaving credentials in the clear
 // after lmm has said it encrypts them.
+//
+// The scrub that follows cannot join that transaction - VACUUM cannot run
+// inside one - so the obligation to scrub is recorded IN it, as the
+// db_meta marker, and discharged only once both scrub steps prove they
+// completed. Every open honours a pending marker before anything can read
+// the table, whatever the rows now look like. Deriving the obligation from
+// the rows instead is what the re-review's remaining Critical was: the
+// first failed scrub left rows that were already sealed, so the work simply
+// disappeared and the next open reported success over plaintext still on
+// disk.
 func (d *DB) migrateTokenEncryption(ctx context.Context) error {
 	legacy, err := d.legacyTokenRows(ctx)
 	if err != nil {
 		return err
 	}
-	if len(legacy) == 0 {
-		return nil
+	if len(legacy) > 0 {
+		if err := d.resealLegacyRows(ctx, legacy); err != nil {
+			return err
+		}
 	}
 
+	pending, err := d.scrubPending(ctx)
+	if err != nil {
+		return err
+	}
+	if !pending {
+		return nil
+	}
+	if err := d.scrubTokenPlaintext(ctx); err != nil {
+		return err
+	}
+	return d.clearScrubPending(ctx)
+}
+
+// resealLegacyRows re-encrypts every plaintext row and records the scrub
+// obligation, both inside one transaction. Neither half can be visible
+// without the other: a sealed row whose plaintext is still on disk with no
+// marker to say so is the state that made the scrub unrepeatable.
+func (d *DB) resealLegacyRows(ctx context.Context, legacy map[string]string) error {
 	key, err := d.tokenKey(true)
 	if err != nil {
 		return err
@@ -63,12 +96,48 @@ func (d *DB) migrateTokenEncryption(ctx context.Context) error {
 			return fmt.Errorf("re-encrypting the stored credential for %q: %w", sourceID, err)
 		}
 	}
+	if _, err := tx.ExecContext(ctx,
+		"INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)",
+		metaTokenScrubPending, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("recording the credential scrub as pending: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("re-encrypting stored credentials: %w", err)
 	}
 	d.log.Info("re-encrypted stored credentials at rest", "sources", len(legacy))
+	return nil
+}
 
-	return d.scrubTokenPlaintext(ctx)
+// metaTokenScrubPending is the db_meta key under which the obligation to
+// remove the pre-encryption plaintext from the files on disk is recorded.
+// Only its presence is meaningful; the value is the UTC timestamp the
+// obligation was taken on, kept because a marker that has survived several
+// opens is worth being able to date in a bug report.
+const metaTokenScrubPending = "token_scrub_pending"
+
+// scrubPending reports whether the database still owes a plaintext scrub.
+func (d *DB) scrubPending(ctx context.Context) (bool, error) {
+	var n int
+	if err := d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM db_meta WHERE key = ?", metaTokenScrubPending).Scan(&n); err != nil {
+		return false, fmt.Errorf("checking whether the credential scrub is pending: %w", err)
+	}
+	return n > 0, nil
+}
+
+// clearScrubPending discharges the obligation. It runs only after BOTH
+// scrub steps have returned success - the VACUUM having rebuilt the main
+// file and the checkpoint's own result columns having proved the WAL is
+// empty - so a marker that is still set always means plaintext may still be
+// on disk. The delete itself writes a frame back into the freshly truncated
+// WAL, which is harmless: it carries the post-VACUUM db_meta page, and no
+// credential ever lived there.
+func (d *DB) clearScrubPending(ctx context.Context) error {
+	if _, err := d.ExecContext(ctx, "DELETE FROM db_meta WHERE key = ?", metaTokenScrubPending); err != nil {
+		return fmt.Errorf("clearing the pending credential scrub: %w", err)
+	}
+	d.log.Debug("pre-encryption credentials removed from disk", "database", d.path)
+	return nil
 }
 
 // legacyTokenRows returns every auth_tokens row still holding a plaintext
