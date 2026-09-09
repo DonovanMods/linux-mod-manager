@@ -257,6 +257,24 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	assert.Contains(t, body, "tracked from Steam — not deployed")
 	assert.NotContains(t, body, "no files to link",
 		"the external row must say why, not merely that there is nothing")
+	assert.NotContains(t, body, "7987119735124793734",
+		"the version DISPLAY rule: no human surface prints Steam's content id as a version")
+	assert.Contains(t, body, "1.0", "a managed row still shows its own version")
+
+	// `lmm deploy --mod <external>` is refused, so the "Only this mod"
+	// narrowing must not offer one.
+	var targets []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll('.modal select[name="deploy-mod"] option'))
+				.map((o) => o.textContent);
+		`, &targets),
+	)
+	assert.Equal(t, []string{"The whole profile", "Managed Mod"}, targets)
 	assert.Empty(t, f.BrowserErrors())
 }
 

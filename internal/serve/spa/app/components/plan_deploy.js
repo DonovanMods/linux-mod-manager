@@ -82,7 +82,15 @@ export function DeployPlanView({ plan, modal, state, actions }) {
                   // row shape. Rendering the span anyway would leave a gap
                   // that reads as a missing value rather than an absent
                   // field.
+                  //
+                  // #269: an external row's version IS Steam's 19-digit
+                  // content id, and the approval note's version DISPLAY rule
+                  // says no human-facing surface prints one as a version.
+                  // DeployPlanMod carries no timestamp to show a date
+                  // instead, and the row's detail line already says what it
+                  // is, so the span is simply omitted for it.
                   mod.ref.version &&
+                  mod.class !== "external" &&
                   html`<span class="mono plan__mod-version"
                     >${mod.ref.version}</span
                   >`
@@ -161,10 +169,16 @@ export function DeployPlanView({ plan, modal, state, actions }) {
           options=${{
             entries: [
               { value: "", label: "The whole profile" },
-              ...mods.map((m) => ({
-                value: `${m.ref.source_id}/${m.ref.mod_id}`,
-                label: m.name,
-              })),
+              // #269: `lmm deploy --mod <external>` is refused with
+              // ErrExternalMod, so an external row is not offered here -
+              // present-and-refused is what this frontend avoids everywhere
+              // else it touches a Steam-owned item.
+              ...mods
+                .filter((m) => m.class !== "external")
+                .map((m) => ({
+                  value: `${m.ref.source_id}/${m.ref.mod_id}`,
+                  label: m.name,
+                })),
             ],
             // mod_id and source_id are two fields of one choice, so they
             // are always written together - clearing the select has to
