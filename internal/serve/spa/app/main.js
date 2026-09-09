@@ -262,7 +262,7 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
   const key = `${route.sourceID}/${route.modID}`;
   const reHydrating = store.get().modPage?.key === key;
   if (!reHydrating) {
-    store.set({ modPage: { key, filesReport: null, error: null } });
+    commitHydration(seq, { modPage: { key, filesReport: null, error: null } });
   }
 
   let filesReport;
@@ -272,22 +272,37 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
     if (store.get().modPage?.key !== key) return;
     if (reHydrating) return;
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({ modPage: { key, filesReport: null, error: message } });
+    commitHydration(seq, {
+      modPage: { key, filesReport: null, error: message },
+    });
     return;
   }
   if (store.get().modPage?.key !== key) return;
-  store.set({
-    modPage: {
-      key,
-      filesReport,
-      error: null,
-      detail: null,
-      detailError: null,
-      versions: null,
-      versionsError: null,
-      updates: null,
-    },
-  });
+  // Both writes above and below pass the SAME fence the final one does
+  // (MIN-2 of the closing wave's gate review). They were guarded by
+  // modPage.key alone, which cannot see the case the counter exists for:
+  // TWO hydrations of the SAME mod page - a job completing while a cold
+  // load is in flight, exactly the pair onJobDone creates - can land out of
+  // order, and the older one's filesReport write resets detail, versions
+  // and updates to null. The newer hydration has already written its
+  // extras by then, so they stay blank until something hydrates again.
+  // Narrow, but it is the class C-1 closed everywhere else.
+  if (
+    !commitHydration(seq, {
+      modPage: {
+        key,
+        filesReport,
+        error: null,
+        detail: null,
+        detailError: null,
+        versions: null,
+        versionsError: null,
+        updates: null,
+      },
+    })
+  ) {
+    return;
+  }
 
   // updates joins the versions table against the ONE version
   // CheckGameUpdates would actually land this mod on (C1) - fetched

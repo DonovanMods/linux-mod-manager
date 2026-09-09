@@ -5630,6 +5630,95 @@ func TestE2E_TheYAMLEditorReallyHasSpellcheckOff(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen is MIN-2 of
+// the closing wave's gate review - C-1's fence, applied to the two writes
+// in hydrateModPage that escaped it.
+//
+// The primary read's write (and the error write beside it) were guarded by
+// modPage.key alone. That key is "source/id" and carries NO profile, so it
+// cannot tell two hydrations of one mod page apart at all - and onJobDone
+// re-hydrates on every completed job, including one another client started.
+// Here that leaves a job's re-hydrate for the profile being left in flight
+// while the profile moved to has already loaded and written its own
+// documents; the older one's filesReport write then resets detail, versions
+// and updates to null, and since its own extras arrive AFTER its fence
+// check they never replace them. The page keeps its Changelog and Versions
+// headings but empties them until something hydrates it again.
+//
+// The profile is what makes this drivable rather than merely arguable: two
+// hydrations under the SAME profile issue the identical URL, and Chrome's
+// HTTP cache takes a single-writer lock on an in-flight cacheable GET, so
+// the duplicate queues behind it and cannot land out of order at all. A
+// different profile is a different URL - and the same modPage.key.
+//
+// Made deterministic the way C-1's own scenario is: a proxy delays exactly
+// the stale profile's second mod-files read, so the stale hydration is
+// GUARANTEED to land last rather than winning a scheduler coin-toss.
+func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	// A second profile carrying the same mod, so the page the scenario
+	// moves to renders the same modPage.key from a different URL.
+	_, err := f.Svc.NewProfileManager().Create(t.Context(), f.Game.ID, "other")
+	require.NoError(t, err)
+	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: f.Game.ID},
+		ProfileName:  "other",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	// The SECOND read scoped to "default" is the delayed one: the first is
+	// the cold load that puts the page on screen, and the second belongs to
+	// the job's re-hydrate - the one this scenario makes stale.
+	f.BaseURL = startE2EProxyDelayingTheNthModFilesRead(t, f.BaseURL, "default", 2, 2*time.Second)
+
+	modPage := func(profile string) string {
+		return f.BaseURL + "/g/" + f.Game.ID + "/" + profile + "/mod/fake/boots"
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(modPage("default")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		// The extras are the subject, so wait until they are really there.
+		chromedp.Poll(`Array.from(document.querySelectorAll(".mod-page h2")).some(h => h.textContent.trim() === "Changelog")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+
+	// A job finishing anywhere re-hydrates the route on screen, and THAT
+	// hydration's files read is the delayed one.
+	startEnableFromAnotherClient(t, f, "fake", "x")
+	time.Sleep(300 * time.Millisecond)
+
+	// Move to the other profile's copy of this page while that is still
+	// fetching - the same two calls router.js's own navigate() makes, so
+	// this is an in-app route change and not a reload that would throw the
+	// in-flight hydration away with the whole document.
+	f.runInBrowser(t,
+		chromedp.Evaluate(`window.history.pushState(null, "", "/g/`+f.Game.ID+`/other/mod/fake/boots");
+			window.dispatchEvent(new PopStateEvent("popstate"));`, nil),
+		chromedp.Poll(`Array.from(document.querySelectorAll(".mod-page h2")).some(h => h.textContent.trim() === "Changelog")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+
+	// Long enough for the delayed read to have landed and repainted. The
+	// Changelog and Versions SECTIONS are the observable: both are gated on
+	// modPage.detail / modPage.versions being non-null, so a write that
+	// resets them to null takes the headings off the page entirely.
+	var headings []string
+	f.runInBrowser(t,
+		chromedp.Sleep(3*time.Second),
+		headingTexts(".mod-page h2", &headings),
+	)
+
+	assert.Contains(t, headings, "Changelog",
+		"a hydration older than the one on screen must not blank the mod page's live detail")
+	assert.Contains(t, headings, "Versions",
+		"nor its versions table")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp is I-6 of the
 // epic live review.
 //

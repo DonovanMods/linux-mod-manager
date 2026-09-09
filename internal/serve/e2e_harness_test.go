@@ -1935,6 +1935,24 @@ func newE2EFixtureWithALockedAndAnUnlockedUpdate(t *testing.T) e2eFixture {
 func startE2EProxyDelayingProfileReads(t *testing.T, backend, profile string, delay time.Duration) string {
 	t.Helper()
 
+	return startE2EDelayingProxy(t, backend, delay, func(r *http.Request) bool {
+		return r.Method == http.MethodGet && r.URL.Query().Get("profile") == profile
+	})
+}
+
+// startE2EDelayingProxy is the shape both delaying proxies share: a reverse
+// proxy in front of an already-running backend that sleeps for delay before
+// forwarding any request shouldDelay says yes to, and forwards everything
+// else untouched.
+//
+// The Host and Origin rewrites are not optional. The server's own Host
+// allow-list (middleware.go's DNS-rebinding guard) and originCheck both
+// compare against the address the request claims, which is this proxy's
+// once a browser is talking to it - so a plain NewSingleHostReverseProxy
+// gets every request refused and the SPA never loads at all.
+func startE2EDelayingProxy(t *testing.T, backend string, delay time.Duration, shouldDelay func(*http.Request) bool) string {
+	t.Helper()
+
 	backendURL, err := url.Parse(backend)
 	require.NoError(t, err)
 
@@ -1956,7 +1974,7 @@ func startE2EProxyDelayingProfileReads(t *testing.T, backend, profile string, de
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Query().Get("profile") == profile {
+		if shouldDelay(r) {
 			time.Sleep(delay)
 		}
 		proxy.ServeHTTP(w, r)
@@ -1975,6 +1993,41 @@ func startE2EProxyDelayingProfileReads(t *testing.T, backend, profile string, de
 	})
 
 	return "http://" + ln.Addr().String()
+}
+
+// startE2EProxyDelayingTheNthModFilesRead fronts an already-running backend
+// with a reverse proxy that sleeps for delay before forwarding the nth GET
+// of a mod-files read (/api/v1/mods/{source}/{id}/files) SCOPED TO profile,
+// and forwards everything else untouched.
+//
+// Scoped to one profile because the scenario it serves needs the OTHER
+// profile's read of the same mod to run unblocked, and because two
+// hydrations of the same mod page under the same profile issue the
+// IDENTICAL URL - which Chrome will not run concurrently at all (its HTTP
+// cache takes a single-writer lock on an in-flight cacheable GET and queues
+// the duplicate behind it), so no proxy delay could order them.
+//
+// Its subject is MIN-2 of the closing wave's gate review, and it is the
+// same trick startE2EProxyDelayingProfileReads plays for C-1: two
+// hydrations of the SAME mod page settle in microseconds on a loopback
+// server, so which one lands last is the scheduler's choice. Delaying
+// exactly one of them makes the out-of-order landing a certainty instead.
+//
+// The mod-files read specifically, because it is hydrateModPage's PRIMARY
+// read - the one whose write resets detail, versions and updates to null.
+func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile string, n int, delay time.Duration) string {
+	t.Helper()
+
+	var seen atomic.Int64
+	return startE2EDelayingProxy(t, backend, delay, func(r *http.Request) bool {
+		if r.Method != http.MethodGet ||
+			!strings.HasPrefix(r.URL.Path, "/api/v1/mods/") ||
+			!strings.HasSuffix(r.URL.Path, "/files") ||
+			r.URL.Query().Get("profile") != profile {
+			return false
+		}
+		return int(seen.Add(1)) == n
+	})
 }
 
 // newE2EFixtureWithASwitchTargetAndSlowStaleReads is
