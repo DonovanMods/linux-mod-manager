@@ -117,7 +117,7 @@ func TestNoAdjacentHTMWhitespaceDrops(t *testing.T) {
 		base := filepath.Base(path)
 		isPlanFile := strings.HasPrefix(base, "plan_")
 		isGameAdd := base == "gameadd.js"
-		if filepath.Ext(path) != ".js" || !(isPlanFile || isGameAdd) {
+		if filepath.Ext(path) != ".js" || (!isPlanFile && !isGameAdd) {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)

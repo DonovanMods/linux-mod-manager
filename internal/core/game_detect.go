@@ -227,8 +227,9 @@ type GameDetectEntry struct {
 
 // GameDetectListingOptions tunes the listing document (#206).
 type GameDetectListingOptions struct {
-	// IncludeUnknown keeps the scan's unknown candidates (known:false) in
-	// the document. Off by default, so a caller that scanned wide can
+	// IncludeUnknown keeps the scan's unknown candidates (no `known` member
+	// at all - never a literal false) in the document. Off by default, so a
+	// caller that scanned wide can
 	// still render exactly today's known-only listing, and a caller that
 	// never asked for unknown rows cannot accidentally publish them.
 	IncludeUnknown bool

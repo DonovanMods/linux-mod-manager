@@ -694,8 +694,9 @@ func TestExactGameCatalogMatch(t *testing.T) {
 }
 
 // TestGameDetectListing_UnknownRows pins the listing's #206 shape: unknown
-// rows appear only when asked for, carry known:false, and - crucially -
-// carry NO index, because a detect selection cannot name them. The known
+// rows appear only when asked for, carry no `known` member at all (never a
+// literal false), and - crucially - carry NO index, because a detect
+// selection cannot name them. The known
 // rows' numbering is identical either way, so an index means the same row
 // whether or not the caller asked for the wider list.
 func TestGameDetectListing_UnknownRows(t *testing.T) {

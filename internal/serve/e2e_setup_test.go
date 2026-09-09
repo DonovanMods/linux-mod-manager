@@ -186,7 +186,9 @@ var (
 // scan needs no real Steam library or a genuine entry in the embedded
 // default list. The second app id has no known-games entry, matching what
 // TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick and its siblings
-// need: a real "known: false" row from a live scan, not a hand-built one.
+// need: a real unknown row (domain.DetectedGame.Known == false, though the
+// wire never carries a literal `"known": false`) from a live scan, not a
+// hand-built one.
 type e2eSteamDetectFixture struct {
 	Slug string
 	Name string
@@ -224,8 +226,9 @@ func writeSteamAppManifest(t *testing.T, steamRoot, appID, installDir, name stri
 // override into configDir. The curated row (app 999999, "E2E Detect Game")
 // keeps its long-standing slug/mod_path so every existing scenario using
 // it is unaffected; the uncurated row (app 888888, "E2E Uncurated Game")
-// carries no known-games entry, so a live scan reports it known:false with
-// an empty mod_path and a slug DERIVED by the scan itself
+// carries no known-games entry, so a live scan reports it with no `known`
+// member at all over the wire (Known == false on the Go struct) with an
+// empty mod_path and a slug DERIVED by the scan itself
 // (steam.deriveSlug) - not hand-computed here, so a change to that
 // derivation cannot silently desync this fixture from what the scan
 // actually returns.

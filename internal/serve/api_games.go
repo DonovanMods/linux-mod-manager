@@ -275,8 +275,9 @@ func gameSourcesErrorStatus(err error) int {
 // scan's own warnings.
 //
 // ?all=1 widens it to EVERY installed Steam game (#206), adding the rows
-// no known-games entry covers - known:false, no sources, an empty mod
-// path and no index, since a detect selection cannot name them. The
+// no known-games entry covers - no `known` member at all (never a literal
+// false), no sources, an empty mod path and no index, since a detect
+// selection cannot name them. The
 // document is the same one either way (the addition is additive, and the
 // known rows keep the same numbering), so the SPA can render both from one
 // decoder; an unknown row is added through POST /api/v1/games with

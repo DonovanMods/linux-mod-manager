@@ -445,10 +445,10 @@ func fakeSteamApp(t *testing.T, appID, name, installDir string) string {
 }
 
 // TestAPIGamesDetect_AllIncludesUnknownRows pins ?all=1: the same document,
-// widened with the rows no known-games entry covers. Those carry
-// known:false and index 0 - they are listed, not selectable - while the
-// known rows keep the numbering they have without the parameter, so one
-// index means one game either way.
+// widened with the rows no known-games entry covers. Those carry no
+// `known` member at all (never a literal false) and index 0 - they are
+// listed, not selectable - while the known rows keep the numbering they
+// have without the parameter, so one index means one game either way.
 func TestAPIGamesDetect_AllIncludesUnknownRows(t *testing.T) {
 	s := newGamesServer(t)
 	fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
