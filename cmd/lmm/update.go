@@ -370,15 +370,17 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// auto-policy row (that is what the policy means), plus every remaining
 	// row when --all was passed. Locked rows are DELIBERATELY included -
 	// core's batch skips them with its own refusal sentence (#97), which is
-	// what feeds the combined "N locked mod(s) not applied" line below.
+	// what feeds the combined "N locked mod(s) not applied" line below; the
+	// same is true of external rows, which get their own line (#269).
 	// Before #324 this loop filtered them out itself and serve's did not,
 	// which is exactly the divergence core now owns.
 	var selection []string
 	var autoUpdates []domain.Update
-	// lockedCandidates counts the locked rows that were CANDIDATES for this
-	// run - auto-policy rows always, notify-policy rows only under --all -
-	// so the header below counts what will really be attempted.
-	lockedCandidates := 0
+	// skippedCandidates counts the rows that were CANDIDATES for this run -
+	// auto-policy rows always, notify-policy rows only under --all - but
+	// which core's batch will decline to attempt (locked, #97; external,
+	// #269), so the header below counts what will really be attempted.
+	skippedCandidates := 0
 	for _, update := range updates {
 		auto := update.InstalledMod.UpdatePolicy == domain.UpdateAuto
 		if !auto && !updateAll {
@@ -387,8 +389,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if auto && !update.Locked {
 			autoUpdates = append(autoUpdates, update)
 		}
-		if update.Locked {
-			lockedCandidates++
+		if update.Locked || update.InstalledMod.External {
+			skippedCandidates++
 		}
 		selection = append(selection, domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID))
 	}
@@ -422,7 +424,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return finish()
 	}
 
-	result, err := applyUpdateBatch(ctx, service, game, profileName, updates, selection, len(selection)-lockedCandidates)
+	result, err := applyUpdateBatch(ctx, service, game, profileName, updates, selection, len(selection)-skippedCandidates)
 	if err != nil {
 		return err
 	}
@@ -442,24 +444,44 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return finish()
 	}
 
-	// #97: one combined report for every locked mod the batch declined to
-	// attempt - auto-policy rows always land here; --all's notify-policy
-	// rows only do when --all was actually passed. Read straight off the
-	// batch's own Skipped list rather than re-derived, so the CLI and the
-	// web UI can never disagree about which mods a lock actually stopped.
-	//
-	// Unit Q re-review N2: ApplyUpdate refuses on ref.Locked alone (see
-	// applySingleUpdate's identical remedy below), so "move the lock" is a
-	// no-op here too - unlock is the only remedy, matching the per-mod path.
-	if len(result.Skipped) > 0 {
-		names := make([]string, 0, len(result.Skipped))
-		for _, sk := range result.Skipped {
-			names = append(names, sk.Name)
-		}
-		fmt.Printf("\n%d locked mod(s) not applied: %s — unlock to update.\n", len(names), strings.Join(names, ", "))
-	}
+	printBatchSkips(result.Skipped)
 
 	return finish()
+}
+
+// printBatchSkips renders the batch's declined rows, split by WHY they were
+// declined - the two have different remedies, and one combined line could
+// only advise on one of them.
+//
+// #97: one combined report for every locked mod the batch declined to
+// attempt - auto-policy rows always land here; --all's notify-policy rows
+// only do when --all was actually passed. Read straight off the batch's own
+// Skipped list rather than re-derived, so the CLI and the web UI can never
+// disagree about which mods a lock actually stopped.
+//
+// Unit Q re-review N2: ApplyUpdate refuses on ref.Locked alone (see
+// applySingleUpdate's identical remedy), so "move the lock" is a no-op here
+// too - unlock is the only remedy, matching the per-mod path.
+//
+// #269: an EXTERNAL row is skipped for a reason the user cannot act on at
+// all - Steam applies a Workshop update itself - so it gets the design's
+// own sentence rather than "unlock to update", which would be nonsense.
+func printBatchSkips(skipped []core.UpdateApplyResult) {
+	var locked, external []string
+	for _, sk := range skipped {
+		if sk.Mod.Locked {
+			locked = append(locked, sk.Name)
+			continue
+		}
+		external = append(external, sk.Name)
+	}
+	if len(locked) > 0 {
+		fmt.Printf("\n%d locked mod(s) not applied: %s — unlock to update.\n", len(locked), strings.Join(locked, ", "))
+	}
+	if len(external) > 0 {
+		fmt.Printf("\n%d Steam Workshop item(s) not applied: %s — Steam applies these itself\n", len(external), strings.Join(external, ", "))
+		fmt.Println("the next time you launch the game.")
+	}
 }
 
 // printUpdateTable renders the MOD/CURRENT/AVAILABLE/POLICY table the bulk

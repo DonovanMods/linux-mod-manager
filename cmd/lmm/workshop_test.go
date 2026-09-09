@@ -263,6 +263,36 @@ func TestPrintExternalUpdateSummary_SilentWithNoExternalUpdates(t *testing.T) {
 	assert.Empty(t, strings.TrimSpace(out))
 }
 
+func TestPrintBatchSkips_SplitsLockedFromSteamWorkshop(t *testing.T) {
+	out := captureStdout(t, func() error {
+		printBatchSkips([]core.UpdateApplyResult{
+			{
+				Mod:    domain.ModReference{SourceID: "nexusmods", ModID: "42", Locked: true},
+				Name:   "Locked Mod",
+				Status: core.UpdateSkipped,
+				Reason: "locked",
+			},
+			{
+				Mod:    domain.ModReference{SourceID: "steamworkshop", ModID: "3617086610"},
+				Name:   "Sample Workshop Item",
+				Status: core.UpdateSkipped,
+				Reason: core.ReasonExternalNoUpdate,
+			},
+		})
+		return nil
+	})
+	assert.Contains(t, out, "1 locked mod(s) not applied: Locked Mod")
+	assert.Contains(t, out, "1 Steam Workshop item(s) not applied: Sample Workshop Item")
+	assert.Contains(t, out, "Steam applies these itself")
+	assert.NotContains(t, out, "Sample Workshop Item — unlock to update",
+		"unlocking is not the remedy for an item Steam owns")
+}
+
+func TestPrintBatchSkips_SilentWithNothingSkipped(t *testing.T) {
+	out := captureStdout(t, func() error { printBatchSkips(nil); return nil })
+	assert.Empty(t, strings.TrimSpace(out))
+}
+
 // doImportWorkshopGate exercises doImport's --workshop exclusivity gate
 // without going near the archive or scan modes it guards.
 func doImportWorkshopGate(svc *core.Service, game *domain.Game, args []string) error {

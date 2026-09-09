@@ -337,6 +337,41 @@ func TestExternal_UpdateApplyRollbackAndRelink_AreRefused(t *testing.T) {
 	})
 }
 
+// A Workshop update is a normal, expected, REPORTABLE state (design §3):
+// `lmm update --all` must record it as a skip carrying the design's own
+// refusal sentence, never as a red failure. Before the fix the item landed
+// in result.Failed and the CLI printed "âœ— <name>: cannot update ...".
+func TestExternal_UpdateBatch_ReportsAnExternalItemAsSkippedNotFailed(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := externalTestGame(t)
+	svc.RegisterSource(newAdoptTestSource("steamworkshop"))
+	seedExternalMod(t, svc, game, "default", "3617086610", "Workshop Item")
+	ctx := context.Background()
+
+	mod, err := svc.GetInstalledMod(ctx, "steamworkshop", "3617086610", game.ID, "default")
+	require.NoError(t, err)
+	upd := domain.Update{InstalledMod: *mod, NewVersion: "9987119735124793734"}
+
+	plan, err := svc.PlanUpdateBatchFrom(ctx, game, "default", []domain.Update{upd},
+		[]string{domain.ModKey("steamworkshop", "3617086610")})
+	require.NoError(t, err)
+
+	result, err := svc.ApplyUpdateBatch(ctx, game, plan, core.UpdateBatchOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Failed, "a Workshop update is expected, not a failure")
+	assert.Empty(t, result.Applied)
+	require.Len(t, result.Skipped, 1)
+
+	skip := result.Skipped[0]
+	assert.Equal(t, "Workshop Item", skip.Name)
+	assert.Equal(t, core.UpdateSkipped, skip.Status)
+	assert.Equal(t, core.ReasonExternalNoUpdate, skip.Reason,
+		"the skip carries the design's sentence verbatim")
+	assert.False(t, skip.Mod.Locked, "external is not locked - the CLI splits the two")
+	assert.Equal(t, mod.Version, skip.Mod.Version, "nothing was written: the ref stands as it was")
+	assert.Equal(t, "9987119735124793734", skip.ToVersion)
+}
+
 func TestExternal_SetUpdatePolicyAuto_IsRefusedButNotifyAndPinnedAreNot(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := externalTestGame(t)

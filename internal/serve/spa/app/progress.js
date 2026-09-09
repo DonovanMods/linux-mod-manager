@@ -303,9 +303,11 @@ export function resultTallyLabel(tally) {
 }
 
 /** skippedNote is one declined item in the engine's OWN words - the name a
- * user recognises plus core.UpdateApplyResult.Reason, which for today's only
- * skip (a locked ref, #97) is the refusal sentence naming the locked version
- * and how to unlock it.
+ * user recognises plus core.UpdateApplyResult.Reason: for a locked ref (#97)
+ * the refusal sentence naming the locked version and how to unlock it, and
+ * for a Steam Workshop item (#269) the sentence saying Steam applies that
+ * update itself. Rendering core's own wording is what lets a second kind of
+ * skip arrive without a line of change here.
  *
  * The reason is what makes the count honest rather than merely present: "1
  * skipped" invites the reader to guess, and a lock is not a guessable
