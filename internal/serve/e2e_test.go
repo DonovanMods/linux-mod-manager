@@ -5595,6 +5595,48 @@ func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
 	assert.Empty(t, chooser.BrowserErrors())
 }
 
+// TestE2E_EveryFramedRouteRendersExactlyOneMainAndOneNav is N-11 of the
+// epic re-review, and TestE2E_EveryRouteRendersExactlyOneH1's sibling for
+// landmarks rather than headings: before this, the application's only
+// landmarks were `header` + `main` - no `nav` around either bar's
+// navigation controls - so heading navigation could find a page's title but
+// landmark navigation (the OTHER primary way a screen reader user moves
+// around a page) had nothing to jump to for "the controls that move me
+// somewhere else". Scoped to the four routes that carry a real navigation
+// bar (topbar.js or awaybar.js); the chooser and first-run routes have no
+// navigation controls at all (just a theme toggle) and are covered
+// separately by the h1 ratchet.
+func TestE2E_EveryFramedRouteRendersExactlyOneMainAndOneNav(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "a"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+		{"setup", f.HomePath() + "/setup", `.setup-page`},
+	}
+	for _, route := range routes {
+		var mains, navs int
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			chromedp.Evaluate(`document.querySelectorAll("main").length`, &mains),
+			// A role attribute overrides the implicit ARIA role a <nav> would
+			// otherwise carry - Setup's own section switcher is a <nav
+			// role="tablist">, a real tab widget rather than a second
+			// navigation landmark, so it does not count here.
+			chromedp.Evaluate(`document.querySelectorAll('nav:not([role="tablist"])').length`, &navs),
+		)
+		assert.Equal(t, 1, mains, "%s must render exactly one <main>", route.name)
+		assert.Equal(t, 1, navs, "%s must render exactly one navigation-landmark <nav>", route.name)
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // unlabelledFormControls returns every visible input/select/textarea the
 // document currently renders that has no accessible name: no aria-label, no
 // aria-labelledby pointing at text, and no <label> (wrapping or `for`)

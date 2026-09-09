@@ -56,7 +56,9 @@ export function AwayBar({ state, route, home, onThemeChange, actions }) {
   return html`
     <header class="app-bar app-bar--away" ref=${barRef}>
       <span class="app-bar__brand">LMM</span>
-      <${BackLink} to=${home} />
+      <nav class="app-bar__nav" aria-label="Back to library">
+        <${BackLink} to=${home} />
+      </nav>
       <${ActivityBell}
         state=${state}
         deepLinkJob=${route?.job ?? ""}

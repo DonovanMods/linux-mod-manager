@@ -130,24 +130,26 @@ export function TopBar({
   return html`
     <header class="app-bar" ref=${barRef}>
       <span class="app-bar__brand">LMM</span>
-      <${GamePicker}
-        status=${status}
-        games=${games}
-        open=${openPicker === "game"}
-        onOpen=${() => setOpenPicker("game")}
-        onClose=${() => setOpenPicker(null)}
-      />
-      <${ProfilePicker}
-        status=${status}
-        route=${route}
-        open=${openPicker === "profile"}
-        onOpen=${() => setOpenPicker("profile")}
-        onClose=${() => setOpenPicker(null)}
-        onSwitchRequested=${(name) => {
-          pendingSwitch.current = name;
-        }}
-        actions=${actions}
-      />
+      <nav class="app-bar__nav" aria-label="Game and profile">
+        <${GamePicker}
+          status=${status}
+          games=${games}
+          open=${openPicker === "game"}
+          onOpen=${() => setOpenPicker("game")}
+          onClose=${() => setOpenPicker(null)}
+        />
+        <${ProfilePicker}
+          status=${status}
+          route=${route}
+          open=${openPicker === "profile"}
+          onOpen=${() => setOpenPicker("profile")}
+          onClose=${() => setOpenPicker(null)}
+          onSwitchRequested=${(name) => {
+            pendingSwitch.current = name;
+          }}
+          actions=${actions}
+        />
+      </nav>
       <span class="app-bar__switch">
         <${InlineJob}
           origin=${SWITCH_ORIGIN}
@@ -181,30 +183,32 @@ export function TopBar({
           Deploy
         </button>
       <//>
-      <input
-        type="search"
-        class="omnibar"
-        name="q"
-        aria-label="Filter your library or search sources"
-        placeholder="Filter your library, or press Enter to search sources…"
-        value=${query}
-        onInput=${(e) => onQueryChange(e.currentTarget.value)}
-        onKeyDown=${(e) => {
-          if (e.key === "Enter") actions.searchSources(query);
-        }}
-      />
-      ${
-        query.trim() &&
-        html`
-          <button
-            type="button"
-            class="button button--small omnibar__fanout"
-            onClick=${() => actions.searchSources(query)}
-          >
-            search sources ↵
-          </button>
-        `
-      }
+      <div class="app-bar__search" role="search">
+        <input
+          type="search"
+          class="omnibar"
+          name="q"
+          aria-label="Filter your library or search sources"
+          placeholder="Filter your library, or press Enter to search sources…"
+          value=${query}
+          onInput=${(e) => onQueryChange(e.currentTarget.value)}
+          onKeyDown=${(e) => {
+            if (e.key === "Enter") actions.searchSources(query);
+          }}
+        />
+        ${
+          query.trim() &&
+          html`
+            <button
+              type="button"
+              class="button button--small omnibar__fanout"
+              onClick=${() => actions.searchSources(query)}
+            >
+              search sources ↵
+            </button>
+          `
+        }
+      </div>
       <${ActivityBell}
         state=${state}
         deepLinkJob=${deepLinkJob}

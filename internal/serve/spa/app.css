@@ -394,11 +394,33 @@ select {
   letter-spacing: 0.08em;
 }
 
-/* The omnibar takes the bar's slack AND gives it back: `min-width: 0`
+/* N-11: the game/profile pickers and the omnibar are wrapped in a <nav> and
+ * a role="search" container respectively (landmarks a screen reader can
+ * jump to) - plain flex children of .app-bar rather than display:contents,
+ * since some browsers still drop a display:contents element's own
+ * accessibility semantics, which would defeat the landmark it exists to
+ * add. Each wrapper carries the flex behaviour its children used to get
+ * straight from .app-bar, so the bar's layout is unchanged. */
+.app-bar__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* The search wrapper takes the bar's slack AND gives it back: `min-width: 0`
  * rather than a floor, so it is the control that shrinks when the bar runs
- * out of room, instead of the bar overflowing the page. */
-.app-bar .omnibar {
+ * out of room, instead of the bar overflowing the page. The omnibar itself
+ * then grows to fill the wrapper the same way. */
+.app-bar__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.app-bar .omnibar {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
