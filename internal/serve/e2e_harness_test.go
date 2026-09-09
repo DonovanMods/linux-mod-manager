@@ -112,8 +112,12 @@ func TestE2EShutdownCleanupGuardExceedsGrace(t *testing.T) {
 // e2eTimeout bounds one chromedp.Run. Generous, because a cold browser
 // start is the slowest thing in this package by an order of magnitude, and
 // a timeout here should mean "the page is broken", never "the machine is
-// busy".
-const e2eTimeout = 30 * time.Second
+// busy". Raised from 30s (N-12, epic re-review = I-1 partial): I-1's own
+// chromedp.Poll rewrite removed the sleep-shaped wait it was filed against,
+// but the suite-wide ceiling itself was untouched, so a busy CI box could
+// still time a browser step out on nothing more than contention. This is
+// the ceiling only - no per-test sleeps.
+const e2eTimeout = 60 * time.Second
 
 // chromeCandidates are the browser binaries the harness probes, in
 // preference order. Named here rather than left to chromedp's own search so
