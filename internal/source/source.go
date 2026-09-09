@@ -68,6 +68,20 @@ type UpdateProgressReporter interface {
 	CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report UpdateProgressFunc) ([]domain.Update, error)
 }
 
+// RefreshingUpdateChecker is implemented by sources that cache remote
+// metadata on disk and can be asked to bypass that cache for one check -
+// what `lmm update --refresh` (and the SPA's refresh action) means for the
+// Steam Workshop source, whose keyless metadata is cached for hours by
+// design (#269).
+//
+// Core prefers it over CheckUpdatesWithProgress / CheckUpdates when a
+// source implements it, passing report through unchanged (nil when the
+// caller wants no progress). A source that does not implement it simply
+// never sees the flag, which is correct: it has no cache to bypass.
+type RefreshingUpdateChecker interface {
+	CheckUpdatesRefreshing(ctx context.Context, installed []domain.InstalledMod, refresh bool, report UpdateProgressFunc) ([]domain.Update, error)
+}
+
 // ChangelogProvider is implemented by sources that can supply a mod's
 // changelog text for a specific version - the same optional-capability
 // pattern as UpdateProgressReporter (#87). Core calls it when present and
