@@ -25,6 +25,12 @@ type DB struct {
 	*sql.DB
 	log *slog.Logger
 
+	// path is the database file this handle opened, absolute, or
+	// ":memory:". Kept so an error can name the file the user has to act
+	// on - the credential scrub's "close the other lmm process and try
+	// again" is useless without it.
+	path string
+
 	// keyPath is the token-encryption key file (#79); "" means an
 	// ephemeral process-lifetime key, which is what an in-memory database
 	// gets. key is loaded at most once, on first need, under keyMu.
@@ -125,7 +131,7 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 	if keyPath == "" {
 		keyPath = defaultKeyPath(dsnPath)
 	}
-	database := &DB{DB: sqlDB, log: log, keyPath: keyPath}
+	database := &DB{DB: sqlDB, log: log, path: dsnPath, keyPath: keyPath}
 
 	// One root context for the whole open sequence: the schema migrations
 	// and the credential re-encryption below share it, so this package keeps

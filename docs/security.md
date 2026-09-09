@@ -39,9 +39,14 @@ lmm touches it.
 
 Afterwards lmm rebuilds the database file (`VACUUM`) and checkpoints and
 truncates the write-ahead log, so the old plaintext is gone from
-`lmm.db-wal` as well as `lmm.db`. A `VACUUM` that cannot run (a busy
-database) logs a warning and is retried on the next open; the credential
-itself is already encrypted either way.
+`lmm.db-wal` as well as `lmm.db`. Both steps need the database to itself:
+another lmm process holding it open — `lmm serve` running while you use the
+CLI, or a second shell — blocks them, and neither reports that as an error
+of its own. Each is retried, and if the plaintext still cannot be removed
+**the open fails** naming the file and telling you to close the other
+process. That is deliberate: succeeding here would tell you your
+credentials are encrypted while a backup or a file sync could still copy
+them in the clear.
 
 ### Threat model — read this part
 

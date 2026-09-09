@@ -18,7 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ciphertext copied between rows will not open. Credentials written by an
   older lmm are re-encrypted in place on the next open, in one transaction,
   after which the database is vacuumed and the write-ahead log truncated so
-  the plaintext is gone from both files.
+  the plaintext is gone from both files. Those last two steps need the
+  database uncontended, so if another lmm process has it open — `lmm serve`
+  while you run a CLI command — that one-shot migration **fails the open**
+  and names the file, rather than reporting success over a key still
+  readable in `lmm.db-wal`; close the other process and run the command
+  again.
 
   Two user-visible consequences. **`lmm auth status`, `GET /api/v1/auth`
   and the web UI's Setup page no longer show a masked stored key** — a
