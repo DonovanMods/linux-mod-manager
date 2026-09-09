@@ -151,6 +151,40 @@ func TestReportError_JSON_ConflictError(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrFileConflict, "the envelope text is the domain sentinel's, plus the count")
 }
 
+// #310: a refusal that could not undo its own cache write carries the
+// reason on the same envelope, under an additive "cleanup_warnings" member
+// - omitted entirely by the ordinary refusal above, whose envelope is
+// unchanged.
+func TestReportError_JSON_ConflictError_CleanupWarnings(t *testing.T) {
+	oldJSON := jsonOutput
+	jsonOutput = true
+	t.Cleanup(func() { jsonOutput = oldJSON })
+
+	err := &core.ConflictError{
+		Conflicts: []core.Conflict{
+			{RelativePath: "shared.esp", CurrentSourceID: "test-src", CurrentModID: "other"},
+		},
+		CleanupWarnings: []string{"could not remove the refused import's cache entry B1@1.0: permission denied"},
+	}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"file conflict detected: 1 file(s) would be overwritten\",\n"+
+		"  \"details\": {\n"+
+		"    \"conflicts\": [\n"+
+		"      {\n"+
+		"        \"relative_path\": \"shared.esp\",\n"+
+		"        \"current_source_id\": \"test-src\",\n"+
+		"        \"current_mod_id\": \"other\"\n"+
+		"      }\n"+
+		"    ],\n"+
+		"    \"cleanup_warnings\": [\n"+
+		"      \"could not remove the refused import's cache entry B1@1.0: permission denied\"\n"+
+		"    ]\n"+
+		"  }\n"+
+		"}\n", out)
+}
+
 // TestReportError_JSON_SourceValidationError pins sourceValidationError's
 // --json envelope shape (#309, detailsCoverage): the wrapped error's own
 // message on "error" (identical to the plain path's "Error: %v" text) and

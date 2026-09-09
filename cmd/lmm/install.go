@@ -46,13 +46,29 @@ import (
 func confirmInstallConflicts(ctx context.Context, service *core.Service, game *domain.Game, profileName string, conflicts []core.Conflict) (proceed bool, readErr error) {
 	fmt.Printf("\n⚠ File conflicts detected:\n")
 
-	modConflicts := make(map[string][]string)
+	// Grouping follows the SLICE order, not a map's (#315): core sorts the
+	// list by owning mod then path, so walking it in order yields each
+	// owner's paths contiguously and the group headers come out in the same
+	// order on every run. Iterating a map here is what made them shuffle.
+	type conflictGroup struct {
+		key   string
+		paths []string
+	}
+	var groups []conflictGroup
+	index := make(map[string]int, len(conflicts))
 	for _, c := range conflicts {
 		key := domain.ModKey(c.CurrentSourceID, c.CurrentModID)
-		modConflicts[key] = append(modConflicts[key], c.RelativePath)
+		at, seen := index[key]
+		if !seen {
+			at = len(groups)
+			index[key] = at
+			groups = append(groups, conflictGroup{key: key})
+		}
+		groups[at].paths = append(groups[at].paths, c.RelativePath)
 	}
 
-	for key, paths := range modConflicts {
+	for _, g := range groups {
+		key, paths := g.key, g.paths
 		parts := strings.SplitN(key, ":", 2)
 		sourceID, modID := parts[0], parts[1]
 
@@ -779,7 +795,21 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	default:
 		fmt.Println("  Installed (merged pak updated)")
 	}
-	fmt.Printf("  Added to profile: %s\n", profileName)
+	// #312: Notes are the --verbose-gated live bucket, so a profile write
+	// that failed left NO trace on the default readout - which then went on
+	// to claim "Added to profile" for a ref that was never written. Print
+	// them here (they were already printed live under -v), and let the
+	// typed flag, not their prose, decide the claim below.
+	if !verbose {
+		for _, note := range result.Notes {
+			fmt.Printf("  %s\n", note)
+		}
+	}
+	if result.ProfileWriteFailed {
+		fmt.Printf("  NOT added to profile: %s\n", profileName)
+	} else {
+		fmt.Printf("  Added to profile: %s\n", profileName)
+	}
 
 	return nil
 }
@@ -934,6 +964,12 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	fmt.Printf("Installed: %d\n", len(result.Installed))
 	if len(result.Failed) > 0 {
 		fmt.Printf("Failed: %d (%s)\n", len(result.Failed), strings.Join(installedRefNames(result.Failed), ", "))
+	}
+	// #312's single-mod fix applied here too: a failed profile write is
+	// carried on -v-only Notes, so without this the batch summary looked
+	// like an unqualified success while a mod was missing from the profile.
+	if result.ProfileWriteFailed {
+		fmt.Printf("Profile: NOT updated for at least one mod - see the notes above (-v)\n")
 	}
 
 	return nil

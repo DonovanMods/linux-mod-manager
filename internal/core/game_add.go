@@ -211,7 +211,9 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     that is what keeps a CurseForge add keyed "minecraft" rather than
 //     "432".
 //   - ModPath is optional: empty defaults to <InstallPath>/mods, exactly
-//     the default the CLI's prompt offered.
+//     the default the CLI's prompt offered. A non-empty value must be
+//     ABSOLUTE (#313); a relative one is refused rather than silently
+//     resolved against the process working directory.
 //   - LinkMethod is optional in the strongest sense: domain.LinkSymlink IS
 //     its zero value, so an unset field writes exactly the symlink method
 //     the CLI has always written, with no defaulting step to drift.
@@ -257,7 +259,8 @@ type GameSpec struct {
 // at the first deploy): the install path must exist and be a directory;
 // the mod path is NOT created - deploy creates it on demand, and a game is
 // routinely configured before its mod directory exists - but it must not
-// already exist as a non-directory.
+// already exist as a non-directory; and it must be ABSOLUTE (#313), since
+// a relative one resolves against the caller's working directory.
 //
 // A duplicate id is refused with ErrGameExists rather than overwritten.
 // That is the one place AddGame does NOT reproduce the old CLI flow, which
@@ -410,6 +413,15 @@ func (spec GameSpec) game() (*domain.Game, error) {
 	modPath := strings.TrimSpace(spec.ModPath)
 	if modPath == "" {
 		modPath = filepath.Join(installPath, "mods")
+	}
+	// #313: a relative mod_path resolves against whatever directory lmm was
+	// run from, so the value written today would name a different directory
+	// tomorrow. A hand-written games.yaml gets it joined onto install_path
+	// at load (config.ResolveModPath); a WRITE is refused outright, because
+	// there is no reason for a frontend to send one.
+	if !filepath.IsAbs(modPath) {
+		return nil, newGameSpecError("mod_path", modPath,
+			"the mod path must be absolute (a relative path would resolve against the current directory)")
 	}
 	// Absent is fine (deploy creates it); present-but-not-a-directory is
 	// not, and would otherwise fail every later deploy with a confusing

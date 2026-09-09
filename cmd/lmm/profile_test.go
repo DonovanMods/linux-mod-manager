@@ -526,7 +526,7 @@ func switchLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 // refusal: core wraps ProfileManager.UpsertMod's own refusal sentence as
 // "could not update profile: <err>", with no "Warning: " prefix baked in.
 // switchLockRefusalWarning is the stderr line the CLI renders from it.
-const switchLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile \"target\" - refusing to record v1.1; move the lock with 'lmm mod lock -s test-src -p target mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p target mod1'"
+const switchLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile target - move the lock with 'lmm mod lock -s test-src -p target mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p target mod1' (refusing to record v1.1)"
 
 const switchLockRefusalWarning = "Warning: " + switchLockRefusalDetail + "\n"
 

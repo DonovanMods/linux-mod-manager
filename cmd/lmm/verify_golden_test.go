@@ -30,6 +30,13 @@ import (
 // A second, additive re-record of the *_json goldens only: #334 added
 // core.VerifyResult.checked_at, an omitzero timestamp. The text goldens
 // were again untouched (nothing prints it).
+//
+// A third, deliberate re-record, of version_mismatch_locked_fix ONLY (#311,
+// review I1): the sixth hand-worded lock refusal was folded through the
+// canonical lockedRefSentence builder, which is a user-visible wording
+// change to that one transcript's --fix sub-line and to nothing else.
+// Re-recorded with `-run '^TestVerifyGolden/version_mismatch_locked_fix$'
+// -update` so no other transcript could be rewritten by the same run.
 
 var updateGolden = flag.Bool("update", false, "rewrite verify golden files from current output")
 

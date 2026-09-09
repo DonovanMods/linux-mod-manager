@@ -407,9 +407,26 @@ func (pm *ProfileManager) UpsertMod(ctx context.Context, gameID, profileName str
 	for i := range profile.Mods {
 		if profile.Mods[i].SourceID == mod.SourceID && profile.Mods[i].ModID == mod.ModID {
 			if profile.Mods[i].Locked && profile.Mods[i].Version != mod.Version {
-				return fmt.Errorf("%w: %s:%s is locked at v%s in profile %q - refusing to record v%s; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s'",
-					ErrModLocked, mod.SourceID, mod.ModID, profile.Mods[i].Version, profileName, mod.Version,
-					mod.SourceID, profileName, mod.ModID, mod.SourceID, profileName, mod.ModID)
+				// #311: routed through the canonical constructor rather
+				// than hand-worded here. This gate refuses only at a
+				// DIFFERENT version - moving the lock genuinely unblocks it
+				// - so it is LockedRefRefusalError's kind (move-or-unlock),
+				// not the unlock-only sibling's. The profile ref carries no
+				// display name, so ModKey stands in for it, exactly as the
+				// hand-worded sentence did; the "refusing to record vX"
+				// datum this gate alone has is appended, since it names the
+				// version the write was ASKING for, which the shared
+				// sentence has no field for. #294 made this line
+				// unconditional on apply/sync/switch, which is what made
+				// its old `profile %q` quoting user-visible drift.
+				locked := profile.Mods[i]
+				return fmt.Errorf("%w (refusing to record v%s)",
+					LockedRefRefusalError(
+						domain.Mod{ID: mod.ModID, SourceID: mod.SourceID, Name: domain.ModKey(mod.SourceID, mod.ModID)},
+						profileName,
+						&locked,
+					),
+					mod.Version)
 			}
 			profile.Mods[i].Version = mod.Version
 			profile.Mods[i].FileIDs = mod.FileIDs

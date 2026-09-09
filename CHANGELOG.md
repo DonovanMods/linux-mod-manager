@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slipping in between two of its items — the price of the one freshness
   window the batch checks against (see `ApplyUpdateBatch`'s doc comment).
 
+- **`lmm search --category` against NexusMods takes a category NAME
+  (#343).** It used to take a numeric category id, and NexusMods' current
+  `ModsFilter` defines no id-keyed category filter at all — only
+  `categoryName` — so the flag now means the category as NexusMods spells
+  it (`--category Armour`). **CurseForge still takes its numeric id**; the
+  flag's help, the man page and the README name both. The fix that made a
+  category-filtered NexusMods search work again at all is under Fixed
+  (#337, #343).
+
 - **`lmm auth logout --json` prints a document, not prose (#335).** It emits
   the re-read `app.AuthStatusReport` — the same document
   `lmm auth status --json` prints and `lmm serve`'s
@@ -444,6 +453,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `source.ChangelogProvider` optional capability via its files endpoint's
   changelog field; a source without it, or a failed live fetch, simply
   omits the section rather than failing the command (#87).
+
+### Fixed
+
+- **NexusMods `--tag` and `--category` work again (#337, #343).** The
+  GraphQL client still sent `tagNames` and `categoryId`, neither of which
+  NexusMods' `ModsFilter` defines any more, so **every** tag- or
+  category-filtered NexusMods search failed outright with
+  `Field is not defined on ModsFilter` — on the CLI and in the web UI's
+  search page alike. They are now the schema's own `tag` and
+  `categoryName`. One consequence worth naming: with no id-keyed category
+  filter left in the schema, `lmm search --category` against NexusMods
+  takes the category **name** as NexusMods spells it (`--category Armour`);
+  CurseForge still takes its numeric id, and the flag's help, the man page
+  and the README now say so. A recorded copy of the relevant part of the
+  schema ships under `internal/source/nexusmods/testdata/`, and a new
+  offline contract test checks every key and operator the client actually
+  sends against it — the check whose absence let both fields rot unnoticed.
+  No test contacts NexusMods.
+
+- **`verify --fix` no longer writes the source's current bytes into a locked
+  mod's pinned cache slot (#325).** The version repair already refused to
+  move a locked record, but the missing-file repair then redownloaded
+  anyway — and every download lands in the _recorded_ version's slot, so a
+  mod pinned at v1.0 could end up holding v2.0's files while the database
+  still said v1.0. The file repairs now fetch a locked ref's file only when
+  the source can identify it as the recorded version's own; otherwise they
+  refuse, leave the slot untouched, and report the finding as still
+  outstanding with the "unlock it first" remedy. All three file repairs
+  (missing file, missing checksum, pak re-ingest) report that as a
+  `--fix skipped:` refusal rather than as a repair that _failed_ — nothing
+  failed, and a retry would decline identically — and `--json`'s `note` is
+  the short, machine-checkable `locked` for each. Unlocked mods are
+  unchanged. `lmm serve`'s Health repair runs the same core tier and
+  inherits this.
+
+- **A refused import reports a cleanup it could not finish (#310).** The
+  conflict refusal removes the cache entry it created, and a failed removal
+  used to disappear into a debug log — leaving an orphaned copy of the whole
+  archive with no signal at all. It now logs at warn level and rides the
+  refusal itself: `*core.ConflictError` gains `CleanupWarnings`, surfaced on
+  the `--json` error envelope as an additive `details.cleanup_warnings`
+  (omitted entirely by every ordinary refusal, including every install one).
+  The hard-error return between the cache write and the conflict gate — a
+  profile whose `link_method` is unrecognised — also discards the entry it
+  created, instead of leaking it, and the two refusal paths that carry no
+  typed error announce their cleanup warnings as ordinary import warnings,
+  so they reach the CLI's stderr and the web UI's progress stream rather
+  than only a result document neither frontend reads on a failure.
+
+- **`lmm profile apply`/`sync`/`switch`'s lock-refusal warning reads like
+  every other lock refusal (#311).** `UpsertMod`'s refusal was a fifth
+  hand-worded sentence, and became user-visible when that warning stopped
+  being `--verbose`-only; it quoted the profile name where the canonical
+  wording does not. It now goes through `core.LockedRefRefusalError` — the
+  same sentence, the same remedies — keeping its own "(refusing to record
+  vX)" datum for the version the write was asking for. `lmm verify --fix`'s
+  own `--fix skipped:` sub-line for a locked version mismatch — the sixth
+  and last hand-worded lock refusal — goes through the same builder, so it
+  loses an em-dash, an interposed "the record is the lock's target" clause
+  and a trailing full stop no other lock refusal carries.
+
+- **A failed profile write is no longer invisible on `lmm install`'s plain
+  output (#312).** When the mod installed but its profile ref could not be
+  written (an unloadable profile YAML, EACCES, a cancelled create), core
+  recorded "could not create profile" / "could not update profile" on
+  `InstallResult.Notes` — but those notes are `--verbose`-only, so the
+  default readout showed nothing and then claimed `Added to profile: <name>`
+  for a ref that was never written. The notes now print on the readout
+  without `-v`, that line becomes `NOT added to profile: <name>`, and the
+  batch summary says the profile was not updated for at least one mod.
+  `InstallResult` gains an additive `profile_write_failed` flag so a
+  frontend branches on the datum instead of the sentence.
+
+- **The install conflict block's per-mod groups print in a stable order
+  (#315).** The `From <mod> (<id>):` groups the CLI prints before the
+  overwrite prompt were built in a map and iterated, so the same conflict
+  set listed its owners in a different order on every run. core now sorts a
+  conflict list by owning mod then path (Ruling 4's determinism rule), so
+  the groups fall out of that order — for `--json`'s `details.conflicts`
+  and `lmm import --verbose`'s own conflict list too.
+
+- **A relative `mod_path` in `games.yaml` is resolved against the game's
+  install path (#313).** It used to be used verbatim, so
+  `mod_path: Data` named a `Data` directory under whatever working
+  directory `lmm` happened to be run from — a different directory per
+  shell, and never the game's. It is now joined onto `install_path` at
+  load, and lmm's own writers (`lmm game add`, `game add --from-detected`,
+  `lmm game detect`, the web UI's add-game form and `POST /api/v1/games`)
+  refuse a relative value outright, with a `mod_path`-named field error,
+  rather than writing one. An entry that pairs a relative `mod_path` with
+  no `install_path` at all has nothing to resolve against, so it is now
+  refused when `games.yaml` is read, naming the game and the field, instead
+  of falling back to the working-directory behaviour this fixes.
 
 ## [2.0.0] - 2026-08-30
 

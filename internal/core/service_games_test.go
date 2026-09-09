@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -50,7 +51,11 @@ func TestService_SaveGame_ConcurrentWithReaders(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			errs <- svc.SaveGame(ctx, &domain.Game{ID: fmt.Sprintf("g%d", i), Name: "G", InstallPath: t.TempDir(), ModPath: "Mods"})
+			install := t.TempDir()
+			// #313: SaveGame refuses a relative mod_path, so this fixture
+			// names an absolute one - the concurrency this test is about is
+			// unchanged either way.
+			errs <- svc.SaveGame(ctx, &domain.Game{ID: fmt.Sprintf("g%d", i), Name: "G", InstallPath: install, ModPath: filepath.Join(install, "Mods")})
 		}(i)
 		go func() {
 			defer wg.Done()

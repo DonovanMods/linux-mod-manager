@@ -305,7 +305,7 @@ func TestDoProfileSync_YesFlagUnderJSON_ProceedsWithoutReadingStdin(t *testing.T
 // LOCKED ref: core wraps ProfileManager.UpsertMod's own refusal sentence as
 // "could not update <source>:<mod>: <err>", with no "Warning: " prefix
 // baked in. syncLockRefusalWarning is the stderr line the CLI renders.
-const syncLockRefusalDetail = "could not update src:lock1: mod is locked: src:lock1 is locked at v1.0 in profile \"default\" - refusing to record v2.0; move the lock with 'lmm mod lock -s src -p default lock1 <version>' or unlock with 'lmm mod unlock -s src -p default lock1'"
+const syncLockRefusalDetail = "could not update src:lock1: mod is locked: src:lock1 is locked at v1.0 in profile default - move the lock with 'lmm mod lock -s src -p default lock1 <version>' or unlock with 'lmm mod unlock -s src -p default lock1' (refusing to record v2.0)"
 
 const syncLockRefusalWarning = "Warning: " + syncLockRefusalDetail + "\n"
 

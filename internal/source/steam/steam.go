@@ -175,9 +175,16 @@ func deriveSlug(name string) string {
 // uniqueSlug returns deriveSlug(name), disambiguated with the app id
 // whenever that slug is already spoken for - by a curated known-games
 // entry (taken is seeded with every one of them) or by an earlier unknown
-// candidate in the same scan. Steam guarantees the app id is unique, so
-// one round is always enough; a name that derives to nothing usable falls
+// candidate in the same scan. A name that derives to nothing usable falls
 // straight to "app-<id>".
+//
+// It LOOPS rather than disambiguating once (Unit 9 gate, Minor 9). Steam
+// guarantees the APP ID is unique, but not the string built from it: a
+// curated entry, or a differently-named app, can already hold exactly
+// "half-life-70" or "app-70", and a single round would then hand back a
+// slug that is taken - the one thing this function exists to prevent.
+// Later rounds append an ordinal, which terminates because each candidate
+// is distinct and taken is finite.
 func uniqueSlug(name, appID string, taken map[string]bool) string {
 	slug := deriveSlug(name)
 	if slug == "" || taken[slug] {
@@ -185,6 +192,10 @@ func uniqueSlug(name, appID string, taken map[string]bool) string {
 		if base := deriveSlug(name); base != "" {
 			slug = base + "-" + appID
 		}
+	}
+	base := slug
+	for n := 2; taken[slug]; n++ {
+		slug = fmt.Sprintf("%s-%d", base, n)
 	}
 	return slug
 }

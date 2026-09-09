@@ -131,6 +131,20 @@ type VerifyFinding struct {
 	// inputs, so the two can never disagree about a row. The wordings are
 	// sentence fragments in the engine's own voice, meant to be rendered
 	// after a lead-in like "Not fixable: ".
+	//
+	// One deliberate hedge (#325, review M2). A LOCKED ref's missing /
+	// no_checksum / needs_reingest rows still report Fixable true with no
+	// reason, even though the repair may refuse at attempt time: whether
+	// the source can still serve the recorded version's own file is a
+	// question only a network call answers, and a reporting-only run must
+	// not pay for one. Fixable's own wording is what stays true here ("a
+	// --fix run would ATTEMPT a repair" - it does attempt, then declines),
+	// and Fixable must NOT be set false on the strength of the lock alone:
+	// that would suppress the affordance for a source that CAN serve the
+	// version, which is the common case. So the same locked mod can carry a
+	// version_mismatch row that says "Not fixable: the ref is locked ..."
+	// beside a missing row that offers Repair; the refusal for the second
+	// one arrives on the repaired document, as note "locked".
 	FixableReason string `json:"fixable_reason,omitzero"`
 }
 
@@ -338,6 +352,17 @@ func (r *verifyRun) resolveLast(status, note string) {
 	}
 }
 
+// lockedSkipDetail renders a repair-refusal error as --fix's sub-line: the
+// refusal sentence behind a "--fix skipped: " lead-in, with the ErrModLocked
+// sentinel trimmed back off. All three file repairs (missing, no_checksum,
+// needs_reingest) refuse through the SAME gate (verify_repair.go's #325
+// check), so they render it the same way rather than three times over -
+// leaving the sentinel on would read "mod is locked: <Name> is locked at
+// v1.0 ...", the stutter lockedRefUnlockOnlyMessage exists to avoid.
+func lockedSkipDetail(err error) string {
+	return "--fix skipped: " + strings.TrimPrefix(err.Error(), ErrModLocked.Error()+": ")
+}
+
 // redownloadRepairs reports whether --fix's redownload repair applies to
 // mod - the ONE gate the missing / no_checksum / needs_reingest repairs
 // share (`r.opts.Fix && mod.SourceID != domain.SourceLocal` at each site):
@@ -469,7 +494,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		return result, err
 	}
 
-	if err := r.perFileWalk(files); err != nil {
+	if err := r.perFileWalk(files, prof); err != nil {
 		// Cancelled mid-pass: return the partial result already
 		// accumulated, same contract Task 3's brief specifies.
 		return result, err
@@ -645,7 +670,7 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 // CHECKSUM/NEEDS REINGEST --fix redownload repairs inline at each site;
 // Task 5 adds the one repair this walk does NOT own (version_mismatch's,
 // in versionPass below).
-func (r *verifyRun) perFileWalk(files []DeployedFile) error {
+func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) error {
 	gameCache := r.svc.GetGameCache(r.game)
 	for _, f := range files {
 		if err := r.ctx.Err(); err != nil {
@@ -662,6 +687,9 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			r.finding(VerifyFinding{ModID: f.ModID, FileID: f.FileID, Status: "skipped"}, VerifyEvent{})
 			continue
 		}
+		// #325: every repair below redownloads into the RECORDED version's
+		// cache slot, so each one has to know whether that record is a lock.
+		ref := prof.FindRef(f.SourceID, f.ModID)
 
 		// #221 lazy migration: a convert-eligible pak whose cache entry
 		// predates pak retention (deployable pak present, no retained
@@ -697,9 +725,22 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// re-ingest either retains the source or it doesn't reach this
 			// far).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID); rerr != nil {
-					r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
-					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID, ref); rerr != nil {
+					if errors.Is(rerr, ErrModLocked) {
+						// #325 (review I2): the SAME distinction the
+						// missing branch below makes. The lock gate
+						// declined before the download, so nothing failed
+						// and a retry declines identically forever -
+						// calling it a failure tells the user to retry,
+						// and rendering the raw error stutters the
+						// ErrModLocked sentinel against the sentence's own
+						// "<Name> is locked at ..." head.
+						r.resolveLast("needs_reingest", "locked")
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(rerr)})
+					} else {
+						r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
+						r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
+					}
 				} else {
 					// Same convention as MISSING/NO CHECKSUM's own --fix
 					// success path below, and stale_deployment's
@@ -723,8 +764,16 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
 				switch {
+				case errors.Is(err, ErrModLocked):
+					// #325: refused, not failed - the slot is untouched and
+					// the row keeps reporting MISSING. Note is the short,
+					// machine-checkable reason versionPass's own lock
+					// refusal already uses; the sentence is the text
+					// surface (VerifyEvRepairDetail).
+					r.resolveLast("missing", "locked")
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
 				case err != nil:
 					r.resolveLast("missing", err.Error())
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
@@ -753,8 +802,17 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// verbatim from doVerify (originally lines 804-846), including
 			// the "ok"+ChecksumPopulated main-line emission on success.
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
 				switch {
+				case errors.Is(err, ErrModLocked):
+					// #325 (review I2): refused, not failed - see the
+					// needs_reingest arm above. The warning stands (the
+					// checksum is still unpopulated) with the short,
+					// machine-checkable note; the sentence is the text
+					// surface.
+					r.result.Warnings++
+					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: "locked"}, VerifyEvent{})
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: lockedSkipDetail(err)})
 				case err != nil:
 					r.result.Warnings++
 					r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum", Note: err.Error()}, VerifyEvent{})
@@ -954,7 +1012,18 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 					// below - a bare 'lmm mod lock <id> <version>' would
 					// resolve against the active profile/an ambiguous source
 					// if this mod's lock lives elsewhere.
-					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s in profile %s — the record is the lock's target; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it.", mod.Name, ref.Version, r.profile, mod.SourceID, r.profile, mod.ID, mod.SourceID, r.profile, mod.ID)
+					// #311 (review I1): the sixth site the issue's own
+					// comment names. It was hand-worded and had drifted
+					// from the canonical sentence in three ways the
+					// unification exists to prevent (an em-dash, an
+					// interposed clause, a trailing full stop). It is
+					// LockedRefRefusalError's KIND - this gate refuses
+					// because the RECORD differs from what the lock names,
+					// so moving the lock genuinely unblocks it - and
+					// lockedRefRefusalMessage is that constructor's
+					// sentence half, i.e. the same builder without an
+					// ErrModLocked prefix to trim back off.
+					refusal := "--fix skipped: " + lockedRefRefusalMessage(mod.Mod, r.profile, ref)
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: refusal})
 					// The Note field already exists on this contract
 					// (repair-failure/rename-blocked detail) - this is an

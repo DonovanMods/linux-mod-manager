@@ -147,7 +147,15 @@ it - rewriting a locked record would silently move what the lock means
 instead of fixing anything. The refusal names the mod and the lock's
 target version, and points at the remedy: 'lmm mod lock' to move the
 lock, or 'lmm mod unlock' to release it; in --json the row keeps
-"version_mismatch" and gains note "locked". Separately, a locked mod whose
+"version_mismatch" and gains note "locked". A locked mod's MISSING, NO
+CHECKSUM and NEEDS REINGEST repairs are refused on the same grounds
+whenever the source cannot identify the recorded version's own file: each
+of them downloads into the RECORDED version's cache slot, and a source
+that does not stamp a version on its files can never identify it, so
+unlock first to repair such a mod. Those refusals print as
+"--fix skipped: ..." naming the unlock remedy - not as a repair that
+failed - and their --json rows keep their status with note "locked" too.
+Separately, a locked mod whose
 recorded version hasn't yet caught up to the lock's target (pending a
 "lmm profile apply", not corruption) prints its own "~ NAME - lock pending
 convergence" informational line instead of being silently folded into the

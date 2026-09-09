@@ -22,7 +22,7 @@ import (
 // (pre-refactor, doVerify's --fix repair helper), minus the cmd parameter -
 // callers now pass ctx directly, and game/profile come from the run itself
 // rather than being threaded in.
-func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.InstalledMod, fileID string) (persisted bool, err error) {
+func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.InstalledMod, fileID string, ref *domain.ModReference) (persisted bool, err error) {
 	files, err := r.svc.GetModFiles(ctx, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
 	if err != nil {
 		return false, fmt.Errorf("getting mod files: %w", err)
@@ -36,6 +36,18 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 	}
 	if downloadFile == nil {
 		return false, fmt.Errorf("file %s not found in mod", fileID)
+	}
+	// #325: every download here lands in the RECORDED version's cache slot
+	// (the cache key is mod.Version), so for a LOCKED ref the bytes must be
+	// that version's own. The version pass already refuses to move a locked
+	// record; without this gate the file repairs quietly wrote the source's
+	// CURRENT content into the locked slot instead - the same slot-mismatch
+	// fixed for unlocked mods, surviving for exactly the mods whose whole
+	// point is version pinning. Refused BEFORE the download, so the slot is
+	// left untouched, and with the unlock-only wording: this gate ignores
+	// the version the lock names, so moving the lock is not a remedy.
+	if ref != nil && ref.Locked && !servesRecordedVersion(downloadFile, mod.Version) {
+		return false, LockedRefUnlockOnlyRefusalError(mod.Mod, r.profile, ref)
 	}
 	// SourceMappedMod on the download too (#228): Service.DownloadMod
 	// forwards its mod straight to src.GetDownloadURL with no translation of
@@ -55,6 +67,21 @@ func (r *verifyRun) redownloadModFile(ctx context.Context, mod *domain.Installed
 		return false, fmt.Errorf("saving checksum: %w", err)
 	}
 	return true, nil
+}
+
+// servesRecordedVersion reports whether file is the source's copy of the
+// version a row RECORDS - the precondition #325 puts on any repair that
+// writes into the recorded version's cache slot for a locked ref.
+//
+// It is deliberately conservative. A file the source stamps with a version
+// answers the question outright. A file with NO version (a source that does
+// not version its files at all) cannot answer it: its current bytes are all
+// the source has, and those are exactly what must not be written into a
+// pinned slot on the strength of a guess. So an unstamped file is treated
+// as "cannot serve it" - a locked mod on such a source is repaired by
+// unlocking first, which is the remedy the refusal names.
+func servesRecordedVersion(file *domain.DownloadableFile, recorded string) bool {
+	return file.Version != "" && file.Version == recorded
 }
 
 // cacheDirExists reports whether a cache mod-version directory exists,

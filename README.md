@@ -233,11 +233,18 @@ show` carries the same information (`locked`, `locked_version`), and bulk
 instead reports a refused apply as `status: "skipped", reason: "locked"`, and
 `lmm update rollback` of a locked mod is refused the same way — before its
 "Rolling back..." header, with the same remedies and JSON document. `lmm verify` still reports a locked mod's version-record
-mismatches, but `--fix` refuses to rewrite a locked mod's record (other,
-unlocked mods in the same run are still fixed) — and when the installed
-version hasn't yet converged to a lock's target, `verify` prints an
-informational "lock pending convergence" note rather than treating it as
-drift to repair.
+mismatches, but `--fix` refuses to rewrite a locked mod's record, and
+refuses its missing-file, missing-checksum and pak re-ingest repairs too
+whenever the source cannot identify the recorded version's own file — every
+one of those repairs downloads into the _recorded_ (locked) version's cache
+slot, so filling it with whatever the source serves today is exactly what a
+lock exists to prevent. A source that does not version its files at all
+(Icarus, for one) can never identify it, so a locked mod there is repaired
+by unlocking first. Other, unlocked mods in the same run are still fixed,
+and each refusal reports as a `--fix skipped:` line naming the unlock
+remedy, not as a repair that failed. Separately, when the installed version
+hasn't yet converged to a lock's target, `verify` prints an informational
+"lock pending convergence" note rather than treating it as drift to repair.
 
 ### Pak conversion (Icarus)
 
@@ -326,6 +333,8 @@ games:
     deploy_mode: compile
     # convert_paks: true  # Optional: default; set false to deploy every prebuilt .pak mod raw instead of converting it
 ```
+
+`mod_path` is normally absolute (`~` expands). A relative value in a hand-written `games.yaml` — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory; an entry with a relative `mod_path` and no `install_path` to resolve it against is refused outright, naming the game and the field. lmm's own writers (`lmm game add`, `lmm game detect`, the web UI's add-game form) refuse a relative value and ask for an absolute path.
 
 Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 
@@ -563,7 +572,7 @@ api:
 | `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                         |
 | `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                         |
 | `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                         |
-| `{category}`  | The search query's category filter (source-specific ID or name), empty when unset                                                        | `search`                                         |
+| `{category}`  | The search query's category filter (NexusMods: a name, CurseForge: an id), empty when unset                                              | `search`                                         |
 | `{tags}`      | The search query's tag filters, comma-joined, empty when unset                                                                           | `search`                                         |
 | `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`           |
 | `{file_id}`   | The file ID                                                                                                                              | `download_url`                                   |
@@ -1449,7 +1458,7 @@ under its issue number:
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lmm search <query>`                                      | Search all configured sources concurrently                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm search <query> --source ID`                          | Search a single source instead of all configured ones                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `lmm search <query> --category ID`                        | Filter by category (NexusMods and CurseForge)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `lmm search <query> --category NAME`                      | Filter by category (NexusMods: the category name, e.g. `Armour`; CurseForge: its numeric id)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `lmm search <query> --tag TAG`                            | Filter by tag (NexusMods only; repeat for multiple)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `lmm install [query]`                                     | Search and install a mod (query optional with `--id`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `lmm install --id <mod-id>`                               | Install by mod ID                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -1640,7 +1649,12 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are
 still fixed) since the record is the lock's target, not drift to repair —
-move the lock instead. Separately, when a locked mod's installed version
+move the lock instead. A locked mod's MISSING, NO CHECKSUM and NEEDS
+REINGEST repairs are refused on the same grounds whenever the source cannot
+identify the recorded version's own file: each of them downloads into the
+recorded version's cache slot, and a source that does not stamp a version on
+its files (Icarus, for one) can never identify it — unlock first to repair
+such a mod. Separately, when a locked mod's installed version
 hasn't yet converged to the lock (see [Locking mods to a
 version](#locking-mods-to-a-version)), `verify` prints an informational
 "lock pending convergence" note rather than treating it as an issue.

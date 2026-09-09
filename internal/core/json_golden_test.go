@@ -567,8 +567,14 @@ func TestJSONGoldens(t *testing.T) {
 				},
 				FilesDeployed:       7,
 				MergedPakSyncFailed: true,
-				Warnings:            []string{"merged pak sync failed"},
-				Notes:               []string{"installed dependency Realistic Needs"},
+				// #312: exercised here so the golden pins the additive flag
+				// rather than leaving it omitted by omitzero (review M7 -
+				// the tag is omitzero, and that IS the distinction: under
+				// encoding/json/v2, omitempty would keep a false bool and
+				// so change every existing install document).
+				ProfileWriteFailed: true,
+				Warnings:           []string{"merged pak sync failed"},
+				Notes:              []string{"installed dependency Realistic Needs"},
 			},
 		},
 		{
