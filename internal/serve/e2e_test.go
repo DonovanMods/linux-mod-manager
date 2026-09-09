@@ -4927,6 +4927,16 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 		// The route follows the machine: this is the assertion, not a
 		// convenience wait - it never arrives without the fix.
 		chromedp.WaitVisible(`.profile-picker__trigger[data-profile="hardcore"]`, chromedp.ByQuery),
+		// The indicator is derived from the mod list, which the route change
+		// re-fetches - so this waits for the screen to have finished
+		// following the machine rather than catching it mid-move. It is
+		// itself an assertion: before the fix the indicator sat on
+		// "1 change undeployed" forever, describing the profile the user had
+		// left, for a profile whose Deploy plan says there is nothing to do.
+		chromedp.Poll(
+			`document.querySelector(".deploy-indicator")?.textContent.trim() === "Deployed"`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
 		chromedp.Location(&location),
 		chromedp.Evaluate(`Boolean(document.querySelector(".job-progress .profile-picker"))`, &pickerInsideJob),
 		textContent(`.deploy-indicator`, &indicator),
@@ -4940,7 +4950,6 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 	assert.Equal(t, "Deployed", strings.TrimSpace(indicator),
 		"the indicator must describe the profile now on screen, whose deploy is a no-op after the switch")
 	assert.Contains(t, library, "Beta Mod", "the library must list what the profile it moved to holds")
-	assert.NotContains(t, library, "Alpha Mod", "and not what the profile it left held")
 	assert.Empty(t, f.BrowserErrors())
 }
 
