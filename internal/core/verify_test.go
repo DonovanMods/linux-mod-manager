@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1268,7 +1269,16 @@ func TestVerify_Fix_VersionMismatch_LockedPrimary_RefusesRepair(t *testing.T) {
 
 	details := repairDetails(events)
 	require.Len(t, details, 1)
-	wantRefusal := "--fix skipped: Mod One is locked at v1.5 in profile default — the record is the lock's target; move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1' instead of rewriting it."
+	// #311 (review I1): the sixth hand-worded lock refusal now goes through
+	// the canonical builder, so this pins lockedRefSentence's own sentence -
+	// hyphen, no interposed clause, no trailing full stop - behind the
+	// "--fix skipped: " lead-in, not a wording of its own.
+	wantRefusal := "--fix skipped: " + strings.TrimPrefix(
+		core.LockedRefRefusalError(
+			domain.Mod{ID: "mod1", Name: "Mod One", SourceID: "test-src"},
+			"default",
+			&domain.ModReference{Version: "1.5"},
+		).Error(), core.ErrModLocked.Error()+": ")
 	require.Equal(t, wantRefusal, details[0].Detail)
 	require.False(t, details[0].Fixed)
 }

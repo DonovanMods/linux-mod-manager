@@ -965,7 +965,18 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 					// below - a bare 'lmm mod lock <id> <version>' would
 					// resolve against the active profile/an ambiguous source
 					// if this mod's lock lives elsewhere.
-					refusal := fmt.Sprintf("--fix skipped: %s is locked at v%s in profile %s — the record is the lock's target; move the lock with 'lmm mod lock -s %s -p %s %s <version>' or unlock with 'lmm mod unlock -s %s -p %s %s' instead of rewriting it.", mod.Name, ref.Version, r.profile, mod.SourceID, r.profile, mod.ID, mod.SourceID, r.profile, mod.ID)
+					// #311 (review I1): the sixth site the issue's own
+					// comment names. It was hand-worded and had drifted
+					// from the canonical sentence in three ways the
+					// unification exists to prevent (an em-dash, an
+					// interposed clause, a trailing full stop). It is
+					// LockedRefRefusalError's KIND - this gate refuses
+					// because the RECORD differs from what the lock names,
+					// so moving the lock genuinely unblocks it - and
+					// lockedRefRefusalMessage is that constructor's
+					// sentence half, i.e. the same builder without an
+					// ErrModLocked prefix to trim back off.
+					refusal := "--fix skipped: " + lockedRefRefusalMessage(mod.Mod, r.profile, ref)
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: refusal})
 					// The Note field already exists on this contract
 					// (repair-failure/rename-blocked detail) - this is an

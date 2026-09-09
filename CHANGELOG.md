@@ -492,7 +492,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being `--verbose`-only; it quoted the profile name where the canonical
   wording does not. It now goes through `core.LockedRefRefusalError` — the
   same sentence, the same remedies — keeping its own "(refusing to record
-  vX)" datum for the version the write was asking for.
+  vX)" datum for the version the write was asking for. `lmm verify --fix`'s
+  own `--fix skipped:` sub-line for a locked version mismatch — the sixth
+  and last hand-worded lock refusal — goes through the same builder, so it
+  loses an em-dash, an interposed "the record is the lock's target" clause
+  and a trailing full stop no other lock refusal carries.
 
 - **A failed profile write is no longer invisible on `lmm install`'s plain
   output (#312).** When the mod installed but its profile ref could not be
