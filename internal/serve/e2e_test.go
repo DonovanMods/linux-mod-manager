@@ -4856,3 +4856,43 @@ func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
 		"the unlocked mod must really have been updated - otherwise the tally counts nothing")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_UpdatesCardAndConfirmMarkALockedRow is Owner item 3 of the unit-8
+// gate review: the two controls a user meets BEFORE the outcome does.
+//
+// The Updates card rendered a locked row as a plain checkbox like any
+// other, and the confirm modal listed it as "Better Boots 1.0 → 2.0" - so
+// the step whose entire job is to say what will happen promised an update
+// ApplyUpdateBatch was always going to refuse (#97). Both now say so, in
+// the engine's own terms, naming the version the LOCK holds rather than the
+// one the install is on.
+func TestE2E_UpdatesCardAndConfirmMarkALockedRow(t *testing.T) {
+	f := newE2EFixtureWithALockedAndAnUnlockedUpdate(t)
+
+	var lockedRow, openRow, modal string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		chromedp.Text(`.card--updates .card__row:has([aria-label="Select Better Boots for update"])`, &lockedRow, chromedp.ByQuery),
+		chromedp.Text(`.card--updates .card__row:has([aria-label="Select Great Gloves for update"])`, &openRow, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Better Boots for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Great Gloves for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		chromedp.Text(`.modal[data-kind="updates"] .plan`, &modal, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, lockedRow, "🔒", "a locked row must be marked on the control the user actually ticks")
+	assert.Contains(t, lockedRow, "locked at v1.0", "and must name the version the lock holds")
+	assert.NotContains(t, openRow, "🔒", "an unlocked row must carry no such mark")
+
+	assert.Contains(t, modal, "will be skipped — locked at v1.0",
+		"the confirm step must not promise an update that will not happen")
+	// Case-folded: .plan__heading is rendered in small caps by app.css, and
+	// this assertion is about the sentence, not about the CSS.
+	assert.Contains(t, strings.ToLower(modal), "1 of them will be skipped — locked.",
+		"and must say up front how much of the selection it will not touch")
+	assert.Contains(t, modal, "1.0 → 2.0",
+		"the row that WILL be updated still shows what it will move to")
+	assert.Empty(t, f.BrowserErrors())
+}

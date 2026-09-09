@@ -20,7 +20,7 @@
 // own TTL, same as a Cancelled plan always has.
 
 import { html } from "../render.js";
-import { modKey } from "../modrows.js";
+import { lockedNote, modKey } from "../modrows.js";
 
 /** rowKey identifies one UpdateBatchPlan row - the same "source:id" key
  * the plan's own request/mods took, and NotFound already reports in. */
@@ -31,6 +31,12 @@ function rowKey(update) {
 export function UpdatesBatchPlanView({ plan, modal, actions }) {
   const updates = plan.updates ?? [];
   const notFound = plan.not_found ?? [];
+  // Owner item 3, unit 8 gate review: the confirm step's whole job is to say
+  // what will happen, and a locked row is one ApplyUpdateBatch will REFUSE
+  // (#97) rather than update. Rendering it as "1.0 → 2.0" like every other
+  // row promised an update that could not happen; the count is stated up
+  // front and the row itself says so instead of showing an arrow.
+  const lockedCount = updates.filter((u) => u.locked).length;
 
   /** drop re-plans with every CURRENTLY planned row except `key`. A no-op
    * when it is the only row left - nothing meaningful for Confirm to apply
@@ -58,9 +64,14 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
   return html`
     <div class="plan plan--updates">
       <p class="plan__summary">
-        ${updates.length} update${updates.length === 1 ? "" : "s"} selected.
+        ${`${updates.length} update${updates.length === 1 ? "" : "s"} selected.`}
       </p>
-
+      ${
+        lockedCount > 0 &&
+        html`<p class="plan__heading plan__heading--warn">
+          ${`${lockedCount} of them will be skipped — locked.`}
+        </p>`
+      }
       ${
         updates.length > 0 &&
         html`
@@ -79,9 +90,15 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
                     />
                     <span class="plan__mod-name">${u.installed_mod.name}</span
                     >${" "}
-                    <span class="plan__mod-detail mono"
-                      >${u.installed_mod.version} → ${u.new_version}</span
-                    >
+                    ${
+                      u.locked
+                        ? html`<span class="plan__mod-detail"
+                            >${`will be skipped — ${lockedNote(u)}`}</span
+                          >`
+                        : html`<span class="plan__mod-detail mono"
+                            >${u.installed_mod.version} → ${u.new_version}</span
+                          >`
+                    }
                   </label>
                 </li>
               `;

@@ -671,6 +671,18 @@ select {
   color: var(--text-primary);
 }
 
+/* A row the engine will REFUSE (Owner item 3, unit 8 gate review): the
+ * lock marker sits at its natural width and never shrinks, because a
+ * truncated "🔒 locked at v…" is worse than a truncated version arrow -
+ * it is the one part of the row that says the tick will not do what it
+ * looks like it does. */
+.card__row-lock {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
 .card__row-detail {
   flex: 0 1 auto;
   min-width: 0;

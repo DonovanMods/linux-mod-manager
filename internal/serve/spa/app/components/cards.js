@@ -8,7 +8,7 @@
 import { html, useState } from "../render.js";
 import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
-import { modKey } from "../modrows.js";
+import { lockedNote, modKey } from "../modrows.js";
 import { relativeTime } from "../relativetime.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
@@ -183,6 +183,20 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                       <span class="mono card__row-detail"
                         >${u.installed_mod.version} → ${u.new_version}</span
                       >
+                      ${
+                        // Owner item 3, unit 8 gate review: a locked row was
+                        // rendered as a plain checkbox like any other, so
+                        // ticking it promised an update the engine will
+                        // refuse. The mark is here, on the control the user
+                        // actually ticks, and again on the confirm modal.
+                        u.locked &&
+                        html`<span
+                          class="card__row-lock"
+                          data-testid="update-lock"
+                          title=${`This update will be skipped: ${lockedNote(u)}`}
+                          >${`🔒 ${lockedNote(u)}`}</span
+                        >`
+                      }
                     </li>
                   `;
                 })}
