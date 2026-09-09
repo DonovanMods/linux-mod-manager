@@ -22,6 +22,9 @@ import { SourceResultsList } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
 import { AwayBar } from "./awaybar.js";
 
+// See tagsSupported below.
+const TAG_CAPABLE_SOURCES = new Set(["nexusmods"]);
+
 export function SearchPage({ state, route, onThemeChange, actions }) {
   // Hooks run unconditionally, before any of the branches below return -
   // missioncontrol.js's own rule, for the same reason: a component that
@@ -47,6 +50,16 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     }
     return hits;
   }, [hits, sort]);
+
+  // TAG_CAPABLE_SOURCES is the set of built-in sources whose search honours
+  // ?tag= (core.SearchOptions.Tags). It is a client-side list because
+  // nothing on the wire advertises the capability per source - the same
+  // reason `lmm search --tag`'s own help says support varies. Kept narrow
+  // deliberately: showing the filter where it does nothing is the failure
+  // mode worth avoiding.
+  const tagsSupported = Object.keys(state?.status?.source_ids ?? {}).some(
+    (id) => TAG_CAPABLE_SOURCES.has(id),
+  );
 
   const home = contextPath(route.game, route.profile);
   const header = html`
@@ -136,6 +149,26 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
                   (s) => html`<option key=${s} value=${s}>${s}</option>`,
                 )}
               </select>
+            </label>
+          `
+        }
+        ${
+          // `lmm search --tag` (C-3). Offered only where a source actually
+          // honours it - NexusMods is the one that does, and a filter that
+          // silently narrows nothing is worse than no filter at all. The
+          // game's own source map is what answers that, since it is the set
+          // /api/v1/search will fan out across.
+          tagsSupported &&
+          html`
+            <label class="library__control">
+              Tags
+              <input
+                type="search"
+                name="tag"
+                placeholder="e.g. armour, lore-friendly"
+                value=${searchPage.tags ?? ""}
+                onChange=${(e) => actions.searchPageSetTags(e.currentTarget.value)}
+              />
             </label>
           `
         }

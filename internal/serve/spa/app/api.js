@@ -126,6 +126,10 @@ export function search(query, opts, context) {
   if (opts?.limit != null) url.searchParams.set("limit", String(opts.limit));
   if (opts?.category) url.searchParams.set("category", opts.category);
   if (opts?.source) url.searchParams.set("source", opts.source);
+  // ?tag= is REPEATABLE and narrows on every one it is given (AND), which
+  // is why it appends rather than sets. An empty list appends nothing -
+  // absent means "no filter", never a "" tag.
+  for (const tag of opts?.tags ?? []) url.searchParams.append("tag", tag);
   return get(url.pathname + url.search);
 }
 

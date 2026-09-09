@@ -2099,3 +2099,25 @@ func newE2EFixtureWithAConvertibleMod(t *testing.T) e2eFixture {
 		BrowserErrors: browserErrors,
 	}
 }
+
+// newE2EFixtureWithATagCapableSource is the world `lmm search --tag` acts
+// on: a game whose one source is registered under the id the SPA's own
+// TAG_CAPABLE_SOURCES list names (searchpage.js), holding one tagged mod
+// and one untagged one so the filter has something to actually narrow.
+//
+// The source is this package's fakeSource under the nexusmods id, not a
+// real client: nothing here talks to NexusMods, and the property under test
+// is that the FILTER reaches the source at all - which fakeSource's own tag
+// support (fakeModHasEveryTag) answers exactly as well.
+func newE2EFixtureWithATagCapableSource(t *testing.T) e2eFixture {
+	t.Helper()
+	src := newFakeSource("nexusmods")
+	src.addMod(fakeSourceMod{
+		Mod:  domain.Mod{ID: "armoured", SourceID: "nexusmods", Name: "Armoured Mod", Version: "1.0"},
+		Tags: []string{"armour"},
+	})
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{ID: "plain", SourceID: "nexusmods", Name: "Plain Mod", Version: "1.0"},
+	})
+	return newE2EFixtureFromSource(t, src)
+}

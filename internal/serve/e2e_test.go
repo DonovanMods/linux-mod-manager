@@ -5880,3 +5880,46 @@ func TestE2E_PakConversionTogglesOnlyWhereItApplies(t *testing.T) {
 		"the toggle must have reached the database")
 	assert.Empty(t, c.BrowserErrors())
 }
+
+// TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt is C-3's
+// `lmm search --tag` half.
+//
+// Task A put ?tag= on GET /api/v1/search; nothing in the SPA set it. The
+// interesting half of wiring it is not the field but the GATE: tag support
+// varies by source (NexusMods honours it), nothing on the wire advertises
+// the capability per source, and a filter that silently narrows nothing is
+// worse than no filter. So both cases are driven - the fake source's game,
+// which must not offer it, and a game mapping nexusmods, which must.
+func TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var fields int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("boots")),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('.search-page input[name="tag"]').length`, &fields),
+	)
+	assert.Zero(t, fields,
+		"a game whose sources do not honour tags must not offer a tag filter")
+	assert.Empty(t, f.BrowserErrors())
+
+	g := newE2EFixtureWithATagCapableSource(t)
+	var tagged string
+	g.runInBrowser(t,
+		chromedp.Navigate(g.BaseURL+"/g/"+g.Game.ID+"/"+g.Profile+"/search?q=mod"),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.search-page input[name="tag"]`, chromedp.ByQuery),
+		chromedp.SetValue(`.search-page input[name="tag"]`, "armour", chromedp.ByQuery),
+		// The filter is server-side: the row that survives is the one the
+		// SOURCE kept, not one this page hid.
+		chromedp.Poll(`!document.querySelector(".search-page").textContent.includes("Plain Mod")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(`.search-page`, &tagged),
+	)
+
+	assert.Contains(t, tagged, "Armoured Mod",
+		"the tagged row must survive the filter")
+	assert.NotContains(t, tagged, "Plain Mod",
+		"the untagged row must not")
+	assert.Empty(t, g.BrowserErrors())
+}

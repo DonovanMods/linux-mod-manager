@@ -508,7 +508,13 @@ function facetsFromReport(report) {
  * recomputing from it would make every OTHER category vanish from its own
  * picker the moment one was chosen. Reset only on a genuinely new query.
  */
-async function runSearchPage({ query, page, category = "", source = "" }) {
+async function runSearchPage({
+  query,
+  page,
+  category = "",
+  source = "",
+  tags = "",
+}) {
   const q = (query ?? "").trim();
   searchPageSeq += 1;
   const seq = searchPageSeq;
@@ -534,6 +540,7 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
       pageSize: SEARCH_PAGE_SIZE,
       category,
       source,
+      tags,
       report: null,
       error: null,
       facets,
@@ -542,7 +549,13 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
   try {
     const report = await apiSearch(
       q,
-      { page, pageSize: SEARCH_PAGE_SIZE, category, source },
+      {
+        page,
+        pageSize: SEARCH_PAGE_SIZE,
+        category,
+        source,
+        tags: splitTags(tags),
+      },
       context,
     );
     if (searchPageSeq !== seq) return;
@@ -555,6 +568,7 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
         pageSize: SEARCH_PAGE_SIZE,
         category,
         source,
+        tags,
         report,
         error: null,
         facets: nextFacets,
@@ -570,6 +584,7 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
         pageSize: SEARCH_PAGE_SIZE,
         category,
         source,
+        tags,
         report: null,
         error: err instanceof ApiError ? err.message : String(err),
         facets,
@@ -578,8 +593,20 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
   }
 }
 
+/** splitTags turns the tag field's raw text into the repeated ?tag= values
+ * the wire takes (C-3, `lmm search --tag`). Comma OR whitespace separated,
+ * because a user typing a tag list will use whichever they are used to, and
+ * empties are dropped rather than sent as a "" tag - absent means no
+ * filter. */
+function splitTags(raw) {
+  return (raw ?? "")
+    .split(/[,\s]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
 /** searchPageGoTo re-runs the search page at a different page, keeping the
- * current query/category/source - the Next/Prev controls' own action. */
+ * current query/category/source/tags - the Next/Prev controls' own action. */
 function searchPageGoTo(page) {
   const current = store.get().searchPage;
   if (!current) return;
@@ -588,6 +615,7 @@ function searchPageGoTo(page) {
     page,
     category: current.category,
     source: current.source,
+    tags: current.tags,
   });
 }
 
@@ -601,6 +629,24 @@ function searchPageSetCategory(category) {
     page: 0,
     category,
     source: current.source,
+    tags: current.tags,
+  });
+}
+
+/** searchPageSetTags applies `lmm search --tag` at page 0 (C-3). Tags are
+ * NOT a facet the report can offer options for - no source reports its own
+ * tag vocabulary on the wire - so this is a free-text field rather than a
+ * select, and the search page only offers it where a source actually
+ * honours it. */
+function searchPageSetTags(tags) {
+  const current = store.get().searchPage;
+  if (!current) return;
+  runSearchPage({
+    query: current.query,
+    page: 0,
+    category: current.category,
+    source: current.source,
+    tags,
   });
 }
 
@@ -612,6 +658,7 @@ function searchPageSetSource(source) {
     page: 0,
     category: current.category,
     source,
+    tags: current.tags,
   });
 }
 
@@ -1525,6 +1572,7 @@ const actions = {
   searchPageGoTo,
   searchPageSetCategory,
   searchPageSetSource,
+  searchPageSetTags,
   startToggle,
   setModLock,
   clearModLock,
