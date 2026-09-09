@@ -788,6 +788,30 @@ const (
 	// is the raw text (no prefix); a caller wanting byte-identical output
 	// prints `fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)`.
 	RelinkWarning
+
+	// --- #324: ApplyUpdateBatch's own per-item bracket. Every item's
+	// ApplyUpdate/ApplyMergedPakRegen events flow through the same sink
+	// unchanged; these four say WHOSE they are and how that item ended, so
+	// a renderer driving a long batch can attribute progress to a row
+	// instead of guessing from the order events arrive in. All four carry
+	// Scope.Mod/ModName and a 1-based Index/Total within the batch. ---
+
+	// UpdateBatchItem fires once per item, before it is re-planned - the
+	// batch's "now working on this one" notice. Version is the update's own
+	// NewVersion (what the item is moving TOWARDS), so a renderer can print
+	// the whole line before any work happens.
+	UpdateBatchItem
+	// UpdateBatchItemApplied fires once an item has fully applied. Version
+	// is the result's ToVersion - the version actually recorded, which for a
+	// file-only update legitimately equals the one it started on.
+	UpdateBatchItemApplied
+	// UpdateBatchItemSkipped fires for an item the batch declined to
+	// attempt - today exactly a locked ref (#97). Detail is the refusal
+	// sentence, identical to the skip entry's own Reason.
+	UpdateBatchItemSkipped
+	// UpdateBatchItemFailed fires for an item that could not be applied.
+	// Detail is the error, identical to the failure entry's own Error.
+	UpdateBatchItemFailed
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -826,6 +850,8 @@ var deployPhaseNames = [...]string{
 	ImportArchiveWarning: "import_archive_warning", ImportArchiveNote: "import_archive_note",
 	ImportArchiveProfileNote: "import_archive_profile_note",
 	RelinkFetching:           "relink_fetching", RelinkProfileNote: "relink_profile_note", RelinkWarning: "relink_warning",
+	UpdateBatchItem: "update_batch_item", UpdateBatchItemApplied: "update_batch_item_applied",
+	UpdateBatchItemSkipped: "update_batch_item_skipped", UpdateBatchItemFailed: "update_batch_item_failed",
 }
 
 // String returns the phase's wire name.

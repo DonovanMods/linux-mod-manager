@@ -965,6 +965,66 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #324. Every optional key populated at once (a real plan whose
+			// selection matched everything carries no NotFound) - the
+			// golden's job is to pin each key's wire shape. The unexported
+			// snapshot field must not appear at all, same as update_plan.
+			"update_batch_plan",
+			core.UpdateBatchPlan{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+						ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+					},
+					NewVersion: "1.2.4",
+					Changelog:  "Fixed a crash on load.",
+				}},
+				NotFound: []string{"curseforge:7"},
+			},
+		},
+		{
+			// #324. Applied is non-omitzero, so a batch that applied
+			// nothing still pins as "[]" rather than "null"; Failed and
+			// Skipped each carry one entry. The skip is a locked ref (#97) -
+			// an UpdateApplyResult with UpdateSkipped and the engine's own
+			// refusal sentence as its Reason.
+			"update_batch_result",
+			core.UpdateBatchResult{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Applied: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.4", FileIDs: []string{"file-1"}},
+					Name:        "Sample Mod",
+					FromVersion: "1.2.3",
+					ToVersion:   "1.2.4",
+					Status:      core.UpdateUpdated,
+				}},
+				Failed: []core.UpdateBatchFailure{{
+					Mod:   "curseforge:7",
+					Name:  "Broken Mod",
+					Error: "fetching mod: source unavailable",
+				}},
+				Skipped: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "9", Version: "1.0", Locked: true},
+					Name:        "Locked Mod",
+					FromVersion: "1.0",
+					ToVersion:   "2.0",
+					Status:      core.UpdateSkipped,
+					Reason:      "Locked Mod is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 9' first",
+				}},
+			},
+		},
+		{
+			"update_batch_failure",
+			core.UpdateBatchFailure{
+				Mod:   "curseforge:7",
+				Name:  "Broken Mod",
+				Error: "fetching mod: source unavailable",
+			},
+		},
+		{
 			"rollback_result",
 			core.RollbackResult{
 				Mod:     domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.2", FileIDs: []string{"file-0"}},

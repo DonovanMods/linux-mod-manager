@@ -1,0 +1,43 @@
+{
+  "game_id": "skyrim-se",
+  "profile": "default",
+  "applied": [
+    {
+      "mod": {
+        "source_id": "nexusmods",
+        "mod_id": "42",
+        "version": "1.2.4",
+        "file_ids": [
+          "file-1"
+        ],
+        "locked": false
+      },
+      "name": "Sample Mod",
+      "from_version": "1.2.3",
+      "to_version": "1.2.4",
+      "status": "updated"
+    }
+  ],
+  "failed": [
+    {
+      "mod": "curseforge:7",
+      "name": "Broken Mod",
+      "error": "fetching mod: source unavailable"
+    }
+  ],
+  "skipped": [
+    {
+      "mod": {
+        "source_id": "nexusmods",
+        "mod_id": "9",
+        "version": "1.0",
+        "locked": true
+      },
+      "name": "Locked Mod",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "skipped",
+      "reason": "Locked Mod is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 9' first"
+    }
+  ]
+}
