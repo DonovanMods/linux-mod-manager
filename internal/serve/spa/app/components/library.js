@@ -30,6 +30,49 @@ const SORT_LABELS = {
   recent: "Recently installed",
 };
 
+/** NoMatches is the library's narrowed-to-nothing state (issue 334's empty-
+ * state pass). "No mods match this filter." was true but unhelpful in two
+ * ways: it named neither of the two things that could be narrowing the
+ * table - the omnibar's text and the Filter dropdown are independent, and
+ * either alone can empty it - and it left the way out to be guessed.
+ *
+ * So it says which narrowing is in force, and when the FILTER is one of
+ * them it offers the single click that undoes it. The omnibar's text has
+ * no such button on purpose: its input is right there in the top bar with
+ * the user's own words in it, and a button that silently emptied a field
+ * they are still typing in would be worse than the sentence. */
+function NoMatches({ query, filter, onFilterChange }) {
+  const text = (query ?? "").trim();
+  const filtered = filter !== "all";
+
+  return html`
+    <div class="empty-state">
+      <p class="empty-state__hint">
+        ${
+          text && filtered
+            ? `No mods match "${text}" under the ${FILTER_LABELS[filter]} filter.`
+            : text
+              ? `No mods match "${text}".`
+              : `No mods are ${FILTER_LABELS[filter].toLowerCase()}.`
+        }
+      </p>
+      ${
+        filtered &&
+        html`<p class="empty-state__actions">
+          <button
+            type="button"
+            class="button button--small"
+            data-action="clear-filter"
+            onClick=${() => onFilterChange("all")}
+          >
+            Show all mods
+          </button>
+        </p>`
+      }
+    </div>
+  `;
+}
+
 /** modOrigin builds the "mod:{source}/{id}:{action}" origin every per-mod
  * control in this application shares (modrows.js#modOriginPattern) - the
  * row toggle, the ⋯ menu's Update/Uninstall, and the batch bar's own
@@ -270,7 +313,7 @@ export function Library({
     }
     return html`
       <section class="library">
-        <p class="app-booting">Loading library…</p>
+        <p class="app-booting">Loading your library…</p>
       </section>
     `;
   }
@@ -361,19 +404,23 @@ export function Library({
 
       ${
         visible.length === 0
-          ? html`<p class="empty-state__hint">No mods match this filter.</p>`
+          ? html`<${NoMatches}
+              query=${query}
+              filter=${filter}
+              onFilterChange=${onFilterChange}
+            />`
           : html`
               <table class="library__table">
                 <thead>
                   <tr>
                     <th class="col--select">Select</th>
                     <th class="col--enabled">Enabled</th>
-                    <th>Name</th>
-                    <th>Version</th>
+                    <th class="col--name">Name</th>
+                    <th class="col--version">Version</th>
                     <th class="col--author">Author</th>
                     <th class="col--source">Source</th>
-                    <th>Badges</th>
-                    <th>Load order</th>
+                    <th class="col--badges">Badges</th>
+                    <th class="col--order">Load order</th>
                     <th class="col--method">Method</th>
                     <th class="col--installed">Installed</th>
                     <th class="col--menu"></th>
@@ -412,7 +459,7 @@ export function Library({
                             onChange=${() => toggleEnabled(row)}
                           />
                         </td>
-                        <td>
+                        <td class="col--name">
                           <button
                             type="button"
                             class="mod-row__name"
@@ -432,12 +479,12 @@ export function Library({
                             </span>`
                           }
                         </td>
-                        <td class="mono">
+                        <td class="col--version mono">
                           ${row.version}${row.hasUpdate && html` → ${row.updateTarget}`}
                         </td>
                         <td class="col--author">${row.author || "—"}</td>
                         <td class="col--source mono">${row.source_id}</td>
-                        <td class="mod-row__badges">
+                        <td class="col--badges mod-row__badges">
                           ${
                             row.hasUpdate &&
                             html`<span
@@ -474,7 +521,7 @@ export function Library({
                             >${row.update_policy}</span
                           >
                         </td>
-                        <td class="mono">${row.loadOrder}</td>
+                        <td class="col--order mono">${row.loadOrder}</td>
                         <td class="col--method mono">${row.link_method}</td>
                         <td class="col--installed">
                           ${formatDate(row.installed_at)}

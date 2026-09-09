@@ -46,3 +46,39 @@ func TestSPAMaxUploadBytesMatchesTheServerConstant(t *testing.T) {
 	require.Equal(t, int64(maxUploadBytes), spaValue,
 		"spa/app/api.js's maxUploadBytes (%d) has drifted from uploads.go's maxUploadBytes (%d)", spaValue, maxUploadBytes)
 }
+
+// motionBaseCSS matches app.css's --motion-base token declaration - the
+// duration every "arriving" animation in this UI runs at. Anchored at the
+// two-space indent of the top-level :root block on purpose: the
+// prefers-reduced-motion override declares the same token, one level
+// deeper, at 0ms, and matching THAT would make this test assert that the
+// application animates nothing.
+var motionBaseCSS = regexp.MustCompile(`(?m)^  --motion-base: (\d+)ms;`)
+
+// motionExitJS matches spa/app/motion.js's own copy of it.
+var motionExitJS = regexp.MustCompile(`(?m)^const EXIT_MILLIS = (\d+);`)
+
+// TestSPAExitAnimationMatchesTheMotionToken pins the one duplication issue
+// 334's motion pass could not avoid.
+//
+// The slide-over's exit needs a TIMER, because the thing that closes it is
+// a route change Preact answers by unmounting the subtree - so the panel has
+// to be held on screen for as long as the CSS animation runs. That means
+// motion.js carries a millisecond count that app.css also declares, and
+// nothing but this test stops the two from drifting into a panel that
+// vanishes mid-animation (or lingers after it).
+func TestSPAExitAnimationMatchesTheMotionToken(t *testing.T) {
+	css, err := os.ReadFile("spa/app.css")
+	require.NoError(t, err)
+	js, err := os.ReadFile("spa/app/motion.js")
+	require.NoError(t, err)
+
+	cssMatch := motionBaseCSS.FindSubmatch(css)
+	require.NotNil(t, cssMatch, "spa/app.css must declare --motion-base in milliseconds")
+	jsMatch := motionExitJS.FindSubmatch(js)
+	require.NotNil(t, jsMatch, "spa/app/motion.js must declare EXIT_MILLIS")
+
+	require.Equal(t, string(cssMatch[1]), string(jsMatch[1]),
+		"motion.js's EXIT_MILLIS (%sms) has drifted from app.css's --motion-base (%sms)",
+		jsMatch[1], cssMatch[1])
+}

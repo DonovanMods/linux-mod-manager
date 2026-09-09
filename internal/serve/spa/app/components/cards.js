@@ -187,21 +187,23 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                   `;
                 })}
               </ul>
-              <${InlineJob}
-                origin=${UPDATES_BATCH_ORIGIN}
-                state=${state}
-                actions=${actions}
-              >
-                <button
-                  type="button"
-                  class="button"
-                  data-action="update-selected"
-                  disabled=${selected.size === 0}
-                  onClick=${updateSelected}
+              <div class="card__actions">
+                <${InlineJob}
+                  origin=${UPDATES_BATCH_ORIGIN}
+                  state=${state}
+                  actions=${actions}
                 >
-                  Update selected
-                </button>
-              <//>
+                  <button
+                    type="button"
+                    class="button"
+                    data-action="update-selected"
+                    disabled=${selected.size === 0}
+                    onClick=${updateSelected}
+                  >
+                    Update selected
+                  </button>
+                <//>
+              </div>
             `
       }
     </div>

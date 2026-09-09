@@ -76,7 +76,7 @@ export function SetupSources() {
     `;
   }
   if (sources === null) {
-    return html`<p class="app-booting">Loading…</p>`;
+    return html`<p class="app-booting">Loading your custom sources…</p>`;
   }
 
   async function afterSave() {

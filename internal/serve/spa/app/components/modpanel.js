@@ -16,6 +16,7 @@
 
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { trapFocus } from "../focustrap.js";
+import { exitMillis } from "../motion.js";
 import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
 import { InlineJob } from "./jobprogress.js";
@@ -87,8 +88,27 @@ export function ModPanel({
       ? visible[index + 1]
       : null;
 
+  // The exit animation (issue 334, owner demo 1: "mild UI animations for the
+  // slide-over"). Preact would unmount this whole subtree the instant the
+  // route lost its ?mod=, so there would be nothing left on screen to
+  // animate - the panel would simply vanish. Holding the ROUTE CHANGE back
+  // for one --motion-base, with a class on the scrim that plays the closing
+  // keyframes, is what gives the exit somewhere to happen.
+  //
+  // Every one of this panel's four exits (Escape, the scrim, the ✕, the
+  // ←/→ that leave it) runs through close(), so one deferral covers them
+  // all. `closing` also latches: a second Escape during the animation must
+  // not queue a second navigate.
+  const [closing, setClosing] = useState(false);
+
   function close() {
-    navigate(contextPath);
+    if (closing) return;
+    if (exitMillis() === 0) {
+      navigate(contextPath);
+      return;
+    }
+    setClosing(true);
+    setTimeout(() => navigate(contextPath), exitMillis());
   }
 
   const panelRef = useRef(null);
@@ -188,7 +208,7 @@ export function ModPanel({
     const origin = `install:${catalogMod.source_id}/${catalogMod.id}`;
     return html`
       <div
-        class="slide-over"
+        class="slide-over ${closing ? "slide-over--closing" : ""}"
         role="dialog"
         aria-modal="true"
         aria-label="${catalogMod.name} details"
@@ -271,7 +291,7 @@ export function ModPanel({
   if (!row) {
     return html`
       <div
-        class="slide-over"
+        class="slide-over ${closing ? "slide-over--closing" : ""}"
         role="dialog"
         aria-modal="true"
         aria-label="Mod details"
@@ -302,7 +322,7 @@ export function ModPanel({
 
   return html`
     <div
-      class="slide-over"
+      class="slide-over ${closing ? "slide-over--closing" : ""}"
       role="dialog"
       aria-modal="true"
       aria-label="${row.name} details"

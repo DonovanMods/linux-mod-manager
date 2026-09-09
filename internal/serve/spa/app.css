@@ -65,6 +65,47 @@
   /* The slide-over's backdrop scrim - text-primary's hue at low opacity,
    * rather than a bare black no token set chose. */
   --scrim: rgb(16 21 28 / 40%);
+
+  /* Motion (issue 334, owner demo 1: "mild UI animations for the slide-over
+   * and a consistent motion language app-wide").
+   *
+   * Three durations and one curve, defined ONCE here rather than per theme:
+   * how long a thing takes to appear is not a colour, and a dark UI that
+   * moved at a different speed from a light one would be a bug.
+   *
+   * The curve decelerates into rest and never overshoots. Everything in
+   * this application that moves is either arriving (a panel, a toast) or
+   * reporting progress; nothing is playful, so nothing bounces. */
+  --motion-fast: 110ms;
+  --motion-base: 170ms;
+  --motion-slow: 240ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/*
+ * prefers-reduced-motion is honoured by collapsing the tokens, not by
+ * hunting down each animation: every duration in this stylesheet is one of
+ * the three above, so zeroing them is the whole switch. The blanket
+ * !important rules underneath catch anything a browser animates on its own
+ * (smooth scrolling) and any future rule that forgets the tokens.
+ *
+ * Zero, not "very short": a user who asked for no motion has said so.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -299,10 +340,6 @@ select {
   cursor: pointer;
 }
 
-.mono {
-  font-family: var(--font-mono);
-}
-
 /* ---------------------------------------------------------------------- */
 /* Top bar.                                                                */
 /* ---------------------------------------------------------------------- */
@@ -342,6 +379,22 @@ select {
   padding: var(--space-6);
 }
 
+/*
+ * A measure, above 1440p (issue 334's density pass). The baseline is 1080p,
+ * where full-bleed is right; on a 1440p or wider display an unbounded
+ * library stretches a seven-column table to 2400px and puts the row's own
+ * actions a head-turn away from its name. 130rem is wide enough that every
+ * progressive column still fits at 1920 (see .library__table's own steps)
+ * and narrow enough that a row reads as one line.
+ */
+@media (min-width: 1440px) {
+  .mission-control__body,
+  .app-main {
+    max-width: 130rem;
+    margin: 0 auto;
+  }
+}
+
 /* The game/profile pickers and the activity bell share one dropdown shape:
  * a trigger button and an absolutely-positioned menu beneath it. */
 .picker {
@@ -363,6 +416,7 @@ select {
 }
 
 .picker__menu {
+  animation: menu-drop var(--motion-fast) var(--motion-ease);
   position: absolute;
   z-index: 10;
   top: 100%;
@@ -426,6 +480,17 @@ select {
   color: var(--text-primary);
 }
 
+/* A dropdown drops - the shortest duration in the set, because a menu that
+ * takes as long as a dialog to appear feels broken rather than considered.
+ * Shared by the game/profile pickers, the row menus and the activity tray,
+ * which all render through .picker__menu or .tray. */
+@keyframes menu-drop {
+  from {
+    transform: translateY(-0.25rem);
+    opacity: 0;
+  }
+}
+
 .picker__divider {
   margin: var(--space-1) 0;
   border-top: 1px solid var(--border-subtle);
@@ -457,20 +522,15 @@ select {
   font-weight: 700;
 }
 
-.tray {
-  min-width: 16rem;
-}
+/* The tray's own layout rules live with the rest of the activity tray
+ * further down this file; only the state colours below are here, where the
+ * bell that owns them is. (Two superseded rules - a 16rem min-width and a
+ * flex .tray__row - sat here until issue 334's polish pass: both were
+ * overridden by that later section, so they styled nothing.) */
 
 .tray__empty {
   padding: var(--space-2);
   color: var(--text-muted);
-}
-
-.tray__row {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
 }
 
 .tray__state {
@@ -501,14 +561,28 @@ select {
 /* Attention cards.                                                       */
 /* ---------------------------------------------------------------------- */
 
+/*
+ * The design asks for "three-across cards" (§Visual design), which was a
+ * literal repeat(3, 1fr) until this unit gave Mission Control a FOURTH card
+ * (the profile card) and the fourth dropped onto a row of its own with two
+ * card-widths of empty space beside it.
+ *
+ * auto-fit with a real minimum says the same thing without counting: at the
+ * 1080p baseline three cards fill the row and a fourth wraps under; from
+ * about 1500px up all four sit across. The minimum is what keeps a card
+ * readable - a Health card squeezed to 15rem wraps every finding onto three
+ * lines.
+ */
 .attention-cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
   gap: var(--space-4);
   margin-bottom: var(--space-6);
 }
 
 .card {
+  display: flex;
+  flex-direction: column;
   padding: var(--space-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
@@ -543,7 +617,13 @@ select {
   font-size: 0.85em;
 }
 
+/* The card's list takes the slack so every card in the row ends its
+ * actions at the same height (issue 334's density pass): without it a
+ * three-finding Health card and a one-row Updates card put their buttons
+ * at two different heights, and the eye reads that as misalignment rather
+ * than as different amounts of content. */
 .card__list {
+  flex: 1 1 auto;
   margin: 0 0 var(--space-3);
   padding: 0;
   list-style: none;
@@ -562,12 +642,27 @@ select {
   border-bottom: none;
 }
 
+/* The name takes the row's slack (so a row's own action stays pinned right,
+ * where every card's is) but can also GIVE it back: min-width: 0 plus the
+ * ellipsis is what stops a long mod name - or a conflict label naming three
+ * mods - from pushing its own Repair/Resolve button out of the card
+ * entirely, which flex's default min-width: auto would happily do
+ * (issue 334's density pass). */
 .card__row-name {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-primary);
 }
 
 .card__row-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-secondary);
 }
 
@@ -579,8 +674,16 @@ select {
   font-size: 0.9em;
 }
 
+/* A card's own action row, pinned to its bottom edge - .card is a flex
+ * column and .card__list takes the slack, so every card in the row ends
+ * its actions at the same height. `align-items: start` keeps a button its
+ * own natural size: a direct flex child of the column would otherwise
+ * stretch to the card's full width, which is how "Update selected" came to
+ * be a full-bleed bar while "Repair all" beside it was a button
+ * (issue 334's density pass). */
 .card__actions {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
 }
 
@@ -630,7 +733,14 @@ select {
   flex: 1;
 }
 
+/* A label wrapping its own control (issue 334's spacing pass). Without the
+ * flex gap the label text sat flush against the <select> - "FilterAll" and
+ * "Sort (on this page)Relevance" - which read as one word at a glance.
+ * Shared by the library toolbar and the search page's own sort. */
 .library__control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--text-secondary);
   font-size: 0.85em;
 }
@@ -638,6 +748,55 @@ select {
 .library__table {
   width: 100%;
   border-collapse: collapse;
+}
+
+/*
+ * Column widths (issue 334's density pass). Every column but the name is
+ * given the width its CONTENT actually needs, so the name - the one column
+ * whose content is unbounded and the one people scan - absorbs all the
+ * slack. Before this the browser's auto layout redistributed everything on
+ * every re-render: switching a filter, or a mod whose author is one
+ * character longer arriving, visibly shifted the checkboxes under the
+ * cursor.
+ *
+ * The widths are minimums (`width` on a table cell is a suggestion, not a
+ * clamp) rather than a fixed table-layout, which would truncate a long
+ * version string instead of letting its column grow.
+ */
+.library__table th.col--select,
+.library__table td.col--select,
+.library__table th.col--enabled,
+.library__table td.col--enabled {
+  width: 4rem;
+}
+
+.library__table th.col--order,
+.library__table td.col--order {
+  width: 6rem;
+  text-align: right;
+}
+
+.library__table th.col--version,
+.library__table td.col--version,
+.library__table th.col--author,
+.library__table td.col--author,
+.library__table th.col--source,
+.library__table td.col--source,
+.library__table th.col--method,
+.library__table td.col--method,
+.library__table th.col--installed,
+.library__table td.col--installed {
+  width: 9rem;
+}
+
+.library__table th.col--badges,
+.library__table td.col--badges {
+  width: 11rem;
+}
+
+.library__table th.col--menu,
+.library__table td.col--menu {
+  width: 3rem;
 }
 
 .library__table th {
@@ -828,6 +987,7 @@ select {
   display: flex;
   justify-content: flex-end;
   background: var(--scrim);
+  animation: scrim-in var(--motion-base) var(--motion-ease);
 }
 
 .slide-over__panel {
@@ -838,6 +998,45 @@ select {
   overflow-y: auto;
   background: var(--surface-raised);
   box-shadow: var(--shadow-raised);
+  animation: panel-in-right var(--motion-base) var(--motion-ease);
+}
+
+/* The closing half (issue 334, owner demo 1). The panel is still mounted
+ * while this runs - modpanel.js holds its own close back for exactly one
+ * --motion-base - which is what makes an exit animation possible at all in
+ * a tree Preact would otherwise unmount the instant the route changed. */
+.slide-over--closing {
+  animation: scrim-out var(--motion-base) var(--motion-ease) forwards;
+}
+
+.slide-over--closing .slide-over__panel {
+  animation: panel-out-right var(--motion-base) var(--motion-ease) forwards;
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes panel-in-right {
+  from {
+    transform: translateX(2rem);
+    opacity: 0;
+  }
+}
+
+@keyframes panel-out-right {
+  to {
+    transform: translateX(2rem);
+    opacity: 0;
+  }
 }
 
 .slide-over__panel:focus {
@@ -925,6 +1124,15 @@ select {
 /* The modal shell + the confirm-plan body.                                */
 /* ---------------------------------------------------------------------- */
 
+/*
+ * The modal arrives with the same scrim fade the slide-over uses and a
+ * short rise. It LEAVES instantly, on purpose and against the temptation to
+ * make the two symmetrical: three of a modal's four exits are followed
+ * immediately by something happening (Confirm starts a job, whose progress
+ * has to appear where the control was), and holding a dialog on screen for
+ * a fifth of a second delays the feedback the user is waiting for. The
+ * slide-over has no such exit - closing it only returns you to the page.
+ */
 .modal-scrim {
   position: fixed;
   inset: 0;
@@ -933,10 +1141,12 @@ select {
   align-items: center;
   justify-content: center;
   padding: var(--space-8);
+  animation: scrim-in var(--motion-fast) var(--motion-ease);
   background: var(--scrim);
 }
 
 .modal {
+  animation: panel-rise var(--motion-base) var(--motion-ease);
   display: flex;
   flex-direction: column;
   width: min(46rem, 100%);
@@ -1021,7 +1231,7 @@ select {
 
 .plan__mods,
 .plan__paths {
-  margin: 0;
+  margin: var(--space-1) 0 0;
   padding: 0;
   list-style: none;
 }
@@ -1065,8 +1275,12 @@ select {
   font-size: 0.9em;
 }
 
+/* The list reset for .plan__paths is above, with the plan's own layout;
+ * this is the muted type it renders in. (They were two competing `margin`
+ * declarations until issue 334's polish pass - the reset's `margin: 0` and
+ * this one's `margin-top` - which is exactly how a list ends up with a gap
+ * nobody meant to give it.) */
 .plan__paths {
-  margin-top: var(--space-1);
   color: var(--text-muted);
   font-size: 0.85em;
 }
@@ -1165,7 +1379,24 @@ select {
   text-decoration: underline;
 }
 
+/*
+ * The trailing facts get fixed widths (issue 334's density pass) so they
+ * line up as COLUMNS down a page of results, rather than each row placing
+ * them wherever its own name happens to end. Truncated rather than wrapped:
+ * a result row is one line, and an author with a long name must not make
+ * its row twice as tall as its neighbours.
+ */
+.search-result__version,
+.search-result__author,
+.search-result__downloads {
+  flex: 0 0 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .search-result__version {
+  width: 6rem;
   color: var(--text-secondary);
   font-size: 0.9em;
 }
@@ -1176,6 +1407,7 @@ select {
 }
 
 .search-result__author {
+  width: 10rem;
   color: var(--text-muted);
   font-size: 0.85em;
 }
@@ -1189,8 +1421,10 @@ select {
 }
 
 .search-result__downloads {
+  width: 9rem;
   color: var(--text-muted);
   font-size: 0.85em;
+  text-align: right;
 }
 
 .search-result__summary {
@@ -1343,6 +1577,22 @@ select {
 /* Toasts - completions whose origin was not on screen.                    */
 /* ---------------------------------------------------------------------- */
 
+@keyframes panel-rise {
+  from {
+    transform: translateY(0.75rem);
+    opacity: 0;
+  }
+}
+
+/* A toast arrives from the edge it lives on (bottom right), so the motion
+ * points at where it came from rather than being a generic fade. */
+@keyframes toast-in {
+  from {
+    transform: translateY(0.5rem);
+    opacity: 0;
+  }
+}
+
 .toasts {
   position: fixed;
   z-index: 50;
@@ -1355,6 +1605,7 @@ select {
 }
 
 .toast {
+  animation: toast-in var(--motion-base) var(--motion-ease);
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -1877,6 +2128,24 @@ select {
 .setup-table td {
   padding: var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+/*
+ * The games table's two PATH columns (issue 334's density pass). A game
+ * installed under a long Steam library path pushed the Default column off
+ * the right-hand edge and stretched every other row to match. Each path
+ * column now takes a share of the width and ellipsises what does not fit;
+ * the full value is on the cell's own title, so nothing is lost.
+ */
+.setup-table {
+  table-layout: fixed;
+}
+
+.setup-table .col--path {
+  width: 32%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .setup-table__actions {

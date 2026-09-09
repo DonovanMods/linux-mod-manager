@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
@@ -4672,5 +4673,73 @@ func TestE2E_Keyboard_SkipLinkJumpsPastTheTopBar(t *testing.T) {
 	var mainExists bool
 	f.runInBrowser(t, chromedp.Evaluate(`document.getElementById("main") !== null`, &mainExists))
 	assert.True(t, mainExists, "the skip link must point at a target that exists")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ReducedMotion_AnimatesNothing is the other half of issue 334's
+// motion pass: a user who has asked their system for less motion gets
+// none of it.
+//
+// It emulates the media feature rather than trusting the stylesheet by
+// reading, because "prefers-reduced-motion is honoured" is a claim about
+// what the BROWSER computes, and the mechanism has two halves that can
+// fail independently - the CSS tokens collapsing to zero, and motion.js's
+// exit timer collapsing with them. A panel held on screen for a fifth of a
+// second waiting for an animation that was disabled is exactly the sluggish
+// UI the preference exists to avoid.
+func TestE2E_ReducedMotion_AnimatesNothing(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var panelDuration, scrimDuration string
+	var closedWithin time.Duration
+	f.runInBrowser(t,
+		emulation.SetEmulatedMedia().WithFeatures([]*emulation.MediaFeature{
+			{Name: "prefers-reduced-motion", Value: "reduce"},
+		}),
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+		chromedp.Evaluate(`getComputedStyle(document.querySelector(".slide-over__panel")).animationDuration`, &panelDuration),
+		chromedp.Evaluate(`getComputedStyle(document.querySelector(".slide-over")).animationDuration`, &scrimDuration),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			started := time.Now()
+			if err := chromedp.KeyEvent(kb.Escape).Do(ctx); err != nil {
+				return err
+			}
+			if err := chromedp.Poll(
+				`document.querySelector(".slide-over") === null`, nil).Do(ctx); err != nil {
+				return err
+			}
+			closedWithin = time.Since(started)
+			return nil
+		}),
+	)
+
+	assert.Equal(t, "0s", panelDuration, "the panel must not animate in")
+	assert.Equal(t, "0s", scrimDuration, "nor must its scrim")
+	assert.Lessf(t, closedWithin, 500*time.Millisecond,
+		"the exit must not wait out an animation that was disabled (took %s)", closedWithin)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Motion_TheSlideOverPlaysItsExitBeforeItGoes is the default-motion
+// half: with no reduced-motion preference the panel stays mounted, wearing
+// the closing class, for long enough for its exit keyframes to run - which
+// is the whole reason modpanel.js holds the route change back at all.
+func TestE2E_Motion_TheSlideOverPlaysItsExitBeforeItGoes(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var sawClosing bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		// The panel is still there, now playing its exit - which is exactly
+		// what would be impossible if the route change had gone straight
+		// through and Preact had unmounted the subtree.
+		chromedp.Poll(`document.querySelector(".slide-over--closing") !== null`, &sawClosing),
+		chromedp.Poll(`document.querySelector(".slide-over") === null`, nil),
+	)
+
+	assert.True(t, sawClosing, "the panel must wear its closing state before it goes")
 	assert.Empty(t, f.BrowserErrors())
 }

@@ -73,7 +73,7 @@ export function SetupGames({ actions, game, profile }) {
     `;
   }
   if (games === null) {
-    return html`<p class="app-booting">Loading…</p>`;
+    return html`<p class="app-booting">Loading your games…</p>`;
   }
 
   return html`
@@ -82,8 +82,8 @@ export function SetupGames({ actions, game, profile }) {
         <thead>
           <tr>
             <th>Name</th>
-            <th>Install path</th>
-            <th>Mod path</th>
+            <th class="col--path">Install path</th>
+            <th class="col--path">Mod path</th>
             <th>Default</th>
           </tr>
         </thead>
@@ -94,8 +94,12 @@ export function SetupGames({ actions, game, profile }) {
                 <td>
                   ${g.name} <span class="mono empty-state__hint">${g.id}</span>
                 </td>
-                <td class="mono">${g.install_path}</td>
-                <td class="mono">${g.mod_path}</td>
+                <td class="col--path mono" title=${g.install_path}>
+                  ${g.install_path}
+                </td>
+                <td class="col--path mono" title=${g.mod_path}>
+                  ${g.mod_path}
+                </td>
                 <td>
                   <button
                     type="button"

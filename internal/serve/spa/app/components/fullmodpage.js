@@ -91,7 +91,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   ) {
     return html`${header}
       <main id="main" class="app-main">
-        <p class="app-booting">Loading…</p>
+        <p class="app-booting">Loading this mod…</p>
       </main>`;
   }
 
@@ -122,8 +122,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
       <h1 class="mod-page__title">${installedMod.name}</h1>
       <p class="mod-page__meta">
         ${installedMod.author ? html`by ${installedMod.author} · ` : ""}
-        <span class="mono">${sourceID}/${modID}</span>
-        · <span class="mono">${installedMod.version}</span> installed
+        <span class="mono">${sourceID}/${modID}</span>${" "}
+        <span>·</span>${" "}
+        <span class="mono">${installedMod.version}</span> installed
         ${installed?.locked && " · locked"}
       </p>
 

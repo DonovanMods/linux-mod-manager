@@ -389,7 +389,9 @@ export function GameAddForm({ onAdded, game, profile }) {
             ${
               spec.matches &&
               (spec.matches.length === 0
-                ? html`<p class="empty-state__hint">No matches.</p>`
+                ? html`<p class="empty-state__hint">
+                    No game in the catalog matches that name.
+                  </p>`
                 : html`
                     <ul class="setup-add__matches">
                       ${spec.matches.map(
