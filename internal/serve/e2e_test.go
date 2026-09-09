@@ -5595,6 +5595,70 @@ func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
 	assert.Empty(t, chooser.BrowserErrors())
 }
 
+// unlabelledFormControls returns every visible input/select/textarea the
+// document currently renders that has no accessible name: no aria-label, no
+// aria-labelledby pointing at text, and no <label> (wrapping or `for`)
+// carrying text either - the three sources a browser's accessibility tree
+// actually looks at. Returned as trimmed outerHTML fragments rather than a
+// bare count, so a failure names the element instead of leaving the reader
+// to go find it.
+func unlabelledFormControls(out *[]string) chromedp.Action {
+	return chromedp.Evaluate(`
+		Array.from(document.querySelectorAll("input,select,textarea"))
+			.filter((el) => {
+				if ((el.getAttribute("aria-label") || "").trim()) return false;
+				const labelledby = el.getAttribute("aria-labelledby");
+				if (labelledby && labelledby.split(/\s+/).every(
+					(id) => (document.getElementById(id)?.textContent || "").trim(),
+				)) return false;
+				if (el.labels && Array.from(el.labels).some((l) => l.textContent.trim())) return false;
+				return true;
+			})
+			.map((el) => el.outerHTML.replace(/\s+/g, " ").slice(0, 160))
+	`, out)
+}
+
+// TestE2E_EveryFormControlHasAnAccessibleName is N-3 of the epic re-review:
+// the omnibar (topbar.js) is the one unlabelled input in the whole
+// application - a placeholder alone, which is not a reliable accessible
+// name and is not exposed by every assistive technology once a value is
+// present - and it is the app's primary input. Checked across every route
+// that carries the top bar or the away bar, since either could regress a
+// control back to placeholder-only labelling without this ratchet noticing.
+func TestE2E_EveryFormControlHasAnAccessibleName(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "boots"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+	}
+	for _, route := range routes {
+		var gaps []string
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			unlabelledFormControls(&gaps),
+		)
+		assert.Empty(t, gaps, "%s must have no unlabelled input/select/textarea", route.name)
+	}
+
+	for _, section := range []string{"games", "auth", "sources", "archive", "adopt"} {
+		var gaps []string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()+"/setup?section="+section),
+			chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+			unlabelledFormControls(&gaps),
+		)
+		assert.Empty(t, gaps, "Setup's %s panel must have no unlabelled input/select/textarea", section)
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_TheYAMLEditorReallyHasSpellcheckOff is IMP-3 of the closing
 // wave's gate review.
 //

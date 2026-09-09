@@ -185,6 +185,7 @@ export function TopBar({
         type="search"
         class="omnibar"
         name="q"
+        aria-label="Filter your library or search sources"
         placeholder="Filter your library, or press Enter to search sources…"
         value=${query}
         onInput=${(e) => onQueryChange(e.currentTarget.value)}
