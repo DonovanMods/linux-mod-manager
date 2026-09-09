@@ -346,7 +346,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			})
 		case !mod.Enabled && !opts.All:
 			plan.Mods = append(plan.Mods, DeployPlanMod{
-				Ref:     domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID},
+				Ref:     domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version},
 				Name:    mod.Name,
 				Skipped: fmt.Sprintf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, opts.ModID),
 			})
@@ -368,7 +368,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	classes := s.classifyCompileDeployMods(ctx, game, profileName, modsToDeploy)
 	for _, mod := range modsToDeploy {
 		entry := DeployPlanMod{
-			Ref:   domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID},
+			Ref:   domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version},
 			Name:  mod.Name,
 			Class: classes[domain.ModKey(mod.SourceID, mod.ID)],
 		}

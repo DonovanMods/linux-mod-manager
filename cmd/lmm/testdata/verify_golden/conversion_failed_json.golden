@@ -7,34 +7,40 @@
         "mod_id": "raw-pak-mod",
         "mod_name": "raw-pak-mod",
         "status": "conversion_failed",
-        "note": "table X not present in current base"
+        "note": "table X not present in current base",
+        "fixable_reason": "a conversion is only retried when a merge input changes - reinstall the mod to retry it"
       },
       {
         "mod_id": "bear-mount",
         "mod_name": "Bear Mount",
-        "status": "version_unverifiable"
+        "status": "version_unverifiable",
+        "fixable_reason": "there is nothing to check the recorded version against"
       },
       {
         "mod_id": "raw-pak-mod",
         "mod_name": "raw-pak-mod",
-        "status": "version_unverifiable"
+        "status": "version_unverifiable",
+        "fixable_reason": "there is nothing to check the recorded version against"
       },
       {
         "mod_id": "bear-mount",
         "mod_name": "Bear Mount",
         "file_id": "exmodz-file-id",
-        "status": "no_checksum"
+        "status": "no_checksum",
+        "fixable": true
       },
       {
         "mod_id": "raw-pak-mod",
         "mod_name": "raw-pak-mod",
         "file_id": "modfile.pak",
-        "status": "no_checksum"
+        "status": "no_checksum",
+        "fixable": true
       }
     ],
     "issues": 0,
     "warnings": 5,
     "checked": 3,
-    "has_files": true
+    "has_files": true,
+    "checked_at": "<TIME>"
   }
 }

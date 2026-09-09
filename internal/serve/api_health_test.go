@@ -5,9 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
-	"strconv"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -41,6 +40,19 @@ func twinConflictFixture(t *testing.T) (*core.Service, *domain.Game) {
 	return svc, game
 }
 
+// requireVerifyReportEncodesLike is requireEncodesLike for a VerifyReport:
+// it first asserts the response's own checked_at is a real, recent stamp
+// (#334) and then copies it onto want, because the two documents come from
+// two separate live verify runs milliseconds apart and would otherwise
+// differ on that field alone. Every other field still has to byte-match.
+func requireVerifyReportEncodesLike(t *testing.T, got []byte, report core.VerifyReport, want *core.VerifyReport, since time.Time) {
+	t.Helper()
+	require.False(t, report.Result.CheckedAt.IsZero(), "the report must say when it was checked")
+	require.False(t, report.Result.CheckedAt.Before(since))
+	want.Result.CheckedAt = report.Result.CheckedAt
+	requireEncodesLike(t, got, want)
+}
+
 // TestServer_APIHealth_ReturnsExactVerifyReport is /api/v1/health's
 // headline RED test (docs/plans/2026-08-30-serve-impl.md Task 5, per the
 // coordinator's ruling on the design doc's route list): the body must
@@ -55,6 +67,7 @@ func twinConflictFixture(t *testing.T) (*core.Service, *domain.Game) {
 // below is the one that does.
 func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 	svc, game := twinConflictFixture(t)
+	since := time.Now().UTC()
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
@@ -69,7 +82,7 @@ func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 
 	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
-	requireEncodesLike(t, rec.Body.Bytes(), want)
+	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
 
 // TestServer_APIHealth_MatchesCLIVerifyTier is the task-5 gate review's
@@ -88,6 +101,7 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
 	})
 	svc, game := newFixtureServiceWithSource(t, src)
+	since := time.Now().UTC()
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
@@ -124,21 +138,24 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 
 	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
-	requireEncodesLike(t, rec.Body.Bytes(), want)
+	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
 
-// healthSummaryPattern matches health.gohtml's "N issue(s), M warning(s), K
-// file(s) checked." summary line.
-var healthSummaryPattern = regexp.MustCompile(`(\d+) issue\(s\), (\d+) warning\(s\), (\d+) file\(s\) checked`)
-
-// TestServer_Health_PageMatchesAPIAndCLICounts is Important 2 (epic live
+// TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts is Important 2 (epic live
 // review): on the exact same state as TestServer_APIHealth_MatchesCLIVerifyTier
-// (a version_mismatch a VerifyLocal tier cannot see), the /health PAGE, the
-// /api/v1/health API, and a direct core.VerifyReport(VerifyFull) call - the
-// CLI's own tier - must all report the SAME issue count. Before the C1 fix
-// (the page pinned to VerifyLocal) this was RED: the page said "0 issue(s)"
-// while the API and the CLI-equivalent call both said "1".
-func TestServer_Health_PageMatchesAPIAndCLICounts(t *testing.T) {
+// (a version_mismatch a VerifyLocal tier cannot see), GET /api/v1/health and
+// a direct core.VerifyReport(VerifyFull) call - the CLI's own tier - must
+// report the SAME issue count. Before the C1 fix this was a THREE-leg test
+// whose first leg was the /health PAGE, pinned to VerifyLocal: the page said
+// "0 issue(s)" while the API and the CLI-equivalent call both said "1". The
+// page went with the server-rendered layer
+// (docs/plans/2026-08-31-serve-spa-design.md); the third leg it stood for -
+// that the REPAIR's own tier agrees too, which is the plan/apply mismatch
+// kind_verify_fix.go's doc comment warns can resurrect the corruption - is
+// carried by TestFlowVerifyFixPlan_TierMatchesTheAPIAndTheCLI
+// (c1_verify_fix_tier_internal_test.go), which can reach the CSRF token a
+// POST needs.
+func TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{
 		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "2.0"},
@@ -160,14 +177,6 @@ func TestServer_Health_PageMatchesAPIAndCLICounts(t *testing.T) {
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 
-	pageReq := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/health", nil)
-	pageRec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(pageRec, pageReq)
-	require.Equal(t, http.StatusOK, pageRec.Code)
-	match := healthSummaryPattern.FindStringSubmatch(pageRec.Body.String())
-	require.Len(t, match, 4, "page must render the issue-count summary line: %s", pageRec.Body.String())
-	pageIssues := match[1]
-
 	apiReq := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
 	apiRec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(apiRec, apiReq)
@@ -178,8 +187,7 @@ func TestServer_Health_PageMatchesAPIAndCLICounts(t *testing.T) {
 	cliEquivalent, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
 
-	require.Equal(t, "1", pageIssues, "the page must see the version_mismatch too, not report a clean sheet")
-	assert.Equal(t, pageIssues, strconv.Itoa(apiReport.Result.Issues), "page and API must report the same issue count on the same state")
+	require.Equal(t, 1, apiReport.Result.Issues, "the API must see the version_mismatch, not report a clean sheet")
 	assert.Equal(t, apiReport.Result.Issues, cliEquivalent.Result.Issues, "API and the CLI's own tier must agree")
 }
 

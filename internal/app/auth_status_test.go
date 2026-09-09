@@ -79,7 +79,9 @@ func TestAuthStatus_StoredVsEnvVsUnauthenticated(t *testing.T) {
 	nx := byID["nexusmods"]
 	assert.True(t, nx.Authenticated)
 	assert.Equal(t, "stored", nx.Via)
-	assert.Empty(t, nx.EnvVar)
+	// EnvVar is filled for every row (#333 Minor #5), even one
+	// authenticated via a STORED token rather than the environment.
+	assert.Equal(t, "NEXUSMODS_API_KEY", nx.EnvVar)
 	assert.NotEmpty(t, nx.KeyMasked)
 	assert.NotContains(t, nx.KeyMasked, "storedbuiltinkey12345")
 
@@ -92,7 +94,7 @@ func TestAuthStatus_StoredVsEnvVsUnauthenticated(t *testing.T) {
 	keyless := byID["keyless-repo"]
 	assert.False(t, keyless.Authenticated)
 	assert.Empty(t, keyless.Via)
-	assert.Empty(t, keyless.EnvVar)
+	assert.Equal(t, "LMM_KEYLESS_REPO_API_KEY", keyless.EnvVar, "EnvVar names the hint even for a never-authenticated row")
 	assert.Empty(t, keyless.KeyMasked)
 }
 

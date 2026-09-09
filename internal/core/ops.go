@@ -106,3 +106,33 @@ func completeDBWrite(ctx context.Context, write func(context.Context) error) err
 	}
 	return err
 }
+
+// completeRename runs write - the profile-RENAME write chain - under a
+// context that cannot be cancelled, then reports the caller's own
+// cancellation if there was one.
+//
+// Rename is the one flow the two helpers above cannot express between them.
+// Both of those exist because one half is applied FIRST and the other half
+// completes it, so the completing half is what runs uncancellably. A rename
+// has three writes and no such ordering: the new profile file, the DB rows
+// that name the profile, and the removal of the old profile file. Stop
+// after the first and the config directory holds two copies of one profile,
+// both flagged default; stop after the second and the DB names a profile
+// whose old file is still on disk. Only the whole chain is a consistent
+// state, so the whole chain is what runs under context.WithoutCancel -
+// exactly the property Ruling 16 asks for ("the DB half and the profile
+// -file half must never end a cancelled run disagreeing"), applied to a
+// three-step chain instead of a pair. Everything that can REFUSE a rename
+// (an unknown source profile, an occupied target name, an invalid name)
+// runs before the chain is entered, where cancellation is still free.
+//
+// ctx.Err() is re-checked immediately afterwards and takes precedence over
+// write's own error, the same cancellation-precedence contract both
+// siblings above give their callers.
+func completeRename(ctx context.Context, write func(context.Context) error) error {
+	err := write(context.WithoutCancel(ctx))
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	return err
+}

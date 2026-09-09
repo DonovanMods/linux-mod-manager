@@ -1,0 +1,251 @@
+// plan_deploy.js - the confirm modal's renderer for a core.DeployPlan.
+//
+// It is the reference implementation for every later kind's renderer
+// (planrenderers.js registers them): read the frozen core plan document,
+// render the facts THAT plan carries, and add nothing. A deploy plan
+// already answers "which mods, which files, what gets purged first, which
+// hooks run, what the merge would produce" - the renderer's whole job is to
+// put those on screen in the order a user decides by.
+
+import { html } from "../render.js";
+import {
+  PlanAdvanced,
+  PlanOption,
+  PlanSelect,
+  ApplyOption,
+} from "./planoptions.js";
+
+/** DeployPlanView renders core.DeployPlan (internal/core/deploy.go). */
+export function DeployPlanView({ plan, modal, state, actions }) {
+  const mods = plan.mods ?? [];
+  const purge = plan.purge ?? [];
+  const hooks = plan.hooks ?? [];
+
+  // M-9 of the epic live review: this list showed both contenders' copies
+  // of a contested path with nothing to say which one wins, so a deploy
+  // preview over a real conflict read as if both would land. The fact
+  // exists - it is the Conflicts card's own document, already fetched for
+  // this route - so the paths carry it rather than the user having to
+  // cross-reference two surfaces. Keyed by path to the winner's own key,
+  // exactly as core.ProfileConflict reports it.
+  const winnerByPath = new Map(
+    (state?.conflicts?.conflicts ?? []).map((c) => [
+      c.path,
+      c.load_order_winner,
+    ]),
+  );
+
+  if (plan.no_changes) {
+    return html`
+      <div class="plan plan--deploy">
+        <p class="plan__note">
+          Nothing to deploy: no mod is selected and there is nothing to purge.
+        </p>
+      </div>
+    `;
+  }
+
+  return html`
+    <div class="plan plan--deploy">
+      <p class="plan__summary">
+        Deploying into profile <span class="mono">${plan.profile}</span>.
+      </p>
+
+      ${
+        purge.length > 0 &&
+        html`
+          <section class="plan__section">
+            <h3 class="plan__heading">Purge first (${purge.length})</h3>
+            <ul class="plan__paths">
+              ${purge.map((p) => html`<li key=${p} class="mono">${p}</li>`)}
+            </ul>
+          </section>
+        `
+      }
+
+      <section class="plan__section">
+        <h3 class="plan__heading">Mods (${mods.length})</h3>
+        <ul class="plan__mods">
+          ${mods.map(
+            (mod) => html`
+              <li
+                key=${`${mod.ref.source_id}/${mod.ref.mod_id}`}
+                class="plan__mod ${mod.skipped ? "plan__mod--skipped" : ""}"
+              >
+                <span class="plan__mod-name">${mod.name}</span>${" "}
+                ${
+                  // Conditional rather than unconditional: issue 330 carry-4
+                  // taught planDeploy to stamp Ref.Version from the
+                  // resolved installed mod (internal/core/deploy.go), but
+                  // the "mod not found" skip branch still has no mod to
+                  // read a version from, so this stays empty for that one
+                  // row shape. Rendering the span anyway would leave a gap
+                  // that reads as a missing value rather than an absent
+                  // field.
+                  mod.ref.version &&
+                  html`<span class="mono plan__mod-version"
+                    >${mod.ref.version}</span
+                  >`
+                }${" "}
+                <span class="plan__mod-detail">${modDetail(mod)}</span>
+                ${
+                  // htm-ws-ok: a block-level <ul> follows - no inline text
+                  // join is needed at this boundary.
+                  (mod.link ?? []).length > 0 &&
+                  html`
+                    <ul class="plan__paths">
+                      ${mod.link.map((p) => {
+                        const winner = winnerByPath.get(p);
+                        const key = `${mod.ref.source_id}:${mod.ref.mod_id}`;
+                        return html`<li key=${p} class="mono">
+                          ${p}${" "}
+                          ${
+                            winner &&
+                            (winner.key === key
+                              ? html`<span class="plan__winner">(wins)</span>`
+                              : html`<span
+                                  class="plan__winner plan__winner--loses"
+                                  >(loses to ${winner.name})</span
+                                >`)
+                          }
+                        </li>`;
+                      })}
+                    </ul>
+                  `
+                }
+                ${
+                  (mod.remove ?? []).length > 0 &&
+                  html`
+                    <p class="plan__removes">
+                      Removes ${mod.remove.length} stale
+                      path${mod.remove.length === 1 ? "" : "s"}
+                    </p>
+                  `
+                }
+              </li>
+            `,
+          )}
+        </ul>
+      </section>
+
+      ${
+        plan.merged &&
+        html`
+          <section class="plan__section">
+            <h3 class="plan__heading">Merged artifact</h3>
+            <p>
+              <span class="mono">${plan.merged.artifact}</span> carrying
+              ${mergedSummary(plan.merged)}
+            </p>
+          </section>
+        `
+      }
+      ${
+        hooks.length > 0 &&
+        html`
+          <section class="plan__section">
+            <h3 class="plan__heading">Hooks (${hooks.length})</h3>
+            <p class="mono plan__hooks">${hooks.join(" → ")}</p>
+          </section>
+        `
+      }
+
+      <${PlanAdvanced}>
+        <${PlanSelect}
+          modal=${modal}
+          actions=${actions}
+          name="deploy-mod"
+          label="Only this mod"
+          hint="lmm deploy <mod-id>. The whole profile, unless you narrow it."
+          value=${modal?.options?.mod_id ?? ""}
+          options=${{
+            entries: [
+              { value: "", label: "The whole profile" },
+              ...mods.map((m) => ({
+                value: `${m.ref.source_id}/${m.ref.mod_id}`,
+                label: m.name,
+              })),
+            ],
+            // mod_id and source_id are two fields of one choice, so they
+            // are always written together - clearing the select has to
+            // clear BOTH, or the next plan would carry half an answer.
+            patch: (v) => {
+              const [sourceID, modID] = v.split("/");
+              return { source_id: sourceID ?? "", mod_id: modID ?? "" };
+            },
+          }}
+        />
+        <${PlanSelect}
+          modal=${modal}
+          actions=${actions}
+          name="link_method"
+          label="Link method"
+          hint="lmm deploy --method. The game's own setting, unless you override it."
+          value=${modal?.options?.link_method ?? ""}
+          options=${{
+            entries: [
+              { value: "", label: "The game's setting" },
+              { value: "symlink", label: "symlink" },
+              { value: "hardlink", label: "hardlink" },
+              { value: "copy", label: "copy" },
+            ],
+            patch: (v) => ({ link_method: v }),
+          }}
+        />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="purge"
+          label="Purge the game directory first"
+          hint="lmm deploy --purge. The list above updates to match."
+        />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="all"
+          label="Include disabled mods"
+          hint="lmm deploy --all. PLAN-time: the mod list above grows to match."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks. Apply-time only, so the list above still shows what would otherwise run."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm deploy --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
+    </div>
+  `;
+}
+
+/** mergedSummary renders core.MergePlan's two lists as one sentence: the
+ * mods whose content the artifact carries (Sources) and the ones deploying
+ * raw because conversion is unavailable to them (RawFallbacks). */
+function mergedSummary(merged) {
+  const sources = (merged.sources ?? []).length;
+  const raw = (merged.raw_fallbacks ?? []).length;
+  const carried = `${sources} mod${sources === 1 ? "" : "s"}`;
+  return raw > 0 ? `${carried}, ${raw} deployed raw.` : `${carried}.`;
+}
+
+/** modDetail is one plan row's own status line: why it will not deploy, or
+ * how it will. The three states are mutually exclusive in the document
+ * (DeployPlanMod: Skipped, Redownload, or a plain link list). */
+function modDetail(mod) {
+  if (mod.skipped) return `skipped — ${mod.skipped}`;
+  if (mod.redownload) return "cache missing — will re-download first";
+  const count = (mod.link ?? []).length;
+  if (count === 0) {
+    return mod.class === "merged"
+      ? "rides the merged artifact"
+      : "no files to link";
+  }
+  return `${count} file${count === 1 ? "" : "s"}`;
+}

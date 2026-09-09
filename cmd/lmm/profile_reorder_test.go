@@ -61,7 +61,7 @@ func TestDoProfileReorder_NoArgs_PrintsLoadOrderTable(t *testing.T) {
 	addProfileMod(t, svc, game, "default", "src1", "gamma")
 
 	out := captureStdout(t, func() error {
-		return doProfileReorder(context.Background(), svc, game, nil)
+		return doProfileReorder(context.Background(), svc, game, nil, nil)
 	})
 
 	assert.Equal(t, "Load order for default (first = lowest priority):\n"+
@@ -78,7 +78,7 @@ func TestDoProfileReorder_ExplicitSourceModIDKeys(t *testing.T) {
 	addProfileMod(t, svc, game, "default", "src1", "gamma")
 
 	out := captureStdout(t, func() error {
-		return doProfileReorder(context.Background(), svc, game, []string{"src1:gamma", "src1:alpha"})
+		return doProfileReorder(context.Background(), svc, game, []string{"src1:gamma", "src1:alpha"}, nil)
 	})
 
 	assert.Equal(t, "✓ Load order updated for profile default.\n", out)
@@ -98,7 +98,7 @@ func TestDoProfileReorder_BareIDs(t *testing.T) {
 	addProfileMod(t, svc, game, "default", "src1", "gamma")
 
 	out := captureStdout(t, func() error {
-		return doProfileReorder(context.Background(), svc, game, []string{"gamma", "alpha"})
+		return doProfileReorder(context.Background(), svc, game, []string{"gamma", "alpha"}, nil)
 	})
 
 	assert.Equal(t, "✓ Load order updated for profile default.\n", out)
@@ -121,7 +121,7 @@ func TestDoProfileReorder_AmbiguousBareID_ErrorsAndLeavesProfileUnchanged(t *tes
 	addProfileMod(t, svc, game, "default", "src1", "shared")
 	before := reloadProfile(t, svc, game, "default")
 
-	err := doProfileReorder(context.Background(), svc, game, []string{"shared"})
+	err := doProfileReorder(context.Background(), svc, game, []string{"shared"}, nil)
 
 	require.Error(t, err)
 	assert.EqualError(t, err, "ambiguous mod id shared (use source:modid): src1:shared, src2:shared")
@@ -135,7 +135,7 @@ func TestDoProfileReorder_UnknownID_ErrorsAndLeavesProfileUnchanged(t *testing.T
 	addProfileMod(t, svc, game, "default", "src1", "alpha")
 	before := reloadProfile(t, svc, game, "default")
 
-	err := doProfileReorder(context.Background(), svc, game, []string{"nope"})
+	err := doProfileReorder(context.Background(), svc, game, []string{"nope"}, nil)
 
 	require.Error(t, err)
 	assert.Equal(t, "mod nope not in profile", err.Error())
@@ -153,7 +153,7 @@ func TestDoProfileReorder_ExplicitKeyNotInProfile_SameErrorText(t *testing.T) {
 	addProfileMod(t, svc, game, "default", "src1", "alpha")
 	before := reloadProfile(t, svc, game, "default")
 
-	err := doProfileReorder(context.Background(), svc, game, []string{"src2:nope"})
+	err := doProfileReorder(context.Background(), svc, game, []string{"src2:nope"}, nil)
 
 	require.Error(t, err)
 	assert.Equal(t, "mod src2:nope not in profile", err.Error())
@@ -168,7 +168,7 @@ func TestDoProfileReorder_PartialReorder_AppendsUnmentionedInOriginalOrder(t *te
 	addProfileMod(t, svc, game, "default", "src1", "beta")
 	addProfileMod(t, svc, game, "default", "src1", "gamma")
 
-	require.NoError(t, doProfileReorder(context.Background(), svc, game, []string{"gamma"}))
+	require.NoError(t, doProfileReorder(context.Background(), svc, game, []string{"gamma"}, nil))
 
 	p := reloadProfile(t, svc, game, "default")
 	assert.Equal(t, []domain.ModReference{
@@ -184,7 +184,7 @@ func TestDoProfileReorder_DuplicateArgs_Deduped(t *testing.T) {
 	addProfileMod(t, svc, game, "default", "src1", "beta")
 	addProfileMod(t, svc, game, "default", "src1", "gamma")
 
-	require.NoError(t, doProfileReorder(context.Background(), svc, game, []string{"gamma", "gamma", "alpha"}))
+	require.NoError(t, doProfileReorder(context.Background(), svc, game, []string{"gamma", "gamma", "alpha"}, nil))
 
 	p := reloadProfile(t, svc, game, "default")
 	assert.Equal(t, []domain.ModReference{
@@ -209,7 +209,7 @@ func TestDoProfileReorder_ProfileFlag_SelectsNonDefaultProfile(t *testing.T) {
 	t.Cleanup(func() { profileReorderProfile = oldFlag })
 
 	out := captureStdout(t, func() error {
-		return doProfileReorder(context.Background(), svc, game, []string{"y"})
+		return doProfileReorder(context.Background(), svc, game, []string{"y"}, nil)
 	})
 
 	assert.Equal(t, "✓ Load order updated for profile other.\n", out)
@@ -274,7 +274,7 @@ func TestDoProfileReorder_DeployCompile_ResyncsMergedPak(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "AB", string(before), "precondition: merged pak reflects install order bear, wolf")
 
-	require.NoError(t, doProfileReorder(context.Background(), svc, game, []string{"wolf-mount"}))
+	require.NoError(t, doProfileReorder(context.Background(), svc, game, []string{"wolf-mount"}, nil))
 
 	after, err := os.ReadFile(deployedPath)
 	require.NoError(t, err, "doProfileReorder must resync the merged pak, not just persist the new order")

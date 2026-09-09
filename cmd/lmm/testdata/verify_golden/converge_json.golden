@@ -13,17 +13,20 @@
         "mod_id": "mod1",
         "file_id": "gone.esp",
         "status": "stale_deployment",
-        "note": "no longer provided by local/mod1"
+        "note": "no longer provided by local/mod1",
+        "fixable": true
       },
       {
         "file_id": "stray.pak",
         "status": "stale_deployment",
-        "note": "dangling link into lmm cache"
+        "note": "dangling link into lmm cache",
+        "fixable": true
       }
     ],
     "issues": 0,
     "warnings": 2,
     "checked": 1,
-    "has_files": true
+    "has_files": true,
+    "checked_at": "<TIME>"
   }
 }

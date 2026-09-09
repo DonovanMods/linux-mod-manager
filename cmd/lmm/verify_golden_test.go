@@ -26,6 +26,10 @@ import (
 // JSON shape change Ruling 3 reserves for the v2.0.0 window. The *_plain and
 // *_fix (text) goldens were NOT touched by that re-record and are still the
 // pre-refactor bytes.
+//
+// A second, additive re-record of the *_json goldens only: #334 added
+// core.VerifyResult.checked_at, an omitzero timestamp. The text goldens
+// were again untouched (nothing prints it).
 
 var updateGolden = flag.Bool("update", false, "rewrite verify golden files from current output")
 
@@ -42,6 +46,14 @@ func runVerifyGolden(t *testing.T, name string, fixture func(*testing.T) (*cobra
 	t.Cleanup(func() { verifyFix, jsonOutput = oldFix, oldJSON })
 
 	out := captureStdout(t, func() error { return doVerify(cmd, svc, game, nil) })
+	if json {
+		// #334: core.VerifyResult now carries checked_at, which is a real
+		// clock reading and so would make every --json golden here churn on
+		// every run. scrubJSON is the same normaliser the CLI's other JSON
+		// goldens already use. The *_plain and *_fix (text) transcripts do
+		// not print it and are untouched by this.
+		out = scrubJSON(out)
+	}
 
 	path := filepath.Join("testdata", "verify_golden", name+".golden")
 	if *updateGolden {

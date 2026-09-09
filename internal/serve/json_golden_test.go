@@ -53,6 +53,8 @@ var goldenDeployResult = &core.DeployResult{
 	RawFallbacks:   1,
 }
 
+func boolPtr(b bool) *bool { return &b }
+
 func TestServeJSONGoldens(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -105,6 +107,77 @@ func TestServeJSONGoldens(t *testing.T) {
 				State:      jobRunning,
 				StartedAt:  goldenTime,
 				EventCount: 1,
+			},
+		},
+		{
+			// The activity tray's index row: jobStatus without the result
+			// document, which is the whole point of the type (activity.go).
+			// The failed shape, because that is the one carrying an
+			// envelope - the fact the tray offers a next step from.
+			"job_summary",
+			jobSummary{
+				ID:        "fedcba9876543210fedcba9876543210",
+				Kind:      "install",
+				State:     jobFailed,
+				StartedAt: goldenTime,
+				EndedAt:   goldenTime.Add(time.Second),
+				Error: &apiErrorEnvelope{
+					Error: "file conflicts detected",
+					Details: (&core.ConflictError{Conflicts: []core.Conflict{{
+						RelativePath:    "Mods/a.pak",
+						CurrentSourceID: "fake",
+						CurrentModID:    "m9",
+					}}}).Details(),
+				},
+				EventCount:    3,
+				DroppedEvents: 1,
+			},
+		},
+		{
+			// GET /api/v1/jobs, newest first: one running job above one
+			// finished one, so the golden pins both row shapes and the
+			// order in the same document.
+			"jobs_index",
+			jobsIndex{Jobs: []jobSummary{
+				{
+					ID:         "aaaabbbbccccddddeeeeffff00001111",
+					Kind:       "deploy",
+					State:      jobRunning,
+					StartedAt:  goldenTime.Add(10 * time.Second),
+					EventCount: 1,
+				},
+				{
+					ID:         "0123456789abcdef0123456789abcdef",
+					Kind:       "deploy",
+					State:      jobSucceeded,
+					StartedAt:  goldenTime,
+					EndedAt:    goldenTime.Add(3 * time.Second),
+					EventCount: 12,
+				},
+			}},
+		},
+		{
+			// One job_progress frame of the multiplexed activity stream: a
+			// SUMMARY of one core event, not core.MarshalEvent's frozen
+			// {"type","data"} envelope, which stays the per-job stream's
+			// contract (activity.go's frame vocabulary). Downloaded and
+			// TotalBytes are the byte-delta fallback's fields
+			// (task-2-review.md Important 1) - pinned here alongside the
+			// step-style fields even though no single core event sets both
+			// halves at once, so one golden covers the whole wire shape.
+			"job_progress_frame",
+			jobProgressFrame{
+				JobID:      "0123456789abcdef0123456789abcdef",
+				Kind:       "install",
+				Type:       "step",
+				Op:         "install",
+				Phase:      core.InstallDeploying.String(),
+				Detail:     "linking files",
+				ModName:    "Mod One",
+				Index:      1,
+				Total:      2,
+				Downloaded: 12582912,
+				TotalBytes: 20971520,
 			},
 		},
 		{
@@ -176,6 +249,10 @@ func TestServeJSONGoldens(t *testing.T) {
 				ModID:        "m2",
 				Version:      "2.0",
 				ShowArchived: true,
+				// #326: `lmm install --no-deps`. Populated here for the same
+				// reason every other optional member is - this golden pins
+				// every key's shape, not one plausible request.
+				NoDeps: true,
 			},
 		},
 		{
@@ -186,6 +263,11 @@ func TestServeJSONGoldens(t *testing.T) {
 				AcceptConflicts: true,
 				Force:           true,
 				SkipHooks:       true,
+				// #326: `lmm install --skip-verify`, the closing wave's
+				// last parity-ledger flag. Populated for the same reason
+				// every other optional member is - this golden pins every
+				// key's shape, not one plausible request.
+				SkipVerify: true,
 			},
 		},
 		{
@@ -205,10 +287,11 @@ func TestServeJSONGoldens(t *testing.T) {
 			uninstallApplyRequest{KeepCache: true, Force: true, SkipHooks: true},
 		},
 		{
-			// #74's batch, both halves of its options plus the two
-			// documents it owns: there is no core batch flow (`lmm update`
-			// loops over one-mod plans), so the SELECTION and the
-			// per-mod report are serve's own wire surface.
+			// #74's batch, both halves of its options. The batch's own two
+			// documents are NOT here: since #324 they are core's
+			// UpdateBatchPlan/UpdateBatchResult, goldened in
+			// internal/core/testdata/json - this kind only decodes the
+			// request halves now (kind_updates.go).
 			"updates_plan_request",
 			updatesPlanRequest{Mods: []string{"fake:m1", "fake:m2"}},
 		},
@@ -217,37 +300,76 @@ func TestServeJSONGoldens(t *testing.T) {
 			updatesApplyRequest{Force: true, SkipHooks: true},
 		},
 		{
-			"updates_batch_plan",
-			updatesBatchPlan{
-				GameID:  "g1",
-				Profile: "default",
-				Updates: []domain.Update{{
-					InstalledMod: domain.InstalledMod{
-						Mod:         domain.Mod{ID: "m1", SourceID: "fake", Name: "Mod One", Version: "1.0", GameID: "g1"},
-						ProfileName: "default",
-						Enabled:     true,
-					},
-					NewVersion: "2.0",
-				}},
-				NotFound: []string{"fake:m9"},
+			// api_mod_settings.go's two request bodies: an explicit version
+			// (the full mod page's versions-table "lock this version"
+			// affordance - the slide-over's own lock checkbox sends an
+			// empty one, which carries no json key and pins nothing new).
+			"mod_lock_request",
+			modLockRequest{Version: "1.2.0"},
+		},
+		{
+			"mod_update_policy_request",
+			modUpdatePolicyRequest{Policy: domain.UpdatePinned},
+		},
+		{
+			// #330's new "rollback" plan kind (kind_rollback.go), both
+			// halves: what the PLAN is computed with, and RollbackOptions'
+			// own Force/SkipHooks as the confirm page's apply-time choice -
+			// the same plan/apply split uninstall's own two requests use.
+			"rollback_plan_request",
+			rollbackPlanRequest{ModID: "m1", SourceID: "fake"},
+		},
+		{
+			"rollback_apply_request",
+			rollbackApplyRequest{Force: true, SkipHooks: true},
+		},
+		{
+			// #326's pak-conversion body (epic live review C-3): a REQUIRED
+			// boolean (I-1: enforced by handleAPIModConvert refusing a nil
+			// Enabled, since json/v2 has no "required" tag), so the key is
+			// always present on the wire - `lmm mod convert <mod-id>
+			// <on|off>` makes the caller say which way, and an omitted
+			// member must never silently mean "off".
+			"mod_convert_request",
+			modConvertRequest{Enabled: boolPtr(true)},
+		},
+		{
+			// #326's three parity kinds (epic live review C-3). purge
+			// carries the same three options at plan and apply time for the
+			// reason #226 gives for uninstall's: the plan is computed with
+			// them so the preview tells the truth, and the apply carries
+			// what the confirm modal finally chose.
+			"purge_plan_request",
+			purgePlanRequest{Uninstall: true, SkipHooks: true},
+		},
+		{
+			"purge_apply_request",
+			purgeApplyRequest{Uninstall: true, Force: true, SkipHooks: true},
+		},
+		{
+			// profile_sync names its target profile in the body, like its
+			// two siblings; ApplyProfileSync takes no options, so its apply
+			// struct has no json tags and pins nothing (the same shape
+			// switch and profile_apply have).
+			"profile_sync_plan_request",
+			profileSyncPlanRequest{Profile: "survival"},
+		},
+		{
+			// mod_relink's split follows core's own: the RE-LINK is plan
+			// time (it is what the plan describes - From, To, the lock
+			// refusal), the metadata overrides are apply time
+			// (core.RelinkOptions is what ApplyRelinkMod reads them from).
+			"mod_relink_plan_request",
+			modRelinkPlanRequest{
+				ModID:       "m1",
+				SourceID:    "fake",
+				NewSourceID: "curseforge",
+				NewModID:    "999",
 			},
 		},
 		{
-			"updates_batch_result",
-			updatesBatchResult{
-				Applied: []core.UpdateApplyResult{{
-					Mod:         domain.ModReference{SourceID: "fake", ModID: "m1"},
-					Name:        "Mod One",
-					FromVersion: "1.0",
-					ToVersion:   "2.0",
-					Status:      core.UpdateUpdated,
-				}},
-				Failed: []updateBatchFailure{{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"}},
-			},
-		},
-		{
-			"update_batch_failure",
-			updateBatchFailure{Mod: "fake:m2", Name: "Mod Two", Error: "mod is locked"},
+			"mod_relink_apply_request",
+			modRelinkApplyRequest{Name: "Renamed", Version: "2.0", Author: "Somebody"},
 		},
 		{
 			// The two profile flows' plan requests. Neither has an apply
@@ -262,11 +384,108 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileApplyPlanRequest{Profile: "modded"},
 		},
 		{
+			// #332's profile-import halves: the exported document arrives
+			// as TEXT (the SPA reads the picked file and posts its
+			// contents), and the apply half is core.ProfileImportOptions'
+			// three fields - `lmm profile import`'s own flags.
+			"profile_import_plan_request",
+			profileImportPlanRequest{Data: "name: survival\ngame_id: g1\nmods: []\n"},
+		},
+		{
+			"profile_import_apply_request",
+			profileImportApplyRequest{Install: true, Force: true, NoInstall: true},
+		},
+		{
+			// #332's one-member profile body, shared by POST
+			// /api/v1/profiles (the name to create) and POST
+			// /api/v1/profiles/{name}/rename (the name to rename TO).
+			"profile_name_request",
+			profileNameRequest{Name: "survival"},
+		},
+		{
+			// #332's reorder request: the new load order as the same mod
+			// identifiers `lmm profile reorder` takes, lowest priority
+			// first (api_profiles.go).
+			"profile_reorder_request",
+			profileReorderRequest{IDs: []string{"fake:m2", "fake:m1"}},
+		},
+		{
+			// #332's per-finding Repair: `lmm verify --mod <id>`'s own
+			// filter, set on both halves of the flow from this one request
+			// (kind_verify_fix.go).
+			"verify_fix_plan_request",
+			verifyFixPlanRequest{ModFilter: "42"},
+		},
+		{
+			// #333's adopt plan request. Its apply half is an empty struct
+			// with no json tags - every choice the flow offers is made at
+			// plan time or IS the decision, which a frontend expresses by
+			// starting the job or not - so it pins nothing.
+			"adopt_plan_request",
+			adoptPlanRequest{SkipMatch: true},
+		},
+		{
+			// #333's import_archive halves. The plan request names a STAGED
+			// UPLOAD, never a path; the apply request's accept_conflicts is
+			// the Overwrite affordance, which maps to
+			// ImportArchiveOptions.AcceptConflicts rather than Force (see
+			// kind_import_archive.go for why the two are not the same
+			// question).
+			"import_archive_plan_request",
+			importArchivePlanRequest{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				SourceID: "nexusmods",
+				ModID:    "1234",
+			},
+		},
+		{
+			"import_archive_apply_request",
+			importArchiveApplyRequest{AcceptConflicts: true, Force: true, SkipHooks: true},
+		},
+		{
+			// #333's upload receipt: the opaque handle a plan request names
+			// the archive by, and what was actually staged.
+			"upload_response",
+			uploadResponse{
+				UploadID: "0123456789abcdef0123456789abcdef",
+				Filename: "SomeMod-1.2.zip",
+				Size:     418209792,
+			},
+		},
+		{
+			// #333's custom-source editor bodies: the draft a validate
+			// request carries (with `lmm source validate`'s two probe
+			// flags), and the definition text a save carries. The id a save
+			// targets is in the PATH, never here - "save THIS source" must
+			// not be able to retarget another one, the same rule the
+			// profile and auth routes follow.
+			"source_validate_request",
+			sourceValidateRequest{
+				YAML:    "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n",
+				Probe:   true,
+				ProbeID: "12345",
+			},
+		},
+		{
+			"source_save_request",
+			sourceSaveRequest{YAML: "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: ~/mods\n"},
+		},
+		{
 			"api_error_envelope",
 			apiErrorEnvelope{
 				Error:   "profile switch finished with warnings",
 				Details: (&core.ProfileWarningsError{Warnings: []string{"1 mod could not be undeployed"}}).Details(),
 			},
+		},
+		{
+			// #330's un-orphaning of AvailableModVersions: the wrapper
+			// document the full mod page's versions table renders. The
+			// Supported-false shape (a source with no version metadata) is
+			// covered live by api_mod_files_test.go rather than a second
+			// golden row - it is the same two fields with different values,
+			// not a different wire shape.
+			"mod_versions_document",
+			modVersionsDocument{Versions: []string{"1.0", "2.0"}, Supported: true},
 		},
 		{
 			"selection_error_details",
@@ -281,6 +500,49 @@ func TestServeJSONGoldens(t *testing.T) {
 				}},
 				Profiles: []string{"default", "modded"},
 			},
+		},
+		{
+			// #307/#333's game-add body: core.GameSpec's wire fields, so a
+			// core.GameSpecError's "field" member points straight at the
+			// input that produced it. game_id and mod_path are the two
+			// optional members - both populated here, since the golden's
+			// job is to pin every key's shape, not one plausible request.
+			"game_add_request",
+			gameAddRequest{
+				SourceID:    "curseforge",
+				Identifier:  "432",
+				Name:        "Minecraft",
+				GameID:      "minecraft",
+				InstallPath: "/games/minecraft",
+				ModPath:     "/games/minecraft/mods",
+			},
+		},
+		{
+			// #326's source<->game mapping body (epic live review C-4): the
+			// FULL map the game ends up with, keyed by registered source id.
+			// Two entries with one empty identifier, because both shapes are
+			// real - a NexusMods slug, and a directory source that keys the
+			// game by nothing at all.
+			"game_sources_request",
+			gameSourcesRequest{Sources: map[string]string{
+				"nexusmods":  "skyrimspecialedition",
+				"local-mods": "",
+			}},
+		},
+		{
+			// The detect apply's body: which listing rows to add, named by
+			// 1-based index or slug (core.SelectDetectedGames resolves
+			// both, so the golden carries one of each).
+			"game_detect_select_request",
+			gameDetectSelectRequest{Select: []string{"1", "valheim"}},
+		},
+		{
+			// The credential body (api_auth.go). One member: the source is
+			// named in the PATH, never here, so "authenticate THIS source"
+			// cannot be retargeted by the body. The value is a dummy - a
+			// golden is a committed file, and no real key belongs in one.
+			"auth_key_request",
+			authKeyRequest{APIKey: "example-api-key"},
 		},
 	}
 

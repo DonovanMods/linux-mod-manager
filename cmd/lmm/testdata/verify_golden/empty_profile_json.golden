@@ -6,12 +6,14 @@
       {
         "file_id": "stray.pak",
         "status": "stale_deployment",
-        "note": "dangling link into lmm cache"
+        "note": "dangling link into lmm cache",
+        "fixable": true
       }
     ],
     "issues": 0,
     "warnings": 1,
     "checked": 0,
-    "has_files": false
+    "has_files": false,
+    "checked_at": "<TIME>"
   }
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"os"
@@ -429,6 +430,69 @@ func TestJSONGolden_GameList(t *testing.T) {
 	})
 }
 
+// --- game add (#333 Minor #4) ---
+
+// TestJSONGolden_GameAdd pins `lmm game add --json`'s CLI-facing document.
+// The wire itself is already goldened at the core level
+// (internal/core/testdata/json/game_list_entry*.golden, via
+// core.GameListEntry) - this is the convention gap the review found (Minor
+// #4): nothing pinned that the COMMAND still emits it, only that the type
+// itself round-trips.
+func TestJSONGolden_GameAdd(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	withJSONOutput(t)
+	installDir, modDir := t.TempDir(), t.TempDir()
+	gameAddSource, gameAddID, gameAddName = "acme-manual", "acme-quest-slug", "Acme Quest"
+	gameAddPath, gameAddModPath = installDir, modDir
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+	assertJSONCLIGolden(t, "game_add", out, installDir, "/GOLDEN/install", modDir, "/GOLDEN/mods")
+}
+
+// --- auth login (#333 Minor #4) ---
+
+// TestJSONGolden_AuthLogin pins `lmm auth login --key-from-env --json`'s
+// CLI-facing document - the same convention gap TestJSONGolden_GameAdd
+// closes, for #307's other new non-interactive command. The wire itself
+// (app.AuthStatusReport) is already goldened at internal/app/testdata/json/.
+func TestJSONGolden_AuthLogin(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "golden-env-key-1234567890")
+	withJSONOutput(t)
+	authKeyFromEnv = true
+	t.Cleanup(func() { authKeyFromEnv = false })
+
+	out := captureStdout(t, func() error {
+		return doAuthLogin(context.Background(), svc, "acme-mods")
+	})
+	assertJSONCLIGolden(t, "auth_login", out)
+}
+
+// --- auth logout (#335) ---
+
+// TestJSONGolden_AuthLogout pins `lmm auth logout --json`'s CLI-facing
+// document (#335): the re-read app.AuthStatusReport, the same shape
+// `lmm auth status --json` and `lmm serve`'s DELETE /api/v1/auth/{source}
+// answer - replacing the prose line that used to break the
+// one-document-on-stdout invariant.
+func TestJSONGolden_AuthLogout(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "acme-mods", "golden-stored-key-1234567890"))
+	withJSONOutput(t)
+
+	out := captureStdout(t, func() error {
+		return doAuthLogout(context.Background(), svc, []string{"acme-mods"})
+	})
+	assertJSONCLIGolden(t, "auth_logout", out)
+}
+
 // --- update ---
 
 func TestJSONGolden_Update(t *testing.T) {
@@ -453,6 +517,30 @@ func TestJSONGolden_Update(t *testing.T) {
 
 		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
 		assertJSONCLIGolden(t, "update_bulk_none", out)
+	})
+
+	// #324: `--all --json` APPLIES (the flag was silently ignored under
+	// --json before) and its one document is core.UpdateBatchResult - the
+	// applied row, and the locked one core declined with its own refusal
+	// sentence.
+	t.Run("bulk_all_applied", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+		setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+		src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+		src.AddDownload("a-new", []byte("new"))
+		seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
+		src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
+		src.AddDownload("b-new", []byte("new"))
+
+		updateAll = true
+		t.Cleanup(func() { updateAll = false })
+
+		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+		assertJSONCLIGolden(t, "update_bulk_all", out)
 	})
 
 	t.Run("single_updated", func(t *testing.T) {

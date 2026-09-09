@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,7 +88,23 @@ func setupGameAddTest(t *testing.T) *core.Service {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	resetGameAddFlags(t)
 	return svc
+}
+
+// resetGameAddFlags zeroes #307's cobra flag variables for the duration of
+// one test. They are package globals bound by init(), so a test that sets
+// one would otherwise leak it into every test that runs after it.
+func resetGameAddFlags(t *testing.T) {
+	t.Helper()
+	src, id, query, pick := gameAddSource, gameAddID, gameAddQuery, gameAddPick
+	name, gameID, path, modPath := gameAddName, gameAddGameID, gameAddPath, gameAddModPath
+	t.Cleanup(func() {
+		gameAddSource, gameAddID, gameAddQuery, gameAddPick = src, id, query, pick
+		gameAddName, gameAddGameID, gameAddPath, gameAddModPath = name, gameID, path, modPath
+	})
+	gameAddSource, gameAddID, gameAddQuery, gameAddPick = "", "", "", 0
+	gameAddName, gameAddGameID, gameAddPath, gameAddModPath = "", "", "", ""
 }
 
 func newGameAddCmd() (*cobra.Command, *bytes.Buffer) {
@@ -124,18 +141,213 @@ func TestDoGameAdd_MenuListsRegisteredSourcesSortedByID(t *testing.T) {
 	assert.Contains(t, out, "[3] Nexus Mods (nexusmods)")
 }
 
-// TestRunGameAdd_JSONOutputReturnsInteractiveOnly pins the non-interactive
-// rule (v2 Phase 3 Ruling 2): `game add` stays interactive-only in Phase 3,
-// so --json must reject with core.ErrInteractiveOnly before opening a
-// service or printing/reading any of doGameAdd's seven prompts.
-func TestRunGameAdd_JSONOutputReturnsInteractiveOnly(t *testing.T) {
+// TestDoGameAdd_JSON_MissingSourceRefusesWithoutReadingStdin pins the
+// post-#307 shape of the non-interactive rule (Ruling 2). `game add` is no
+// longer interactive-only - a fully-flagged run works under --json - so the
+// refusal narrowed from "this command" to "this value": with no --source
+// there is nothing to resolve the source prompt, and the error names the
+// flag while stdin is provably never touched.
+func TestDoGameAdd_JSON_MissingSourceRefusesWithoutReadingStdin(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
 	withJSONOutput(t)
 
-	err := assertStdinNeverRead(t, func() error {
-		return runGameAdd(&cobra.Command{}, nil)
-	})
+	cmd, _ := newGameAddCmd()
+	err := doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
 
 	require.ErrorIs(t, err, core.ErrInteractiveOnly)
+	assert.Contains(t, err.Error(), "--source")
+}
+
+// TestDoGameAdd_JSON_MissingValueNamesItsFlag covers the other three
+// per-value refusals a --json run can hit, each naming the flag that
+// answers it. Table-driven because they differ only in which flag is
+// withheld.
+func TestDoGameAdd_JSON_MissingValueNamesItsFlag(t *testing.T) {
+	tests := []struct {
+		name      string
+		id, path  string
+		wantsFlag string
+	}{
+		{"no identifier", "", "", "--id"},
+		{"no install path", "acme-quest", "", "--path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := setupGameAddTest(t)
+			svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+			withJSONOutput(t)
+			gameAddSource, gameAddID, gameAddName, gameAddPath = "acme-manual", tt.id, "Acme Quest", tt.path
+
+			cmd, _ := newGameAddCmd()
+			err := doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+
+			require.ErrorIs(t, err, core.ErrInteractiveOnly)
+			assert.Contains(t, err.Error(), tt.wantsFlag)
+		})
+	}
+}
+
+// TestDoGameAdd_FullyFlagged_ManualPath pins #307's headline: every prompt
+// answered by a flag, no stdin, and the core.GameListEntry document `lmm
+// game list --json` emits for the same game.
+func TestDoGameAdd_FullyFlagged_ManualPath(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	withJSONOutput(t)
+	installDir, modDir := t.TempDir(), t.TempDir()
+	gameAddSource, gameAddID, gameAddName = "acme-manual", "acme-quest-slug", "Acme Quest"
+	gameAddPath, gameAddModPath = installDir, modDir
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal([]byte(out), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "acme-quest-slug", entry.ID)
+	assert.Equal(t, "Acme Quest", entry.Name)
+	assert.Equal(t, installDir, entry.InstallPath)
+	assert.Equal(t, modDir, entry.ModPath)
+	assert.Equal(t, map[string]string{"acme-manual": "acme-quest-slug"}, entry.SourceIDs)
+}
+
+// TestDoGameAdd_GameIDFlag_ManualPath pins #333 Minor #4: --game-id sets
+// the LOCAL games.yaml key on the manual path, distinct from --id (the
+// SOURCE identifier) - the one-way parity hole against POST
+// /api/v1/games' game_id member, which could already do this.
+func TestDoGameAdd_GameIDFlag_ManualPath(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	withJSONOutput(t)
+	installDir := t.TempDir()
+	gameAddSource, gameAddID, gameAddName = "acme-manual", "acme-quest-slug", "Acme Quest"
+	gameAddGameID, gameAddPath = "my-local-key", installDir
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal([]byte(out), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "my-local-key", entry.ID, "the LOCAL key is --game-id, not derived from --id")
+	assert.Equal(t, map[string]string{"acme-manual": "acme-quest-slug"}, entry.SourceIDs,
+		"the SOURCE identifier is still --id, stored verbatim")
+}
+
+// TestDoGameAdd_QueryWithoutPick_EmitsTheCatalogDocument pins the two-step
+// catalog flow a non-interactive caller uses: --query alone answers with
+// the matches (core.GameCatalogReport) and adds nothing, so the caller can
+// re-run with --pick. It is not an error - the caller asked what matched.
+func TestDoGameAdd_QueryWithoutPick_EmitsTheCatalogDocument(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme-cat", name: "Acme Catalog"},
+		entries: []source.GameEntry{
+			{ID: "42", Name: "Acme Quest", Slug: "acme-quest"},
+			{ID: "7", Name: "Other Game", Slug: "other-game"},
+		},
+	})
+	withJSONOutput(t)
+	gameAddSource, gameAddQuery = "acme-cat", "quest"
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var report core.GameCatalogReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "acme-cat", report.SourceID)
+	require.Len(t, report.Matches, 1)
+	assert.Equal(t, "acme-quest", report.Matches[0].GameID)
+
+	games, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Empty(t, games, "a search must add nothing")
+}
+
+// TestDoGameAdd_QueryWithPick_AddsTheMatch pins the second step: --pick
+// resolves a match, and the saved game is keyed by the match's SLUG-derived
+// id with the source identifier stored verbatim - the CurseForge shape
+// ("minecraft" keyed, "432" stored).
+func TestDoGameAdd_QueryWithPick_AddsTheMatch(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "curseforge", name: "CurseForge"},
+		entries:           []source.GameEntry{{ID: "432", Name: "Minecraft", Slug: "minecraft"}},
+	})
+	withJSONOutput(t)
+	installDir := t.TempDir()
+	gameAddSource, gameAddQuery, gameAddPick, gameAddPath = "curseforge", "mine", 1, installDir
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal([]byte(out), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "minecraft", entry.ID)
+	assert.Equal(t, "Minecraft", entry.Name, "the match's name is the default display name")
+	assert.Equal(t, map[string]string{"curseforge": "432"}, entry.SourceIDs)
+}
+
+// TestDoGameAdd_GameIDFlag_OverridesCatalogMatch pins that an explicit
+// --game-id wins over the catalog match's own slug-derived suggestion -
+// the flag is the caller's decision, not just a manual-path-only escape
+// hatch.
+func TestDoGameAdd_GameIDFlag_OverridesCatalogMatch(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "curseforge", name: "CurseForge"},
+		entries:           []source.GameEntry{{ID: "432", Name: "Minecraft", Slug: "minecraft"}},
+	})
+	withJSONOutput(t)
+	installDir := t.TempDir()
+	gameAddSource, gameAddQuery, gameAddPick, gameAddPath = "curseforge", "mine", 1, installDir
+	gameAddGameID = "my-minecraft"
+
+	cmd, _ := newGameAddCmd()
+	out := captureStdout(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal([]byte(out), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "my-minecraft", entry.ID)
+	assert.Equal(t, map[string]string{"curseforge": "432"}, entry.SourceIDs)
+}
+
+// TestDoGameAdd_PickOutOfRange refuses a --pick beyond the match list
+// rather than indexing past it.
+func TestDoGameAdd_PickOutOfRange(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme-cat", name: "Acme Catalog"},
+		entries:           []source.GameEntry{{ID: "42", Name: "Acme Quest", Slug: "acme-quest"}},
+	})
+	gameAddSource, gameAddQuery, gameAddPick, gameAddPath = "acme-cat", "quest", 9, t.TempDir()
+
+	cmd, _ := newGameAddCmd()
+	err := doGameAdd(context.Background(), cmd, bufio.NewReader(strings.NewReader("")), svc)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid selection")
+}
+
+// TestDoGameAdd_UnknownSourceFlag names the registered sources rather than
+// leaving the caller to guess what "--source" accepts.
+func TestDoGameAdd_UnknownSourceFlag(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	gameAddSource = "nope"
+
+	cmd, _ := newGameAddCmd()
+	err := doGameAdd(context.Background(), cmd, bufio.NewReader(strings.NewReader("")), svc)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "acme-manual")
 }
 
 // TestDoGameAdd_NoRegisteredSources guards the degenerate case a bare
@@ -167,12 +379,13 @@ func TestDoGameAdd_CatalogPath_DrivesMockGameCatalog(t *testing.T) {
 		},
 	})
 
+	installDir := t.TempDir()
 	input := strings.Join([]string{
-		"1",                    // select acme-cat (only registered source)
-		"quest",                // search query
-		"1",                    // select the (sole) match
-		"/opt/games/acmequest", // install path
-		"",                     // accept default mod path
+		"1",        // select acme-cat (only registered source)
+		"quest",    // search query
+		"1",        // select the (sole) match
+		installDir, // install path (must exist)
+		"",         // accept default mod path
 	}, "\n") + "\n"
 
 	cmd, buf := newGameAddCmd()
@@ -186,8 +399,8 @@ func TestDoGameAdd_CatalogPath_DrivesMockGameCatalog(t *testing.T) {
 	game, ok := games["acme-quest"]
 	require.True(t, ok, "expected a game keyed by slug %q; got %v", "acme-quest", games)
 	assert.Equal(t, map[string]string{"acme-cat": "42"}, game.SourceIDs)
-	assert.Equal(t, "/opt/games/acmequest", game.InstallPath)
-	assert.Equal(t, "/opt/games/acmequest/mods", game.ModPath)
+	assert.Equal(t, installDir, game.InstallPath)
+	assert.Equal(t, filepath.Join(installDir, "mods"), game.ModPath)
 }
 
 // TestDoGameAdd_CatalogPath_NoMatches proves an empty filter result reports
@@ -247,11 +460,12 @@ func TestDoGameAdd_ManualPath_DrivesCatalogLessSource(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
 
+	installDir := t.TempDir()
 	input := strings.Join([]string{
 		"1",               // select acme-manual (only registered source)
 		"Acme Quest",      // game name (display)
 		"acme-quest-slug", // source identifier
-		"/opt/games/acme", // install path
+		installDir,        // install path (must exist)
 		"",                // accept default mod path
 	}, "\n") + "\n"
 
@@ -292,7 +506,8 @@ func TestDoGameAdd_ZeroMigration_CurseForgeShape(t *testing.T) {
 		},
 	})
 
-	input := "1\nminecraft\n1\n/opt/games/minecraft\n\n"
+	installDir := t.TempDir()
+	input := "1\nminecraft\n1\n" + installDir + "\n\n"
 	cmd, buf := newGameAddCmd()
 	reader := bufio.NewReader(strings.NewReader(input))
 
@@ -319,11 +534,12 @@ func TestDoGameAdd_ZeroMigration_NexusModsShape(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(nexusmods.New(nil, ""))
 
+	installDir := t.TempDir()
 	input := strings.Join([]string{
 		"1", // select nexusmods (only registered source)
 		"Skyrim Special Edition",
 		"skyrimspecialedition",
-		"/opt/games/skyrim",
+		installDir,
 		"",
 	}, "\n") + "\n"
 
@@ -344,15 +560,12 @@ func TestDoGameAdd_ZeroMigration_NexusModsShape(t *testing.T) {
 	assert.Contains(t, raw, `nexusmods: skyrimspecialedition`)
 }
 
-// TestCatalogIdentifier_PrefersIDFallsBackToSlug pins the decision for a
-// GameCatalog implementer that only populates Slug (design brief: "prefer
-// ID, fall back to Slug"): ID wins when present (CurseForge's case), Slug is
-// used only when ID is empty.
-func TestCatalogIdentifier_PrefersIDFallsBackToSlug(t *testing.T) {
-	assert.Equal(t, "42", catalogIdentifier(source.GameEntry{ID: "42", Slug: "the-slug"}))
-	assert.Equal(t, "the-slug", catalogIdentifier(source.GameEntry{Slug: "the-slug"}))
-	assert.Equal(t, "", catalogIdentifier(source.GameEntry{}))
-}
+// The identifier-vs-slug decision this file used to unit-test
+// (catalogIdentifier: prefer GameEntry.ID, fall back to Slug) moved into
+// core.Service.SearchGameCatalog with #307, where it is covered by
+// TestSearchGameCatalog_SlugFallsBackToIdentifier - the CLI no longer owns
+// that decision, so the local helper and its test are gone rather than
+// duplicated.
 
 // readGamesYAML reads the raw games.yaml bytes from the test's configDir,
 // for byte-shape assertions the map-based assertions above can't make (map
@@ -376,12 +589,13 @@ func TestDoGameAdd_CatalogPath_EmptySlugFallsBackToIdentifier(t *testing.T) {
 		},
 	})
 
+	installDir := t.TempDir()
 	input := strings.Join([]string{
-		"1",                   // select acme-cat
-		"quest",               // search query
-		"1",                   // select the sole match
-		"/opt/games/slugless", // install path
-		"",                    // accept default mod path
+		"1",        // select acme-cat
+		"quest",    // search query
+		"1",        // select the sole match
+		installDir, // install path (must exist)
+		"",         // accept default mod path
 	}, "\n") + "\n"
 
 	cmd, buf := newGameAddCmd()
@@ -401,8 +615,10 @@ func TestDoGameAdd_CatalogPath_EmptySlugFallsBackToIdentifier(t *testing.T) {
 }
 
 // TestDoGameAdd_CatalogPath_NoUsableIdentifierErrors pins the guard for a
-// catalog entry populating neither ID nor Slug: a clear error naming the
-// source, never a games.yaml entry keyed "".
+// catalog entry populating neither ID nor Slug: a typed, FIELD-NAMED
+// refusal from core.AddGame, never a games.yaml entry keyed "". Before
+// #307 the CLI raised this itself ("no usable identifier"); the check now
+// lives with the write, so the message is core.GameSpecError's.
 func TestDoGameAdd_CatalogPath_NoUsableIdentifierErrors(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(&mockGameAddCatalogSource{
@@ -412,17 +628,38 @@ func TestDoGameAdd_CatalogPath_NoUsableIdentifierErrors(t *testing.T) {
 		},
 	})
 
-	input := "1\nbroken\n1\n"
+	input := "1\nbroken\n1\n" + t.TempDir() + "\n\n"
 	cmd, buf := newGameAddCmd()
 	reader := bufio.NewReader(strings.NewReader(input))
 
 	err := doGameAdd(context.Background(), cmd, reader, svc)
 	require.Error(t, err, "output so far:\n%s", buf.String())
-	assert.Contains(t, err.Error(), "no usable identifier")
-	assert.Contains(t, err.Error(), "acme-cat")
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "identifier", specErr.Field)
 
 	games, err := config.LoadGames(configDir)
 	require.NoError(t, err)
 	_, empty := games[""]
 	assert.False(t, empty, "an empty-string game key must never be written")
+}
+
+// TestReportError_JSON_GameSpecError pins core.GameSpecError's --json
+// envelope (detailsCoverage): the "<field>: <reason>" message on "error"
+// and the field/value/reason document on "details", which is what lets an
+// SPA form mark the offending input rather than substring-matching prose.
+func TestReportError_JSON_GameSpecError(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.GameSpecError{Field: "install_path", Value: "/games/nope", Reason: "path does not exist"}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"install_path: path does not exist\",\n"+
+		"  \"details\": {\n"+
+		"    \"field\": \"install_path\",\n"+
+		"    \"value\": \"/games/nope\",\n"+
+		"    \"reason\": \"path does not exist\"\n"+
+		"  }\n"+
+		"}\n", out)
 }

@@ -238,7 +238,11 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 	assert.Contains(t, rowB, "✓")
 	assert.NotContains(t, rowB, "[locked@")
 
-	assert.Contains(t, out, "\nApplying 1 auto-update(s)...\n")
+	// #324: one core batch call replaced the two hand-written loops, so the
+	// two section headers became one. The count still EXCLUDES the locked
+	// row, which is what this assertion is really about: the header must
+	// not promise an apply the lock is going to refuse.
+	assert.Contains(t, out, "\nApplying 1 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
 	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
@@ -342,7 +346,9 @@ func TestDoUpdate_AllSkipsLockedNotifyMods(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
+	// #324: see TestDoUpdate_TableMarksLockedAndSkipsAutoApply - one header
+	// now, still counting only what will actually be attempted.
+	assert.Contains(t, out, "\nApplying 1 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
 	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
@@ -354,4 +360,38 @@ func TestDoUpdate_AllSkipsLockedNotifyMods(t *testing.T) {
 	updatedB, err := svc.GetInstalledMod(context.Background(), "test-src", "modB", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updatedB.Version)
+}
+
+// TestDoUpdate_DryRun_LockedAutoRow_NeverPromised: the #324 review (Important
+// 2) - a locked auto-policy row must not appear in the `--dry-run` "Would
+// auto-update" preview. The table three lines above already marks the same
+// row "[locked@1.0]" and withholds its ✓ (isLocked's own guard in
+// printUpdateTable); the preview must agree with the table it sits under,
+// not promise an apply the lock is going to refuse.
+func TestDoUpdate_DryRun_LockedAutoRow_NeverPromised(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+	updateDryRun = true
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+	_, err := svc.SetModUpdatePolicy(context.Background(), "test-src", "modA", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+	src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+	src.AddDownload("a-new", []byte("new"))
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
+	_, err = svc.SetModUpdatePolicy(context.Background(), "test-src", "modB", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+	src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
+	src.AddDownload("b-new", []byte("new"))
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "\nWould auto-update 1 mod(s):\n")
+	assert.Contains(t, out, "  - Mod B 1.0 → 2.0\n")
+	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "a locked auto row must never appear in the dry-run preview")
 }

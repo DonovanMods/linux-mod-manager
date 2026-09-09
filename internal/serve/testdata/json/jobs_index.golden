@@ -1,0 +1,21 @@
+{
+  "jobs": [
+    {
+      "id": "aaaabbbbccccddddeeeeffff00001111",
+      "kind": "deploy",
+      "state": "running",
+      "started_at": "2026-08-30T12:00:10Z",
+      "event_count": 1,
+      "dropped_events": 0
+    },
+    {
+      "id": "0123456789abcdef0123456789abcdef",
+      "kind": "deploy",
+      "state": "succeeded",
+      "started_at": "2026-08-30T12:00:00Z",
+      "ended_at": "2026-08-30T12:00:03Z",
+      "event_count": 12,
+      "dropped_events": 0
+    }
+  ]
+}

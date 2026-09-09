@@ -202,3 +202,48 @@ func TestVersionPass_CancellationDuringLastModsOwnIteration_ReturnsCtxErr(t *tes
 	require.Error(t, err, "the cancellation inside the only mod's own iteration must not be swallowed as a nil return")
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+// TestCompleteRename_RunsEveryWriteThenReportsTheCancellation is the
+// Ruling-16 shape test for the profile-RENAME chain (#332). A rename is
+// three writes - the new profile file, the DB rows keyed by profile, the
+// removal of the old profile file - and stopping between any two leaves the
+// config directory and the database disagreeing, which is exactly what
+// Ruling 16 forbids. completeRename therefore runs the WHOLE chain under a
+// context that cannot be cancelled and only then reports the caller's own
+// cancellation.
+//
+// The test asserts both halves: every write ran (and saw a live context),
+// and the caller still learns it was cancelled.
+func TestCompleteRename_RunsEveryWriteThenReportsTheCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var steps []string
+	var sawLiveContext bool
+	err := completeRename(ctx, func(inner context.Context) error {
+		sawLiveContext = inner.Err() == nil
+		steps = append(steps, "save-new", "rename-rows", "delete-old")
+		return nil
+	})
+
+	require.ErrorIs(t, err, context.Canceled, "the caller must still learn it was cancelled")
+	assert.True(t, sawLiveContext, "the chain must run under a context that cannot be cancelled")
+	assert.Equal(t, []string{"save-new", "rename-rows", "delete-old"}, steps,
+		"every write in the chain must have run")
+}
+
+// TestCompleteRename_CancellationOutranksTheWriteError mirrors the
+// precedence contract completeProfileWrite and completeDBWrite give their
+// callers: a run that was cancelled reports the cancellation, not whatever
+// the (uncancellable) write happened to fail with.
+func TestCompleteRename_CancellationOutranksTheWriteError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := completeRename(ctx, func(context.Context) error { return errors.New("disk full") })
+	require.ErrorIs(t, err, context.Canceled)
+
+	// ...and with no cancellation, the write's own error is what surfaces.
+	err = completeRename(context.Background(), func(context.Context) error { return errors.New("disk full") })
+	require.EqualError(t, err, "disk full")
+}

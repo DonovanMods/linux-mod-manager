@@ -29,6 +29,11 @@ go.work.sum
 
 # Dependency directories
 vendor/
+# ... except the SPA's vendored browser libraries, which are committed on
+# purpose: `go build` is the whole build (no Node, no npm, no bundler), so
+# preact/htm ship in the repo, pinned and go:embed-ed, and are never fetched
+# by anything (docs/plans/2026-08-31-serve-spa-design.md §Settled decisions).
+!internal/serve/vendor/
 
 # Build output
 /bin/

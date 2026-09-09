@@ -1,9 +1,0 @@
-/*
- * Tailwind input for the Makefile's `css` target (dev-time only - see that
- * target's comment). Building this with the standalone tailwindcss CLI
- * replaces the hand-written internal/serve/static/app.css with a real
- * Tailwind build covering the same class names.
- */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;

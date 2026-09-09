@@ -13,8 +13,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // apiContentType is every /api/v1 response's Content-Type, success or
@@ -185,6 +187,51 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 // Important 1). The default (no ?limit=) stays unset/uncapped, matching
 // the /search PAGE's own call and every existing test's expectations; a
 // non-numeric ?limit= is bad input (400), the same class as a missing q.
+//
+// ?page=/?page_size= are #331's pagination params, for the dedicated search
+// PAGE's escape-hatch browsing (the omnibar never sets either - a live
+// filter has no "next page", it just re-fans-out): forwarded verbatim into
+// SearchOptions.Page/PageSize, which core.Search already threads through to
+// searchAllSources/SearchMods (both paginate per-source). Absent, both
+// default to 0 - "page 0, let each source apply its own default size" -
+// matching the CLI's own historical always-page-0 behavior.
+//
+// ?category=/?source= (unit 5 fix wave, Important 1b) are the search PAGE's
+// category/source filters, moved server-side from a client-side slice of
+// one page's own hits: forwarded verbatim into SearchOptions.Category
+// (already a SearchQuery field every source may honor) and SearchOptions.
+// SourceID (the existing named-source path, `lmm search --source`'s own
+// option) - naming a source narrows the aggregate merge to exactly it,
+// making any of ITS failures the call's own error rather than a Warning
+// (SearchOptions' own doc comment). Neither is validated here: an unknown
+// source name is SearchMods' own "source not found" error, the same 500 an
+// unregistered ?source= produces for every other per-source call.
+//
+// ?tag= is #326's parity fix (epic live review C-3: `lmm search --tag` had
+// no API twin at all). It forwards verbatim into SearchOptions.Tags - the
+// same field the flag sets - and is REPEATABLE like the flag, so
+// ?tag=a&tag=b narrows on both. Not validated here, and deliberately not
+// refused for a source that ignores tags: support varies by source
+// (NexusMods honours it today), exactly as `lmm search`'s own help says.
+//
+// ?page_size= is NEVER used to derive an implicit Limit on the AGGREGATE
+// path (SourceID empty; unit 5 fix wave, Important 6 - previously
+// `if limit == 0 && pageSize != 0 { limit = pageSize }` ran unconditionally
+// regardless of SourceID). searchAllSources requests page N from EVERY
+// configured source and merges - a page can therefore hold up to
+// page_size × (number of sources) rows - so capping the merge at a single
+// page_size silently and PERMANENTLY dropped whatever a page's later-ranked
+// sources contributed: with two sources at page_size=20, page 0 fetched 40
+// candidates and kept only the top-ranked 20, and page 1 asked each source
+// for ITS OWN next 20, never revisiting the 20 that were dropped from page
+// 0's merge - they were unreachable on any page. A NAMED source (SourceMods,
+// which paginates ONE cursor directly) has no such coupling - its own page
+// already IS the merge, so page_size doubling as its cap is harmless, and
+// is what lets the search page's source filter promise "at most page_size
+// rows" the same way it always could for a single-source game. An explicit
+// ?limit= still wins over either derivation - it says what it means
+// regardless of how many sources answered.
+// Either non-numeric value is bad input (400), the same class as ?limit=.
 func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -192,14 +239,26 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var limit int
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid query parameter %q: %w", "limit", err))
-			return
-		}
-		limit = n
+	limit, ok := s.parseOptionalIntParam(w, r, "limit")
+	if !ok {
+		return
+	}
+	page, ok := s.parseOptionalIntParam(w, r, "page")
+	if !ok {
+		return
+	}
+	pageSize, ok := s.parseOptionalIntParam(w, r, "page_size")
+	if !ok {
+		return
+	}
+	category := r.URL.Query().Get("category")
+	sourceID := r.URL.Query().Get("source")
+	// REPEATABLE, like the flag it mirrors: ?tag=a&tag=b is `--tag a --tag
+	// b`. Absent, Query()["tag"] is nil - never a one-element slice holding
+	// "", which a source would treat as a tag named "" (#326).
+	tags := r.URL.Query()["tag"]
+	if limit == 0 && pageSize != 0 && sourceID != "" {
+		limit = pageSize
 	}
 
 	sel, ok := s.resolveReadyAPISelection(w, r)
@@ -207,12 +266,31 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query, core.SearchOptions{Limit: limit})
+	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query,
+		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize, Category: category, SourceID: sourceID, Tags: tags})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, report)
+}
+
+// parseOptionalIntParam reads name from r's query string: 0/true when
+// absent, the parsed value/true when present and numeric, or 0/false (the
+// 400 envelope already written) when present but not. Shared by every
+// ?limit=/?page=/?page_size= parse on this endpoint so the three agree on
+// what "bad input" means.
+func (s *Server) parseOptionalIntParam(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid query parameter %q: %w", name, err))
+		return 0, false
+	}
+	return n, true
 }
 
 // handleAPIUpdates answers GET /api/v1/updates with exactly the
@@ -327,18 +405,62 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 // beyond the design doc's original api-route list - see handleAPIHealth's
 // doc comment for the ruling that put conflicts here instead of folded into
 // /api/v1/health.
+//
+// ?order= (#332) is the reorder modal's live preview: a comma-separated
+// list of mod identifiers - the same ones POST /profiles/{name}/reorder
+// takes, resolved through the same core.Service.ResolveReorder - asking
+// "which mod would win each contested path if I committed THIS order".
+// Absent, the report describes the order the profile currently holds,
+// which is this endpoint's original and unchanged behaviour. The answer
+// comes from core.GetProfileConflictsForOrder, so the preview and the
+// commit share one winner rule rather than the frontend re-deriving it;
+// nothing is written either way. A bad identifier is bad input (400), the
+// same classification the reorder route itself gives it.
 func (s *Server) handleAPIConflicts(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
 		return
 	}
 
-	conflicts, err := s.svc.GetProfileConflicts(r.Context(), sel.Game, sel.Profile)
+	order, ok := s.parseConflictOrderParam(w, r, sel)
+	if !ok {
+		return
+	}
+
+	conflicts, err := s.svc.GetProfileConflictsForOrder(r.Context(), sel.Game, sel.Profile, order)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, &core.ConflictReport{GameID: sel.Game.ID, Profile: sel.Profile, Conflicts: conflicts})
+}
+
+// parseConflictOrderParam resolves ?order= into the load order
+// GetProfileConflictsForOrder previews against: nil/true when the param is
+// absent (the saved order), the resolved refs/true when it names mods the
+// profile holds, or nil/false with the 400 envelope already written when it
+// does not. An empty entry ("a,,b") is refused rather than silently
+// dropped - it is the shape a client that joined an array containing a
+// blank produces, and quietly ignoring it would preview an order the caller
+// did not describe.
+func (s *Server) parseConflictOrderParam(w http.ResponseWriter, r *http.Request, sel selection) ([]domain.ModReference, bool) {
+	raw := r.URL.Query().Get("order")
+	if raw == "" {
+		return nil, true
+	}
+	ids := strings.Split(raw, ",")
+	for _, id := range ids {
+		if id == "" {
+			s.writeAPIError(w, http.StatusBadRequest, errors.New(`invalid query parameter "order": empty mod id`))
+			return nil, false
+		}
+	}
+	order, err := s.svc.ResolveReorder(r.Context(), sel.Game, sel.Profile, ids)
+	if err != nil {
+		s.writeAPIError(w, s.reorderErrorStatus(err), err)
+		return nil, false
+	}
+	return order, true
 }
 
 // handleAPIStatus answers GET /api/v1/status with exactly the

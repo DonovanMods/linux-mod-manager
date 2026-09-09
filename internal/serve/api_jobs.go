@@ -127,7 +127,7 @@ func (s *Server) handleAPIPlan(w http.ResponseWriter, r *http.Request) {
 
 	document, pending, err := kind.Plan(r.Context(), s, sel, opts)
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
+		s.writeAPIError(w, planErrorStatus(err), err)
 		return
 	}
 
@@ -272,9 +272,12 @@ func (s *Server) handleAPINotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiMethodsToProbe are the only methods any /api/v1 route ever uses today
-// (routes.go registers each one as either GET or POST) - the closed set
-// apiAllowedMethods needs to try, not every HTTP method that exists.
-var apiMethodsToProbe = []string{http.MethodGet, http.MethodPost}
+// (routes.go registers each one as GET, POST, PUT or DELETE) - the closed
+// set apiAllowedMethods needs to try, not every HTTP method that exists.
+// PUT and DELETE joined the list with #333's source editor; without them a
+// GET of a DELETE-only path answered 404 instead of naming the method that
+// does work there.
+var apiMethodsToProbe = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
 
 // apiAllowedMethods reports which of apiMethodsToProbe a registered
 // /api/v1 route actually claims for r's URL, by cloning r with each

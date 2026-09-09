@@ -575,10 +575,20 @@ func (s *Service) ResolveModVersion(ctx context.Context, sourceID string, mod *d
 	return ResolveVersionFiles(sourceID, files, version)
 }
 
+// ErrSourceVersionsUnsupported is source.ErrNotSupported, re-exported so a
+// frontend can recognize AvailableModVersions' "this source cannot resolve
+// per-file versions at all" outcome without importing internal/source
+// itself - a frontend only ever imports internal/core (the boundary rule
+// cmd/lmm/boundary_test.go and internal/serve/boundary_test.go both
+// enforce; cmd/lmm has never needed this because it imports internal/source
+// directly for other reasons, but `lmm serve` - #330, AvailableModVersions'
+// first real consumer - does not).
+var ErrSourceVersionsUnsupported = source.ErrNotSupported
+
 // AvailableModVersions lists the distinct per-file versions mod's source
 // reports, in first-seen order (#97).
-// Wraps source.ErrNotSupported (same format as ResolveVersionFiles) when
-// the file list carries no version info at all.
+// Wraps ErrSourceVersionsUnsupported (same format as ResolveVersionFiles)
+// when the file list carries no version info at all.
 //
 // No cmd caller today, but it is a non-mutating query a frontend can
 // legitimately need - `lmm serve`'s intended consumer, same reasoning as

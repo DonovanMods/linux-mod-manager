@@ -32,5 +32,6 @@
       "reason": "auth_not_declared",
       "key_masked": "sta...456"
     }
-  ]
+  ],
+  "restart_required": true
 }

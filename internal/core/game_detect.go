@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -108,4 +111,115 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 		result.Profiles = append(result.Profiles, game.ID+"/default")
 	}
 	return result, nil
+}
+
+// GameDetectEntry is one row of a GameDetectListing: a detected game, the
+// 1-based Index that names it in a selection (the same number the CLI's
+// printed listing shows and `lmm game detect --select` takes), and whether
+// games.yaml already holds it.
+//
+// AlreadyConfigured is the machine-readable form of the CLI listing's
+// "[configured]" marker (#205 item 2). It is omitzero: a row that is not
+// configured carries no key at all, matching how every other boolean on
+// this wire behaves. Selecting a configured row anyway is legal - that is
+// the documented repair path - so this is advisory, not a filter.
+type GameDetectEntry struct {
+	domain.DetectedGame
+	Index             int  `json:"index"`
+	AlreadyConfigured bool `json:"already_configured,omitzero"`
+}
+
+// GameDetectListing is the document a detect scan produces BEFORE anything
+// is selected - what the CLI only ever printed to the terminal (under
+// --json it emitted nothing until a selection was made, since Ruling 15
+// allows only the result document on stdout). `lmm serve` needs the
+// listing itself, because its selection happens in a browser between two
+// requests, so it is a document here rather than console text.
+//
+// Games is never nil: a scan that found nothing is an empty list, not an
+// error. Warnings are the scan's own (unreadable libraries, malformed
+// known-games entries), carried in the document rather than written to
+// stderr for the same reason GameDetectResult.Warnings are.
+type GameDetectListing struct {
+	Games    []GameDetectEntry `json:"games"`
+	Warnings []string          `json:"warnings"`
+}
+
+// GameDetectListing builds the pre-selection listing for an
+// already-detected set of games (app.DetectGames' output - core cannot
+// scan Steam itself without importing a concrete source, Ruling 8), marking
+// every row that games.yaml already holds.
+//
+// The configured check reads games.yaml FROM DISK (LoadGamesFromDisk)
+// rather than the Service's in-memory set, matching what `lmm game detect`
+// has always done: the listing must reflect the file a concurrent `game
+// add` may have just written.
+func (s *Service) GameDetectListing(ctx context.Context, games []domain.DetectedGame, warnings []string) (*GameDetectListing, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return nil, fmt.Errorf("loading games: %w", err)
+	}
+
+	listing := &GameDetectListing{Games: make([]GameDetectEntry, 0, len(games)), Warnings: warnings}
+	for i, g := range games {
+		_, configured := existing[g.Slug]
+		listing.Games = append(listing.Games, GameDetectEntry{
+			DetectedGame: g, Index: i + 1, AlreadyConfigured: configured,
+		})
+	}
+	return listing, nil
+}
+
+// SelectDetectedGames resolves a caller's selection against a detect
+// listing, in the order given, returning the detected games ApplyGameDetect
+// should persist. Each selector is either a 1-based index into games (the
+// number GameDetectEntry.Index carries and the CLI's `--select` takes) or a
+// game's slug, matched case-insensitively - two spellings of the same
+// choice, because the CLI's listing is numbered while an SPA holds the row
+// itself and has no reason to count.
+//
+// An empty selection is refused rather than treated as "none": a caller
+// that means "add nothing" does not call this at all, so an empty list here
+// is a malformed request. A duplicate is refused too - ApplyGameDetect
+// overwrites each game it is handed, and applying that twice to one game is
+// never what a caller meant.
+func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]domain.DetectedGame, error) {
+	if len(selectors) == 0 {
+		return nil, errors.New("no games selected")
+	}
+	if len(games) == 0 {
+		// Without this the range hint below reads "use 1-0", which is not a
+		// range and buries the real answer: the scan found nothing at all.
+		return nil, errors.New("no games were detected, so there is nothing to select")
+	}
+	bySlug := make(map[string]int, len(games))
+	for i, g := range games {
+		bySlug[strings.ToLower(g.Slug)] = i
+	}
+
+	seen := make(map[int]bool, len(selectors))
+	out := make([]domain.DetectedGame, 0, len(selectors))
+	for _, sel := range selectors {
+		sel = strings.TrimSpace(sel)
+		var idx int
+		if n, err := strconv.Atoi(sel); err == nil {
+			if n < 1 || n > len(games) {
+				return nil, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(games))
+			}
+			idx = n - 1
+		} else if i, ok := bySlug[strings.ToLower(sel)]; ok {
+			idx = i
+		} else {
+			return nil, fmt.Errorf("invalid selection %q: no detected game with that index or slug", sel)
+		}
+		if seen[idx] {
+			return nil, fmt.Errorf("duplicate selection %q", sel)
+		}
+		seen[idx] = true
+		out = append(out, games[idx])
+	}
+	return out, nil
 }

@@ -117,12 +117,28 @@ func (e *GameDetectPartialError) Unwrap() error { return e.Err }
 // failure - for a frontend's error envelope's "details" field.
 func (e *GameDetectPartialError) Details() any { return e.Result }
 
+// ErrProfileExists is returned by ProfileManager.Create and ProfileManager.
+// Rename when the target profile name is already taken - either a profile
+// file already answers to it, or (Rename only) DB rows still name it after
+// a Delete that only ever removed the file (ProfileManager.Delete's own doc
+// comment; see refuseOccupiedName). It is detected INSIDE the gated
+// CreateProfile/RenameProfile seams, before either writes anything, so a
+// frontend's 409 never depends on an untyped error's wording (#332 M6).
+var ErrProfileExists = errors.New("profile already exists")
+
 // ErrConfirmationRequired is returned by a frontend-facing entry point that
 // would have to prompt but cannot - the CLI's --json mode, which never reads
 // stdin (Ruling 2). The decision must come from a flag instead.
 var ErrConfirmationRequired = errors.New("confirmation required: pass --yes (or --force where documented) in non-interactive mode")
 
-// ErrInteractiveOnly marks a command that has no non-interactive form yet
-// (Ruling 2: `game add`, `auth login`) and therefore rejects --json outright
-// rather than half-running.
-var ErrInteractiveOnly = errors.New("this command is interactive-only and does not support --json")
+// ErrInteractiveOnly marks a value a frontend could only obtain by
+// prompting, in a mode that forbids reading stdin (the CLI's --json,
+// Ruling 2).
+//
+// Before #307 it meant something coarser - `game add` and `auth login` had
+// no flag-driven form at all and rejected --json outright, before doing
+// anything. Both now take flags for every prompt they had, so the refusal
+// narrowed from "this command" to "this value": it is returned only when a
+// specific value was supplied by neither a flag nor an interactive prompt,
+// wrapped with the flag that would have answered it.
+var ErrInteractiveOnly = errors.New("this value can only be supplied interactively; pass the matching flag instead")

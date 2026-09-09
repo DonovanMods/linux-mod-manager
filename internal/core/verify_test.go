@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -141,8 +142,8 @@ func TestVerify_LocalWalk_StatusesAndCounts(t *testing.T) {
 	// walks the rows in DB order, same as the CLI's own loop does today).
 	byFileID := map[string]core.VerifyFinding{
 		"ok-file":          {ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
-		"missing-file":     {ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing", Version: "1.0"},
-		"no-checksum-file": {ModID: "mod-no-checksum", ModName: "Mod No Checksum", FileID: "no-checksum-file", Status: "no_checksum"},
+		"missing-file":     {ModID: "mod-missing", ModName: "Mod Missing", FileID: "missing-file", Status: "missing", Version: "1.0", Fixable: true},
+		"no-checksum-file": {ModID: "mod-no-checksum", ModName: "Mod No Checksum", FileID: "no-checksum-file", Status: "no_checksum", Fixable: true},
 		"gone-file":        {ModID: "mod-gone", FileID: "gone-file", Status: "skipped"},
 	}
 	var wantFindings []core.VerifyFinding
@@ -391,8 +392,9 @@ func TestVerify_FullTier_VersionStatuses(t *testing.T) {
 	wantFindings := []core.VerifyFinding{
 		// --- version pass (runs before the per-file walk) ---
 		{ModID: "unreachable-mod", ModName: "Unreachable", Status: "skipped", Note: "could not check version: boom"},
-		{ModID: "unverifiable-mod", ModName: "Unverifiable", Status: "version_unverifiable"},
-		{ModID: "mismatch-mod", ModName: "Mismatch", Status: "version_mismatch", Recorded: "1.0", Effective: "2.0"},
+		{ModID: "unverifiable-mod", ModName: "Unverifiable", Status: "version_unverifiable",
+			FixableReason: "there is nothing to check the recorded version against"},
+		{ModID: "mismatch-mod", ModName: "Mismatch", Status: "version_mismatch", Recorded: "1.0", Effective: "2.0", Fixable: true},
 		{ModID: "locked-mod", ModName: "Locked", Status: "ok", Note: "lock pending convergence (installed v1.0, locked v2.0)"},
 		// --- per-file walk (DB/checksum insertion order) ---
 		{ModID: "reachable-mod", ModName: "Reachable", FileID: "f1", Status: "ok"},
@@ -1061,7 +1063,8 @@ func TestVerify_Fix_SourceLocal_NoRepairAttempted(t *testing.T) {
 
 	require.Equal(t, 1, result.Issues, "no repair was attempted - the missing issue stands")
 	require.Equal(t, 0, result.Warnings)
-	require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "missing", Version: "1.0"}}, result.Findings)
+	require.Equal(t, []core.VerifyFinding{{ModID: "mod1", ModName: "Mod One", FileID: "1", Status: "missing", Version: "1.0",
+		FixableReason: "the mod was imported locally, so there is no source to re-download from"}}, result.Findings)
 	require.Empty(t, repairDetails(events), "SourceLocal must never reach a redownload attempt")
 }
 
@@ -1505,7 +1508,7 @@ func TestVerify_EmptyProfile_DanglingLink_DryRun(t *testing.T) {
 	require.Equal(t, 0, result.Issues)
 	require.Equal(t, 1, result.Warnings)
 	require.Equal(t, []core.VerifyFinding{
-		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"},
+		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache", Fixable: true},
 	}, result.Findings)
 
 	require.Len(t, events, 2, "Begin, then the one convergence finding - nothing else runs on this path")
@@ -1575,7 +1578,7 @@ func TestVerify_MainPath_ConvergenceAfterFileWalk(t *testing.T) {
 
 	require.Equal(t, []core.VerifyFinding{
 		{ModID: "mod-ok", ModName: "Mod OK", FileID: "ok-file", Status: "ok"},
-		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"},
+		{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache", Fixable: true},
 	}, result.Findings)
 	require.Equal(t, 1, result.Warnings)
 }
@@ -1739,11 +1742,11 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	// GetFilesWithChecksums' own (fetched-here) row order.
 	byModAndFile := map[string]core.VerifyFinding{
 		"fc-mod:fc-file":           {ModID: "fc-mod", ModName: "FC Mod", FileID: "fc-file", Status: "ok"},
-		"goodmod:exmodz-file":      {ModID: "goodmod", ModName: "goodmod", FileID: "exmodz-file", Status: "no_checksum"},
-		"wolfmod:exmodz-file":      {ModID: "wolfmod", ModName: "wolfmod", FileID: "exmodz-file", Status: "no_checksum"},
-		"badpak:pak":               {ModID: "badpak", ModName: "badpak", FileID: "pak", Status: "no_checksum"},
-		"legacypak:pak":            {ModID: "legacypak", ModName: "Legacy Pak", FileID: "pak", Status: "needs_reingest", Note: "pak predates conversion support - run 'lmm verify --fix' to re-ingest"},
-		"missing-mod:missing-file": {ModID: "missing-mod", ModName: "Missing Mod", FileID: "missing-file", Status: "missing", Version: "1.0"},
+		"goodmod:exmodz-file":      {ModID: "goodmod", ModName: "goodmod", FileID: "exmodz-file", Status: "no_checksum", Fixable: true},
+		"wolfmod:exmodz-file":      {ModID: "wolfmod", ModName: "wolfmod", FileID: "exmodz-file", Status: "no_checksum", Fixable: true},
+		"badpak:pak":               {ModID: "badpak", ModName: "badpak", FileID: "pak", Status: "no_checksum", Fixable: true},
+		"legacypak:pak":            {ModID: "legacypak", ModName: "Legacy Pak", FileID: "pak", Status: "needs_reingest", Note: "pak predates conversion support - run 'lmm verify --fix' to re-ingest", Fixable: true},
+		"missing-mod:missing-file": {ModID: "missing-mod", ModName: "Missing Mod", FileID: "missing-file", Status: "missing", Version: "1.0", Fixable: true},
 	}
 	var perFileRows []core.VerifyFinding
 	for _, f := range files {
@@ -1753,12 +1756,93 @@ func TestVerify_FullOrder_Integration(t *testing.T) {
 	}
 
 	want := []core.VerifyFinding{
-		{ModID: "fc-mod", ModName: "FC Mod", Status: "file_count_mismatch"},
-		{ModID: "merged-pak", ModName: "Icarus Merged Pak", Status: "stale_compile", Note: "base pak updated"},
-		{ModID: "badpak", ModName: "badpak", Status: "conversion_failed", Note: "irreconcilable pak layout"},
+		{ModID: "fc-mod", ModName: "FC Mod", Status: "file_count_mismatch",
+			FixableReason: "there is nothing to repair a file-count mismatch with"},
+		{ModID: "merged-pak", ModName: "Icarus Merged Pak", Status: "stale_compile", Note: "base pak updated", Fixable: true},
+		{ModID: "badpak", ModName: "badpak", Status: "conversion_failed", Note: "irreconcilable pak layout",
+			FixableReason: "a conversion is only retried when a merge input changes - reinstall the mod to retry it"},
 	}
 	want = append(want, perFileRows...)
-	want = append(want, core.VerifyFinding{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache"})
+	want = append(want, core.VerifyFinding{FileID: "stray.pak", Status: "stale_deployment", Note: "dangling link into lmm cache", Fixable: true})
 
 	require.Equal(t, want, result.Findings)
+}
+
+// --- #334: VerifyResult.CheckedAt and VerifyFinding.FixableReason ---
+
+// TestVerify_StampsCheckedAt pins the timestamp the Health surface reads to
+// say "last verified": it is set on every run, including the #217
+// empty-profile path and a run that stops early, because it is stamped
+// before any pass begins.
+func TestVerify_StampsCheckedAt(t *testing.T) {
+	svc, game := newFixTestGame(t)
+	before := time.Now().UTC()
+
+	t.Run("populated profile", func(t *testing.T) {
+		seedVerifyMod(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"1"}, true)
+		result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, nil)
+		require.NoError(t, err)
+		assert.False(t, result.CheckedAt.IsZero(), "a run must always stamp when it happened")
+		assert.False(t, result.CheckedAt.Before(before))
+		assert.Equal(t, time.UTC, result.CheckedAt.Location(), "the wire carries UTC")
+	})
+
+	t.Run("empty profile", func(t *testing.T) {
+		_, empty := newFixTestGame(t)
+		result, err := svc.VerifyForTest(context.Background(), empty, "default", core.VerifyOptions{}, nil)
+		require.NoError(t, err)
+		assert.False(t, result.CheckedAt.IsZero(), "the #217 empty-profile path stamps it too")
+	})
+}
+
+// TestVerify_FixableReason_LockedVersionMismatch is the case the web UI
+// used to guess at from a separate library fetch: a version mismatch on a
+// LOCKED ref. The engine names the lock (and its version) itself.
+func TestVerify_FixableReason_LockedVersionMismatch(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	src := &scriptedVersionSource{
+		mockSource:   newMockSource("vsrc"),
+		filesByModID: map[string][]domain.DownloadableFile{"mismatch-mod": {{ID: "f1", Version: "2.0", IsPrimary: true}}},
+	}
+	svc.RegisterSource(src)
+
+	seedVerifyMod(t, svc, game, "vsrc", "mismatch-mod", "Mismatch", "1.0", []string{"f1"}, true)
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "vsrc", "mismatch-mod", game.ID, "default", "f1", "cs"))
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "vsrc", ModID: "mismatch-mod", Version: "1.0", FileIDs: []string{"f1"}}))
+	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "vsrc", "mismatch-mod", "1.0"))
+
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	require.NoError(t, err)
+
+	var mismatch *core.VerifyFinding
+	for i := range result.Findings {
+		if result.Findings[i].Status == "version_mismatch" {
+			mismatch = &result.Findings[i]
+		}
+	}
+	require.NotNil(t, mismatch, "the mismatch must still be reported: %+v", result.Findings)
+	assert.False(t, mismatch.Fixable, "#97: --fix will not rewrite a lock's target version")
+	assert.Contains(t, mismatch.FixableReason, "locked at v1.0")
+	assert.Contains(t, mismatch.FixableReason, "unlock it first")
+}
+
+// TestVerify_FixableReason_EmptyWhenFixable is the control: a row a --fix
+// run WOULD repair carries no reason at all, so a renderer can branch on
+// Fixable alone and never print an explanation beside a working button.
+func TestVerify_FixableReason_EmptyWhenFixable(t *testing.T) {
+	svc, game := newFixTestGame(t)
+	seedVerifyMod(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"1"}, false)
+	require.NoError(t, svc.SaveFileChecksum(context.Background(), "test-src", "mod1", game.ID, "default", "1", "old-checksum"))
+
+	result, err := svc.VerifyForTest(context.Background(), game, "default", core.VerifyOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Findings, 1)
+	assert.True(t, result.Findings[0].Fixable)
+	assert.Empty(t, result.Findings[0].FixableReason)
 }

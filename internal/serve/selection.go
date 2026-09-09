@@ -3,33 +3,31 @@ package serve
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"slices"
-	"sort"
-	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // gameParam and profileParam are the two query params every game/profile-
-// scoped page - and Task 5's mirroring GET /api/v1 endpoints - read to pick
-// which game and profile they render (docs/plans/2026-08-30-serve-impl.md
-// Task 4 ruling on game/profile selection). resolveSelection is the single
-// place both a page and its API mirror resolve them, so the two always
-// agree.
+// scoped /api/v1 endpoint reads to pick which game and profile it answers
+// for (docs/plans/2026-08-30-serve-impl.md Task 4 ruling on game/profile
+// selection). The SPA holds the same pair in its URL path
+// (/g/{game}/{profile}, docs/plans/2026-08-31-serve-spa-design.md
+// §Information architecture) and passes them down as these params, so the
+// browser and a script driving /api/v1 by hand resolve identically.
 const (
 	gameParam    = "game"
 	profileParam = "profile"
 )
 
-// selection is resolveSelection's result: what a game/profile-scoped page
-// (or its /api/v1 mirror) renders against, plus the nav switcher's choices.
-// ready reports whether both a game and a profile resolved - the signal a
-// page checks before calling a core query; otherwise it renders a friendly
-// empty state offering Games/Profiles as the valid choices, with Warning
-// explaining why an explicitly-named game or profile (or the configured
-// default) could not be honoured.
+// selection is resolveSelection's result: what a game/profile-scoped
+// /api/v1 endpoint answers against, plus the choices a caller may switch
+// between. ready reports whether both a game and a profile resolved - the
+// signal an endpoint checks before calling a core query; otherwise it
+// answers the valid Games/Profiles instead, with Warning explaining why an
+// explicitly-named game or profile (or the configured default) could not be
+// honoured.
 type selection struct {
 	Game     *domain.Game
 	Profile  string
@@ -50,12 +48,10 @@ func (sel selection) ready() bool {
 // (ProfileManager.GetDefault) when absent; either parameter overrides its
 // default when present.
 //
-// Both are read with http.Request.FormValue, so a GET page reads them from
-// the query string and a POSTed mutation form reads them from its own
-// hidden fields (Task 8) - one resolution for both, rather than a second,
-// drifting copy for the mutation routes. FormValue prefers the body over
-// the query string for a POST, which is the right precedence: the hidden
-// field a page rendered is what the user was actually looking at.
+// Both are read with http.Request.FormValue, which takes them from the
+// query string on a GET and from a urlencoded body on a POST - one
+// resolution for the read endpoints and the plan endpoint alike, rather
+// than a second, drifting copy for the mutation routes.
 //
 // An unresolvable game or profile - an unknown value, no configured
 // default, no games at all - degrades the result rather than failing the
@@ -117,145 +113,4 @@ func (s *Server) resolveSelection(r *http.Request) (selection, error) {
 	sel.Profile = profileName
 
 	return sel, nil
-}
-
-// pageChrome is the layout-level data every page's template data struct
-// embeds: the CSRF token layout.gohtml's forms need (Global Constraints:
-// "CSRF token in every form"), and - for a page scoped to one game+profile -
-// the nav switcher's resolved selection (Nav is nil for a page with no
-// single active game+profile, e.g. the status dashboard). Path is the
-// switcher form's GET target, so switching game/profile reloads the same
-// page it was submitted from. ExtraParams are the current request's query
-// parameters other than game/profile (e.g. /search's "q"), carried as the
-// switcher form's hidden fields so submitting it doesn't reset them (task-4
-// review Minor 2).
-type pageChrome struct {
-	Title       string
-	CSRFToken   string
-	Path        string
-	Nav         *selection
-	ExtraParams []queryParam
-	NavLinks    []navLink
-
-	// Refresh, when non-zero, makes layout.gohtml emit a meta refresh of
-	// that many seconds INSIDE a <noscript> - so a page whose content
-	// changes on its own (the job page while its job runs) still advances
-	// with JavaScript disabled, and never fights the enhancement JS when it
-	// is enabled. Zero on every other page.
-	Refresh int
-}
-
-// queryParam is one pageChrome.ExtraParams entry: a query key/value pair
-// the nav switcher's GET form round-trips as a hidden field.
-type queryParam struct {
-	Key   string
-	Value string
-}
-
-// chrome builds the pageChrome common to every page. sel is nil for a page
-// with no single active game+profile (the status dashboard); every other
-// page passes the selection resolveSelection returned so layout.gohtml can
-// render the switcher and any resolution Warning.
-func (s *Server) chrome(r *http.Request, title string, sel *selection) pageChrome {
-	return pageChrome{
-		Title:       title,
-		CSRFToken:   s.csrf.token,
-		Path:        r.URL.Path,
-		Nav:         sel,
-		ExtraParams: extraQueryParams(r),
-		NavLinks:    buildNavLinks(r.URL.Path, sel),
-	}
-}
-
-// navLink is one entry in layout.gohtml's primary navigation - one of the
-// six top-level pages, every page reachable from every other one (epic live
-// review I1: before this, the shipped UI had exactly one nav link, "/", and
-// a user landing on an empty /mods or a fresh profile had no way to reach
-// anything else without hand-typing a URL).
-type navLink struct {
-	Label   string
-	Href    string
-	Current bool
-}
-
-// primaryNavItems is the six top-level pages, in the order they render.
-var primaryNavItems = []struct {
-	Path  string
-	Label string
-}{
-	{"/", "Status"},
-	{"/mods", "Mods"},
-	{"/search", "Search"},
-	{"/updates", "Updates"},
-	{"/profiles", "Profiles"},
-	{"/health", "Health"},
-}
-
-// buildNavLinks returns the primary nav's six links, each carrying sel's
-// resolved game/profile as query params (the same ?game/?profile a page
-// itself reads via resolveSelection) so following a nav link stays on the
-// context the user was already looking at, rather than silently falling
-// back to whatever the default game/profile happens to be. sel is nil for a
-// page with no single active game+profile (the status dashboard, a job
-// page) - those pages' own links carry no query params, and every
-// destination page resolves its own default from scratch. currentPath marks
-// exactly one link Current: "/" only when it IS the current path (so it
-// doesn't light up for every page), every other item when currentPath is it
-// or a sub-path of it (e.g. "/mods/{source}/{id}" still marks "Mods").
-func buildNavLinks(currentPath string, sel *selection) []navLink {
-	var query string
-	if sel != nil && sel.Game != nil {
-		params := url.Values{}
-		params.Set(gameParam, sel.Game.ID)
-		if sel.Profile != "" {
-			params.Set(profileParam, sel.Profile)
-		}
-		query = "?" + params.Encode()
-	}
-
-	links := make([]navLink, len(primaryNavItems))
-	for i, item := range primaryNavItems {
-		current := currentPath == item.Path
-		if item.Path != "/" {
-			current = current || strings.HasPrefix(currentPath, item.Path+"/")
-		}
-		links[i] = navLink{Label: item.Label, Href: item.Path + query, Current: current}
-	}
-	return links
-}
-
-// extraQueryParams returns r's query parameters other than gameParam/
-// profileParam, sorted by key then value for deterministic rendering - the
-// hidden fields the nav switcher's form carries so a page-specific
-// parameter (e.g. /search's "q") survives a game/profile switch instead of
-// being silently dropped (task-4 review Minor 2: a GET form submission
-// replaces the whole query string with only the fields the form itself
-// declares).
-func extraQueryParams(r *http.Request) []queryParam {
-	q := r.URL.Query()
-	q.Del(gameParam)
-	q.Del(profileParam)
-	if len(q) == 0 {
-		return nil
-	}
-	params := make([]queryParam, 0, len(q))
-	for key, values := range q {
-		for _, v := range values {
-			params = append(params, queryParam{Key: key, Value: v})
-		}
-	}
-	sortQueryParams(params)
-	return params
-}
-
-// sortQueryParams orders params by key then value, so any rendered set of
-// hidden fields is stable across requests. Shared by the nav switcher and
-// the mutation recovery forms (mutations.go).
-func sortQueryParams(params []queryParam) {
-	sort.Slice(params, func(i, j int) bool {
-		if params[i].Key != params[j].Key {
-			return params[i].Key < params[j].Key
-		}
-		return params[i].Value < params[j].Value
-	})
 }

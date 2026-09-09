@@ -1,0 +1,2660 @@
+/*
+ * The "Launcher" design tokens and the shell's own baseline
+ * (docs/plans/2026-08-31-serve-spa-design.md §Visual design).
+ *
+ * TWO complete token sets, dark and light, both defined from day one so no
+ * screen can be built against only one of them. Which set applies:
+ *
+ *   :root                        the light set, the unconditional baseline
+ *   @media (prefers-color-scheme: dark)   the dark set, when the SYSTEM says
+ *                                         dark and no override is stamped
+ *   [data-theme="dark"|"light"]  the persisted user override, which wins
+ *                                over the system in both directions
+ *
+ * The override attribute is stamped by the shell's pre-paint inline script
+ * (spa/index.html) and maintained by app/theme.js.
+ *
+ * Density is tuned for >= 1080p desktop only; there is no small-screen
+ * design (owner decision, §Settled decisions).
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, back to front. */
+  --surface-base: #f4f5f7;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
+  --surface-sunken: #e8eaee;
+
+  /* Text. */
+  --text-primary: #10151c;
+  --text-secondary: #4a5461;
+  --text-muted: #5f6874;
+  --text-inverted: #f7f9fb;
+
+  /* Lines. */
+  --border-subtle: #d8dce2;
+  --border-strong: #767f8d;
+  --focus-ring: #8f5500;
+
+  /* The amber primary action, and the good/warn/conflict semantics. */
+  --accent: #8f5500;
+  --accent-hover: #6f4200;
+  --accent-contrast: #ffffff;
+  --good: #1a7238;
+  --warn: #8f5a00;
+  --danger: #b3261e;
+
+  /* Type. */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Rhythm. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --radius: 6px;
+  --shadow-raised: 0 1px 2px rgb(16 21 28 / 8%), 0 4px 12px rgb(16 21 28 / 6%);
+  /* The slide-over's backdrop scrim - text-primary's hue at low opacity,
+   * rather than a bare black no token set chose. */
+  --scrim: rgb(16 21 28 / 40%);
+
+  /* Motion (issue 334, owner demo 1: "mild UI animations for the slide-over
+   * and a consistent motion language app-wide").
+   *
+   * Three durations and one curve, defined ONCE here rather than per theme:
+   * how long a thing takes to appear is not a colour, and a dark UI that
+   * moved at a different speed from a light one would be a bug.
+   *
+   * The curve decelerates into rest and never overshoots. Everything in
+   * this application that moves is either arriving (a panel, a toast) or
+   * reporting progress; nothing is playful, so nothing bounces. */
+  --motion-fast: 110ms;
+  --motion-base: 170ms;
+  --motion-slow: 240ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/*
+ * prefers-reduced-motion is honoured by collapsing the tokens, not by
+ * hunting down each animation: every duration in this stylesheet is one of
+ * the three above, so zeroing them is the whole switch. The blanket
+ * !important rules underneath catch anything a browser animates on its own
+ * (smooth scrolling) and any future rule that forgets the tokens.
+ *
+ * Zero, not "very short": a user who asked for no motion has said so.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface-base: #0b0f14;
+    --surface-raised: #111823;
+    --surface-overlay: #16202d;
+    --surface-sunken: #070a0e;
+
+    --text-primary: #e8edf4;
+    --text-secondary: #a8b3c1;
+    --text-muted: #7c8896;
+    --text-inverted: #0b0f14;
+
+    --border-subtle: #223044;
+    --border-strong: #5e7594;
+    --focus-ring: #f0a92b;
+
+    --accent: #f0a92b;
+    --accent-hover: #ffc257;
+    --accent-contrast: #0b0f14;
+    --good: #4ac97e;
+    --warn: #f0a92b;
+    --danger: #ff6b5e;
+
+    --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 32%);
+    --scrim: rgb(0 0 0 / 55%);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-base: #0b0f14;
+  --surface-raised: #111823;
+  --surface-overlay: #16202d;
+  --surface-sunken: #070a0e;
+
+  --text-primary: #e8edf4;
+  --text-secondary: #a8b3c1;
+  --text-muted: #7c8896;
+  --text-inverted: #0b0f14;
+
+  --border-subtle: #223044;
+  --border-strong: #5e7594;
+  --focus-ring: #f0a92b;
+
+  --accent: #f0a92b;
+  --accent-hover: #ffc257;
+  --accent-contrast: #0b0f14;
+  --good: #4ac97e;
+  --warn: #f0a92b;
+  --danger: #ff6b5e;
+
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 32%);
+  --scrim: rgb(0 0 0 / 55%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+kbd,
+samp,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+:where(a) {
+  color: var(--accent);
+}
+
+:where(a):hover {
+  color: var(--accent-hover);
+}
+
+:where(:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* visually-hidden takes an element out of the VISUAL layout while leaving
+   it in the accessibility tree - the standard clip-rect recipe, not
+   display:none (which removes it from both) and not a zero opacity (which
+   leaves it taking up space). Two users: Mission Control's own <h1>
+   (heading navigation needs a route title, and the top bar already renders
+   that context as two pickers - I-3, epic live review) and each Setup
+   panel's own <h2> (the section's visible title IS its tab, and a tab is
+   not a heading - issue 326). */
+.visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+}
+
+/* Confident, tracked section headers - the Launcher signature. */
+.section-header {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-root {
+  min-height: 100vh;
+}
+
+/* The skip link: off screen until it is focused, then a real control in the
+ * top-left corner. Moved with `top` rather than hidden with display/
+ * visibility, both of which would take it out of the tab order entirely and
+ * make it unreachable by the only input method it exists for. */
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: -4rem;
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  top: var(--space-3);
+}
+
+/*
+ * What the shell shows before main.js has mounted anything, and what a
+ * browser with modules disabled is left with. Both are deliberately plain:
+ * this is the only markup in the application that Preact did not render.
+ */
+.app-booting,
+.app-noscript {
+  margin: 0;
+  padding: var(--space-8);
+  color: var(--text-muted);
+}
+
+.app-noscript code {
+  color: var(--text-primary);
+}
+
+.app-error {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Buttons and controls - shared by the top bar, the cards, the library.   */
+/* ---------------------------------------------------------------------- */
+
+.button {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.button--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 700;
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.button--small {
+  padding: 0 var(--space-2);
+  font-size: 0.85em;
+}
+
+.button--danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.button:disabled,
+input:disabled,
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="search"],
+input[type="text"],
+select {
+  padding: var(--space-1) var(--space-2);
+  /* --border-strong, not --border-subtle (issue 334's a11y pass): a control
+   * whose fill barely differs from the page behind it has only its border
+   * to identify it as a control, which WCAG 2.1 SC 1.4.11 holds to 3:1.
+   * --border-subtle stays what its name says - a divider between things
+   * that are already obviously separate. */
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.theme-toggle {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Top bar.                                                                */
+/* ---------------------------------------------------------------------- */
+
+/*
+ * The top bar must never push the page wider than the viewport
+ * (issue 334's density pass). It carries nine controls, and a document that
+ * overflows horizontally gets a scrollbar that a position:fixed overlay -
+ * the slide-over, the modal - then sits partly underneath: found by an E2E
+ * whose browser runs at 800px, where the slide-over's own close button
+ * became unclickable because the page had grown to 899px. The baseline for
+ * this UI is 1080p, where none of this binds; wrapping is what keeps a
+ * narrower window merely cramped instead of broken.
+ */
+.app-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+}
+
+.app-bar--minimal {
+  justify-content: space-between;
+}
+
+.app-bar__brand {
+  color: var(--text-primary);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+/* N-11: the game/profile pickers and the omnibar are wrapped in a <nav> and
+ * a role="search" container respectively (landmarks a screen reader can
+ * jump to) - plain flex children of .app-bar rather than display:contents,
+ * since some browsers still drop a display:contents element's own
+ * accessibility semantics, which would defeat the landmark it exists to
+ * add. Each wrapper carries the flex behaviour its children used to get
+ * straight from .app-bar, so the bar's layout is unchanged. */
+.app-bar__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* The search wrapper takes the bar's slack AND gives it back: `min-width: 0`
+ * rather than a floor, so it is the control that shrinks when the bar runs
+ * out of room, instead of the bar overflowing the page. The omnibar itself
+ * then grows to fill the wrapper the same way. */
+.app-bar__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.app-bar .omnibar {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-main {
+  padding: var(--space-6);
+}
+
+/* Mission Control's own main landmark - missing entirely was I1: the
+ * attention cards and the library ran flat against both viewport edges and
+ * the top bar's bottom edge, with no gutter at all. */
+.mission-control__body {
+  padding: var(--space-6);
+}
+
+/*
+ * A measure, above 1440p (issue 334's density pass). The baseline is 1080p,
+ * where full-bleed is right; on a 1440p or wider display an unbounded
+ * library stretches a seven-column table to 2400px and puts the row's own
+ * actions a head-turn away from its name. 130rem is wide enough that every
+ * progressive column still fits at 1920 (see .library__table's own steps)
+ * and narrow enough that a row reads as one line.
+ */
+@media (min-width: 1440px) {
+  .mission-control__body,
+  .app-main {
+    max-width: 130rem;
+    margin: 0 auto;
+  }
+}
+
+/* The game/profile pickers and the activity bell share one dropdown shape:
+ * a trigger button and an absolutely-positioned menu beneath it. */
+.picker {
+  position: relative;
+}
+
+.picker__trigger {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.picker__trigger:hover {
+  border-color: var(--border-subtle);
+}
+
+.picker__menu {
+  animation: menu-drop var(--motion-fast) var(--motion-ease);
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0;
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1);
+  min-width: 12rem;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-raised);
+}
+
+.picker__item {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker__item:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+/* One profile row: its name (the plain view change) on the left, its
+ * "Switch and deploy…" (the real mutation) on the right - issue 334. The
+ * action is always rendered, never revealed on hover: a keyboard user must
+ * be able to reach it, and a hover-only affordance is invisible to them. */
+.picker__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.picker__row .picker__item {
+  flex: 1 1 auto;
+}
+
+.picker__action {
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.85em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.picker__action:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+/* A dropdown drops - the shortest duration in the set, because a menu that
+ * takes as long as a dialog to appear feels broken rather than considered.
+ * Shared by the game/profile pickers, the row menus and the activity tray,
+ * which all render through .picker__menu or .tray. */
+@keyframes menu-drop {
+  from {
+    transform: translateY(-0.25rem);
+    opacity: 0;
+  }
+}
+
+.picker__divider {
+  margin: var(--space-1) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.deploy-indicator {
+  color: var(--good);
+  font-size: 0.9em;
+  white-space: nowrap;
+}
+
+.deploy-indicator--pending {
+  color: var(--warn);
+}
+
+.activity-bell__trigger {
+  position: relative;
+}
+
+.activity-bell__count {
+  position: absolute;
+  top: -0.3em;
+  right: -0.6em;
+  padding: 0 0.35em;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.7em;
+  font-weight: 700;
+}
+
+/* The tray's own layout rules live with the rest of the activity tray
+ * further down this file; only the state colours below are here, where the
+ * bell that owns them is. (Two superseded rules - a 16rem min-width and a
+ * flex .tray__row - sat here until issue 334's polish pass: both were
+ * overridden by that later section, so they styled nothing.) */
+
+.tray__empty {
+  padding: var(--space-2);
+  color: var(--text-muted);
+}
+
+.tray__state {
+  text-transform: uppercase;
+  font-size: 0.75em;
+  letter-spacing: 0.04em;
+}
+
+.tray__state--running {
+  color: var(--accent);
+}
+
+.tray__state--succeeded {
+  color: var(--good);
+}
+
+.tray__state--failed {
+  color: var(--danger);
+}
+
+/* A batch job's own tally disagreeing with its bare state - see
+ * .job-progress--mixed's identical rationale (I3, unit 6 fix wave). */
+.tray__state--mixed {
+  color: var(--warn);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Attention cards.                                                       */
+/* ---------------------------------------------------------------------- */
+
+/*
+ * The design asks for "three-across cards" (§Visual design), which was a
+ * literal repeat(3, 1fr) until this unit gave Mission Control a FOURTH card
+ * (the profile card) and the fourth dropped onto a row of its own with two
+ * card-widths of empty space beside it.
+ *
+ * auto-fit with a real minimum says the same thing without counting: at the
+ * 1080p baseline three cards fill the row and a fourth wraps under; from
+ * about 1500px up all four sit across. The minimum is what keeps a card
+ * readable - a Health card squeezed to 15rem wraps every finding onto three
+ * lines.
+ */
+.attention-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+}
+
+/* I-3's second half (issue 326): the four attention cards' titles are <h2>
+ * elements now - heading navigation on Mission Control used to find
+ * "Library" and nothing else - so this class has to restate what the <p>
+ * they used to be simply inherited. Without it the browser's own h2
+ * defaults (1.5em, bold, 0.83em margins) would resize and re-space every
+ * card. The tag carries the meaning; the appearance is unchanged. */
+.card__title {
+  margin: 1em 0;
+  font: inherit;
+}
+
+.card--updates .card__title {
+  color: var(--good);
+}
+
+.card--health .card__title {
+  color: var(--warn);
+}
+
+.card--conflicts .card__title {
+  color: var(--danger);
+}
+
+/* The profile card (issue 334): this profile lists mods nobody installed.
+ * The accent, not a semantic colour - it is a pending action, not a fault. */
+.card--profile .card__title {
+  color: var(--accent);
+}
+
+/* A card's own supporting line, under its title - the Health card's "Last
+ * verified …" (issue 334). Muted and small: it qualifies the card, it is
+ * not one of its rows. */
+.card__meta {
+  margin: calc(var(--space-2) * -1) 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/* The card's list takes the slack so every card in the row ends its
+ * actions at the same height (issue 334's density pass): without it a
+ * three-finding Health card and a one-row Updates card put their buttons
+ * at two different heights, and the eye reads that as misalignment rather
+ * than as different amounts of content. */
+.card__list {
+  flex: 1 1 auto;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.card__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.9em;
+}
+
+.card__row:last-child {
+  border-bottom: none;
+}
+
+/* The name takes the row's slack (so a row's own action stays pinned right,
+ * where every card's is) but can also GIVE it back: min-width: 0 plus the
+ * ellipsis is what stops a long mod name - or a conflict label naming three
+ * mods - from pushing its own Repair/Resolve button out of the card
+ * entirely, which flex's default min-width: auto would happily do
+ * (issue 334's density pass).
+ *
+ * It gives that slack back LAST (M3, unit 8 gate review). Both halves used
+ * to shrink at the same rate, so a Health row at 1280px read
+ * "Better …  version mismatch (recorded 1.0, so…" - both cut, and the name
+ * is the identifier: the detail explains a mod you can still name, while a
+ * truncated name explains nothing at all. The detail's much larger shrink
+ * factor (100 against 1) is what makes the name the last thing to go. Both
+ * carry their own full text as a title, so nothing truncated here is
+ * unrecoverable without resizing the window. */
+.card__row-name {
+  flex: 1 1 auto;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+/* A row the engine will REFUSE (Owner item 3, unit 8 gate review): the
+ * lock marker sits at its natural width and never shrinks, because a
+ * truncated "🔒 locked at v…" is worse than a truncated version arrow -
+ * it is the one part of the row that says the tick will not do what it
+ * looks like it does. */
+.card__row-lock {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.card__row-detail {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+/* A card whose own fetch failed - I3: never rendered as the all-clear
+ * empty state. */
+.card__error {
+  margin: 0 0 var(--space-3);
+  color: var(--danger);
+  font-size: 0.9em;
+}
+
+/* A card's own action row, pinned to its bottom edge - .card is a flex
+ * column and .card__list takes the slack, so every card in the row ends
+ * its actions at the same height. `align-items: start` keeps a button its
+ * own natural size: a direct flex child of the column would otherwise
+ * stretch to the card's full width, which is how "Update selected" came to
+ * be a full-bleed bar while "Repair all" beside it was a button
+ * (issue 334's density pass). */
+.card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Badges - the library's ⬆⚠⇄🔒 + policy column.                          */
+/* ---------------------------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 0 0.4em;
+  border-radius: var(--radius);
+  font-size: 0.8em;
+}
+
+.badge--good {
+  color: var(--good);
+}
+
+.badge--warn {
+  color: var(--warn);
+}
+
+.badge--danger {
+  color: var(--danger);
+}
+
+.badge--policy {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Library.                                                                */
+/* ---------------------------------------------------------------------- */
+
+.library__toolbar {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.library__toolbar .section-header {
+  margin: 0;
+  flex: 1;
+}
+
+/* A label wrapping its own control (issue 334's spacing pass). Without the
+ * flex gap the label text sat flush against the <select> - "FilterAll" and
+ * "Sort (on this page)Relevance" - which read as one word at a glance.
+ * Shared by the library toolbar and the search page's own sort. */
+.library__control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+.library__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/*
+ * Column widths (issue 334's density pass). Every column but the name is
+ * given the share of the table its content needs, so the name - the one
+ * column whose content is unbounded and the one people scan - absorbs all
+ * the slack. Before this the browser's auto layout redistributed everything
+ * on every re-render: switching a filter, or a mod whose author was one
+ * character longer arriving, visibly shifted the checkboxes under the
+ * cursor.
+ *
+ * PERCENTAGES, not rem. A fixed width is a MINIMUM the table will overflow
+ * its container to satisfy, and the shares below add up differently
+ * depending on which progressive columns are showing - so in rem the table
+ * grew a horizontal scrollbar on a narrow window (found by an E2E whose
+ * browser runs at 800px: the page went 899px wide and the slide-over's own
+ * close button ended up under the scrollbar). A percentage is a share of
+ * whatever width there is, so the same rule holds at every one of the three
+ * column sets below.
+ */
+.library__table th.col--select,
+.library__table td.col--select {
+  width: 5%;
+}
+
+.library__table th.col--enabled,
+.library__table td.col--enabled {
+  width: 6%;
+}
+
+.library__table th.col--order,
+.library__table td.col--order {
+  width: 6%;
+  text-align: right;
+}
+
+.library__table th.col--version,
+.library__table td.col--version,
+.library__table th.col--installed,
+.library__table td.col--installed {
+  width: 8%;
+}
+
+.library__table th.col--author,
+.library__table td.col--author {
+  width: 9%;
+}
+
+.library__table th.col--source,
+.library__table td.col--source,
+.library__table th.col--method,
+.library__table td.col--method {
+  width: 7%;
+}
+
+.library__table th.col--badges,
+.library__table td.col--badges {
+  width: 10%;
+}
+
+.library__table th.col--menu,
+.library__table td.col--menu {
+  width: 3%;
+}
+
+.library__table th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.mod-row td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/*
+ * Progressive columns (owner demo 1). Seven columns on a 2560px display
+ * wastes most of it, and the four extra facts below are already in the
+ * /api/v1/mods document every row is built from - nothing new is fetched
+ * to fill them.
+ *
+ *   >= 1440px   author + install date
+ *   >= 1920px   source + link method
+ *
+ * Hidden by default and revealed upward, rather than the reverse: the
+ * unqualified rule is the one a browser with no media-query support (or a
+ * print stylesheet) falls back to, and the narrow table is the safe
+ * fallback. Note the baseline for this application is 1080p (§Settled
+ * decisions), so the 1440 step is the first one a supported display can
+ * actually sit below.
+ */
+.library__table .col--author,
+.library__table .col--installed,
+.library__table .col--source,
+.library__table .col--method {
+  display: none;
+}
+
+@media (min-width: 1440px) {
+  .library__table .col--author,
+  .library__table .col--installed {
+    display: table-cell;
+  }
+}
+
+@media (min-width: 1920px) {
+  .library__table .col--source,
+  .library__table .col--method {
+    display: table-cell;
+  }
+}
+
+/* The two leading checkbox columns are DIFFERENT things - select-for-batch
+ * and the mod's own enabled state - so both carry a real heading rather
+ * than the blank cells that made them ambiguous (owner demo 1). They are
+ * narrow, so the heading text is the smallest the header scale goes. */
+.library__table th.col--select,
+.library__table th.col--enabled {
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.mod-row:hover {
+  background: var(--surface-sunken);
+}
+
+.mod-row--selected {
+  background: var(--surface-overlay);
+}
+
+/* A <button>, not a bare <td onClick> (M6): the row-open affordance is the
+ * primary navigation on the primary screen, so it must be reachable by
+ * keyboard (Tab, then Enter/Space), not mouse-only. */
+.mod-row__name {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mod-row__name:hover {
+  color: var(--accent);
+}
+
+.mod-row__badges {
+  white-space: nowrap;
+}
+
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-raised);
+}
+
+.empty-state {
+  padding: var(--space-6);
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.empty-state__hint {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+/* The library's own I3 error state - a failed mods fetch, never rendered as
+ * "No mods installed yet". */
+.empty-state--error {
+  border-style: solid;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Game chooser.                                                          */
+/* ---------------------------------------------------------------------- */
+
+.game-chooser {
+  padding: var(--space-8);
+}
+
+.game-chooser__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(14rem, 1fr));
+  gap: var(--space-4);
+}
+
+.game-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-raised);
+}
+
+.game-card:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.game-card__name {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.game-card__default {
+  align-self: flex-start;
+  padding: 0 0.4em;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  color: var(--accent);
+  font-size: 0.75em;
+  text-transform: uppercase;
+}
+
+.game-card__meta {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The slide-over (issue 330): default drill-in, ~40% width over a still-  */
+/* visible home.                                                          */
+/* ---------------------------------------------------------------------- */
+
+.slide-over {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--scrim);
+  animation: scrim-in var(--motion-base) var(--motion-ease);
+}
+
+.slide-over__panel {
+  position: relative;
+  width: 40%;
+  min-width: 22rem;
+  padding: var(--space-6);
+  overflow-y: auto;
+  /* Reserve the scrollbar's space whether or not one is showing
+   * (issue 334): the panel's own nav is absolutely positioned against this
+   * element's PADDING box, which includes the scrollbar gutter - so on a
+   * panel with enough content to scroll, the close button sat underneath
+   * the scrollbar and a real mouse click landed on the scrollbar instead.
+   * Found by an E2E: a JS .click() on the same button worked while a
+   * synthetic mouse click at its own centre did nothing. Stable also stops
+   * the whole panel shifting sideways the moment its content grows past
+   * one screen. */
+  scrollbar-gutter: stable;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  animation: panel-in-right var(--motion-base) var(--motion-ease);
+}
+
+/* The closing half (issue 334, owner demo 1). The panel is still mounted
+ * while this runs - modpanel.js holds its own close back for exactly one
+ * --motion-base - which is what makes an exit animation possible at all in
+ * a tree Preact would otherwise unmount the instant the route changed. */
+.slide-over--closing {
+  animation: scrim-out var(--motion-base) var(--motion-ease) forwards;
+}
+
+.slide-over--closing .slide-over__panel {
+  animation: panel-out-right var(--motion-base) var(--motion-ease) forwards;
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes scrim-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes panel-in-right {
+  from {
+    transform: translateX(2rem);
+    opacity: 0;
+  }
+}
+
+@keyframes panel-out-right {
+  to {
+    transform: translateX(2rem);
+    opacity: 0;
+  }
+}
+
+.slide-over__panel:focus {
+  outline: none;
+}
+
+.slide-over__nav {
+  position: absolute;
+  top: var(--space-3);
+  /* Clear of the reserved scrollbar gutter above, not merely inside the
+   * padding box. */
+  right: var(--space-6);
+  display: flex;
+  gap: var(--space-2);
+}
+
+.slide-over__close,
+.slide-over__step {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.2em;
+  cursor: pointer;
+}
+
+.slide-over__step:disabled {
+  color: var(--border-strong);
+  cursor: default;
+}
+
+.slide-over__meta {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+}
+
+.slide-over__summary {
+  color: var(--text-secondary);
+}
+
+.slide-over__settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.slide-over__setting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.slide-over__actions {
+  display: flex;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.slide-over__section {
+  margin-top: var(--space-4);
+}
+
+.slide-over__changelog {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.slide-over__more {
+  display: inline-block;
+  margin-top: var(--space-4);
+  color: var(--accent);
+}
+
+.mod-row__live {
+  display: block;
+  color: var(--accent);
+  font-size: 0.8em;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The modal shell + the confirm-plan body.                                */
+/* ---------------------------------------------------------------------- */
+
+/*
+ * The modal arrives with the same scrim fade the slide-over uses and a
+ * short rise. It LEAVES instantly, on purpose and against the temptation to
+ * make the two symmetrical: three of a modal's four exits are followed
+ * immediately by something happening (Confirm starts a job, whose progress
+ * has to appear where the control was), and holding a dialog on screen for
+ * a fifth of a second delays the feedback the user is waiting for. The
+ * slide-over has no such exit - closing it only returns you to the page.
+ */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  animation: scrim-in var(--motion-fast) var(--motion-ease);
+  background: var(--scrim);
+}
+
+.modal {
+  animation: panel-rise var(--motion-base) var(--motion-ease);
+  display: flex;
+  flex-direction: column;
+  width: min(46rem, 100%);
+  max-height: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-raised);
+}
+
+.modal__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.modal__title {
+  flex: 1;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.modal__close {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.1em;
+  cursor: pointer;
+}
+
+.modal__body {
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6);
+}
+
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.modal__pending {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.modal__error {
+  color: var(--danger);
+}
+
+/* The plan readout - the SPA's sibling of the CLI's confirm text. */
+.plan__summary,
+.plan__note {
+  margin: 0 0 var(--space-4);
+  color: var(--text-secondary);
+}
+
+.plan__note--warn {
+  color: var(--warn);
+}
+
+.plan__section {
+  margin-bottom: var(--space-4);
+}
+
+.plan__heading {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.plan__mods,
+.plan__paths {
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan__mod {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.plan__mod:last-child {
+  border-bottom: none;
+}
+
+.plan__mod--skipped .plan__mod-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* A plan row that ALREADY failed to resolve at plan time (issue 334,
+ * core.ProfileApplyInstall.Error): it keeps its place in the list, because
+ * the apply will report it at that position, but it must not read as an
+ * ordinary row. */
+.plan__mod--warn {
+  border-left: 2px solid var(--warn);
+  padding-left: var(--space-2);
+}
+
+.plan__mod-detail--warn {
+  color: var(--warn);
+}
+
+.plan__mod-name {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.plan__mod-version,
+.plan__mod-detail {
+  margin-left: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+/* The list reset for .plan__paths is above, with the plan's own layout;
+ * this is the muted type it renders in. (They were two competing `margin`
+ * declarations until issue 334's polish pass - the reset's `margin: 0` and
+ * this one's `margin-top` - which is exactly how a list ends up with a gap
+ * nobody meant to give it.) */
+.plan__paths {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.plan__removes {
+  margin: var(--space-1) 0 0;
+  color: var(--warn);
+  font-size: 0.85em;
+}
+
+.plan__hooks {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+/* The Advanced disclosure every plan renderer hangs its option controls off
+   (C-3). Closed by default: the plan document above it is the normal
+   answer, and none of these overrides is. */
+.plan__advanced {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.plan__advanced-summary {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.plan__advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.plan__option {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.plan__option--select {
+  flex-wrap: wrap;
+}
+
+.plan__option-hint {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/* The game-source mapping editor (C-4), shared by the Games table's own
+   "Edit sources…" row and the add form's "Also map" section. */
+.sources-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.sources-map__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sources-map__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 16rem;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.sources-map__identifier {
+  flex: 1 1 12rem;
+}
+
+/* The inline form a plan renderer draws when the mutation needs an answer
+   before it has anything to preview (C-3: mod re-link). */
+.plan__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+/* Which contender wins a contested path, inline in the deploy preview
+   (M-9). The losing note is muted rather than coloured: it is a fact about
+   load order, not a failure. */
+.plan__winner {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/* The type-the-name gate on a destructive plan (C-3: purge). */
+.plan__confirm-name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.plan__heading--warn {
+  color: var(--warn);
+}
+
+/* install's version/file picker (issue 331, plan_install.js) - the one plan
+ * renderer with something to CHOOSE rather than only read. */
+.plan__section--picker {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.plan__control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Search: the omnibar's "search sources" affordance, the fan-out appended */
+/* below the library, and the dedicated search page's own result list     */
+/* (issue 331, docs/plans/2026-08-31-serve-spa-design.md §Search).        */
+/* ---------------------------------------------------------------------- */
+
+.omnibar__fanout {
+  white-space: nowrap;
+}
+
+.omnibar-results {
+  margin-top: var(--space-6);
+}
+
+.search-results {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.search-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.search-result:last-child {
+  border-bottom: none;
+}
+
+/* the row of name/version/badges/action - the omnibar's own layout, and
+ * the search page's own `detailed` first line above its summary. */
+.search-result__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.search-result--warning {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--warn);
+}
+
+.search-result__name {
+  flex: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-result__name:hover {
+  text-decoration: underline;
+}
+
+/*
+ * The trailing facts get fixed widths (issue 334's density pass) so they
+ * line up as COLUMNS down a page of results, rather than each row placing
+ * them wherever its own name happens to end. Truncated rather than wrapped:
+ * a result row is one line, and an author with a long name must not make
+ * its row twice as tall as its neighbours.
+ */
+.search-result__version,
+.search-result__author,
+.search-result__downloads {
+  flex: 0 0 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.search-result__version {
+  width: 6rem;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.search-result__source {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.search-result__author {
+  width: 10rem;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/* detailed-only (search page): category badge, download count, summary
+ * line - design doc §Search's "source badges, star/download counts,
+ * summaries", none of which the terser omnibar fan-out renders. */
+.search-result__category {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.search-result__downloads {
+  width: 9rem;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  text-align: right;
+}
+
+.search-result__summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+.search-page {
+  max-width: 60rem;
+}
+
+.search-page__toolbar {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.search-page__toolbar .section-header {
+  margin: 0;
+  flex: 1;
+}
+
+.search-page__pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* The generic document renderer (a plan with no bespoke view yet, and a
+ * failure envelope's typed details). */
+.doc__pairs {
+  margin: 0;
+}
+
+.doc__pair {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+
+.doc__key {
+  flex: 0 0 12rem;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.doc__value {
+  flex: 1;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.doc__list {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.doc__empty {
+  color: var(--text-muted);
+}
+
+/* ---------------------------------------------------------------------- */
+/* Inline job progress - the control that was clicked, morphed.            */
+/* ---------------------------------------------------------------------- */
+
+.job-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 14rem;
+  /* Bounded, because the text can be a core error message: an uncapped
+   * failure readout grew the top bar until the game picker wrapped onto two
+   * lines. The text ellipsizes; the tray carries it in full. */
+  max-width: 26rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: 0.85em;
+}
+
+.job-progress__bar {
+  position: relative;
+  overflow: hidden;
+  flex: 0 0 5rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-base);
+}
+
+.job-progress__fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+/* An indeterminate bar: the job is working but nothing it has reported can
+ * say how far along it is (progress.js's progressFraction returns null), so
+ * the bar sweeps rather than claiming a confident 0%. */
+.job-progress__bar--indeterminate .job-progress__fill {
+  width: 40%;
+  animation: job-progress-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes job-progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+/* M-2 of the epic live review: this was nowrap + ellipsis, which clipped a
+   real failure ("file conflict detected: 2 file(s) wou…") on a row with
+   ~1400px of empty space to its left, leaving the full sentence nowhere but
+   a toast that should not have been there either (C-2). A job readout is at
+   most a couple of lines of prose; letting it wrap costs nothing and is the
+   difference between a message and a hint that there was one. */
+.job-progress__text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.job-progress--succeeded .job-progress__text {
+  color: var(--good);
+}
+
+.job-progress--failed .job-progress__text {
+  color: var(--danger);
+}
+
+/* A batch job whose own state is "succeeded" but whose result tally says
+ * some items failed and some did not (I3, unit 6 fix wave) - neither the
+ * clean-success nor the total-failure color is honest here. */
+.job-progress--mixed .job-progress__text {
+  color: var(--warn);
+}
+
+.job-progress__dismiss {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Toasts - completions whose origin was not on screen.                    */
+/* ---------------------------------------------------------------------- */
+
+@keyframes panel-rise {
+  from {
+    transform: translateY(0.75rem);
+    opacity: 0;
+  }
+}
+
+/* A toast arrives from the edge it lives on (bottom right), so the motion
+ * points at where it came from rather than being a generic fade. */
+@keyframes toast-in {
+  from {
+    transform: translateY(0.5rem);
+    opacity: 0;
+  }
+}
+
+.toasts {
+  position: fixed;
+  z-index: 50;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 24rem;
+}
+
+.toast {
+  animation: toast-in var(--motion-base) var(--motion-ease);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-raised);
+}
+
+.toast--success {
+  border-left-color: var(--good);
+}
+
+.toast--failure {
+  border-left-color: var(--danger);
+}
+
+.toast__body {
+  flex: 1;
+}
+
+.toast__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.toast__detail {
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.toast__link {
+  margin-top: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toast__dismiss {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The activity tray.                                                      */
+/* ---------------------------------------------------------------------- */
+
+/* The bell sits at the far right of the top bar, so its menu hangs from
+ * the right edge - the shared .picker__menu's left: 0 would run a 26rem
+ * tray straight off the side of the viewport, which is exactly what it did
+ * (the running row's progress line was cut off mid-word). */
+.activity-bell .picker__menu {
+  right: 0;
+  left: auto;
+}
+
+.tray {
+  min-width: 26rem;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.activity-bell__count--failed {
+  background: var(--danger);
+  color: var(--text-inverted);
+}
+
+.tray__section {
+  padding: var(--space-1) 0;
+}
+
+.tray__section-title {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tray__rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tray__row {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.tray__row:last-child {
+  border-bottom: none;
+}
+
+.tray__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tray__kind {
+  flex: 1;
+  font-weight: 700;
+}
+
+.tray__caret {
+  color: var(--text-muted);
+}
+
+.tray__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.tray__detail {
+  flex: 1;
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray__failure {
+  padding: var(--space-1) 0;
+}
+
+.tray__failure-message {
+  margin: 0 0 var(--space-1);
+  color: var(--danger);
+  font-size: 0.9em;
+}
+
+.tray__events {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  max-height: 14rem;
+  overflow-y: auto;
+  border-left: 2px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  list-style: none;
+}
+
+.tray__event--empty {
+  color: var(--text-muted);
+}
+
+/* The declined rows of a finished batch, named in the engine's own words
+ * (I1, unit 8 gate review). Rendered unexpanded, directly under the row's
+ * own tally: a lock refusal is a SKIP, not a failure, so it carries the
+ * secondary text colour rather than --danger - the honest outcome of a
+ * locked mod must not read as an alarm. */
+.tray__skips {
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  list-style: none;
+}
+
+.tray__error {
+  padding: var(--space-2);
+  color: var(--danger);
+  font-size: 0.9em;
+}
+
+/* The switch job's own slot in the top bar (I2, unit 8 gate review) - it
+ * exists so that a running/finished switch has somewhere to morph that is
+ * NOT the profile picker. Empty for the whole time no switch is in flight,
+ * and collapsed then, so it costs the bar nothing. */
+.app-bar__switch:empty {
+  display: none;
+}
+
+/* The library header's live line while a job runs. */
+.library__live {
+  color: var(--accent);
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The full mod page (issue 330): the slide-over's "More info ->", the     */
+/* design's "full path" one click away from it.                            */
+/* ---------------------------------------------------------------------- */
+
+.mod-page {
+  max-width: 60rem;
+  margin: 0 auto;
+}
+
+.mod-page__back {
+  color: var(--text-secondary);
+}
+
+.mod-page__title {
+  margin: var(--space-4) 0 var(--space-1);
+  color: var(--text-primary);
+  font-size: 1.4em;
+}
+
+.mod-page__meta {
+  margin: 0 0 var(--space-6);
+  color: var(--text-secondary);
+}
+
+.mod-page__section {
+  margin-bottom: var(--space-6);
+}
+
+/* The full mod page's own action row (I-5): the same shape the slide-over's
+   actions use, since they are now the same set of actions. */
+.mod-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.mod-page__prose {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.mod-page__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mod-page__table th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.mod-page__table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* ---------------------------------------------------------------------- */
+/* The ⋯ row menu (library.js) and the batch bar's own buttons - issue 332.     */
+/* The batch bar itself (.batch-bar) is styled already (Library section).  */
+/* ---------------------------------------------------------------------- */
+
+.row-menu-cell {
+  position: relative;
+}
+
+.row-menu {
+  position: absolute;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 10rem;
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-raised);
+}
+
+.row-menu__item {
+  padding: var(--space-2);
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-menu__item:hover {
+  background: var(--surface-sunken);
+}
+
+/* ---------------------------------------------------------------------- */
+/* The reorder modal (issue 332): drag-and-drop + a keyboard/button path, and   */
+/* its live conflict preview.                                              */
+/* ---------------------------------------------------------------------- */
+
+.reorder-list {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.reorder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.reorder-row:last-child {
+  border-bottom: none;
+}
+
+.reorder-row--dragging {
+  background: var(--surface-sunken);
+  opacity: 0.7;
+}
+
+.reorder-row__handle {
+  color: var(--text-muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.reorder-row__position {
+  min-width: 2ch;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.reorder-row__name {
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.reorder-row__controls {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.reorder-preview {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.reorder-preview th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.reorder-preview td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.reorder-preview__changed {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The profiles modal (issue 332): list/create/rename/delete/export/import/     */
+/* set-default.                                                            */
+/* ---------------------------------------------------------------------- */
+
+.profiles-list {
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.profiles-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.profiles-row:last-child {
+  border-bottom: none;
+}
+
+.profiles-row--confirm {
+  color: var(--danger);
+}
+
+.profiles-row__name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.profiles-row__count {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.profiles-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.profiles-row__rename-form {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.profiles-create,
+.profiles-import {
+  margin-top: var(--space-4);
+}
+
+.profiles-create__row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.profiles-import label.button {
+  display: inline-block;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The uninstall-batch modal (issue 332): one UninstallPlanView per selected     */
+/* mod.                                                                     */
+/* ---------------------------------------------------------------------- */
+
+.uninstall-batch__entry {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.uninstall-batch__entry:last-child {
+  border-bottom: none;
+}
+
+/* ---------------------------------------------------------------------- */
+/* The Setup page (issue 333): games, auth, custom sources, archive import, */
+/* adopt - a whole page, like the search/full-mod pages, since the admin   */
+/* surface earns one (design doc §Scope).                                  */
+/* ---------------------------------------------------------------------- */
+
+/* M-7: both of these were a narrow centred column on a 1920px page while
+   Mission Control used the full width - inconsistent density on a product
+   whose design says "desktop only, >= 1080p, density tuned". They now share
+   Mission Control's own measure (the 130rem cap above applies to .app-main
+   at >= 1440px), and their SECTIONS become columns once there is room for
+   two, which is what actually fills the space: a 60rem form stretched to
+   1900px is worse than a narrow one, not better. */
+.setup-page {
+  max-width: 100%;
+}
+
+.game-chooser--first-run {
+  max-width: 100%;
+}
+
+.setup-page__sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+@media (min-width: 1440px) {
+  .setup-page__sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+.setup-nav {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.setup-nav__tab {
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.setup-nav__tab:hover {
+  color: var(--text-primary);
+}
+
+.setup-nav__tab--active {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.setup-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The keyboard-shortcuts help's own table (issue 334's gate review,
+ * Important 3). Same shape as .setup-table - this application has one table
+ * idiom - with the key column sized to its content so the two prose columns
+ * take the slack. */
+.shortcuts {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.shortcuts th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.shortcuts td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.shortcuts td:first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.shortcuts__keys {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+/* N-5: the running server's own display version, in the one place a user
+ * looking for it is most likely to check. */
+.shortcuts__version {
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.setup-section__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setup-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.setup-table th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.setup-table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/*
+ * The games table's two PATH columns (issue 334's density pass). A game
+ * installed under a long Steam library path pushed the Default column off
+ * the right-hand edge and stretched every other row to match. Each path
+ * column now takes a share of the width and ellipsises what does not fit;
+ * the full value is on the cell's own title, so nothing is lost.
+ */
+.setup-table {
+  table-layout: fixed;
+}
+
+.setup-table .col--path {
+  width: 32%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* N-2 (= epic M-4): the earlier fix put `display: flex` directly on the
+   <td>, which computes the cell OUT of the table's row layout entirely (a
+   table-cell whose display is overridden stops being one) - so each row's
+   actions column measured its own content's width instead of sharing one
+   column width, leaving the three action-less built-in rows a detached
+   16px rule fragment where the row border used to run the column's full
+   width. A fixed width on the CELL keeps every row's last column the same
+   size regardless of content; the flex layout for the buttons themselves
+   moves to an inner span (setup-table__actions-group) that never has to be
+   a table-cell in the first place. */
+.setup-table__actions {
+  width: 14rem;
+}
+
+.setup-table__actions-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.plan__control--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.empty-state__actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* Games: detect + manual add (gameadd.js), shared by the first-run flow. */
+.setup-detect__list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.setup-detect__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+
+/* First-run readiness item 9: the game name must never wrap mid-word to
+   make room for the path beside it - it gets its own natural width and
+   the path (usually much longer) truncates instead, with the full value
+   still available via its own `title` attribute. */
+.setup-detect__name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.setup-detect__path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.setup-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 30rem;
+}
+
+.setup-add__catalog {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.setup-add__matches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Authentication. */
+.setup-auth__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-auth__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.setup-auth__row:last-child {
+  border-bottom: none;
+}
+
+.setup-auth__name {
+  flex: 0 0 10rem;
+  font-weight: 700;
+}
+
+.setup-auth__login {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* The live re-key missed its window (issue 334): the key IS saved, so this
+ * is a caution, not an error - it takes the whole row's width so the
+ * sentence reads as one line under the controls it concerns. */
+/* M-1/D-3: the env var is text beside the field, not a placeholder inside
+   it. It is the only place the UI names the variable. */
+.setup-auth__env-var {
+  white-space: nowrap;
+}
+
+.setup-auth__restart {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--warn);
+  font-size: 0.9em;
+}
+
+/* Custom sources: the YAML editor (setupsources.js). No editor library
+ * (task brief's own call) - line numbers are a plain CSS counter column
+ * beside a bare <textarea>. */
+.source-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.source-editor__frame {
+  display: flex;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.source-editor__gutter {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-1);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  line-height: 1.5;
+  text-align: right;
+  user-select: none;
+}
+
+.source-editor__textarea {
+  flex: 1;
+  min-height: 16rem;
+  padding: var(--space-2);
+  border: none;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-size: 0.85em;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* The textarea sits flush inside an overflow:hidden frame, so its own
+ * outline would be clipped - the FRAME wears the focus ring instead
+ * (issue 334's a11y pass). Before this the editor was the one focusable
+ * control in the application with no focus indicator at all. */
+.source-editor__textarea:focus {
+  outline: none;
+}
+
+.source-editor__frame:has(.source-editor__textarea:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.source-editor__report {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+/* Archive import: the upload progress bar reuses .job-progress (jobprogress.js). */
+.setup-import__staged {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}

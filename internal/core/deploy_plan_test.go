@@ -93,7 +93,12 @@ func TestPlanDeploy_ListsModsInLoadOrderWithTheirDeployableFiles(t *testing.T) {
 	require.Len(t, plan.Mods, 2)
 	assert.Equal(t, "Mod One", plan.Mods[0].Name, "load order, not key order")
 	assert.Equal(t, "Mod Two", plan.Mods[1].Name)
-	assert.Equal(t, domain.ModReference{SourceID: "src", ModID: "1"}, plan.Mods[0].Ref)
+	// #330 carry-4: a deploy plan's mod refs now carry the installed
+	// version, so the confirm modal can show per-mod versions
+	// (spa/app/components/plan_deploy.js already renders mod.ref.version
+	// when present) - previously always empty (planDeploy built Ref from
+	// source+id alone).
+	assert.Equal(t, domain.ModReference{SourceID: "src", ModID: "1", Version: "1.0"}, plan.Mods[0].Ref)
 	assert.Equal(t, []string{"one.esp"}, plan.Mods[0].Link)
 	assert.Equal(t, []string{"two.esp"}, plan.Mods[1].Link)
 	assert.Empty(t, plan.Mods[0].Remove)
@@ -451,6 +456,9 @@ func TestPlanDeploy_DisabledSingleMod_RecordsSkippedRatherThanFailing(t *testing
 	require.NoError(t, err, "a disabled mod is a skip in the plan, not a planning failure")
 	require.Len(t, plan.Mods, 1)
 	assert.Equal(t, "Disabled Mod", plan.Mods[0].Name)
+	// #330 carry-4: this branch resolves the mod (unlike the unknown-ID
+	// branch below), so its Ref carries a version too.
+	assert.Equal(t, "1.0", plan.Mods[0].Ref.Version)
 	assert.Contains(t, plan.Mods[0].Skipped, "is disabled")
 	assert.Empty(t, plan.Mods[0].Link)
 

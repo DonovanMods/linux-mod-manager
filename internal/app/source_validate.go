@@ -2,6 +2,7 @@ package app
 
 import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
 // SourceProbeResult is `lmm source validate --probe`'s live smoke-test
@@ -41,6 +42,28 @@ type SourceValidationReport struct {
 func ValidateSourceFile(path string) (*SourceValidationReport, source.SourceDefinition, error) {
 	report := &SourceValidationReport{Path: path}
 	def, err := LoadSourceDefinitionFile(path)
+	return finishSourceValidation(report, def, err)
+}
+
+// ValidateSourceContent is ValidateSourceFile for a definition that has no
+// file yet: the web UI's source editor validates a draft the user is still
+// typing, and writing it to a temp file first would be both pointless and a
+// lie (the report's Path would name a file the user never created). It
+// parses and validates the same bytes LoadSourceDefinitionFile would have
+// read, through the same config.ParseSourceDefinition, so the two paths
+// cannot drift on what "valid" means or on how a failure is worded.
+//
+// The returned report's Path is empty - the honest answer for content with
+// no file - which is the only difference from ValidateSourceFile's document.
+func ValidateSourceContent(data []byte) (*SourceValidationReport, source.SourceDefinition, error) {
+	report := &SourceValidationReport{}
+	def, err := config.ParseSourceDefinition(data)
+	return finishSourceValidation(report, def, err)
+}
+
+// finishSourceValidation fills report in from one parse attempt's outcome -
+// the half ValidateSourceFile and ValidateSourceContent share.
+func finishSourceValidation(report *SourceValidationReport, def source.SourceDefinition, err error) (*SourceValidationReport, source.SourceDefinition, error) {
 	if err != nil {
 		report.Errors = []string{err.Error()}
 		return report, source.SourceDefinition{}, err

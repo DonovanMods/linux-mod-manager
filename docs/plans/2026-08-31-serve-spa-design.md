@@ -45,7 +45,13 @@ URL scheme (History API; the Go server serves the SPA shell for all app routes):
 /g/{game}/{profile}              → Mission Control (home)
 /g/{game}/{profile}/mod/{source}/{id}   → full mod page
 /g/{game}/{profile}/search?q=…          → dedicated search page
+/g/{game}/{profile}/setup               → the Setup page (admin: games, auth,
+                                          custom sources, archive import, adopt)
 ```
+
+`/setup` was added with the admin surface (#333) and recorded here in the closing wave (#326,
+epic live review D-1) — until then the router served it and neither this block nor the README's
+named it.
 
 Context (game + profile) lives **in the path** — the audit's B1 wrong-game bug class becomes
 structurally impossible. The slide-over annotates the URL (`…?mod=nexus/123`) so deep links and
@@ -101,11 +107,20 @@ returns to home exactly as left.
 
 ### Modals (inventory)
 
-Confirm-plan (install/uninstall/update batch/deploy/repair — renders the Plan, the SPA sibling of
-the CLI's confirm), conflict-overwrite, **reorder** (drag-and-drop load order with live conflict
-preview; reachable from Conflicts card and library), **profiles** (list/create/rename/delete/
-export/import/set-default), keyboard-shortcuts help. Modals stack at most one deep; everything
-else is slide-over or page.
+Confirm-plan (one framework, one renderer per kind: install/uninstall/update batch/deploy/
+rollback/switch/profile apply/profile sync/profile import/purge/archive import/adopt/mod re-link/
+repair — renders the Plan, the SPA sibling of the CLI's confirm), conflict-overwrite, **reorder**
+(drag-and-drop load order with live conflict preview; reachable from Conflicts card and library),
+**profiles** (list/create/rename/delete/export/import/set-default, plus per-profile Sync… and
+Purge…), keyboard-shortcuts help. Modals stack at most one deep; everything else is slide-over or
+page.
+
+Two things every confirm-plan modal carries since the closing wave (#326). An **Advanced**
+disclosure holds that kind's own flags, split the way the backend splits its request: a PLAN-time
+option re-computes the plan (so the preview can never describe one mutation while Confirm submits
+another), an APPLY-time one patches the pending job. And a kind may demand a **typed name** before
+Confirm enables — `purge` is the one that does, enforced by the modal rather than by its renderer,
+because the modal owns Confirm.
 
 ## Visual design
 
@@ -150,6 +165,66 @@ cross modalities only where they make sense there — visual-native features (e.
 search) may stay web-only, CLI-native ones CLI-only. Concretely judged in: per-item update
 batches land in core (#324) with the CLI's `-i` picker (#254), which was independently wanted.
 **Out:** remote access/auth, mobile layouts, no-JS operation, i18n.
+
+### The parity ledger (settled in the closing wave, #326)
+
+The epic live review measured this bar and found four commands and several flags web-unreachable
+(its C-3). The closing wave landed all of them — `purge`, `profile sync`, `mod edit`
+(`mod_relink`) and `mod convert` as web paths, `search --tag`, `install --no-deps`,
+`install --skip-verify` and `deploy --all` as wire options and Advanced controls, and the
+source↔game mapping as a NEW capability on BOTH sides (`lmm game edit` and
+`PUT /api/v1/games/{id}`, which neither frontend had). What remains outside parity is
+modality-bound, and this is the exhaustive list — re-derived from `lmm <cmd> --help` for every
+command and every persistent flag in the closing wave's fix pass (#326):
+
+**CLI-only, by judgment.** Each is a scripting- or terminal-native affordance whose web
+equivalent already exists in a better form:
+
+- `lmm profile reorder -i` — a numbered-list picker for a terminal. The web's equivalent is the
+  reorder modal's drag-and-drop with its live winner preview; both write the same load order
+  through the same core call.
+- `lmm gen-man` — generates the man pages for the CLI itself. There is nothing for a browser to do
+  with roff.
+- `lmm completion` and `lmm help` — cobra's own two built-ins: a shell completion script and the
+  command tree's help text. Same shape as `gen-man`; both configure or describe the terminal that
+  runs them.
+- `lmm serve` — the command that starts this UI. A browser reaching it would already be looking
+  at it.
+- `--json` on every command — the web UI *is* the JSON consumer. `/api/v1` returns the identical
+  documents, so the flag has no browser meaning.
+- The persistent process/output flags — `--config`, `--data`, `--verbose`, `--no-color` and
+  `--log-level`. Each configures the *process*, not the mutation: the first two are what
+  `lmm serve` itself was started with (a running server cannot re-point its own config and data
+  directories mid-session without becoming a different server), and the last three describe a
+  terminal's stdout/stderr. `-g/--game` and `--no-hooks` are the two persistent flags that are
+  NOT here: the game is the URL's own `/g/{game}/{profile}` scope, and `--no-hooks` is the "Skip
+  hooks" control on every confirm step that takes one.
+- `lmm auth login --key-from-env`/`--key-stdin` — terminal-native ways to hand over a secret
+  without typing it into a form; the web's own `type=password` field is the equivalent affordance,
+  and there is no browser analogue of "read this from an env var" or a piped stdin.
+- `lmm search -l/--limit` — the web paginates the results at a fixed page size instead of taking an
+  arbitrary limit; `← Prev` / `Next →` is the browser's own answer to "how much do I see at once".
+
+The epic re-review's own N-7 named two further omissions — `--version` and `lmm game add
+--game-id` — that the polish wave closed rather than left as exceptions (#326): the running
+server's display version now rides the SPA shell itself (a `<meta name="lmm-version">`, surfaced
+in the shortcuts help), and the manual add form's Advanced disclosure carries a "Game id" input
+mapped to the same request field the catalog path already filled in silently. Neither belongs on
+this list any more — both are bidirectional now, which is why they are not named as exceptions
+below either.
+
+**Web-only, by judgment.** Nothing here is a CAPABILITY the CLI lacks — each is a rendering of
+one it has:
+
+- the activity tray, the multiplexed SSE stream and inline job progress (the CLI streams the same
+  core events to the terminal as they happen);
+- drag-and-drop reordering (`lmm profile reorder`, positionally or with `-i`);
+- the version/file picker and the inline conflict "Overwrite?" affordance (`install
+  --version/--file`, and re-running with `--force`).
+
+Judged per modality, the bar is met: CLI ⊇ web, and web ⊇ CLI for everything a browser can
+meaningfully express. Every command and flag not named above has a web path — the two lists on
+this page are the whole difference between the two frontends.
 
 ## Testing
 

@@ -262,6 +262,12 @@ func TestJSONGoldens(t *testing.T) {
 				Files: []domain.DownloadableFile{
 					{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", Size: 104857600, IsPrimary: true},
 				},
+				// FilePool (#331): the candidate list Files' pick came FROM -
+				// two versions here, so a picker has something to group.
+				FilePool: []domain.DownloadableFile{
+					{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", Size: 104857600, IsPrimary: true},
+					{ID: "file-0", Name: "Main File", FileName: "sample-mod-1.2.2.zip", Version: "1.2.2", Size: 104857600},
+				},
 				Dependencies:        nil,
 				MissingDependencies: []domain.ModReference{{SourceID: "nexusmods", ModID: "99"}},
 				CycleDetected:       true,
@@ -512,9 +518,14 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// Backfilled is #333's additive, omitzero member: a caller that
+			// ran ApplyAdoptBackfill as part of the same user-level adopt
+			// folds its count in here (`lmm serve` does; the CLI reports it
+			// separately and leaves this zero, in which case the document
+			// is byte-identical to what it was before the field existed).
 			"adopt_result",
 			core.AdoptResult{
-				Adopted: 2, Skipped: 1, Failed: 1,
+				Adopted: 2, Skipped: 1, Failed: 1, Backfilled: 3,
 				Warnings: []string{"merge sync produced 1 raw fallback"},
 			},
 		},
@@ -573,17 +584,27 @@ func TestJSONGoldens(t *testing.T) {
 			core.VerifyOptions{Tier: core.VerifyFull, Fix: true, ModFilter: "Sample Mod"},
 		},
 		{
+			// Fixable true here on purpose (#332): version_mismatch on an
+			// unlocked, source-backed mod is exactly the case --fix acts
+			// on, so this golden pins the field PRESENT. verify_report's
+			// own "ok" finding below pins the other half - omitzero, so a
+			// non-fixable row carries no key at all.
+			// Fixable and FixableReason are populated together here so both
+			// keys pin their wire shape; a real finding carries a reason
+			// only when Fixable is false (#334).
 			"verify_finding",
 			core.VerifyFinding{
 				ModID: "42", ModName: "Sample Mod", FileID: "file-1", Status: "version_mismatch",
 				Note: "recorded version does not match effective", Recorded: "1.2.2", Effective: "1.2.3", Version: "1.2.3",
+				Fixable:       true,
+				FixableReason: "the mod was imported locally, so there is no source to re-download from",
 			},
 		},
 		{
 			// Findings is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null" - a clean verify run reports it.
 			"verify_result",
-			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true},
+			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime},
 		},
 		{
 			"converged_file",
@@ -948,6 +969,66 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #324. Every optional key populated at once (a real plan whose
+			// selection matched everything carries no NotFound) - the
+			// golden's job is to pin each key's wire shape. The unexported
+			// snapshot field must not appear at all, same as update_plan.
+			"update_batch_plan",
+			core.UpdateBatchPlan{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+						ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+					},
+					NewVersion: "1.2.4",
+					Changelog:  "Fixed a crash on load.",
+				}},
+				NotFound: []string{"curseforge:7"},
+			},
+		},
+		{
+			// #324. Applied is non-omitzero, so a batch that applied
+			// nothing still pins as "[]" rather than "null"; Failed and
+			// Skipped each carry one entry. The skip is a locked ref (#97) -
+			// an UpdateApplyResult with UpdateSkipped and the engine's own
+			// refusal sentence as its Reason.
+			"update_batch_result",
+			core.UpdateBatchResult{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Applied: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.4", FileIDs: []string{"file-1"}},
+					Name:        "Sample Mod",
+					FromVersion: "1.2.3",
+					ToVersion:   "1.2.4",
+					Status:      core.UpdateUpdated,
+				}},
+				Failed: []core.UpdateBatchFailure{{
+					Mod:   "curseforge:7",
+					Name:  "Broken Mod",
+					Error: "fetching mod: source unavailable",
+				}},
+				Skipped: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "9", Version: "1.0", Locked: true},
+					Name:        "Locked Mod",
+					FromVersion: "1.0",
+					ToVersion:   "2.0",
+					Status:      core.UpdateSkipped,
+					Reason:      "Locked Mod is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 9' first",
+				}},
+			},
+		},
+		{
+			"update_batch_failure",
+			core.UpdateBatchFailure{
+				Mod:   "curseforge:7",
+				Name:  "Broken Mod",
+				Error: "fetching mod: source unavailable",
+			},
+		},
+		{
 			"rollback_result",
 			core.RollbackResult{
 				Mod:     domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.2", FileIDs: []string{"file-0"}},
@@ -1051,6 +1132,83 @@ func TestJSONGoldens(t *testing.T) {
 				LockedVersion: "1.2.3",
 				Refusal:       "Sample Mod is locked at v1.2.3 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
 				CacheMissing:  true,
+			},
+		},
+		{
+			// The catalog match row: every key populated, including the
+			// derived local game_id that keeps a CurseForge add keyed
+			// "minecraft" rather than its numeric identifier (#307).
+			"game_catalog_match",
+			core.GameCatalogMatch{Identifier: "432", Name: "Minecraft", Slug: "minecraft", GameID: "minecraft"},
+		},
+		{
+			// `lmm game add --query`'s document: the query echoed back
+			// beside its matches, so a stored response is self-describing.
+			"game_catalog_report",
+			core.GameCatalogReport{
+				SourceID: "curseforge",
+				Query:    "mine",
+				Matches: []core.GameCatalogMatch{
+					{Identifier: "432", Name: "Minecraft", Slug: "minecraft", GameID: "minecraft"},
+				},
+			},
+		},
+		{
+			// #333's source-removal refusal: the games that still map the
+			// source, so a frontend names them instead of saying "in use".
+			"source_in_use_error",
+			core.SourceInUseError{SourceID: "my-mods", Games: []string{"alpha", "zeta"}},
+		},
+		{
+			// #326 fix wave's M5 (epic review M-4): the mirror one level
+			// down - installed mods, not games, still referencing a source
+			// UpdateGameSources was asked to drop from the map.
+			"game_source_in_use_error",
+			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
+		},
+		{
+			// The field-named rejection an SPA form renders against the
+			// offending input. Err is deliberately absent from the wire
+			// (json:"-"): it exists for errors.Is, not for a client.
+			"game_spec_error",
+			core.GameSpecError{
+				Field:  "install_path",
+				Value:  "/games/nope",
+				Reason: "path does not exist",
+				Err:    domain.ErrInvalidGameID,
+			},
+		},
+		{
+			// One detect listing row: the embedded DetectedGame flat (as
+			// every whole-record wire type in this file embeds its record),
+			// plus the 1-based index a selection names and the
+			// already-configured marker.
+			"game_detect_entry",
+			core.GameDetectEntry{
+				DetectedGame: domain.DetectedGame{
+					SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+					InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
+					NexusID: "skyrimspecialedition",
+				},
+				Index:             1,
+				AlreadyConfigured: true,
+			},
+		},
+		{
+			// The pre-selection listing GET /api/v1/games/detect answers
+			// with: rows plus the scan's own warnings, carried in the
+			// document rather than written to stderr (Ruling 15).
+			"game_detect_listing",
+			core.GameDetectListing{
+				Games: []core.GameDetectEntry{{
+					DetectedGame: domain.DetectedGame{
+						SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+						InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
+						NexusID: "skyrimspecialedition",
+					},
+					Index: 1,
+				}},
+				Warnings: []string{"steam library /mnt/games could not be read"},
 			},
 		},
 	}

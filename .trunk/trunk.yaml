@@ -35,6 +35,10 @@ lint:
       paths:
         # Generated Docs
         - docs/**
+        # Vendored, pinned third-party browser libraries - kept byte-exact
+        # against their upstream artifacts (see each file's header), so no
+        # formatter or linter may rewrite them.
+        - internal/serve/vendor/**
 
 actions:
   enabled:

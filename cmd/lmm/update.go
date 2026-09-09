@@ -309,6 +309,14 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	if len(updates) == 0 {
 		if jsonOutput {
+			// The SECOND document `--all --json` can emit (M5, unit 8 gate
+			// review - now named in README's --json table rather than left
+			// for a consumer to discover). With nothing to apply this never
+			// enters the batch, and the check report is the more useful
+			// answer: its skipped{} names the mods that were passed over
+			// (pinned, locked, manual download), which an empty
+			// UpdateBatchResult would lose. The two are discriminable -
+			// only the batch result carries "applied".
 			if err := emitJSON(bulkCheckReport(game.ID, profileName, nil, installed, checkErr)); err != nil {
 				return err
 			}
@@ -338,14 +346,126 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return finish()
 	}
 
-	if jsonOutput {
+	// A bulk `--json` run without --all is a CHECK: it emits the check
+	// document and applies nothing, exactly as it always has. --all is the
+	// one instruction that says otherwise, and since #324 it is honoured
+	// under --json too (it was silently ignored before) - that run emits
+	// UpdateBatchResult below instead. A --dry-run never applies, so it
+	// stays on the check document whatever else was passed.
+	if jsonOutput && (!updateAll || updateDryRun) {
 		if err := emitJSON(bulkCheckReport(game.ID, profileName, updates, installed, checkErr)); err != nil {
 			return err
 		}
 		return finish()
 	}
 
-	// Display available updates with policy
+	// The selection this run would apply, in the check's own order: every
+	// auto-policy row (that is what the policy means), plus every remaining
+	// row when --all was passed. Locked rows are DELIBERATELY included -
+	// core's batch skips them with its own refusal sentence (#97), which is
+	// what feeds the combined "N locked mod(s) not applied" line below.
+	// Before #324 this loop filtered them out itself and serve's did not,
+	// which is exactly the divergence core now owns.
+	var selection []string
+	var autoUpdates []domain.Update
+	// lockedCandidates counts the locked rows that were CANDIDATES for this
+	// run - auto-policy rows always, notify-policy rows only under --all -
+	// so the header below counts what will really be attempted.
+	lockedCandidates := 0
+	for _, update := range updates {
+		auto := update.InstalledMod.UpdatePolicy == domain.UpdateAuto
+		if !auto && !updateAll {
+			continue
+		}
+		if auto && !update.Locked {
+			autoUpdates = append(autoUpdates, update)
+		}
+		if update.Locked {
+			lockedCandidates++
+		}
+		selection = append(selection, domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID))
+	}
+
+	if !jsonOutput {
+		if err := printUpdateTable(updates, autoUpdates); err != nil {
+			return err
+		}
+
+		fmt.Printf("\n%s\n", colorYellow(fmt.Sprintf("%d update(s) available.", len(updates))))
+		if skips := core.CountUpdateSkips(installed); skips.Total() > 0 {
+			fmt.Println()
+			printSkipped(skips)
+		}
+		printUpdateChangelogs(updates)
+
+		// Dry run mode - just show what would happen
+		if updateDryRun {
+			if len(autoUpdates) > 0 {
+				fmt.Printf("\nWould auto-update %d mod(s):\n", len(autoUpdates))
+				for _, u := range autoUpdates {
+					fmt.Printf("  - %s %s → %s\n", u.InstalledMod.Name, u.InstalledMod.Version, u.NewVersion)
+				}
+			}
+			fmt.Println("\nUse without --dry-run to apply updates.")
+			return finish()
+		}
+	}
+
+	if len(selection) == 0 {
+		return finish()
+	}
+
+	result, err := applyUpdateBatch(ctx, service, game, profileName, updates, selection, len(selection)-lockedCandidates)
+	if err != nil {
+		return err
+	}
+	// A partial check failure would otherwise vanish once the run moves past
+	// the check-only report: the stderr warning above is suppressed under
+	// --json (Ruling 15), and UpdateBatchResult carries no error unless told
+	// to - so the caller could not tell "everything was checked and applied"
+	// from "half the sources never answered" (#324 review, Important 3).
+	if checkErr != nil {
+		result.ErrorMessage = checkErr.Error()
+	}
+
+	if jsonOutput {
+		if err := emitJSON(result); err != nil {
+			return err
+		}
+		return finish()
+	}
+
+	// #97: one combined report for every locked mod the batch declined to
+	// attempt - auto-policy rows always land here; --all's notify-policy
+	// rows only do when --all was actually passed. Read straight off the
+	// batch's own Skipped list rather than re-derived, so the CLI and the
+	// web UI can never disagree about which mods a lock actually stopped.
+	//
+	// Unit Q re-review N2: ApplyUpdate refuses on ref.Locked alone (see
+	// applySingleUpdate's identical remedy below), so "move the lock" is a
+	// no-op here too - unlock is the only remedy, matching the per-mod path.
+	if len(result.Skipped) > 0 {
+		names := make([]string, 0, len(result.Skipped))
+		for _, sk := range result.Skipped {
+			names = append(names, sk.Name)
+		}
+		fmt.Printf("\n%d locked mod(s) not applied: %s — unlock to update.\n", len(names), strings.Join(names, ", "))
+	}
+
+	return finish()
+}
+
+// printUpdateTable renders the MOD/CURRENT/AVAILABLE/POLICY table the bulk
+// check prints - lifted out of doUpdate verbatim when #324 split "what the
+// run will apply" (computed for both output modes) from "what the human
+// sees" (printed only when there is a human). autoUpdates is the set the
+// ✓ marker names.
+func printUpdateTable(updates, autoUpdates []domain.Update) error {
+	auto := make(map[string]bool, len(autoUpdates))
+	for _, u := range autoUpdates {
+		auto[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)] = true
+	}
+
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintf(w, "MOD\tCURRENT\tAVAILABLE\tPOLICY\n"); err != nil {
@@ -355,13 +475,6 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		return fmt.Errorf("writing separator: %w", err)
 	}
 
-	var autoUpdates []domain.Update
-	// lockedAuto/lockedNames accumulate every locked mod skipped from
-	// application below - auto-policy rows here, plus (further down) any
-	// notify-policy rows --all would otherwise have applied. Reported once,
-	// after both sections, via a single combined line.
-	var lockedAuto int
-	var lockedNames []string
 	for _, update := range updates {
 		policyStr := policyToString(update.InstalledMod.UpdatePolicy)
 		isLocked := update.Locked
@@ -374,14 +487,8 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			// from a genuine no-op row in the table.
 			policyStr += " [recompile]"
 		}
-		if update.InstalledMod.UpdatePolicy == domain.UpdateAuto {
-			if isLocked {
-				lockedAuto++
-				lockedNames = append(lockedNames, update.InstalledMod.Name)
-			} else {
-				policyStr += " ✓"
-				autoUpdates = append(autoUpdates, update)
-			}
+		if auto[domain.ModKey(update.InstalledMod.SourceID, update.InstalledMod.ID)] && !isLocked {
+			policyStr += " ✓"
 		}
 		// Safe to color inline here specifically because POLICY is the
 		// LAST column - text/tabwriter never pads after the final cell, so
@@ -406,104 +513,109 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
 	}
-	if err := printTable(&buf, 2, nil); err != nil {
-		return fmt.Errorf("writing table: %w", err)
-	}
+	return printTable(&buf, 2, nil)
+}
 
-	fmt.Printf("\n%s\n", colorYellow(fmt.Sprintf("%d update(s) available.", len(updates))))
-	if skips := core.CountUpdateSkips(installed); skips.Total() > 0 {
-		fmt.Println()
-		printSkipped(skips)
-	}
-
-	// Show changelogs where available
+// printUpdateChangelogs prints the changelog block the bulk check shows -
+// lifted out of doUpdate unchanged by #324, for the same reason
+// printUpdateTable was.
+func printUpdateChangelogs(updates []domain.Update) {
 	var withChangelog []domain.Update
 	for _, u := range updates {
 		if u.Changelog != "" {
 			withChangelog = append(withChangelog, u)
 		}
 	}
-	if len(withChangelog) > 0 {
-		fmt.Println("\nChangelogs:")
-		for _, u := range withChangelog {
-			cl := core.CleanChangelog(u.Changelog)
-			const maxChangelog = 800
-			if len(cl) > maxChangelog {
-				cl = cl[:maxChangelog] + "\n..."
+	if len(withChangelog) == 0 {
+		return
+	}
+	fmt.Println("\nChangelogs:")
+	for _, u := range withChangelog {
+		cl := core.CleanChangelog(u.Changelog)
+		const maxChangelog = 800
+		if len(cl) > maxChangelog {
+			cl = cl[:maxChangelog] + "\n..."
+		}
+		fmt.Printf("\n  %s (%s → %s):\n", u.InstalledMod.Name, u.InstalledMod.Version, u.NewVersion)
+		for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
+			fmt.Printf("    %s\n", line)
+		}
+	}
+}
+
+// applyUpdateBatch plans and applies the bulk run's selection through core's
+// one batch pair (#324), replacing the two hand-written per-mod loops
+// doUpdate used to run (an auto-policy pass, then --all's remaining pass).
+// The pair owns the ordering, the freshness window, the per-item outcomes
+// and the lock refusals now; this only renders them.
+//
+// PlanUpdateBatchFrom, not PlanUpdateBatch: the check whose table was just
+// printed already found these updates, and re-running it would both cost a
+// second live query per source and let the plan disagree with the table the
+// user is reading - the same reason applyBulkUpdate used PlanUpdateFrom
+// (#289 review, Important 1).
+//
+// attempting is the count the header announces: the selection minus the
+// locked rows core will decline, so "Applying 3 update(s)" never means two.
+func applyUpdateBatch(ctx context.Context, service *core.Service, game *domain.Game, profileName string, updates []domain.Update, selection []string, attempting int) (*core.UpdateBatchResult, error) {
+	plan, err := service.PlanUpdateBatchFrom(ctx, game, profileName, updates, selection)
+	if err != nil {
+		return nil, err
+	}
+
+	if !jsonOutput && attempting > 0 {
+		fmt.Printf("\nApplying %d update(s)...\n", attempting)
+	}
+
+	opts := core.UpdateBatchOptions{Force: updateForce, SkipHooks: noHooks}
+	return service.ApplyUpdateBatch(ctx, game, plan, opts, quietSink(batchProgress(updates)))
+}
+
+// batchProgress renders a batch run's events: the per-item bracket #324
+// added, plus every event an individual ApplyUpdate still emits through the
+// same sink (they are the reason a long batch shows a download percentage
+// at all). The per-item lines reproduce the two retired loops' own
+// "  ✓ <name> <from> → <to>" / "  ✗ <name>: <err>" wording; a locked row
+// prints nothing here, exactly as before - the combined line at the end of
+// doUpdate covers every one of them at once.
+//
+// The applied line's versions come from `updates` - the bulk check's own
+// values, the same ones the table above printed - rather than from the
+// event, preserving applyBulkUpdate's deliberate choice: the two are the
+// same mod moments apart, and printing from the original avoids depending
+// on a race-free re-check.
+func batchProgress(updates []domain.Update) func(core.Event) {
+	byKey := make(map[string]domain.Update, len(updates))
+	for _, u := range updates {
+		byKey[domain.ModKey(u.InstalledMod.SourceID, u.InstalledMod.ID)] = u
+	}
+	return func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.UpdateBatchItemApplied:
+			u := byKey[domain.ModKey(p.SourceID, p.ModID)]
+			fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), p.ModName, u.InstalledMod.Version, u.NewVersion)
+		case core.UpdateBatchItemFailed:
+			fmt.Printf("  %s %s: %s\n", colorRed("✗"), p.ModName, p.Detail)
+		case core.UpdateDownloading:
+			if verbose && !jsonOutput {
+				fmt.Printf("\r  Downloading: %.1f%%", p.Percent)
 			}
-			fmt.Printf("\n  %s (%s → %s):\n", u.InstalledMod.Name, u.InstalledMod.Version, u.NewVersion)
-			for _, line := range strings.Split(strings.TrimSpace(cl), "\n") {
-				fmt.Printf("    %s\n", line)
+		case core.UpdateDownloadDone:
+			if verbose && !jsonOutput {
+				fmt.Println()
+			}
+		case core.UpdateBeforeEachForced, core.UpdateWarning:
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.UpdateNote:
+			if verbose && !jsonOutput {
+				fmt.Printf("  %s\n", p.Detail)
 			}
 		}
 	}
-
-	// Dry run mode - just show what would happen
-	if updateDryRun {
-		if len(autoUpdates) > 0 {
-			fmt.Printf("\nWould auto-update %d mod(s):\n", len(autoUpdates))
-			for _, u := range autoUpdates {
-				fmt.Printf("  - %s %s → %s\n", u.InstalledMod.Name, u.InstalledMod.Version, u.NewVersion)
-			}
-		}
-		fmt.Println("\nUse without --dry-run to apply updates.")
-		return finish()
-	}
-
-	// Apply auto-updates
-	if len(autoUpdates) > 0 {
-		fmt.Printf("\nApplying %d auto-update(s)...\n", len(autoUpdates))
-		for _, update := range autoUpdates {
-			if err := applyBulkUpdate(ctx, service, game, update, profileName); err != nil {
-				fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
-			} else {
-				fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
-			}
-		}
-	}
-
-	// If --all flag, apply all remaining updates
-	if updateAll {
-		var notifyUpdates []domain.Update
-		for _, update := range updates {
-			if update.InstalledMod.UpdatePolicy == domain.UpdateAuto {
-				continue // already handled above (applied, or reported as a locked skip)
-			}
-			if update.Locked {
-				lockedAuto++
-				lockedNames = append(lockedNames, update.InstalledMod.Name)
-				continue
-			}
-			notifyUpdates = append(notifyUpdates, update)
-		}
-
-		if len(notifyUpdates) > 0 {
-			fmt.Printf("\nApplying %d remaining update(s)...\n", len(notifyUpdates))
-			for _, update := range notifyUpdates {
-				if err := applyBulkUpdate(ctx, service, game, update, profileName); err != nil {
-					fmt.Printf("  %s %s: %v\n", colorRed("✗"), update.InstalledMod.Name, err)
-				} else {
-					fmt.Printf("  %s %s %s → %s\n", colorGreen("✓"), update.InstalledMod.Name, update.InstalledMod.Version, update.NewVersion)
-				}
-			}
-		}
-	}
-
-	// #97: one combined report for every locked mod that would otherwise
-	// have been applied above - auto-policy rows always land here; --all's
-	// notify-policy rows only do when --all was actually passed. Placed
-	// after both application sections (so it "covers" whichever ran), but
-	// fires on its own whenever lockedAuto > 0 even if neither section had
-	// anything else to apply.
-	//
-	// Unit Q re-review N2: ApplyUpdate refuses on ref.Locked alone (see
-	// applySingleUpdate's identical remedy below), so "move the lock" is a
-	// no-op here too - unlock is the only remedy, matching the per-mod path.
-	if lockedAuto > 0 {
-		fmt.Printf("\n%d locked mod(s) not applied: %s — unlock to update.\n", lockedAuto, strings.Join(lockedNames, ", "))
-	}
-
-	return finish()
 }
 
 // applySingleUpdate renders `lmm update <mod-id>`'s outcome for mod: plans
@@ -673,33 +785,6 @@ func applySingleUpdate(ctx context.Context, service *core.Service, game *domain.
 		fmt.Println("  Previous version preserved for rollback")
 		return nil
 	}
-}
-
-// applyBulkUpdate re-plans and applies a single row from doUpdate's bulk
-// check (its auto-policy and --all loops both call this): ApplyUpdate now
-// takes a *core.UpdatePlan, and a plan computed once at the top of doUpdate
-// would go stale after the FIRST mod in the loop applies (Ruling 5 - see
-// PlanUpdate's doc comment), so each mod is re-planned immediately before
-// its own apply. It builds that plan via Service.PlanUpdateFrom, reusing
-// update - the exact domain.Update the bulk check already found and the
-// loop's own line already printed - rather than PlanUpdate, which would
-// re-run the whole CheckGameUpdates (including a live source query) a
-// second time per applied mod (#289 review, Important 1); PlanUpdateFrom
-// still re-reads the installed-mod row and the profile's lock state locally,
-// so a lock taken or a version changed between the listing and this apply is
-// still caught. The bulk loop's own printed line still uses update's fields
-// (the bulk check's own values), not the freshly re-planned ones - the two
-// are the same mod moments apart, but printing from the original avoids
-// depending on a race-free re-check.
-func applyBulkUpdate(ctx context.Context, service *core.Service, game *domain.Game, update domain.Update, profileName string) error {
-	plan, err := service.PlanUpdateFrom(ctx, game, profileName, update)
-	if err != nil {
-		return err
-	}
-	// The bulk loop renders its own per-mod line from the check's data and
-	// emits no document, so the apply result is not needed here.
-	_, err = applyUpdate(ctx, service, game, plan)
-	return err
 }
 
 // applyUpdate applies plan: resolve -> call Service.ApplyUpdate -> print

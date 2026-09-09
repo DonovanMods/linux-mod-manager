@@ -410,6 +410,65 @@ func TestService_PlanInstall_TotalDownloadBytes(t *testing.T) {
 	})
 }
 
+// TestService_PlanInstall_FilePoolCarriesEveryCandidateFile is #331's
+// carry-in ("the install candidate pool disclosure ... Unit 5 must
+// re-surface the pool"): FilePool is the SAME showArchived-filtered,
+// category-sorted list Files is picked FROM - not narrowed to the single
+// default pick the way Files is - so a frontend's version/file picker has
+// every candidate to group and choose between, computed from data
+// PlanInstall already fetched (no second GetModFiles round trip).
+func TestService_PlanInstall_FilePoolCarriesEveryCandidateFile(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	mock := &categorizedFilesSource{
+		mockSource: newMockSource("src"),
+		files: []domain.DownloadableFile{
+			{ID: "f1", Name: "Main 2.0", FileName: "mod-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true},
+			{ID: "f2", Name: "Main 1.0", FileName: "mod-1.0.zip", Version: "1.0", Category: "MAIN"},
+		},
+	}
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+
+	require.Len(t, plan.Files, 1, "Files stays the single default pick")
+	assert.Equal(t, "f1", plan.Files[0].ID)
+
+	require.Len(t, plan.FilePool, 2, "FilePool carries every candidate, not just the default pick")
+	ids := []string{plan.FilePool[0].ID, plan.FilePool[1].ID}
+	assert.ElementsMatch(t, []string{"f1", "f2"}, ids)
+}
+
+// TestService_PlanInstall_FilePoolHonoursShowArchived pins that FilePool
+// applies the SAME showArchived filter Files does - an archived file is
+// absent from both, or present in both, never split between them.
+func TestService_PlanInstall_FilePoolHonoursShowArchived(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	mock := &categorizedFilesSource{
+		mockSource: newMockSource("src"),
+		files: []domain.DownloadableFile{
+			{ID: "f1", Name: "Main", FileName: "mod-main.zip", Version: "2.0", Category: "MAIN", IsPrimary: true},
+			{ID: "f2", Name: "Old", FileName: "mod-old.zip", Version: "1.0", Category: "OLD_VERSION"},
+		},
+	}
+	svc.RegisterSource(mock)
+	mock.AddMod("g1", &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "2.0", GameID: "g1"})
+
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", false)
+	require.NoError(t, err)
+	require.Len(t, plan.FilePool, 1, "the archived file is filtered from the pool by default")
+	assert.Equal(t, "f1", plan.FilePool[0].ID)
+
+	planShown, err := svc.PlanInstall(context.Background(), game, "default", "src", "mod1", true)
+	require.NoError(t, err)
+	require.Len(t, planShown.FilePool, 2, "--show-archived widens the pool too")
+}
+
 // TestService_PlanInstall_AllArchivedFilesReturnsNoDownloadableFilesError
 // covers the review finding (Phase 5b Task 1 fix wave 1): the CLI's
 // doInstall filters out ARCHIVED/OLD_VERSION/DELETED files via
@@ -3354,4 +3413,26 @@ func TestService_ApplyInstall_CancelledEnsureProfileExists_RecordsFailureNotSile
 	assert.Contains(t, installedRefNames(result.Failed), "Dep One",
 		"the cancelled completing-write must be recorded as failed, not silently dropped")
 	assert.NotContains(t, installedRefNames(result.Installed), "Dep One")
+}
+
+// TestInstallPlan_SkipDependencies pins `lmm install --no-deps`'s whole
+// effect, now that it is one core call both frontends make (#326): all
+// FOUR dependency-pass fields are cleared together, so no confirm screen
+// can warn about dependencies the apply will not install.
+func TestInstallPlan_SkipDependencies(t *testing.T) {
+	plan := &core.InstallPlan{
+		Mod:                 domain.Mod{ID: "m1", SourceID: "fake", Name: "Mod One"},
+		Dependencies:        []domain.Mod{{ID: "dep", SourceID: "fake"}},
+		MissingDependencies: []domain.ModReference{{SourceID: "fake", ModID: "gone"}},
+		CycleDetected:       true,
+		DependencyWarnings:  []core.DependencyWarning{{SourceID: "fake", ModID: "m1", Message: "boom"}},
+	}
+
+	plan.SkipDependencies()
+
+	assert.Nil(t, plan.Dependencies)
+	assert.Nil(t, plan.MissingDependencies)
+	assert.False(t, plan.CycleDetected)
+	assert.Nil(t, plan.DependencyWarnings)
+	assert.Equal(t, "m1", plan.Mod.ID, "the primary mod is untouched")
 }

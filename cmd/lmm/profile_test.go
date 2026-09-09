@@ -1195,3 +1195,54 @@ func TestDoProfileApply_VersionDrift_OldCachePruned_InstallsWithoutReplace(t *te
 	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
 	assert.NoError(t, err, "the new 1.0 file must be deployed via the Install fallback")
 }
+
+// --- doProfileRename (#332) ---
+
+// TestDoProfileRename_PlainOutputAndEffect: the profile really moves, and
+// the plain path prints the one confirmation line.
+func TestDoProfileRename_PlainOutputAndEffect(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "a"}))
+
+	out := captureStdout(t, func() error {
+		return doProfileRename(context.Background(), svc, game, "default", "survival")
+	})
+	assert.Equal(t, "✓ Renamed profile: default → survival\n", out)
+
+	renamed, err := pm.Get(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+	require.Len(t, renamed.Mods, 1)
+	assert.True(t, renamed.IsDefault, "the renamed default profile stays the default")
+
+	_, err = pm.Get(context.Background(), game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound)
+}
+
+// TestDoProfileRename_RefusesAnOccupiedName: the error is wrapped with the
+// command's own context and nothing moves.
+func TestDoProfileRename_RefusesAnOccupiedName(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	pm := getProfileManager(svc)
+	_, err := pm.Create(context.Background(), game.ID, "survival")
+	require.NoError(t, err)
+
+	err = doProfileRename(context.Background(), svc, game, "default", "survival")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "renaming profile")
+
+	_, err = pm.Get(context.Background(), game.ID, "default")
+	require.NoError(t, err, "a refused rename must leave the source profile in place")
+}
+
+// TestProfileRenameCmd_Structure: the subcommand is wired and takes exactly
+// two names.
+func TestProfileRenameCmd_Structure(t *testing.T) {
+	var subCmds []string
+	for _, cmd := range profileCmd.Commands() {
+		subCmds = append(subCmds, cmd.Name())
+	}
+	assert.Contains(t, subCmds, "rename")
+	assert.Error(t, profileRenameCmd.Args(profileRenameCmd, []string{"only-one"}))
+	assert.NoError(t, profileRenameCmd.Args(profileRenameCmd, []string{"old", "new"}))
+}

@@ -1,0 +1,18 @@
+{
+  "id": "acme-quest-slug",
+  "name": "Acme Quest",
+  "install_path": "/GOLDEN/install",
+  "mod_path": "/GOLDEN/mods",
+  "source_ids": {
+    "acme-manual": "acme-quest-slug"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks_explicit": false,
+  "default": false
+}

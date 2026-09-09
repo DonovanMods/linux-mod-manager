@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -83,6 +84,89 @@ type VerifyFinding struct {
 	Recorded  string `json:"recorded,omitempty"`
 	Effective string `json:"effective,omitempty"`
 	Version   string `json:"version,omitempty"`
+
+	// Fixable reports whether a `verify --fix` run would ATTEMPT a repair
+	// for this row as it stands (#332). It is set from the same decision
+	// points the repairs themselves are gated on - not from a second,
+	// drifting table - so a frontend offering a per-finding "Repair"
+	// affordance never has to guess, and never has to reimplement the
+	// question in JavaScript.
+	//
+	// The full table, derived from the engine (this file and
+	// verify_repair.go):
+	//
+	//	stale_deployment      always: convergePass removes it under --fix
+	//	stale_compile         always, on a plain run: --fix's merged-pak
+	//	                      resync (syncMergedPakPass) regenerates it
+	//	missing               a non-local source: redownloadModFile
+	//	no_checksum           a non-local source: redownload-to-populate
+	//	needs_reingest        a non-local source: redownload re-ingests
+	//	version_mismatch      a non-local source AND an UNLOCKED ref - a
+	//	                      locked ref's Version is the lock's target, and
+	//	                      --fix refuses to rewrite it (#97)
+	//	everything else       never - ok, skipped, file_count_mismatch,
+	//	                      version_unverifiable (nothing to repair it
+	//	                      with) and conversion_failed (a conversion is
+	//	                      retried only when a merge INPUT changes, which
+	//	                      --fix does not itself decide)
+	//
+	// A row produced BY a --fix run always reports false: its repair has
+	// already been attempted, refused, or completed, so "a --fix run would
+	// act on this" is no longer true of it. That is what makes the field
+	// useful on the verify_fix PLAN document (a Fix=false run), which is
+	// where the web UI reads it.
+	Fixable bool `json:"fixable,omitzero"`
+
+	// FixableReason is the ENGINE's own reason this finding will not be
+	// repaired, or empty when Fixable is true (or when the row is not a
+	// problem at all - an "ok" or "skipped" row has nothing to explain).
+	// #334: it exists so a frontend offering a per-finding "Repair"
+	// affordance can say WHY the button is absent without reimplementing
+	// the question - the web UI carried a hand-maintained status->sentence
+	// table plus a locked/unlocked guess read off a separate library fetch,
+	// which could not see the local-source case at all and had no honest
+	// word for it.
+	//
+	// It is derived at the same decision points Fixable is, from the same
+	// inputs, so the two can never disagree about a row. The wordings are
+	// sentence fragments in the engine's own voice, meant to be rendered
+	// after a lead-in like "Not fixable: ".
+	FixableReason string `json:"fixable_reason,omitzero"`
+}
+
+// notFixableLocal is the reason shared by every repair gated on
+// redownloadRepairs: a locally imported mod has no source to fetch from, so
+// the missing / no_checksum / needs_reingest repairs have nothing to do.
+const notFixableLocal = "the mod was imported locally, so there is no source to re-download from"
+
+// redownloadRefusal is redownloadRepairs' reason half: empty when the
+// repair applies, the local-source sentence when it does not. Declared
+// beside it so VerifyFinding.Fixable and .FixableReason are computed from
+// the same expression rather than from two that can drift.
+func redownloadRefusal(mod *domain.InstalledMod) string {
+	if redownloadRepairs(mod) {
+		return ""
+	}
+	return notFixableLocal
+}
+
+// versionMismatchRefusal is versionMismatchRepairs' reason half, on the same
+// terms: the two ways the version repair is refused get their own sentence,
+// because "there is no source" and "the lock owns this version" are
+// different problems with different remedies.
+//
+// The lock sentence carries no issue number (M2, unit 8 gate review): it is
+// rendered verbatim in the web UI's Health card and by `lmm verify --json`,
+// and "(#97)" means nothing to the person reading it. The issue behind the
+// rule is #97, and this comment is where that belongs.
+func versionMismatchRefusal(mod *domain.InstalledMod, ref *domain.ModReference) string {
+	if !redownloadRepairs(mod) {
+		return notFixableLocal
+	}
+	if ref != nil && ref.Locked {
+		return fmt.Sprintf("the ref is locked at v%s, and --fix will not rewrite what a lock means - unlock it first", ref.Version)
+	}
+	return ""
 }
 
 // VerifyResult is the accumulated outcome of a verify run.
@@ -92,6 +176,17 @@ type VerifyResult struct {
 	Warnings int             `json:"warnings"`
 	Checked  int             `json:"checked"`   // feeds the CLI's "No files found for mod X" gate
 	HasFiles bool            `json:"has_files"` // false = the #217 empty-profile path ran
+
+	// CheckedAt is when the run began, in UTC (#334) - so a surface that
+	// renders a stored or cached result ("last verified 2 hours ago") reads
+	// it off the document rather than guessing from when it happened to
+	// fetch it. Stamped at the START rather than the end because every
+	// partial result a cancelled run returns carries it too; a run that
+	// stops halfway still checked what it checked, at that moment.
+	//
+	// omitzero, so a VerifyResult built by hand (a test, a caller
+	// assembling one) carries no key at all rather than a zero time.
+	CheckedAt time.Time `json:"checked_at,omitzero"`
 }
 
 // VerifyEventKind identifies what a VerifyEvent carries.
@@ -212,10 +307,69 @@ func (r *verifyRun) finding(f VerifyFinding, extras VerifyEvent) {
 // extras, since it's still the same unresolved condition.
 func (r *verifyRun) resolveLast(status, note string) {
 	last := &r.result.Findings[len(r.result.Findings)-1]
+	// Read BEFORE the two fields are cleared below. A row this run never
+	// considered fixable in the first place was REFUSED, not attempted - a
+	// locked ref is the case in practice - and its existing reason is the
+	// accurate one (M4, unit 8 gate review: "this --fix run already
+	// attempted a repair for it" is simply untrue of a refusal, and it
+	// replaced the sentence naming the lock and how to lift it. The plain
+	// run - what the web UI's Health card reads - kept the good sentence,
+	// so the two runs disagreed about the same row).
+	refused, refusalReason := !last.Fixable, last.FixableReason
 	last.Status, last.Note = status, note
+	// Every resolveLast call happens inside a --fix run, AFTER that row's
+	// repair was attempted, refused or completed - so whatever the row now
+	// says, "a --fix run would act on this" has stopped being true of it
+	// (VerifyFinding.Fixable).
+	last.Fixable = false
+	last.FixableReason = ""
+	switch {
+	case status != "missing" && status != "version_mismatch":
+		// Resolved (or demoted): no reason to give.
+	case refused && refusalReason != "":
+		last.FixableReason = refusalReason
+	default:
+		// Still unresolved after a repair was actually attempted: say so,
+		// rather than leaving a not-fixable row with no reason at all.
+		last.FixableReason = "this --fix run already attempted a repair for it"
+	}
 	if status != "missing" && status != "version_mismatch" {
 		last.Recorded, last.Effective, last.Version = "", "", ""
 	}
+}
+
+// redownloadRepairs reports whether --fix's redownload repair applies to
+// mod - the ONE gate the missing / no_checksum / needs_reingest repairs
+// share (`r.opts.Fix && mod.SourceID != domain.SourceLocal` at each site):
+// a locally imported mod has no source to fetch from, so there is nothing
+// to redownload. Declared here so VerifyFinding.Fixable is computed from
+// the same expression the repair is gated on rather than a copy of it.
+func redownloadRepairs(mod *domain.InstalledMod) bool {
+	return mod.SourceID != domain.SourceLocal
+}
+
+// versionMismatchRepairs reports whether --fix's version repair
+// (repairModVersion) applies to mod with profile ref ref: a non-local
+// source, AND an unlocked ref. #97: a locked ref's Version IS the lock's
+// target, so rewriting it would silently move what the lock means instead
+// of fixing anything - the mismatch stays reported, only the repair is
+// refused (versionPass).
+func versionMismatchRepairs(mod *domain.InstalledMod, ref *domain.ModReference) bool {
+	if !redownloadRepairs(mod) {
+		return false
+	}
+	return ref == nil || !ref.Locked
+}
+
+// staleCompileRefusal is the stale_compile row's reason half. Its Fixable
+// is !opts.Fix - a plain run reports the staleness that --fix's own
+// merged-pak resync (syncMergedPakPass) would regenerate - so on a --fix
+// run the row is already past being actionable.
+func staleCompileRefusal(fixing bool) string {
+	if !fixing {
+		return ""
+	}
+	return "this --fix run already resynced the merged artifact"
 }
 
 // verifyGated is the beginOp-gated entry point for a verify run: a --fix run
@@ -260,7 +414,7 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 // including the #217 empty-profile path, which now runs nothing BUT that
 // sweep.
 func (s *Service) verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
-	result := &VerifyResult{}
+	result := &VerifyResult{CheckedAt: time.Now().UTC()}
 	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, sink: sink, result: result}
 
 	files, err := s.GetFilesWithChecksums(ctx, game.ID, profile)
@@ -391,7 +545,7 @@ func (r *verifyRun) convergencePass() {
 				continue
 			}
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: cf.ModID, FileID: cf.Path, Status: "stale_deployment", Note: cf.Reason, Fixable: true}, VerifyEvent{})
 		}
 	}
 	if convErr != nil {
@@ -473,7 +627,8 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 		if expectedCount > 0 && actualCount == 0 {
 			if !reportedMismatch[key] {
 				r.result.Warnings++
-				r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "file_count_mismatch"}, VerifyEvent{ExpectedCount: expectedCount})
+				r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "file_count_mismatch",
+					FixableReason: "there is nothing to repair a file-count mismatch with"}, VerifyEvent{ExpectedCount: expectedCount})
 				reportedMismatch[key] = true
 			}
 		}
@@ -531,7 +686,8 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 				note = "re-import the archive to enable conversion"
 			}
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "needs_reingest", Note: note}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "needs_reingest", Note: note,
+				Fixable: redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{})
 			// #224 Task 4: --fix re-ingests through the same redownload path
 			// as MISSING/NO CHECKSUM below - the widened ingest predicate
 			// retains the source this time, and a later sync picks it up.
@@ -562,7 +718,8 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 		cacheExists := gameCache.Exists(r.game.ID, mod.SourceID, mod.ID, mod.Version)
 		if !cacheExists {
 			r.result.Issues++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version}, VerifyEvent{Version: mod.Version})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "missing", Version: mod.Version,
+				Fixable: redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{Version: mod.Version})
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
@@ -616,7 +773,8 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 				continue
 			}
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum"}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, FileID: f.FileID, Status: "no_checksum",
+				Fixable: redownloadRepairs(mod), FixableReason: redownloadRefusal(mod)}, VerifyEvent{})
 			continue
 		}
 
@@ -646,7 +804,8 @@ func (r *verifyRun) mergedPakStalenessPass() {
 	r.result.Checked++
 	if staleUpd != nil {
 		r.result.Warnings++
-		r.finding(VerifyFinding{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile", Note: staleUpd.RecompileReason}, VerifyEvent{})
+		r.finding(VerifyFinding{ModID: staleUpd.InstalledMod.ID, ModName: staleUpd.InstalledMod.Name, Status: "stale_compile",
+			Note: staleUpd.RecompileReason, Fixable: !r.opts.Fix, FixableReason: staleCompileRefusal(r.opts.Fix)}, VerifyEvent{})
 	}
 }
 
@@ -695,7 +854,8 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 			name = entry.ModID
 		}
 		r.result.Warnings++
-		r.finding(VerifyFinding{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason}, VerifyEvent{})
+		r.finding(VerifyFinding{ModID: entry.ModID, ModName: name, Status: "conversion_failed", Note: entry.FailReason,
+			FixableReason: "a conversion is only retried when a merge input changes - reinstall the mod to retry it"}, VerifyEvent{})
 	}
 	return nil
 }
@@ -757,7 +917,8 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 
 		if len(matched) == 0 {
 			r.result.Warnings++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_unverifiable"}, VerifyEvent{})
+			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_unverifiable",
+				FixableReason: "there is nothing to check the recorded version against"}, VerifyEvent{})
 			continue
 		}
 
@@ -772,7 +933,12 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		if effective != mod.Version {
 			recorded := mod.Version
 			r.result.Issues++
-			r.finding(VerifyFinding{ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch", Recorded: recorded, Effective: effective}, VerifyEvent{Recorded: recorded, Effective: effective})
+			r.finding(VerifyFinding{
+				ModID: mod.ID, ModName: mod.Name, Status: "version_mismatch",
+				Recorded: recorded, Effective: effective,
+				Fixable:       versionMismatchRepairs(mod, ref),
+				FixableReason: versionMismatchRefusal(mod, ref),
+			}, VerifyEvent{Recorded: recorded, Effective: effective})
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
 				// #97 (Task 8): a locked ref's Version is the lock's
 				// TARGET, not a repairable mistake - rewriting it here

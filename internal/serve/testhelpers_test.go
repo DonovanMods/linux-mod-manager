@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -93,6 +94,12 @@ type fakeSourceMod struct {
 	Mod       domain.Mod
 	Files     []domain.DownloadableFile
 	Changelog string
+	// Tags is the source-side tag set a source.SearchQuery.Tags filter
+	// matches against. It has no domain.Mod home - tags are a search
+	// PARAMETER, source-specific, and never travel on a hit - so the
+	// double keeps them here, which is the only place a fake can honour
+	// ?tag= at all (#326).
+	Tags []string
 }
 
 // fakeSource is a minimal source.ModSource (and source.ChangelogProvider)
@@ -129,18 +136,50 @@ func (s *fakeSource) ExchangeToken(context.Context, string) (*source.Token, erro
 }
 
 // Search returns every catalog mod whose name contains query
-// (case-insensitive), or every mod when query is empty - enough to exercise
-// /search's rendering without a real search index.
+// (case-insensitive) AND, when query.Category is set, whose own Category
+// matches it EXACTLY (unit 5 fix wave, I1: the search page's category
+// filter moved server-side, and needs a source that actually honors it to
+// prove that server-side round trip rather than a client-side no-op) - or
+// every mod when query is empty, enough to exercise /search's rendering
+// without a real search index. query.Page/PageSize are honored when
+// PageSize is set (issue 331's search-page pagination scenario needs a real
+// page 2 to differ from page 1, not just a truncated-but-identical repeat of
+// it) - a PageSize of 0 (every caller before issue 331) keeps returning the
+// full match list unsliced.
 func (s *fakeSource) Search(_ context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	var mods []domain.Mod
 	q := strings.ToLower(query.Query)
 	for _, m := range s.mods {
+		if query.Category != "" && m.Mod.Category != query.Category {
+			continue
+		}
+		if !fakeModHasEveryTag(m, query.Tags) {
+			continue
+		}
 		if q == "" || strings.Contains(strings.ToLower(m.Mod.Name), q) {
 			mods = append(mods, m.Mod)
 		}
 	}
 	sort.Slice(mods, func(i, j int) bool { return mods[i].ID < mods[j].ID })
-	return source.SearchResult{Mods: mods, TotalCount: len(mods)}, nil
+	total := len(mods)
+	if query.PageSize > 0 {
+		start := min(query.Page*query.PageSize, total)
+		end := min(start+query.PageSize, total)
+		mods = mods[start:end]
+	}
+	return source.SearchResult{Mods: mods, TotalCount: total}, nil
+}
+
+// fakeModHasEveryTag reports whether m carries every tag in want (an
+// empty want matches everything) - the AND semantics `lmm search --tag a
+// --tag b` describes, so a forwarded filter narrows rather than widens.
+func fakeModHasEveryTag(m *fakeSourceMod, want []string) bool {
+	for _, tag := range want {
+		if !slices.Contains(m.Tags, tag) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *fakeSource) GetMod(_ context.Context, _, modID string) (*domain.Mod, error) {

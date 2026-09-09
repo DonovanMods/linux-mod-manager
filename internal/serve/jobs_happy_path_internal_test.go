@@ -125,10 +125,4 @@ func TestServeJobs_HappyPath_PlanThenJobThenEventsThenResult(t *testing.T) {
 
 	_, statErr := os.Lstat(deployedFixturePath(game))
 	require.NoError(t, statErr, "the deploy must have reached the game directory")
-
-	// 5. The page for the same job renders the same outcome with no JS.
-	code, raw = liveAPI(t, s, srv, http.MethodGet, "/jobs/"+string(started.JobID), "")
-	require.Equal(t, http.StatusOK, code)
-	assert.Contains(t, string(raw), "succeeded")
-	assert.Contains(t, string(raw), "Deployed")
 }

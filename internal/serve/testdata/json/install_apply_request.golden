@@ -6,5 +6,6 @@
   ],
   "accept_conflicts": true,
   "force": true,
-  "skip_hooks": true
+  "skip_hooks": true,
+  "skip_verify": true
 }

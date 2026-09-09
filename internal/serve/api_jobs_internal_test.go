@@ -297,7 +297,10 @@ func TestAPIWrongMethodOnRealRoute_405WithAllow(t *testing.T) {
 		wantMessage string
 	}{
 		{"POST on a GET-only route", http.MethodPost, "/api/v1/status", "GET", "method POST not allowed on /api/v1/status"},
-		{"GET on a POST-only route", http.MethodGet, "/api/v1/jobs", "POST", "method GET not allowed on /api/v1/jobs"},
+		// /api/v1/jobs used to stand for this row, and stopped being able
+		// to when the activity tray's index gave it a GET (routes.go); a
+		// plan route is the POST-only surface that took its place.
+		{"GET on a POST-only route", http.MethodGet, "/api/v1/plans/deploy", "POST", "method GET not allowed on /api/v1/plans/deploy"},
 		{"PUT on a GET-only route with a path param", http.MethodPut, "/api/v1/jobs/abc/events", "GET", "method PUT not allowed on /api/v1/jobs/abc/events"},
 	}
 	for _, tc := range tests {

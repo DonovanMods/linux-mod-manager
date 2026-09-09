@@ -5,6 +5,7 @@
       "ref": {
         "source_id": "src",
         "mod_id": "a",
+        "version": "1.0",
         "locked": false
       },
       "name": "Mod A",

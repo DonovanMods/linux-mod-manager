@@ -47,3 +47,22 @@ func newStagingDir(root, pattern string) (string, error) {
 	}
 	return dir, nil
 }
+
+// NewStagingDir creates a scratch directory under this service's staging
+// root and returns its path. The caller OWNS it and must remove it.
+//
+// It is the exported seam a frontend that stages large content of its own
+// needs - `lmm serve`'s archive upload endpoint is its intended consumer,
+// which writes a browser-uploaded mod archive here before planning an
+// import over it. That content belongs in exactly the place downloads and
+// extraction already go, for exactly the reasons in newStagingDir's comment
+// (a multi-gigabyte archive must not land in a tmpfs /tmp, and it should
+// sit on the same filesystem as the cache it will be committed into), and
+// the alternative - a frontend inventing a temp root of its own - would
+// silently reintroduce both problems.
+//
+// pattern is an os.MkdirTemp pattern; a trailing "*" is where the random
+// component goes. The directory is created 0700, as is the staging root.
+func (s *Service) NewStagingDir(pattern string) (string, error) {
+	return newStagingDir(s.stagingRoot(), pattern)
+}

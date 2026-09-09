@@ -1,8 +1,11 @@
-// Package serve implements `lmm serve`: a local HTTP server rendering
-// server-side HTML pages and a small /api/v1 JSON layer over a long-lived
-// *core.Service, per docs/plans/2026-08-30-serve-design.md. It imports only
-// internal/app, internal/core, internal/domain, and the standard library
-// (enforced by boundary_test.go).
+// Package serve implements `lmm serve`: a local HTTP server hosting a
+// single-page application and the /api/v1 JSON + SSE layer it drives, over
+// a long-lived *core.Service. The API, jobs and SSE surfaces are
+// docs/plans/2026-08-30-serve-design.md's; the SPA that replaced that
+// design's server-rendered page layer is
+// docs/plans/2026-08-31-serve-spa-design.md. It imports only internal/app,
+// internal/core, internal/domain, and the standard library (enforced by
+// boundary_test.go).
 package serve
 
 import (
@@ -40,6 +43,22 @@ type Options struct {
 	// ShutdownGrace bounds how long a cancelled Serve waits for in-flight
 	// requests to finish before returning. Zero uses defaultShutdownGrace.
 	ShutdownGrace time.Duration
+
+	// MaxUploadBytes caps a single POST /api/v1/uploads body. Zero (the
+	// production default) takes maxUploadBytes; a test shrinks this to
+	// drive the real 413 path with a body it can actually afford to build,
+	// the same seam newUploadStore's ttl/cap parameters already give the
+	// upload store's OTHER two limits (#333 Important #2 - the constant
+	// itself had no seam a test could exercise the removal of).
+	MaxUploadBytes int64
+
+	// Version is the human-facing display version - `cmd/lmm/root.go`'s
+	// computeDisplayVersion(version, buildDescribe), the exact string `lmm
+	// --version` prints, not the bare version const - stamped into the SPA
+	// shell so a bug report filed from the browser can say what it is
+	// running (N-5, epic re-review). Empty renders no <meta> content, which
+	// only happens in a test that does not set it.
+	Version string
 }
 
 // Server is the lmm serve HTTP server: an *http.Server wired to a
@@ -73,6 +92,18 @@ type Server struct {
 	plans *planStore
 	jobs  *jobRegistry
 
+	// uploads indexes the archives a browser has streamed into the
+	// service's staging directory, awaiting an import (uploads.go). Like
+	// plans it is process-lifetime state with a TTL; unlike plans each
+	// entry owns a real directory on disk, which is why every removal path
+	// goes through the store rather than deleting a map entry.
+	uploads *uploadStore
+	// maxUploadBytes is the cap handleAPIUploadCreate enforces on a single
+	// upload body - Options.MaxUploadBytes, defaulted. A field rather than
+	// the maxUploadBytes constant read directly, so a test can shrink it
+	// without shrinking the production default (see Options.MaxUploadBytes).
+	maxUploadBytes int64
+
 	// heartbeat is the clock seam every SSE stream's comment heartbeat
 	// runs on (see sse.go). Production is realHeartbeatTicker; an internal
 	// test swaps in a channel it sends on by hand so a heartbeat assertion
@@ -88,6 +119,10 @@ type Server struct {
 	// behind them keep running to their own bounded grace (jobs.go).
 	draining     chan struct{}
 	drainingOnce sync.Once
+
+	// version is Options.Version, stamped into the SPA shell (spa.go's
+	// shellData) so the browser can say what it is running.
+	version string
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
@@ -110,28 +145,35 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		grace = defaultShutdownGrace
 	}
 
+	maxUpload := opts.MaxUploadBytes
+	if maxUpload <= 0 {
+		maxUpload = maxUploadBytes
+	}
+
 	allowedHosts, wildcardPort := allowedHostsFor(opts.Addr)
 	s := &Server{
-		svc:           svc,
-		log:           log,
-		mux:           http.NewServeMux(),
-		allowedHosts:  allowedHosts,
-		wildcardPort:  wildcardPort,
-		shutdownGrace: grace,
-		csrf:          newCSRFGuard(),
-		plans:         newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
-		jobs:          newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
-		heartbeat:     realHeartbeatTicker,
-		draining:      make(chan struct{}),
+		svc:            svc,
+		log:            log,
+		mux:            http.NewServeMux(),
+		allowedHosts:   allowedHosts,
+		wildcardPort:   wildcardPort,
+		shutdownGrace:  grace,
+		csrf:           newCSRFGuard(),
+		plans:          newPlanStore(defaultPlanTTL, defaultPlanStoreCap, time.Now),
+		uploads:        newUploadStore(defaultUploadTTL, defaultUploadStoreCap, time.Now),
+		maxUploadBytes: maxUpload,
+		jobs:           newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
+		heartbeat:      realHeartbeatTicker,
+		draining:       make(chan struct{}),
+		version:        opts.Version,
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,
 		// Security headers, request logging, and the Host allow-list apply
 		// to every request the mux ever sees - including a 404/405 the mux
-		// generates itself and /static/, neither of which goes through
-		// wrap (task-3 review Minor 4; the logging half is task-3
-		// re-review New finding 2). wrap adds the checks specific to the
-		// routes that need them.
+		// generates itself, which goes through no route at all (task-3
+		// review Minor 4; the logging half is task-3 re-review New finding
+		// 2). wrap adds the checks specific to the routes that need them.
 		Handler: securityHeaders(s.rootLogging(s.hostCheck(s.mux))),
 	}
 	// RegisterOnShutdown fires when Shutdown is called - the only hook
@@ -166,9 +208,16 @@ func (s *Server) Listen() (net.Addr, error) {
 // Close closes the listener bound by Listen, if any, without starting a
 // shutdown. It's for a caller that fails between Listen and Serve (e.g. a
 // startup-print error) and needs to release the socket instead of leaking
-// it (task-3 review Minor 7); it is a no-op if Listen was never called or
-// Serve is already draining the listener itself.
+// it (task-3 review Minor 7); it is a no-op on the listener if Listen was
+// never called or Serve is already draining it itself.
+//
+// It also purges staged uploads (#333 Minor #6), the same as Serve does on
+// its own return: a New+Listen+Close sequence that never reaches Serve - or
+// a Serve that never runs at all - used to leave any staged archives behind
+// for no reason. PurgeAll is idempotent (an empty store purges to nothing),
+// so calling it here as well as at the end of a completed Serve is safe.
 func (s *Server) Close() error {
+	s.uploads.PurgeAll()
 	if s.ln == nil {
 		return nil
 	}
@@ -183,7 +232,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.ln == nil {
 		return errors.New("serve: Listen must be called before Serve")
 	}
-	return serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
+	err := serveGraceful(ctx, s.httpServer, s.ln, s.shutdownGrace, s.jobs.shutdown)
+	// Staged uploads are large; an orderly shutdown takes them with it
+	// rather than leaving them for a future start to wonder about. A hard
+	// kill still leaves them, exactly as it does an interrupted download.
+	s.uploads.PurgeAll()
+	return err
 }
 
 // ListenAndServe binds Server's configured address and serves until ctx is
