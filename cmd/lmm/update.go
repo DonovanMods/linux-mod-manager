@@ -369,7 +369,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		if !auto && !updateAll {
 			continue
 		}
-		if auto {
+		if auto && !update.Locked {
 			autoUpdates = append(autoUpdates, update)
 		}
 		if update.Locked {
