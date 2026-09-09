@@ -210,7 +210,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata API — with no account, no API key and no `steamcmd`.
   `lmm game detect` maps a game whose Workshop manifest shows installed
   items to the new built-in `steamworkshop` source (`--no-workshop` opts
-  out), `lmm import --workshop` records them, and the web UI's library,
+  out), `lmm import --workshop` records them — or, in `lmm serve`,
+  **Add mods ▾ → Track Steam Workshop items…** — and the web UI's library,
   mod panel and full mod page render the same facts.
   lmm **never** moves, copies, downloads or deletes a Workshop item's
   files: the Steam client owns them where they sit. Such a mod is marked
