@@ -483,8 +483,8 @@ export function GameAddForm({ onAdded, game, profile, refreshKey }) {
           />
         </label>
         <p class="empty-state__hint">
-          The local games.yaml key (--game-id). Set automatically by a
-          catalog match above; override it here to choose it by hand.
+          The local games.yaml key (--game-id). Set automatically by a catalog
+          match above; override it here to choose it by hand.
         </p>
         ${errorFor("game_id") && html`<p class="modal__error">${errorFor("game_id")}</p>`}
       </details>
