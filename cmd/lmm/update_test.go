@@ -366,10 +366,16 @@ func TestApplySingleUpdate_UpToDate_PrintsExpectedText(t *testing.T) {
 	assert.Equal(t, "Mod One is already up to date (v1.0).\n", out)
 }
 
-// TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues guards doUpdate's own
-// loop: auto-policy updates apply automatically, a failure mid-batch prints
-// "✗ %s: %v" and CONTINUES to the next update (never aborts), and --all
-// applies the remaining notify-policy updates afterward.
+// TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues guards doUpdate's
+// bulk apply: auto-policy updates apply automatically, a failure mid-batch
+// prints "✗ %s: %v" and CONTINUES to the next update (never aborts), and
+// --all applies the remaining notify-policy updates too.
+//
+// #324 replaced the two hand-written loops (an auto-policy pass, then
+// --all's remaining pass) with ONE core.ApplyUpdateBatch call, so the two
+// section headers became a single "Applying N update(s)..." - the only
+// output delta. Everything the test actually guards - the ✗ line, the
+// continuation past it, and all three end states - is unchanged.
 func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 	updateAll = true
@@ -399,10 +405,9 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "\nApplying 2 auto-update(s)...\n")
+	assert.Contains(t, out, "\nApplying 3 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod One 1.0 → 2.0\n")
 	assert.Contains(t, out, "  ✗ Mod Two: ")
-	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod Three 1.0 → 2.0\n")
 
 	updated1, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
@@ -419,10 +424,11 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 }
 
 // TestDoUpdate_BulkApply_ChecksSourceExactlyOnce guards #289 review's
-// Important 1 fix: applyBulkUpdate must build its plan from the
-// domain.Update the batch listing already found (Service.PlanUpdateFrom),
-// never by re-invoking CheckGameUpdates (and therefore the source's
-// CheckUpdates) a second time per applied mod. Before the fix, applying 3
+// Important 1 fix, now one level up: the bulk apply must build its plan
+// from the domain.Updates the batch listing already found
+// (Service.PlanUpdateBatchFrom, #324 - previously applyBulkUpdate's
+// per-mod Service.PlanUpdateFrom), never by re-invoking CheckGameUpdates
+// (and therefore the source's CheckUpdates) a second time. Before the fix, applying 3
 // auto-policy mods cost 1 (the listing) + 3 (one re-check per apply) = 4
 // CheckUpdates calls; after the fix it must cost exactly 1, however many
 // mods are applied.
@@ -444,7 +450,7 @@ func TestDoUpdate_BulkApply_ChecksSourceExactlyOnce(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, fmt.Sprintf("\nApplying %d auto-update(s)...\n", modCount))
+	assert.Contains(t, out, fmt.Sprintf("\nApplying %d update(s)...\n", modCount))
 	assert.Equal(t, 1, src.checkUpdatesCalls, "bulk apply of N mods must perform exactly one CheckUpdates call (the listing), not N+1")
 
 	for i := 1; i <= modCount; i++ {

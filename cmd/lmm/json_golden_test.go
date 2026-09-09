@@ -499,6 +499,30 @@ func TestJSONGolden_Update(t *testing.T) {
 		assertJSONCLIGolden(t, "update_bulk_none", out)
 	})
 
+	// #324: `--all --json` APPLIES (the flag was silently ignored under
+	// --json before) and its one document is core.UpdateBatchResult - the
+	// applied row, and the locked one core declined with its own refusal
+	// sentence.
+	t.Run("bulk_all_applied", func(t *testing.T) {
+		withJSONOutput(t)
+		svc, game, src := setupDoUpdateTest(t)
+		seedInstalledForUpdate(t, svc, game, "test-src", "modA", "Mod A", "1.0", []string{"a-old"}, map[string][]byte{"a-old.esp": []byte("old")})
+		setLockedForUpdate(t, svc, game, "test-src", "modA", "1.0")
+		src.AddMod(&domain.Mod{ID: "modA", SourceID: "test-src", Name: "Mod A", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "a-new", FileName: "a-new.esp", IsPrimary: true}})
+		src.AddDownload("a-new", []byte("new"))
+		seedInstalledForUpdate(t, svc, game, "test-src", "modB", "Mod B", "1.0", []string{"b-old"}, map[string][]byte{"b-old.esp": []byte("old")})
+		src.AddMod(&domain.Mod{ID: "modB", SourceID: "test-src", Name: "Mod B", Version: "2.0", GameID: "g1"},
+			[]domain.DownloadableFile{{ID: "b-new", FileName: "b-new.esp", IsPrimary: true}})
+		src.AddDownload("b-new", []byte("new"))
+
+		updateAll = true
+		t.Cleanup(func() { updateAll = false })
+
+		out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+		assertJSONCLIGolden(t, "update_bulk_all", out)
+	})
+
 	t.Run("single_updated", func(t *testing.T) {
 		withJSONOutput(t)
 		svc, game, src := setupDoUpdateTest(t)

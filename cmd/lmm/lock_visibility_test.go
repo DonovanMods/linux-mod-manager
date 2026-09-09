@@ -238,7 +238,11 @@ func TestDoUpdate_TableMarksLockedAndSkipsAutoApply(t *testing.T) {
 	assert.Contains(t, rowB, "✓")
 	assert.NotContains(t, rowB, "[locked@")
 
-	assert.Contains(t, out, "\nApplying 1 auto-update(s)...\n")
+	// #324: one core batch call replaced the two hand-written loops, so the
+	// two section headers became one. The count still EXCLUDES the locked
+	// row, which is what this assertion is really about: the header must
+	// not promise an apply the lock is going to refuse.
+	assert.Contains(t, out, "\nApplying 1 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
 	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")
@@ -342,7 +346,9 @@ func TestDoUpdate_AllSkipsLockedNotifyMods(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
+	// #324: see TestDoUpdate_TableMarksLockedAndSkipsAutoApply - one header
+	// now, still counting only what will actually be attempted.
+	assert.Contains(t, out, "\nApplying 1 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod B 1.0 → 2.0\n")
 	assert.NotContains(t, out, "Mod A 1.0 → 2.0", "the locked mod must never reach applyUpdate")
 	assert.Contains(t, out, "1 locked mod(s) not applied: Mod A — unlock to update.")

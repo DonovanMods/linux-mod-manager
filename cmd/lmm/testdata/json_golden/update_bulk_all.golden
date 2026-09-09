@@ -1,0 +1,36 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "applied": [
+    {
+      "mod": {
+        "source_id": "test-src",
+        "mod_id": "modB",
+        "version": "2.0",
+        "file_ids": [
+          "b-new"
+        ],
+        "locked": false
+      },
+      "name": "Mod B",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "updated"
+    }
+  ],
+  "skipped": [
+    {
+      "mod": {
+        "source_id": "test-src",
+        "mod_id": "modA",
+        "version": "1.0",
+        "locked": true
+      },
+      "name": "Mod A",
+      "from_version": "1.0",
+      "to_version": "2.0",
+      "status": "skipped",
+      "reason": "Mod A is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s test-src -p default modA' first"
+    }
+  ]
+}
