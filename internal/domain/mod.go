@@ -155,6 +155,27 @@ type InstalledMod struct {
 	FileIDs         []string     `json:"file_ids,omitempty"`          // Source-specific file IDs that were downloaded
 	ManualDownload  bool         `json:"manual_download"`             // True if mod requires manual download (CurseForge restricted, etc.)
 	ConvertPaks     bool         `json:"convert_paks"`                // #221: pak-to-exmod conversion enabled (default true; only meaningful for DeployCompile games)
+
+	// External marks a mod lmm TRACKS but never deploys: another agent
+	// (today, the Steam client for a Workshop item) owns its files where
+	// they sit, and the game loads them from there. lmm never links,
+	// copies, downloads, moves or removes an external mod's content
+	// (#269).
+	//
+	// Enabled keeps its meaning (user intent). Deployed is set true at
+	// adopt and no flow ever mutates it on an external mod - the field
+	// means "its files are where the game reads them", which for a
+	// Workshop item is true the moment Steam finished downloading it; any
+	// other choice makes `lmm status` report a permanent, un-actionable
+	// "not deployed" backlog.
+	//
+	// omitzero, so every document for an ordinary managed mod is
+	// byte-identical to what it was before this field existed.
+	External bool `json:"external,omitzero"`
+	// ExternalPath is the absolute directory that agent owns. Only
+	// meaningful when External; recorded at adopt time so no flow needs to
+	// re-scan Steam's libraries just to report where a mod lives.
+	ExternalPath string `json:"external_path,omitempty"`
 }
 
 // Update represents an available update for an installed mod

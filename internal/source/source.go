@@ -109,6 +109,32 @@ type DescriptionFetcher interface {
 // disk into the cache (#300).
 type LocalFileServer interface{ ServesLocalFiles() bool }
 
+// WorkshopScan is one WorkshopScanner answer: the local roots that actually
+// held bookkeeping for the requested game, every item they declare, and the
+// non-fatal diagnostics collected on the way (an unreadable or damaged
+// manifest warns against that one file rather than failing the scan).
+type WorkshopScan struct {
+	Roots    []string
+	Items    []domain.WorkshopItem
+	Warnings []string
+}
+
+// WorkshopScanner is implemented by sources whose content is installed and
+// owned by ANOTHER agent on the user's machine - today, the Steam client
+// for a Workshop item (#269). Such a source discovers what is installed by
+// reading that agent's own on-disk bookkeeping, not by asking a remote API,
+// and core adopts the result as EXTERNAL mods (domain.InstalledMod.External)
+// it tracks but never deploys.
+//
+// It is the same optional-capability pattern as MergeCompiler: core type-
+// asserts for it and does nothing workshop-specific when a source does not
+// implement it, so internal/core never imports the concrete source package.
+// sourceGameID is the source's own game identifier from
+// domain.Game.SourceIDs (for Steam Workshop, the decimal app id).
+type WorkshopScanner interface {
+	ScanWorkshopItems(ctx context.Context, sourceGameID string) (WorkshopScan, error)
+}
+
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade
 // gracefully (hide the action, show a notice) rather than treat it as a failure.

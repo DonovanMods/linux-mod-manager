@@ -136,6 +136,50 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #269 Tier 1: the same struct for an EXTERNAL mod - a Steam
+			// Workshop item lmm tracks but never deploys. Its absences are
+			// the contract as much as its two new keys: no file ids (lmm
+			// downloaded nothing), no manual_download, and Version is the
+			// ACF content id rather than anything human-readable.
+			"installed_mod_external",
+			domain.InstalledMod{
+				Mod: domain.Mod{
+					ID:          "3617086610",
+					SourceID:    "steamworkshop",
+					Name:        "Sample Workshop Item",
+					Version:     "7987119735124793734",
+					Author:      "76561198000000000",
+					Summary:     "An item subscribed in the Steam client.",
+					Description: "An item subscribed in the Steam client.",
+					GameID:      "space-engineers-2",
+					Category:    "Blueprint",
+					PictureURL:  "https://example.invalid/preview.jpg",
+					SourceURL:   "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+					UpdatedAt:   fixedTime,
+				},
+				ProfileName:  "default",
+				UpdatePolicy: domain.UpdateNotify,
+				InstalledAt:  fixedTime,
+				Enabled:      true,
+				Deployed:     true,
+				LinkMethod:   domain.LinkSymlink,
+				External:     true,
+				ExternalPath: "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+			},
+		},
+		{
+			// The scan row #269's adopt flow is built from: what Steam's
+			// own appworkshop manifest says about one installed item.
+			"workshop_item",
+			domain.WorkshopItem{
+				FileID:      "3617086610",
+				Path:        "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+				SizeOnDisk:  572330,
+				Manifest:    "7987119735124793734",
+				TimeUpdated: 1764767935,
+			},
+		},
+		{
 			"update",
 			domain.Update{
 				InstalledMod: domain.InstalledMod{
@@ -203,6 +247,22 @@ func TestJSONGoldens(t *testing.T) {
 				Slug:        "satisfactory",
 				Name:        "Satisfactory",
 				InstallPath: "/home/user/.steam/steam/steamapps/common/Satisfactory",
+			},
+		},
+		{
+			// #269's detection prefill: an app whose appworkshop manifest
+			// declares installed items gets `steamworkshop: <appid>` added
+			// to its sources map, and the item count that justified it.
+			"detected_game_workshop",
+			domain.DetectedGame{
+				SteamAppID:    "1133870",
+				Slug:          "space-engineers-2",
+				Name:          "Space Engineers 2",
+				InstallPath:   "/home/user/.steam/steam/steamapps/common/SpaceEngineers2",
+				ModPath:       "/home/user/.steam/steam/steamapps/common/SpaceEngineers2/Mods",
+				Sources:       map[string]string{"steamworkshop": "1133870"},
+				Known:         true,
+				WorkshopItems: 30,
 			},
 		},
 		{
