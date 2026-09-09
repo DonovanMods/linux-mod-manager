@@ -309,6 +309,14 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	if len(updates) == 0 {
 		if jsonOutput {
+			// The SECOND document `--all --json` can emit (M5, unit 8 gate
+			// review - now named in README's --json table rather than left
+			// for a consumer to discover). With nothing to apply this never
+			// enters the batch, and the check report is the more useful
+			// answer: its skipped{} names the mods that were passed over
+			// (pinned, locked, manual download), which an empty
+			// UpdateBatchResult would lose. The two are discriminable -
+			// only the batch result carries "applied".
 			if err := emitJSON(bulkCheckReport(game.ID, profileName, nil, installed, checkErr)); err != nil {
 				return err
 			}
