@@ -2176,6 +2176,45 @@ select {
   gap: var(--space-3);
 }
 
+/* The keyboard-shortcuts help's own table (issue 334's gate review,
+ * Important 3). Same shape as .setup-table - this application has one table
+ * idiom - with the key column sized to its content so the two prose columns
+ * take the slack. */
+.shortcuts {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.shortcuts th {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.shortcuts td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+
+.shortcuts td:first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.shortcuts__keys {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
 .setup-section__actions {
   display: flex;
   align-items: center;

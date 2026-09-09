@@ -218,6 +218,16 @@ export function TopBar({
       <button
         type="button"
         class="button button--small"
+        data-action="shortcuts"
+        title="Keyboard shortcuts"
+        aria-label="Keyboard shortcuts"
+        onClick=${() => actions.openShortcutsModal()}
+      >
+        ?
+      </button>
+      <button
+        type="button"
+        class="button button--small"
         data-action="setup"
         title="Setup"
         aria-label="Setup"

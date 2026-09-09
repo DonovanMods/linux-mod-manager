@@ -123,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The UI follows the system's light/dark preference with a persisted
   override, both palettes meeting WCAG AA contrast; every control is
-  reachable and operable by keyboard, dialogs contain focus and give it
+  reachable and operable by keyboard (`?` opens a shortcuts help listing
+  every binding), dialogs contain focus and give it
   back, and `prefers-reduced-motion` disables every animation. Desktop only
   (1080p and up) and localhost only, by design — there is no remote access,
   no authentication, and no mobile layout.

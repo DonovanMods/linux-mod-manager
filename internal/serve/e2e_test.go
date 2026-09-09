@@ -4943,3 +4943,63 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 	assert.NotContains(t, library, "Alpha Mod", "and not what the profile it left held")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus is Important 3 of the
+// unit-8 gate review: the last entry in the design's own modal inventory
+// (§Modals: "keyboard-shortcuts help") with nothing behind it, in an
+// application that is now fully keyboard-driven and whose README documents
+// every binding.
+//
+// Both routes in are driven - the `?` key from anywhere and the top bar's
+// own control - along with the two things every modal in this application
+// owes its user: Escape closes it, and focus comes back to what opened it.
+// The rows themselves are shortcuts.js's, pinned to the README by
+// TestSPAKeyboardShortcutsMatchTheREADME.
+func TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var byKey, byButton, focused string
+	var reopenedFromOmnibar bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+
+		// The `?` key, from the page rather than from any control.
+		chromedp.KeyEvent("?"),
+		chromedp.WaitVisible(`.modal[data-kind="shortcuts"]`, chromedp.ByQuery),
+		// The shell's Escape handler lives in an effect, and this modal opens
+		// from a keystroke rather than a click - so the next key would
+		// otherwise land before the listener that answers it exists.
+		settleEffects(),
+		chromedp.Text(`.modal[data-kind="shortcuts"] .shortcuts`, &byKey, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		waitGone(`.modal`),
+
+		// A "?" typed into a text field is a character, not a command.
+		chromedp.Focus(`.omnibar`, chromedp.ByQuery),
+		chromedp.KeyEvent("?"),
+		settleEffects(),
+		chromedp.Evaluate(`Boolean(document.querySelector('.modal[data-kind="shortcuts"]'))`, &reopenedFromOmnibar),
+		chromedp.Blur(`.omnibar`, chromedp.ByQuery),
+
+		// The top bar's own control, and the focus it must get back.
+		chromedp.Click(`[data-action="shortcuts"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="shortcuts"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Text(`.modal[data-kind="shortcuts"] .shortcuts`, &byButton, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		waitGone(`.modal`),
+		chromedp.Evaluate(`document.activeElement?.dataset?.action ?? ""`, &focused),
+	)
+
+	assert.Contains(t, byKey, "Tab", "the help must list the traversal binding")
+	assert.Contains(t, byKey, "Esc", "and the one every overlay answers to")
+	assert.Contains(t, byKey, "step to the previous/next mod",
+		"the rows are the README's own words, not a second wording of them")
+	assert.Equal(t, byKey, byButton, "both ways in must open the same help")
+	assert.False(t, reopenedFromOmnibar,
+		"`?` typed into the omnibar is a character someone meant to search for")
+	assert.Equal(t, "shortcuts", focused,
+		"Escape must give focus back to the control that opened the modal")
+	assert.Empty(t, f.BrowserErrors())
+}

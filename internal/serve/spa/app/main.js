@@ -642,6 +642,20 @@ function openProfilesModal() {
   store.set({ modal: { type: "profiles" } });
 }
 
+/** openShortcutsModal opens the keyboard-shortcuts help (design doc §Modals,
+ * issue 334's gate review Important 3) - reachable from the top bar's own
+ * "?" control and from the `?` key on any screen. Read-only: it renders
+ * shortcuts.js's rows and has nothing to fetch or precompute.
+ *
+ * openerSelector names the top-bar control rather than trusting the captured
+ * activeElement, because the `?` key can open this from anywhere - including
+ * with focus on an element the modal's own confirm may have removed. */
+function openShortcutsModal() {
+  store.set({
+    modal: { type: "shortcuts", openerSelector: '[data-action="shortcuts"]' },
+  });
+}
+
 /** openUninstallBatchModal opens the library batch bar's "Uninstall
  * selected" (issue 332): ONE confirm modal over N selected mods' own uninstall
  * plans, never a second modal per mod ("modals stack at most one deep",
@@ -1312,6 +1326,7 @@ const actions = {
   canRetryInstallOverwrite,
   openReorderModal,
   openProfilesModal,
+  openShortcutsModal,
   openUninstallBatchModal,
   startBatchToggle,
   startUninstallBatch,

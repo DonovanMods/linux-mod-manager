@@ -8,7 +8,7 @@
 // to a mod page mid-deploy and the completion still has to find you, which
 // it cannot do from a component that just unmounted.
 
-import { html } from "../render.js";
+import { html, useEffect } from "../render.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { GameChooser } from "./gamechooser.js";
 import { MissionControl } from "./missioncontrol.js";
@@ -19,6 +19,7 @@ import { ConfirmPlanModal } from "./confirmplan.js";
 import { ReorderModal } from "./reordermodal.js";
 import { ProfilesModal } from "./profilesmodal.js";
 import { UninstallBatchModal } from "./uninstallbatchmodal.js";
+import { ShortcutsModal } from "./shortcutsmodal.js";
 import { Toasts } from "./toasts.js";
 
 /** The application root: reads the route and dispatches to its screen. The
@@ -26,6 +27,36 @@ import { Toasts } from "./toasts.js";
  * Mission Control's top bar carries the theme toggle for every other route. */
 export function App({ state, onThemeChange, actions }) {
   const { route, error } = state;
+
+  // `?` opens the keyboard-shortcuts help from any screen (issue 334's gate
+  // review, Important 3). Bound here rather than on a screen, because the
+  // help is about the whole application and every screen is meant to be
+  // keyboard-driven.
+  //
+  // Ignored while a text field has focus - "?" is a character someone is
+  // entitled to type into the omnibar or a rename box - and while any modal
+  // is already open, since modals stack at most one deep (design doc
+  // §Modals) and replacing whatever is open with help nobody asked for is
+  // worse than doing nothing.
+  const modalOpen = Boolean(state.modal);
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (e.key !== "?" || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (modalOpen) return;
+      const target = e.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+      ) {
+        return;
+      }
+      e.preventDefault();
+      actions.openShortcutsModal();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [modalOpen, actions]);
 
   // The overlays every route carries. Rendered as a Fragment beside the
   // screen rather than inside it, so switching screens cannot take a
@@ -66,6 +97,10 @@ export function App({ state, onThemeChange, actions }) {
         state=${state}
         actions=${actions}
       />`
+    }
+    ${
+      modalType === "shortcuts" &&
+      html`<${ShortcutsModal} modal=${state.modal} actions=${actions} />`
     }
     ${
       modalType === "uninstall-batch" &&

@@ -867,7 +867,8 @@ same plan-and-confirm every other mutation uses.
 modal (drag a row, or use its ↑ ↓ First Last buttons, with a live
 "current vs proposed winner" preview per contested path before Save
 commits), the **profiles** modal (create, rename, delete, set default,
-export, import), and a batch-uninstall confirm.
+export, import), the **keyboard shortcuts** help (`?`), and a
+batch-uninstall confirm.
 
 ### Keyboard
 
@@ -877,10 +878,15 @@ a visible ring in both themes.
 | Key                        | Where                                        | What it does                                                                                                   |
 | -------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `Tab` / `Shift+Tab`        | anywhere                                     | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
+| `?`                        | anywhere outside a text field                | open this keyboard-shortcuts help                                                                              |
 | `Enter`                    | omnibar                                      | search the game's sources for what you typed                                                                   |
 | `Esc`                      | any modal, the slide-over, any open dropdown | close it and return focus to whatever opened it                                                                |
 | `←` / `→`                  | the slide-over                               | step to the previous/next mod in the library's current order                                                   |
 | `←` / `→` / `Home` / `End` | the Setup page's section tabs                | move between sections                                                                                          |
+
+The same table is in the app itself: press `?` (or the **?** button beside
+**⚙ Setup**) to open it. It is generated from one list, so the two cannot
+drift.
 
 Focus is contained inside a modal and the slide-over while either is open,
 so `Tab` cannot wander onto the page behind the scrim. If your system asks
