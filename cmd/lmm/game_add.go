@@ -172,6 +172,16 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 			// pick second.
 			return err
 		}
+	} else if gameAddID != "" || gameAddQuery != "" || gameAddPick != 0 {
+		// The skip above takes the curated source map as-is and never reads
+		// --id/--query/--pick, so silently taking this branch would discard
+		// a value the user explicitly typed (#206 review, Important 3).
+		// --source is what tells resolveGameAddIdentity which of the
+		// curated map's entries the identifier names.
+		return &core.GameSpecError{
+			Field:  "source_id",
+			Reason: "--id/--query/--pick need --source when the detected game is curated",
+		}
 	}
 
 	if spec.Name == "" {

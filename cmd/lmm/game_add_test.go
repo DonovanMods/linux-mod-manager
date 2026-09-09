@@ -885,6 +885,30 @@ func TestDoGameAdd_FromDetected_UnknownAppID(t *testing.T) {
 	assert.Equal(t, "999999", specErr.Value)
 }
 
+// TestDoGameAdd_FromDetected_IDWithoutSourceOnCuratedGameIsRefused pins
+// Important 3 from the #206 review: a curated candidate's source map is
+// taken as-is with no source named, so --id/--query/--pick were silently
+// dropped with exit 0 - the worst shape for a value the user explicitly
+// typed. poisonReader proves the refusal never falls back to a prompt.
+func TestDoGameAdd_FromDetected_IDWithoutSourceOnCuratedGameIsRefused(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	fakeSteamGame(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
+	gameAddFromDetected, gameAddID = "489830", "TOTALLY-BOGUS"
+
+	cmd, _ := newGameAddCmd()
+	err := doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "source_id", specErr.Field)
+
+	saved, loadErr := config.LoadGames(configDir)
+	require.NoError(t, loadErr)
+	assert.Empty(t, saved, "nothing is written when the flag is refused")
+}
+
 // TestDoGameAdd_FromDetected_JSONEmitsTheGameDocument keeps the flag inside
 // Ruling 15: the add's one document on stdout, nothing else.
 func TestDoGameAdd_FromDetected_JSONEmitsTheGameDocument(t *testing.T) {
