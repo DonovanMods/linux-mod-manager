@@ -41,7 +41,8 @@ type Paths struct {
 }
 
 // ResolvePaths applies, in order: explicit overrides from opts, the XDG Base
-// Directory variables, and the legacy ~/.config and ~/.local/share defaults.
+// Directory variables when they name an absolute path, and the legacy
+// ~/.config and ~/.local/share defaults otherwise (#297).
 // The cache lives under the data directory unless config.yaml sets cache_path;
 // it is deliberately not placed under XDG_CACHE_HOME, because it holds
 // downloads that are expensive to fetch again and must not be treated as
@@ -73,31 +74,40 @@ func ResolvePaths(opts Options) (Paths, error) {
 	return p, nil
 }
 
-// resolveBaseDir returns <base>/lmm, where base is the XDG variable when it is
-// set to an absolute path (the spec requires relative values to be ignored)
-// and $HOME/<legacyRel> otherwise. When the XDG location does not exist yet
-// but the legacy one does, the legacy directory wins so installs that predate
-// XDG support keep finding their data. $HOME is consulted only on this path,
-// so a caller that supplies both directories explicitly never needs it (#277).
+// xdgValueIsAuthoritative is #297's policy, in one predicate: an XDG base
+// directory variable that names an ABSOLUTE path is an explicit instruction
+// and always decides where lmm reads and writes. Anything else - unset, or
+// relative (which the XDG spec requires be ignored) - leaves lmm free to
+// prefer a legacy directory that already exists.
+//
+// The ruling (#297, 2026-09-09) is option (a): silently writing into
+// ~/.local/share/lmm while XDG_DATA_HOME pointed elsewhere surprised the
+// user in the one case where they had said exactly what they wanted, and it
+// made a test harness that set XDG_* but left HOME alone corrupt the real
+// install. Kept as a named predicate so a different ruling is one function
+// away.
+func xdgValueIsAuthoritative(value string) bool {
+	return value != "" && filepath.IsAbs(value)
+}
+
+// resolveBaseDir returns <base>/lmm, where base is the XDG variable when it
+// is set to an absolute path and $HOME/<legacyRel> otherwise.
+//
+// An absolute XDG value wins outright, whether or not that directory exists
+// yet (xdgValueIsAuthoritative, #297). The legacy fallback - use
+// $HOME/<legacyRel>/lmm when it exists - therefore applies only when the
+// variable is unset or relative, which is the case an install that predates
+// XDG support is actually in: it never set the variable. $HOME is consulted
+// only on this path, so a caller that supplies both directories explicitly
+// never needs it (#277).
 func resolveBaseDir(envVar, legacyRel string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
 	legacy := filepath.Join(home, legacyRel, appDirName)
-	base := os.Getenv(envVar)
-	if base == "" || !filepath.IsAbs(base) {
-		return legacy, nil
+	if base := os.Getenv(envVar); xdgValueIsAuthoritative(base) {
+		return filepath.Join(base, appDirName), nil
 	}
-	xdg := filepath.Join(base, appDirName)
-	if xdg == legacy {
-		return xdg, nil
-	}
-	if _, err := os.Stat(xdg); err == nil {
-		return xdg, nil
-	}
-	if _, err := os.Stat(legacy); err == nil {
-		return legacy, nil
-	}
-	return xdg, nil
+	return legacy, nil
 }

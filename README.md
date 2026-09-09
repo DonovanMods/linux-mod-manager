@@ -1796,7 +1796,7 @@ lmm follows the XDG Base Directory specification. `--config` and `--data` overri
 | Mod Cache        | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)  |
 | Download Staging | `<data>/downloads/` (in-flight downloads and archive extraction)                                  |
 
-If an XDG variable is set but `$XDG_…/lmm` does not exist yet and the legacy `~/.config/lmm` or `~/.local/share/lmm` does, the legacy directory is used, so existing installs keep working after setting the variables. Move the directory to adopt the XDG location.
+**Precedence.** `--config`/`--data` win outright. Otherwise an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path decides, whether or not `$XDG_…/lmm` exists yet — setting the variable is an explicit instruction, and lmm never silently writes somewhere else (#297). Only when the variable is **unset** — or set to a relative path, which the XDG spec requires be ignored — does lmm fall back to the legacy `~/.config/lmm` / `~/.local/share/lmm`, which is the situation an install predating XDG support is in. If you set an XDG variable and want your existing data, move the directory to the new location (or point `--data`/`--config` at the old one).
 
 The mod cache location can be customized via `cache_path` in `config.yaml`. Setting a per-game `cache_path` in `games.yaml` changes that game's on-disk layout too: the global cache is `cache/<game-id>/<source-id>-<mod-id>/<version>/`, but a game-scoped `cache_path` drops the `<game-id>` segment since the configured directory is already specific to that game (`<cache_path>/<source-id>-<mod-id>/<version>/`).
 

@@ -56,10 +56,49 @@ func TestResolvePaths(t *testing.T) {
 			},
 		},
 		{
-			name: "legacy directories win when they exist and the XDG ones do not",
+			// #297: the legacy directory used to win here, so a script or
+			// test harness that set XDG_DATA_HOME and left HOME alone wrote
+			// into the real ~/.local/share/lmm.
+			name: "an explicit absolute XDG value wins even when only the legacy directory exists",
 			setup: func(t *testing.T, home string) Options {
 				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
 				t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg-data"))
+				mkdir(t, filepath.Join(home, ".config", "lmm"))
+				mkdir(t, filepath.Join(home, ".local", "share", "lmm"))
+				return Options{}
+			},
+			want: func(home string) Paths {
+				return Paths{
+					ConfigDir: filepath.Join(home, "xdg-config", "lmm"),
+					DataDir:   filepath.Join(home, "xdg-data", "lmm"),
+					CacheDir:  filepath.Join(home, "xdg-data", "lmm", "cache"),
+				}
+			},
+		},
+		{
+			// The other half of #297: with no XDG variable to honour, the
+			// legacy directory is still what an upgrading install finds.
+			name: "legacy directories are used when the XDG variables are unset",
+			setup: func(t *testing.T, home string) Options {
+				t.Setenv("XDG_CONFIG_HOME", "")
+				t.Setenv("XDG_DATA_HOME", "")
+				mkdir(t, filepath.Join(home, ".config", "lmm"))
+				mkdir(t, filepath.Join(home, ".local", "share", "lmm"))
+				return Options{}
+			},
+			want: func(home string) Paths {
+				return Paths{
+					ConfigDir: filepath.Join(home, ".config", "lmm"),
+					DataDir:   filepath.Join(home, ".local", "share", "lmm"),
+					CacheDir:  filepath.Join(home, ".local", "share", "lmm", "cache"),
+				}
+			},
+		},
+		{
+			name: "legacy directories are used when the XDG variables are relative",
+			setup: func(t *testing.T, home string) Options {
+				t.Setenv("XDG_CONFIG_HOME", "relative/config")
+				t.Setenv("XDG_DATA_HOME", "relative/data")
 				mkdir(t, filepath.Join(home, ".config", "lmm"))
 				mkdir(t, filepath.Join(home, ".local", "share", "lmm"))
 				return Options{}

@@ -154,6 +154,8 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 
 `<config>` is `$XDG_CONFIG_HOME/lmm` (default `~/.config/lmm`); `<data>` is `$XDG_DATA_HOME/lmm` (default `~/.local/share/lmm`).
 
+**Precedence** (#297): `--config`/`--data` win outright; then an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path, whether or not that directory exists yet; then — only when the variable is unset or set to a relative path, which the XDG spec requires be ignored — the legacy `~/.config/lmm` / `~/.local/share/lmm`. Setting an XDG variable is treated as an explicit instruction, so lmm never writes into the legacy directory behind your back; move your data (or point `--data`/`--config` at it) when you adopt the XDG location.
+
 | Path                                       | Description                                                             |
 | ------------------------------------------ | ----------------------------------------------------------------------- |
 | `<config>/config.yaml`                     | Global config                                                           |

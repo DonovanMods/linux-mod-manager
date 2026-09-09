@@ -90,6 +90,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Realm of Lorkhan_), in which case the tie is refused and the entry stays
     untracked rather than being attached to whichever mod sorts first.
 
+- **An absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME` now always wins over the
+  legacy directory (#297).** lmm used to prefer an existing
+  `~/.config/lmm` / `~/.local/share/lmm` when the XDG location did not
+  exist yet — including when the user had set the variable explicitly, so
+  a script (or a test harness that set `XDG_DATA_HOME` but left `HOME`
+  alone) silently read and wrote the real install instead of the sandbox
+  it asked for. Setting an XDG variable to an absolute path is now an
+  explicit instruction and decides the location whether or not that
+  directory exists. The legacy fallback still applies when the variable is
+  unset or relative (the XDG spec requires relative values be ignored),
+  which is the case an install predating XDG support is actually in.
+  `--config`/`--data` are unchanged and still beat both. Move the
+  directory (or pass `--data`/`--config`) to keep existing data after
+  setting an XDG variable.
+
 - **`lmm search --limit N` fills against a source that reports its page
   cap (#361).** #109's paging loop stops a source that could not honour the
   page size it was asked for, because its next offset would skip the rows
