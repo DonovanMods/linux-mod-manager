@@ -13,12 +13,12 @@
 
 import { html, useEffect, useRef, useState } from "../render.js";
 import { navigate, contextPath, setupPath } from "../router.js";
-import { currentTheme, cycleTheme } from "../theme.js";
 import { SetupGames } from "./setupgames.js";
 import { SetupAuth } from "./setupauth.js";
 import { SetupSources } from "./setupsources.js";
 import { SetupImportArchive } from "./setupimport.js";
 import { SetupAdopt } from "./setupadopt.js";
+import { AwayBar } from "./awaybar.js";
 
 const SECTIONS = [
   { key: "games", label: "Games" },
@@ -27,18 +27,6 @@ const SECTIONS = [
   { key: "archive", label: "Archive import" },
   { key: "adopt", label: "Adopt" },
 ];
-
-function BackLink({ to }) {
-  return html`<a
-    class="mod-page__back"
-    href=${to}
-    onClick=${(e) => {
-      e.preventDefault();
-      navigate(to);
-    }}
-    >← Back to library</a
-  >`;
-}
 
 export function SetupPage({ state, route, onThemeChange, actions }) {
   const [section, setSection] = useState(
@@ -88,17 +76,13 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
 
   const home = contextPath(route.game, route.profile);
   const header = html`
-    <header class="app-bar">
-      <span class="app-bar__brand">LMM</span>
-      <${BackLink} to=${home} />
-      <button
-        type="button"
-        class="theme-toggle"
-        onClick=${() => onThemeChange(cycleTheme())}
-      >
-        Theme: ${currentTheme()}
-      </button>
-    </header>
+    <${AwayBar}
+      state=${state}
+      route=${route}
+      home=${home}
+      onThemeChange=${onThemeChange}
+      actions=${actions}
+    />
   `;
 
   if (state.error) {

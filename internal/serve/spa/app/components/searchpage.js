@@ -17,22 +17,10 @@
 // round trip; its own label says so (Important 1c).
 
 import { html, useMemo, useState } from "../render.js";
-import { navigate, contextPath } from "../router.js";
-import { currentTheme, cycleTheme } from "../theme.js";
+import { contextPath } from "../router.js";
 import { SourceResultsList } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
-
-function BackLink({ to }) {
-  return html`<a
-    class="mod-page__back"
-    href=${to}
-    onClick=${(e) => {
-      e.preventDefault();
-      navigate(to);
-    }}
-    >← Back to library</a
-  >`;
-}
+import { AwayBar } from "./awaybar.js";
 
 export function SearchPage({ state, route, onThemeChange, actions }) {
   // Hooks run unconditionally, before any of the branches below return -
@@ -62,17 +50,13 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
 
   const home = contextPath(route.game, route.profile);
   const header = html`
-    <header class="app-bar">
-      <span class="app-bar__brand">LMM</span>
-      <${BackLink} to=${home} />
-      <button
-        type="button"
-        class="theme-toggle"
-        onClick=${() => onThemeChange(cycleTheme())}
-      >
-        Theme: ${currentTheme()}
-      </button>
-    </header>
+    <${AwayBar}
+      state=${state}
+      route=${route}
+      home=${home}
+      onThemeChange=${onThemeChange}
+      actions=${actions}
+    />
   `;
 
   if (!query) {

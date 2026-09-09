@@ -38,43 +38,27 @@
 // what ApplyRollback/ApplyUpdate would refuse server-side anyway.
 
 import { html, useEffect, useMemo, useState } from "../render.js";
-import { navigate, contextPath } from "../router.js";
-import { currentTheme, cycleTheme } from "../theme.js";
+import { contextPath } from "../router.js";
 import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
+import { AwayBar } from "./awaybar.js";
 
 /** BackLink is this page's one route out - always to Mission Control as it
  * stood, never the browser's own history stack. */
-function BackLink({ to }) {
-  return html`<a
-    class="mod-page__back"
-    href=${to}
-    onClick=${(e) => {
-      e.preventDefault();
-      navigate(to);
-    }}
-    >← Back to library</a
-  >`;
-}
-
 export function FullModPage({ state, route, onThemeChange, actions }) {
   const home = contextPath(route.game, route.profile);
   const modPage = state.modPage;
   const key = `${route.sourceID}/${route.modID}`;
 
   const header = html`
-    <header class="app-bar">
-      <span class="app-bar__brand">LMM</span>
-      <${BackLink} to=${home} />
-      <button
-        type="button"
-        class="theme-toggle"
-        onClick=${() => onThemeChange(cycleTheme())}
-      >
-        Theme: ${currentTheme()}
-      </button>
-    </header>
+    <${AwayBar}
+      state=${state}
+      route=${route}
+      home=${home}
+      onThemeChange=${onThemeChange}
+      actions=${actions}
+    />
   `;
 
   // Loading until the PRIMARY read has landed one way or the other:

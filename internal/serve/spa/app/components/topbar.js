@@ -13,13 +13,14 @@
 // "Manage profiles…" is still present and disabled - it is Unit 6's, and
 // the pre-flight forbids forking the framework early to land it sooner.
 
-import { html, useEffect, useRef, useState } from "../render.js";
+import { html, useCallback, useEffect, useRef, useState } from "../render.js";
 import { navigate, contextPath, setupPath } from "../router.js";
 import { currentTheme, cycleTheme } from "../theme.js";
 import { resolveGamePath } from "../navigation.js";
 import { countUndeployed } from "../modrows.js";
 import { InlineJob } from "./jobprogress.js";
 import { ActivityBell } from "./tray.js";
+import { useDismissOnOutsideOrEscape } from "../dismiss.js";
 
 // DEPLOY_ORIGIN is the key the top bar's Deploy control morphs on. Origins
 // are stable strings, one per control (jobprogress.js) - a later unit's
@@ -117,34 +118,14 @@ export function TopBar({
     if (deepLinkJob) setOpenPicker("activity");
   }, [deepLinkJob]);
 
-  useEffect(() => {
-    if (openPicker === null) return;
-    function handlePointerDown(e) {
-      if (barRef.current && !barRef.current.contains(e.target)) {
-        setOpenPicker(null);
-      }
-    }
-    function handleKeyDown(e) {
-      if (e.key !== "Escape") return;
-      // Focus goes back to the trigger that owns this dropdown (issue 334's
-      // a11y pass). Without it Escape closes the menu and leaves the
-      // keyboard nowhere - the focused menu item has just been removed from
-      // the document, so the next Tab restarts from the top of the page.
-      // Queried fresh here rather than captured at open: the trigger is
-      // re-rendered while the menu is up (its own aria-expanded changes).
-      const trigger = barRef.current?.querySelector(
-        `[data-picker="${openPicker}"]`,
-      );
-      setOpenPicker(null);
-      if (trigger instanceof HTMLElement) trigger.focus();
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [openPicker]);
+  // The outside-click/Escape rule is dismiss.js's, shared with the
+  // away-from-home routes' own bar (awaybar.js) since they gained the same
+  // activity bell.
+  useDismissOnOutsideOrEscape(
+    barRef,
+    openPicker,
+    useCallback(() => setOpenPicker(null), []),
+  );
 
   return html`
     <header class="app-bar" ref=${barRef}>

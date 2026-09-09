@@ -2477,11 +2477,15 @@ func TestE2E_ConflictOverwriteRoundTripSucceeds(t *testing.T) {
 // TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage is I4 (unit 5
 // fix wave): installing from the DEDICATED SEARCH PAGE and hitting a
 // conflict used to be a dead end there - app.js renders SearchPage with no
-// TopBar, so there is no activity bell/tray on that route at all, and the
+// TopBar, so there was no activity bell/tray on that route at all, and the
 // tray was the ONLY place the Overwrite affordance rendered. tray.js's own
 // OverwriteButton now renders INLINE beside the failed row's own job chip
-// (jobprogress.js), so this scenario completes without a tray anywhere in
-// reach.
+// (jobprogress.js), so this scenario completes on the ROW alone.
+//
+// The search page has since regained the frame's own bell (I-6, epic live
+// review), so the scenario no longer proves the row is the only way in by
+// the tray's absence. It proves it directly instead: the tray is never
+// opened, and the round trip completes from the row.
 func TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 	deployedPath := filepath.Join(f.Game.ModPath, filepath.FromSlash(e2eSearchDeployedFile))
@@ -2497,11 +2501,11 @@ func TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage(t *testing.T) {
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
 	)
 
-	var trayPresent bool
+	var trayOpen bool
 	f.runInBrowser(t,
-		chromedp.Evaluate(`document.querySelector(".activity-bell__trigger") !== null`, &trayPresent),
+		chromedp.Evaluate(`document.querySelector(".tray") !== null`, &trayOpen),
 	)
-	require.False(t, trayPresent, "the search page has no top bar/tray at all - the row is the only way in")
+	require.False(t, trayOpen, "nothing opens the tray here - the row is the only way in")
 
 	f.runInBrowser(t,
 		chromedp.Click(row+` button[data-action="overwrite"]`, chromedp.ByQuery),
@@ -4687,7 +4691,7 @@ func TestE2E_Keyboard_ModalContainsFocusAndGivesItBack(t *testing.T) {
 	var focused string
 	f.runInBrowser(t,
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? ""`, &focused),
 	)
 	assert.Equal(t, "deploy", focused,
@@ -5481,4 +5485,66 @@ func TestE2E_EveryRouteRendersExactlyOneH1(t *testing.T) {
 	)
 	assert.Equal(t, 1, firstRunH1s, "first run must render exactly one <h1>")
 	assert.Empty(t, firstRun.BrowserErrors())
+}
+
+// TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp is I-6 of the
+// epic live review.
+//
+// The three routes that leave home - Setup, the full mod page, the search
+// page - each hand-rolled their own header (brand, "← Back to library",
+// theme) and between them dropped the whole frame. Start a long archive
+// import from Setup and there was no tray to watch it in; a deploy running
+// in another tab was invisible there; the `?` key still worked but the
+// button naming it was gone. Those are frame concerns, not home concerns.
+//
+// The bell is opened on each route, not merely counted, because a bell that
+// renders and cannot open its tray would pass a presence check and still
+// leave the user with nowhere to watch a job.
+func TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "a"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+		{"setup", f.HomePath() + "/setup", `.setup-page`},
+	}
+	for _, route := range routes {
+		var shortcutsButtons int
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+			chromedp.Evaluate(`document.querySelectorAll('[data-action="shortcuts"]').length`, &shortcutsButtons),
+			// Escape closes it and hands the keyboard back to the trigger -
+			// the same rule the home bar's dropdowns obey, now that both bars
+			// share one implementation of it (dismiss.js). settleEffects
+			// first: that listener is installed by an effect, and Preact
+			// flushes effects after paint, which a headless browser is often
+			// not doing.
+			settleEffects(),
+			chromedp.KeyEvent(kb.Escape),
+			waitGone(`.tray`),
+		)
+		assert.Equal(t, 1, shortcutsButtons,
+			"%s must offer the keyboard help, exactly once", route.name)
+	}
+
+	var focused string
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="shortcuts"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="shortcuts"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? ""`, &focused),
+	)
+	assert.Equal(t, "shortcuts", focused,
+		"the help opened from Setup's own bar must return focus to the button that opened it")
+	assert.Empty(t, f.BrowserErrors())
 }
