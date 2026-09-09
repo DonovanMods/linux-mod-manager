@@ -198,6 +198,41 @@ func TestAdoptBestCandidateRejectsEveryWeakHit(t *testing.T) {
 	assert.Less(t, score, adoptMatchThreshold)
 }
 
+// TestAdoptBestCandidateRefusesAHeadSegmentTie is the Track C re-review's
+// N5: a scanned "Alternate Start" matches the HEAD of two different real
+// mods, both capped at adoptHeadSegmentCap, so the pair ties exactly and
+// the source-ID/mod-ID tie-break would silently pick one of them. Two real
+// mods that are equally good matches are precisely the ambiguity #27 exists
+// to decline, so the entry stays untracked.
+func TestAdoptBestCandidateRefusesAHeadSegmentTie(t *testing.T) {
+	candidates := []domain.Mod{
+		{ID: "1", SourceID: "alpha", Name: "Alternate Start - Live Another Life"},
+		{ID: "2", SourceID: "alpha", Name: "Alternate Start - Realm of Lorkhan"},
+	}
+	best, score := adoptBestCandidate("Alternate Start", "", candidates)
+	assert.Nil(t, best, "two head-segment matches tied exactly must not be resolved by mod ID")
+	assert.InDelta(t, adoptHeadSegmentCap, score, 1e-9, "the nearest-miss score is still reported")
+
+	// The same catalogue with only ONE of the two still adopts: the refusal
+	// is about the ambiguity, not about head-segment matches as such.
+	best, _ = adoptBestCandidate("Alternate Start", "", candidates[:1])
+	require.NotNil(t, best)
+	assert.Equal(t, "1", best.ID)
+}
+
+// TestAdoptBestCandidateBreaksANonHeadTie keeps the ordinary tie-break in
+// place: two candidates carrying the SAME full name are the same mod listed
+// twice (or on two sources), which the deterministic order resolves.
+func TestAdoptBestCandidateBreaksANonHeadTie(t *testing.T) {
+	candidates := []domain.Mod{
+		{ID: "2", SourceID: "alpha", Name: "Bigger Backpack"},
+		{ID: "1", SourceID: "alpha", Name: "Bigger Backpack"},
+	}
+	best, _ := adoptBestCandidate("Bigger Backpack", "", candidates)
+	require.NotNil(t, best)
+	assert.Equal(t, "1", best.ID)
+}
+
 // TestAdoptScoreRefusesNearNames is the first of the two realistic tables
 // the Track C review supplied (review finding 2). Every row is a pair of
 // DIFFERENT mods whose names are one sequel digit or one letter apart - the

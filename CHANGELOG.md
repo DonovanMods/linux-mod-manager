@@ -79,12 +79,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   short of an exact name with its band — in the CLI and in `lmm serve`'s
   adopt plan alike. Three differences are refused outright however close the
   rest of the name is: a differing sequel number (_Sim Settlements 2_ is
-  never _Sim Settlements 3_), any difference at all in a name shorter than
-  twelve letters (_Vortex_ is never _Vertex_), and whole extra words
-  (_RaceMenu_ is not _RaceMenu Special Edition_). A subtitle set off by
-  punctuation is the exception, so the common catalogue shape still adopts:
-  _Ordinator_ matches _Ordinator - Perks of Skyrim_, always as a
-  `[probable match]` so the elided subtitle is visible before you confirm.
+  never _Sim Settlements 3_), any difference at all in a pair whose longer
+  name is under twelve letters (_Vortex_ is never _Vertex_, and _SkyUI_ is
+  never _SkyUI SE_), and whole extra words (_RaceMenu_ is not _RaceMenu
+  Special Edition_). A subtitle set off by punctuation is the exception, so
+  the common catalogue shape still adopts: _Ordinator_ matches _Ordinator -
+  Perks of Skyrim_, always as a `[probable match]` so the elided subtitle is
+  visible before you confirm — unless two catalogue rows hang subtitles off
+  the SAME name (_Alternate Start - Live Another Life_ and _Alternate Start
+  - Realm of Lorkhan_), in which case the tie is refused and the entry stays
+    untracked rather than being attached to whichever mod sorts first.
 
 - **CurseForge update checks are one request per 50 mods, not one per mod
   (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
@@ -116,9 +120,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after ranking is indistinguishable from a complete answer. So `--limit
 100` may still come back with fewer than 100 results, and `has_more` says
   so, but every result really is among the first ones its source had. A
-  source that fails on a later page is reported exactly like one that fails
-  on its first — a warning, with the hits its earlier pages returned kept —
-  and no longer counts as exhausted. CurseForge now clamps and reports its
+  source that reports no total and hands over its whole catalogue in one
+  short page cannot be told apart from one that was clamped, so `has_more`
+  stays deliberately optimistic there — the safe direction, since the next
+  page is merely empty. A source that fails on ANY page — its first as much
+  as a later one — is reported the same way (a warning, with the hits its
+  earlier pages returned kept) and no longer counts as exhausted, so a plain
+  single-round search can now answer `has_more: true` where it used to claim
+  the sources were exhausted. CurseForge now clamps and reports its
   own effective page size so its offsets stay contiguous. `lmm serve`
   inherits all of it through `/api/v1/search?limit=`; the search page's own
   `?page=`/`?page_size=` pagination (no `?limit=`) is deliberately

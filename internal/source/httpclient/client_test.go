@@ -215,7 +215,6 @@ func TestDoJSON_ContextCancellationPropagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "context canceled")
 }
 
-// TestDoJSONBody covers the body-carrying variant added for CurseForge's
 // TestCappedAndUncappedReadsDecodeIdentically is the Track C review's
 // finding 9: MaxResponseBytes switched the decode from a streaming
 // json.Decoder to json.Unmarshal over the buffered payload, and the two
@@ -263,6 +262,7 @@ func TestCappedAndUncappedReadsDecodeIdentically(t *testing.T) {
 	}
 }
 
+// TestDoJSONBody covers the body-carrying variant added for CurseForge's
 // batch POST /v1/mods (#28): the body is sent as JSON with a Content-Type,
 // the auth header still rides along, and non-2xx responses map exactly as
 // DoJSON's do.

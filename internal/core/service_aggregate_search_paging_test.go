@@ -314,6 +314,43 @@ func TestSearchLimitIsFilledByPaging(t *testing.T) {
 	assert.True(t, report.HasMore)
 }
 
+// TestSearchPagingHasMoreStaysOptimisticWithoutATotal pins the Track C
+// re-review's N4 - a deliberate over-claim, so it does not drift by
+// accident. A source that reports no TotalCount and hands over its ENTIRE
+// catalogue in one short page is indistinguishable from one that was
+// clamped: both answer short, and NexusMods (which reports neither) is the
+// real instance. Core therefore answers has_more: true, and the same query
+// without a limit - which runs the single-round path and its
+// requested-size arithmetic - answers false. Over-claiming costs the user
+// an empty next page; under-claiming would hide rows a clamped source
+// really does still have, so the optimism is the right direction.
+func TestSearchPagingHasMoreStaysOptimisticWithoutATotal(t *testing.T) {
+	newStub := func() *pagingStubSource {
+		st := newPagingStub("nototal", 3, 10)
+		st.reportTotal = false
+		return st
+	}
+
+	paged := newStub()
+	svc, game := newAggregateTestService(t, map[string]string{"nototal": ""}, paged)
+	report, err := svc.Search(context.Background(), game, "default", "mod",
+		core.SearchOptions{Page: 0, PageSize: 10, Limit: 10})
+	require.NoError(t, err)
+	assert.Len(t, report.Mods, 3, "the whole catalogue came back in one page")
+	assert.Equal(t, []int{0}, paged.requestedPages(), "a short page is never asked again")
+	assert.True(t, report.HasMore,
+		"a short page from a source reporting no total is ambiguous, and core over-claims deliberately")
+
+	single := newStub()
+	svc2, game2 := newAggregateTestService(t, map[string]string{"nototal": ""}, single)
+	plain, err := svc2.Search(context.Background(), game2, "default", "mod",
+		core.SearchOptions{Page: 0, PageSize: 10})
+	require.NoError(t, err)
+	assert.Len(t, plain.Mods, 3)
+	assert.False(t, plain.HasMore,
+		"the single-round path keeps sourceHasMore verbatim, so the same query answers differently")
+}
+
 // TestSearchLimitStopsShortOfAClampingSource pins the OTHER half of the
 // bargain, and the shape `lmm search --limit N` itself has (the CLI asks
 // for a page size equal to the limit, cmd/lmm/search.go's searchPageSize):
