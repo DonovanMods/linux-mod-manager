@@ -847,6 +847,27 @@ first-run flow and shares those same detect/add forms — **and the
 custom-source editor**, because a game can only be added against a source
 that already exists and nothing about defining one is game-scoped.
 
+Steam detection lists every installed game it finds, not only the curated
+ones: a curated row is badged **Known** and adds by ticking its checkbox
+same as always, while a game lmm has no known-games entry for is shown
+beside it — never hidden — with an **Add with details…** action instead of
+a checkbox (it has no scan index to select with). That opens the manual add
+form pre-filled from the scan: the display name, a read-only install path,
+and the Advanced section's game id, all as the scan reported them; the mod
+path field shows `<install path>/mods` as a placeholder guess, editable
+like any other field. Picking a mod source then auto-searches its catalog
+by the detected game's own name and highlights a single exact-name match
+without submitting anything — the same suggestion `lmm game add
+--from-detected` makes non-interactively, just requiring a click here
+instead of taking it silently. The manual add form also gets its own **Pick
+an installed game…** control — the identical picker and prefill, reachable
+without going through the detect list first, for when you already know you
+want the manual form. Either path submits with `from_steam_app_id` plus
+only the fields you actually changed; the browser never invents a slug, a
+mod path or a source map of its own. If the scan that offered a game goes
+stale (it was uninstalled between the scan and the submit), the form says
+so by name and offers a **Rescan** rather than a dead end.
+
 ### Flows
 
 **Every mutation works the same way**, and it is the CLI's own way: the plan

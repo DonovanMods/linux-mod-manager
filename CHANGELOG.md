@@ -82,6 +82,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `POST /api/v1/games/detect` is a 400 pointing at that member.
   `domain.DetectedGame` gains an additive `known` flag.
 
+  The web UI's Setup → Games "Detect games" (and the first-run flow it
+  shares) scans wide too: a curated row is badged **Known** and still adds
+  by ticking its checkbox, and an uncurated one is shown beside it - never
+  hidden - with an **Add with details…** action in place of a checkbox (it
+  has no scan index to select with). That opens the manual add form
+  pre-filled from the scan for display - name, a read-only install path,
+  the mod path shown as `<install path>/mods` in the field's placeholder
+  and editable, the Advanced section's game id - then choosing a source
+  auto-searches its catalog by the detected game's own name and highlights
+  a single exact-name match without submitting anything (a click stands in
+  for the CLI's own non-interactive auto-pick). The manual add form also
+  gained its own **Pick an installed game…** control - the identical picker
+  and prefill, reachable without going through the detect list first.
+  Either path submits `from_steam_app_id` plus only the fields actually
+  edited, so the browser derives no slug, mod path or source map of its
+  own; a scan that has gone stale by submit time (the game was uninstalled
+  in between) names itself and offers a **Rescan** instead of a dead end.
+
 - **`lmm game edit` — change a configured game's sources (#326).** Which
   mod sources a game maps could only ever be set when the game was created,
   so a custom source added later (`lmm source add`, or the web UI's Setup →
