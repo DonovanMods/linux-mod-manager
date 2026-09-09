@@ -22,6 +22,26 @@ export function PurgePlanView({ plan, modal, actions }) {
   const mods = plan.mods ?? [];
   const hooks = plan.hooks ?? [];
 
+  // The type-the-name gate renders on BOTH branches (MIN-4, the closing
+  // wave's gate review). confirmplan.js's typedNameFor.purge demands
+  // plan.profile back for this kind whatever the plan says, so an early
+  // return without the input left Confirm permanently disabled with nothing
+  // on screen explaining why. Harmless - there is nothing to purge - but
+  // undocumented, and it would break outright the moment the input moved.
+  const confirmName = html`
+    <label class="plan__confirm-name">
+      <span>Type <span class="mono">${plan.profile}</span> to confirm</span>
+      <input
+        type="text"
+        name="purge-confirm"
+        autocomplete="off"
+        aria-label=${`Type ${plan.profile} to confirm the purge`}
+        value=${modal?.confirmationText ?? ""}
+        onInput=${(e) => actions.setPlanConfirmationText(e.currentTarget.value)}
+      />
+    </label>
+  `;
+
   if (mods.length === 0) {
     return html`
       <div class="plan plan--purge">
@@ -29,6 +49,7 @@ export function PurgePlanView({ plan, modal, actions }) {
           Nothing to purge: profile <span class="mono">${plan.profile}</span>
           has no installed mods.
         </p>
+        ${confirmName}
       </div>
     `;
   }
@@ -81,19 +102,7 @@ export function PurgePlanView({ plan, modal, actions }) {
           </section>
         `
       }
-
-      <label class="plan__confirm-name">
-        <span>Type <span class="mono">${plan.profile}</span> to confirm</span>
-        <input
-          type="text"
-          name="purge-confirm"
-          autocomplete="off"
-          aria-label=${`Type ${plan.profile} to confirm the purge`}
-          value=${modal?.confirmationText ?? ""}
-          onInput=${(e) =>
-            actions.setPlanConfirmationText(e.currentTarget.value)}
-        />
-      </label>
+      ${confirmName}
 
       <${PlanAdvanced}>
         <${PlanOption}

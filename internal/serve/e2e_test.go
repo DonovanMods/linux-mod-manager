@@ -6014,6 +6014,49 @@ func installFromOmnibar(t *testing.T, f e2eSearchFixture, query, row string, ski
 	)
 }
 
+// TestE2E_PurgeOfAnEmptyProfileStillOffersItsConfirmGate is MIN-4 of the
+// closing wave's gate review.
+//
+// plan_purge.js returned early on an empty plan WITHOUT rendering the
+// type-the-profile-name input, while confirmplan.js's typedNameFor.purge
+// still demands that name back for this kind - so Confirm sat permanently
+// disabled with nothing on screen explaining why. Nothing was lost (there
+// is nothing to purge), but a control that cannot be operated and does not
+// say why is a bug report waiting to happen, and it would break outright
+// the moment the input moved.
+func TestE2E_PurgeOfAnEmptyProfileStillOffersItsConfirmGate(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var note string
+	var beforeTyping, afterTyping bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="purge-profile"][data-profile="default"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="purge"] .plan`, chromedp.ByQuery),
+		textContent(`.modal .plan__note`, &note),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &beforeTyping),
+		chromedp.SendKeys(`input[name="purge-confirm"]`, "default", chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('.modal [data-action="confirm"]').disabled === false`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &afterTyping),
+	)
+
+	assert.Contains(t, note, "Nothing to purge",
+		"the empty plan still says what it found")
+	assert.True(t, beforeTyping, "and still gates Confirm behind the profile name")
+	assert.False(t, afterTyping, "which the user can now actually satisfy")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_PurgeFromTheProfilesModalEmptiesTheGameDirectory is C-3's purge
 // half.
 //
