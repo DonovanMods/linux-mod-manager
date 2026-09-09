@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -523,6 +524,38 @@ func TestDoGameDetect_OnlyUnknownFound_NoPrompt(t *testing.T) {
 	assert.Contains(t, buf.String(), "Installed but not in the known-games list")
 	assert.NotContains(t, buf.String(), "Add games to config?")
 	assert.False(t, strings.HasPrefix(buf.String(), "\n"), "no known games means no earlier section, so no leading blank line either (#206 review Minor 11)")
+}
+
+// TestDoGameDetect_JSON_AllWithOnlyUnknownGames_WarnsInsteadOfEmptySuccess
+// pins unit9 review Minor 11: `--include-unknown --all --json` on a library
+// whose only installed games are uncurated used to emit
+// {"saved":[],"profiles":[],"warnings":[]} and exit 0 - the user asked to
+// add everything and was told nothing, silently.
+func TestDoGameDetect_JSON_AllWithOnlyUnknownGames_WarnsInsteadOfEmptySuccess(t *testing.T) {
+	configDir = t.TempDir()
+	withJSONOutput(t)
+	oldAll, oldIncludeUnknown := gameDetectAll, gameDetectIncludeUnknown
+	gameDetectAll, gameDetectIncludeUnknown = true, true
+	t.Cleanup(func() { gameDetectAll, gameDetectIncludeUnknown = oldAll, oldIncludeUnknown })
+
+	games := []steam.DetectedGame{
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
+	}
+
+	svc := newGameDetectTestService(t)
+	cmd := &cobra.Command{}
+	cmd.SetOut(&strings.Builder{})
+
+	out := captureStdout(t, func() error {
+		return doGameDetect(context.Background(), cmd, bufio.NewReader(poisonReader{t}), svc, games, nil)
+	})
+
+	var result core.GameDetectResult
+	require.NoError(t, json.Unmarshal([]byte(out), &result))
+	assert.Empty(t, result.Saved)
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "1 installed game(s) are not in the known-games list")
+	assert.Contains(t, result.Warnings[0], "cannot be added by --all/--select")
 }
 
 // TestDoGameDetect_ConsoleNumberingMatchesListingIndex is the agreement

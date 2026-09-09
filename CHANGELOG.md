@@ -77,7 +77,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries those rows at all — pass the flag to see them, as on a terminal).
   If a plain scan finds no known games but this machine has other installed
   Steam games with no known-games entry, it says how many and names
-  `--include-unknown`, instead of reporting nothing found.
+  `--include-unknown`, instead of reporting nothing found. `--all`/
+  `--select` under `--json` in that same situation - nothing selectable, so
+  nothing to add - carries a warning saying so instead of a silent
+  `{"saved":[],...}`.
 
   On the web side, `GET /api/v1/games/detect?all=1` returns the same
   listing widened with those rows (no `known` member at all — absent means

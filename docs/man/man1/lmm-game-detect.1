@@ -47,7 +47,9 @@ scan (no --include-unknown) never carries those rows at all, known or not
 If a plain scan finds no known games but this machine has OTHER installed
 Steam games lmm has no known-games entry for, it says so and names
 --include-unknown, instead of reporting "No moddable Steam games found" -
-the game is right there, just not curated yet.
+the game is right there, just not curated yet. --all/--select in that same
+situation - nothing here is selectable, so nothing gets added - carries a
+warning saying so (under --json too) instead of a silent empty success.
 
 .PP
 Examples:
