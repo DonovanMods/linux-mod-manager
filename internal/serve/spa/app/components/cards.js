@@ -164,7 +164,7 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
 
   return html`
     <div class="card card--updates">
-      <p class="card__title">⬆ Updates (${rows.length})</p>
+      <h2 class="card__title">⬆ Updates (${rows.length})</h2>
       ${
         error
           ? html`<${CardError}
@@ -275,9 +275,9 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
 
   return html`
     <div class="card card--health">
-      <p class="card__title">
+      <h2 class="card__title">
         ⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}
-      </p>
+      </h2>
       ${
         lastVerified &&
         html`<p class="card__meta" data-testid="health-last-verified">
@@ -445,7 +445,7 @@ function ProfileCard({ state, notInstalled, notListed, actions }) {
 
   return html`
     <div class="card card--profile">
-      <p class="card__title">${`◎ Profile (${notInstalled || notListed})`}</p>
+      <h2 class="card__title">${`◎ Profile (${notInstalled || notListed})`}</h2>
       <ul class="card__list">
         <li class="card__row">
           <span class="card__row-name">${sentence}</span>
@@ -520,7 +520,7 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
 
   return html`
     <div class="card card--conflicts">
-      <p class="card__title">⇄ Conflicts (${rows.length})</p>
+      <h2 class="card__title">⇄ Conflicts (${rows.length})</h2>
       ${
         error
           ? html`<${CardError}

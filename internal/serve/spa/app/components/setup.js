@@ -132,6 +132,20 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
         aria-labelledby=${`setup-tab-${section}`}
       >
         ${
+          // IMP-2 of the closing wave's gate review: this page's five
+          // sections contributed no headings at all, so a screen-reader
+          // user navigating Setup by heading got "Setup" and then nothing.
+          // aria-labelledby (above) names the panel but creates no heading,
+          // and the section's VISIBLE title is its own tab - drawing it a
+          // second time inside the panel would say the same thing twice.
+          // So: a real <h2>, announced rather than drawn, the same call
+          // Mission Control's own <h1> makes. It moves with the tab, which
+          // is what makes each of the five a real heading in turn.
+          html`<h2 class="section-header visually-hidden">
+            ${SECTIONS.find((s) => s.key === section)?.label ?? "Setup"}
+          </h2>`
+        }
+        ${
           section === "games" &&
           html`<${SetupGames}
             actions=${actions}

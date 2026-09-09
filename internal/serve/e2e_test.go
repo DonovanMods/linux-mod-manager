@@ -5488,6 +5488,113 @@ func TestE2E_EveryRouteRendersExactlyOneH1(t *testing.T) {
 	assert.Empty(t, firstRun.BrowserErrors())
 }
 
+// headingTexts returns every h1/h2 the document currently renders, tagged
+// with its level - so an assertion can say both "these are the sections"
+// and "they are the level they claim to be".
+func headingTexts(selector string, out *[]string) chromedp.Action {
+	return chromedp.Evaluate(
+		`Array.from(document.querySelectorAll(`+"`"+selector+"`"+`)).map(h => h.textContent.trim().replace(/\s+/g, " "))`,
+		out,
+	)
+}
+
+// TestE2E_EveryRouteRendersItsSectionsAsHeadings is IMP-2's ratchet, and
+// TestE2E_EveryRouteRendersExactlyOneH1's sibling.
+//
+// The h1 ratchet counts h1s only, which is why it stayed green through the
+// half of I-3 that never landed: Mission Control's four attention cards
+// were still <p class="card__title"> and Setup's five sections contributed
+// no heading at all, so the two screens a user spends the most time on
+// answered heading navigation with "h1 → Library" and "h1" respectively.
+// The CHANGELOG's a11y paragraph claims "its sections are real headings",
+// and this is what makes that sentence checkable.
+//
+// The expected SET, not merely a count: a count cannot tell a section that
+// regressed to a <p> from one that was renamed, and this ratchet's whole
+// job is to notice a heading quietly becoming a styled paragraph again.
+// The fixture is the one that renders all four cards at once
+// (newE2EFixtureWithAttention: an available update, two health findings, a
+// real file conflict, and a mod installed but absent from the profile) -
+// a fixture where a card happened not to render would ratchet nothing.
+func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var home []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll("h2").length === 5`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		headingTexts("h2", &home),
+	)
+	assert.Equal(t, []string{
+		"⬆ Updates (1)", "⚠ Health (2)", "◎ Profile (1)", "⇄ Conflicts (1)", "Library (3)",
+	}, home, "Mission Control's four attention cards and its library are its sections")
+
+	var modPage []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "boots")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll(".mod-page h2").length === 5`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		headingTexts(".mod-page h2", &modPage),
+	)
+	// One level for all of them (MIN-3): Findings/Conflicts used to be h2
+	// while Description/Changelog/Files/Versions/Job history were h3 - and
+	// the h3s came AFTER the h2s, so they read as children of "Findings".
+	// This row is the mix itself: Findings (the old h2) beside four of the
+	// old h3s.
+	assert.Equal(t, []string{"Findings (2)", "Changelog", "Files", "Versions", "Job history"}, modPage,
+		"the full mod page's sections are siblings, not a Findings subtree")
+
+	// Setup renders ONE section at a time (a tablist), so "its five
+	// sections are real headings" is a claim about each tab in turn: the
+	// panel's own h2 moves with the selection.
+	for _, s := range []struct{ key, label string }{
+		{"games", "Games"},
+		{"auth", "Authentication"},
+		{"sources", "Custom sources"},
+		{"archive", "Archive import"},
+		{"adopt", "Adopt"},
+	} {
+		var setup []string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()+"/setup"),
+			chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+			chromedp.Click(`.setup-nav__tab[data-section="`+s.key+`"]`, chromedp.ByQuery),
+			chromedp.Poll(`document.querySelector("#setup-panel h2")?.textContent.trim() === `+
+				"`"+s.label+"`", nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+			headingTexts("#setup-panel h2", &setup),
+		)
+		assert.Equal(t, []string{s.label}, setup,
+			"Setup's %s panel must name itself with a real heading", s.key)
+	}
+
+	// The three routes whose whole content IS their h1 - a results
+	// summary, a list of game cards, a single add form - have no sections
+	// to name, and inventing one would be worse than having none. Pinned
+	// so that a section ARRIVING on one of them has to come with a
+	// heading.
+	var search []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/g/"+f.Game.ID+"/"+f.Profile+"/search?q=a"),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		headingTexts(".search-page h2", &search),
+	)
+	assert.Empty(t, search, "the search page's own h1 is its only section")
+	assert.Empty(t, f.BrowserErrors())
+
+	chooser := newE2EMultiGameFixture(t)
+	var chooserH2s []string
+	chooser.runInBrowser(t,
+		chromedp.Navigate(chooser.BaseURL+"/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		headingTexts(".game-chooser h2", &chooserH2s),
+	)
+	assert.Empty(t, chooserH2s, "the chooser's own h1 is its only section")
+	assert.Empty(t, chooser.BrowserErrors())
+}
+
 // TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp is I-6 of the
 // epic live review.
 //

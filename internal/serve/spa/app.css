@@ -212,9 +212,11 @@ pre,
 /* visually-hidden takes an element out of the VISUAL layout while leaving
    it in the accessibility tree - the standard clip-rect recipe, not
    display:none (which removes it from both) and not a zero opacity (which
-   leaves it taking up space). Mission Control's own <h1> is its only user:
-   heading navigation needs a route title, and the top bar already renders
-   that context as two pickers (I-3, epic live review). */
+   leaves it taking up space). Two users: Mission Control's own <h1>
+   (heading navigation needs a route title, and the top bar already renders
+   that context as two pickers - I-3, epic live review) and each Setup
+   panel's own <h2> (the section's visible title IS its tab, and a tab is
+   not a heading - issue 326). */
 .visually-hidden {
   position: absolute;
   overflow: hidden;
@@ -620,6 +622,17 @@ select {
   border-radius: var(--radius);
   background: var(--surface-raised);
   box-shadow: var(--shadow-raised);
+}
+
+/* I-3's second half (issue 326): the four attention cards' titles are <h2>
+ * elements now - heading navigation on Mission Control used to find
+ * "Library" and nothing else - so this class has to restate what the <p>
+ * they used to be simply inherited. Without it the browser's own h2
+ * defaults (1.5em, bold, 0.83em margins) would resize and re-space every
+ * card. The tag carries the meaning; the appearance is unchanged. */
+.card__title {
+  margin: 1em 0;
+  font: inherit;
 }
 
 .card--updates .card__title {
