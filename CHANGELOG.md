@@ -35,6 +35,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lmm game edit` — change a configured game's sources (#326).** Which
+  mod sources a game maps could only ever be set when the game was created,
+  so a custom source added later (`lmm source add`, or the web UI's Setup →
+  Custom sources editor) could not be attached to an existing game without
+  hand-editing `games.yaml`. `lmm game edit <game-id> --source
+<id>=<identifier>` adds or replaces one mapping and `--remove-source <id>`
+  drops one; both are repeatable, removals apply first (so one run can
+  re-point an id), and the identifier may be empty for a source that needs
+  none. `--json` prints the same `core.GameListEntry` row `lmm game list`
+  does. The web twin is `PUT /api/v1/games/{id}` — a new capability on
+  **both** sides, which is why the web UI's first-run flow used to dead-end
+  for a directory-source user.
+
+- **The last four CLI commands reach `lmm serve` (#326).** `purge`,
+  `profile sync` and `mod edit` join the plan-kind table as `purge`,
+  `profile_sync` and `mod_relink` — each the same Plan → confirm → job flow
+  every other mutation uses, over core's existing pairs — and `mod convert`
+  (the pak-conversion toggle for a compile-mode game) becomes
+  `POST /api/v1/mods/{source}/{id}/convert`, a single-step write beside
+  lock/unlock/update-policy. Two flags gained the wire options they were
+  missing: `GET /api/v1/search` takes a repeatable `?tag=`
+  (`lmm search --tag`), and the `install` plan takes `no_deps`
+  (`lmm install --no-deps`), whose four-field clearing now lives in core as
+  `InstallPlan.SkipDependencies` so both frontends mean the same thing by
+  it.
+
 - **`lmm serve` — a local web UI that can do everything the CLI can
   (epic #326).** `lmm serve` starts a single-page application on
   `127.0.0.1:7420` (`--addr` to change it, `--no-open` to skip opening a
@@ -138,8 +164,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback. It also closes epic #276's carried TUI intents — per-item update
   selection (#74), install version/file selection (#225), uninstall options
   (#226), full mod-detail prose (#232, #86), live deploy progress (#257) and
-  mod changelog (#87) — and, unlike that epic, leaves nothing CLI-only.
+  mod changelog (#87) — and, unlike that epic, leaves only three things
+  CLI-only, each of them terminal-native: `profile reorder -i` (the web
+  reorders by dragging the same load order), `gen-man` (roff for the CLI's
+  own man pages) and `--json` (the web UI _is_ the JSON consumer, and
+  `/api/v1` returns the identical documents). Nothing is web-only either:
+  every browser affordance is a rendering of a CLI-reachable capability.
+  The full ledger is in the design doc's Scope section.
   (#327, #328, #329, #330, #331, #332, #333, #334, epic #326)
+
+- **`lmm serve`'s CSP pins `base-uri` and `form-action` (#326).** Neither
+  is covered by `default-src`, so without them an injected `<base href>`
+  could re-point the shell's relative module URLs and an injected form could
+  post the page's CSRF token off-origin. Defence in depth — every DOM write
+  goes through Preact and both unsafe-write ratchets are green — at one
+  directive each.
 
 - **`lmm profile reorder -i` — an interactive load-order picker (#254).**
   Setting a load order used to mean naming every mod ID positionally, which

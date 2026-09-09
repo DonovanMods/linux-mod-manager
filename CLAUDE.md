@@ -74,7 +74,7 @@ internal/
 │   ├── config/           # YAML parsing (games, profiles)
 │   └── cache/            # Central mod file cache
 ├── linker/               # Deploy strategies (symlink, hardlink, copy)
-├── core/                 # Business logic orchestration (flat package, 49 files); frontends never reach past it
+├── core/                 # Business logic orchestration (flat package, 55 files); frontends never reach past it
     ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
     ├── ops.go             # beginOp: the Service's single mutation-serialization slot
     ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
@@ -119,6 +119,7 @@ internal/
     ├── import_archive.go  # archive-import flow: PlanImportArchive/ApplyImportArchive (`lmm import <archive>`)
     ├── archive_listing.go # archive listing + the member normalisation the plan and the ingest share
     ├── game_detect.go     # game-detect flow: GameFromDetected/ApplyGameDetect (`lmm game detect`)
+    ├── game_edit.go       # UpdateGameSources: the source<->game mapping (`lmm game edit`, PUT /api/v1/games/{id}, #326)
     ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
     ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)
     ├── mod_settings.go    # mod lock/unlock/set-update/convert flows -> ModSettingResult
@@ -148,6 +149,9 @@ internal/
     ├── kind_updates.go    # per-item update batch plan (#74)
     ├── kind_switch.go     # `lmm profile switch` as a job (SPA: the profile picker's "Switch and deploy…")
     ├── kind_profile_apply.go # `lmm profile apply` as a job (SPA: Mission Control's profile card)
+    ├── kind_profile_sync.go # `lmm profile sync` as a job (#326)
+    ├── kind_purge.go      # `lmm purge` as a job (#326)
+    ├── kind_mod_relink.go # `lmm mod edit` as a job - core's PlanRelinkMod/ApplyRelinkMod (#326)
     ├── kind_profile_import.go # `lmm profile import` as a job (SPA: the profiles modal)
     ├── kind_rollback.go   # `lmm update rollback` as a job (SPA: the full mod page's versions table)
     ├── kind_import_archive.go # `lmm import <archive>` as a job, over an upload (#333)
@@ -155,10 +159,10 @@ internal/
     ├── kind_deploy.go     # deploy with live SSE phases (#257)
     ├── kind_verify_fix.go # `lmm verify --fix` as a job
     ├── api_profiles.go    # profile CRUD/reorder/export - the sanctioned single-step writes
-    ├── api_games.go       # game add/detect/set-default (#307/#333)
+    ├── api_games.go       # game add/detect/set-default (#307/#333) + PUT /api/v1/games/{id} sources (#326)
     ├── api_auth.go        # per-source credential store + the live re-key (restart_required)
     ├── api_sources.go     # the custom-source editor: list/definition/validate/save/delete
-    ├── api_mod_settings.go # mod lock/unlock/update-policy - single DB writes, no job
+    ├── api_mod_settings.go # mod lock/unlock/update-policy/convert - single DB writes, no job
     ├── api_mod_files.go   # GET /api/v1/mods/{source}/{id}/{files,versions}
     ├── uploads.go         # streamed archive uploads into the real staging dir (2 GiB cap, 30-min TTL)
     └── api_uploads.go     # POST /api/v1/uploads, DELETE /api/v1/uploads/{id}

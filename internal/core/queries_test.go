@@ -721,8 +721,11 @@ func TestSearch_HasMoreFalseWhenExhausted(t *testing.T) {
 }
 
 // TestSearch_NoPageSizeReportsNoMore pins the "no paging concept" default:
-// the CLI's own single-page call never sets PageSize, and a report with no
-// paging window must never claim a next page exists.
+// a report with no paging window must never claim a next page exists. The
+// caller that reaches it is `/api/v1/search` with no page params, not the
+// CLI - `lmm search` always sets PageSize from --limit (default 10), so its
+// own document always carries page_size (#326, epic live review D-2
+// corrected this comment, which claimed the opposite).
 func TestSearch_NoPageSizeReportsNoMore(t *testing.T) {
 	src := &searchStubSource{id: "alpha", result: source.SearchResult{
 		Mods: mods("alpha", "a1"), TotalCount: 1,

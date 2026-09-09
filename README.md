@@ -825,9 +825,9 @@ The **Setup page** (`/g/{game}/{profile}/setup`) holds everything
 administrative, in five sections: **Games** (the configured games table,
 Steam detection, manual add, set/clear the default), **Authentication**
 (per-source status, log in and out, the environment variable each source
-reads, orphaned-token removal), **Custom sources** (a line-numbered YAML
-editor with validate-then-save and an optional live probe, delete,
-download), **Archive import** (upload an archive, optionally link it to a
+reads shown beside its field, orphaned-token removal), **Custom sources**
+(a line-numbered YAML editor with validate-then-save and an optional live
+probe, delete, download), **Archive import** (upload an archive, optionally link it to a
 source and mod id, then confirm), and **Adopt** (scan the game folder for
 untracked mods, preview, confirm). With no games configured yet, `/` is the
 first-run flow and shares those same detect/add forms.
@@ -899,6 +899,7 @@ for reduced motion, every animation is disabled.
 /g/{game}/{profile}                      Mission Control (home)
 /g/{game}/{profile}/mod/{source}/{id}    a mod's full page
 /g/{game}/{profile}/search?q=…           the search page
+/g/{game}/{profile}/setup                the Setup page
 ```
 
 The game and profile live in the **path**, not in a query parameter, so the
@@ -928,7 +929,7 @@ GET  /api/v1/mods
 GET  /api/v1/mods/{source}/{id}
 GET  /api/v1/mods/{source}/{id}/files
 GET  /api/v1/mods/{source}/{id}/versions
-GET  /api/v1/search?q=&page=&page_size=&limit=
+GET  /api/v1/search?q=&page=&page_size=&limit=&category=&source=&tag=
 GET  /api/v1/updates
 GET  /api/v1/profiles
 GET  /api/v1/profiles/{name}/export
@@ -959,10 +960,16 @@ GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
 GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
 ```
 
-`{kind}` is one of eleven, each the browser-side twin of a CLI command:
+`{kind}` is one of fourteen, each the browser-side twin of a CLI command:
 `deploy`, `install`, `uninstall`, `updates`, `rollback`, `switch`,
-`profile_apply`, `profile_import`, `verify_fix`, `import_archive` and
-`adopt`. An unknown kind is a 400 whose details list the ones that exist.
+`profile_apply`, `profile_import`, `profile_sync`, `purge`, `mod_relink`,
+`verify_fix`, `import_archive` and `adopt`. An unknown kind is a 400 whose
+details list the ones that exist. (`mod_relink` is `lmm mod edit`: it is
+named for the core flow it drives, `PlanRelinkMod`/`ApplyRelinkMod`.)
+
+`?tag=` on `GET /api/v1/search` is `lmm search --tag`, and is repeatable
+the same way: `?tag=lore-friendly&tag=armor` narrows on both. Support
+varies by source.
 
 Two endpoints report on jobs as a whole rather than one at a time — what
 the UI's activity tray is built on:
@@ -976,6 +983,19 @@ Profile management is the other set of synchronous mutations - a create, a
 delete, a set-default, a rename and a reorder each write once with nothing
 to preview, so like lock/policy they answer immediately with the same
 document their `lmm profile ...  --json` twin prints:
+
+```text
+POST   /api/v1/mods/{source}/{id}/lock      {"version"?} -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/unlock               -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/update-policy {"policy"}
+                                                       -> the mod's settings
+POST   /api/v1/mods/{source}/{id}/convert   {"enabled"} -> the mod's settings
+```
+
+Those four are `lmm mod lock`/`unlock`/`set-update`/`convert`, each
+answering the `core.ModSettingResult` document its `--json` twin prints.
+`convert` is the pak-conversion toggle for a compile-mode game (Icarus); a
+mod with no convertible `.pak` is a 400, the same refusal the CLI gives.
 
 ```text
 POST   /api/v1/profiles                     {"name"}   -> the profile created
@@ -993,6 +1013,7 @@ takes `?game=`:
 POST   /api/v1/games          {"source_id","identifier","name",
                                "install_path"[,"game_id","mod_path"]}
                                           -> the new game's `lmm game list` row
+PUT    /api/v1/games/{id}     {"sources"} -> the game's `lmm game list` row
 POST   /api/v1/games/{id}/set-default     -> the new default (core.SettingsResult)
 DELETE /api/v1/games/default              -> the default cleared (core.SettingsResult)
 POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
@@ -1005,7 +1026,13 @@ DELETE /api/v1/sources/{id}               -> the source list, re-read
 ```
 
 `GET /api/v1/games` answers with the rows `lmm game list --json` prints —
-an empty array is the first-run signal. `GET /api/v1/games/catalog` is the
+an empty array is the first-run signal; each row carries the game's
+`source_ids` map. `PUT /api/v1/games/{id}` rewrites that map (`lmm game
+edit`'s twin) and answers with the same row: the body's `sources` object is
+the FULL map the game ends up with, so an omitted source id is removed. An
+id no registered source claims is a 400 whose `details.field` is
+`"sources"`, an unknown game is a 404, and an empty map is refused — a game
+must keep at least one source. `GET /api/v1/games/catalog` is the
 game-add form's search, over any source with a searchable catalog
 (CurseForge today); a source without one answers 400, which is the signal
 to ask for an identifier instead. `POST /api/v1/games` answers 400 with a
@@ -1209,29 +1236,29 @@ has a recorded golden under `internal/core/testdata/json/`,
 its exact wire shape. A field can only change by changing that golden, which
 shows up as a diff in review.
 
-| Command                        | Document                                                                                                                                                                                                                                           |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                                                                                                                                                                      |
-| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                                                                                                                                                                      |
-| `lmm profile list`             | `core.ProfileListing` — `{game_id, profiles[]}`                                                                                                                                                                                                    |
-| `lmm profile export <name>`    | `domain.ExportedProfile` — `{name, game_id, mods[], link_method?, overrides?, hooks, hooks_explicit}`                                                                                                                                              |
-| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                                                                                                  |
-| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                                                                                                 |
-| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count, page?, page_size?, has_more?}` (the last three are omitted unless a caller pages — `lmm serve`'s search page does, the CLI's single-page call doesn't) |
-| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`; each finding carries `fixable` when `verify --fix` would attempt a repair for it                                                                              |
-| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                                                                                          |
-| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                                                                                       |
-| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                       |
-| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                                                                                                                                                                             |
-| `lmm source validate <file>`   | `app.SourceValidationReport` — `{path, id?, type?, valid, errors[], warnings[], probe?}` (an invalid file/failed probe is the error envelope instead, `details` = this report)                                                                     |
-| `lmm source add <file>`        | `[]app.SourceInfo` — the full registry, re-read (an invalid definition is the error envelope instead, `details` = the validation report)                                                                                                           |
-| `lmm source remove <id>`       | `[]app.SourceInfo` — the full registry, re-read (a source a game still maps is the error envelope, `details` = `core.SourceInUseError`'s `{source_id, games[]}`)                                                                                   |
-| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                                                                                                                                                                         |
-| `lmm game show-default`        | `core.DefaultGame` — `{set, id?, name?}`                                                                                                                                                                                                           |
-| `lmm auth status`              | `app.AuthStatusReport` — `{sources[], orphaned[]}`                                                                                                                                                                                                 |
-| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                                                                                                                                                                      |
-| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`                                                                                                                                                                    |
-| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`                                                                                                                                                                   |
+| Command                        | Document                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lmm list`                     | `core.ModList` — `{game_id, profile, mods[]}`                                                                                                                                                                                                                                                                                             |
+| `lmm list --profiles`          | `core.ProfileNames` — `{game_id, profiles[]}`                                                                                                                                                                                                                                                                                             |
+| `lmm profile list`             | `core.ProfileListing` — `{game_id, profiles[]}`                                                                                                                                                                                                                                                                                           |
+| `lmm profile export <name>`    | `domain.ExportedProfile` — `{name, game_id, mods[], link_method?, overrides?, hooks, hooks_explicit}`                                                                                                                                                                                                                                     |
+| `lmm status`                   | `core.StatusReport` — `{games[]}`                                                                                                                                                                                                                                                                                                         |
+| `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                                                                                                                                                                                        |
+| `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count, page?, page_size?, has_more?}` (each of the last three is omitted when it is unset; `lmm search` always sets `page_size` from `--limit`, default 10, and never sets `page`, while `/api/v1/search` sets none of them unless the caller pages) |
+| `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`; each finding carries `fixable` when `verify --fix` would attempt a repair for it                                                                                                                                                                     |
+| `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                                                                                                                                                                                 |
+| `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                                                                                                                                                                              |
+| `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                                                                                                              |
+| `lmm source list`              | `[]app.SourceInfo` — a top-level array                                                                                                                                                                                                                                                                                                    |
+| `lmm source validate <file>`   | `app.SourceValidationReport` — `{path, id?, type?, valid, errors[], warnings[], probe?}` (an invalid file/failed probe is the error envelope instead, `details` = this report)                                                                                                                                                            |
+| `lmm source add <file>`        | `[]app.SourceInfo` — the full registry, re-read (an invalid definition is the error envelope instead, `details` = the validation report)                                                                                                                                                                                                  |
+| `lmm source remove <id>`       | `[]app.SourceInfo` — the full registry, re-read (a source a game still maps is the error envelope, `details` = `core.SourceInUseError`'s `{source_id, games[]}`)                                                                                                                                                                          |
+| `lmm game list`                | `[]core.GameListEntry` — a top-level array                                                                                                                                                                                                                                                                                                |
+| `lmm game show-default`        | `core.DefaultGame` — `{set, id?, name?}`                                                                                                                                                                                                                                                                                                  |
+| `lmm auth status`              | `app.AuthStatusReport` — `{sources[], orphaned[]}`                                                                                                                                                                                                                                                                                        |
+| `lmm update` (bulk check)      | `core.UpdateCheckReport` — `{game_id, profile, updates[], skipped{}, error?}`                                                                                                                                                                                                                                                             |
+| `lmm update <mod-id>`          | `core.UpdateApplyResult` — `{mod{}, name, from_version, to_version, status, …}`                                                                                                                                                                                                                                                           |
+| `lmm update rollback <mod-id>` | `core.RollbackResult` — `{mod{}, mod_name, from_version, to_version, status, …}`                                                                                                                                                                                                                                                          |
 
 Mutating commands emit their **result**, or - with `--dry-run` - the **plan**
 that run would have applied:
@@ -1259,6 +1286,7 @@ that run would have applied:
 | `lmm auth login --key-from-env`/`--key-stdin` | `app.AuthStatusReport` — the same document `lmm auth status --json` prints                                                                                                                                                                      |
 | `lmm auth logout [source]`                    | `app.AuthStatusReport` — the same document, re-read after the removal                                                                                                                                                                           |
 | `lmm update --all`                            | `core.UpdateBatchResult` — `{game_id, profile, applied[], failed[], skipped[]}`, or `core.UpdateCheckReport` when the check found nothing to apply (see below); without `--all` a bulk run is a CHECK and always emits `core.UpdateCheckReport` |
+| `lmm game edit`                               | `core.GameListEntry` — the same row `lmm game list --json` prints for it                                                                                                                                                                        |
 | `lmm game set-default` / `clear-default`      | `core.SettingsResult` — `{default_game}`                                                                                                                                                                                                        |
 
 **`lmm update --all --json` emits one of two documents.** With something
@@ -1400,6 +1428,8 @@ under its issue number:
 | `lmm game add --query <q> [--pick <n>]`                   | Search a source's game catalog instead of naming an identifier; without `--pick` the matches are printed (`core.GameCatalogReport` under `--json`)   |
 | `lmm game add --name <n> --path <dir> [--mod-path <dir>]` | Display name, install path (must exist) and mod directory (default `<install>/mods`)                                                                 |
 | `lmm game list`                                           | List configured games (ID, name, paths, deploy mode, sources; marks the default)                                                                     |
+| `lmm game edit <game-id> --source <id>=<identifier>`      | Add or replace one of the game's source mappings (repeatable); the identifier may be empty for a source that needs none                              |
+| `lmm game edit <game-id> --remove-source <id>`            | Drop one source mapping (repeatable; removals apply before additions, and a game must keep at least one source)                                      |
 | `lmm game detect`                                         | Scan Steam libraries for known moddable games (extend the known-games list via [`steam-games.yaml`](docs/configuration.md#steam-gamesyaml-optional)) |
 | `lmm game detect --all`                                   | Non-interactively select every not-yet-configured detected game (same set the "all" prompt answer picks); required under `--json`                    |
 | `lmm game detect --select <indices>`                      | Non-interactively select detected games by their 1-based prompt index (e.g. `1,3`); required under `--json`                                          |

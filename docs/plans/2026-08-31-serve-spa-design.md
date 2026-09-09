@@ -45,7 +45,13 @@ URL scheme (History API; the Go server serves the SPA shell for all app routes):
 /g/{game}/{profile}              → Mission Control (home)
 /g/{game}/{profile}/mod/{source}/{id}   → full mod page
 /g/{game}/{profile}/search?q=…          → dedicated search page
+/g/{game}/{profile}/setup               → the Setup page (admin: games, auth,
+                                          custom sources, archive import, adopt)
 ```
+
+`/setup` was added with the admin surface (#333) and recorded here in the closing wave (#326,
+epic live review D-1) — until then the router served it and neither this block nor the README's
+named it.
 
 Context (game + profile) lives **in the path** — the audit's B1 wrong-game bug class becomes
 structurally impossible. The slide-over annotates the URL (`…?mod=nexus/123`) so deep links and
@@ -148,6 +154,38 @@ UI, source auth UI, custom-source editor, archive import/adopt UI (over `ImportA
 And vice-versa: any capability the web UI adds must be CLI-reachable — concretely, per-item
 update batches land in core (#324) with the CLI's `-i` selection picker (#254) closing that gap.
 **Out:** remote access/auth, mobile layouts, no-JS operation, i18n.
+
+### The parity ledger (settled in the closing wave, #326)
+
+The epic live review measured this bar and found four commands and several flags web-unreachable
+(its C-3). The closing wave landed all of them — `purge`, `profile sync`, `mod edit`
+(`mod_relink`) and `mod convert` as web paths, `search --tag` and `install --no-deps` as wire
+options, and the source↔game mapping as a NEW capability on BOTH sides (`lmm game edit` and
+`PUT /api/v1/games/{id}`, which neither frontend had). What remains outside parity is
+modality-bound, and this is the exhaustive list:
+
+**CLI-only, by judgment.** Each is a scripting- or terminal-native affordance whose web
+equivalent already exists in a better form:
+
+- `lmm profile reorder -i` — a numbered-list picker for a terminal. The web's equivalent is the
+  reorder modal's drag-and-drop with its live winner preview; both write the same load order
+  through the same core call.
+- `lmm gen-man` — generates the man pages for the CLI itself. There is nothing for a browser to do
+  with roff.
+- `--json` on every command — the web UI *is* the JSON consumer. `/api/v1` returns the identical
+  documents, so the flag has no browser meaning.
+
+**Web-only, by judgment.** Nothing here is a CAPABILITY the CLI lacks — each is a rendering of
+one it has:
+
+- the activity tray, the multiplexed SSE stream and inline job progress (the CLI streams the same
+  core events to the terminal as they happen);
+- drag-and-drop reordering (`lmm profile reorder`, positionally or with `-i`);
+- the version/file picker and the inline conflict "Overwrite?" affordance (`install
+  --version/--file`, and re-running with `--force`).
+
+Judged per modality, the bar is met: CLI ⊇ web, and web ⊇ CLI for everything a browser can
+meaningfully express.
 
 ## Testing
 
