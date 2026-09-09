@@ -488,7 +488,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (omitted entirely by every ordinary refusal, including every install one).
   The hard-error return between the cache write and the conflict gate — a
   profile whose `link_method` is unrecognised — also discards the entry it
-  created, instead of leaking it.
+  created, instead of leaking it, and the two refusal paths that carry no
+  typed error announce their cleanup warnings as ordinary import warnings,
+  so they reach the CLI's stderr and the web UI's progress stream rather
+  than only a result document neither frontend reads on a failure.
 
 - **`lmm profile apply`/`sync`/`switch`'s lock-refusal warning reads like
   every other lock refusal (#311).** `UpsertMod`'s refusal was a fifth

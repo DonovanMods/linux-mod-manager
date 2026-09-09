@@ -627,7 +627,16 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 		// #310 item 2: this hard error sits BETWEEN the cache write and the
 		// conflict gate, so returning bare leaked the entry this call
 		// created - the one thing every other return from here undoes.
-		result.Warnings = append(result.Warnings, s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)...)
+		// Through warn (review M3), not a bare append: a bare append reaches
+		// only a caller that reads the Result, and NEITHER frontend does on
+		// an error return (cmd/lmm/import.go returns the error alone;
+		// serve's job registry stores a Result only for a job that
+		// succeeded), so an orphaned copy of the whole archive was announced
+		// to nobody. warn records it on the Result AND emits the
+		// ImportArchiveWarning step both frontends already render.
+		for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted) {
+			warn("%s", w)
+		}
 		return result, err
 	}
 	installer := s.newInstallerWithLinker(game, s.getLinker(linkMethod))
@@ -645,8 +654,11 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 			// plan promised, so the decision the caller made (or is about to
 			// make) was made about a different set. Re-plan (#314, R-B3).
 			// A stale plan carries no typed payload, so a failed cleanup
-			// rides the Result's own Warnings (#310).
-			result.Warnings = append(result.Warnings, s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)...)
+			// rides the Result's own Warnings and the warning event
+			// (#310, review M3 - see the link-method return above).
+			for _, w := range s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted) {
+				warn("%s", w)
+			}
 			return result, fmt.Errorf("%w: file conflicts changed since the plan was computed", ErrStalePlan)
 		case len(conflicts) > 0 && !opts.AcceptConflicts:
 			cleanup := s.discardImportedCacheEntry(game, result, preEnrichID, preEnrichVersion, entryPreExisted)
@@ -803,6 +815,14 @@ func (s *Service) applyImportArchive(ctx context.Context, game *domain.Game, pro
 // failure is now also logged at Warn, and the caller attaches the returned
 // warnings to whatever it is about to return (the *ConflictError's
 // CleanupWarnings, or the Result's own Warnings).
+//
+// Which surface each of those reaches (review M3): CleanupWarnings rides the
+// typed refusal to `--json`'s details.cleanup_warnings and to serve's job
+// error envelope. The other two callers announce theirs through the flow's
+// own warn closure instead, so they arrive as ImportArchiveWarning STEP
+// EVENTS - which cmd/lmm/import.go prints to stderr unconditionally and
+// serve streams over SSE - as well as landing on the Result. A bare append
+// to Result.Warnings would reach neither frontend on an error return.
 func (s *Service) discardImportedCacheEntry(game *domain.Game, result *ImportArchiveResult, preEnrichID, preEnrichVersion string, entryPreExisted bool) []string {
 	if entryPreExisted || result.Mod == nil {
 		return nil
