@@ -37,6 +37,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV10,
 		migrateV11,
 		migrateV12,
+		migrateV13,
 	}
 
 	if version < len(migrations) {
@@ -203,5 +204,19 @@ func migrateV12(ctx context.Context, d *DB) error {
 	// (paks join the merged pak); 0 = deploy raw. Deliberately excluded
 	// from SaveInstalledMod's upsert so reinstall preserves the user's choice.
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN convert_paks INTEGER DEFAULT 1`)
+	return err
+}
+
+// migrateV13 gives auth_tokens a created_at, so a status surface can say how
+// long a credential has been held rather than only when it was last written
+// (#79 - the encrypted table shows presence and age instead of the key).
+// SQLite cannot default an added column to CURRENT_TIMESTAMP, so it is added
+// nullable and backfilled from updated_at, which for a row that was never
+// re-logged-in is the same instant.
+func migrateV13(ctx context.Context, d *DB) error {
+	if _, err := d.ExecContext(ctx, `ALTER TABLE auth_tokens ADD COLUMN created_at DATETIME`); err != nil {
+		return err
+	}
+	_, err := d.ExecContext(ctx, `UPDATE auth_tokens SET created_at = updated_at WHERE created_at IS NULL`)
 	return err
 }

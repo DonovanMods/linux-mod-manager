@@ -137,11 +137,12 @@ func TestListTokens(t *testing.T) {
 	tokens, err = db.ListTokens(context.Background())
 	require.NoError(t, err)
 	require.Len(t, tokens, 2)
-	// Ordered by source_id so callers get deterministic output.
+	// Ordered by source_id so callers get deterministic output. The keys
+	// themselves never come back - only their fingerprints (#79).
 	assert.Equal(t, "ghost-repo", tokens[0].SourceID)
-	assert.Equal(t, "key-b", tokens[0].APIKey)
+	assert.Equal(t, TokenFingerprint("key-b"), tokens[0].Fingerprint)
 	assert.Equal(t, "nexusmods", tokens[1].SourceID)
-	assert.Equal(t, "key-a", tokens[1].APIKey)
+	assert.Equal(t, TokenFingerprint("key-a"), tokens[1].Fingerprint)
 }
 
 func setupTestDB(t *testing.T) *DB {
