@@ -133,12 +133,14 @@ func TestAPIAuth_ReportsEveryAuthCapableSource(t *testing.T) {
 	requireEncodesLikeInternal(t, rec.Body.Bytes(), want)
 }
 
-// TestAPIAuthLogin_StoresAndReportsMasked drives a login end to end and
+// TestAPIAuthLogin_ReportsFingerprintOnly drives a login end to end and
 // asserts the END STATE - the token is in the DB - alongside the re-read
 // report, which shows the source authenticated and identifies the stored
-// key by FINGERPRINT only (#79: it is encrypted at rest and is never
-// decrypted to build a status document, so no masked form exists for it).
-func TestAPIAuthLogin_StoresAndReportsMasked(t *testing.T) {
+// key by FINGERPRINT only (#79: it is encrypted at rest and never reaches
+// the wire, so no masked form exists for it). Named for what it asserts:
+// it used to be ...StoresAndReportsMasked, which is the opposite of the
+// assertion it now carries (review, Minor 9).
+func TestAPIAuthLogin_ReportsFingerprintOnly(t *testing.T) {
 	s, _ := newAuthServer(t, &authFixtureSource{id: "acme"})
 
 	rec := doAPI(s, http.MethodPost, "/api/v1/auth/acme", `{"api_key":"`+theSubmittedKey+`"}`)

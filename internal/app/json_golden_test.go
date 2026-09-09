@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // goldenStamp is the fixed instant every credential timestamp in these
@@ -25,6 +27,19 @@ import (
 // literal keeps the files byte-stable; the real values come from the
 // database, which no golden can pin.
 var goldenStamp = time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+
+// The fingerprints these goldens carry, derived rather than typed. The
+// field is documented as the first 8 hex of a key's SHA-256, and the
+// literals here were arbitrary - one of them was in fact the first 8 hex of
+// MD5("hello"), which a maintainer reading the file could reasonably take
+// for a real example (review, Minor 10). db.TokenFingerprint is what
+// produces the real thing, so these ARE real, and stay byte-stable because
+// the inputs are fixed.
+var (
+	goldenStoredFingerprint = db.TokenFingerprint("golden-nexusmods-stored-key")
+	goldenEnvFingerprint    = db.TokenFingerprint("golden-my-repo-env-key")
+	goldenOrphanFingerprint = db.TokenFingerprint("golden-ghost-repo-orphan-key")
+)
 
 // updateAppJSONGoldens re-records internal/app's JSON contract goldens. Run
 // ONCE:
@@ -79,11 +94,11 @@ func TestAppJSONGoldens(t *testing.T) {
 		},
 		{
 			"auth_source_status",
-			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: "3a7bd3e2", CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
+			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: goldenStoredFingerprint, CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
 		},
 		{
 			"orphaned_token",
-			OrphanedToken{ID: "ghost-repo", Reason: "not_registered", KeyFingerprint: "0b4e7a0e"},
+			OrphanedToken{ID: "ghost-repo", Reason: "not_registered", KeyFingerprint: goldenOrphanFingerprint},
 		},
 		{
 			// `lmm auth status --json`'s document (#309): one authenticated
@@ -96,11 +111,11 @@ func TestAppJSONGoldens(t *testing.T) {
 				RestartRequired: true,
 				Sources: []AuthSourceStatus{
 					{ID: "keyless-repo", Name: "Keyless"},
-					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789", KeyFingerprint: "5d41402a"},
-					{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: "3a7bd3e2", CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
+					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789", KeyFingerprint: goldenEnvFingerprint},
+					{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: goldenStoredFingerprint, CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
 				},
 				Orphaned: []OrphanedToken{
-					{ID: "ghost-repo", Reason: "not_registered", KeyFingerprint: "0b4e7a0e"},
+					{ID: "ghost-repo", Reason: "not_registered", KeyFingerprint: goldenOrphanFingerprint},
 					{ID: "local-mods", Reason: "auth_not_declared", Unreadable: true},
 				},
 			},
