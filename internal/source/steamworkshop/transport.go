@@ -84,8 +84,10 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		case retryableStatus(resp.StatusCode):
 			lastErr = fmt.Errorf("API error (status %d)", resp.StatusCode)
 			wait := retryAfter(resp)
-			// The body must be drained and closed before the connection can
-			// be reused for the retry.
+			// Closed so the connection can be released before the retry. Not
+			// drained: an unread 429/5xx body means the connection is not
+			// returned to the pool, which is the right trade for an error
+			// response whose size lmm has no reason to trust.
 			_ = resp.Body.Close()
 			if attempt == maxAttempts {
 				t.recordFailure()
