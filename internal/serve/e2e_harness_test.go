@@ -143,11 +143,16 @@ func chromeBinary(t *testing.T) string {
 	return ""
 }
 
-// sandboxE2EEnv points HOME and every XDG_* path at throwaway directories,
-// so nothing a test drives - the Service, or the browser the harness
-// launches - can reach the developer's real config, data or cache. The
-// package-internal tests have their own copy (jobs_internal_test.go's
-// sandboxEnv); package serve_test cannot see it.
+// sandboxE2EEnv points HOME and the three XDG_* paths lmm reads at
+// throwaway directories, so nothing a test drives - the Service, or the
+// browser the harness launches - can reach the developer's real config,
+// data or cache. The package-internal tests have their own copy
+// (jobs_internal_test.go's sandboxEnv); package serve_test cannot see it.
+//
+// THREE, not "every XDG_*" (M7, unit 8 gate review): lmm's non-test code
+// reads no XDG_STATE_HOME and no XDG_RUNTIME_DIR, so this list is the
+// complete set that could leak - the sandbox was never short, only the
+// comment (and one report's wording) was.
 func sandboxE2EEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
