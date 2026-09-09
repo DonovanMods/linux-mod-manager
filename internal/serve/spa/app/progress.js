@@ -198,8 +198,8 @@ export function jobStateLabel(summary, frame) {
  * record per-item outcomes in their own result rather than returning one.
  * Two result shapes exist on the wire today, kept SEPARATE (N1, unit 6
  * re-review) rather than collapsed into one two-number tally: updates'
- * `{applied: [...], failed: [...]}` becomes `{kind: "updates", applied,
- * failed}`, and profile_import's `{installed, failed, skipped, warnings}`
+ * `{applied: [...]}` becomes `{kind: "updates", applied, failed, skipped,
+ * skippedNotes}`, and profile_import's `{installed, failed, skipped, warnings}`
  * (core.ProfileImportResult) becomes `{kind: "profile_import", installed,
  * failed, skipped, warnings}` - Skipped stays its OWN term rather than
  * rolling into "failed", because core.ApplyImport sets it for the flow's
@@ -213,6 +213,16 @@ export function jobStateLabel(summary, frame) {
  * (core.InstallResult's own `installed`/`failed` are ARRAYS, not this
  * shape, and are left alone on purpose).
  *
+ * The updates discriminator is `applied` ALONE (I1, unit 8 gate review).
+ * It used to require `failed` to be an array too, but
+ * core.UpdateBatchResult.Failed is `json:"failed,omitzero"` - so the exact
+ * document a locked-skip batch produces (applied rows, skipped rows, and no
+ * `failed` key at all) fell through to null, and the control that started
+ * the batch said a bare "Done" over a mod the engine had refused to touch.
+ * `json:"applied"` (no omitzero) exists on no other core or serve type, so
+ * the single key is a sound discriminator, and both omitzero lists default
+ * to 0 rather than gating the whole read.
+ *
  * An all-zero tally also returns null (N2, unit 6 re-review): a
  * profile_import whose every mod was already installed (Plan.Installed,
  * pending == 0) applies nothing and skips nothing, so its result is
@@ -222,18 +232,25 @@ export function jobStateLabel(summary, frame) {
  */
 export function resultTally(result) {
   if (!result) return null;
-  if (Array.isArray(result.applied) && Array.isArray(result.failed)) {
+  if (Array.isArray(result.applied)) {
     const applied = result.applied.length;
-    const failed = result.failed.length;
+    // Both lists are omitzero on the wire, so an absent key means zero -
+    // never "this is not a batch result".
+    const failed = Array.isArray(result.failed) ? result.failed.length : 0;
     // core.UpdateBatchResult.Skipped (issue 324): the items the batch declined
-    // to attempt - today exactly the locked refs (#97). It is omitzero, so
-    // a batch with none carries no key at all. Kept its OWN term for the
-    // same reason profile_import's is: "we did not try, and here is why" is
-    // not a failure, and rolling it into one would turn the honest outcome
+    // to attempt - today exactly the locked refs (#97). Kept its OWN term for
+    // the same reason profile_import's is: "we did not try, and here is why"
+    // is not a failure, and rolling it into one would turn the honest outcome
     // of a locked mod red.
-    const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
-    if (applied === 0 && failed === 0 && skipped === 0) return null;
-    return { kind: "updates", applied, failed, skipped };
+    const skips = Array.isArray(result.skipped) ? result.skipped : [];
+    if (applied === 0 && failed === 0 && skips.length === 0) return null;
+    return {
+      kind: "updates",
+      applied,
+      failed,
+      skipped: skips.length,
+      skippedNotes: skips.map(skippedNote),
+    };
   }
   if (
     typeof result.installed === "number" &&
@@ -258,9 +275,12 @@ export function resultTally(result) {
  * real outcome - replacing the bare "Done" a job's mere `state` would
  * otherwise print over a batch that applied nothing at all.
  *
- * "updates" reads "n applied / m failed", with " · k skipped" appended only
- * when the batch actually skipped something (issue 324's locked refs - a batch
- * with none is byte-identical to what this printed before). profile_import
+ * "updates" reads "n applied / m failed" for a batch that skipped nothing
+ * (byte-identical to what this printed before), and "n applied / m skipped"
+ * when it did - a lock refusal is a SKIP, and pairing it with a "0 failed"
+ * it has nothing to do with is what made the honest outcome read as an
+ * alarm. A batch that both failed and skipped names all three counts, since
+ * dropping either one would hide an item's fate. profile_import
  * instead reads "n
  * installed · m skipped", since skipped is the flow's own documented
  * outcome, not a failure - with " · k failed" appended only when failed is
@@ -274,8 +294,25 @@ export function resultTallyLabel(tally) {
     if (tally.warnings > 0) parts.push(`${tally.warnings} warnings`);
     return parts.join(" · ");
   }
-  const label = `${tally.applied} applied / ${tally.failed} failed`;
-  return tally.skipped > 0 ? `${label} · ${tally.skipped} skipped` : label;
+  const parts = [`${tally.applied} applied`];
+  if (tally.failed > 0 || tally.skipped === 0) {
+    parts.push(`${tally.failed} failed`);
+  }
+  if (tally.skipped > 0) parts.push(`${tally.skipped} skipped`);
+  return parts.join(" / ");
+}
+
+/** skippedNote is one declined item in the engine's OWN words - the name a
+ * user recognises plus core.UpdateApplyResult.Reason, which for today's only
+ * skip (a locked ref, #97) is the refusal sentence naming the locked version
+ * and how to unlock it.
+ *
+ * The reason is what makes the count honest rather than merely present: "1
+ * skipped" invites the reader to guess, and a lock is not a guessable
+ * outcome. A row that somehow carries no reason still names itself. */
+function skippedNote(item) {
+  const name = item?.name || item?.mod?.mod_id || "a mod";
+  return item?.reason ? `${name} — ${item.reason}` : name;
 }
 
 /**

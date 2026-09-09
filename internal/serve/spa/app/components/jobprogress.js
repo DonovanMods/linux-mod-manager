@@ -109,7 +109,10 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       data-state=${state}
       role="status"
     >
-      <span class="job-progress__text">
+      <span
+        class="job-progress__text"
+        title=${(tally?.skippedNotes ?? []).join("; ") || undefined}
+      >
         ${
           failed
             ? `Failed: ${summary?.error?.error ?? "unknown error"}`

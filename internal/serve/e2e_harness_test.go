@@ -1033,9 +1033,15 @@ type e2eSearchSourceMod struct {
 // mods through the omnibar/search page - unlike installSource's ID-only
 // fixture, which never needed to be found by a query.
 type e2eSearchSource struct {
-	id          string
-	server      *httptest.Server
-	mods        map[string]*e2eSearchSourceMod
+	id     string
+	server *httptest.Server
+	mods   map[string]*e2eSearchSourceMod
+	// updatable turns CheckUpdates from a no-op into the catalog-versus-
+	// installed comparison every real source makes (I1, unit 8 gate review's
+	// locked-skip scenario). Off by default: every scenario written before
+	// it asserts on a Mission Control with NO Updates card, and a source
+	// that suddenly reported updates would change what those screens show.
+	updatable   bool
 	urlRequests atomic.Int64
 }
 
@@ -1130,8 +1136,22 @@ func (s *e2eSearchSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fil
 	return s.server.URL + "/" + mod.ID + "/" + fileID, nil
 }
 
-func (s *e2eSearchSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
-	return nil, nil
+func (s *e2eSearchSource) CheckUpdates(_ context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	if !s.updatable {
+		return nil, nil
+	}
+	var updates []domain.Update
+	for _, im := range installed {
+		entry, ok := s.mods[im.ID]
+		if !ok || entry.mod.Version == im.Version {
+			continue
+		}
+		updates = append(updates, domain.Update{InstalledMod: im, NewVersion: entry.mod.Version})
+	}
+	sort.Slice(updates, func(i, j int) bool {
+		return updates[i].InstalledMod.ID < updates[j].InstalledMod.ID
+	})
+	return updates, nil
 }
 
 func (s *e2eSearchSource) downloadCount() int { return int(s.urlRequests.Load()) }
@@ -1787,4 +1807,104 @@ func previousStop(visited []string, i int) string {
 		return "(the page's own starting focus)"
 	}
 	return visited[i-1]
+}
+
+// e2eLockedUpdateModID/e2eOpenUpdateModID name the two mods the locked-batch
+// fixture below installs at 1.0 against a catalog sitting at 2.0. The ids
+// are chosen so that "boots" sorts before "gloves": CheckUpdates reports in
+// id order, PlanUpdateBatch keeps that order, and ApplyUpdateBatch applies
+// in it - so the LOCKED row is the one the batch reaches first, and a tally
+// that only ever noticed the last item would still be wrong.
+const (
+	e2eLockedUpdateModID = "boots"
+	e2eOpenUpdateModID   = "gloves"
+)
+
+// newE2EFixtureWithALockedAndAnUnlockedUpdate seeds the exact batch the
+// unit-8 gate review drove by hand: two installed mods with a real update
+// waiting, one of them LOCKED in the profile (#97).
+//
+// Applying both is therefore one genuine update and one refusal, which is
+// the outcome the whole #324 batch flow exists to report honestly - and the
+// outcome the web UI used to render as a bare "Done". The updates are real:
+// the source downloads over its own httptest server, so the applied row
+// actually moves the deployed file to 2.0 and the locked row actually does
+// not.
+func newE2EFixtureWithALockedAndAnUnlockedUpdate(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src := newE2ESearchSource(t, "fake")
+	src.updatable = true
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: e2eLockedUpdateModID, SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		files: []domain.DownloadableFile{
+			{ID: "boots-2.0", Name: "Main 2.0", FileName: "boots-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128},
+			{ID: "boots-1.0", Name: "Main 1.0", FileName: "boots-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
+		},
+		members: map[string]string{"boots-1.0": "Mods/boots.pak", "boots-2.0": "Mods/boots.pak"},
+	})
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: e2eOpenUpdateModID, SourceID: "fake", Name: "Great Gloves", Version: "2.0"},
+		files: []domain.DownloadableFile{
+			{ID: "gloves-2.0", Name: "Main 2.0", FileName: "gloves-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128},
+			{ID: "gloves-1.0", Name: "Main 1.0", FileName: "gloves-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
+		},
+		members: map[string]string{"gloves-1.0": "Mods/gloves.pak", "gloves-2.0": "Mods/gloves.pak"},
+	})
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{src.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+
+	pm := svc.NewProfileManager()
+	for _, seed := range []struct {
+		id, name string
+		locked   bool
+	}{
+		{e2eLockedUpdateModID, "Better Boots", true},
+		{e2eOpenUpdateModID, "Great Gloves", false},
+	} {
+		fileID := seed.id + "-1.0"
+		member := "Mods/" + seed.id + ".pak"
+		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "fake", seed.id, "1.0",
+			member, []byte("payload for "+seed.id+"/"+fileID)))
+		require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+			Mod: domain.Mod{
+				ID: seed.id, SourceID: "fake", Name: seed.name,
+				Version: "1.0", GameID: game.ID,
+			},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+			FileIDs:      []string{fileID},
+		}))
+		require.NoError(t, pm.AddMod(t.Context(), game.ID, "default", domain.ModReference{
+			SourceID: "fake", ModID: seed.id, Version: "1.0",
+			FileIDs: []string{fileID}, Locked: seed.locked,
+		}))
+	}
+	_, err = svc.DeployProfile(t.Context(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+		BrowserErrors: browserErrors,
+	}
 }

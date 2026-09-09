@@ -1066,6 +1066,64 @@ func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ResultTallyReadsAnOmittedFailedList pins progress.js#resultTally
+// against the wire shape core actually emits, in the browser (the only
+// runner this application has).
+//
+// The bug this exists for: resultTally discriminated a batch result on
+// `applied` AND `failed` both being arrays, while
+// core.UpdateBatchResult.Failed is `json:"failed,omitzero"` - so the exact
+// document a locked-skip batch produces (applied rows, skipped rows, NO
+// `failed` key at all) fell through to null, and the control that started
+// the batch said a bare "Done" over a mod the engine had refused. The
+// discriminator is `applied` alone: `json:"applied"` exists on no other
+// core or serve type, and both omitzero lists default to 0.
+func TestE2E_ResultTallyReadsAnOmittedFailedList(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var got []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { resultTally, resultTallyLabel, resultTallyTone } =
+				await import("/static/app/progress.js");
+			// The shape cmd/lmm/testdata/json_golden/update_bulk_all.golden
+			// carries: one applied row, one locked skip, and no "failed" key.
+			const lockedSkip = {
+				applied: [{ name: "Mod B", status: "updated" }],
+				skipped: [{ name: "Mod A", status: "skipped", reason: "Mod A is locked at v1.0" }],
+			};
+			const allApplied = { applied: [{ name: "Mod B", status: "updated" }] };
+			const oneFailed = {
+				applied: [],
+				failed: [{ mod: "test-src:modA", name: "Mod A", error: "boom" }],
+			};
+			const notABatch = { deployed: 3 };
+			const describe = (r) => {
+				const tally = resultTally(r);
+				if (!tally) return "null";
+				const notes = (tally.skippedNotes ?? []).join("; ");
+				return resultTallyLabel(tally) + " [" + resultTallyTone(tally) + "] {" + notes + "}";
+			};
+			return [describe(lockedSkip), describe(allApplied), describe(oneFailed), describe(notABatch)];
+		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, got, 4)
+	assert.Equal(t, "1 applied / 1 skipped [succeeded] {Mod A — Mod A is locked at v1.0}", got[0],
+		"a batch with no `failed` key must still tally, must call a lock a SKIP rather than a failure, and must carry the engine's own refusal sentence")
+	assert.Equal(t, "1 applied / 0 failed [succeeded] {}", got[1],
+		"an all-success batch reads exactly as it did before this fix")
+	assert.Equal(t, "0 applied / 1 failed [failed] {}", got[2],
+		"a real failure is still a failure, and a batch that applied nothing is not `mixed`")
+	assert.Equal(t, "null", got[3],
+		"a result that is not a batch at all still says Done rather than inventing a tally")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_TrayShowsARunningJobWithProgress opens the activity tray DURING a
 // job, which is the state it exists for: the bell badge counts what is
 // happening, the tray groups it under Running, and the row carries the same
@@ -4742,5 +4800,59 @@ func TestE2E_Motion_TheSlideOverPlaysItsExitBeforeItGoes(t *testing.T) {
 	)
 
 	assert.True(t, sawClosing, "the panel must wear its closing state before it goes")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LockedUpdateIsReportedAsASkipNotAsDone is I1's own end-to-end
+// reproduction: tick a LOCKED mod's update alongside an unlocked one, apply
+// the batch, and read what the screen says about it.
+//
+// Before the fix the control that started the batch read a bare "Done" and
+// the tray read "updates succeeded", with the lock refusal named nowhere at
+// all - while the CLI, for the same batch, withheld the row's tick and
+// ended with "1 locked mod(s) not applied". That is the parity gap #324
+// closed in core and this surface lost on the way to the screen.
+//
+// The disk assertions are what stop this from being a test of wording: the
+// unlocked mod really moves to 2.0 and the locked one really does not, so
+// the tally is checked against what actually happened.
+func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
+	f := newE2EFixtureWithALockedAndAnUnlockedUpdate(t)
+
+	var inline, trayState, traySkips string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Better Boots for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Great Gloves for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.card--updates .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		textContent(`.card--updates .job-progress__text`, &inline),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row .tray__skips`, chromedp.ByQuery),
+		textContent(`.tray__row .tray__state`, &trayState),
+		textContent(`.tray__row .tray__skips`, &traySkips),
+	)
+
+	assert.Equal(t, "1 applied / 1 skipped", strings.TrimSpace(inline),
+		"the control that started the batch must count the refusal as a SKIP, never say a bare Done")
+	assert.Equal(t, "1 applied / 1 skipped", strings.TrimSpace(trayState),
+		"the tray must say the same thing the control does")
+	assert.Contains(t, traySkips, "Better Boots",
+		"the skipped row must be NAMED, not merely counted")
+	assert.Contains(t, traySkips, "locked",
+		"and the engine's own reason must be on screen - a bare count is a guessing game")
+
+	boots, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "boots.pak"))
+	require.NoError(t, err)
+	assert.Contains(t, string(boots), "boots-1.0",
+		"the locked mod must still be deployed at the version its lock names")
+	gloves, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "gloves.pak"))
+	require.NoError(t, err)
+	assert.Contains(t, string(gloves), "gloves-2.0",
+		"the unlocked mod must really have been updated - otherwise the tally counts nothing")
 	assert.Empty(t, f.BrowserErrors())
 }

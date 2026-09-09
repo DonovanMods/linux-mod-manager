@@ -1816,6 +1816,19 @@ select {
   color: var(--text-muted);
 }
 
+/* The declined rows of a finished batch, named in the engine's own words
+ * (I1, unit 8 gate review). Rendered unexpanded, directly under the row's
+ * own tally: a lock refusal is a SKIP, not a failure, so it carries the
+ * secondary text colour rather than --danger - the honest outcome of a
+ * locked mod must not read as an alarm. */
+.tray__skips {
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  list-style: none;
+}
+
 .tray__error {
   padding: var(--space-2);
   color: var(--danger);
