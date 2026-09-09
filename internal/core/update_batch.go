@@ -254,7 +254,7 @@ func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, pr
 func (s *Service) ApplyUpdateBatch(ctx context.Context, game *domain.Game, plan *UpdateBatchPlan, opts UpdateBatchOptions, sink EventSink) (*UpdateBatchResult, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
-		return &UpdateBatchResult{}, err
+		return &UpdateBatchResult{GameID: plan.GameID, Profile: plan.Profile}, err
 	}
 	defer release()
 	return s.applyUpdateBatch(ctx, game, plan, opts, sink)

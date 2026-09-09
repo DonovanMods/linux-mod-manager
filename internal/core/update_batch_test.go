@@ -292,6 +292,30 @@ func TestApplyUpdateBatch_BracketsEveryItemWithEvents(t *testing.T) {
 	}, ticks)
 }
 
+// TestApplyUpdateBatch_BeginOpFailure_ResultIdentifiesTheBatch pins the #324
+// review's Minor 7: a beginOp failure (here, a pre-cancelled ctx, which
+// beginOp refuses before ever touching the semaphore) must still return a
+// result naming which game/profile the batch was for, matching every other
+// exit of ApplyUpdateBatch - a stored serve job Result should never carry an
+// empty game_id/profile.
+func TestApplyUpdateBatch_BeginOpFailure_ResultIdentifiesTheBatch(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game, updates := batchTestGame(t, svc)
+
+	plan, err := svc.PlanUpdateBatchFrom(context.Background(), game, "default", updates, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := svc.ApplyUpdateBatch(ctx, game, plan, core.UpdateBatchOptions{}, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	assert.Equal(t, game.ID, result.GameID)
+	assert.Equal(t, "default", result.Profile)
+}
+
 // TestUpdateBatchFailure_CauseIsNilOffTheWire documents the one thing the
 // wire cannot carry: a decoded failure has its Error text and no typed
 // cause.
