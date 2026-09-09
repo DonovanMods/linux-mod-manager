@@ -4044,6 +4044,107 @@ mods:
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ProfileImportNoInstallOverridesTheInstallCheckbox is N-14 of the
+// epic re-review: `profile import --no-install` is a hard override the wire
+// has always carried (profileImportApplyRequest.NoInstall), but only the
+// positive "Download and install" opt-in had a control - the outcome
+// matched whenever it was left unchecked, but there was no way to check it
+// AND still guarantee nothing is installed.
+//
+// The distinguishing evidence is "skipped" rather than "failed": these two
+// mod ids are not registered in the fixture's fake source at all, so if the
+// hard override did NOT win over a checked "Download and install", Apply
+// would attempt real downloads that error out - a "failed" tally, not a
+// "skipped" one. Seeing "skipped" with Install visibly checked is what
+// proves the override, not merely the unchecked default, produced this.
+func TestE2E_ProfileImportNoInstallOverridesTheInstallCheckbox(t *testing.T) {
+	f := newE2EFixture(t)
+
+	doc := fmt.Sprintf(`name: imported
+game_id: %s
+mods:
+  - source_id: fake
+    mod_id: newmod1
+    version: "1.0"
+  - source_id: fake
+    mod_id: newmod2
+    version: "1.0"
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "imported.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+	)
+
+	var installChecked, noInstallVisible bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] input[type="checkbox"]'))
+				.find((el) => el.closest("label")?.textContent.includes("Download and install"))
+				.click();
+		`, nil),
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] input[name="no_install"]`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="profile_import"] input[name="no_install"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] input[type="checkbox"]'))
+				.find((el) => el.closest("label")?.textContent.includes("Download and install")).checked
+		`, &installChecked),
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="profile_import"] input[name="no_install"]').checked`, &noInstallVisible),
+	)
+	require.True(t, installChecked, "Download and install must be visibly checked - the override must win DESPITE it, not merely stand in for it")
+	require.True(t, noInstallVisible, "the hard override checkbox must be checked too")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "imported")
+		return err == nil && len(p.Mods) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the import job must still succeed and save the profile")
+
+	list, err := f.Svc.ListMods(t.Context(), f.Game, "imported")
+	require.NoError(t, err)
+	assert.Empty(t, list.Mods, "no_install must have stopped anything from actually installing, even though Install was checked")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.tray`, &trayText))
+		return strings.Contains(trayText, "profile_import") && strings.Contains(trayText, "skipped")
+	}, 5*time.Second, 100*time.Millisecond, "the tray must show the pending mods as skipped, not attempted")
+	assert.NotContains(t, trayText, "failed",
+		"a failed download attempt would mean the checked Install box was not actually overridden")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone is N2's own
 // scenario (unit 6 re-review): a profile_import whose every mod is already
 // installed (the plan's Installed bucket, pending == 0) returns a
