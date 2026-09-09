@@ -83,16 +83,22 @@ type DownloadModResult struct {
 // serialized through this semaphore; Phase 2 lifts those flows into
 // serialized Service methods.
 type Service struct {
-	config     *config.Config
-	db         *db.DB
-	cache      *cache.Cache
-	registry   *source.Registry
-	gamesMu    sync.RWMutex
-	games      map[string]*domain.Game
-	opSem      chan struct{}
-	downloader *Downloader
-	extractor  *Extractor
-	log        *slog.Logger // Diagnostics logger; nil means discard (see logger()).
+	config   *config.Config
+	db       *db.DB
+	cache    *cache.Cache
+	registry *source.Registry
+	gamesMu  sync.RWMutex
+	games    map[string]*domain.Game
+	opSem    chan struct{}
+	// verifyMemo caches the last verify answer per (game, profile, tier),
+	// keyed on a cheap fingerprint of what a run actually reads (#336). Any
+	// mutation drops it - beginOp does that - and VerifyOptions.Force
+	// bypasses it. See verify_memo.go for the fingerprint's own limits.
+	verifyMemoMu sync.Mutex
+	verifyMemo   map[string]verifyMemoEntry
+	downloader   *Downloader
+	extractor    *Extractor
+	log          *slog.Logger // Diagnostics logger; nil means discard (see logger()).
 
 	configDir string
 	dataDir   string

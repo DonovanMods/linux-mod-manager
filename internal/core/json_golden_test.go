@@ -616,8 +616,11 @@ func TestJSONGoldens(t *testing.T) {
 			core.DependencyWarning{SourceID: "nexusmods", ModID: "99", Message: "fetch failed"},
 		},
 		{
+			// Force is set here (#336) to pin its key's wire shape; it is
+			// omitempty, so the default (memo-eligible) options document is
+			// byte-identical to what it was before the field existed.
 			"verify_options",
-			core.VerifyOptions{Tier: core.VerifyFull, Fix: true, ModFilter: "Sample Mod"},
+			core.VerifyOptions{Tier: core.VerifyFull, Fix: true, ModFilter: "Sample Mod", Force: true},
 		},
 		{
 			// Fixable true here on purpose (#332): version_mismatch on an
@@ -639,8 +642,11 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			// Findings is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null" - a clean verify run reports it.
+			// Cached (#336) is set for the same reason Force is on
+			// verify_options above: this is the only golden that carries
+			// the key, and a real run omits it entirely.
 			"verify_result",
-			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime},
+			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime, Cached: true},
 		},
 		{
 			"converged_file",

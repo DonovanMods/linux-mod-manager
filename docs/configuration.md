@@ -248,3 +248,25 @@ kernel drops it the moment the process exits — a killed or crashed lmm never l
 a stale lock to clear by hand, and the file itself can be deleted safely when no lmm
 is running. Two installations (different `--data` directories) have separate lock
 files and never contend.
+
+## The verify memo
+
+`lmm verify` always looks at the disk for real. The web UI's Health card, which
+re-hydrates on every route change, job completion and profile switch, does not: core
+keeps the last verify answer per game, profile and tier, and re-uses it while a cheap
+fingerprint of what a run inspects is unchanged (#336). That fingerprint is the
+profile's mods and their locks, the installed rows, and a **stat-only** walk of the
+deployed tree — each file's path, size and modification time.
+
+A re-used answer keeps the `checked_at` of the run that produced it and carries
+`cached: true`, which the card renders as "Unchanged since …". Every lmm mutation
+drops the memo, and the card's **Re-verify** (`GET /api/v1/health?force=1`) forces a
+real run.
+
+**The limit**, stated plainly: size and modification time are not content. A deployed
+file rewritten to the same length with its timestamp preserved — a restore from
+backup, a tool that copies mtimes — fingerprints identically, and the memoised answer
+stands until something else changes or a run is forced. The memo also cannot see
+anything the full tier reads over the network, nor changes inside the cache
+directory. Run `lmm verify` (or press Re-verify) whenever you want a guaranteed fresh
+answer; neither ever uses the memo.

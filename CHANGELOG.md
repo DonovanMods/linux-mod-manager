@@ -653,6 +653,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI no longer re-runs a full verify on every hydrate (#336).**
+  Mission Control hydrates on each route change, job completion and profile
+  switch, and every one of those ran the full verify tier — a source round
+  trip per mod and a cache stat per file — over state that had not moved.
+  It was correct and it was the one place a large install felt slow.
+  `Service.Verify` now memoises its last answer per (game, profile, tier),
+  keyed on a cheap fingerprint of what a run actually inspects: the
+  profile's mods and locks, the installed rows, and a stat-only walk (path,
+  size, modification time) of the deployed tree. An unchanged installation
+  is answered from that memo with its original `checked_at` and an additive
+  `cached: true`, which the Health card renders as "Unchanged since …".
+  Every mutation drops the memo; a new `VerifyOptions.Force` (the CLI's
+  `lmm verify` always, the card's **Re-verify** via
+  `GET /api/v1/health?force=1`) bypasses it, as does any run with `--fix`, a
+  mod filter, or a caller watching progress events. Documented limit: size
+  and mtime are not content, so a file rewritten at the same size with its
+  timestamp preserved is not noticed until a mutation or a forced run.
+
 - **Two lmm processes can no longer interleave their mutations (#317).**
   Within one process `beginOp` serialized every mutation; across processes
   — a CLI command typed while `lmm serve` was mid-job, or two CLIs — only

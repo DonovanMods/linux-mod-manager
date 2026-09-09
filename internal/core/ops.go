@@ -48,6 +48,13 @@ func (s *Service) beginOp(ctx context.Context) (release func(), err error) {
 		return nil, ctx.Err()
 	}
 
+	// #336: every mutation invalidates the verify memo. Done HERE, at the
+	// gate, rather than in each flow: a per-flow guess about what a given
+	// mutation could have changed is a guess a flow added later gets wrong,
+	// and a stale health verdict is exactly the kind of wrong that looks
+	// right.
+	s.dropVerifyMemo()
+
 	var lock *opLock
 	if s.opLockPath != "" {
 		var err error

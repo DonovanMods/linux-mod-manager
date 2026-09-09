@@ -849,12 +849,12 @@ the omnibar, the activity bell, **⚙ Setup** and the theme toggle. Beneath
 it, attention cards render only when they have something to say, and each
 acts in place:
 
-| Card          | What it shows                                            | What it does                                                                                                                             |
-| ------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Updates**   | every mod with a newer version                           | tick rows → "Update selected" applies them as one batch                                                                                  |
-| **Health**    | `lmm verify`'s findings, and when it last ran            | per-finding **Repair**, **Repair all**, **Re-verify**; a finding that `verify --fix` would not attempt says so in the engine's own words |
-| **Conflicts** | each contested file, its contenders and the winning rule | **Resolve…** opens the reorder modal scrolled to that file                                                                               |
-| **Profile**   | which way the profile and the installed set have drifted | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                           |
+| Card          | What it shows                                                                                                          | What it does                                                                                                                                                             |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Updates**   | every mod with a newer version                                                                                         | tick rows → "Update selected" applies them as one batch                                                                                                                  |
+| **Health**    | `lmm verify`'s findings, and when it last ran (or "Unchanged since …" when the answer came from the verify memo, #336) | per-finding **Repair**, **Repair all**, **Re-verify** (a real re-run, never the memo); a finding that `verify --fix` would not attempt says so in the engine's own words |
+| **Conflicts** | each contested file, its contenders and the winning rule                                                               | **Resolve…** opens the reorder modal scrolled to that file                                                                                                               |
+| **Profile**   | which way the profile and the installed set have drifted                                                               | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                                                           |
 
 The **library** is the spine: an enabled toggle, the name, the installed
 version (with its update target), badges (⬆ update, ⚠ health, ⇄ conflict,
@@ -1298,6 +1298,21 @@ single trusted user on their own machine:
   Content-Security-Policy). The policy admits exactly one inline script —
   the theme bootstrap — and it does so by the SHA-256 of that script's own
   bytes, not by `'unsafe-inline'`. There is no `'unsafe-eval'`.
+- **The Health card does not re-verify what has not changed** (#336). A
+  hydrate — and the web UI hydrates on every route change, job completion
+  and profile switch — asks core for the same full verify tier the CLI
+  runs. Core answers from the previous run when nothing it inspects has
+  moved: the profile's mods and locks, the installed rows, and a stat-only
+  walk (path, size, modification time) of the deployed tree. The card then
+  says "Unchanged since …" instead of "Last verified …", and the document
+  carries `cached: true` beside the original `checked_at`. **Any** lmm
+  mutation drops the memo, and **Re-verify** (like `lmm verify` itself,
+  which never uses the memo) forces a real run. The limit is the
+  fingerprint's: a deployed file rewritten to the same size with its
+  modification time preserved looks unchanged, so a memoised answer can be
+  stale until a mutation or a forced run — which is exactly why a typed
+  `lmm verify` always runs for real.
+
 - **Cross-process mutations are serialized** (#317). Every lmm mutation —
   CLI or `serve` — takes an advisory `flock` on `<data dir>/.oplock` for as
   long as it holds the in-process mutation slot, so a `lmm deploy` typed

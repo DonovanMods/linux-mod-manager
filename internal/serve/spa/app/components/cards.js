@@ -270,8 +270,19 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
 
   // ONE string, not adjacent interpolations - htm's whitespace collapsing
   // (see conflictLabel below) would fuse "verified" to the age.
+  //
+  // core.VerifyResult.cached (issue 336) says this answer came from core's
+  // memo rather than from a run just now: nothing it fingerprints has moved
+  // since checked_at, so the previous verdict still stands. The line says
+  // which it is, because "last verified 3 minutes ago" over a memo hit and
+  // over a fresh run mean different things to a reader deciding whether to
+  // press Re-verify.
   const checked = relativeTime(result?.checked_at);
-  const lastVerified = checked ? `Last verified ${checked}` : "";
+  const lastVerified = checked
+    ? result?.cached
+      ? `Unchanged since ${checked}`
+      : `Last verified ${checked}`
+    : "";
 
   return html`
     <div class="card card--health">

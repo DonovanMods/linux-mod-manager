@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -112,6 +113,13 @@ type fakeSourceMod struct {
 type fakeSource struct {
 	id   string
 	mods map[string]*fakeSourceMod
+
+	// modFilesMu/modFilesCalls count GetModFiles calls, which is what the
+	// VerifyFull tier's version pass does per mod - the round trip issue
+	// 336's verify memo exists to stop repeating on every hydrate. Guarded
+	// because a server answers requests on its own goroutines.
+	modFilesMu    sync.Mutex
+	modFilesCalls int
 }
 
 // newFakeSource builds a fakeSource with id and no mods; add them via
@@ -196,11 +204,23 @@ func (s *fakeSource) GetDependencies(context.Context, *domain.Mod) ([]domain.Mod
 }
 
 func (s *fakeSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
+	s.modFilesMu.Lock()
+	s.modFilesCalls++
+	s.modFilesMu.Unlock()
+
 	m, ok := s.mods[mod.ID]
 	if !ok {
 		return nil, domain.ErrModNotFound
 	}
 	return m.Files, nil
+}
+
+// getModFilesCalls reports how many times this source has been asked for a
+// mod's file list.
+func (s *fakeSource) getModFilesCalls() int {
+	s.modFilesMu.Lock()
+	defer s.modFilesMu.Unlock()
+	return s.modFilesCalls
 }
 
 func (s *fakeSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {

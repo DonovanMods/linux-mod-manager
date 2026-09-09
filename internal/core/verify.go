@@ -59,6 +59,16 @@ type VerifyOptions struct {
 	Tier      VerifyTier `json:"tier"`
 	Fix       bool       `json:"fix"`
 	ModFilter string     `json:"mod_filter,omitempty"`
+	// Force runs the tier even when an unchanged installation could be
+	// answered from the last run's memo (#336), and replaces that memo with
+	// the fresh answer.
+	//
+	// `lmm verify` always sets it: a user who types the command is asking
+	// for a real look at the disk, and the memo's fingerprint cannot see a
+	// file rewritten at the same size and mtime. The web UI's Health card
+	// sets it for Re-verify and leaves it off for a plain hydrate, which is
+	// the case the memo exists for.
+	Force bool `json:"force,omitempty"`
 }
 
 // VerifyFinding is one reported row - a per-file or per-mod outcome from a
@@ -201,6 +211,17 @@ type VerifyResult struct {
 	// omitzero, so a VerifyResult built by hand (a test, a caller
 	// assembling one) carries no key at all rather than a zero time.
 	CheckedAt time.Time `json:"checked_at,omitzero"`
+
+	// Cached reports that this answer came from #336's memo rather than
+	// from a run just now: nothing the memo fingerprints has changed since
+	// CheckedAt, so the previous verdict still stands. A surface renders it
+	// as "unchanged since <checked_at>" and offers a forced re-run
+	// (VerifyOptions.Force) beside it.
+	//
+	// omitzero: a real run carries no key at all, so every document
+	// produced before this field existed is byte-identical to what it is
+	// now.
+	Cached bool `json:"cached,omitzero"`
 }
 
 // VerifyEventKind identifies what a VerifyEvent carries.
@@ -414,7 +435,63 @@ func (s *Service) verifyGated(ctx context.Context, game *domain.Game, profile st
 		}
 		defer release()
 	}
-	return s.verify(ctx, game, profile, opts, sink)
+	return s.verifyMemoized(ctx, game, profile, opts, sink)
+}
+
+// verifyMemoized is verify plus #336's memo: an installation whose
+// fingerprint has not moved since the last run is answered from that run
+// instead of walking it again.
+//
+// Mission Control hydrates on every route change, every job completion and
+// every profile switch, and each hydrate ran the full tier - a source query
+// per mod and a cache stat per file, for state that had not changed. It was
+// honest and it was the one place a big install felt slow.
+//
+// FOUR shapes always run, and none of them is a cache-busting nicety:
+//
+//   - Force: `lmm verify` typed by a user, and the Health card's Re-verify.
+//     A forced run also REPLACES the memo, so the next hydrate is handed
+//     the fresh answer rather than re-running.
+//   - Fix: a repair changes state; answering it from a memo would report a
+//     repair that never happened.
+//   - ModFilter: a single-mod run is not the whole-profile answer, and
+//     storing it under the same key would let it stand in for one.
+//   - A non-nil sink: a memo hit has no run, so it has no progress events
+//     to emit. A caller that asked to watch gets something to watch.
+//
+// A fingerprint that cannot be computed (an unreadable directory, a failed
+// DB read) is not a match and not an error: the run simply happens, which
+// is the behaviour that existed before the memo.
+func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
+	if opts.Fix || opts.ModFilter != "" || sink != nil {
+		return s.verify(ctx, game, profile, opts, sink)
+	}
+
+	key := verifyMemoKey(game.ID, profile, opts.Tier)
+	fingerprint, err := s.verifyFingerprint(ctx, game, profile)
+	if err != nil {
+		s.logger().Debug("verify memo disabled for this run", "game", game.ID, "profile", profile, "err", err)
+		return s.verify(ctx, game, profile, opts, sink)
+	}
+
+	if !opts.Force {
+		if hit := s.verifyMemoLookup(key, fingerprint); hit != nil {
+			// A copy, with the ORIGINAL CheckedAt: the answer really was
+			// computed then, and a surface saying "unchanged since ..."
+			// needs that moment, not this one. Findings are shared - core
+			// never mutates a returned result, and neither may a caller.
+			cached := *hit
+			cached.Cached = true
+			return &cached, nil
+		}
+	}
+
+	result, err := s.verify(ctx, game, profile, opts, sink)
+	if err != nil {
+		return result, err // a partial (e.g. cancelled) result is never memoised
+	}
+	s.verifyMemoStore(key, fingerprint, result)
+	return result, nil
 }
 
 // verify runs the verify engine for game/profile per opts, reporting

@@ -393,13 +393,25 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 // agree. An additive `?tier=` query param (default full) to let an API
 // caller opt back into the cheap offline check is a possible later
 // addition - not added here.
+//
+// `?force=1` (#336) runs the tier even when core could answer from its
+// unchanged-installation memo. Off by default: an ordinary Mission Control
+// hydrate is exactly the repeated caller the memo exists for, and the
+// answer it gets carries `cached: true` plus the original `checked_at`, so
+// the card can say how old it is and offer a forced re-run.
 func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
 		return
 	}
 
-	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile, core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	// ?force=1 opts out of core's unchanged-installation memo (#336): the
+	// Health card's Re-verify sends it, an ordinary hydrate does not. Only
+	// that exact value counts, so a hydrate cannot accidentally spell the
+	// expensive request.
+	force := r.URL.Query().Get("force") == "1"
+	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile,
+		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, nil)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

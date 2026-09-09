@@ -1561,7 +1561,11 @@ function originOf(jobID) {
 const actions = {
   reloadMods: () => reload("mods", "/api/v1/mods"),
   reloadUpdates: () => reload("updates", "/api/v1/updates"),
-  reloadHealth: () => reload("health", "/api/v1/health"),
+  // Re-verify is the ONE health read that opts out of core's
+  // unchanged-installation memo (issue 336): a user pressing it is asking
+  // for a fresh look, while the hydrate that runs on every route change and
+  // job completion is exactly the repeated caller the memo exists for.
+  reloadHealth: () => reload("health", "/api/v1/health?force=1"),
   reloadConflicts: () => reload("conflicts", "/api/v1/conflicts"),
   reloadModPage: () => {
     const route = store.get().route;

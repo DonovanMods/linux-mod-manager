@@ -208,7 +208,7 @@ func TestFlowHealthFix_RepairsVersionMismatch_NotJustTheMissingFile(t *testing.T
 	assert.Zero(t, report.Result.Issues, "the job's own claimed issue count")
 	assert.Zero(t, report.Result.Warnings, "the job's own claimed warning count")
 
-	fresh, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	fresh, err := svc.VerifyReport(ctx, game, "default", core.VerifyOptions{Tier: core.VerifyFull, Force: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, report.Result.Issues, fresh.Result.Issues,
 		"a fresh full-tier verify must agree with what the repair just claimed - not still see a version_mismatch")
@@ -237,7 +237,7 @@ func TestFlowVerifyFixPlan_TierMatchesTheAPIAndTheCLI(t *testing.T) {
 	var apiReport core.VerifyReport
 	require.NoError(t, json.Unmarshal(apiRec.Body.Bytes(), &apiReport))
 
-	cliEquivalent, err := svc.VerifyReport(t.Context(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	cliEquivalent, err := svc.VerifyReport(t.Context(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Force: true}, nil)
 	require.NoError(t, err)
 
 	require.Positive(t, planned.Plan.Result.Issues,
