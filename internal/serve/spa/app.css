@@ -661,9 +661,19 @@ select {
  * ellipsis is what stops a long mod name - or a conflict label naming three
  * mods - from pushing its own Repair/Resolve button out of the card
  * entirely, which flex's default min-width: auto would happily do
- * (issue 334's density pass). */
+ * (issue 334's density pass).
+ *
+ * It gives that slack back LAST (M3, unit 8 gate review). Both halves used
+ * to shrink at the same rate, so a Health row at 1280px read
+ * "Better …  version mismatch (recorded 1.0, so…" - both cut, and the name
+ * is the identifier: the detail explains a mod you can still name, while a
+ * truncated name explains nothing at all. The detail's much larger shrink
+ * factor (100 against 1) is what makes the name the last thing to go. Both
+ * carry their own full text as a title, so nothing truncated here is
+ * unrecoverable without resizing the window. */
 .card__row-name {
   flex: 1 1 auto;
+  flex-shrink: 1;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -684,7 +694,7 @@ select {
 }
 
 .card__row-detail {
-  flex: 0 1 auto;
+  flex: 0 100 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;

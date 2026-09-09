@@ -177,10 +177,12 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                         checked=${selected.has(key)}
                         onChange=${() => toggle(key)}
                       />
-                      <span class="card__row-name"
+                      <span class="card__row-name" title=${u.installed_mod.name}
                         >${u.installed_mod.name}</span
                       >
-                      <span class="mono card__row-detail"
+                      <span
+                        class="mono card__row-detail"
+                        title=${`${u.installed_mod.version} → ${u.new_version}`}
                         >${u.installed_mod.version} → ${u.new_version}</span
                       >
                       ${
@@ -290,10 +292,14 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                       key=${f.mod_id + "/" + (f.file_id || i)}
                       class="card__row"
                     >
-                      <span class="card__row-name"
+                      <span
+                        class="card__row-name"
+                        title=${f.mod_name || f.mod_id}
                         >${f.mod_name || f.mod_id}</span
                       >
-                      <span class="card__row-detail">${findingLabel(f)}</span>
+                      <span class="card__row-detail" title=${findingLabel(f)}
+                        >${findingLabel(f)}</span
+                      >
                       ${
                         f.fixable
                           ? html`<${InlineJob}
@@ -486,10 +492,16 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
                     <li key=${c.path} class="card__row">
                       <span
                         class="card__row-name"
-                        title=${c.stale ? "A redeploy would change which file wins" : undefined}
+                        title=${
+                          c.stale
+                            ? `A redeploy would change which file wins — ${conflictLabel(c)}`
+                            : conflictLabel(c)
+                        }
                         >${conflictLabel(c)}</span
                       >
-                      <span class="mono card__row-detail">${c.path}</span>
+                      <span class="mono card__row-detail" title=${c.path}
+                        >${c.path}</span
+                      >
                       <button
                         type="button"
                         class="button button--small"

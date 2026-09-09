@@ -5036,3 +5036,42 @@ func TestE2E_SlideOverFindingsReadAsProse(t *testing.T) {
 		"the two surfaces render one finding through one helper, so their words must be identical")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_HealthCardTruncatesTheDetailBeforeTheName is M3 of the unit-8
+// gate review. Both halves of a card row shrank at the same rate, so at
+// 1280px a Health row read "Better …  version mismatch (recorded 1.0, so…"
+// - both cut. The name is the identifier: a truncated detail still explains
+// a mod you can name, while a truncated name explains nothing at all. Only
+// the not-fixable branch carried a title, so a fixable row's cut text was
+// unrecoverable without resizing the window.
+//
+// Measured in the browser rather than asserted against the stylesheet: a
+// truncation is what a layout engine DOES with a rule, and scrollWidth
+// versus clientWidth is the only place that fact exists.
+func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var nameCut, detailPresent, titled bool
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health .card__row-name`, chromedp.ByQuery),
+		chromedp.Evaluate(`(() => {
+			const n = document.querySelector(".card--health .card__row-name");
+			return n.scrollWidth > n.clientWidth;
+		})()`, &nameCut),
+		chromedp.Evaluate(`Boolean(document.querySelector(".card--health .card__row-detail"))`, &detailPresent),
+		chromedp.Evaluate(`(() => {
+			const row = document.querySelector(".card--health .card__row");
+			return Array.from(row.querySelectorAll(".card__row-name, .card__row-detail"))
+				.every((el) => (el.title ?? "") !== "");
+		})()`, &titled),
+	)
+
+	assert.True(t, detailPresent, "the row must actually carry both halves, or this proves nothing")
+	assert.False(t, nameCut,
+		"at 1280px the mod name must not be truncated - the detail gives up the room first")
+	assert.True(t, titled,
+		"both halves must carry their own full text as a title, so nothing cut is unrecoverable")
+	assert.Empty(t, f.BrowserErrors())
+}
