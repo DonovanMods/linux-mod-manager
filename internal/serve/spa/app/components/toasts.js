@@ -22,8 +22,19 @@ import { navigate, contextPath } from "../router.js";
  * entry (?job=, the same annotation the deleted /jobs/{id} page's 301 now
  * points at). It is offered only on the home route, which is the only route
  * that has a tray to open.
+ *
+ * A toast may ALSO name one action from the actions object, by key, with
+ * its own label (issue 334, the N7 carry): a profile import is started from
+ * inside the profiles modal, and the confirm-plan modal REPLACES that modal
+ * in the shared slot ("modals stack at most one deep"), so by the time the
+ * import finishes the surface that would have shown its result is gone and
+ * the user has to go and re-open it to see what they just created. The name
+ * is a string rather than a function because it travels through the store,
+ * which holds plain data - and it is looked up defensively, so a toast
+ * naming an action this build no longer has renders without it rather than
+ * throwing over a completion notice.
  */
-export function Toasts({ toasts, route, onDismiss }) {
+export function Toasts({ toasts, route, onDismiss, actions }) {
   const list = toasts ?? [];
   if (list.length === 0) return null;
 
@@ -41,6 +52,23 @@ export function Toasts({ toasts, route, onDismiss }) {
             <div class="toast__body">
               <p class="toast__title">${toast.title}</p>
               ${toast.detail && html`<p class="toast__detail">${toast.detail}</p>`}
+              ${
+                toast.action &&
+                typeof actions?.[toast.action] === "function" &&
+                html`
+                  <button
+                    type="button"
+                    class="toast__link"
+                    data-action="toast-action"
+                    onClick=${() => {
+                      onDismiss(toast.id);
+                      actions[toast.action]();
+                    }}
+                  >
+                    ${toast.actionLabel}
+                  </button>
+                `
+              }
               ${
                 canOpenTray &&
                 toast.jobID &&

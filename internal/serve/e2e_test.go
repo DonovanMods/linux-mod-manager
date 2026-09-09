@@ -4447,3 +4447,70 @@ func TestE2E_HealthCard_SaysWhenItLastVerified(t *testing.T) {
 	assert.Equal(t, "Last verified just now", line)
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ProfilesModal_ImportOffersAWayBackToProfiles closes the N7 carry
+// (unit 6 re-review): importing from the profiles modal REPLACES it with
+// the confirm-plan modal in the shared slot ("modals stack at most one
+// deep"), so when the import finishes there is nothing on screen that shows
+// profiles - and the profile the user just created is only findable by
+// knowing to re-open "Manage profiles…".
+//
+// The completion toast now carries that door. The scenario clicks it and
+// asserts the profiles modal really opens on the imported profile - not
+// that a button merely rendered.
+func TestE2E_ProfilesModal_ImportOffersAWayBackToProfiles(t *testing.T) {
+	f := newE2EFixture(t)
+
+	doc := fmt.Sprintf(`name: imported
+game_id: %s
+mods: []
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "imported.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		// The import's own origin has no control left on screen, so its
+		// completion becomes a toast - which is exactly the state N7 is
+		// about.
+		chromedp.WaitVisible(`.toast [data-action="toast-action"]`, chromedp.ByQuery),
+	)
+
+	var label string
+	f.runInBrowser(t, textContent(`.toast [data-action="toast-action"]`, &label))
+	assert.Equal(t, "Open profiles", label)
+
+	f.runInBrowser(t,
+		chromedp.Click(`.toast [data-action="toast-action"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('[data-testid="profiles-list"]').textContent.includes("imported")`, nil),
+	)
+
+	var listText string
+	f.runInBrowser(t, textContent(`[data-testid="profiles-list"]`, &listText))
+	assert.Contains(t, listText, "imported",
+		"the offer must land on the profiles list showing what the import created")
+	assert.Empty(t, f.BrowserErrors())
+}

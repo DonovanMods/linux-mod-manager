@@ -79,6 +79,7 @@ export function App({ state, onThemeChange, actions }) {
       toasts=${state.toasts}
       route=${route}
       onDismiss=${actions.dismissToast}
+      actions=${actions}
     />
   `;
 

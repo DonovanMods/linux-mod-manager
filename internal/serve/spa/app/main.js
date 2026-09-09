@@ -1224,13 +1224,40 @@ async function onJobDone(summary) {
           title: `${summary.kind} failed`,
           detail: summary.error?.error ?? "",
           jobID: summary.id,
+          ...toastAffordance(summary),
         }
       : {
           tone: "success",
           title: `${summary.kind} finished`,
           jobID: summary.id,
+          ...toastAffordance(summary),
         },
   );
+}
+
+// jobToastAffordances maps a job KIND to the one place its outcome
+// actually lives, for the kinds whose own surface is gone by the time they
+// finish (issue 334, the N7 carry).
+//
+// profile_import is the case: it is started from inside the profiles modal,
+// and the confirm-plan modal REPLACES that modal in the shared slot ("modals
+// stack at most one deep", design doc §Modals). So the import's own result -
+// a profile that now exists, or does not - lands with nothing on screen that
+// shows profiles, and the user has to know to go and re-open "Manage
+// profiles…" to find out what they just did. Re-opening the modal FOR them
+// was the other option the carry named and is the wrong one: it would seize
+// the screen from whatever they moved on to, minutes later, for a job they
+// may already have forgotten. An offer they can decline is the honest shape.
+//
+// Keyed by action NAME rather than by function because a toast is store
+// state, and the store holds plain data.
+const jobToastAffordances = {
+  profile_import: { action: "openProfilesModal", actionLabel: "Open profiles" },
+};
+
+/** toastAffordance is summary's own extra offer, or nothing. */
+function toastAffordance(summary) {
+  return jobToastAffordances[summary.kind] ?? {};
 }
 
 /** originOf finds which control (if any) started jobID. */
