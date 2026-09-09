@@ -154,12 +154,17 @@ func redownloadRefusal(mod *domain.InstalledMod) string {
 // terms: the two ways the version repair is refused get their own sentence,
 // because "there is no source" and "the lock owns this version" are
 // different problems with different remedies.
+//
+// The lock sentence carries no issue number (M2, unit 8 gate review): it is
+// rendered verbatim in the web UI's Health card and by `lmm verify --json`,
+// and "(#97)" means nothing to the person reading it. The issue behind the
+// rule is #97, and this comment is where that belongs.
 func versionMismatchRefusal(mod *domain.InstalledMod, ref *domain.ModReference) string {
 	if !redownloadRepairs(mod) {
 		return notFixableLocal
 	}
 	if ref != nil && ref.Locked {
-		return fmt.Sprintf("the ref is locked at v%s, and --fix will not rewrite what a lock means (#97) - unlock it first", ref.Version)
+		return fmt.Sprintf("the ref is locked at v%s, and --fix will not rewrite what a lock means - unlock it first", ref.Version)
 	}
 	return ""
 }
