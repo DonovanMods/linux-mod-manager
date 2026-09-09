@@ -1,17 +1,17 @@
 // plan_updates.js - the confirm modal's renderer for the "updates" batch
-// kind (kind_updates.go's updatesBatchPlan), replacing GenericPlanView for
-// this one kind (issue 330 carry-3, issue 332): checkboxes to drop a row, a
-// per-item tally, and NotFound rows named rather than silently absorbed
-// into the count.
+// kind (core.UpdateBatchPlan, served by kind_updates.go), replacing
+// GenericPlanView for this one kind (issue 330 carry-3, issue 332):
+// checkboxes to drop a row, a per-item tally, and NotFound rows named
+// rather than silently absorbed into the count.
 //
-// There is no core.UpdatePlan batch type to render (kind_updates.go's own
-// doc comment: the batch is a SELECTION, applied as N single-mod plans) -
-// updatesBatchPlan already IS that selection, so "dropping a row" can only
-// mean re-planning with a smaller selection: kind_updates.go's
-// planUpdatesKind computes p.Updates once, at Plan time, and Apply just
-// walks it - there is no apply-time filter option to smuggle a drop through
-// (this unit's gate keeps the wire frozen; issue 332 review confirmed there is
-// none to add). So unchecking a row calls actions.openPlan again, with the
+// A batch plan IS a selection (core.UpdateBatchPlan's own doc comment: the
+// items are re-planned one at a time inside the apply, so the batch plan
+// carries the chosen updates rather than N pre-computed single-mod plans),
+// so "dropping a row" can only mean re-planning with a smaller selection:
+// PlanUpdateBatch computes plan.Updates once, at Plan time, and
+// ApplyUpdateBatch just walks it - there is no apply-time filter option to
+// smuggle a drop through (issue 332's review confirmed there is none to
+// add). So unchecking a row calls actions.openPlan again, with the
 // SAME kind/origin/title/confirmLabel modal.js already opened this with
 // (threaded down as `modal`, confirmplan.js's own addition for this file)
 // and a `mods` list one entry shorter - a fresh plan_id, same modal slot,
@@ -22,7 +22,7 @@
 import { html } from "../render.js";
 import { modKey } from "../modrows.js";
 
-/** rowKey identifies one updatesBatchPlan row - the same "source:id" key
+/** rowKey identifies one UpdateBatchPlan row - the same "source:id" key
  * the plan's own request/mods took, and NotFound already reports in. */
 function rowKey(update) {
   return modKey(update.installed_mod);

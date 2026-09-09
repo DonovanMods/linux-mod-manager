@@ -37,12 +37,17 @@ function resultNamesMod(kind, result, sourceID, modID) {
   }
   if (kind === "updates") {
     const key = `${sourceID}:${modID}`;
-    const applied = result.applied ?? [];
-    const failed = result.failed ?? [];
+    // Applied and Skipped are core.UpdateApplyResults (a nested `mod` ref);
+    // Failed carries the flat "source:id" key instead (issue 324's
+    // UpdateBatchFailure). Skipped is the locked-ref outcome (#97) - a mod
+    // whose batch DID concern it, so a history section that ignored it
+    // would tell that mod's page nothing happened.
+    const namesRef = (r) =>
+      r.mod?.source_id === sourceID && r.mod?.mod_id === modID;
     return (
-      applied.some(
-        (a) => a.mod?.source_id === sourceID && a.mod?.mod_id === modID,
-      ) || failed.some((f) => f.mod === key)
+      (result.applied ?? []).some(namesRef) ||
+      (result.skipped ?? []).some(namesRef) ||
+      (result.failed ?? []).some((f) => f.mod === key)
     );
   }
   return false;

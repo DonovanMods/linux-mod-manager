@@ -225,8 +225,15 @@ export function resultTally(result) {
   if (Array.isArray(result.applied) && Array.isArray(result.failed)) {
     const applied = result.applied.length;
     const failed = result.failed.length;
-    if (applied === 0 && failed === 0) return null;
-    return { kind: "updates", applied, failed };
+    // core.UpdateBatchResult.Skipped (issue 324): the items the batch declined
+    // to attempt - today exactly the locked refs (#97). It is omitzero, so
+    // a batch with none carries no key at all. Kept its OWN term for the
+    // same reason profile_import's is: "we did not try, and here is why" is
+    // not a failure, and rolling it into one would turn the honest outcome
+    // of a locked mod red.
+    const skipped = Array.isArray(result.skipped) ? result.skipped.length : 0;
+    if (applied === 0 && failed === 0 && skipped === 0) return null;
+    return { kind: "updates", applied, failed, skipped };
   }
   if (
     typeof result.installed === "number" &&
@@ -251,8 +258,10 @@ export function resultTally(result) {
  * real outcome - replacing the bare "Done" a job's mere `state` would
  * otherwise print over a batch that applied nothing at all.
  *
- * "updates" keeps the original two-number "n applied / m failed" (N1, unit
- * 6 re-review: this shape is untouched). profile_import instead reads "n
+ * "updates" reads "n applied / m failed", with " · k skipped" appended only
+ * when the batch actually skipped something (issue 324's locked refs - a batch
+ * with none is byte-identical to what this printed before). profile_import
+ * instead reads "n
  * installed · m skipped", since skipped is the flow's own documented
  * outcome, not a failure - with " · k failed" appended only when failed is
  * non-empty, and " · j warnings" appended only when the result actually
@@ -265,7 +274,8 @@ export function resultTallyLabel(tally) {
     if (tally.warnings > 0) parts.push(`${tally.warnings} warnings`);
     return parts.join(" · ");
   }
-  return `${tally.applied} applied / ${tally.failed} failed`;
+  const label = `${tally.applied} applied / ${tally.failed} failed`;
+  return tally.skipped > 0 ? `${label} · ${tally.skipped} skipped` : label;
 }
 
 /**
