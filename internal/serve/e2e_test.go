@@ -6203,6 +6203,43 @@ func TestE2E_RelinkFromTheRowMenuMovesTheModsIdentity(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ARefusedRelinkPlanDisablesConfirm is N-1 of the epic re-review
+// (epic-rereview.md): the row ⋯ menu offers Re-link… on any mod including a
+// locked one, and a blank re-link form is a legal metadata-only edit
+// (core.RelinkPlan.Refusal only populates once the plan actually proposes a
+// relink) - but naming a new mod id on a LOCKED ref turns the plan into one
+// core.PlanRelinkMod refuses (RelinkPlan.Refusal, "...unlock it first...").
+// The CLI refuses at plan time and never calls Apply
+// (cmd/lmm/mod_edit.go:109); before this fix the web's Confirm stayed live,
+// so the only way to learn the answer was to start a job that could not
+// succeed.
+func TestE2E_ARefusedRelinkPlanDisablesConfirm(t *testing.T) {
+	f := newE2EFixtureWithDrillInModsAndALockedMod(t)
+
+	var confirmDisabled bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.Click(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="mod_relink"] .plan`, chromedp.ByQuery),
+		// A blank form is a metadata-only edit and refuses nothing yet - the
+		// refusal only appears once a real re-link is proposed.
+		chromedp.SetValue(`input[name="relink-mod-id"]`, "renamed", chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="relink-refusal"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &confirmDisabled),
+	)
+
+	assert.True(t, confirmDisabled,
+		"a re-link plan carrying a refusal must not offer a live Confirm")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_PakConversionTogglesOnlyWhereItApplies is C-3's `lmm mod convert`
 // half, and the one the epic live review said it would not defer: it is the
 // Icarus pak-conversion toggle on a first-class supported game, and it had

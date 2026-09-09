@@ -932,6 +932,19 @@ func newE2EFixtureWithDrillInMods(t *testing.T) e2eFixture {
 	return f
 }
 
+// newE2EFixtureWithDrillInModsAndALockedMod is newE2EFixtureWithDrillInMods
+// with "Alpha Mod" (fake/a) locked at its installed version - N-1's fixture,
+// epic-rereview.md's finding that a re-link plan carrying a refusal still
+// offers a live Confirm. The lock is set through ProfileManager.SetModLock,
+// the same call `lmm mod lock` and the row menu's own "Lock" action make,
+// so the ref this seeds is indistinguishable from one a user locked by hand.
+func newE2EFixtureWithDrillInModsAndALockedMod(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInMods(t)
+	require.NoError(t, f.Svc.NewProfileManager().SetModLock(t.Context(), f.Game.ID, "default", "fake", "a", "1.0"))
+	return f
+}
+
 // newE2EFixtureWithRollbackReadyMod seeds one catalog-registered, deployed
 // mod already advanced to a second version - PreviousVersion set, both
 // versions' cache entries present - the precondition ApplyRollback's own
