@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -421,6 +422,57 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 	updated3, err := svc.GetInstalledMod(context.Background(), "test-src", "mod3", "g1", "default")
 	require.NoError(t, err)
 	assert.Equal(t, "2.0", updated3.Version, "mod3 (--all, notify-policy) must have applied")
+}
+
+// TestDoUpdate_AllJSON_PartialCheckFailure_SurfacesOnDocument is the #324
+// review's Important 3: a partial update-CHECK failure (one source down,
+// another fine) must reach the caller under `--all --json`. Before this fix
+// the stderr warning was suppressed by Ruling 15's `!jsonOutput` guard and
+// the emitted core.UpdateBatchResult carried no error field, so the failure
+// reached neither stream - a caller got a result document plus a bare
+// non-zero exit with nothing to explain it. mod2 lives under a source the
+// service never registered, so CheckGameUpdates reports mod1's update
+// normally but returns a non-nil checkErr for mod2's source - the same
+// partial-failure shape TestDoUpdate_CheckFailed_JSONCarriesError pins for
+// the check-only (non---all) path.
+func TestDoUpdate_AllJSON_PartialCheckFailure_SurfacesOnDocument(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, src := setupDoUpdateTest(t)
+	updateAll = true
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"m1-old"}, map[string][]byte{"mod1-old.esp": []byte("old1")})
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "m1-new", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.AddDownload("m1-new", []byte("new1"))
+
+	// missing-src is never registered with the service - CheckGameUpdates'
+	// per-source loop fails this mod's registry lookup and returns a
+	// non-nil error alongside mod1's perfectly good update.
+	seedInstalledForUpdate(t, svc, game, "missing-src", "mod2", "Mod Two", "1.0", []string{"m2-old"}, map[string][]byte{"mod2-old.esp": []byte("old2")})
+
+	var doUpdateErr error
+	out := captureStdout(t, func() error {
+		doUpdateErr = doUpdate(context.Background(), svc, game, nil)
+		return nil
+	})
+
+	require.Error(t, doUpdateErr, "a partial check failure must still fail the command")
+	assert.ErrorIs(t, doUpdateErr, ErrReported)
+
+	var doc core.UpdateBatchResult
+	dec := json.NewDecoder(strings.NewReader(out))
+	require.NoError(t, dec.Decode(&doc))
+	trailing := strings.TrimSpace(out[dec.InputOffset():])
+	assert.Empty(t, trailing, "stdout must hold exactly one JSON document")
+
+	require.Len(t, doc.Applied, 1)
+	assert.Equal(t, "mod1", doc.Applied[0].Mod.ModID, "the source that DID answer must still apply")
+	assert.NotEmpty(t, doc.ErrorMessage, "the partial check failure must be visible in the document")
+	assert.Contains(t, doc.ErrorMessage, "missing-src")
+
+	updated1, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated1.Version)
 }
 
 // TestDoUpdate_BulkApply_ChecksSourceExactlyOnce guards #289 review's

@@ -411,6 +411,14 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	if err != nil {
 		return err
 	}
+	// A partial check failure would otherwise vanish once the run moves past
+	// the check-only report: the stderr warning above is suppressed under
+	// --json (Ruling 15), and UpdateBatchResult carries no error unless told
+	// to - so the caller could not tell "everything was checked and applied"
+	// from "half the sources never answered" (#324 review, Important 3).
+	if checkErr != nil {
+		result.ErrorMessage = checkErr.Error()
+	}
 
 	if jsonOutput {
 		if err := emitJSON(result); err != nil {

@@ -133,6 +133,14 @@ type UpdateBatchResult struct {
 	// because "we did not try, and here is why" is a different fact from
 	// "we tried and it broke".
 	Skipped []UpdateApplyResult `json:"skipped,omitzero"`
+	// ErrorMessage carries a partial update-CHECK failure (the source query
+	// that produced plan.Updates, not the apply below) - ApplyUpdateBatch
+	// itself never sets this; it is a caller-populated field for a frontend
+	// that ran its own check before planning (`lmm update --all --json`'s
+	// CheckGameUpdates call, mirroring UpdateCheckReport.ErrorMessage) to
+	// carry that failure onto the SAME document the apply produced, rather
+	// than losing it once the run moves past the check-only report.
+	ErrorMessage string `json:"error,omitempty"`
 }
 
 // PlanUpdateBatch computes the batch plan for selection in profileName: it
