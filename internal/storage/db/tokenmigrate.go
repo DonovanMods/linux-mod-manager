@@ -264,7 +264,8 @@ func (n *scrubNotice) gaveUp() {
 // busy_timeout, plus 0.25 s + 0.5 s of backoff per step), so 45 s leaves
 // room for an attempt that blocks past its busy_timeout without letting a
 // pathological lock hold `lmm` open indefinitely. Exceeding it fails the
-// open with the context error rather than waiting on.
+// open with scrubFailure's message - the file, the step and the remedy,
+// wrapping the context error - rather than waiting on.
 const scrubBudget = 45 * time.Second
 
 // scrubAttempts is how many times each scrub step is tried before the open
@@ -308,12 +309,31 @@ func (d *DB) retryUntilUncontended(ctx context.Context, notice *scrubNotice, ste
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			// The budget's own exit carries the SAME message the
+			// attempts-exhausted exit below does (re-review N3): it used
+			// to return ctx.Err() bare, so the one failure a user is most
+			// likely to hit - another lmm process holding the database -
+			// arrived as "context deadline exceeded" with neither the file
+			// name nor the remedy. The ctx error is still wrapped, so
+			// errors.Is(err, context.DeadlineExceeded) keeps holding.
+			return d.scrubFailure(step, fmt.Sprintf("did not complete within %s", scrubBudget), ctx.Err())
 		case <-time.After(pause):
 		}
 		pause *= 2
 	}
-	return fmt.Errorf("could not remove the pre-encryption credentials from %s: %s did not complete after %d attempts, which usually means the database is in use by another process; close any other lmm process (`lmm serve` included) and run the command again: %w", d.path, step, scrubAttempts, err)
+	return d.scrubFailure(step, fmt.Sprintf("did not complete after %d attempts", scrubAttempts), err)
+}
+
+// scrubFailure is the ONE sentence every scrub failure exits through:
+// which database, which step, why it stopped, and the remedy. It exists so
+// the two exits in retryUntilUncontended - the attempt budget and the wall
+// -clock budget - cannot drift apart on what they tell the user, which is
+// exactly how re-review N3's bare context error came about. cause is
+// wrapped, so errors.Is still reaches context.DeadlineExceeded /
+// context.Canceled or the underlying SQLite failure.
+func (d *DB) scrubFailure(step, why string, cause error) error {
+	return fmt.Errorf("could not remove the pre-encryption credentials from %s: %s %s, which usually means the database is in use by another process; close any other lmm process (`lmm serve` included) and run the command again: %w",
+		d.path, step, why, cause)
 }
 
 // vacuumOnce rebuilds the database file, dropping the free pages that can
