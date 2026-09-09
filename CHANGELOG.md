@@ -27,9 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Two user-visible consequences. **`lmm auth status`, `GET /api/v1/auth`
   and the web UI's Setup page no longer show a masked stored key** — a
-  stored credential is never decrypted to build a status document, so it is
-  identified by a **fingerprint** (the first 8 hex of its SHA-256) plus when
-  it was stored and last replaced; a key supplied through an environment
+  stored credential is never shown, returned or logged, so it is identified
+  by a **fingerprint** (the first 8 hex of its SHA-256) plus when it was
+  stored and last replaced; a key supplied through an environment
   variable, which lmm holds in the clear regardless, keeps its masked
   `abc...xyz` form and gains a fingerprint too. On the wire that is a new
   `key_fingerprint` field on `app.AuthStatusReport`'s source and orphan
@@ -39,9 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   And **the key file is now part of your backup**: copying `lmm.db`
   without `key` leaves the credentials unrecoverable — run
-  `lmm auth login <source>` again for each. A missing, loose, malformed or
-  undecryptable key is reported per source with the remedy named, and never
-  stops the rest of lmm from working. The threat model is documented
+  `lmm auth login <source>` again for each. A single row that will not
+  decrypt is reported per source with the remedy named and does not disturb
+  the others; a problem with the key FILE itself (missing, loose,
+  malformed) is about every credential at once, so it is reported once —
+  naming the file and the fix — and the status surface reports that instead
+  of listing sources. Neither stops anything that needs no credential from
+  working. The threat model is documented
   honestly in [docs/security.md](docs/security.md): this protects a
   database that is copied, synced or backed up, **not** a local attacker
   running as you.

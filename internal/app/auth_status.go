@@ -42,13 +42,20 @@ func AuthCapableSources(svc *core.Service) []source.ModSource {
 // from either place.
 //
 // WHAT THIS SAYS ABOUT THE KEY ITSELF (#79). A STORED credential is
-// encrypted at rest and is never decrypted to build this report: the row
-// carries KeyFingerprint - the first 8 hex of the key's SHA-256, enough to
-// answer "is this still the one I pasted?" - and no KeyMasked at all. A key
-// from the ENVIRONMENT is one lmm already holds in the clear (it is in the
+// encrypted at rest and never appears in this report: the row carries
+// KeyFingerprint - the first 8 hex of the key's SHA-256, enough to answer
+// "is this still the one I pasted?" - and no KeyMasked at all. A key from
+// the ENVIRONMENT is one lmm already holds in the clear (it is in the
 // process environment either way), so that row keeps the masked form, which
 // a user can recognise at a glance, AND gains the fingerprint, so the two
 // kinds of row can be compared.
+//
+// Precisely, since it is a security claim (review 2): db.ListTokens DOES
+// decrypt each row, because the fingerprint is over the KEY - it has to be,
+// or a stored row and an environment row could not be compared, which is
+// the whole point of carrying it on both. What the plaintext never does is
+// escape the process: db.TokenInfo has no field to return it in, so a leak
+// into this report could not compile.
 //
 // CreatedAt/UpdatedAt are the stored credential's timestamps - when it was
 // first stored and when it was last replaced - and are zero for an
@@ -131,9 +138,16 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 	registered := make(map[string]bool, len(sources))
 
 	// ONE read of the credential table for the whole report, and it is the
-	// non-decrypting one (#79): every stored row this report mentions -
-	// a registered source's and an orphan's alike - is described from this
-	// listing, so building `lmm auth status` never puts a key in memory.
+	// one that cannot hand back a key (#79): every stored row this report
+	// mentions - a registered source's and an orphan's alike - is described
+	// from this listing, which returns db.TokenInfo and has no field a
+	// credential could travel in.
+	//
+	// A key-file-level failure (missing, wrong mode, malformed) comes back
+	// as the error and takes the whole report with it, deliberately: the
+	// answer is then about the installation rather than any one source, and
+	// there is one remedy to print. Only a single row that will not decrypt
+	// degrades to Readable:false - see db.ListTokens.
 	tokens, err := svc.ListSourceTokens(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing stored tokens: %w", err)

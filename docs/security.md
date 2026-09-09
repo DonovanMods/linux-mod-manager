@@ -81,15 +81,24 @@ Two consequences worth stating plainly:
 ### What a status surface shows
 
 `lmm auth status`, `GET /api/v1/auth`, and the web UI's Setup page never
-decrypt a stored credential. They report presence, when it was stored and
+*show* a stored credential. They report presence, when it was stored and
 last replaced, and a **fingerprint** — the first 8 hex digits of the key's
 SHA-256 — which is enough to answer "is this still the key I pasted?" and
 tells an attacker nothing. A key supplied through an environment variable
 is a different case: lmm holds it in the clear regardless, so that row
 still shows the familiar masked `abc...xyz` form alongside its fingerprint.
 
-Only the sources themselves get the key in the clear, at the moment they
-put it on a request.
+Being exact about that, because it is a security claim: computing the
+fingerprint means decrypting the row, so building one of these documents
+does put the key in the process's own memory for as long as it takes to
+hash it. It has to — the fingerprint is over the key itself, which is the
+only reason a stored row and an environment row can be compared at all.
+What the key never does is leave the process: it is not returned by the
+listing API (`db.TokenInfo` has no field to put it in), not rendered, not
+logged, and not written anywhere.
+
+Only the sources themselves get the key in the clear *outbound*, at the
+moment they put it on a request.
 
 ### When something goes wrong
 
@@ -100,9 +109,18 @@ put it on a request.
 | "the token-encryption key … is not a 32-byte key"              | the file was truncated or replaced                | move it aside, then log in again              |
 | "the stored credential for … could not be decrypted"           | that one row is damaged, or predates a replaced key | `lmm auth login <that source>`                |
 
-Every one of these is reported per source: a single damaged credential does
-not stop the other sources from working, and does not stop lmm from doing
-anything that needs no credential at all.
+The last row is the per-source case: a single damaged credential is named,
+the other sources are still listed and still work, and nothing that needs
+no credential is affected at all.
+
+The first three are **not** per-source, and it would be misleading to say
+they were. They are about the key file, so they are about every stored
+credential at once: `lmm auth status` reports the one problem and the one
+remedy instead of listing sources, and `GET /api/v1/auth` answers 500 with
+the same message (the web UI shows it in place of the Auth section). That
+is deliberate — when the key file is gone, "your key file is gone, here is
+the fix" is the whole answer, and repeating "unreadable" once per source
+would bury it. Anything that needs no credential keeps working throughout.
 
 ## File permissions
 

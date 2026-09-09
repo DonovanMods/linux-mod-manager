@@ -462,9 +462,9 @@ func doAuthStatus(ctx context.Context, service *core.Service) error {
 	for _, s := range report.Sources {
 		switch s.Via {
 		case "stored":
-			// A stored key is encrypted at rest and never decrypted for
-			// display (#79), so this identifies it by fingerprint where it
-			// used to show a masked prefix and suffix.
+			// A stored key is encrypted at rest and never leaves the
+			// storage layer (#79), so this identifies it by fingerprint
+			// where it used to show a masked prefix and suffix.
 			fmt.Printf("%s (%s): authenticated (key %s)\n", s.Name, s.ID, s.KeyFingerprint)
 		case "env":
 			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", s.Name, s.ID, s.EnvVar, s.KeyMasked)

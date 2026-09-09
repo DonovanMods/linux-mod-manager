@@ -6,8 +6,8 @@
 // comment): the typed key never leaves the password input except in the
 // POST body itself, and nothing here ever reads report.sources[].api_key
 // (the wire has no such member). Since #79 a STORED key is encrypted at
-// rest and is never decrypted for display either, so what comes back for
-// one is key_fingerprint - the first 8 hex of its SHA-256 - and key_masked
+// rest and never reaches the wire at all, so what comes back for one is
+// key_fingerprint - the first 8 hex of its SHA-256 - and key_masked
 // appears only for a key read from the environment, which lmm holds in the
 // clear regardless. keyLabel below renders whichever the row has. The field is
 // cleared on SUCCESS, and on a 502 (the check could not run at all -
@@ -26,7 +26,13 @@ import { ApiError, getAuthStatus, authLogin, authLogout } from "../api.js";
  * rest, so the wire carries only its fingerprint; a key read from the
  * environment still carries the masked form lmm has always shown, because
  * that one is in the process environment either way. A row that would not
- * decrypt has neither, and says so. */
+ * decrypt has neither, and says so.
+ *
+ * This is the per-ROW condition only. A key file the server cannot use at
+ * all (missing, wrong mode, malformed) is about every credential at once,
+ * so GET /api/v1/auth fails rather than answering a report full of
+ * unreadable rows, and the section renders that message - which names the
+ * file and the remedy - in place of the list (review 2). */
 function keyLabel(row) {
   if (row.unreadable) return "unreadable";
   return row.key_masked || row.key_fingerprint || "";

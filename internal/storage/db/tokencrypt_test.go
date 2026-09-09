@@ -242,3 +242,59 @@ func TestMemoryDatabaseUsesAnEphemeralKeyAndNeverTouchesDisk(t *testing.T) {
 		assert.NotEqual(t, TokenKeyFileName, e.Name(), "an in-memory database must not write a key file")
 	}
 }
+
+// TestListTokens_AKeyFileProblemFailsTheWholeListing pins the half of the
+// failure taxonomy the security documents describe (review 2): a single row
+// that will not decrypt degrades to Readable:false and leaves its siblings
+// alone, but a problem with the KEY FILE is about every stored credential at
+// once, so it is reported once - naming the file and the remedy - instead of
+// as a listing in which every row says "unreadable".
+func TestListTokens_AKeyFileProblemFailsTheWholeListing(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	ctx := context.Background()
+
+	seed, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	require.NoError(t, err)
+	require.NoError(t, seed.SaveToken(ctx, "nexusmods", "key-a"))
+	require.NoError(t, seed.SaveToken(ctx, "curseforge", "key-b"))
+	require.NoError(t, seed.Close())
+
+	// A fresh handle each time: the key is cached on first use per *DB.
+	for name, tc := range map[string]struct {
+		breakKey func(t *testing.T)
+		want     KeyErrorReason
+	}{
+		"the mode was widened": {
+			breakKey: func(t *testing.T) { require.NoError(t, os.Chmod(keyPath, 0644)) },
+			want:     KeyBadPermissions,
+		},
+		"the file was lost": {
+			breakKey: func(t *testing.T) { require.NoError(t, os.Remove(keyPath)) },
+			want:     KeyMissing,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			saved, err := os.ReadFile(keyPath)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = os.Remove(keyPath)
+				require.NoError(t, os.WriteFile(keyPath, saved, keyFileMode))
+			})
+			tc.breakKey(t)
+
+			d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+			require.NoError(t, err, "the open itself is fine - there are no legacy rows to migrate")
+			t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+			infos, err := d.ListTokens(ctx)
+			assert.Empty(t, infos)
+			var keyErr *KeyError
+			require.ErrorAs(t, err, &keyErr)
+			assert.Equal(t, tc.want, keyErr.Reason)
+			assert.Equal(t, keyPath, keyErr.Path)
+			assert.Empty(t, keyErr.SourceID, "a key-file problem is not about one source")
+		})
+	}
+}

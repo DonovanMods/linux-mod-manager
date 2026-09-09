@@ -16,11 +16,16 @@
 // pinned by TestAuthRequestLoggingNeverCarriesTheKey), never interpolated
 // into an error, and never echoed in a response.
 //
-// Since #79 the write itself is encrypted at rest, and the report this file
-// answers with never decrypts one: a STORED credential appears as
+// Since #79 the write itself is encrypted at rest, and no report this file
+// answers with can carry one back: a STORED credential appears as
 // key_fingerprint (the first 8 hex of its SHA-256) with no masked form at
 // all, and app.MaskAPIKey is applied only to a key read from the
-// environment - one lmm holds in the clear regardless. A validator's own
+// environment - one lmm holds in the clear regardless. (The fingerprint is
+// computed over the key, so the storage layer does decrypt each row to
+// build it; nothing above db.TokenInfo ever sees the result - review 2.)
+// A key file that is missing or unusable is not a per-row condition, so it
+// fails this route with the storage layer's own message naming the file and
+// the remedy, rather than 200 with every source marked unreadable. A validator's own
 // error text is passed through as the 400's message, so a source must not
 // echo the key into it - the built-ins do not.
 package serve
