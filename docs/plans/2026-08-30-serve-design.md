@@ -1,5 +1,10 @@
 # `lmm serve` (v2.1.0) — Design
 
+> **Versioning note (2026-09-09, owner decision):** the web UI ships in **v2.0.0**, the first public v2 release. The
+> "v2.0.0 tag stays a quiet contract freeze / serve = v2.1.0" arrangement below is superseded: the premature
+> 2026-08-30 tag was retracted and v2.0.0 is cut once v2 is feature-complete. Every "v2.1.0" in this document reads
+> as "v2.0.0". The SPA that replaced this document's page layer is designed in `2026-08-31-serve-spa-design.md`.
+
 **Date:** 2026-08-30
 **Status:** Approved design (owner, 2026-08-30), pre-implementation — the implementation plan is written from this document
 **Issues:** EPIC [#276](https://github.com/DonovanMods/linux-mod-manager/issues/276); carried TUI intents #74 #225 #226 #232 #257 #87; deferred: #307 (non-interactive game add/auth), #317 (cross-process mutation lock)
