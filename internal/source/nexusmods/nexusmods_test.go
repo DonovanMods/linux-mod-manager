@@ -873,3 +873,54 @@ func TestModDataToDomain_RealDescriptionFlowsThrough(t *testing.T) {
 	assert.Equal(t, "short summary", mod.Summary)
 	assert.Equal(t, "the real full description", mod.Description)
 }
+
+// TestNexusMods_SearchPagingContract is the NexusMods half of the Track C
+// review's finding 1. Nothing here is wrong on its own - the offset really
+// is page*pageSize, which is contiguous for any page size the API honours -
+// but the API caps a page at around 30 rows and says so nowhere: Search
+// reports the REQUESTED page size back and an unconditional TotalCount of
+// 0. This test pins that shape so the aggregate's protection against it
+// (core.sourceIsPageable: a short page is never paged on) stays anchored to
+// what the source actually does rather than to a comment about it.
+func TestNexusMods_SearchPagingContract(t *testing.T) {
+	const serverCap = 3
+
+	var gotCount, gotOffset []float64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables struct {
+				Count  float64 `json:"count"`
+				Offset float64 `json:"offset"`
+			} `json:"variables"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		gotCount = append(gotCount, req.Variables.Count)
+		gotOffset = append(gotOffset, req.Variables.Offset)
+
+		nodes := make([]string, 0, serverCap)
+		for i := range serverCap {
+			nodes = append(nodes, `{"modId":`+string(rune('1'+i))+`,"name":"Mod","version":"1.0","uploader":{"name":"A"}}`)
+		}
+		_, _ = w.Write([]byte(`{"data":{"mods":{"nodes":[` + strings.Join(nodes, ",") + `]}}}`))
+	}))
+	defer server.Close()
+
+	nm := New(nil, "key")
+	nm.client.graphqlURL = server.URL + "/v2/graphql"
+
+	for _, page := range []int{0, 1} {
+		res, err := nm.Search(context.Background(), source.SearchQuery{
+			GameID: "skyrimspecialedition", Query: "x", Page: page, PageSize: 10,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 10, res.PageSize,
+			"the requested page size is reported back - the real cap is not knowable from the response")
+		assert.Zero(t, res.TotalCount, "the GraphQL search reports no total at all")
+		assert.Len(t, res.Mods, serverCap,
+			"the server returns its own cap, which is what makes the page SHORT")
+	}
+
+	assert.Equal(t, []float64{10, 10}, gotCount, "the requested count goes upstream unchanged")
+	assert.Equal(t, []float64{0, 10}, gotOffset,
+		"the offset is page*pageSize: contiguous for any page size the API honours, and strided for one it does not - which is why a short page must not be paged")
+}
