@@ -334,6 +334,26 @@ func TestUninstall_LiveReadoutSaysItStoppedTracking(t *testing.T) {
 	assert.NotContains(t, out, "Uninstalled:", "lmm removed its tracking, not the mod")
 }
 
+// PurgePlan.External exists "so the preview says what it will not touch"
+// (design §2); before the fix core populated it and neither preview printed
+// it, so the user saw a shorter mod count with no explanation.
+func TestPurge_DryRunNamesWhatItLeavesAlone(t *testing.T) {
+	svc, game, _, _ := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+
+	plan, err := svc.PlanPurge(context.Background(), game, "default", core.PurgeOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"Sample Workshop Item"}, plan.External,
+		"precondition: core excludes it from the purge set and names it")
+
+	out := captureStdout(t, func() error {
+		renderPurgePlan(plan, game, func(core.Event) {})
+		return nil
+	})
+	assert.Contains(t, out, "Left alone (tracked from Steam): Sample Workshop Item")
+}
+
 func TestPrintBatchSkips_SplitsLockedFromSteamWorkshop(t *testing.T) {
 	out := captureStdout(t, func() error {
 		printBatchSkips([]core.UpdateApplyResult{

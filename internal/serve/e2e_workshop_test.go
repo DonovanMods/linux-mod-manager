@@ -102,6 +102,27 @@ func newE2EWorkshopFixture(t *testing.T) e2eFixture {
 	return f
 }
 
+// seedWorkshopManagedMod adds one ORDINARY, lmm-managed mod to the workshop
+// fixture: an all-external profile has nothing to deploy and nothing to
+// purge by construction, so a scenario about how the external row reads
+// ALONGSIDE managed ones needs one of each.
+func seedWorkshopManagedMod(t *testing.T, f e2eFixture) {
+	t.Helper()
+	src, err := f.Svc.GetSource(e2eWorkshopSourceID)
+	require.NoError(t, err)
+	ws, ok := src.(*e2eWorkshopSource)
+	require.True(t, ok)
+	ws.addMod(fakeSourceMod{Mod: domain.Mod{
+		ID: "managed-1", SourceID: e2eWorkshopSourceID, Name: "Managed Mod", Version: "1.0",
+	}})
+	seedInstalledMod(t, f.Svc, f.Game, domain.Mod{
+		ID: "managed-1", SourceID: e2eWorkshopSourceID, Name: "Managed Mod",
+		Version: "1.0", GameID: f.Game.ID,
+	}, true, map[string][]byte{"managed.pak": []byte("managed")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: e2eWorkshopSourceID, ModID: "managed-1", Version: "1.0"}))
+}
+
 // TestE2E_Workshop_LibraryRowCarriesTheSteamBadge proves the badge renders
 // at all - a fact only a browser can establish, since it is derived in
 // modrows.js and rendered by library.js.
@@ -198,21 +219,7 @@ func TestE2E_Workshop_FullModPageHidesRelinkAndRollback(t *testing.T) {
 func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	f := newE2EWorkshopFixture(t)
 
-	// One ordinary, undeployed mod, so Mission Control offers a Deploy at
-	// all - an all-external profile has nothing to deploy by construction.
-	src, err := f.Svc.GetSource(e2eWorkshopSourceID)
-	require.NoError(t, err)
-	ws, ok := src.(*e2eWorkshopSource)
-	require.True(t, ok)
-	ws.addMod(fakeSourceMod{Mod: domain.Mod{
-		ID: "managed-1", SourceID: e2eWorkshopSourceID, Name: "Managed Mod", Version: "1.0",
-	}})
-	seedInstalledMod(t, f.Svc, f.Game, domain.Mod{
-		ID: "managed-1", SourceID: e2eWorkshopSourceID, Name: "Managed Mod",
-		Version: "1.0", GameID: f.Game.ID,
-	}, true, map[string][]byte{"managed.pak": []byte("managed")})
-	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
-		domain.ModReference{SourceID: e2eWorkshopSourceID, ModID: "managed-1", Version: "1.0"}))
+	seedWorkshopManagedMod(t, f)
 
 	var body string
 	f.runInBrowser(t,
@@ -228,6 +235,35 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	assert.Contains(t, body, "tracked from Steam — not deployed")
 	assert.NotContains(t, body, "no files to link",
 		"the external row must say why, not merely that there is nothing")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Workshop_PurgePreviewNamesWhatItLeavesAlone renders design §2's
+// reason for PurgePlan.External existing at all: "so the preview says what
+// it will not touch". Core populated it and plan_purge.js never read it, so
+// the user saw a shorter mod count with no explanation for the difference.
+func TestE2E_Workshop_PurgePreviewNamesWhatItLeavesAlone(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+	seedWorkshopManagedMod(t, f)
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="purge-profile"][data-profile="default"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="purge"] .plan`, chromedp.ByQuery),
+		textContent(`[data-testid="purge-external"]`, &body),
+	)
+	assert.Contains(t, body, "Left alone — tracked from Steam (1)")
+	assert.Contains(t, body, "Sample Workshop Item")
 	assert.Empty(t, f.BrowserErrors())
 }
 

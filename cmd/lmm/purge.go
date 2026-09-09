@@ -238,6 +238,12 @@ func renderPurgePlan(plan *core.PurgePlan, game *domain.Game, progress func(core
 	}
 
 	fmt.Printf("\nWould purge: %d mod(s)\n", total)
+	// #269: PurgePlan.External exists "so the preview says what it will not
+	// touch" (design §2). Without it the user sees a shorter mod count with
+	// no explanation for the difference.
+	if len(plan.External) > 0 {
+		fmt.Printf("Left alone (tracked from Steam): %s\n", strings.Join(plan.External, ", "))
+	}
 	if plan.MergedArtifact != nil {
 		fmt.Println("The profile's merged artifact would be removed too")
 	}
