@@ -1,8 +1,10 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -21,6 +23,22 @@ import (
 // stays UNTRACKED and is adopted as a local mod, which is recoverable,
 // rather than mis-attributed, which is not. Under-matching is the
 // deliberate failure mode.
+//
+// The rule is a similarity ratio (adoptNameSimilarity) with three
+// modifiers, each of which exists because the ratio alone got a whole class
+// of real names wrong:
+//
+//   - Digits must agree, so a sequel number is never elided (finding 2).
+//   - A key shorter than adoptShortKeyRunes must match exactly, so one
+//     letter in a short name is a different mod, not a typo (finding 2).
+//   - The scanned name is also compared against the candidate's HEAD
+//     SEGMENT - the text before a subtitle separator - so the dominant
+//     "Name - Subtitle" catalogue shape is adoptable, capped at
+//     adoptHeadSegmentCap so it always reads as probable (finding 3).
+//
+// A candidate that merely has more WORDS in it than the archive is still
+// refused - that is #27's own SkyUI/SkyUI Flashlite case, and the head
+// segment rule deliberately does not reach it.
 const (
 	// adoptMatchThreshold is the score a candidate must reach to be
 	// accepted. 0.75 is chosen against the cases in
@@ -45,6 +63,28 @@ const (
 	// lift a genuinely different name over the bar - "SkyUI" against "SkyUI
 	// Flashlite" 5.2 only reaches 0.52 and is still refused.
 	adoptVersionAgreementBonus = 0.25
+
+	// adoptShortKeyRunes is the normalised-key length below which a single
+	// edit stops being a spelling difference and becomes a different name.
+	// "Vortex"/"Vertex", "Nordic UI"/"Nordic UX" and "Campfire"/"Campsite"
+	// are all one or two edits apart and all score 0.75 or better as a
+	// RATIO, because the ratio is only as strict as the name is long; they
+	// are also three different pairs of unrelated mods. Below twelve runes
+	// the keys must therefore match exactly (once normalised, and possibly
+	// via a head segment) for the names to count as the same mod at all.
+	// Twelve is where one edit costs less than the 0.9 strong band -
+	// 1-1/12 = 0.917 - so it is exactly the length at which the ratio
+	// starts calling a single edit "a spelling difference" on its own.
+	adoptShortKeyRunes = 12
+
+	// adoptHeadSegmentCap is the highest score a HEAD-SEGMENT match can
+	// reach (see adoptHeadSegment). Matching "Ordinator" against the head
+	// of "Ordinator - Perks of Skyrim" is good evidence, but the subtitle
+	// was elided to get there and the user should see that before
+	// confirming an adopt, so the score is held inside the probable band -
+	// under adoptStrongThreshold - however well the head itself matched. A
+	// version agreement lifts it to 0.888, which is still probable.
+	adoptHeadSegmentCap = 0.85
 )
 
 // AdoptMatchClass is how confident an adopt match is - the score band a
@@ -83,8 +123,9 @@ func adoptMatchClass(score float64) AdoptMatchClass {
 // adoptNameKey normalises a mod name for comparison: lowercased, with every
 // rune that is not a letter or a digit removed, so "SkyUI 5.2 (SE)",
 // "skyui-5.2-se" and "Sky UI 5.2 SE" all compare identically. Digits are
-// KEPT: "Mod 2" and "Mod 3" are different mods, and the whole rule leans
-// towards refusing an uncertain match.
+// KEPT so that adoptDigitsAgree can read them back out of the key; keeping
+// them is not by itself what separates "Mod 2" from "Mod 3" (one edit over
+// a five-rune key is cheap), the digit gate in adoptNameSimilarity is.
 func adoptNameKey(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))
@@ -97,13 +138,27 @@ func adoptNameKey(name string) string {
 }
 
 // adoptNameSimilarity scores two mod names from 0 (nothing in common) to 1
-// (identical), as 1 - levenshtein(a, b)/max(len(a), len(b)) over their
-// normalised keys. Edit distance rather than token overlap because the
-// differences that should still match are spelling-sized (a plural, a
-// hyphen, a capital) while the differences that should not are whole extra
-// words - and a ratio over the LONGER name is what makes an extra word
-// expensive. An empty key on either side scores 0: there is nothing to
-// compare, and a name we could not read is not evidence of anything.
+// (identical), as 1 - levenshtein(a, b)/max(runes(a), runes(b)) over their
+// normalised keys, subject to two outright refusals. Edit distance rather
+// than token overlap because the differences that should still match are
+// spelling-sized (a plural, a hyphen, a capital) while the differences that
+// should not are whole extra words - and a ratio over the LONGER name is
+// what makes an extra word expensive.
+//
+// The ratio alone is not enough, because it is only as strict as the name
+// is long. Two refusals bound it (Track C review, finding 2):
+//
+//   - Digits must agree (adoptDigitsAgree). A sequel number is the whole
+//     difference between two mods that share every other rune: "Sim
+//     Settlements 2"/"Sim Settlements 3" is 0.93 as a ratio and is not the
+//     same mod. Adopting an archive as the wrong sequel attaches it to the
+//     wrong version history and the wrong update target, which is #27's
+//     entire premise.
+//   - A key shorter than adoptShortKeyRunes must match exactly. One edit in
+//     a six-rune name is "Vortex" against "Vertex", not a typo of it.
+//
+// An empty key on either side scores 0: there is nothing to compare, and a
+// name we could not read is not evidence of anything.
 func adoptNameSimilarity(a, b string) float64 {
 	ka, kb := adoptNameKey(a), adoptNameKey(b)
 	if ka == "" || kb == "" {
@@ -112,8 +167,72 @@ func adoptNameSimilarity(a, b string) float64 {
 	if ka == kb {
 		return 1
 	}
-	longest := max(len(ka), len(kb))
+	if !adoptDigitsAgree(ka, kb) {
+		return 0
+	}
+	longest := max(utf8.RuneCountInString(ka), utf8.RuneCountInString(kb))
+	if longest < adoptShortKeyRunes {
+		return 0
+	}
 	return 1 - float64(levenshtein(ka, kb))/float64(longest)
+}
+
+// adoptDigitsAgree reports whether two normalised keys carry the same digit
+// runs, in the same order: "simsettlements2" and "simsettlements3" do not,
+// "biggerbackpack" and "biggerbackpacks" (neither has any) do. Runs rather
+// than individual digits so "xp32" and "xp33" differ once, not twice, and
+// so "fallout4" never matches "fallout44".
+func adoptDigitsAgree(ka, kb string) bool {
+	runs := func(key string) []string {
+		var out []string
+		var cur strings.Builder
+		for _, r := range key {
+			if unicode.IsDigit(r) {
+				cur.WriteRune(r)
+				continue
+			}
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		}
+		if cur.Len() > 0 {
+			out = append(out, cur.String())
+		}
+		return out
+	}
+	return slices.Equal(runs(ka), runs(kb))
+}
+
+// adoptHeadSegmentSeparators are the punctuation marks a catalogue name
+// uses to hang a subtitle off the name a mod is actually known by:
+// "Ordinator - Perks of Skyrim", "HDT-SMP (Skinned Mesh Physics)",
+// "Immersive Citizens: AI Overhaul". Each is anchored on a space so an
+// intra-word hyphen ("HDT-SMP") is not a separator.
+var adoptHeadSegmentSeparators = []string{" - ", " \u2014 ", " \u2013 ", ": ", " ("}
+
+// adoptHeadSegment returns the part of a catalogue name before its first
+// subtitle separator, or name unchanged when it carries none. The archive
+// on disk is almost always named after the short name - "Ordinator" - while
+// the catalogue row it must match carries the subtitle too, and the ratio
+// over the LONGER name refuses that pairing outright (0.41). Scoring
+// against the head segment as well is what keeps the dominant
+// "Name - Subtitle" shape adoptable (Track C review, finding 3).
+//
+// It deliberately does NOT strip trailing WORDS: "SkyUI Flashlite" and
+// "RaceMenu Special Edition" have no separator, so nothing distinguishes
+// them from #27's own case, and they stay refused. That is the rule's
+// limit, not an oversight - a mod whose catalogue name simply has more
+// words in it is imported as a local mod, and `lmm mod edit --source`
+// re-links it.
+func adoptHeadSegment(name string) string {
+	head := name
+	for _, sep := range adoptHeadSegmentSeparators {
+		if i := strings.Index(head, sep); i > 0 {
+			head = head[:i]
+		}
+	}
+	return strings.TrimSpace(head)
 }
 
 // levenshtein is the standard edit distance between two strings, computed
@@ -164,10 +283,17 @@ func adoptVersionsAgree(scanned, candidate string) bool {
 
 // adoptCandidateScore scores one candidate against a scanned archive's
 // detected name and (when the filename parser found one) version. The name
-// carries the score; an agreeing version closes adoptVersionAgreementBonus
-// of the remaining distance to 1.
+// carries the score: the scanned name is compared both against the
+// candidate's full name and against its head segment, and the better of the
+// two wins, with the head-segment result capped at adoptHeadSegmentCap so
+// an elided subtitle can never read as better than a probable match. An
+// agreeing version then closes adoptVersionAgreementBonus of whatever
+// distance to 1 is left.
 func adoptCandidateScore(scannedName, scannedVersion string, candidate domain.Mod) float64 {
 	score := adoptNameSimilarity(scannedName, candidate.Name)
+	if head := adoptHeadSegment(candidate.Name); head != candidate.Name {
+		score = max(score, min(adoptNameSimilarity(scannedName, head), adoptHeadSegmentCap))
+	}
 	if score > 0 && adoptVersionsAgree(scannedVersion, candidate.Version) {
 		score += (1 - score) * adoptVersionAgreementBonus
 	}

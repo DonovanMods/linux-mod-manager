@@ -41,7 +41,10 @@ func TestAdoptNameSimilarity(t *testing.T) {
 		{"identical after normalisation", "SkyUI", "sky-ui", 1, 1},
 		{"a plural is nearly identical", "Bigger Backpack", "Bigger Backpacks", 0.9, 1},
 		{"the #27 overlap case is far apart", "SkyUI", "SkyUI Flashlite", 0, 0.5},
-		{"a short suffix sits just under the bar", "SkyUI", "SkyUI SE", 0.6, adoptMatchThreshold},
+		{"a short key with a suffix is refused outright", "SkyUI", "SkyUI SE", 0, 0},
+		{"a long key survives one edit", "Winter Overhaul", "Winter Overhauls", 0.9, 1},
+		{"a long key with an extra word sits just under the bar", "Winter Overhaul", "Winter Overhaul Redux", 0.7, adoptMatchThreshold},
+		{"a sequel digit is refused however close the rest is", "Sim Settlements 2", "Sim Settlements 3", 0, 0},
 		{"unrelated names score low", "SkyUI", "Realistic Needs", 0, 0.3},
 		{"an empty name never matches", "", "SkyUI", 0, 0},
 	}
@@ -92,20 +95,39 @@ func TestAdoptCandidateScore(t *testing.T) {
 			wantAccepted: false,
 		},
 		{
+			// The pair is long enough for the ratio to be meaningful
+			// (0.737) and still under the bar, so the bonus decides it.
 			name:        "a matching version lifts a near-miss over the bar",
-			scannedName: "SkyUI", scannedVersion: "5.2",
-			candidateName: "SkyUI SE", candidateVersion: "5.2",
+			scannedName: "Winter Overhaul", scannedVersion: "5.2",
+			candidateName: "Winter Overhaul Redux", candidateVersion: "5.2",
 			wantAccepted: true, wantClass: AdoptMatchProbable,
 		},
 		{
 			name:        "the same near-miss without a version stays untracked",
-			scannedName: "SkyUI", candidateName: "SkyUI SE",
+			scannedName: "Winter Overhaul", candidateName: "Winter Overhaul Redux",
 			wantAccepted: false,
 		},
 		{
 			name:        "a version that disagrees adds nothing",
+			scannedName: "Winter Overhaul", scannedVersion: "5.2",
+			candidateName: "Winter Overhaul Redux", candidateVersion: "1.0",
+			wantAccepted: false,
+		},
+		{
+			name:        "a short name and a short suffix are different mods",
 			scannedName: "SkyUI", scannedVersion: "5.2",
-			candidateName: "SkyUI SE", candidateVersion: "1.0",
+			candidateName: "SkyUI SE", candidateVersion: "5.2",
+			wantAccepted: false,
+		},
+		{
+			name:        "an elided subtitle is a probable match, never a strong one",
+			scannedName: "Ordinator", candidateName: "Ordinator - Perks of Skyrim",
+			wantAccepted: true, wantClass: AdoptMatchProbable,
+		},
+		{
+			name:        "a sequel number is never adopted as its predecessor",
+			scannedName: "Sim Settlements 2", scannedVersion: "5.2",
+			candidateName: "Sim Settlements 3", candidateVersion: "5.2",
 			wantAccepted: false,
 		},
 		{
@@ -174,4 +196,72 @@ func TestAdoptBestCandidateRejectsEveryWeakHit(t *testing.T) {
 	best, score := adoptBestCandidate("SkyUI", "", candidates)
 	assert.Nil(t, best, "no candidate clears the threshold, so nothing is adopted")
 	assert.Less(t, score, adoptMatchThreshold)
+}
+
+// TestAdoptScoreRefusesNearNames is the first of the two realistic tables
+// the Track C review supplied (review finding 2). Every row is a pair of
+// DIFFERENT mods whose names are one sequel digit or one letter apart - the
+// single most common near-name shape in modding - and every one of them was
+// accepted by the first cut of the rule, the "Mod 2"/"Mod 3" row on the
+// exact example adoptNameKey's own doc comment claimed was refused.
+func TestAdoptScoreRefusesNearNames(t *testing.T) {
+	tests := []struct{ scanned, candidate string }{
+		{"Mod 2", "Mod 3"},
+		{"Sim Settlements 2", "Sim Settlements 3"},
+		{"Sim Settlements", "Sim Settlements 2"},
+		{"Mod Organizer 2", "Mod Organizer 3"},
+		{"XP32 Maximum Skeleton", "XP33 Maximum Skeleton"},
+		{"Frostfall", "Frostfall 3"},
+		{"Weapon Mod 1", "Weapon Mod 7"},
+		{"Nordic UI", "Nordic UX"},
+		{"Vortex", "Vertex"},
+		{"Campfire", "Campsite"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.scanned+" is not "+tc.candidate, func(t *testing.T) {
+			score := adoptCandidateScore(tc.scanned, "", domain.Mod{Name: tc.candidate})
+			assert.Less(t, score, adoptMatchThreshold,
+				"%q must not be adopted as %q (scored %.3f)", tc.scanned, tc.candidate, score)
+		})
+	}
+}
+
+// TestAdoptScoreSubtitledCatalogueNames is the review's second table
+// (finding 3): an archive named after the short name a mod is known by,
+// against the subtitled name its catalogue page actually carries. The
+// head-segment rule accepts the rows whose subtitle is set off by
+// punctuation and CANNOT accept the rest - a candidate that merely has more
+// words in it is exactly #27's SkyUI/SkyUI Flashlite shape - so the table
+// pins both outcomes rather than only the happy ones.
+func TestAdoptScoreSubtitledCatalogueNames(t *testing.T) {
+	tests := []struct {
+		scanned, candidate string
+		wantAccepted       bool
+	}{
+		{"iNeed", "iNeed - Food, Water and Sleep", true},
+		{"HDT-SMP", "HDT-SMP (Skinned Mesh Physics)", true},
+		{"Ordinator", "Ordinator - Perks of Skyrim", true},
+		{"Alternate Start", "Alternate Start - Live Another Life", true},
+		{"A Quality World Map", "A Quality World Map - Classic", true},
+		{"Immersive Citizens", "Immersive Citizens: AI Overhaul", true},
+		// No separator: the extra words are part of the name itself, and
+		// nothing distinguishes these from "SkyUI"/"SkyUI Flashlite".
+		{"RaceMenu", "RaceMenu Special Edition", false},
+		{"Cathedral Weathers", "Cathedral Weathers and Seasons", false},
+		{"Unofficial Skyrim Patch", "Unofficial Skyrim Special Edition Patch", false},
+		// #27's own case must survive the new rule untouched.
+		{"SkyUI", "SkyUI Flashlite", false},
+		{"SkyUI", "SkyUI Weapons Pack", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.scanned+" / "+tc.candidate, func(t *testing.T) {
+			score := adoptCandidateScore(tc.scanned, "", domain.Mod{Name: tc.candidate})
+			accepted := score >= adoptMatchThreshold
+			assert.Equal(t, tc.wantAccepted, accepted, "scored %.3f", score)
+			if accepted {
+				assert.Equal(t, AdoptMatchProbable, adoptMatchClass(score),
+					"an elided subtitle is never better than a probable match")
+			}
+		})
+	}
 }

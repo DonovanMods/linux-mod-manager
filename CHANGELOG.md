@@ -23,7 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact name match ends the lookup without searching the remaining sources.
   `core.AdoptMatch` gains two additive fields, `score` and `score_class`
   (`exact`/`strong`/`probable`), and the scan readout annotates any match
-  short of an exact name with its band.
+  short of an exact name with its band — in the CLI and in `lmm serve`'s
+  adopt plan alike. Three differences are refused outright however close the
+  rest of the name is: a differing sequel number (_Sim Settlements 2_ is
+  never _Sim Settlements 3_), any difference at all in a name shorter than
+  twelve letters (_Vortex_ is never _Vertex_), and whole extra words
+  (_RaceMenu_ is not _RaceMenu Special Edition_). A subtitle set off by
+  punctuation is the exception, so the common catalogue shape still adopts:
+  _Ordinator_ matches _Ordinator - Perks of Skyrim_, always as a
+  `[probable match]` so the elided subtitle is visible before you confirm.
 
 - **CurseForge update checks are one request per 50 mods, not one per mod
   (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now

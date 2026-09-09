@@ -49,7 +49,13 @@ Scan mode scores every candidate the sources return against the scanned
 name (and version, when the filename carries one) and adopts the best
 one, annotating anything short of an exact name match with its
 confidence. A name that nothing matches confidently enough stays local
-rather than being adopted as a similarly-named mod.
+rather than being adopted as a similarly-named mod: a differing sequel
+number ("Sim Settlements 2" is never "Sim Settlements 3"), a
+single-letter difference in a short name, and a candidate carrying whole
+extra words ("SkyUI" is never "SkyUI Flashlite") are all refused. A
+catalogue name whose subtitle is set off by punctuation - "Ordinator -
+Perks of Skyrim", "HDT-SMP (Skinned Mesh Physics)" - still matches the
+short name the archive is called, as a probable match.
 
 Either way, a mod that ends up unmatched to any remote source is
 imported as local - it deploys and installs normally, but 'lmm update'

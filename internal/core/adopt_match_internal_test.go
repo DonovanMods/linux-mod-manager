@@ -313,19 +313,19 @@ func TestMatchScannedMod_VersionLiftsANearMiss(t *testing.T) {
 	newSvc := func(t *testing.T) (*Service, *domain.Game) {
 		svc, game := newMatchTestService(t)
 		src := newMatchTestSource("nexusmods")
-		src.searchMods = []domain.Mod{{ID: "1", SourceID: "nexusmods", Name: "SkyUI SE", Version: "5.2"}}
+		src.searchMods = []domain.Mod{{ID: "1", SourceID: "nexusmods", Name: "Winter Overhaul Redux", Version: "5.2"}}
 		svc.RegisterSource(src)
 		game.SourceIDs = map[string]string{"nexusmods": "g1"}
 		return svc, game
 	}
 
 	svc, game := newSvc(t)
-	matched, _, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Winter Overhaul", "")
 	require.NoError(t, err)
 	assert.Nil(t, matched, "the name alone is not enough")
 
 	svc, game = newSvc(t)
-	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "5.2")
+	matched, score, err := svc.matchScannedMod(context.Background(), game, "Winter Overhaul", "5.2")
 	require.NoError(t, err)
 	require.NotNil(t, matched, "an agreeing version lifts the same pair over the bar")
 	assert.Equal(t, AdoptMatchProbable, adoptMatchClass(score))
