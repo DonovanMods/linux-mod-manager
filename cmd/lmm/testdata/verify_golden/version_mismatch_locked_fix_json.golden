@@ -10,7 +10,7 @@
         "note": "locked",
         "recorded": "1.5",
         "effective": "1.0",
-        "fixable_reason": "this --fix run already attempted a repair for it"
+        "fixable_reason": "the ref is locked at v1.5, and --fix will not rewrite what a lock means - unlock it first"
       },
       {
         "mod_id": "mod1",

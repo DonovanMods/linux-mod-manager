@@ -307,6 +307,15 @@ func (r *verifyRun) finding(f VerifyFinding, extras VerifyEvent) {
 // extras, since it's still the same unresolved condition.
 func (r *verifyRun) resolveLast(status, note string) {
 	last := &r.result.Findings[len(r.result.Findings)-1]
+	// Read BEFORE the two fields are cleared below. A row this run never
+	// considered fixable in the first place was REFUSED, not attempted - a
+	// locked ref is the case in practice - and its existing reason is the
+	// accurate one (M4, unit 8 gate review: "this --fix run already
+	// attempted a repair for it" is simply untrue of a refusal, and it
+	// replaced the sentence naming the lock and how to lift it. The plain
+	// run - what the web UI's Health card reads - kept the good sentence,
+	// so the two runs disagreed about the same row).
+	refused, refusalReason := !last.Fixable, last.FixableReason
 	last.Status, last.Note = status, note
 	// Every resolveLast call happens inside a --fix run, AFTER that row's
 	// repair was attempted, refused or completed - so whatever the row now
@@ -314,8 +323,13 @@ func (r *verifyRun) resolveLast(status, note string) {
 	// (VerifyFinding.Fixable).
 	last.Fixable = false
 	last.FixableReason = ""
-	if status == "missing" || status == "version_mismatch" {
-		// Still unresolved after a repair was attempted or refused: say so,
+	switch {
+	case status != "missing" && status != "version_mismatch":
+		// Resolved (or demoted): no reason to give.
+	case refused && refusalReason != "":
+		last.FixableReason = refusalReason
+	default:
+		// Still unresolved after a repair was actually attempted: say so,
 		// rather than leaving a not-fixable row with no reason at all.
 		last.FixableReason = "this --fix run already attempted a repair for it"
 	}
