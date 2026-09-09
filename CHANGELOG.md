@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm update --all` applies as one batch (#324).** The command used to
+  run two separate per-mod loops (auto-policy updates, then `--all`'s
+  remaining ones); it now builds one selection and applies it through
+  core's batch pair. Two visible consequences: the two section headers
+  ("Applying N auto-update(s)…" / "Applying N remaining update(s)…") are one
+  "Applying N update(s)…", the per-mod ✓/✗ lines being unchanged; and
+  **`lmm update --all --json` now applies**, emitting
+  `core.UpdateBatchResult`, where it previously emitted the check document
+  and silently ignored the flag. A `--json` run WITHOUT `--all`, and any
+  `--dry-run`, are unchanged: still the check document, still applying
+  nothing.
+
+- **`lmm auth logout --json` prints a document, not prose (#335).** It emits
+  the re-read `app.AuthStatusReport` — the same document
+  `lmm auth status --json` prints and `lmm serve`'s
+  `DELETE /api/v1/auth/{source}` already answered — restoring the
+  one-document-on-stdout invariant every other `--json` command holds to.
+  Plain-text output is unchanged.
+
 - **`lmm serve` is now a single-page application.** The page-per-command web
   UI described by the unreleased entries below never shipped: it converted
   the TUI too literally — six pages mapped to CLI verbs, context
@@ -28,6 +47,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry before the first release that ships any of it.
 
 ### Added
+
+- **`lmm profile reorder -i` — an interactive load-order picker (#254).**
+  Setting a load order used to mean naming every mod ID positionally, which
+  in practice meant running the command once to print the table, copying the
+  IDs out by hand, and retyping them all. `-i`/`--interactive` prints the
+  same numbered table and takes the POSITIONS instead: `1,3,2`, or `2-5,1`
+  to move a block (or push one entry to the end of a long list). Positions
+  you leave out keep their current relative order at the end — the same rule
+  the positional-argument form already follows. Enter keeps the order as it
+  stands, `q` cancels, and duplicate or out-of-range positions are rejected
+  with a re-prompt rather than silently corrected. A bare
+  `lmm profile reorder` still prints the load order and nothing else, and
+  the existing `lmm profile reorder <id> <id> …` form is unchanged; `-i`
+  under `--json` is refused with `core.ErrInteractiveOnly` (`--json` never
+  reads stdin).
+
+- **A batch update flow in core, shared by the CLI and the web UI (#324).**
+  `Service.PlanUpdateBatch`/`ApplyUpdateBatch` own what `lmm update --all`
+  and the web UI's per-item update selection each used to decide for
+  themselves: the order items apply in, the single freshness window for the
+  whole batch, what a per-item failure does to the rest (nothing — the
+  remaining rows still get their update, and the failures are named), and
+  how a locked ref is refused. The two frontends previously disagreed about
+  that last one; both now follow the #97 rule, reporting a locked mod as
+  *skipped*, with the engine's own refusal sentence, rather than as a
+  failure. `lmm update --all --json` emits the new
+  `core.UpdateBatchResult`.
+
+- **`lmm verify` reports when it ran and why a finding is not fixable
+  (#334).** `core.VerifyResult` gains `checked_at` (UTC, additive), so a
+  surface rendering a stored result can say "last verified …" from the
+  document; `core.VerifyFinding` gains `fixable_reason` (additive), the
+  engine's own reason a row will not be repaired — a local source with
+  nothing to re-download from, a locked ref whose version `--fix` will not
+  rewrite, a conversion only a reinstall retries. Both reach
+  `lmm verify --json` and `GET /api/v1/health` unchanged in every other
+  respect; the web UI's Health card renders the engine's sentence instead
+  of the guess it used to make client-side.
+
+- **`app.AuthStatusReport` gains `restart_required` (#334).** A credential
+  saved or removed through `lmm serve` takes effect on the running server
+  immediately — but when that live swap cannot complete (the source cannot
+  be rebuilt, or the mutation gate does not come free in time), the key is
+  stored and the process keeps using the old one until restarted. The
+  response now says so, instead of reporting "authenticated" and leaving
+  the miss to a server-side log line.
 
 - **The `lmm serve` Setup page (#333).** A whole page at
   `/g/{game}/{profile}/setup` rather than a modal, reached from the top
