@@ -62,8 +62,9 @@ func TestNew_DropsModCacheTableOnUpgrade(t *testing.T) {
 
 	// Rewind to v10 by reverting every post-v10 schema change. v11 dropped
 	// mod_cache; v12 added convert_paks; v13 added auth_tokens.created_at;
-	// v15 added installed_mods.external and external_path.
-	for _, col := range []string{"convert_paks", "external", "external_path"} {
+	// v15 added installed_mods.external and external_path; v16 added
+	// installed_mods.updated_at.
+	for _, col := range []string{"convert_paks", "external", "external_path", "updated_at"} {
 		_, err = database.Exec("ALTER TABLE installed_mods DROP COLUMN " + col)
 		require.NoError(t, err, "revert post-v10 installed_mods change before rewinding version tracker")
 	}

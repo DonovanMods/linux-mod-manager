@@ -1,0 +1,33 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "mods": [
+    {
+      "id": "3617086610",
+      "source_id": "steamworkshop",
+      "name": "Sample Workshop Item",
+      "version": "7987119735124793734",
+      "author": "76561198000000000",
+      "summary": "An item subscribed in the Steam client.",
+      "description": "",
+      "game_id": "g1",
+      "category": "",
+      "downloads": 0,
+      "picture_url": "",
+      "source_url": "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+      "files": [],
+      "dependencies": [],
+      "updated_at": "<TIME>",
+      "profile_name": "default",
+      "update_policy": "notify",
+      "installed_at": "<TIME>",
+      "enabled": true,
+      "deployed": true,
+      "link_method": "symlink",
+      "manual_download": false,
+      "external": true,
+      "external_path": "/GOLDEN/workshop/3617086610",
+      "locked": false
+    }
+  ]
+}

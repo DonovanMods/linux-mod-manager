@@ -36,6 +36,15 @@
     ]
   },
   {
+    "id": "steamworkshop",
+    "name": "Steam Workshop",
+    "type": "built-in",
+    "auth": "none",
+    "capabilities": [
+      "updates"
+    ]
+  },
+  {
     "id": "broken-mods",
     "name": "",
     "type": "error",

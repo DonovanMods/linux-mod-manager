@@ -713,7 +713,19 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if installedInfo != nil {
 		fmt.Println()
-		fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
+		if installedInfo.External {
+			// #269: for an external mod the installed line is a DATE - the
+			// Version field holds Steam's 19-digit content id, which is the
+			// item's version identity and not a version anybody can read.
+			// The content id is still shown, labelled as itself, below.
+			revision := "unknown"
+			if !installedInfo.UpdatedAt.IsZero() {
+				revision = installedInfo.UpdatedAt.Format("2006-01-02")
+			}
+			fmt.Printf("Installed: revision of %s (profile: %s)\n", colorCyan(revision), installedInfo.Profile)
+		} else {
+			fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
+		}
 		policyDisplay := policyToString(installedInfo.UpdatePolicy)
 		switch policyDisplay {
 		case "pinned":
@@ -744,6 +756,19 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 				convertState = "off"
 			}
 			fmt.Printf("  Pak conversion: %s\n", convertState)
+		}
+		if installedInfo.External {
+			// #269: last, after the settings that DO apply, so the block
+			// reads as the qualification on everything above it.
+			fmt.Println()
+			fmt.Println("Managed by: Steam Workshop")
+			fmt.Printf("  Location: %s\n", installedInfo.ExternalPath)
+			if installedInfo.Version != "" {
+				fmt.Printf("  Steam content id: %s\n", installedInfo.Version)
+			}
+			fmt.Println("  lmm tracks this item and checks it for updates; Steam owns its")
+			fmt.Println("  files and applies its updates. Deploy, enable/disable, update and")
+			fmt.Println("  rollback are not available for it.")
 		}
 	}
 

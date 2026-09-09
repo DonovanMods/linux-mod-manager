@@ -34,5 +34,14 @@
       "auth",
       "versions"
     ]
+  },
+  {
+    "id": "steamworkshop",
+    "name": "Steam Workshop",
+    "type": "built-in",
+    "auth": "none",
+    "capabilities": [
+      "updates"
+    ]
   }
 ]

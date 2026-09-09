@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -19,6 +20,8 @@ var (
 	importForce     bool
 	importDryRun    bool
 	importSkipMatch bool
+	importWorkshop  bool
+	importRefresh   bool
 )
 
 var importCmd = &cobra.Command{
@@ -26,7 +29,20 @@ var importCmd = &cobra.Command{
 	Short: "Import mods from local files or scan mod_path",
 	Long: `Import mods from local files or scan for untracked mods.
 
-Two distinct modes, chosen by whether an archive path is given:
+Three modes: scan (no arguments), archive (an archive path), and
+--workshop.
+
+--workshop brings the Steam Workshop items you are already subscribed to
+under lmm's tracking. lmm reads Steam's own bookkeeping, records each
+item and checks it for updates - it never moves, copies or deletes a
+Workshop item's files: Steam owns them where they sit and the game loads
+them from there. Deploying, enabling, disabling, updating and rolling
+back are all refused for such a mod, and uninstalling one removes lmm's
+tracking only. It is mutually exclusive with an archive argument and with
+--skip-match (there is nothing to match: items are identified by their
+Steam published-file id, exactly).
+
+The other two modes, chosen by whether an archive path is given:
 
 Scan mode (no arguments): scans the game's mod_path for files not yet
 tracked by lmm, tries to match each one by name against the game's
@@ -62,6 +78,8 @@ imported as local - it deploys and installs normally, but 'lmm update'
 has nothing to check it against and will never notify about it.
 
 Examples:
+  lmm import --workshop --game space-engineers-2   # Track subscribed Workshop items
+  lmm import --workshop --dry-run --game space-engineers-2
   lmm import --game hytale                    # Scan mod_path for untracked mods
   lmm import --game hytale --dry-run          # Preview what would be imported
   lmm import --game hytale --skip-match       # Scan without source lookup
@@ -79,6 +97,8 @@ func init() {
 	importCmd.Flags().BoolVarP(&importForce, "force", "f", false, "import without conflict prompts")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview what would be imported without making changes")
 	importCmd.Flags().BoolVar(&importSkipMatch, "skip-match", false, "skip source lookup for untracked mods")
+	importCmd.Flags().BoolVar(&importWorkshop, "workshop", false, "track the Steam Workshop items you are subscribed to (lmm never moves their files)")
+	importCmd.Flags().BoolVar(&importRefresh, "refresh", false, "bypass cached source metadata (--workshop)")
 
 	rootCmd.AddCommand(importCmd)
 }
@@ -99,6 +119,19 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 	profileName, err := resolveProfile(ctx, service, game.ID, importProfile)
 	if err != nil {
 		return err
+	}
+
+	// #269: --workshop is a third mode, mutually exclusive with the other
+	// two. Refused rather than silently preferred, so a command that means
+	// two different things never quietly picks one.
+	if importWorkshop {
+		if len(args) > 0 {
+			return fmt.Errorf("--workshop imports what Steam already downloaded; it cannot take an archive path")
+		}
+		if importSkipMatch {
+			return fmt.Errorf("--skip-match does not apply to --workshop: Workshop items are matched by their Steam published-file id, exactly")
+		}
+		return runImportWorkshop(ctx, service, game, profileName)
 	}
 
 	// No args = scan mode
@@ -521,4 +554,144 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 
 	fmt.Printf("\nImported: %d, Skipped: %d, Failed: %d\n", result.Adopted, result.Skipped, result.Failed)
 	return nil
+}
+
+// runImportWorkshop renders `lmm import --workshop` (#269): the Steam
+// Workshop items the Steam client has already downloaded for this game are
+// recorded as EXTERNAL mods - tracked, reported and update-checked, never
+// deployed. The engine is core.PlanWorkshopAdopt/ApplyWorkshopAdopt; this
+// only parses, prompts and prints.
+func runImportWorkshop(ctx context.Context, service *core.Service, game *domain.Game, profileName string) error {
+	if !jsonOutput {
+		fmt.Println("Note: lmm tracks Steam Workshop items where Steam put them.")
+		fmt.Println("      It never moves, copies or deletes their files, and cannot")
+		fmt.Println("      deploy, enable or update them - Steam does that itself.")
+		fmt.Println()
+		fmt.Println("Reading Steam's workshop manifests...")
+	}
+
+	plan, err := service.PlanWorkshopAdopt(ctx, game, profileName,
+		core.WorkshopAdoptOptions{Refresh: importRefresh})
+	if err != nil {
+		return err
+	}
+
+	if !jsonOutput {
+		fmt.Printf("Found %d subscribed item(s) in %d Steam librar(y/ies); %d already tracked, %d new\n\n",
+			len(plan.Scan.Items), len(plan.Scan.Libraries), plan.Scan.Tracked, plan.Scan.Untracked)
+		for _, w := range plan.Scan.Warnings {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+		}
+	}
+
+	if plan.NoChanges {
+		// Ruling 15: a --json caller still gets a document - the Plan under
+		// --dry-run, otherwise the empty result the adopt would produce.
+		if jsonOutput {
+			if importDryRun {
+				return emitJSON(plan)
+			}
+			return emitJSON(&core.WorkshopAdoptResult{})
+		}
+		fmt.Println("Every subscribed item is already tracked.")
+		return nil
+	}
+
+	if !jsonOutput {
+		fmt.Printf("Ready to track %d item(s):\n", len(plan.Entries))
+		for _, e := range plan.Entries {
+			fmt.Printf("  - %s\n", workshopEntryLine(e))
+		}
+	}
+
+	if importDryRun {
+		if jsonOutput {
+			return emitJSON(plan)
+		}
+		fmt.Println("\n(dry run - no changes made)")
+		return nil
+	}
+
+	if !importForce {
+		if jsonOutput {
+			return core.ErrConfirmationRequired
+		}
+		fmt.Printf("\nTrack these items? [y/N]: ")
+		input, err := readPromptLine()
+		if err != nil {
+			return err
+		}
+		if input != "y" && input != "yes" {
+			return fmt.Errorf("import cancelled")
+		}
+	}
+
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		switch p.Phase {
+		case core.WorkshopAdopted:
+			fmt.Printf("  ✓ %s\n", p.ModName)
+		case core.WorkshopUnavailable:
+			fmt.Printf("  ! %s: %s\n", p.ModName, p.Detail)
+		case core.WorkshopSkipped:
+			fmt.Printf("  ⊘ %s: %s\n", p.ModName, p.Detail)
+		case core.WorkshopScanned:
+			if verbose {
+				fmt.Printf("  %s\n", p.Detail)
+			}
+		}
+	}
+
+	result, err := service.ApplyWorkshopAdopt(ctx, game, plan, quietSink(progress))
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+	fmt.Printf("\nTracked: %d", result.Adopted)
+	if result.Skipped > 0 {
+		fmt.Printf(", skipped: %d", result.Skipped)
+	}
+	if result.Failed > 0 {
+		fmt.Printf(", failed: %d", result.Failed)
+	}
+	fmt.Println()
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	}
+	return nil
+}
+
+// workshopEntryLine renders one plan entry for the confirmation list: the
+// item's name and the date of the revision on disk. The ACF's manifest is
+// the item's version IDENTITY, but no human-facing surface prints a
+// 19-digit content id as a version (the design's approval note), so the
+// date is what the list shows.
+func workshopEntryLine(e core.WorkshopAdoptEntry) string {
+	name := "Workshop item " + e.FileID
+	if e.Mod != nil && e.Mod.Name != "" {
+		name = e.Mod.Name
+	}
+	line := fmt.Sprintf("%s (#%s", name, e.FileID)
+	if d := workshopRevisionDate(e.TimeUpdated); d != "" {
+		line += ", updated " + d
+	}
+	line += ")"
+	if e.Unavailable {
+		line += " - " + e.Note
+	}
+	return line
+}
+
+// workshopRevisionDate formats a Workshop item's revision timestamp as a
+// plain date. Empty for a record that carries none.
+func workshopRevisionDate(unix int64) string {
+	if unix <= 0 {
+		return ""
+	}
+	return time.Unix(unix, 0).Format("2006-01-02")
 }

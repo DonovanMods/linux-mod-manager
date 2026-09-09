@@ -1,0 +1,49 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "scan": {
+    "game_id": "g1",
+    "app_id": "1133870",
+    "libraries": [
+      "/GOLDEN/steam"
+    ],
+    "items": [
+      {
+        "file_id": "3617086610",
+        "path": "/GOLDEN/workshop/3617086610",
+        "size_on_disk": 572330,
+        "manifest": "7987119735124793734",
+        "time_updated": 1764767935
+      }
+    ],
+    "tracked": 0,
+    "untracked": 1
+  },
+  "entries": [
+    {
+      "file_id": "3617086610",
+      "path": "/GOLDEN/workshop/3617086610",
+      "size_on_disk": 572330,
+      "manifest": "7987119735124793734",
+      "time_updated": 1764767935,
+      "mod": {
+        "id": "3617086610",
+        "source_id": "steamworkshop",
+        "name": "Sample Workshop Item",
+        "version": "",
+        "author": "76561198000000000",
+        "summary": "An item subscribed in the Steam client.",
+        "description": "",
+        "game_id": "",
+        "category": "Blueprint",
+        "downloads": 0,
+        "picture_url": "",
+        "source_url": "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+        "files": [],
+        "dependencies": [],
+        "updated_at": "<TIME>"
+      }
+    }
+  ],
+  "no_changes": false
+}

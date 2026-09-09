@@ -16,6 +16,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/icarus"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steamworkshop"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -25,20 +26,27 @@ const icarusFirestoreProjectID = "projectdaedalus-fb09f"
 // builtinSourceFactories constructs the first-party sources keyless; API keys
 // are attached after construction by registerSource so built-ins and custom
 // sources share one key pipeline.
-var builtinSourceFactories = []func() source.ModSource{
-	func() source.ModSource { return nexusmods.New(nil, "") },
-	func() source.ModSource { return curseforge.New(nil, "") },
-	func() source.ModSource { return icarus.New(nil, icarusFirestoreProjectID) },
+//
+// Each factory is handed the resolved Paths: steamworkshop (#269) needs the
+// cache root for its metadata cache (<CacheDir>/_steamworkshop/meta/), the
+// only built-in that needs anything from the environment beyond a key.
+var builtinSourceFactories = []func(Paths) source.ModSource{
+	func(Paths) source.ModSource { return nexusmods.New(nil, "") },
+	func(Paths) source.ModSource { return curseforge.New(nil, "") },
+	func(Paths) source.ModSource { return icarus.New(nil, icarusFirestoreProjectID) },
+	func(p Paths) source.ModSource {
+		return steamworkshop.New(steamworkshop.Options{CacheDir: p.CacheDir})
+	},
 }
 
 // registerSources registers the built-in sources followed by every custom
-// source definition under <cfgDir>/sources. Built-ins register first, so a
+// source definition under <ConfigDir>/sources. Built-ins register first, so a
 // custom definition reusing a built-in ID loses the collision (and warns).
-func registerSources(ctx context.Context, svc *core.Service, cfgDir string, warn io.Writer) {
+func registerSources(ctx context.Context, svc *core.Service, p Paths, warn io.Writer) {
 	for _, factory := range builtinSourceFactories {
-		registerSource(ctx, svc, factory(), warn)
+		registerSource(ctx, svc, factory(p), warn)
 	}
-	registerCustomSources(ctx, svc, cfgDir, warn)
+	registerCustomSources(ctx, svc, p.ConfigDir, warn)
 }
 
 // registerSource attaches src's API key (when it declares Auth) and registers

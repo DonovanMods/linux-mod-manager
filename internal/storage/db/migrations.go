@@ -40,6 +40,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV13,
 		migrateV14,
 		migrateV15,
+		migrateV16,
 	}
 
 	if version < len(migrations) {
@@ -263,5 +264,24 @@ func migrateV15(ctx context.Context, d *DB) error {
 		return err
 	}
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN external_path TEXT DEFAULT ''`)
+	return err
+}
+
+// migrateV16 persists domain.Mod.UpdatedAt - when the SOURCE last published
+// a revision of the mod, as distinct from installed_at (when lmm recorded
+// it).
+//
+// It was previously fetched live and dropped on save, which was harmless
+// while every version was a readable string. #269 made it load-bearing: a
+// Steam Workshop item's version IS a 19-digit content id, and the approved
+// design says no human-facing surface prints one - `lmm list`, the update
+// summary and the web UI's rows show the revision DATE instead. That date
+// has to survive a round trip through the database to be shown by a
+// listing, which reads nothing else.
+//
+// NULL for every existing row, which decodes to the zero time - exactly
+// what those rows carried in memory before this column existed.
+func migrateV16(ctx context.Context, d *DB) error {
+	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN updated_at DATETIME`)
 	return err
 }

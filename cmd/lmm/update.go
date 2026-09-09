@@ -485,6 +485,12 @@ func printUpdateTable(updates, autoUpdates []domain.Update) error {
 	for _, update := range updates {
 		policyStr := policyToString(update.InstalledMod.UpdatePolicy)
 		isLocked := update.Locked
+		if update.InstalledMod.External {
+			// #269: lmm reports this update; Steam applies it. The marker
+			// keeps the row from reading like something `lmm update --all`
+			// will act on.
+			policyStr += " [steam]"
+		}
 		if isLocked {
 			policyStr += " [locked@" + update.LockedVersion + "]"
 		}
@@ -508,10 +514,21 @@ func printUpdateTable(updates, autoUpdates []domain.Update) error {
 		case strings.HasSuffix(policyStr, " ✓"):
 			policyStr = colorGreen(policyStr)
 		}
+		current, available := update.InstalledMod.Version, update.NewVersion
+		if update.InstalledMod.External {
+			// A 19-digit Steam content id is the item's version IDENTITY,
+			// never something to print as a version (the design's approval
+			// note): the table shows dates instead.
+			current = workshopRevisionDate(update.InstalledMod.UpdatedAt.Unix())
+			if current == "" {
+				current = "-"
+			}
+			available = "newer"
+		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
-			update.InstalledMod.Version,
-			update.NewVersion,
+			current,
+			available,
 			policyStr,
 		); err != nil {
 			return fmt.Errorf("writing row: %w", err)
@@ -520,7 +537,23 @@ func printUpdateTable(updates, autoUpdates []domain.Update) error {
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
 	}
-	return printTable(&buf, 2, nil)
+	if err := printTable(&buf, 2, nil); err != nil {
+		return err
+	}
+	printExternalUpdateSummary(updates)
+	return nil
+}
+
+// printExternalUpdateSummary is #269's summary line: the external rows in a
+// bulk check are reported but never applied, and "run lmm update" is the
+// wrong advice for them. Silent when there are none.
+func printExternalUpdateSummary(updates []domain.Update) {
+	n := core.CountExternalUpdates(updates)
+	if n == 0 {
+		return
+	}
+	fmt.Printf("\n%d Steam Workshop item(s) have updates — Steam applies these itself the next time\n", n)
+	fmt.Println("you launch the game (or use Steam's \"Verify integrity of game files\").")
 }
 
 // printUpdateChangelogs prints the changelog block the bulk check shows -

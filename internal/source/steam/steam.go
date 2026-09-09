@@ -91,6 +91,15 @@ func getLibraryPathsFromMap(root VDFMap) []string {
 
 // DetectOptions tunes a DetectGames scan (#206).
 type DetectOptions struct {
+	// NoWorkshop suppresses #269's Steam Workshop prefill: a candidate
+	// whose appworkshop manifest declares installed items normally gains
+	// `steamworkshop: <appid>` in its Sources map and a WorkshopItems
+	// count. Off by default, because a game with items already downloaded
+	// is exactly the case where tracking them is free; a user who does not
+	// want lmm to know about them says so with `lmm game detect
+	// --no-workshop`.
+	NoWorkshop bool
+
 	// IncludeUnknown adds every OTHER installed Steam app to the result as
 	// an unknown candidate: the manifest's own name and install path, a
 	// slug derived from that name, an EMPTY ModPath and no sources. It is
@@ -121,6 +130,76 @@ var steamToolNamePrefixes = []string{
 	"Proton Hotfix",
 	"Proton Next",
 	"Proton EasyAntiCheat Runtime",
+}
+
+// workshopItemCount reports how many Workshop items Steam has installed
+// for appID inside a library, and whether a manifest existed at all (#269).
+//
+// It answers a narrower question than internal/source/steamworkshop's own
+// parser - "are there any, and how many" rather than "what are they" - and
+// deliberately keeps its own tiny reader rather than importing that package:
+// steamworkshop already imports THIS one for the VDF dialect and the
+// library walk, so the dependency cannot run both ways.
+//
+// An EMPTY-STUB manifest (WorkshopItemsInstalled {}, the shape Steam leaves
+// for a workshop-capable app with nothing subscribed) reports 0, which is
+// what suppresses the prefill: nothing is lost, since `lmm game edit` and
+// the web UI's sources map can add the mapping later.
+func workshopItemCount(libPath, appID string) int {
+	data, err := os.ReadFile(filepath.Join(libPath, "steamapps", "workshop", "appworkshop_"+appID+".acf"))
+	if err != nil {
+		return 0
+	}
+	root, err := ParseVDF(strings.NewReader(string(data)))
+	if err != nil {
+		return 0
+	}
+	block, ok := root["AppWorkshop"].(VDFMap)
+	if !ok {
+		return 0
+	}
+	installed, ok := block["WorkshopItemsInstalled"].(VDFMap)
+	if !ok {
+		return 0
+	}
+	return len(installed)
+}
+
+// withWorkshopPrefill stamps #269's Steam Workshop mapping onto a candidate
+// when this library has Workshop items installed for it.
+//
+// The mapping is ADDED to whatever sources the candidate already carries -
+// a curated entry keeps its own, and the nil-Sources case is left alone
+// here because core.GameFromDetected/GameSpecFromDetected derive
+// {nexusmods: NexusID} from a nil map; a map materialised here would
+// suppress that derivation. So a curated game with a nil map gets its
+// workshop entry only once the derivation has happened, which is why the
+// derivation is what this seeds FROM rather than replaces.
+//
+// An UNKNOWN game (Known false, empty ModPath) gets the workshop entry as
+// its ONLY source, which is exactly right: lmm cannot deploy to it, but it
+// can track what Steam already downloaded.
+func withWorkshopPrefill(g DetectedGame, libPath string, noWorkshop bool) DetectedGame {
+	if noWorkshop {
+		return g
+	}
+	count := workshopItemCount(libPath, g.SteamAppID)
+	if count == 0 {
+		return g
+	}
+	g.WorkshopItems = count
+	sources := make(map[string]string, len(g.Sources)+2)
+	for k, v := range g.Sources {
+		sources[k] = v
+	}
+	// Preserve the pre-#269 derivation for a curated entry that declared
+	// only a nexus id: adding a key to a nil map would otherwise silence it.
+	if len(g.Sources) == 0 && g.NexusID != "" {
+		sources["nexusmods"] = g.NexusID
+	}
+	sources["steamworkshop"] = g.SteamAppID
+	g.Sources = sources
+	return g
 }
 
 // isSteamTool reports whether an app manifest's display name is one of
@@ -292,12 +371,12 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					}
 					slug := uniqueSlug(name, manifest.AppID, takenSlugs)
 					takenSlugs[slug] = true
-					found = append(found, DetectedGame{
+					found = append(found, withWorkshopPrefill(DetectedGame{
 						SteamAppID:  manifest.AppID,
 						Slug:        slug,
 						Name:        name,
 						InstallPath: installPath,
-					})
+					}, libPath, opts.NoWorkshop))
 					continue
 				}
 				modPath := installPath
@@ -305,7 +384,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					modPath = filepath.Join(installPath, info.ModPath)
 				}
 				seen[info.Slug] = true
-				found = append(found, DetectedGame{
+				found = append(found, withWorkshopPrefill(DetectedGame{
 					SteamAppID:  manifest.AppID,
 					Slug:        info.Slug,
 					Name:        info.Name,
@@ -315,7 +394,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					DeployMode:  info.DeployMode,
 					Sources:     info.Sources,
 					Known:       true,
-				})
+				}, libPath, opts.NoWorkshop))
 			}
 		}
 	}
