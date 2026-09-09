@@ -94,7 +94,14 @@ Steam app id for 'lmm game add --from-detected' with that app id, which
 prefills the name, install path, game id and a default mod path and asks
 only for the source. Under --json, --include-unknown with neither --all nor
 --select emits the detect LISTING document (every candidate, known and
-unknown) instead of prompting: search first, add second.
+unknown) instead of prompting: search first, add second. A plain --json
+scan (no --include-unknown) never carries those rows at all, known or not
+- pass the flag to see them, exactly as on a terminal.
+
+If a plain scan finds no known games but this machine has OTHER installed
+Steam games lmm has no known-games entry for, it says so and names
+--include-unknown, instead of reporting "No moddable Steam games found" -
+the game is right there, just not curated yet.
 
 Examples:
   lmm game detect
@@ -257,8 +264,14 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The scan itself always goes wide (#206 Important 3): whether the
+	// unknown rows get PRINTED or SELECTABLE still follows
+	// gameDetectIncludeUnknown (below, in doGameDetect) exactly as before -
+	// this only lets doGameDetect tell "nothing installed at all" apart from
+	// "installed, but none of it is in the known-games list" so a plain scan
+	// with only the latter can say so instead of a flat "found nothing".
 	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir,
-		app.DetectOptions{IncludeUnknown: gameDetectIncludeUnknown})
+		app.DetectOptions{IncludeUnknown: true})
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}
@@ -337,18 +350,31 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 				cmd.Printf("      Path: %s\n", g.InstallPath)
 			}
 		}
-		if len(known) > 0 && len(unknown) > 0 {
-			cmd.Println()
+		// The unknown section only renders under --include-unknown (#206):
+		// the scan itself now always finds these rows (runGameDetect), but a
+		// plain scan's baseline behavior - list known games only, say
+		// nothing about the rest - must stay exactly what it always was.
+		if gameDetectIncludeUnknown {
+			if len(known) > 0 && len(unknown) > 0 {
+				cmd.Println()
+			}
+			printUnknownDetectedGames(cmd, unknown)
 		}
-		printUnknownDetectedGames(cmd, unknown)
 	}
 
 	if len(known) == 0 {
 		// Nothing here is selectable, so there is no prompt to print and
 		// no answer to read - the unknown section above already said what
-		// to do next.
+		// to do next (when --include-unknown asked for it).
 		if jsonOutput {
 			return emitJSON(&core.GameDetectResult{Warnings: detectWarnings})
+		}
+		if !gameDetectIncludeUnknown && len(unknown) > 0 {
+			// #206 Important 3: the game is right there, just not curated -
+			// "No moddable Steam games found" would be a dead end for
+			// exactly the user this feature exists for.
+			cmd.Printf("%d installed game(s) are not in the known-games list; run `lmm game detect --include-unknown` to add them.\n", len(unknown))
+			return nil
 		}
 		return nil
 	}

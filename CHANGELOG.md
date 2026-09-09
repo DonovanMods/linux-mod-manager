@@ -73,7 +73,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chooses; a single entry whose name is exactly the game's name is taken
   automatically). The whole flow is non-interactive and works under
   `--json`, where `lmm game detect --include-unknown` with no selection
-  flag emits the detect LISTING document.
+  flag emits the detect LISTING document (a plain `--json` scan never
+  carries those rows at all — pass the flag to see them, as on a terminal).
+  If a plain scan finds no known games but this machine has other installed
+  Steam games with no known-games entry, it says how many and names
+  `--include-unknown`, instead of reporting nothing found.
 
   On the web side, `GET /api/v1/games/detect?all=1` returns the same
   listing widened with those rows (no `known` member at all — absent means

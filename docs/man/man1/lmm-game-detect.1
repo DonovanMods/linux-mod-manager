@@ -39,7 +39,15 @@ Steam app id for 'lmm game add --from-detected' with that app id, which
 prefills the name, install path, game id and a default mod path and asks
 only for the source. Under --json, --include-unknown with neither --all nor
 --select emits the detect LISTING document (every candidate, known and
-unknown) instead of prompting: search first, add second.
+unknown) instead of prompting: search first, add second. A plain --json
+scan (no --include-unknown) never carries those rows at all, known or not
+- pass the flag to see them, exactly as on a terminal.
+
+.PP
+If a plain scan finds no known games but this machine has OTHER installed
+Steam games lmm has no known-games entry for, it says so and names
+--include-unknown, instead of reporting "No moddable Steam games found" -
+the game is right there, just not curated yet.
 
 .PP
 Examples:

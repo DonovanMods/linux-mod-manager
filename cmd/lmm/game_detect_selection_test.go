@@ -469,6 +469,9 @@ func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.
 // into the selectable list - "all" still adds only the known ones.
 func TestDoGameDetect_IncludeUnknown_ListsUnknownSection(t *testing.T) {
 	configDir = t.TempDir()
+	oldIncludeUnknown := gameDetectIncludeUnknown
+	gameDetectIncludeUnknown = true
+	t.Cleanup(func() { gameDetectIncludeUnknown = oldIncludeUnknown })
 
 	games := []steam.DetectedGame{
 		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
@@ -501,6 +504,9 @@ func TestDoGameDetect_IncludeUnknown_ListsUnknownSection(t *testing.T) {
 // than offering a prompt whose every answer is invalid.
 func TestDoGameDetect_OnlyUnknownFound_NoPrompt(t *testing.T) {
 	configDir = t.TempDir()
+	oldIncludeUnknown := gameDetectIncludeUnknown
+	gameDetectIncludeUnknown = true
+	t.Cleanup(func() { gameDetectIncludeUnknown = oldIncludeUnknown })
 
 	games := []steam.DetectedGame{
 		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/satisfactory"},
