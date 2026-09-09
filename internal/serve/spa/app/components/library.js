@@ -382,7 +382,11 @@ export function Library({
             one, or bring in what you already have:
           </p>
           <div class="empty-state__actions">
-            <${AddModsMenu} route=${state.route} actions=${actions} />
+            <${AddModsMenu}
+              route=${state.route}
+              actions=${actions}
+              state=${state}
+            />
           </div>
         </div>
       </section>
@@ -440,7 +444,11 @@ export function Library({
             ${SORT_NAMES.map((s) => html`<option value=${s}>${SORT_LABELS[s]}</option>`)}
           </select>
         </label>
-        <${AddModsMenu} route=${state.route} actions=${actions} />
+        <${AddModsMenu}
+          route=${state.route}
+          actions=${actions}
+          state=${state}
+        />
         <button
           type="button"
           class="button button--small"

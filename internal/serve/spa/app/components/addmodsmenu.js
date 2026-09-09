@@ -7,6 +7,14 @@
 // EXISTING flows rather than a fourth: the omnibar's own fan-out, Setup →
 // Archive import, Setup → Adopt.
 //
+// #269 adds a fourth entry, on the same principle: `lmm import --workshop`
+// is a real flow with a real plan kind (workshop_adopt), and without an
+// entry here a web-only user could be shown a Steam badge and a "Managed by
+// Steam" block with no way to get an item tracked in the first place. It is
+// offered only when the game actually maps the steamworkshop source, since
+// the plan endpoint answers 400 otherwise - an entry that can only fail is
+// the thing this menu's own "land on EXISTING flows" rule argues against.
+//
 // A plain dropdown, the same shape topbar.js's game/profile pickers use
 // (.picker/.picker__trigger/.picker__menu/.picker__item) - reused rather
 // than invented, and dismissed the same way (dismiss.js's outside-click/
@@ -26,7 +34,8 @@ function focusOmnibar() {
   if (input instanceof HTMLElement) input.focus();
 }
 
-export function AddModsMenu({ route, actions }) {
+export function AddModsMenu({ route, actions, state }) {
+  const workshopMapped = Boolean(state?.status?.source_ids?.steamworkshop);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -89,6 +98,30 @@ export function AddModsMenu({ route, actions }) {
                 Adopt untracked mods…
               </button>
             </li>
+            ${
+              workshopMapped &&
+              html`
+                <li>
+                  <button
+                    type="button"
+                    class="picker__item"
+                    data-action="track-workshop"
+                    onClick=${() =>
+                      pick(() =>
+                        actions.openPlan({
+                          kind: "workshop_adopt",
+                          origin: "add-mods:workshop",
+                          title: "Track Steam Workshop items",
+                          confirmLabel: "Track",
+                          options: {},
+                        }),
+                      )}
+                  >
+                    Track Steam Workshop items…
+                  </button>
+                </li>
+              `
+            }
           </ul>
         `
       }

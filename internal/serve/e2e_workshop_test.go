@@ -231,6 +231,26 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_Workshop_AddModsMenuOmitsTheEntryWithoutTheSource is the other
+// half of that entry point: POST /api/v1/plans/workshop_adopt answers 400
+// for a game with no steamworkshop mapping, and an entry that can only fail
+// is exactly what this menu's "land on EXISTING flows" rule argues against.
+func TestE2E_Workshop_AddModsMenuOmitsTheEntryWithoutTheSource(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var menu string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-mods"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.add-mods-menu__menu`, chromedp.ByQuery),
+		textContent(`.add-mods-menu__menu`, &menu),
+	)
+	assert.Contains(t, menu, "Adopt untracked mods…", "the existing entries stand")
+	assert.NotContains(t, menu, "Track Steam Workshop items…")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_Workshop_AdoptPlanModalRendersItsOwnPreview drives the plan
 // endpoint from the browser and asserts plan_workshop_adopt.js actually
 // rendered - which also proves its module path resolves, the one class of
@@ -252,15 +272,12 @@ func TestE2E_Workshop_AdoptPlanModalRendersItsOwnPreview(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		chromedp.Evaluate(`
-			window.__lmmOpenPlan({
-				kind: "workshop_adopt",
-				origin: "e2e-workshop",
-				title: "Track Steam Workshop items",
-				confirmLabel: "Track",
-				options: {},
-			});
-		`, nil),
+		// Driven through the REAL control the SPA offers, not
+		// window.__lmmOpenPlan - whose own doc comment says no control in
+		// this application ever opens one, which made using it here the
+		// proof of a missing entry point rather than a way around it.
+		chromedp.Click(`[data-action="add-mods"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="track-workshop"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.plan--workshop-adopt`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector(".plan--workshop-adopt").textContent;`, &modal),
 	)

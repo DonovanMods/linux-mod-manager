@@ -1726,7 +1726,7 @@ lmm can **track** the Steam Workshop items you are already subscribed to. It rea
 **What Tier 1 does:**
 
 - `lmm game detect` maps a game whose Workshop manifest shows installed items to the `steamworkshop` source automatically (the per-source game id is the Steam **app id**). Suppress it with `--no-workshop`, or add the mapping later with `lmm game edit --source steamworkshop=<appid>`.
-- `lmm import --workshop` records every subscribed item lmm does not already track. `--dry-run` previews it; `--refresh` bypasses the cached Steam metadata.
+- `lmm import --workshop` records every subscribed item lmm does not already track. `--dry-run` previews it; `--refresh` bypasses the cached Steam metadata. In `lmm serve`, the same flow is **Add mods ▾ → Track Steam Workshop items…**, offered once the game maps the `steamworkshop` source.
 - `lmm list` marks such mods `EXTERNAL`, `lmm status` counts them separately, and `lmm mod show` prints a "Managed by: Steam Workshop" block naming the directory Steam owns.
 - `lmm update` reports an item whose Steam revision has moved on, and says plainly that **Steam** applies that update — the next time you launch the game, or via Steam's _Verify integrity of game files_.
 - `lmm verify` checks that the directory Steam owns is still there and non-empty; an item you unsubscribed from is reported as a finding.
@@ -1734,7 +1734,7 @@ lmm can **track** the Steam Workshop items you are already subscribed to. It rea
 
 **What it deliberately does NOT do.** lmm never moves, copies, downloads or deletes a Workshop item's files — the Steam client owns them where they sit, and the game loads them from there. So:
 
-- **Deploying, enabling, disabling, updating, rolling back and re-linking are refused** for a Workshop item, with a message naming what to do in Steam instead. A bookkeeping-only "disabled" flag on a mod the game still loads would be a lie.
+- **Deploying, enabling, disabling, updating, rolling back and re-linking are refused** for a Workshop item, with a message naming what to do in Steam instead. So is `lmm install steamworkshop:<file id>` for an item you are already subscribed to: an lmm-managed second copy alongside the one Steam loads would put the mod in the game twice. A bookkeeping-only "disabled" flag on a mod the game still loads would be a lie.
 - **Profile switches do not change what Steam has on disk.** A Workshop item is game-global; lmm profiles are not. `lmm profile switch` / `apply` leave such items exactly as they are and say so once. Managing which items are active is the Steam client's job.
 - **Conflict detection cannot see them.** `lmm conflicts` compares files deployed under the game's `mod_path`, and a Workshop item has none there. lmm cannot see inside a game's own Workshop loader.
 - **`lmm profile reorder` omits them.** Load order decides deploy precedence, and a tracked-only item deploys nothing, so any position it held would be inert.
