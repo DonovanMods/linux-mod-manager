@@ -228,3 +228,44 @@ func TestOpen_ContendedMigrationFailsRatherThanLeavingPlaintextInTheWAL(t *testi
 	assert.False(t, fileContains(t, dbPath, legacyKey), "plaintext still present in the database")
 	assert.False(t, fileContains(t, dbPath+"-wal", legacyKey), "plaintext still present in the WAL")
 }
+
+// TestOpen_ReencryptsALegacyKeyThatStartsWithTheMagic is the regression for
+// the review's Important 3. The legacy discriminator used to be a four-byte
+// prefix sniff, so a pre-#79 plaintext key that happened to begin with
+// "lmm1" was mistaken for an envelope: the migration skipped it, no key file
+// was ever created, and the credential stayed in the clear in lmm.db
+// INDEFINITELY while every read of the table failed with "the
+// token-encryption key is missing" - a wrong diagnosis that took the whole
+// auth listing down with it. A user-defined `api` source's key is whatever
+// the user pastes, so the shape is not impossible.
+func TestOpen_ReencryptsALegacyKeyThatStartsWithTheMagic(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	ctx := context.Background()
+
+	// 40 bytes - longer than the smallest possible envelope - and printable
+	// throughout, which is what makes it a key and not a ciphertext.
+	const legacyKey = "lmm1abcdefghijklmnopqrstuvwxyz0123456789"
+	seedPlaintextTokens(t, dbPath, map[string]string{"my-api-source": legacyKey})
+
+	d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+	got, err := d.GetToken(ctx, "my-api-source")
+	require.NoError(t, err, "a legacy key beginning with the magic must still be readable")
+	assert.Equal(t, legacyKey, got.APIKey)
+
+	// It really was re-encrypted, not merely handed back verbatim.
+	assert.NotEqual(t, []byte(legacyKey), rawTokenBlob(t, d, "my-api-source"))
+	assert.False(t, fileContains(t, dbPath, legacyKey), "plaintext still present in the database")
+	assert.False(t, fileContains(t, dbPath+"-wal", legacyKey), "plaintext still present in the WAL")
+
+	// And the listing works, rather than failing with a spurious "the key is missing".
+	infos, err := d.ListTokens(ctx)
+	require.NoError(t, err)
+	require.Len(t, infos, 1)
+	assert.True(t, infos[0].Readable)
+	assert.Equal(t, TokenFingerprint(legacyKey), infos[0].Fingerprint)
+}
