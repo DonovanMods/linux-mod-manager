@@ -445,6 +445,20 @@ func TestSelectDetectedGames_Rejections(t *testing.T) {
 	assert.Contains(t, err.Error(), "no games were detected")
 }
 
+// TestSelectDetectedGames_NumericSelectionWithNoKnownRows pins Minor 7 of
+// the #206 review: a scan with installed games but ZERO known rows (all
+// unknown) hit the generic "use 1-0" range message, which is not a range
+// and buries the real answer - nothing here is selectable by number at
+// all.
+func TestSelectDetectedGames_NumericSelectionWithNoKnownRows(t *testing.T) {
+	games := []domain.DetectedGame{{Slug: "satisfactory", Name: "Satisfactory"}}
+
+	_, err := core.SelectDetectedGames(games, []string{"1"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "use 1-0")
+	assert.Contains(t, err.Error(), "no detected game is in the known-games list")
+}
+
 // --- #206: prefilling an add from an installed game ---
 
 // detectedSkyrim is the curated candidate app.DetectGames produces for a

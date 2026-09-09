@@ -330,6 +330,12 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 		sel = strings.TrimSpace(sel)
 		var idx int
 		if n, err := strconv.Atoi(sel); err == nil {
+			if len(byIndex) == 0 {
+				// "use 1-0" is not a range; the scan found installed games,
+				// just none of them in the known-games list, so a numbered
+				// selection has nothing to count.
+				return nil, errors.New("no detected game is in the known-games list; add one with `lmm game add --from-detected <app-id>`")
+			}
 			if n < 1 || n > len(byIndex) {
 				return nil, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(byIndex))
 			}
