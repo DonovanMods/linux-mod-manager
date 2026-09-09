@@ -1574,3 +1574,47 @@ func dragRowTo(fromText, toText string) chromedp.Action {
 		return input.DispatchMouseEvent(input.MouseReleased, tx, ty).WithButton(input.Left).WithClickCount(1).Do(ctx)
 	})
 }
+
+// newE2EFixtureWithASwitchTarget seeds the world a profile SWITCH acts on:
+// two profiles whose mod sets differ, with everything the switch needs
+// already local so applying it makes no source call at all.
+//
+//	default (active)  Alpha Mod - enabled, cached, deployed
+//	hardcore          Beta Mod  - installed, cached, DISABLED under default
+//
+// Switching default -> hardcore therefore plans exactly one disable (Alpha,
+// enabled under default and absent from hardcore) and exactly one enable
+// (Beta, installed and cached but disabled), and no install - which is what
+// keeps the scenario a pure disk round trip: alpha.pak leaves the game
+// directory, beta.pak arrives in it, and the game's default profile moves.
+func newE2EFixtureWithASwitchTarget(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+	pm := f.Svc.NewProfileManager()
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "alpha", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.pak": []byte("alpha content")})
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "alpha", Version: "1.0"}))
+
+	// Disabled, so the switch's own enable pass is what deploys it - not a
+	// deploy that already happened before the browser was ever opened.
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "beta", SourceID: "fake", Name: "Beta Mod", Version: "1.0", GameID: f.Game.ID},
+		false, map[string][]byte{"beta.pak": []byte("beta content")})
+
+	_, err := pm.Create(t.Context(), f.Game.ID, "hardcore")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "hardcore",
+		domain.ModReference{SourceID: "fake", ModID: "beta", Version: "1.0"}))
+	// Marked explicitly, as `lmm game add` leaves a real game: without it
+	// NO profile is the default, GameStatus reports is_default false for
+	// both, and the picker would offer to switch to the profile core would
+	// have switched FROM.
+	require.NoError(t, pm.SetDefault(t.Context(), f.Game.ID, "default"))
+
+	_, err = f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	return f
+}

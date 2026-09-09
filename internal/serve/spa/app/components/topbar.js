@@ -26,6 +26,14 @@ import { ActivityBell } from "./tray.js";
 // per-mod controls use "install:fake/123" and friends.
 const DEPLOY_ORIGIN = "deploy";
 
+// SWITCH_ORIGIN is the profile picker's own "Switch and deploy…" control.
+// ONE origin for the whole picker rather than one per profile row: the
+// menu closes the instant a switch is confirmed, so the only control left
+// to morph is the picker itself - and a switch is not a mutation you can
+// have two of in flight anyway (core's beginOp would serialize them, and
+// the second's plan would be stale before it started).
+const SWITCH_ORIGIN = "switch";
+
 export function TopBar({
   state,
   status,
@@ -84,14 +92,16 @@ export function TopBar({
         onOpen=${() => setOpenPicker("game")}
         onClose=${() => setOpenPicker(null)}
       />
-      <${ProfilePicker}
-        status=${status}
-        route=${route}
-        open=${openPicker === "profile"}
-        onOpen=${() => setOpenPicker("profile")}
-        onClose=${() => setOpenPicker(null)}
-        actions=${actions}
-      />
+      <${InlineJob} origin=${SWITCH_ORIGIN} state=${state} actions=${actions}>
+        <${ProfilePicker}
+          status=${status}
+          route=${route}
+          open=${openPicker === "profile"}
+          onOpen=${() => setOpenPicker("profile")}
+          onClose=${() => setOpenPicker(null)}
+          actions=${actions}
+        />
+      <//>
       <span
         class="deploy-indicator ${undeployed > 0 ? "deploy-indicator--pending" : ""}"
       >
@@ -218,7 +228,22 @@ function GamePicker({ status, games, open, onOpen, onClose }) {
 
 /** ProfilePicker switches profiles within the CURRENT game - a plain route
  * change, since the profile's own name (unlike a game switch) is already
- * known without another round trip. */
+ * known without another round trip.
+ *
+ * That plain navigation is only ever a VIEW change: it moves what this
+ * browser is looking at and touches nothing on disk. The real `lmm profile
+ * switch` - undeploy what the old profile deployed, deploy what the new one
+ * lists, and move the game's active profile - is the row's own "Switch and
+ * deploy…" (issue 334), which goes through the confirm-plan framework like
+ * every other mutation. Keeping both is deliberate: the design's own
+ * "quick path inline, full path one click away" reads here as "looking is
+ * free, changing the machine is confirmed".
+ *
+ * The affordance is offered for every profile that is not ALREADY the
+ * active one (ProfileSummary.is_default, core.GameStatus's own answer to
+ * "which profile does this game deploy"): switching to the active profile
+ * is the plan's own AlreadyActive case, with nothing to move.
+ */
 function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
   const profiles = status.profiles ?? [];
 
@@ -226,6 +251,23 @@ function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
     onClose();
     if (name === route.profile) return;
     navigate(contextPath(route.game, name));
+  }
+
+  function switchTo(name) {
+    onClose();
+    actions.openPlan({
+      kind: "switch",
+      origin: SWITCH_ORIGIN,
+      title: `Switch to ${name}`,
+      confirmLabel: "Switch and deploy",
+      options: { profile: name },
+      // The control that opened this modal is a menu item inside a
+      // dropdown that has just closed, so there is nothing left to return
+      // focus to - the picker's own trigger is the stable survivor
+      // (modal.js's openerSelector, the I2 pattern the profiles modal
+      // already uses).
+      openerSelector: ".profile-picker__trigger",
+    });
   }
 
   return html`
@@ -243,7 +285,7 @@ function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
           <ul class="picker__menu profile-picker__menu">
             ${profiles.map(
               (p) => html`
-                <li key=${p.name}>
+                <li key=${p.name} class="picker__row" data-profile=${p.name}>
                   <button
                     type="button"
                     class="picker__item"
@@ -251,6 +293,18 @@ function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
                   >
                     ${p.name}
                   </button>
+                  ${
+                    !p.is_default &&
+                    html`<button
+                      type="button"
+                      class="picker__action"
+                      data-action="switch"
+                      data-profile=${p.name}
+                      onClick=${() => switchTo(p.name)}
+                    >
+                      Switch and deploy…
+                    </button>`
+                  }
                 </li>
               `,
             )}

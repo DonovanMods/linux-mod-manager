@@ -368,6 +368,38 @@ select {
   background: var(--surface-sunken);
 }
 
+/* One profile row: its name (the plain view change) on the left, its
+ * "Switch and deploy…" (the real mutation) on the right - issue 334. The
+ * action is always rendered, never revealed on hover: a keyboard user must
+ * be able to reach it, and a hover-only affordance is invisible to them. */
+.picker__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.picker__row .picker__item {
+  flex: 1 1 auto;
+}
+
+.picker__action {
+  flex: 0 0 auto;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.85em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.picker__action:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
 .picker__divider {
   margin: var(--space-1) 0;
   border-top: 1px solid var(--border-subtle);

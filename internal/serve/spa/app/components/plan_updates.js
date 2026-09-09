@@ -49,6 +49,9 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
       // selection once this is actually confirmed" (m4/I2) must survive
       // that just as it survives every other re-render of this modal.
       onConfirmed: modal.onConfirmed,
+      // Forwarded for the same reason (issue 334): a re-plan that dropped
+      // the modal's focus-return target would strand focus on the body.
+      openerSelector: modal.openerSelector,
     });
   }
 

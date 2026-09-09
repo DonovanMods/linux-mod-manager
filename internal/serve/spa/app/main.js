@@ -552,6 +552,7 @@ async function openPlan({
   confirmLabel,
   options,
   onConfirmed,
+  openerSelector,
 }) {
   modalSeq += 1;
   const seq = modalSeq;
@@ -575,6 +576,13 @@ async function openPlan({
   // mutation is truly underway, never at open time, which used to tear the
   // very control the user just clicked out of the DOM before the modal
   // even finished mounting (the same removal that broke focus-return, I2).
+  //
+  // openerSelector (issue 334) is modal.js's own focus-return escape hatch,
+  // carried on the modal rather than passed at the Modal call site: a plan
+  // opened from a DROPDOWN (the profile picker's "Switch and deploy…") has
+  // no opener left to focus by the time the modal unmounts, because the
+  // menu closed to let the modal open. Every other caller omits it and gets
+  // the captured activeElement, which is still on screen for them.
   const base = {
     type: "plan",
     kind,
@@ -584,6 +592,7 @@ async function openPlan({
     seq,
     options,
     onConfirmed,
+    openerSelector,
   };
 
   store.set({ modal: { ...base, status: "planning" } });

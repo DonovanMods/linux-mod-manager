@@ -46,7 +46,16 @@ export function ConfirmPlanModal({ modal, actions }) {
   // store.js's own doc comment: "another shape in this same slot".
   if (modal?.type !== "plan") return null;
 
-  const { kind, title, status, plan, error, details, confirmLabel } = modal;
+  const {
+    kind,
+    title,
+    status,
+    plan,
+    error,
+    details,
+    confirmLabel,
+    openerSelector,
+  } = modal;
   const busy = status === "starting";
   const PlanView = planRendererFor(kind);
 
@@ -101,6 +110,7 @@ export function ConfirmPlanModal({ modal, actions }) {
       title=${title}
       onClose=${busy ? noop : actions.closePlan}
       footer=${footer}
+      openerSelector=${openerSelector}
     >
       ${
         status === "planning"

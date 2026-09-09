@@ -4245,3 +4245,81 @@ func TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename(t *testing.T) {
 	require.NoError(t, err, "Escape must not have renamed the profile")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ProfilePicker_SwitchAndDeployRoundTrip drives `lmm profile
+// switch` from the browser: the profile picker offers "Switch and deploy…"
+// beside every profile that is not already the active one, that opens the
+// confirm modal over the SwitchPlan, and confirming runs the real job.
+//
+// The end state is asserted on DISK and in the service, not just on screen:
+// Alpha's link leaves the game directory, Beta's arrives, and the game's
+// default profile has actually moved. A green bar over an unchanged game
+// directory would be the worst possible pass.
+func TestE2E_ProfilePicker_SwitchAndDeployRoundTrip(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var plan, outcome string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="switch"]`, &plan),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		textContent(`.job-progress__text`, &outcome),
+	)
+
+	assert.Contains(t, plan, "default")
+	assert.Contains(t, plan, "hardcore")
+	assert.Contains(t, plan, "Alpha Mod", "the plan names what it would disable")
+	assert.Contains(t, plan, "Beta Mod", "the plan names what it would enable")
+	assert.NotEmpty(t, outcome)
+
+	_, err := os.Lstat(filepath.Join(f.Game.ModPath, "alpha.pak"))
+	assert.Error(t, err, "the switch must have undeployed the profile it left")
+	_, err = os.Lstat(filepath.Join(f.Game.ModPath, "beta.pak"))
+	assert.NoError(t, err, "the switch must have deployed the profile it moved to")
+
+	active, err := f.Svc.NewProfileManager().GetDefault(t.Context(), f.Game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "hardcore", active.Name, "the switch must have moved the active profile")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilePicker_PlainNavigationSurvivesTheSwitchAffordance is the
+// other half of the picker's contract (issue 334): clicking a profile's
+// NAME still only changes what this browser is looking at - no plan, no
+// modal, nothing on disk - and the profile that is already active offers no
+// "Switch and deploy…" at all, because switching to it is the plan's own
+// AlreadyActive no-op.
+func TestE2E_ProfilePicker_PlainNavigationSurvivesTheSwitchAffordance(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var switchActions, activeSwitchActions, modals int
+	var path string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('[data-action="switch"]').length`, &switchActions),
+		chromedp.Evaluate(`document.querySelectorAll('[data-action="switch"][data-profile="default"]').length`, &activeSwitchActions),
+		// The NAME, not the action beside it.
+		chromedp.Click(`.profile-picker__menu .picker__row[data-profile="hardcore"] .picker__item`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".modal").length`, &modals),
+		chromedp.Location(&path),
+	)
+
+	assert.Equal(t, 1, switchActions, "only the non-active profile offers a switch")
+	assert.Zero(t, activeSwitchActions, "the active profile has nothing to switch to")
+	assert.Zero(t, modals, "browsing to a profile must not open a confirm modal")
+	assert.Contains(t, path, "/hardcore", "the name is still a plain route change")
+
+	_, err := os.Lstat(filepath.Join(f.Game.ModPath, "alpha.pak"))
+	assert.NoError(t, err, "looking at another profile must not undeploy anything")
+	assert.Empty(t, f.BrowserErrors())
+}
