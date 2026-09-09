@@ -36,10 +36,15 @@ var vendorFS embed.FS
 // is a build defect, not a runtime condition to recover from.
 var shellTemplate = template.Must(template.ParseFS(spaFS, "spa/index.html"))
 
-// shellData is everything the shell template interpolates. Exactly one
-// member, and it is the reason the shell cannot be a static asset.
+// shellData is everything the shell template interpolates - the reason the
+// shell cannot be a static asset.
 type shellData struct {
 	CSRFToken string
+	// Version is Server.version (N-5, epic re-review): stamped into a
+	// <meta name="lmm-version"> so a bug report filed from the browser can
+	// say what it is running. Empty renders empty content, never an absent
+	// tag - main.js/shortcutsmodal.js read the attribute either way.
+	Version string
 }
 
 // inlineScriptPattern matches the shell's inline <script> block - the one
@@ -103,7 +108,7 @@ func buildContentSecurityPolicy() string {
 func (s *Server) handleShell(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if err := shellTemplate.ExecuteTemplate(w, "index.html", shellData{CSRFToken: s.csrf.token}); err != nil {
+	if err := shellTemplate.ExecuteTemplate(w, "index.html", shellData{CSRFToken: s.csrf.token, Version: s.version}); err != nil {
 		s.log.Error("rendering the SPA shell", "err", err)
 	}
 }

@@ -363,14 +363,21 @@ func TestE2E_ManualAdd_IdentifierHintsPerSourceType(t *testing.T) {
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
-// TestE2E_ManualAdd_UnrenderableFieldErrorFallsBackToFormBanner pins Minor 2
-// (unit7-review.md): a GameSpecError naming a field this form has no input
-// for (Field: "game_id" - only ever set from a catalog match's own
-// game_id, never typed directly) used to un-busy the button with nothing
-// shown at all. A catalog whose slug derives to a path-unsafe game id
-// (DeriveGameID lower-cases and dashes spaces, but does not strip "/")
-// reproduces it from the browser.
-func TestE2E_ManualAdd_UnrenderableFieldErrorFallsBackToFormBanner(t *testing.T) {
+// TestE2E_ManualAdd_GameIDFieldErrorOpensAdvancedAndRendersInline is N-6 of
+// the epic re-review, superseding the old Minor 2 regression (unit7-
+// review.md): "game_id" used to be a GameSpecError field this form had no
+// input for at all - only ever set from a catalog match's own game_id,
+// never typed directly - so a rejection naming it fell back to the
+// form-wide banner. N-6 gave it a real Advanced input, so KNOWN_FIELD_ERRORS
+// now covers it like every other named field: the error renders directly
+// under the Game id input, which must auto-open (it starts collapsed) so
+// the user is not left staring at a busy-cleared button with the actual
+// reason hidden inside a <details> they never opened.
+//
+// A catalog whose slug derives to a path-unsafe game id (DeriveGameID
+// lower-cases and dashes spaces, but does not strip "/") reproduces it from
+// the browser.
+func TestE2E_ManualAdd_GameIDFieldErrorOpensAdvancedAndRendersInline(t *testing.T) {
 	f := newE2EFixtureNoGames(t)
 	cat := newE2EGameCatalogSource("catalogsrc")
 	cat.entries = []source.GameEntry{{ID: "1", Name: "Weird Game", Slug: "weird/slug"}}
@@ -388,12 +395,13 @@ func TestE2E_ManualAdd_UnrenderableFieldErrorFallsBackToFormBanner(t *testing.T)
 		chromedp.Click(`.setup-add__matches button`, chromedp.ByQuery),
 		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),
 		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`[data-testid="setup-add-game"] .modal__error`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-advanced"][open] .modal__error`, chromedp.ByQuery),
 	)
 
 	var errorText string
-	f.runInBrowser(t, chromedp.Text(`[data-testid="setup-add-game"] .modal__error`, &errorText, chromedp.ByQuery))
-	assert.Contains(t, errorText, "game_id", "the form-wide banner must carry the server's own message when no input matches the field")
+	f.runInBrowser(t, chromedp.Text(`[data-testid="setup-add-advanced"] .modal__error`, &errorText, chromedp.ByQuery))
+	assert.Contains(t, errorText, "path separators",
+		"the field-specific reason must render under the Game id input, not the form-wide banner")
 
 	_, err := f.Svc.GetGame("weird/slug")
 	require.Error(t, err, "an id that failed validation must never be written")
@@ -453,6 +461,46 @@ func TestE2E_FirstRunManualAdd_IdentifierFieldErrorThenSucceeds(t *testing.T) {
 	// suite's own assertNoUncaughtErrors doc comment) - the fixture working
 	// as intended, not a bug. An uncaught JS exception is not, and still
 	// fails this assertion.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_ManualAdd_AdvancedGameIDOverridesTheDerivedKey is N-6 of the epic
+// re-review: `lmm game add --game-id` had no web input at all -
+// gameadd.js:180's own doc comment used to document the absence - so a
+// custom-source user's only way to choose the local games.yaml key by hand
+// was the CLI. The manual identifier path derives one from the identifier
+// when the field is left blank (DeriveGameID), so filling in a DIFFERENT
+// id under Advanced and confirming it, not the derived one, is what wins is
+// the only way to prove the override actually reaches the request.
+func TestE2E_ManualAdd_AdvancedGameIDOverridesTheDerivedKey(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	f.Svc.RegisterSource(newFakeSource("plain")) // no GameCatalog - identifier only
+
+	install := t.TempDir()
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		retrySetValue(`select[name="add-source"]`, "plain"),
+		chromedp.SendKeys(`input[name="add-identifier"]`, "acme", chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="add-name"]`, "Acme Game", chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="add-install-path"]`, install, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="setup-add-advanced"] summary`, chromedp.ByQuery),
+		chromedp.WaitVisible(`input[name="add-game-id"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`input[name="add-game-id"]`, "acme-custom", chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
+	)
+
+	var url string
+	f.runInBrowser(t, chromedp.Location(&url))
+	assert.Contains(t, url, "/g/acme-custom/", "the game must be addressed by the id typed under Advanced")
+
+	got, err := f.Svc.GetGame("acme-custom")
+	require.NoError(t, err, "the typed id must be the one actually saved")
+	assert.Equal(t, "Acme Game", got.Name)
+
+	_, err = f.Svc.GetGame("acme")
+	assert.Error(t, err, "the derived id (from the identifier alone) must NOT have been used instead")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
@@ -627,6 +675,42 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 		chromedp.WaitNotPresent(`tr[data-source="my-mods"]`, chromedp.ByQuery),
 	)
 	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_SourcesTableActionsColumnIsTheSameWidthOnEveryRow is N-2 of the
+// epic re-review (= epic M-4): the previous fix put `display: flex` on the
+// actions <td> itself, which computes it out of the table's own row layout
+// - so a built-in source's EMPTY actions cell (no Download/Edit/Delete)
+// measured its own near-zero content width instead of the column's real
+// width, leaving that row's bottom border a detached fragment instead of
+// running the column's full span. "fake" (a built-in, non-custom type) has
+// no actions; "my-mods" (a custom directory source) has all three - so
+// their last cell's rendered widths, and the header's blank one above them,
+// must all agree.
+func TestE2E_SourcesTableActionsColumnIsTheSameWidthOnEveryRow(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+	dir := t.TempDir()
+	yaml := []byte("id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: " + dir + "\n")
+	_, err := app.SaveSourceDefinition(f.Ctx, f.Svc, "", yaml)
+	require.NoError(t, err)
+
+	var widths []float64
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("sources")),
+		chromedp.WaitVisible(`tr[data-source="fake"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`tr[data-source="my-mods"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".setup-table__actions"))
+				.map((el) => el.getBoundingClientRect().width)
+		`, &widths),
+	)
+
+	require.Len(t, widths, 3, "the header th plus the two rows' td, all sharing the class")
+	assert.InDelta(t, widths[0], widths[1], 1,
+		"the built-in row's (empty) actions cell must be the header's width, not its own content's")
+	assert.InDelta(t, widths[0], widths[2], 1,
+		"the custom row's (populated) actions cell must be the same width too")
+	assert.Empty(t, f.BrowserErrors())
 }
 
 // TestE2E_Sources_InUseNamesTheGameNotItsID pins Minor 8 (unit7-review.md):

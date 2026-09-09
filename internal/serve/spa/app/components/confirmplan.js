@@ -71,6 +71,15 @@ export function ConfirmPlanModal({ modal, state, actions }) {
     status === "ready" &&
     (plan?.updates?.length ?? 0) === 0;
 
+  // N-1, epic re-review: a re-link plan that has already refused itself
+  // (plan.refusal - a locked ref the user has just pointed at a new
+  // identity) has nothing for Confirm to apply. plan_mod_relink.js renders
+  // the refusal loudly, but the CLI's own answer is to refuse before ever
+  // calling Apply (cmd/lmm/mod_edit.go), and this modal should not offer a
+  // click the machine has already said no to.
+  const relinkRefused =
+    kind === "mod_relink" && status === "ready" && Boolean(plan?.refusal);
+
   // The type-the-name gate (C-3): a kind listed in typedNameFor keeps
   // Confirm disabled until the user has typed back the thing they are about
   // to destroy. `purge` is the one that earns it - it undeploys an entire
@@ -112,7 +121,7 @@ export function ConfirmPlanModal({ modal, state, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan || !nameTyped}
+            disabled=${status !== "ready" || emptyUpdatesPlan || relinkRefused || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (confirmLabel ?? "Confirm")}

@@ -394,11 +394,33 @@ select {
   letter-spacing: 0.08em;
 }
 
-/* The omnibar takes the bar's slack AND gives it back: `min-width: 0`
+/* N-11: the game/profile pickers and the omnibar are wrapped in a <nav> and
+ * a role="search" container respectively (landmarks a screen reader can
+ * jump to) - plain flex children of .app-bar rather than display:contents,
+ * since some browsers still drop a display:contents element's own
+ * accessibility semantics, which would defeat the landmark it exists to
+ * add. Each wrapper carries the flex behaviour its children used to get
+ * straight from .app-bar, so the bar's layout is unchanged. */
+.app-bar__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+/* The search wrapper takes the bar's slack AND gives it back: `min-width: 0`
  * rather than a floor, so it is the control that shrinks when the bar runs
- * out of room, instead of the bar overflowing the page. */
-.app-bar .omnibar {
+ * out of room, instead of the bar overflowing the page. The omnibar itself
+ * then grows to fill the wrapper the same way. */
+.app-bar__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.app-bar .omnibar {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -2382,6 +2404,14 @@ select {
   color: var(--text-primary);
 }
 
+/* N-5: the running server's own display version, in the one place a user
+ * looking for it is most likely to check. */
+.shortcuts__version {
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
 .setup-section__actions {
   display: flex;
   align-items: center;
@@ -2427,13 +2457,22 @@ select {
   text-overflow: ellipsis;
 }
 
-/* M-4: display:flex on a <td> takes it out of the table's own row layout,
-   so an EMPTY one (a built-in source has no actions) collapsed to nothing
-   and left the surrounding cell borders floating out of line with the rest
-   of the row. inline-flex keeps the cell a table cell and lays the buttons
-   out inside it, which is what was wanted all along. */
+/* N-2 (= epic M-4): the earlier fix put `display: flex` directly on the
+   <td>, which computes the cell OUT of the table's row layout entirely (a
+   table-cell whose display is overridden stops being one) - so each row's
+   actions column measured its own content's width instead of sharing one
+   column width, leaving the three action-less built-in rows a detached
+   16px rule fragment where the row border used to run the column's full
+   width. A fixed width on the CELL keeps every row's last column the same
+   size regardless of content; the flex layout for the buttons themselves
+   moves to an inner span (setup-table__actions-group) that never has to be
+   a table-cell in the first place. */
 .setup-table__actions {
-  display: inline-flex;
+  width: 14rem;
+}
+
+.setup-table__actions-group {
+  display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
 }

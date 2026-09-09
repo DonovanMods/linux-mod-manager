@@ -2333,6 +2333,55 @@ func TestE2E_InlineInstallWithVersionPickWritesToDisk(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ForceHintNamesTheConflictBypassOnInstallAndImport is N-8 of the
+// epic re-review: every kind's Advanced Force option rendered the same
+// generic sentence ("Carry on past a failure that would otherwise stop the
+// flow"), but on install and archive import Force does something a lot
+// louder - it bypasses the conflict refusal outright and overwrites without
+// the Overwrite round-trip (internal/core/install.go's own `if !opts.Force
+// && !opts.AcceptConflicts`) - and the CLI's own help is blunter about it:
+// "install without conflict prompts". Deploy's Force is checked too, to pin
+// that the generic sentence is deliberately unchanged for the kinds it
+// still describes accurately.
+func TestE2E_ForceHintNamesTheConflictBypassOnInstallAndImport(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	var installHint string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		textContent(`.modal label:has(input[name="force"])`, &installHint),
+	)
+
+	assert.Contains(t, installHint, "install without conflict prompts",
+		"install's Force hint must mirror the CLI's own wording")
+	assert.Contains(t, installHint, "Overwrite round-trip",
+		"and name what it actually bypasses, not just \"carry on past a failure\"")
+
+	f.runInBrowser(t, chromedp.Click(`.modal [data-action="cancel"]`, chromedp.ByQuery))
+
+	var deployHint string
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		textContent(`.modal label:has(input[name="force"])`, &deployHint),
+	)
+	assert.Contains(t, deployHint, "Carry on past a failure",
+		"deploy's Force does not bypass a conflict refusal, so the generic sentence must stay")
+	assert.NotContains(t, deployHint, "conflict prompts",
+		"the install-specific wording must not leak into a kind it does not describe")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_SearchRowReadsInstalledAfterItsOwnJobSucceeds is M5 (unit 5 fix
 // wave): a search row's own hit.installed is only as fresh as the report
 // that produced it, and search reports are outside hydrate()'s own
@@ -4044,6 +4093,107 @@ mods:
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ProfileImportNoInstallOverridesTheInstallCheckbox is N-14 of the
+// epic re-review: `profile import --no-install` is a hard override the wire
+// has always carried (profileImportApplyRequest.NoInstall), but only the
+// positive "Download and install" opt-in had a control - the outcome
+// matched whenever it was left unchecked, but there was no way to check it
+// AND still guarantee nothing is installed.
+//
+// The distinguishing evidence is "skipped" rather than "failed": these two
+// mod ids are not registered in the fixture's fake source at all, so if the
+// hard override did NOT win over a checked "Download and install", Apply
+// would attempt real downloads that error out - a "failed" tally, not a
+// "skipped" one. Seeing "skipped" with Install visibly checked is what
+// proves the override, not merely the unchecked default, produced this.
+func TestE2E_ProfileImportNoInstallOverridesTheInstallCheckbox(t *testing.T) {
+	f := newE2EFixture(t)
+
+	doc := fmt.Sprintf(`name: imported
+game_id: %s
+mods:
+  - source_id: fake
+    mod_id: newmod1
+    version: "1.0"
+  - source_id: fake
+    mod_id: newmod2
+    version: "1.0"
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "imported.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+	)
+
+	var installChecked, noInstallVisible bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] input[type="checkbox"]'))
+				.find((el) => el.closest("label")?.textContent.includes("Download and install"))
+				.click();
+		`, nil),
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] input[name="no_install"]`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="profile_import"] input[name="no_install"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] input[type="checkbox"]'))
+				.find((el) => el.closest("label")?.textContent.includes("Download and install")).checked
+		`, &installChecked),
+		chromedp.Evaluate(`document.querySelector('.modal[data-kind="profile_import"] input[name="no_install"]').checked`, &noInstallVisible),
+	)
+	require.True(t, installChecked, "Download and install must be visibly checked - the override must win DESPITE it, not merely stand in for it")
+	require.True(t, noInstallVisible, "the hard override checkbox must be checked too")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal[data-kind="profile_import"]`, chromedp.ByQuery),
+	)
+
+	require.Eventually(t, func() bool {
+		p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "imported")
+		return err == nil && len(p.Mods) == 2
+	}, 5*time.Second, 20*time.Millisecond, "the import job must still succeed and save the profile")
+
+	list, err := f.Svc.ListMods(t.Context(), f.Game, "imported")
+	require.NoError(t, err)
+	assert.Empty(t, list.Mods, "no_install must have stopped anything from actually installing, even though Install was checked")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+	)
+	var trayText string
+	require.Eventually(t, func() bool {
+		f.runInBrowser(t, textContent(`.tray`, &trayText))
+		return strings.Contains(trayText, "profile_import") && strings.Contains(trayText, "skipped")
+	}, 5*time.Second, 100*time.Millisecond, "the tray must show the pending mods as skipped, not attempted")
+	assert.NotContains(t, trayText, "failed",
+		"a failed download attempt would mean the checked Install box was not actually overridden")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_ProfilesModal_ImportOfAlreadyInstalledModsReadsDone is N2's own
 // scenario (unit 6 re-review): a profile_import whose every mod is already
 // installed (the plan's Installed bucket, pending == 0) returns a
@@ -5075,6 +5225,29 @@ func TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ShortcutsHelpNamesTheRunningVersion is N-5 of the epic re-review:
+// nothing in the browser said what version of lmm was running - the
+// shortcuts help is where TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus
+// already proves a user can reliably land, so it is where the version now
+// reads too, sourced from the shell's own <meta name="lmm-version">
+// (spa.go) rather than any /api/v1 document.
+func TestE2E_ShortcutsHelpNamesTheRunningVersion(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var versionText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="shortcuts"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="lmm-version"]`, chromedp.ByQuery),
+		chromedp.Text(`[data-testid="lmm-version"]`, &versionText, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, versionText, "lmm "+e2eLmmVersion,
+		"the shortcuts help must name the running server's own version")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_SlideOverFindingsReadAsProse is M1 of the unit-8 gate review: the
 // slide-over printed a finding's raw status slug ("version_mismatch") while
 // the Health card two inches to its left rendered the same finding, for the
@@ -5593,6 +5766,112 @@ func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
 	)
 	assert.Empty(t, chooserH2s, "the chooser's own h1 is its only section")
 	assert.Empty(t, chooser.BrowserErrors())
+}
+
+// TestE2E_EveryFramedRouteRendersExactlyOneMainAndOneNav is N-11 of the
+// epic re-review, and TestE2E_EveryRouteRendersExactlyOneH1's sibling for
+// landmarks rather than headings: before this, the application's only
+// landmarks were `header` + `main` - no `nav` around either bar's
+// navigation controls - so heading navigation could find a page's title but
+// landmark navigation (the OTHER primary way a screen reader user moves
+// around a page) had nothing to jump to for "the controls that move me
+// somewhere else". Scoped to the four routes that carry a real navigation
+// bar (topbar.js or awaybar.js); the chooser and first-run routes have no
+// navigation controls at all (just a theme toggle) and are covered
+// separately by the h1 ratchet.
+func TestE2E_EveryFramedRouteRendersExactlyOneMainAndOneNav(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "a"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+		{"setup", f.HomePath() + "/setup", `.setup-page`},
+	}
+	for _, route := range routes {
+		var mains, navs int
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			chromedp.Evaluate(`document.querySelectorAll("main").length`, &mains),
+			// A role attribute overrides the implicit ARIA role a <nav> would
+			// otherwise carry - Setup's own section switcher is a <nav
+			// role="tablist">, a real tab widget rather than a second
+			// navigation landmark, so it does not count here.
+			chromedp.Evaluate(`document.querySelectorAll('nav:not([role="tablist"])').length`, &navs),
+		)
+		assert.Equal(t, 1, mains, "%s must render exactly one <main>", route.name)
+		assert.Equal(t, 1, navs, "%s must render exactly one navigation-landmark <nav>", route.name)
+	}
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// unlabelledFormControls returns every visible input/select/textarea the
+// document currently renders that has no accessible name: no aria-label, no
+// aria-labelledby pointing at text, and no <label> (wrapping or `for`)
+// carrying text either - the three sources a browser's accessibility tree
+// actually looks at. Returned as trimmed outerHTML fragments rather than a
+// bare count, so a failure names the element instead of leaving the reader
+// to go find it.
+func unlabelledFormControls(out *[]string) chromedp.Action {
+	return chromedp.Evaluate(`
+		Array.from(document.querySelectorAll("input,select,textarea"))
+			.filter((el) => {
+				if ((el.getAttribute("aria-label") || "").trim()) return false;
+				const labelledby = el.getAttribute("aria-labelledby");
+				if (labelledby && labelledby.split(/\s+/).every(
+					(id) => (document.getElementById(id)?.textContent || "").trim(),
+				)) return false;
+				if (el.labels && Array.from(el.labels).some((l) => l.textContent.trim())) return false;
+				return true;
+			})
+			.map((el) => el.outerHTML.replace(/\s+/g, " ").slice(0, 160))
+	`, out)
+}
+
+// TestE2E_EveryFormControlHasAnAccessibleName is N-3 of the epic re-review:
+// the omnibar (topbar.js) is the one unlabelled input in the whole
+// application - a placeholder alone, which is not a reliable accessible
+// name and is not exposed by every assistive technology once a value is
+// present - and it is the app's primary input. Checked across every route
+// that carries the top bar or the away bar, since either could regress a
+// control back to placeholder-only labelling without this ratchet noticing.
+func TestE2E_EveryFormControlHasAnAccessibleName(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "boots"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+	}
+	for _, route := range routes {
+		var gaps []string
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			unlabelledFormControls(&gaps),
+		)
+		assert.Empty(t, gaps, "%s must have no unlabelled input/select/textarea", route.name)
+	}
+
+	for _, section := range []string{"games", "auth", "sources", "archive", "adopt"} {
+		var gaps []string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()+"/setup?section="+section),
+			chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+			unlabelledFormControls(&gaps),
+		)
+		assert.Empty(t, gaps, "Setup's %s panel must have no unlabelled input/select/textarea", section)
+	}
+	assert.Empty(t, f.BrowserErrors())
 }
 
 // TestE2E_TheYAMLEditorReallyHasSpellcheckOff is IMP-3 of the closing
@@ -6200,6 +6479,43 @@ func TestE2E_RelinkFromTheRowMenuMovesTheModsIdentity(t *testing.T) {
 		})
 	}, 10*time.Second, 100*time.Millisecond,
 		"the re-link must have moved the mod's identity in the database")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ARefusedRelinkPlanDisablesConfirm is N-1 of the epic re-review
+// (epic-rereview.md): the row ⋯ menu offers Re-link… on any mod including a
+// locked one, and a blank re-link form is a legal metadata-only edit
+// (core.RelinkPlan.Refusal only populates once the plan actually proposes a
+// relink) - but naming a new mod id on a LOCKED ref turns the plan into one
+// core.PlanRelinkMod refuses (RelinkPlan.Refusal, "...unlock it first...").
+// The CLI refuses at plan time and never calls Apply
+// (cmd/lmm/mod_edit.go:109); before this fix the web's Confirm stayed live,
+// so the only way to learn the answer was to start a job that could not
+// succeed.
+func TestE2E_ARefusedRelinkPlanDisablesConfirm(t *testing.T) {
+	f := newE2EFixtureWithDrillInModsAndALockedMod(t)
+
+	var confirmDisabled bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.Click(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="mod_relink"] .plan`, chromedp.ByQuery),
+		// A blank form is a metadata-only edit and refuses nothing yet - the
+		// refusal only appears once a real re-link is proposed.
+		chromedp.SetValue(`input[name="relink-mod-id"]`, "renamed", chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="relink-refusal"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &confirmDisabled),
+	)
+
+	assert.True(t, confirmDisabled,
+		"a re-link plan carrying a refusal must not offer a live Confirm")
 	assert.Empty(t, f.BrowserErrors())
 }
 

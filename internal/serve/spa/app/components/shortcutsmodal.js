@@ -12,6 +12,14 @@ import { html } from "../render.js";
 import { Modal } from "./modal.js";
 import { shortcutRows } from "../shortcuts.js";
 
+// lmmVersion reads the shell's own <meta name="lmm-version"> - the running
+// server's display version, the same string `lmm --version` prints (N-5,
+// epic re-review). Read once per module load: the shell is a fresh document
+// per navigation, and the value never changes without one.
+const lmmVersion = document
+  .querySelector('meta[name="lmm-version"]')
+  ?.getAttribute("content");
+
 /** ShortcutsModal is a read-only modal: there is nothing to confirm, so its
  * only footer action is the one that closes it.
  *
@@ -57,6 +65,12 @@ export function ShortcutsModal({ modal, actions }) {
           )}
         </tbody>
       </table>
+      ${
+        lmmVersion &&
+        html`<p class="shortcuts__version" data-testid="lmm-version">
+          lmm ${lmmVersion}
+        </p>`
+      }
     <//>
   `;
 }

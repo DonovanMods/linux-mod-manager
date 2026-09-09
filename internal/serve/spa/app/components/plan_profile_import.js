@@ -4,6 +4,7 @@
 // already installed, needing a redownload, or missing entirely.
 
 import { html } from "../render.js";
+import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** refLabel names a domain.ModReference - it carries no display name of its
  * own (domain.ModReference's own fields: source_id, mod_id, version,
@@ -30,7 +31,7 @@ function RefList({ heading, refs }) {
   `;
 }
 
-export function ProfileImportPlanView({ plan, actions }) {
+export function ProfileImportPlanView({ plan, modal, actions }) {
   const installed = plan.installed ?? [];
   const needsRedownload = plan.needs_redownload ?? [];
   const missing = plan.missing ?? [];
@@ -86,6 +87,16 @@ export function ProfileImportPlanView({ plan, actions }) {
       <${RefList} heading="Already installed" refs=${installed} />
       <${RefList} heading="Needs redownload" refs=${needsRedownload} />
       <${RefList} heading="Missing entirely" refs=${missing} />
+
+      <${PlanAdvanced}>
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="no_install"
+          label="Never install"
+          hint="--no-install: a hard override that skips installing even if the checkbox above is checked"
+        />
+      <//>
     </div>
   `;
 }

@@ -824,10 +824,11 @@ files table, a versions table with per-version install and rollback,
 **Re-link…** (`lmm mod edit`), dependencies, and that mod's own job history.
 
 Every confirm-plan modal has an **Advanced** section holding that command's
-own flags — `install --show-archived` / `--no-deps`, `uninstall
---keep-cache`, `deploy <mod-id>` / `--method` / `--purge`, `--force` and the
-global `--no-hooks`. Flags that change what the plan SAYS re-compute it, so
-the preview always describes the mutation Confirm will submit.
+own flags — `install --show-archived` / `--no-deps` / `--skip-verify`,
+`uninstall --keep-cache`, `deploy <mod-id>` / `--method` / `--purge` /
+`--all`, `--force` and the global `--no-hooks`. Flags that change what the
+plan SAYS re-compute it, so the preview always describes the mutation
+Confirm will submit.
 
 The **Setup page** (`/g/{game}/{profile}/setup`) holds everything
 administrative, in five sections: **Games** (the configured games table with

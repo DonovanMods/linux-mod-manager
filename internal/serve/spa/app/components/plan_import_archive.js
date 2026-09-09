@@ -133,7 +133,7 @@ export function ImportArchivePlanView({ plan, modal, actions }) {
           actions=${actions}
           name="force"
           label="Force"
-          hint="lmm import --force. Carry on past a failure that would otherwise stop the flow."
+          hint="lmm import --force: import without conflict prompts. Bypasses the conflict refusal outright and overwrites without the Overwrite round-trip - not just carrying on past an ordinary failure."
         />
       <//>
     </div>

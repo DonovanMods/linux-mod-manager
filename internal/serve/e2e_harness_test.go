@@ -112,8 +112,17 @@ func TestE2EShutdownCleanupGuardExceedsGrace(t *testing.T) {
 // e2eTimeout bounds one chromedp.Run. Generous, because a cold browser
 // start is the slowest thing in this package by an order of magnitude, and
 // a timeout here should mean "the page is broken", never "the machine is
-// busy".
-const e2eTimeout = 30 * time.Second
+// busy". Raised from 30s (N-12, epic re-review = I-1 partial): I-1's own
+// chromedp.Poll rewrite removed the sleep-shaped wait it was filed against,
+// but the suite-wide ceiling itself was untouched, so a busy CI box could
+// still time a browser step out on nothing more than contention. This is
+// the ceiling only - no per-test sleeps.
+const e2eTimeout = 60 * time.Second
+
+// e2eLmmVersion is the fixed Options.Version every E2E-driven server
+// carries, so N-5's own scenario (the shortcuts help names the running
+// version) has something real to assert against.
+const e2eLmmVersion = "2.0.0 (e2e-test)"
 
 // chromeCandidates are the browser binaries the harness probes, in
 // preference order. Named here rather than left to chromedp's own search so
@@ -400,7 +409,7 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 	t.Helper()
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler),
-		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace})
+		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace, Version: e2eLmmVersion})
 	addr, err := srv.Listen()
 	require.NoError(t, err)
 
@@ -929,6 +938,19 @@ func newE2EFixtureWithDrillInMods(t *testing.T) e2eFixture {
 	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
 	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default", domain.ModReference{SourceID: "fake", ModID: "b", Version: "1.0"}))
 
+	return f
+}
+
+// newE2EFixtureWithDrillInModsAndALockedMod is newE2EFixtureWithDrillInMods
+// with "Alpha Mod" (fake/a) locked at its installed version - N-1's fixture,
+// epic-rereview.md's finding that a re-link plan carrying a refusal still
+// offers a live Confirm. The lock is set through ProfileManager.SetModLock,
+// the same call `lmm mod lock` and the row menu's own "Lock" action make,
+// so the ref this seeds is indistinguishable from one a user locked by hand.
+func newE2EFixtureWithDrillInModsAndALockedMod(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInMods(t)
+	require.NoError(t, f.Svc.NewProfileManager().SetModLock(t.Context(), f.Game.ID, "default", "fake", "a", "1.0"))
 	return f
 }
 

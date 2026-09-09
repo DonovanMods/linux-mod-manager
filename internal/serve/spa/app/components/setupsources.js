@@ -103,7 +103,7 @@ export function SetupSources({ onChanged } = {}) {
             <th>Name</th>
             <th>Type</th>
             <th>In use</th>
-            <th></th>
+            <th class="setup-table__actions"></th>
           </tr>
         </thead>
         <tbody>
@@ -234,29 +234,31 @@ function SourceRow({ source, inUseBy, gameNames, onEdit, onChanged }) {
         ${
           (isCustom || isError) &&
           html`
-            <a
-              class="button button--small"
-              href=${sourceDefinitionURL(source.id)}
-              download=${`${source.id}.yaml`}
-            >
-              Download
-            </a>
-            <button
-              type="button"
-              class="button button--small"
-              data-action="edit-source"
-              onClick=${onEdit}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              class="button button--small button--danger"
-              data-action="delete-source"
-              onClick=${() => setConfirming(true)}
-            >
-              Delete
-            </button>
+            <span class="setup-table__actions-group">
+              <a
+                class="button button--small"
+                href=${sourceDefinitionURL(source.id)}
+                download=${`${source.id}.yaml`}
+              >
+                Download
+              </a>
+              <button
+                type="button"
+                class="button button--small"
+                data-action="edit-source"
+                onClick=${onEdit}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                class="button button--small button--danger"
+                data-action="delete-source"
+                onClick=${() => setConfirming(true)}
+              >
+                Delete
+              </button>
+            </span>
           `
         }
       </td>
