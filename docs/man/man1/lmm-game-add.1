@@ -38,6 +38,14 @@ game with no curated sources, name one with --source, and either give
 the game's name is taken automatically).
 
 .PP
+For a game lmm ALREADY has curated sources for, naming --source (with
+--id, --query or --pick) ADDS a mapping to the curated map rather than
+replacing it, so detection's own sources are never discarded - use 'lmm
+game edit --remove-source' to drop one afterwards. --id/--query/--pick
+alone, with no --source, are refused: they need --source to say which
+source the identifier belongs to.
+
+.PP
 Sources with a searchable game catalog (CurseForge today; any future
 source that implements one) accept --query to search it, with --pick to
 choose from the matches by number. Without --pick the matches are simply
@@ -117,7 +125,7 @@ lmm game detect --include-unknown          # list installed app ids
 
 .PP
 \fB--source\fP=""
-	mod source ID (skips the source prompt)
+	mod source ID (skips the source prompt); with --from-detected on a curated game, adds a mapping rather than replacing the curated map
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

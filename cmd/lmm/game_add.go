@@ -45,6 +45,13 @@ game with no curated sources, name one with --source, and either give
 (--pick chooses among the matches; a single match whose name is exactly
 the game's name is taken automatically).
 
+For a game lmm ALREADY has curated sources for, naming --source (with
+--id, --query or --pick) ADDS a mapping to the curated map rather than
+replacing it, so detection's own sources are never discarded - use 'lmm
+game edit --remove-source' to drop one afterwards. --id/--query/--pick
+alone, with no --source, are refused: they need --source to say which
+source the identifier belongs to.
+
 Sources with a searchable game catalog (CurseForge today; any future
 source that implements one) accept --query to search it, with --pick to
 choose from the matches by number. Without --pick the matches are simply
@@ -97,7 +104,7 @@ var (
 func init() {
 	gameCmd.AddCommand(gameAddCmd)
 
-	gameAddCmd.Flags().StringVar(&gameAddSource, "source", "", "mod source ID (skips the source prompt)")
+	gameAddCmd.Flags().StringVar(&gameAddSource, "source", "", "mod source ID (skips the source prompt); with --from-detected on a curated game, adds a mapping rather than replacing the curated map")
 	gameAddCmd.Flags().StringVar(&gameAddID, "id", "", "the game's identifier with that source (NexusMods slug, CurseForge game ID, ...)")
 	gameAddCmd.Flags().StringVar(&gameAddQuery, "query", "", "search the source's game catalog instead of naming an identifier")
 	gameAddCmd.Flags().IntVar(&gameAddPick, "pick", 0, "1-based choice among --query's matches (without it the matches are printed)")
