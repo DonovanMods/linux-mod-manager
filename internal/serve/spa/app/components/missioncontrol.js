@@ -152,6 +152,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
           updates=${updates}
           health=${health}
           conflicts=${conflicts}
+          mods=${mods}
           errors=${fetchErrors}
           actions=${actions}
         />

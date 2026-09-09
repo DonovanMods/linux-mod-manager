@@ -32,6 +32,7 @@ import { ProfileImportPlanView } from "./plan_profile_import.js";
 import { ImportArchivePlanView } from "./plan_import_archive.js";
 import { AdoptPlanView } from "./plan_adopt.js";
 import { SwitchPlanView } from "./plan_switch.js";
+import { ProfileApplyPlanView } from "./plan_profile_apply.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
 // "profile_import" each get their real renderer here, replacing the
@@ -53,6 +54,7 @@ const renderers = {
   // the honest fallback for the NEXT kind wired before its renderer
   // exists - it is not dead code once this table is complete.
   switch: SwitchPlanView,
+  profile_apply: ProfileApplyPlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */

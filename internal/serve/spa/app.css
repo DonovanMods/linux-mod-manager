@@ -502,6 +502,12 @@ select {
   color: var(--danger);
 }
 
+/* The profile card (issue 334): this profile lists mods nobody installed.
+ * The accent, not a semantic colour - it is a pending action, not a fault. */
+.card--profile .card__title {
+  color: var(--accent);
+}
+
 .card__list {
   margin: 0 0 var(--space-3);
   padding: 0;
@@ -997,6 +1003,19 @@ select {
 .plan__mod--skipped .plan__mod-name {
   color: var(--text-muted);
   text-decoration: line-through;
+}
+
+/* A plan row that ALREADY failed to resolve at plan time (issue 334,
+ * core.ProfileApplyInstall.Error): it keeps its place in the list, because
+ * the apply will report it at that position, but it must not read as an
+ * ordinary row. */
+.plan__mod--warn {
+  border-left: 2px solid var(--warn);
+  padding-left: var(--space-2);
+}
+
+.plan__mod-detail--warn {
+  color: var(--warn);
 }
 
 .plan__mod-name {

@@ -4323,3 +4323,56 @@ func TestE2E_ProfilePicker_PlainNavigationSurvivesTheSwitchAffordance(t *testing
 	assert.NoError(t, err, "looking at another profile must not undeploy anything")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists drives `lmm
+// profile apply` from the browser (issue 334): Mission Control notices that
+// the profile lists more mods than are installed, says so as an attention
+// card, and the card's own "Apply profile…" runs the real convergence
+// through the confirm-plan framework.
+//
+// The end state is asserted on disk: the mod the profile listed but nobody
+// had installed is downloaded, extracted and deployed into the game
+// directory. A card that merely renders would prove nothing.
+func TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists(t *testing.T) {
+	f := newE2EFixtureWithAnUnappliedProfile(t)
+
+	var card, plan string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.card--profile`, chromedp.ByQuery),
+		textContent(`.card--profile`, &card),
+		chromedp.Click(`[data-action="apply-profile"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_apply"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="profile_apply"]`, &plan),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, card, "1 mod in this profile is not installed")
+	assert.Contains(t, plan, "Better Boots", "the plan names what it would install")
+
+	deployed, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "boots.pak"))
+	require.NoError(t, err, "apply must have installed and deployed the listed mod")
+	assert.Contains(t, string(deployed), "payload for boots")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfileCard_AbsentWhenTheProfileIsAlreadyApplied is the card's
+// own silence rule: an attention card that renders when nothing needs
+// attention is noise, and noise is what makes people stop reading them.
+func TestE2E_ProfileCard_AbsentWhenTheProfileIsAlreadyApplied(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var cards int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.library`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".card--profile").length`, &cards),
+	)
+
+	assert.Zero(t, cards, "every listed mod is installed - there is nothing to apply")
+	assert.Empty(t, f.BrowserErrors())
+}

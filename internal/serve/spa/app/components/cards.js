@@ -18,6 +18,9 @@ const UPDATES_BATCH_ORIGIN = "updates:batch";
 // HEALTH_REPAIR_ALL_ORIGIN is the Health card's "Repair all" control.
 const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
 
+// PROFILE_APPLY_ORIGIN is the Profile card's "Apply profile…" control.
+const PROFILE_APPLY_ORIGIN = "profile:apply";
+
 /** notFixableReason names why a finding's own Repair is absent.
  *
  * Since issue 334 this is the ENGINE's own sentence, read straight off the
@@ -61,6 +64,7 @@ export function AttentionCards({
   updates,
   health,
   conflicts,
+  mods,
   errors = {},
   actions,
 }) {
@@ -70,11 +74,13 @@ export function AttentionCards({
   );
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
+  const notInstalled = notInstalledCount(state, mods);
 
   if (
     updateRows.length === 0 &&
     findings.length === 0 &&
     conflictRows.length === 0 &&
+    notInstalled === 0 &&
     !hasError
   ) {
     return null;
@@ -100,6 +106,14 @@ export function AttentionCards({
           result=${health?.result}
           error=${errors.health}
           onReverify=${actions.reloadHealth}
+          actions=${actions}
+        />`
+      }
+      ${
+        notInstalled > 0 &&
+        html`<${ProfileCard}
+          state=${state}
+          notInstalled=${notInstalled}
           actions=${actions}
         />`
       }
@@ -297,6 +311,83 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
               </div>
             `
       }
+    </div>
+  `;
+}
+
+/** notInstalledCount is how many of the current profile's listed mods have
+ * no install behind them - the number `lmm profile apply` exists to bring
+ * to zero, and the only thing the Profile card renders on.
+ *
+ * It is a SUBTRACTION of two documents this route already has, not a third
+ * fetch: core.ProfileSummary.mod_count is the profile YAML's own load order
+ * (GET /api/v1/status, scoped), and core.ModList carries one row per
+ * INSTALLED mod (GET /api/v1/mods). Planning the mutation would answer it
+ * exactly, but a plan is a mutation-shaped round trip with a server-side
+ * handle and a TTL, and Mission Control renders on every hydrate - so the
+ * card is derived, and the PLAN behind "Apply profile…" is what tells the
+ * precise truth.
+ *
+ * The one case the subtraction understates: core.ListMods also lists a mod
+ * that is installed but ABSENT from the load order (never silently
+ * dropped - internal/core/queries.go), so a profile with one such row AND
+ * one uninstalled entry cancels to zero and the card stays away. That is a
+ * missing prompt, never a false one, which is the right direction for a
+ * surface whose whole contract is "renders only when it has something to
+ * say".
+ */
+function notInstalledCount(state, mods) {
+  const profileName = state?.route?.profile;
+  const summary = (state?.status?.profiles ?? []).find(
+    (p) => p.name === profileName,
+  );
+  if (!summary) return 0;
+  return Math.max(0, summary.mod_count - (mods?.mods?.length ?? 0));
+}
+
+/** ProfileCard is the design's third attention state (issue 334): this
+ * profile lists mods nobody has installed, and `lmm profile apply` is the
+ * one command that converges them. */
+function ProfileCard({ state, notInstalled, actions }) {
+  // ONE string rather than three adjacent interpolations: htm collapses
+  // JSX-style whitespace between them, which silently fuses "profile" and
+  // "is" into "profileis" (the same trap conflictLabel below documents).
+  const sentence = `${notInstalled} mod${notInstalled === 1 ? "" : "s"} in this profile ${notInstalled === 1 ? "is" : "are"} not installed`;
+
+  function apply() {
+    actions.openPlan({
+      kind: "profile_apply",
+      origin: PROFILE_APPLY_ORIGIN,
+      title: `Apply ${state.route.profile}`,
+      confirmLabel: "Apply profile",
+      options: { profile: state.route.profile },
+    });
+  }
+
+  return html`
+    <div class="card card--profile">
+      <p class="card__title">◎ Profile</p>
+      <ul class="card__list">
+        <li class="card__row">
+          <span class="card__row-name">${sentence}</span>
+        </li>
+      </ul>
+      <div class="card__actions">
+        <${InlineJob}
+          origin=${PROFILE_APPLY_ORIGIN}
+          state=${state}
+          actions=${actions}
+        >
+          <button
+            type="button"
+            class="button"
+            data-action="apply-profile"
+            onClick=${apply}
+          >
+            Apply profile…
+          </button>
+        <//>
+      </div>
     </div>
   `;
 }

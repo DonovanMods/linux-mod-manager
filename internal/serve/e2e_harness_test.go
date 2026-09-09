@@ -1618,3 +1618,20 @@ func newE2EFixtureWithASwitchTarget(t *testing.T) e2eFixture {
 	require.NoError(t, err)
 	return f
 }
+
+// newE2EFixtureWithAnUnappliedProfile seeds the state `lmm profile apply`
+// exists for: the profile LISTS a mod that is not installed at all.
+//
+// "Better Boots" is added to default's load order without ever being
+// installed, so the profile's own mod count (2) runs ahead of the installed
+// rows (1) - which is exactly what Mission Control's profile card reads to
+// decide it has something to say. The mod comes from the search fixture's
+// real downloading source, so applying the profile is a genuine
+// download/extract/deploy rather than a plan that could never converge.
+func newE2EFixtureWithAnUnappliedProfile(t *testing.T) e2eSearchFixture {
+	t.Helper()
+	f := newE2EFixtureWithSearchableMods(t)
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: e2eSearchInstallModID}))
+	return f
+}
