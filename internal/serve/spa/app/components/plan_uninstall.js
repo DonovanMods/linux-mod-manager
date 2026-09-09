@@ -26,8 +26,18 @@ export function UninstallPlanView({ plan, modal, actions }) {
     <div class="plan plan--uninstall">
       <p class="plan__summary">
         Uninstalling <span class="mono">${plan.mod.name}</span>${" "}
-        <span class="mono">${plan.mod.version}</span> from profile${" "}
-        <span class="mono">${plan.mod.profile_name}</span>.
+        ${
+          // issue 269, the approval note's version DISPLAY rule: an external
+          // mod's `version` is Steam's 19-digit content id, and no
+          // human-facing surface prints one where a version goes.
+          // core.UninstallPlan carries no timestamp to show the revision date
+          // instead and the modal's own header already names the mod, so the
+          // span is omitted rather than filled - exactly what
+          // plan_deploy.js does for its external row.
+          !plan.external &&
+          html`<span class="mono">${plan.mod.version}</span>${" "}`
+        }from
+        profile${" "} <span class="mono">${plan.mod.profile_name}</span>.
       </p>
 
       ${

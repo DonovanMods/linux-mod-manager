@@ -434,3 +434,27 @@ func TestE2E_Workshop_FullModPageMetaShowsTheRevisionDate(t *testing.T) {
 		"the labelled block underneath is where the manifest belongs")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_Workshop_StopTrackingConfirmOmitsTheContentID: the confirm modal's
+// own summary line read "Uninstalling Sample Workshop Item
+// 7987119735124793734 from profile default", printing Steam's content id in
+// the slot a version goes. core.UninstallPlan carries no timestamp to show a
+// date instead and the header already names the mod, so the span is simply
+// omitted - exactly what plan_deploy.js now does for its external row.
+func TestE2E_Workshop_StopTrackingConfirmOmitsTheContentID(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	var summary, body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+		chromedp.Click(`.slide-over__actions .button--danger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="uninstall"] .plan__summary`, &summary),
+		textContent(`.modal[data-kind="uninstall"]`, &body),
+	)
+	assert.Contains(t, summary, "Uninstalling Sample Workshop Item from profile default.")
+	assert.NotContains(t, body, e2eWorkshopManifest,
+		"the version DISPLAY rule: no human surface prints Steam's content id as a version")
+	assert.Empty(t, f.BrowserErrors())
+}
