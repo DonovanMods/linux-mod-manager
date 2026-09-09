@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,6 +185,13 @@ func TestSaveToken_RecordsCreatedAtAndPreservesItAcrossUpdates(t *testing.T) {
 // The contention here is the real one: a second connection holding a read
 // transaction open across the whole migration, with the pre-#79 plaintext
 // sitting in an unchecked­pointed WAL.
+//
+// This test asserts the REFUSAL and nothing more. It used to go on to open
+// again after closing the seeder and assert a clean WAL, which passed for
+// the wrong reason: closing the last connection makes SQLite checkpoint the
+// WAL itself, so the assertion was satisfied without lmm scrubbing anything.
+// What happens on the next open is
+// TestOpen_AFailedScrubIsRetriedOnTheNextOpen, which keeps a connection up.
 func TestOpen_ContendedMigrationFailsRatherThanLeavingPlaintextInTheWAL(t *testing.T) {
 	dir := sandboxHome(t)
 	dbPath := filepath.Join(dir, "lmm.db")
@@ -214,19 +222,11 @@ func TestOpen_ContendedMigrationFailsRatherThanLeavingPlaintextInTheWAL(t *testi
 	assert.ErrorContains(t, err, "in use by another process")
 	assert.ErrorContains(t, err, dbPath)
 
-	// Release the contention; the very next open completes the job.
+	// The plaintext really is still on disk - refusing is the whole point.
+	assert.True(t, fileContains(t, dbPath+"-wal", legacyKey))
+
 	require.NoError(t, reader.Rollback())
 	require.NoError(t, seeder.Close())
-
-	d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, d.Close()) })
-
-	got, err := d.GetToken(ctx, "nexusmods")
-	require.NoError(t, err)
-	assert.Equal(t, legacyKey, got.APIKey)
-	assert.False(t, fileContains(t, dbPath, legacyKey), "plaintext still present in the database")
-	assert.False(t, fileContains(t, dbPath+"-wal", legacyKey), "plaintext still present in the WAL")
 }
 
 // TestOpen_ReencryptsALegacyKeyThatStartsWithTheMagic is the regression for
@@ -268,4 +268,187 @@ func TestOpen_ReencryptsALegacyKeyThatStartsWithTheMagic(t *testing.T) {
 	require.Len(t, infos, 1)
 	assert.True(t, infos[0].Readable)
 	assert.Equal(t, TokenFingerprint(legacyKey), infos[0].Fingerprint)
+}
+
+// scrubMarkerKey is the db_meta key the durable "credential scrub pending"
+// obligation is recorded under. Spelled out here rather than referenced from
+// the implementation: it is an on-disk contract, and a database written by
+// one build has to be understood by the next.
+const scrubMarkerKey = "token_scrub_pending"
+
+// scrubMarkerSet reports whether the marker is recorded in db_meta. A
+// database written before the marker existed has no db_meta table at all,
+// and owes nothing.
+func scrubMarkerSet(t *testing.T, d *DB) bool {
+	t.Helper()
+	var n int
+	err := d.QueryRowContext(context.Background(),
+		"SELECT COUNT(*) FROM db_meta WHERE key = ?", scrubMarkerKey).Scan(&n)
+	if err != nil && strings.Contains(err.Error(), "no such table") {
+		return false
+	}
+	require.NoError(t, err)
+	return n > 0
+}
+
+// setScrubMarker records the marker by hand, so a test can build the state a
+// crashed or contended scrub leaves behind without having to contend.
+func setScrubMarker(t *testing.T, d *DB) {
+	t.Helper()
+	_, err := d.ExecContext(context.Background(),
+		"INSERT OR REPLACE INTO db_meta (key, value) VALUES (?, ?)", scrubMarkerKey, "set-by-test")
+	require.NoError(t, err)
+}
+
+// holdContention seeds a legacy plaintext row through a connection it leaves
+// open - so the plaintext frames stay in lmm.db-wal - and holds a read
+// transaction across it, which is exactly what a second lmm process (`lmm
+// serve`) does to the scrub. The returned release() drops the read lock but
+// KEEPS the connection open, which is the state Proof A of the re-review
+// showed lmm never recovered from.
+func holdContention(t *testing.T, dbPath, legacyKey string) (seeder *DB, release func()) {
+	t.Helper()
+	ctx := context.Background()
+
+	seeder = openPlaintextSeeder(t, dbPath, map[string]string{"nexusmods": legacyKey})
+	t.Cleanup(func() { _ = seeder.Close() }) //nolint:errcheck // may already be closed
+	require.True(t, fileContains(t, dbPath+"-wal", legacyKey),
+		"precondition: the pre-#79 plaintext must be sitting in the WAL")
+
+	// BEGIN is deferred in SQLite, so the read lock is only taken at the
+	// first query.
+	reader, err := seeder.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, reader.QueryRowContext(ctx, "SELECT COUNT(*) FROM auth_tokens").Scan(&n))
+	require.Equal(t, 1, n)
+
+	return seeder, func() { require.NoError(t, reader.Rollback()) }
+}
+
+// TestOpen_AFailedScrubIsRetriedOnTheNextOpen is the regression for the
+// re-review's remaining Critical. The scrub obligation used to be DERIVED
+// from the rows: the re-encryption transaction committed first, so once the
+// scrub failed the rows carried the envelope, legacyTokenRows came back
+// empty on every later open, and the scrub never ran again. lmm then
+// reported success over a credential still readable in lmm.db-wal - the
+// exact outcome the error message's own remedy ("close the other process and
+// run the command again") tells the user they have fixed.
+//
+// The seeder connection is deliberately left OPEN across the second open:
+// closing it would let SQLite's own last-connection checkpoint clean the WAL
+// and the assertion would pass without lmm scrubbing anything.
+func TestOpen_AFailedScrubIsRetriedOnTheNextOpen(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	ctx := context.Background()
+	const legacyKey = "legacy-nexus-key-retried-1234567890"
+
+	seeder, release := holdContention(t, dbPath, legacyKey)
+
+	contended, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	if err == nil {
+		require.NoError(t, contended.Close())
+	}
+	require.Error(t, err, "a migration that cannot scrub the WAL must not report success")
+	assert.ErrorContains(t, err, "in use by another process")
+	assert.True(t, scrubMarkerSet(t, seeder),
+		"the failed scrub must leave a durable obligation behind")
+
+	// Contention gone, but the other connection is still up - so nothing but
+	// lmm itself can clean this WAL.
+	release()
+
+	d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	require.NoError(t, err, "the next open must finish the scrub the first one could not")
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+	got, err := d.GetToken(ctx, "nexusmods")
+	require.NoError(t, err)
+	assert.Equal(t, legacyKey, got.APIKey)
+	assert.False(t, fileContains(t, dbPath, legacyKey), "plaintext still present in the database")
+	assert.False(t, fileContains(t, dbPath+"-wal", legacyKey), "plaintext still present in the WAL")
+	assert.False(t, scrubMarkerSet(t, d), "a completed scrub must clear its marker")
+}
+
+// TestOpen_ASecondContendedOpenFailsAgainRatherThanReportingSuccess is the
+// other face of the same Critical: the run that still cannot scrub must
+// still refuse. Reporting success on the second attempt would be worse than
+// on the first, because the user has by then followed the remedy and
+// believes the plaintext is gone.
+func TestOpen_ASecondContendedOpenFailsAgainRatherThanReportingSuccess(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	const legacyKey = "legacy-nexus-key-still-contended-1234567890"
+
+	seeder, release := holdContention(t, dbPath, legacyKey)
+	defer release()
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+		if err == nil {
+			require.NoError(t, d.Close())
+		}
+		require.Error(t, err, "open %d must not report success while the plaintext is still in the WAL", attempt)
+		assert.ErrorContains(t, err, "in use by another process")
+	}
+
+	assert.True(t, fileContains(t, dbPath+"-wal", legacyKey),
+		"precondition of the assertion above: the plaintext really is still there")
+	assert.True(t, scrubMarkerSet(t, seeder), "the obligation must survive a failed retry")
+}
+
+// TestOpen_APendingScrubMarkerWithNoLegacyRowsClearsItself pins that the
+// obligation is honoured on its own terms. Every row can already carry an
+// envelope - that is precisely the state a failed scrub leaves - so the
+// marker, not the row contents, is what decides whether the scrub runs.
+func TestOpen_APendingScrubMarkerWithNoLegacyRowsClearsItself(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	ctx := context.Background()
+
+	first, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	require.NoError(t, err)
+	require.NoError(t, first.SaveToken(ctx, "nexusmods", "already-encrypted-key-1234567890"))
+	setScrubMarker(t, first)
+	require.NoError(t, first.Close())
+
+	d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+	assert.False(t, scrubMarkerSet(t, d), "an uncontended open must discharge a pending scrub")
+	got, err := d.GetToken(ctx, "nexusmods")
+	require.NoError(t, err)
+	assert.Equal(t, "already-encrypted-key-1234567890", got.APIKey)
+}
+
+// TestOpen_TheScrubMarkerIsIdempotentAcrossReopens pins the other side of
+// the marker: once discharged it stays discharged, so the ordinary open -
+// which is every open after the one migration - still does no scrub work and
+// leaves no obligation behind.
+func TestOpen_TheScrubMarkerIsIdempotentAcrossReopens(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	ctx := context.Background()
+	const legacyKey = "legacy-nexus-key-idempotent-1234567890"
+
+	seedPlaintextTokens(t, dbPath, map[string]string{"nexusmods": legacyKey})
+
+	for range 3 {
+		d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+		require.NoError(t, err)
+		assert.False(t, scrubMarkerSet(t, d), "a settled database owes no scrub")
+		got, err := d.GetToken(ctx, "nexusmods")
+		require.NoError(t, err)
+		assert.Equal(t, legacyKey, got.APIKey)
+		require.NoError(t, d.Close())
+
+		assert.False(t, fileContains(t, dbPath, legacyKey), "plaintext still present in the database")
+		assert.False(t, fileContains(t, dbPath+"-wal", legacyKey), "plaintext still present in the WAL")
+	}
 }
