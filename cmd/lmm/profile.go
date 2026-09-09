@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -147,6 +149,11 @@ With mod IDs as arguments, sets the new order (first ID = lowest priority).
 Mods not listed are appended at the end. A mod ID shared by mods from
 different sources is ambiguous; qualify it as "source:modid" instead.
 
+With -i/--interactive, the load order is printed as a numbered list and you
+type the positions in the order you want them - no mod IDs needed. Ranges
+are accepted ("2-5,1"), positions you leave out keep their current relative
+order at the end, Enter keeps the order as it is, and q cancels.
+
 Use -p/--profile to target a profile other than the active one - this
 flag belongs to 'reorder' itself, distinct from the game's active profile
 used by other 'profile' subcommands.
@@ -154,6 +161,7 @@ used by other 'profile' subcommands.
 Examples:
   lmm profile reorder --game skyrim-se
   lmm profile reorder --game skyrim-se --profile survival
+  lmm profile reorder -i --game skyrim-se
   lmm profile reorder 12345 67890 11111 --game skyrim-se`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runProfileReorder,
@@ -187,6 +195,7 @@ var (
 	profileSyncYes         bool
 	profileSyncDryRun      bool
 	profileReorderProfile  string
+	profileReorderInteract bool
 )
 
 func init() {
@@ -220,6 +229,7 @@ func init() {
 
 	// Reorder flags
 	profileReorderCmd.Flags().StringVarP(&profileReorderProfile, "profile", "p", "", "profile (default: active profile)")
+	profileReorderCmd.Flags().BoolVarP(&profileReorderInteract, "interactive", "i", false, "pick the new load order from a numbered list")
 
 	rootCmd.AddCommand(profileCmd)
 }
@@ -923,15 +933,30 @@ func profileSyncTarget(ctx context.Context, service *core.Service, game *domain.
 
 func runProfileReorder(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
-		return doProfileReorder(ctx, service, game, args)
+		return doProfileReorder(ctx, service, game, args, os.Stdin)
 	})
 }
 
-func doProfileReorder(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
+// doProfileReorder renders `lmm profile reorder`'s three forms: the bare
+// readout, the positional-args set, and -i's numbered picker (#254). in is
+// the picker's input, threaded from runProfileReorder as os.Stdin and
+// replaced by a plain io.Reader in tests.
+func doProfileReorder(ctx context.Context, service *core.Service, game *domain.Game, args []string, in io.Reader) error {
 
 	profileName, err := resolveProfile(ctx, service, game.ID, profileReorderProfile)
 	if err != nil {
 		return err
+	}
+
+	if profileReorderInteract {
+		if len(args) > 0 {
+			return errors.New("--interactive takes no mod IDs: pick the order from the numbered list, or pass the IDs without -i")
+		}
+		ids, err := reorderInteractively(ctx, service, game, profileName, in)
+		if err != nil || ids == nil {
+			return err
+		}
+		args = ids
 	}
 
 	if len(args) == 0 {
@@ -999,6 +1024,46 @@ func doProfileReorder(ctx context.Context, service *core.Service, game *domain.G
 
 	fmt.Printf("✓ Load order updated for profile %s.\n", profileName)
 	return nil
+}
+
+// reorderInteractively runs the -i picker and returns the mod keys the user
+// chose, in typed order, for the shared ResolveReorder path below to apply.
+// A nil slice with a nil error means "nothing to do" - an empty profile, or
+// the user pressing Enter to keep the order as it stands - and the caller
+// returns without writing anything.
+//
+// Ruling 2: --json never reads stdin, so -i under --json is refused with
+// core.ErrInteractiveOnly naming the form that does work non-interactively,
+// rather than blocking on a prompt no one will answer.
+func reorderInteractively(ctx context.Context, service *core.Service, game *domain.Game, profileName string, in io.Reader) ([]string, error) {
+	if jsonOutput {
+		return nil, fmt.Errorf("%w: pass the mod IDs as arguments in the order you want them", core.ErrInteractiveOnly)
+	}
+
+	profile, err := getProfileManager(service).Get(ctx, game.ID, profileName)
+	if err != nil {
+		return nil, fmt.Errorf("loading profile: %w", err)
+	}
+	if len(profile.Mods) == 0 {
+		fmt.Printf("No mods in profile %s.\n", profileName)
+		return nil, nil
+	}
+
+	installed, _ := service.GetInstalledMods(ctx, game.ID, profileName)
+	names := make(map[string]string, len(installed))
+	for i := range installed {
+		names[domain.ModKey(installed[i].SourceID, installed[i].ID)] = installed[i].Name
+	}
+
+	ids, err := promptReorderFrom(in, profileName, profile.Mods, names)
+	if err != nil {
+		return nil, err
+	}
+	if ids == nil {
+		fmt.Println("\nLoad order unchanged.")
+		return nil, nil
+	}
+	return ids, nil
 }
 
 func runProfileApply(cmd *cobra.Command, args []string) error {

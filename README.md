@@ -1369,6 +1369,7 @@ under its issue number:
 | `lmm profile import <file> --force`                       | Import and overwrite existing                                                                                                                        |
 | `lmm profile import <file> -y`                            | Answer "Download and install mods?" without a prompt; required under `--json`                                                                        |
 | `lmm profile reorder [mod-id ...]`                        | Show or set load order                                                                                                                               |
+| `lmm profile reorder -i`                                  | Pick the new load order from a numbered list — type positions ("1,3,2", ranges "2-5,1"), no mod IDs needed; Enter keeps it, `q` cancels               |
 | `lmm profile sync`                                        | Update profile to match installed mods                                                                                                               |
 | `lmm profile sync -y`                                     | Skip the confirmation prompt; required under `--json`                                                                                                |
 | `lmm profile apply`                                       | Install/enable mods to match profile                                                                                                                 |
