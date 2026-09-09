@@ -1,6 +1,7 @@
 package steamworkshop
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,10 @@ func newTestTransport(t *testing.T, now func() time.Time) (*retryTransport, *[]t
 	t.Helper()
 	var waits []time.Duration
 	rt := newRetryTransport(http.DefaultTransport, now)
-	rt.sleep = func(d time.Duration) { waits = append(waits, d) }
+	rt.sleep = func(ctx context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		return ctx.Err()
+	}
 	return rt, &waits
 }
 
@@ -150,6 +154,42 @@ func TestRetryTransport_SuccessClearsTheFailureStreak(t *testing.T) {
 	require.Error(t, err)
 	_, open := rt.breakerOpen()
 	assert.False(t, open, "the breaker counts CONSECUTIVE failures")
+}
+
+// The backoff must observe cancellation: with maxBackoff at 30s and two
+// retries, a Ctrl-C during `lmm update` (or an SSE client disconnect) could
+// otherwise wait out a minute of sleeping before anyone noticed. Driven
+// against the REAL sleepCtx, since the seam is precisely what a test could
+// otherwise paper over.
+func TestRetryTransport_CancellingDuringBackoffReturnsPromptly(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// A Retry-After far larger than any test may wait for.
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	rt := newRetryTransport(http.DefaultTransport, time.Now)
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, strings.NewReader("itemcount=1"))
+	require.NoError(t, err)
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, err = rt.RoundTrip(req)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled, "the caller's cancellation, not an API failure")
+	assert.Less(t, elapsed, 5*time.Second, "the 15s+ jittered backoff was abandoned, not slept")
+}
+
+func TestSleepCtx_ReturnsNilWhenTheWaitCompletes(t *testing.T) {
+	require.NoError(t, sleepCtx(context.Background(), time.Millisecond))
 }
 
 func TestBackoffFor_IsBoundedAndJittered(t *testing.T) {

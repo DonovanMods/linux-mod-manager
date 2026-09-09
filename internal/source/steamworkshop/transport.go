@@ -9,6 +9,7 @@
 package steamworkshop
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -41,9 +42,15 @@ const (
 // package sends is a read (GetPublishedFileDetails is a POST only because
 // Valve's endpoint takes a form), so re-sending it is safe by construction.
 type retryTransport struct {
-	base  http.RoundTripper
-	now   func() time.Time
-	sleep func(time.Duration)
+	base http.RoundTripper
+	now  func() time.Time
+	// sleep waits out one backoff, or returns the request context's error
+	// the moment the caller gives up. GO.md's context-threading rule: with
+	// maxBackoff at 30s and two retries, a Ctrl-C during `lmm update` (or an
+	// SSE client disconnect) could otherwise wait out a minute of sleeping
+	// before the cancellation was observed. Injectable so the tests assert
+	// the backoff POLICY without spending it.
+	sleep func(context.Context, time.Duration) error
 
 	mu           sync.Mutex
 	failures     int
@@ -54,7 +61,7 @@ func newRetryTransport(base http.RoundTripper, now func() time.Time) *retryTrans
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return &retryTransport{base: base, now: now, sleep: func(d time.Duration) { time.Sleep(d) }}
+	return &retryTransport{base: base, now: now, sleep: sleepCtx}
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -84,7 +91,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 				t.recordFailure()
 				return nil, fmt.Errorf("%w: %v after %d attempts", ErrMetadataUnavailable, lastErr, maxAttempts)
 			}
-			t.sleep(backoffFor(attempt, wait))
+			if err := t.sleep(req.Context(), backoffFor(attempt, wait)); err != nil {
+				return nil, err
+			}
 			continue
 		default:
 			t.recordSuccess()
@@ -94,11 +103,28 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if attempt == maxAttempts {
 			break
 		}
-		t.sleep(backoffFor(attempt, 0))
+		if err := t.sleep(req.Context(), backoffFor(attempt, 0)); err != nil {
+			return nil, err
+		}
 	}
 
 	t.recordFailure()
 	return nil, lastErr
+}
+
+// sleepCtx is the production sleep: it waits out d, or gives up the moment
+// ctx is done and reports that instead. A cancelled backoff is the caller's
+// error, not an API failure, so it is returned rather than folded into
+// ErrMetadataUnavailable and never counts toward the circuit breaker.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // rewind returns the request to send on this attempt: the original on the
