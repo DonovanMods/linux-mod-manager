@@ -23,33 +23,63 @@ import (
 // NOTHING here touches the network: the contract is checked against the
 // recording, and the request is driven against an httptest server.
 type recordedSchema struct {
-	ModsFilter struct {
-		InputFields []struct {
-			Name string `json:"name"`
-			Type struct {
-				Kind   string `json:"kind"`
-				Name   string `json:"name"`
-				OfType *struct {
-					Kind   string `json:"kind"`
-					Name   string `json:"name"`
-					OfType *struct {
-						Kind string `json:"kind"`
-						Name string `json:"name"`
-					} `json:"ofType"`
-				} `json:"ofType"`
-			} `json:"type"`
-		} `json:"inputFields"`
-	} `json:"modsFilter"`
-	Ops struct {
-		EnumValues []struct {
-			Name string `json:"name"`
-		} `json:"enumValues"`
-	} `json:"ops"`
-	OpsEW struct {
-		EnumValues []struct {
-			Name string `json:"name"`
-		} `json:"enumValues"`
-	} `json:"opsEW"`
+	ModsFilter inputObject `json:"modsFilter"`
+	Base       inputObject `json:"base"`
+	BaseEW     inputObject `json:"baseEW"`
+	Ops        enumType    `json:"ops"`
+	OpsEW      enumType    `json:"opsEW"`
+}
+
+// inputObject is a recorded GraphQL INPUT_OBJECT: ModsFilter itself, and
+// the two filter-value objects its list fields take.
+type inputObject struct {
+	Name        string       `json:"name"`
+	InputFields []inputField `json:"inputFields"`
+}
+
+type inputField struct {
+	Name string  `json:"name"`
+	Type typeRef `json:"type"`
+}
+
+// typeRef is introspection's recursive type reference: a NON_NULL or LIST
+// wrapper nests the type it wraps in OfType, a named type ends the chain.
+type typeRef struct {
+	Kind   string   `json:"kind"`
+	Name   string   `json:"name"`
+	OfType *typeRef `json:"ofType"`
+}
+
+type enumType struct {
+	Name       string `json:"name"`
+	EnumValues []struct {
+		Name string `json:"name"`
+	} `json:"enumValues"`
+}
+
+// requiredMembers names the input object's NON_NULL members - the ones every
+// entry the client sends must carry. Read from the recording (review M4)
+// rather than hardcoded as "value", so a rename in a re-recorded fixture
+// changes what the test demands instead of quietly checking the old name.
+func (o inputObject) requiredMembers() []string {
+	var out []string
+	for _, f := range o.InputFields {
+		if f.Type.Kind == "NON_NULL" {
+			out = append(out, f.Name)
+		}
+	}
+	return out
+}
+
+// operatorMember names the input object's ENUM member and the enum it takes
+// ("op", "FilterComparisonOperator"), both read from the recording.
+func (o inputObject) operatorMember() (member, enum string) {
+	for _, f := range o.InputFields {
+		if f.Type.Kind == "ENUM" {
+			return f.Name, f.Type.Name
+		}
+	}
+	return "", ""
 }
 
 // elementTypeName unwraps a ModsFilter field's LIST-of-NON_NULL-of-X type
@@ -60,16 +90,43 @@ func (s *recordedSchema) elementTypeName(field string) (string, bool) {
 		if f.Name != field {
 			continue
 		}
-		t := f.Type
-		if t.OfType == nil {
-			return t.Name, t.Name != ""
+		t := &f.Type
+		for t.OfType != nil {
+			t = t.OfType
 		}
-		if t.OfType.OfType != nil {
-			return t.OfType.OfType.Name, t.OfType.OfType.Name != ""
-		}
-		return t.OfType.Name, t.OfType.Name != ""
+		return t.Name, t.Name != ""
 	}
 	return "", false
+}
+
+// filterValueObjects maps an element type name to the recorded input object
+// it names, so the contract below can ask the RECORDING what a given
+// ModsFilter field's entries must look like rather than carrying its own
+// table of the answer (review M4).
+func (s *recordedSchema) filterValueObjects() map[string]inputObject {
+	out := map[string]inputObject{}
+	for _, o := range []inputObject{s.Base, s.BaseEW} {
+		if o.Name != "" {
+			out[o.Name] = o
+		}
+	}
+	return out
+}
+
+// enumMembers maps an enum type name to its recorded members.
+func (s *recordedSchema) enumMembers() map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for _, e := range []enumType{s.Ops, s.OpsEW} {
+		if e.Name == "" {
+			continue
+		}
+		members := map[string]bool{}
+		for _, v := range e.EnumValues {
+			members[v.Name] = true
+		}
+		out[e.Name] = members
+	}
+	return out
 }
 
 func loadRecordedSchema(t *testing.T) *recordedSchema {
@@ -82,8 +139,9 @@ func loadRecordedSchema(t *testing.T) *recordedSchema {
 	if err := json.Unmarshal(data, &s); err != nil {
 		t.Fatalf("parsing the recorded schema: %v", err)
 	}
-	if len(s.ModsFilter.InputFields) == 0 || len(s.Ops.EnumValues) == 0 {
-		t.Fatal("the recorded schema is empty - the fixture is the whole point of this test")
+	if len(s.ModsFilter.InputFields) == 0 || len(s.Ops.EnumValues) == 0 ||
+		len(s.Base.InputFields) == 0 || len(s.BaseEW.InputFields) == 0 {
+		t.Fatal("the recorded schema is incomplete - the fixture is the whole point of this test")
 	}
 	return &s
 }
@@ -128,20 +186,8 @@ func captureSearchVariables(t *testing.T, category string, tags []string) map[st
 // BaseFilterValue). RED before the fix on `tagNames` and `categoryId`.
 func TestSearchModsFilterMatchesRecordedSchema(t *testing.T) {
 	schema := loadRecordedSchema(t)
-
-	opsByType := map[string]map[string]bool{}
-	for _, e := range schema.Ops.EnumValues {
-		if opsByType["BaseFilterValue"] == nil {
-			opsByType["BaseFilterValue"] = map[string]bool{}
-		}
-		opsByType["BaseFilterValue"][e.Name] = true
-	}
-	for _, e := range schema.OpsEW.EnumValues {
-		if opsByType["BaseFilterValueEqualsWildcard"] == nil {
-			opsByType["BaseFilterValueEqualsWildcard"] = map[string]bool{}
-		}
-		opsByType["BaseFilterValueEqualsWildcard"][e.Name] = true
-	}
+	valueObjects := schema.filterValueObjects()
+	enums := schema.enumMembers()
 
 	// Every optional filter exercised at once, so a key that only appears
 	// with --category or --tag is covered too.
@@ -160,9 +206,15 @@ func TestSearchModsFilterMatchesRecordedSchema(t *testing.T) {
 			t.Errorf("filter key %q is not an inputField of the recorded ModsFilter (fields: %v)", field, schemaFieldNames(schema))
 			continue
 		}
-		allowed, known := opsByType[elem]
+		valueObject, known := valueObjects[elem]
 		if !known {
-			t.Errorf("filter key %q takes %s, which this test has no recorded operator enum for", field, elem)
+			t.Errorf("filter key %q takes %s, which this recording has no input object for", field, elem)
+			continue
+		}
+		opMember, opEnum := valueObject.operatorMember()
+		allowed, hasEnum := enums[opEnum]
+		if !hasEnum {
+			t.Errorf("%s's operator member takes %q, which this recording has no enum for", elem, opEnum)
 			continue
 		}
 		entries, isList := raw.([]any)
@@ -176,12 +228,14 @@ func TestSearchModsFilterMatchesRecordedSchema(t *testing.T) {
 				t.Errorf("filter[%s][%d] must be an object, got %T", field, i, e)
 				continue
 			}
-			if _, hasValue := entry["value"]; !hasValue {
-				t.Errorf("filter[%s][%d] has no value (it is NON_NULL in the schema)", field, i)
+			for _, required := range valueObject.requiredMembers() {
+				if _, present := entry[required]; !present {
+					t.Errorf("filter[%s][%d] has no %q (it is NON_NULL on %s)", field, i, required, elem)
+				}
 			}
-			op, _ := entry["op"].(string)
+			op, _ := entry[opMember].(string)
 			if op != "" && !allowed[op] {
-				t.Errorf("filter[%s][%d] op %q is not a member of the enum %s accepts", field, i, op, elem)
+				t.Errorf("filter[%s][%d] %s %q is not a member of %s, the enum %s accepts", field, i, opMember, op, opEnum, elem)
 			}
 		}
 	}

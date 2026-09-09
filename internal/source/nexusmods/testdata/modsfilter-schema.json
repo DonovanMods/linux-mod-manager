@@ -7,11 +7,11 @@
       "query { __type(name: \"ModsFilter\") { name kind inputFields { name type { kind name ofType { kind name ofType { kind name } } } } } }",
       "query { __type(name: \"BaseFilterValue\") { name kind inputFields { name type { kind name ofType { kind name } } } } }",
       "query { __type(name: \"BaseFilterValueEqualsWildcard\") { name kind inputFields { name type { kind name ofType { kind name } } } } }",
-      "query { __type(name: \"FilterComparisonOperator\") { enumValues { name } } }",
-      "query { __type(name: \"FilterComparisonOperatorEqualsWildcard\") { enumValues { name } } }"
+      "query { __type(name: \"FilterComparisonOperator\") { name enumValues { name } } }",
+      "query { __type(name: \"FilterComparisonOperatorEqualsWildcard\") { name enumValues { name } } }"
     ],
     "why": "#337/#343: ModsFilter no longer defines tagNames or categoryId. This recording is what the offline schema-contract test checks the client's filter map against; NO test may ever call the live API. Re-record by hand, from the queries above, when the schema is next known to have moved.",
-    "keys": "modsFilter = ModsFilter; base = BaseFilterValue; baseEW = BaseFilterValueEqualsWildcard; ops = FilterComparisonOperator; opsEW = FilterComparisonOperatorEqualsWildcard"
+    "keys": "modsFilter = ModsFilter; base = BaseFilterValue; baseEW = BaseFilterValueEqualsWildcard; ops = FilterComparisonOperator; opsEW = FilterComparisonOperatorEqualsWildcard. Each block is the __type payload for the type its query names, so a block's own \"name\" is that argument; the enum blocks' names were filled in from their queries (review M4) so the contract test can map an input object to its operator enum from the recording instead of a hardcoded table."
   },
   "modsFilter": {
     "name": "ModsFilter",
@@ -468,6 +468,7 @@
     ]
   },
   "ops": {
+    "name": "FilterComparisonOperator",
     "enumValues": [
       {
         "name": "EQUALS"
@@ -496,6 +497,7 @@
     ]
   },
   "opsEW": {
+    "name": "FilterComparisonOperatorEqualsWildcard",
     "enumValues": [
       {
         "name": "EQUALS"
