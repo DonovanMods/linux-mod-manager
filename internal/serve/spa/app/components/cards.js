@@ -10,6 +10,7 @@ import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
 import { lockedNote, modKey } from "../modrows.js";
 import { relativeTime } from "../relativetime.js";
+import { conflictLabel } from "../conflicts.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
 // distinct from a single-mod update's own "mod:{source}/{id}:update"
@@ -448,18 +449,6 @@ function CardError({ message, detail, onRetry }) {
   `;
 }
 
-/** conflictLabel names the contenders AND the winning rule (design doc:
- * "each conflict names the contenders and the winning rule") - built as one
- * plain string rather than split across template-literal lines, which
- * htm's JSX-style whitespace collapsing would otherwise eat between two
- * adjacent interpolations (a real trap: a `trunk fmt` reflow silently
- * dropped the space that used to separate "wins:" from the name here). */
-function conflictLabel(c) {
-  const also = c.also_in.map((m) => m.name).join(", ");
-  const label = `${c.owner.name} ↔ ${also} · wins: ${c.load_order_winner.name}`;
-  return c.stale ? `${label} (stale)` : label;
-}
-
 function ConflictsCard({ state, rows, error, onRetry, actions }) {
   // Demo item 9 (unit 6 gate review): "Resolve…" used to always land the
   // reorder modal at the top of the list, same as the library's own plain
@@ -490,13 +479,7 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
                 ${rows.map(
                   (c) => html`
                     <li key=${c.path} class="card__row">
-                      <span
-                        class="card__row-name"
-                        title=${
-                          c.stale
-                            ? `A redeploy would change which file wins — ${conflictLabel(c)}`
-                            : conflictLabel(c)
-                        }
+                      <span class="card__row-name" title=${conflictLabel(c)}
                         >${conflictLabel(c)}</span
                       >
                       <span class="mono card__row-detail" title=${c.path}

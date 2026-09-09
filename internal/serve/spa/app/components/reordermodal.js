@@ -29,6 +29,7 @@ import { html, useEffect, useMemo, useRef, useState } from "../render.js";
 import { Modal } from "./modal.js";
 import { conflictsForOrder, reorderProfile } from "../api.js";
 import { modKey } from "../modrows.js";
+import { staleWinnerNote } from "../conflicts.js";
 
 // PREVIEW_DEBOUNCE_MS mirrors main.js's own debounced fetches (the omnibar
 // fan-out has none - it fires on Enter - but the search page's category/
@@ -366,7 +367,7 @@ export function ReorderModal({ modal, state, actions }) {
                                 current?.stale &&
                                 html`<span
                                   class="badge badge--warn"
-                                  title="A redeploy would change which file wins"
+                                  title=${`A redeploy would change which file wins (${staleWinnerNote})`}
                                   >redeploy needed</span
                                 >`
                               }

@@ -5371,3 +5371,48 @@ func TestE2E_FailedDeployStaysPinnedUntilDismissed(t *testing.T) {
 	assert.False(t, deployButtonBack, "the control is still the failure's, until it is dismissed")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ConflictsCardSaysWhatToDoAboutAStaleWinner is I-4 of the epic live
+// review.
+//
+// A conflict is "stale" when the file's CURRENT deployed provider is not the
+// one the profile's load order now names - a fact about the deploy, not
+// about the conflict, so the sentence has to say what closes the gap. The
+// card rendered a bare "(stale)"; `lmm conflicts` renders
+// "(stale — redeploy to apply)" (cmd/lmm/conflicts.go) for the identical
+// document. The web told the user something was wrong and not what to do,
+// on the one card whose whole job is to name a next step.
+//
+// The scenario makes a conflict stale the way a user does: reorder the
+// profile so the other mod wins, without redeploying.
+func TestE2E_ConflictsCardSaysWhatToDoAboutAStaleWinner(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		chromedp.Poll(`(() => {
+			const btn = Array.from(document.querySelectorAll(".reorder-row"))
+				.find((r) => r.textContent.includes("Mod X"))
+				?.querySelector('[aria-label="Move Mod X to highest priority"]');
+			if (!btn || btn.disabled) return false;
+			btn.click();
+			return true;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var card string
+	f.runInBrowser(t,
+		chromedp.Poll(`document.querySelector(".card--conflicts")?.textContent.includes("stale")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(`.card--conflicts`, &card),
+	)
+
+	assert.Contains(t, card, "stale — redeploy to apply",
+		"the card must carry the CLI's own actionable sentence, not a bare (stale)")
+	assert.Empty(t, f.BrowserErrors())
+}
