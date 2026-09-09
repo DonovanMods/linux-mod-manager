@@ -76,6 +76,12 @@ const (
 	// game- or mod-level ConvertPaks opt-out (#221) - it deploys raw,
 	// individually.
 	DeployModRaw
+	// DeployModExternal: a mod lmm TRACKS but never deploys (#269) - a
+	// Steam Workshop item whose files the Steam client owns where they sit.
+	// It is listed so a plan is a complete account of the profile, and it
+	// links nothing: its Link and Remove are both empty, and the deploy
+	// loop emits DeployExternalSkipped for it and moves on.
+	DeployModExternal
 )
 
 // deployModClassNames maps each DeployModClass to its wire name. Keep in
@@ -84,6 +90,7 @@ var deployModClassNames = [...]string{
 	DeployModIndividual: "individual",
 	DeployModMerged:     "merged",
 	DeployModRaw:        "raw",
+	DeployModExternal:   "external",
 }
 
 // String returns the class's wire name.
@@ -312,7 +319,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	purgeMods := 0
 	if opts.Purge {
 		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
-		mods := orderByProfile(profile, installedMods)
+		mods, _ := partitionExternal(orderByProfile(profile, installedMods))
 		purgeMods = len(mods)
 		seen := make(map[string]bool)
 		for i := range mods {
@@ -372,6 +379,15 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			Name:  mod.Name,
 			Class: classes[domain.ModKey(mod.SourceID, mod.ID)],
 		}
+		// #269: an external mod is listed and links nothing. This pass is
+		// unconditional and comes FIRST, ahead of the cache lookup below:
+		// there is no cache entry to find, and "missing cache" must never
+		// read as "re-download this" for a mod lmm never downloaded.
+		if mod.External {
+			entry.Class = DeployModExternal
+			plan.Mods = append(plan.Mods, entry)
+			continue
+		}
 		if !gameCache.Exists(game.ID, mod.SourceID, mod.ID, mod.Version) {
 			// The deploy loop heals this by re-downloading from source and
 			// then deploying it - this mod WOULD deploy, so it is not a
@@ -428,6 +444,12 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 // listing failure is logged and reported as "nothing known", never an error
 // that fails the plan.
 func (s *Service) deployedPathsFor(ctx context.Context, game *domain.Game, profileName string, mod *domain.InstalledMod) []string {
+	// #269: an external mod has no lmm-deployed files at all - nothing to
+	// list, nothing to remove. Answering "nothing known" here is what keeps
+	// it out of every purge preview and every removal set.
+	if mod.External {
+		return nil
+	}
 	files, err := s.GetGameCache(game).ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err == nil {
 		return files
@@ -607,12 +629,18 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		// rather than aborting the purge).
 		profile, _ := config.LoadProfile(s.configDir, game.ID, profileName)
 		mods = orderByProfile(profile, mods)
+		// #269: a --purge pass undeploys lmm's own deployments, and an
+		// external mod has none. enabledBeforePurge is still computed over
+		// the FULL set, external mods included, because it is the deploy
+		// half's selection - dropping them here would make `deploy --purge`
+		// silently stop listing them.
 		enabledBeforePurge = make(map[string]bool)
 		for _, m := range mods {
 			if m.Enabled {
 				enabledBeforePurge[domain.ModKey(m.SourceID, m.ID)] = true
 			}
 		}
+		mods, _ = partitionExternal(mods)
 		if err := s.purgeForDeploy(ctx, game, profileName, mods, opts, hooks, runner, result, emit); err != nil {
 			return result, fmt.Errorf("purging mods: %w", err)
 		}
@@ -635,6 +663,13 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		mod, err := s.GetInstalledMod(ctx, opts.SourceID, opts.ModID, game.ID, profileName)
 		if err != nil {
 			return result, fmt.Errorf("mod not found: %s", opts.ModID)
+		}
+		// #269: asking to deploy ONE external mod is a request lmm cannot
+		// honour, so it is refused rather than silently skipped - a
+		// targeted command that does nothing and says nothing is worse
+		// than one that explains itself.
+		if err := refuseExternal("deploy", mod, ReasonExternalNoDeploy); err != nil {
+			return result, err
 		}
 		if !mod.Enabled && !opts.All {
 			return result, fmt.Errorf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, opts.ModID)
@@ -659,6 +694,20 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 				modsToDeploy = append(modsToDeploy, &mods[i])
 			}
 		}
+	}
+
+	// #269: external mods are reported and then set aside BEFORE the hook
+	// and installer machinery runs. They contribute nothing to deploy, so
+	// a profile of nothing but external mods must not run install hooks
+	// for work that will not happen.
+	modsToDeploy, externalMods := partitionExternalPtrs(modsToDeploy)
+	for _, mod := range externalMods {
+		emit(ModEvent{
+			Scope:  Scope{Op: OpDeploy, ModName: mod.Name, Mod: &domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID}},
+			Phase:  DeployExternalSkipped,
+			Detail: mod.ExternalPath,
+			Class:  DeployModExternal,
+		})
 	}
 
 	if len(modsToDeploy) == 0 {

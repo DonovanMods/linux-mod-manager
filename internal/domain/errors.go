@@ -34,11 +34,19 @@ var (
 	// deploy_mode; see ValidDeployModes for the recognized names (#172).
 	ErrInvalidDeployMode = errors.New("invalid deploy mode")
 	ErrDependencyLoop    = errors.New("circular dependency detected")
-	ErrAuthRequired      = errors.New("authentication required")
-	ErrInvalidConfig     = errors.New("invalid configuration")
-	ErrFileConflict      = errors.New("file conflict detected")
-	ErrDownloadFailed    = errors.New("download failed")
-	ErrLinkFailed        = errors.New("link operation failed")
+	// ErrExternalMod marks an operation refused because the mod is
+	// EXTERNAL: lmm tracks it, but another agent (today, the Steam client
+	// for a Workshop item) owns its files where they sit (#269). Deploy,
+	// enable/disable, update-apply, rollback and relink all have nothing to
+	// act on, and doing them anyway would either lie about state or put the
+	// mod in the game twice. core.ExternalModError wraps it with the
+	// operation, the mod and the advice.
+	ErrExternalMod    = errors.New("mod is managed outside lmm")
+	ErrAuthRequired   = errors.New("authentication required")
+	ErrInvalidConfig  = errors.New("invalid configuration")
+	ErrFileConflict   = errors.New("file conflict detected")
+	ErrDownloadFailed = errors.New("download failed")
+	ErrLinkFailed     = errors.New("link operation failed")
 )
 
 // DeployError aggregates a primary failure with optional rollback / cleanup

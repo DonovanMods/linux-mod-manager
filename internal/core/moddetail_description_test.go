@@ -163,7 +163,7 @@ func TestDescriptionFetcherIsDetailOnly(t *testing.T) {
 		installed, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
 		require.NoError(t, err)
 		require.NotEmpty(t, installed)
-		_, err = svc.NewUpdater().CheckUpdates(context.Background(), game, installed, nil)
+		_, err = svc.NewUpdater().CheckUpdates(context.Background(), game, installed, nil, core.UpdateCheckOptions{})
 		require.NoError(t, err)
 		assert.Zero(t, src.calls.Load(), "an update check must not cost a description round trip per mod")
 	})

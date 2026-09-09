@@ -122,7 +122,27 @@ func (s *Service) SetModUpdatePolicy(ctx context.Context, sourceID, modID, gameI
 	return s.modSettingResult(ctx, sourceID, modID, gameID, profileName)
 }
 
+// refuseExternalAutoPolicy is #269's gate on `lmm mod set-update auto`:
+// notify (the default) and pinned both mean something for an item lmm can
+// only report on, and auto does not - lmm cannot apply a Steam Workshop
+// update at all, so the policy would never fire.
+func (s *Service) refuseExternalAutoPolicy(ctx context.Context, sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
+	if policy != domain.UpdateAuto {
+		return nil
+	}
+	mod, err := s.GetInstalledMod(ctx, sourceID, modID, gameID, profileName)
+	if err != nil {
+		// Not found (or unreadable) is the existing setter's problem to
+		// report, in its own words - this gate only ever adds a refusal.
+		return nil
+	}
+	return refuseExternal("set update policy", mod, ReasonExternalNoAutoUpdate)
+}
+
 func (s *Service) setModUpdatePolicy(ctx context.Context, sourceID, modID, gameID, profileName string, policy domain.UpdatePolicy) error {
+	if err := s.refuseExternalAutoPolicy(ctx, sourceID, modID, gameID, profileName, policy); err != nil {
+		return err
+	}
 	return s.db.UpdateModPolicy(ctx, sourceID, modID, gameID, profileName, policy)
 }
 

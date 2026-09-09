@@ -17,7 +17,12 @@ import (
 )
 
 var (
-	updateSource  string
+	updateSource string
+	// updateRefresh is --refresh: bypass a source's own metadata cache for
+	// this check (#269). Only the Steam Workshop source caches anything to
+	// bypass today, and it caches for hours - so without this there is no
+	// way to ask "has Steam published a newer revision in the last minute?".
+	updateRefresh bool
 	updateProfile string
 	updateAll     bool
 	updateDryRun  bool
@@ -30,10 +35,11 @@ var (
 // derived from what was installed, and the check's own failure, if any.
 func bulkCheckReport(gameID, profileName string, updates []domain.Update, installed []domain.InstalledMod, checkErr error) *core.UpdateCheckReport {
 	report := &core.UpdateCheckReport{
-		GameID:  gameID,
-		Profile: profileName,
-		Updates: updates,
-		Skipped: core.CountUpdateSkips(installed),
+		GameID:   gameID,
+		Profile:  profileName,
+		Updates:  updates,
+		Skipped:  core.CountUpdateSkips(installed),
+		External: core.CountExternalUpdates(updates),
 	}
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()
@@ -143,6 +149,7 @@ func init() {
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
+	updateCmd.Flags().BoolVar(&updateRefresh, "refresh", false, "bypass cached source metadata (Steam Workshop caches for hours)")
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 
 	updateRollbackCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
@@ -281,7 +288,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	// Check for updates (partial results returned even when some mods fail to
 	// fetch) plus, for DeployCompile games, merged-pak staleness (#196/#197) -
 	// CheckGameUpdates is the single seam the CLI checks through.
-	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed, sink)
+	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
 			return authPromptError(updateSource)

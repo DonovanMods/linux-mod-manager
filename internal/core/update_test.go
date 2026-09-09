@@ -1194,7 +1194,7 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 		id:         "src",
 		currentMod: &domain.Mod{ID: "mod1", SourceID: "src", Name: "Mod One", Version: "1.0.3", GameID: "g1"},
 	})
-	again, err := core.NewUpdater(loopRegistry).CheckUpdates(context.Background(), game, []domain.InstalledMod{*updated}, nil)
+	again, err := core.NewUpdater(loopRegistry).CheckUpdates(context.Background(), game, []domain.InstalledMod{*updated}, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, again, "a re-check after a successful update must find no further update")
 
@@ -1202,7 +1202,7 @@ func TestApplyUpdate_OldFileStillListedUpstream_AdvancesToNewVersion(t *testing.
 	// version, proving the assertion above can actually fail.
 	stale := *updated
 	stale.Version = "1.0.1"
-	staleAgain, err := core.NewUpdater(loopRegistry).CheckUpdates(context.Background(), game, []domain.InstalledMod{stale}, nil)
+	staleAgain, err := core.NewUpdater(loopRegistry).CheckUpdates(context.Background(), game, []domain.InstalledMod{stale}, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, staleAgain, 1, "control: a row still on 1.0.1 must still be reported as updatable")
 

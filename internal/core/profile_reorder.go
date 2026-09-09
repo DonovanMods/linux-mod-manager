@@ -82,10 +82,27 @@ func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profile
 		return nil, fmt.Errorf("loading profile: %w", err)
 	}
 
+	// #269 (Q1): external mods are OMITTED from the orderable set. Load
+	// order decides deploy precedence, and an external mod deploys nothing -
+	// any position it held would be inert, and a list that pretends
+	// otherwise invites the user to "fix" a load-order problem by dragging a
+	// row that cannot affect it. Naming one is therefore the same error as
+	// naming a mod that is not in the profile.
+	//
+	// Their refs still come back in the RESULT, appended with every other
+	// unmentioned ref: ProfileManager.ReorderMods replaces the profile's
+	// whole mod list, so omitting them from the returned order would delete
+	// them from the profile. Omitted from the choosing, kept in the list.
+	installed, _ := s.GetInstalledMods(ctx, game.ID, profileName)
+	external := externalKeys(installed)
+
 	// Key by sourceID:modID so mods from different sources with the same ModID are not overwritten.
 	byKey := make(map[string]domain.ModReference)
 	for _, ref := range profile.Mods {
 		key := ref.SourceID + ":" + ref.ModID
+		if external[key] {
+			continue
+		}
 		byKey[key] = ref
 	}
 
@@ -128,7 +145,10 @@ func (s *Service) ResolveReorder(ctx context.Context, game *domain.Game, profile
 		seen[key] = true
 		newRefs = append(newRefs, ref)
 	}
-	// Append mods not mentioned in ids (unchanged relative order)
+	// Append mods not mentioned in ids (unchanged relative order). An
+	// external mod's ref stays in the profile YAML - it is still an
+	// installed mod - it simply never participates in ordering, so it is
+	// appended here like any unmentioned ref.
 	for _, ref := range profile.Mods {
 		key := ref.SourceID + ":" + ref.ModID
 		if !seen[key] {

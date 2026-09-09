@@ -74,6 +74,14 @@ func (s *Service) enableMod(ctx context.Context, game *domain.Game, profileName,
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
 	}
 
+	// #269: lmm cannot make a Steam Workshop item active or inactive - the
+	// game loads it from Steam's own directory either way. The refusal comes
+	// BEFORE the already-enabled short-circuit so the answer is the same
+	// whatever the row happens to say.
+	if err := refuseExternal("enable", mod, ReasonExternalNoToggle); err != nil {
+		return nil, err
+	}
+
 	if mod.Enabled {
 		return &EnableResult{}, nil
 	}
@@ -153,6 +161,12 @@ func (s *Service) disableMod(ctx context.Context, game *domain.Game, profileName
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mod %s: %w", modID, err)
+	}
+
+	// #269: refused for the same reason enable is - a bookkeeping-only
+	// "disabled" flag on a mod the game still loads is a lie.
+	if err := refuseExternal("disable", mod, ReasonExternalNoToggle); err != nil {
+		return nil, err
 	}
 
 	if !mod.Enabled {

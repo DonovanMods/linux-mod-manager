@@ -51,6 +51,12 @@ type ProfileApplyPlan struct {
 	// kinds separately.
 	ToInstall []ProfileApplyInstall `json:"to_install"`
 
+	// ExternalUnchanged counts the EXTERNAL mods (#269) this converge pass
+	// left exactly as they are: lmm deploys none of their files, so there
+	// is nothing for it to converge. Non-zero produces one advisory note in
+	// the result - see NoteExternalProfileScope. omitzero.
+	ExternalUnchanged int `json:"external_unchanged,omitzero"`
+
 	// NoChanges is true when all three buckets are empty - the system
 	// already matches the profile and ApplyProfileApply has nothing to do
 	// (the CLI prints "System already matches profile <name>." and stops
@@ -216,6 +222,16 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 	for i := range ordered {
 		im := &ordered[i]
 		key := domain.ModKey(im.SourceID, im.ID)
+
+		// #269: an external mod is never disabled, enabled, or installed by
+		// a converge pass. lmm deploys none of its files, so there is
+		// nothing to converge; Steam has it where the game reads it,
+		// whatever this profile says. Counted as unchanged so the apply can
+		// say so once, exactly as a profile switch does.
+		if im.External {
+			plan.ExternalUnchanged++
+			continue
+		}
 
 		ref, inProfile := profileKeys[key]
 		if !inProfile {
@@ -393,6 +409,12 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		if sink != nil {
 			sink(e)
 		}
+	}
+	// #269: said once, up front - see ApplyProfileSwitch's identical note.
+	if plan.ExternalUnchanged > 0 {
+		msg := fmt.Sprintf(NoteExternalProfileScope, plan.ExternalUnchanged)
+		result.Notes = append(result.Notes, msg)
+		emit(StepEvent{Scope: Scope{Op: OpProfileApply}, Phase: DeployExternalSkipped, Detail: msg})
 	}
 	note := func(scope Scope, phase DeployPhase, msg string) {
 		result.Notes = append(result.Notes, msg)

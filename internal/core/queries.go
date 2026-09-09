@@ -283,9 +283,15 @@ type GameStatus struct {
 	ActiveProfile       string            `json:"active_profile,omitempty"`
 	InstalledModCount   int               `json:"installed_mod_count"`
 	EnabledModCount     int               `json:"enabled_mod_count"`
-	LastDeploy          *time.Time        `json:"last_deploy,omitempty"`
-	ConversionFailures  int               `json:"conversion_failures"`
-	ConvertPaks         *bool             `json:"convert_paks,omitzero"`
+	// ExternalCount is how many of InstalledModCount are EXTERNAL mods
+	// (#269) - Steam Workshop items lmm tracks but never deploys - so a
+	// readout can say "30 installed (30 tracked from Steam)" instead of
+	// implying lmm deployed thirty mods it never touched. omitzero: a game
+	// with no such mods emits no key at all.
+	ExternalCount      int        `json:"external_count,omitzero"`
+	LastDeploy         *time.Time `json:"last_deploy,omitempty"`
+	ConversionFailures int        `json:"conversion_failures"`
+	ConvertPaks        *bool      `json:"convert_paks,omitzero"`
 }
 
 // Status summarizes every configured game, ordered by ID (ListGames').
@@ -403,6 +409,7 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 	mods, _ := s.GetInstalledMods(ctx, game.ID, active.Name)
 	status.ActiveProfile = active.Name
 	status.InstalledModCount = len(mods)
+	status.ExternalCount = countExternal(mods)
 	for _, m := range mods {
 		if m.Enabled {
 			status.EnabledModCount++

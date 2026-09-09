@@ -39,6 +39,7 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV12,
 		migrateV13,
 		migrateV14,
+		migrateV15,
 	}
 
 	if version < len(migrations) {
@@ -244,5 +245,23 @@ func migrateV14(ctx context.Context, d *DB) error {
 			value TEXT
 		)
 	`)
+	return err
+}
+
+// migrateV15 adds #269's two external-mod columns: external marks a mod lmm
+// TRACKS but never deploys (a Steam Workshop item, whose files the Steam
+// client owns where they sit), and external_path records the directory that
+// agent owns.
+//
+// Both are written by SaveInstalledMod's upsert, unlike convert_paks: they
+// are facts about WHAT the mod is rather than a user preference, so a
+// re-adopt must be able to move a mod's recorded path when Steam moved the
+// library. Existing rows default to 0/” - every mod installed before this
+// migration is an ordinary managed one.
+func migrateV15(ctx context.Context, d *DB) error {
+	if _, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN external INTEGER DEFAULT 0`); err != nil {
+		return err
+	}
+	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN external_path TEXT DEFAULT ''`)
 	return err
 }

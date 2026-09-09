@@ -812,6 +812,30 @@ const (
 	// UpdateBatchItemFailed fires for an item that could not be applied.
 	// Detail is the error, identical to the failure entry's own Error.
 	UpdateBatchItemFailed
+	// DeployExternalSkipped: ModName is an EXTERNAL mod (#269) - a Steam
+	// Workshop item whose files the Steam client owns where they sit. The
+	// deploy lists it and does nothing: there is nothing to link, and the
+	// game already reads it from Steam's own directory. Detail names that
+	// directory.
+	DeployExternalSkipped
+	// PurgeExternalSkipped: ModName is an EXTERNAL mod a purge is leaving
+	// entirely alone. Emitted once per such mod so a purge readout can say
+	// what it did not touch.
+	PurgeExternalSkipped
+	// WorkshopScanned fires once at the start of a workshop adopt, after
+	// the Steam libraries have been read: Total is how many subscribed
+	// items the scan found, Detail names the libraries.
+	WorkshopScanned
+	// WorkshopAdopted: ModName is now tracked by lmm - a DB row and a
+	// profile ref, and nothing else. No file was read, written or moved.
+	WorkshopAdopted
+	// WorkshopSkipped: an item the adopt did not take on, because lmm
+	// already tracks it. Detail is the reason.
+	WorkshopSkipped
+	// WorkshopUnavailable: Steam's API would not describe this item
+	// (delisted, deleted or private). It is still adoptable - it is on disk
+	// and the game loads it - but with only the identity the ACF carries.
+	WorkshopUnavailable
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -852,6 +876,9 @@ var deployPhaseNames = [...]string{
 	RelinkFetching:           "relink_fetching", RelinkProfileNote: "relink_profile_note", RelinkWarning: "relink_warning",
 	UpdateBatchItem: "update_batch_item", UpdateBatchItemApplied: "update_batch_item_applied",
 	UpdateBatchItemSkipped: "update_batch_item_skipped", UpdateBatchItemFailed: "update_batch_item_failed",
+	DeployExternalSkipped: "deploy_external_skipped", PurgeExternalSkipped: "purge_external_skipped",
+	WorkshopScanned: "workshop_scanned", WorkshopAdopted: "workshop_adopted",
+	WorkshopSkipped: "workshop_skipped", WorkshopUnavailable: "workshop_unavailable",
 }
 
 // String returns the phase's wire name.

@@ -60,11 +60,13 @@ func TestNew_DropsModCacheTableOnUpgrade(t *testing.T) {
 	database, err := db.New(path)
 	require.NoError(t, err)
 
-	// Rewind to v10 by reverting schema changes from v11, v12 and v13.
-	// v11 dropped mod_cache; v12 added convert_paks; v13 added
-	// auth_tokens.created_at. Undo all three.
-	_, err = database.Exec("ALTER TABLE installed_mods DROP COLUMN convert_paks")
-	require.NoError(t, err, "revert v12 schema change before rewinding version tracker")
+	// Rewind to v10 by reverting every post-v10 schema change. v11 dropped
+	// mod_cache; v12 added convert_paks; v13 added auth_tokens.created_at;
+	// v15 added installed_mods.external and external_path.
+	for _, col := range []string{"convert_paks", "external", "external_path"} {
+		_, err = database.Exec("ALTER TABLE installed_mods DROP COLUMN " + col)
+		require.NoError(t, err, "revert post-v10 installed_mods change before rewinding version tracker")
+	}
 	_, err = database.Exec("ALTER TABLE auth_tokens DROP COLUMN created_at")
 	require.NoError(t, err, "revert v13 schema change before rewinding version tracker")
 	_, err = database.Exec("DELETE FROM schema_migrations WHERE version >= 11")

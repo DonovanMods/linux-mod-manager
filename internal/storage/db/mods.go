@@ -58,8 +58,8 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, external, external_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, mod_id, game_id, profile_name) DO UPDATE SET
 			name = excluded.name,
 			version = excluded.version,
@@ -71,8 +71,10 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 			link_method = excluded.link_method,
 			manual_download = excluded.manual_download,
 			summary = excluded.summary,
-			source_url = excluded.source_url
-	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL)
+			source_url = excluded.source_url,
+			external = excluded.external,
+			external_path = excluded.external_path
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath)
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
@@ -88,7 +90,7 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks
+		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks, external, external_path
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY installed_at ASC
@@ -105,7 +107,7 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
-			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks,
+			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath,
 		)
 		if err != nil {
 			_ = rows.Close()
@@ -296,14 +298,14 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
 		       update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download,
-		       summary, source_url, convert_paks
+		       summary, source_url, convert_paks, external, external_path
 		FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
-		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks,
+		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -44,6 +44,10 @@ const (
 	OpVerify      Op = "verify"
 	OpUpdateCheck Op = "update_check"
 	OpDownload    Op = "download"
+	// OpWorkshopAdopt is `lmm import --workshop` - bringing the Steam
+	// Workshop items the Steam client already downloaded under lmm's
+	// tracking (#269). It writes DB rows and profile refs and nothing else.
+	OpWorkshopAdopt Op = "workshop_adopt"
 	// OpModEdit is `lmm mod edit` - ApplyRelinkMod's metadata-only and
 	// re-link edits (v2 Phase 3 Task 10, #303).
 	OpModEdit Op = "mod_edit"

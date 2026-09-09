@@ -45,6 +45,27 @@ var jsonGoldenMod = domain.Mod{
 	GameID: "skyrim-se", UpdatedAt: fixedTime,
 }
 
+// jsonGoldenExternal is the EXTERNAL installed mod (#269) the _external
+// goldens below share: a Steam Workshop item lmm tracks but never deploys.
+// Deployed is true (its files ARE where the game reads them), there are no
+// file ids and no manual_download, and Version is the ACF content id.
+var jsonGoldenExternal = domain.InstalledMod{
+	Mod: domain.Mod{
+		ID: "3617086610", SourceID: "steamworkshop", Name: "Workshop Item",
+		Version: "7987119735124793734", Author: "76561198000000000",
+		GameID: "space-engineers-2", UpdatedAt: fixedTime,
+		SourceURL: "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+	},
+	ProfileName:  "default",
+	UpdatePolicy: domain.UpdateNotify,
+	InstalledAt:  fixedTime,
+	Enabled:      true,
+	Deployed:     true,
+	LinkMethod:   domain.LinkSymlink,
+	External:     true,
+	ExternalPath: "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+}
+
 // jsonGoldenGame is the domain.Game shared across the query goldens that
 // carry a whole game on the wire - domain's own golden pins Game's full
 // shape, so these only need a representative value.
@@ -103,6 +124,18 @@ func TestJSONGoldens(t *testing.T) {
 				Files:     []string{"Data/Sample.esp"},
 				KeepCache: true,
 				Hooks:     nil,
+			},
+		},
+		{
+			// #269: the tracking-only uninstall. Files is EMPTY - lmm
+			// deployed nothing to remove - and external says so, which is
+			// what a confirmation reads to reword itself.
+			"uninstall_plan_external",
+			core.UninstallPlan{
+				Mod:       jsonGoldenExternal,
+				External:  true,
+				Files:     []string{},
+				KeepCache: false,
 			},
 		},
 		{
@@ -167,6 +200,25 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #269: an external mod in a deploy plan - class "external",
+			// nothing linked, nothing removed. The plan is a complete
+			// account of the profile; the deploy itself does nothing here.
+			"deploy_plan_external",
+			core.DeployPlan{
+				Profile: "default",
+				Mods: []core.DeployPlanMod{{
+					Ref:    domain.ModReference{SourceID: "steamworkshop", ModID: "3617086610", Version: "7987119735124793734"},
+					Name:   "Workshop Item",
+					Class:  core.DeployModExternal,
+					Link:   []string{},
+					Remove: nil,
+				}},
+				Purge:     []string{},
+				Hooks:     []string{},
+				NoChanges: false,
+			},
+		},
+		{
 			"purge_result",
 			core.PurgeResult{
 				Purged:   2,
@@ -196,6 +248,19 @@ func TestJSONGoldens(t *testing.T) {
 				// optional field: the nested object and the JSON null a
 				// "nothing would change" plan carries.
 				MergedArtifact: &core.MergedArtifactEffect{Action: core.MergedArtifactRemove, Path: "zzz_LMM_Merged_P.pak"},
+			},
+		},
+		{
+			// #269: a purge that will not touch the profile's one Steam
+			// Workshop item. Mods is EMPTY (nothing purgeable) and external
+			// names what the preview is leaving alone - the count being
+			// short is otherwise unexplained.
+			"purge_plan_external",
+			core.PurgePlan{
+				Profile:  "default",
+				Mods:     []domain.InstalledMod{},
+				External: []string{"Workshop Item"},
+				Hooks:    []string{},
 			},
 		},
 		{
@@ -748,6 +813,14 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #269: the two new InstalledMod keys riding along on a listing
+			// row for free - ModListing embeds InstalledMod, so `lmm list`
+			// and the web UI's library both see them with no field of their
+			// own. convert_paks is absent (a non-compile game).
+			"mod_listing_external",
+			core.ModListing{InstalledMod: jsonGoldenExternal},
+		},
+		{
 			// ConvertPaks left nil - pak conversion does not apply at all
 			// (a non-compile game), the common shape mod_listing above does
 			// NOT cover (phase-end review Minor 8 / Unit N M3): the
@@ -852,6 +925,24 @@ func TestJSONGoldens(t *testing.T) {
 				EnabledModCount:     2,
 				LastDeploy:          &fixedTime,
 				ConversionFailures:  1,
+			},
+		},
+		{
+			// #269: the counts that let a readout say "3 installed
+			// (2 tracked from Steam)" instead of implying lmm deployed
+			// three mods it never touched.
+			"game_status_external",
+			core.GameStatus{
+				Game:                jsonGoldenGame,
+				LinkMethod:          domain.LinkSymlink,
+				EffectiveLinkMethod: domain.LinkSymlink,
+				LinkMethodSource:    "game",
+				ResolvedCachePath:   "/home/user/.local/share/lmm",
+				Profiles:            []core.ProfileSummary{{Name: "default", ModCount: 3, IsDefault: true}},
+				ActiveProfile:       "default",
+				InstalledModCount:   3,
+				EnabledModCount:     3,
+				ExternalCount:       2,
 			},
 		},
 		{
@@ -1011,6 +1102,21 @@ func TestJSONGoldens(t *testing.T) {
 				RecompileNeeded: true,
 				Changelog:       "Fixed a crash on load.",
 				Refusal:         "Sample Mod is locked at v1.2.2 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 42' first",
+			},
+		},
+		{
+			// #269: an update lmm can REPORT but never apply. external says
+			// which kind of refusal this is; refusal is the existing field,
+			// reused rather than a second refusal-rendering path.
+			"update_plan_external",
+			core.UpdatePlan{
+				Mod:      jsonGoldenExternal,
+				External: true,
+				Update: &domain.Update{
+					InstalledMod: jsonGoldenExternal,
+					NewVersion:   "8100000000000000001",
+				},
+				Refusal: core.ReasonExternalNoUpdate,
 			},
 		},
 		{

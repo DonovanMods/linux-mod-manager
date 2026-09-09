@@ -40,6 +40,14 @@ type UninstallPlan struct {
 	// cache entry is deleted too, so a later reinstall re-downloads.
 	KeepCache bool `json:"keep_cache"`
 
+	// External reports that this uninstall removes lmm's TRACKING and
+	// nothing else (#269): no files are touched, there is no cache entry to
+	// delete, and KeepCache is a no-op. A frontend's confirmation must say
+	// so - see UninstallExternalNote for the wording - because "uninstall"
+	// otherwise reads as "remove the mod", and the item stays subscribed in
+	// Steam either way.
+	External bool `json:"external,omitzero"`
+
 	// Hooks names the uninstall.* hooks that would actually run, in run
 	// order. Only configured hooks are listed, and none at all under
 	// SkipHooks.
@@ -108,6 +116,7 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 
 	plan := &UninstallPlan{
 		Mod:            *mod,
+		External:       mod.External,
 		KeepCache:      opts.KeepCache,
 		Hooks:          uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks),
 		MergedArtifact: s.mergedArtifactEffectForUninstall(ctx, game, profileName, mod),
@@ -264,21 +273,28 @@ func (s *Service) uninstallMod(ctx context.Context, game *domain.Game, profileNa
 		result.Warnings = append(result.Warnings, fmt.Sprintf("uninstall.before_each hook failed (forced): %v", err))
 	}
 
-	installer, err := s.getInstallerForProfile(ctx, game, profileName)
-	if err != nil {
-		return result, err
-	}
-	if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
-		// Non-fatal - files may have been manually removed. Always
-		// recorded; the historical "Warning: " prefix is baked into the
-		// text itself (see UninstallResult's doc comment).
-		result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))
-	}
-
-	if !opts.KeepCache {
-		if err := s.GetGameCache(game).Delete(game.ID, mod.SourceID, modID, mod.Version); err != nil {
-			result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
+	// #269: an external mod's uninstall is tracking-only. lmm deployed
+	// nothing to undeploy and cached nothing to delete, and reaching for
+	// either would be reaching into a directory the Steam client owns.
+	if !mod.External {
+		installer, err := s.getInstallerForProfile(ctx, game, profileName)
+		if err != nil {
+			return result, err
 		}
+		if err := installer.Uninstall(ctx, game, &mod.Mod, profileName); err != nil {
+			// Non-fatal - files may have been manually removed. Always
+			// recorded; the historical "Warning: " prefix is baked into the
+			// text itself (see UninstallResult's doc comment).
+			result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to undeploy some files: %v", err))
+		}
+
+		if !opts.KeepCache {
+			if err := s.GetGameCache(game).Delete(game.ID, mod.SourceID, modID, mod.Version); err != nil {
+				result.Notes = append(result.Notes, fmt.Sprintf("Warning: failed to clean cache: %v", err))
+			}
+		}
+	} else {
+		result.Notes = append(result.Notes, "Note: "+UninstallExternalNote)
 	}
 
 	if err := s.deleteInstalledMod(ctx, mod.SourceID, modID, game.ID, profileName); err != nil {

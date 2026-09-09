@@ -22,6 +22,7 @@ import (
 // longer exists) fails the build.
 var detailsCoverage = map[string]string{
 	"core.ConflictError":          "TestReportError_JSON_ConflictError",
+	"core.ExternalModError":       "TestReportError_JSON_ExternalModError",
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
 	"core.GameSourceInUseError":   "TestReportError_JSON_GameSourceInUseError",
 	"core.GameSpecError":          "TestReportError_JSON_GameSpecError",

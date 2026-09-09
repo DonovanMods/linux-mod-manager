@@ -63,6 +63,13 @@ type InstalledDetail struct {
 	// all (not a merge-compile game, or no pak merge source) - distinct from
 	// a non-nil pointer to false, which means "applies, and is off".
 	ConvertPaks *bool `json:"convert_paks,omitempty"`
+
+	// External and ExternalPath mirror the installed row's own two fields
+	// (#269), so `lmm mod show` and the SPA's mod page can render
+	// "Managed by: Steam Workshop (<path>)" - and hide the deploy, disable,
+	// rollback and relink actions - without a second lookup.
+	External     bool   `json:"external,omitzero"`
+	ExternalPath string `json:"external_path,omitempty"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install
@@ -95,6 +102,8 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		Version:      installed.Version,
 		Profile:      profile,
 		UpdatePolicy: installed.UpdatePolicy,
+		External:     installed.External,
+		ExternalPath: installed.ExternalPath,
 	}
 	if game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, installed) {
 		v := installed.ConvertPaks
