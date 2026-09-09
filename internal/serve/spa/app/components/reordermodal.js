@@ -354,7 +354,8 @@ export function ReorderModal({ modal, state, actions }) {
             aria-hidden="true"
             style=${`left: ${ghostAt.x}px; top: ${ghostAt.y}px;`}
           >
-            <span class="reorder-row__handle">⠿</span>${" "}${modsByKey.get(dragKey)?.name}
+            <span class="reorder-row__handle">⠿</span
+            >${" "}${modsByKey.get(dragKey)?.name}
           </div>
         `
       }

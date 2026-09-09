@@ -30,10 +30,8 @@ export function AddModsMenu({ route, actions }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
-  useDismissOnOutsideOrEscape(
-    ref,
-    open ? "add-mods" : null,
-    () => setOpen(false),
+  useDismissOnOutsideOrEscape(ref, open ? "add-mods" : null, () =>
+    setOpen(false),
   );
 
   function pick(run) {
