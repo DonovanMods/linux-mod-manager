@@ -269,6 +269,37 @@ func TestExternal_ProfileSwitch_LeavesSteamAloneAndSaysSo(t *testing.T) {
 
 // --- Row: conflicts ---
 
+// The §2 table names sync alongside switch and apply. No rule is needed
+// here - the buckets are empty by construction - but nothing pinned that,
+// and "inert for three separate reasons" is exactly the kind of claim that
+// stops being true silently.
+func TestExternal_ProfileSync_LeavesExternalRefsAlone(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := externalTestGame(t)
+	seedNamedInstalledMod(t, svc, game, "src", "1", "Managed Mod", "1.0", true, map[string][]byte{"one.esp": []byte("1")})
+	seedProfileWithMod(t, svc, game.ID, "default", "src", "1", "1.0")
+	seedExternalMod(t, svc, game, "default", "3617086610", "Workshop Item")
+	ctx := context.Background()
+
+	plan, err := svc.PlanProfileSync(ctx, game, "default")
+	require.NoError(t, err)
+	assert.True(t, plan.NoChanges,
+		"an external row is enabled, already ref'd by adopt, and carries no FileIDs")
+	assert.Empty(t, plan.ToAdd)
+	assert.Empty(t, plan.ToRemove)
+	assert.Empty(t, plan.ToUpdate)
+
+	// And a sync of a profile that LOST the ref restores it rather than
+	// dropping the mod: the DB row is the source of truth here, external or
+	// not, and lmm's tracking is the only thing a sync can move.
+	require.NoError(t, svc.NewProfileManager().RemoveMod(ctx, game.ID, "default", "steamworkshop", "3617086610"))
+	plan, err = svc.PlanProfileSync(ctx, game, "default")
+	require.NoError(t, err)
+	require.Len(t, plan.ToAdd, 1)
+	assert.Equal(t, "3617086610", plan.ToAdd[0].ModID)
+	assert.Empty(t, plan.ToRemove)
+}
+
 func TestExternal_Conflicts_NeverIncludeAnExternalMod(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := externalTestGame(t)

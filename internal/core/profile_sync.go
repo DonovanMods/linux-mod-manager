@@ -150,6 +150,13 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		profileRefs[domain.ModKey(mr.SourceID, mr.ModID)] = mr
 	}
 
+	// #269: no external rule is needed here, and that is a fact worth
+	// stating rather than an omission. A sync moves lmm's TRACKING to match
+	// the DB, never a file; an external row is Enabled, had its ref written
+	// at adopt, and carries no FileIDs, so all three buckets below stay
+	// empty for it. A profile that somehow lost the ref gets it back, which
+	// is the right answer for a tracked-only mod too - see
+	// TestExternal_ProfileSync_LeavesExternalRefsAlone.
 	plan := &ProfileSyncPlan{GameID: game.ID, Profile: profileName, Missing: missing, Names: map[string]string{}}
 
 	for _, im := range installedMods {
