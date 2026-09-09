@@ -636,6 +636,7 @@ async function openPlan({
   title,
   confirmLabel,
   options,
+  applyOptions,
   onConfirmed,
   openerSelector,
 }) {
@@ -676,6 +677,12 @@ async function openPlan({
     confirmLabel,
     seq,
     options,
+    // applyOptions is normally undefined at open time and filled in by the
+    // renderer's own controls (setPlanOptions). It is carried HERE for
+    // replanWith (below), which re-opens the same plan with a changed
+    // plan-time option and must not throw away an apply-time choice the
+    // user already made in the same modal.
+    applyOptions,
     onConfirmed,
     openerSelector,
   };
@@ -696,6 +703,37 @@ async function openPlan({
     if (modalSeq !== seq) return;
     store.set({ modal: { ...base, status: "error", ...describe(err) } });
   }
+}
+
+/**
+ * replanWith re-computes the OPEN plan with one plan-time option changed
+ * (C-3, epic live review).
+ *
+ * A plan-time option is one that changes what the plan SAYS - install's
+ * show_archived and no_deps, uninstall's keep_cache, deploy's link method.
+ * Patching it locally would leave the preview on screen describing a
+ * mutation other than the one Confirm submits, which is the exact dishonesty
+ * the Plan/Apply split exists to prevent. So the modal re-plans: same kind,
+ * same origin, same words, a new plan.
+ *
+ * applyPatch moves an apply-time twin along with it, for the fields that
+ * live in both halves of a kind's request (kind_uninstall.go/kind_purge.go
+ * each take keep_cache/uninstall/skip_hooks twice - plan-time so the preview
+ * is honest, apply-time because the flow reads its own options).
+ */
+async function replanWith(planPatch, applyPatch) {
+  const modal = store.get().modal;
+  if (!modal || modal.type !== "plan") return;
+  await openPlan({
+    kind: modal.kind,
+    origin: modal.origin,
+    title: modal.title,
+    confirmLabel: modal.confirmLabel,
+    options: { ...(modal.options ?? {}), ...planPatch },
+    applyOptions: { ...(modal.applyOptions ?? {}), ...(applyPatch ?? {}) },
+    onConfirmed: modal.onConfirmed,
+    openerSelector: modal.openerSelector,
+  });
 }
 
 /** closeModal closes whatever the shared modal slot currently holds -
@@ -1441,6 +1479,7 @@ const actions = {
   closePlan: closeModal,
   confirmPlan,
   setPlanOptions,
+  replanWith,
   searchSources,
   searchPageGoTo,
   searchPageSetCategory,

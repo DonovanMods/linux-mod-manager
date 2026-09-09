@@ -5618,3 +5618,58 @@ func TestE2E_FullModPageCarriesEverythingTheSlideOverDoes(t *testing.T) {
 	require.GreaterOrEqual(t, idx, 0)
 	assert.True(t, list.Mods[idx].Locked, "the lock the page rendered must have reached the database")
 }
+
+// TestE2E_AdvancedOptionsReachTheFlow is C-3's option half.
+//
+// Every flag in this scenario has been on the wire since the unit that
+// landed its kind; nothing in the SPA ever set one, so `--keep-cache`,
+// `--show-archived`, `--no-deps`, `--no-hooks`, `--force` and
+// `deploy --method/--purge/<mod-id>` were CLI-only in practice while the
+// design's Scope claims full bidirectional parity.
+//
+// Both halves are driven, because they behave differently by construction:
+// a PLAN-time option re-computes the plan (so the preview cannot describe
+// one mutation while Confirm submits another), and an APPLY-time one is a
+// local patch on a plan already computed. The assertions are on the END
+// STATE - what is on disk and in the cache afterwards - not on the request.
+func TestE2E_AdvancedOptionsReachTheFlow(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	// --- APPLY-time, and a PLAN-time twin: uninstall --keep-cache. ---
+	// keep_cache rides both halves (kind_uninstall.go takes it twice), so
+	// the preview's own sentence about the cache has to move with it.
+	var noteBefore, noteAfter string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll(".slide-over__actions button")).find((b) => b.textContent.trim() === "Uninstall").click()`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
+		textContent(`[data-testid="uninstall-cache-note"]`, &noteBefore),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		chromedp.Click(`.modal input[name="keep_cache"]`, chromedp.ByQuery),
+		// The re-plan is the assertion: the preview's cache sentence flips
+		// because the SERVER recomputed it, not because the client edited
+		// a string.
+		chromedp.Poll(`document.querySelector('[data-testid="uninstall-cache-note"]')?.textContent.includes("kept")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(`[data-testid="uninstall-cache-note"]`, &noteAfter),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.Contains(t, noteBefore, "deleted", "the default preview says the cache goes too")
+	assert.Contains(t, noteAfter, "kept", "and the re-planned one says it stays")
+
+	require.Eventually(t, func() bool {
+		list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+		return err == nil && !slices.ContainsFunc(list.Mods, func(m core.ModListing) bool {
+			return m.ID == "a"
+		})
+	}, 10*time.Second, 100*time.Millisecond, "the uninstall must actually have run")
+
+	assert.True(t, f.Svc.GetGameCache(f.Game).Exists(f.Game.ID, "fake", "a", "1.0"),
+		"--keep-cache must have kept the cached download the default would have deleted")
+	assert.Empty(t, f.BrowserErrors())
+}

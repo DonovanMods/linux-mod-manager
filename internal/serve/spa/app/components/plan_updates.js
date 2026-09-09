@@ -21,6 +21,7 @@
 
 import { html } from "../render.js";
 import { lockedNote, modKey } from "../modrows.js";
+import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** rowKey identifies one UpdateBatchPlan row - the same "source:id" key
  * the plan's own request/mods took, and NotFound already reports in. */
@@ -121,6 +122,23 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
           </section>
         `
       }
+
+      <${PlanAdvanced}>
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
     </div>
   `;
 }

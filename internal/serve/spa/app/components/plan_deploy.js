@@ -8,9 +8,15 @@
 // put those on screen in the order a user decides by.
 
 import { html } from "../render.js";
+import {
+  PlanAdvanced,
+  PlanOption,
+  PlanSelect,
+  ApplyOption,
+} from "./planoptions.js";
 
 /** DeployPlanView renders core.DeployPlan (internal/core/deploy.go). */
-export function DeployPlanView({ plan }) {
+export function DeployPlanView({ plan, modal, actions }) {
   const mods = plan.mods ?? [];
   const purge = plan.purge ?? [];
   const hooks = plan.hooks ?? [];
@@ -114,6 +120,71 @@ export function DeployPlanView({ plan }) {
           </section>
         `
       }
+
+      <${PlanAdvanced}>
+        <${PlanSelect}
+          modal=${modal}
+          actions=${actions}
+          name="deploy-mod"
+          label="Only this mod"
+          hint="lmm deploy <mod-id>. The whole profile, unless you narrow it."
+          value=${modal?.options?.mod_id ?? ""}
+          options=${{
+            entries: [
+              { value: "", label: "The whole profile" },
+              ...mods.map((m) => ({
+                value: `${m.ref.source_id}/${m.ref.mod_id}`,
+                label: m.name,
+              })),
+            ],
+            // mod_id and source_id are two fields of one choice, so they
+            // are always written together - clearing the select has to
+            // clear BOTH, or the next plan would carry half an answer.
+            patch: (v) => {
+              const [sourceID, modID] = v.split("/");
+              return { source_id: sourceID ?? "", mod_id: modID ?? "" };
+            },
+          }}
+        />
+        <${PlanSelect}
+          modal=${modal}
+          actions=${actions}
+          name="link_method"
+          label="Link method"
+          hint="lmm deploy --method. The game's own setting, unless you override it."
+          value=${modal?.options?.link_method ?? ""}
+          options=${{
+            entries: [
+              { value: "", label: "The game's setting" },
+              { value: "symlink", label: "symlink" },
+              { value: "hardlink", label: "hardlink" },
+              { value: "copy", label: "copy" },
+            ],
+            patch: (v) => ({ link_method: v }),
+          }}
+        />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="purge"
+          label="Purge the game directory first"
+          hint="lmm deploy --purge. The list above updates to match."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks. Apply-time only, so the list above still shows what would otherwise run."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm deploy --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
     </div>
   `;
 }

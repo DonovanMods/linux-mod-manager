@@ -18,9 +18,10 @@
 // install's own conflict round trip works.
 
 import { html } from "../render.js";
+import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** ImportArchivePlanView renders core.ImportArchivePlan (internal/core/import_archive.go). */
-export function ImportArchivePlanView({ plan }) {
+export function ImportArchivePlanView({ plan, modal, actions }) {
   const conflicts = plan.conflicts ?? [];
   const warnings = plan.warnings ?? [];
   const hooks = plan.hooks ?? [];
@@ -118,6 +119,23 @@ export function ImportArchivePlanView({ plan }) {
           </section>
         `
       }
+
+      <${PlanAdvanced}>
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm import --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
     </div>
   `;
 }
