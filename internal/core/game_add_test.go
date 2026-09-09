@@ -388,9 +388,9 @@ func TestGameDetectListing_MarksAlreadyConfigured(t *testing.T) {
 	}))
 
 	listing, err := svc.GameDetectListing(context.Background(), []domain.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim"},
-		{Slug: "valheim", Name: "Valheim", InstallPath: "/games/valheim"},
-	}, []string{"a library was unreadable"})
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", Known: true},
+		{Slug: "valheim", Name: "Valheim", InstallPath: "/games/valheim", Known: true},
+	}, []string{"a library was unreadable"}, core.GameDetectListingOptions{})
 	require.NoError(t, err)
 
 	require.Len(t, listing.Games, 2)
@@ -405,7 +405,7 @@ func TestGameDetectListing_MarksAlreadyConfigured(t *testing.T) {
 // a well-formed document with an empty (never null) game list.
 func TestGameDetectListing_EmptyScan(t *testing.T) {
 	svc := newGameAddService(t)
-	listing, err := svc.GameDetectListing(context.Background(), nil, nil)
+	listing, err := svc.GameDetectListing(context.Background(), nil, nil, core.GameDetectListingOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, listing.Games)
 	assert.NotNil(t, listing.Games)
@@ -415,9 +415,9 @@ func TestGameDetectListing_EmptyScan(t *testing.T) {
 // share: a 1-based index into the listing, or a slug.
 func TestSelectDetectedGames(t *testing.T) {
 	games := []domain.DetectedGame{
-		{Slug: "skyrim-se", Name: "Skyrim"},
-		{Slug: "valheim", Name: "Valheim"},
-		{Slug: "icarus", Name: "Icarus"},
+		{Slug: "skyrim-se", Name: "Skyrim", Known: true},
+		{Slug: "valheim", Name: "Valheim", Known: true},
+		{Slug: "icarus", Name: "Icarus", Known: true},
 	}
 
 	got, err := core.SelectDetectedGames(games, []string{"2", "icarus"})
@@ -431,7 +431,7 @@ func TestSelectDetectedGames(t *testing.T) {
 // selection, an out-of-range index, an unknown slug, and a duplicate (which
 // would apply the same overwrite twice).
 func TestSelectDetectedGames_Rejections(t *testing.T) {
-	games := []domain.DetectedGame{{Slug: "skyrim-se", Name: "Skyrim"}}
+	games := []domain.DetectedGame{{Slug: "skyrim-se", Name: "Skyrim", Known: true}}
 
 	for _, sel := range [][]string{nil, {"0"}, {"2"}, {"nope"}, {"1", "skyrim-se"}} {
 		_, err := core.SelectDetectedGames(games, sel)
@@ -443,4 +443,305 @@ func TestSelectDetectedGames_Rejections(t *testing.T) {
 	_, err := core.SelectDetectedGames(nil, []string{"1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no games were detected")
+}
+
+// TestSelectDetectedGames_NumericSelectionWithNoKnownRows pins Minor 7 of
+// the #206 review: a scan with installed games but ZERO known rows (all
+// unknown) hit the generic "use 1-0" range message, which is not a range
+// and buries the real answer - nothing here is selectable by number at
+// all.
+func TestSelectDetectedGames_NumericSelectionWithNoKnownRows(t *testing.T) {
+	games := []domain.DetectedGame{{Slug: "satisfactory", Name: "Satisfactory"}}
+
+	_, err := core.SelectDetectedGames(games, []string{"1"})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "use 1-0")
+	assert.ErrorIs(t, err, core.ErrUnknownDetectedGame)
+	// #206 review Minor 7: this error is only ever reached via `lmm serve`
+	// today (the CLI's own interactive flow never calls SelectDetectedGames),
+	// so a CLI command baked into the core message would be wrong for the
+	// browser user actually reading it.
+	assert.NotContains(t, err.Error(), "lmm game add",
+		"the core message must not name a specific CLI command")
+}
+
+// --- #206: prefilling an add from an installed game ---
+
+// detectedSkyrim is the curated candidate app.DetectGames produces for a
+// known game: slug, mod path, nexus id and Known all supplied by the
+// known-games entry.
+func detectedSkyrim(install string) domain.DetectedGame {
+	return domain.DetectedGame{
+		SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+		InstallPath: install, ModPath: filepath.Join(install, "Data"),
+		NexusID: "skyrimspecialedition", Known: true,
+	}
+}
+
+// TestGameSpecFromDetected_KnownGame pins the whole prefill for a curated
+// candidate: nothing is left for the caller to type.
+func TestGameSpecFromDetected_KnownGame(t *testing.T) {
+	install := t.TempDir()
+	spec := core.GameSpecFromDetected(detectedSkyrim(install), core.GameSpec{})
+
+	assert.Equal(t, "Skyrim Special Edition", spec.Name)
+	assert.Equal(t, "skyrim-se", spec.ID)
+	assert.Equal(t, install, spec.InstallPath)
+	assert.Equal(t, filepath.Join(install, "Data"), spec.ModPath)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, spec.Sources)
+}
+
+// TestGameSpecFromDetected_KnownGameWithSourceMap pins #177's multi-source
+// shape surviving the prefill: the known entry's own map wins over the
+// derived {nexusmods: nexus_id}, so `game add --from-detected` reproduces
+// exactly the games.yaml block `game detect` writes.
+func TestGameSpecFromDetected_KnownGameWithSourceMap(t *testing.T) {
+	install := t.TempDir()
+	spec := core.GameSpecFromDetected(domain.DetectedGame{
+		SteamAppID: "1149460", Slug: "icarus", Name: "Icarus",
+		InstallPath: install, ModPath: filepath.Join(install, "Icarus", "Content", "Paks", "mods"),
+		DeployMode: "compile", Sources: map[string]string{"icarus": "icarus"}, Known: true,
+	}, core.GameSpec{})
+
+	assert.Equal(t, map[string]string{"icarus": "icarus"}, spec.Sources)
+	assert.Equal(t, "compile", spec.DeployMode)
+}
+
+// TestGameSpecFromDetected_UnknownGame pins the defaults an uncurated
+// candidate needs: the derived slug becomes the game id, and the mod path
+// - which detection deliberately left empty - defaults to <install>/mods,
+// the same default core has always applied to a bare `game add`.
+func TestGameSpecFromDetected_UnknownGame(t *testing.T) {
+	install := t.TempDir()
+	spec := core.GameSpecFromDetected(domain.DetectedGame{
+		SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: install,
+	}, core.GameSpec{SourceID: "nexusmods", Identifier: "satisfactory"})
+
+	assert.Equal(t, "Satisfactory", spec.Name)
+	assert.Equal(t, "satisfactory", spec.ID)
+	assert.Equal(t, install, spec.InstallPath)
+	assert.Equal(t, filepath.Join(install, "mods"), spec.ModPath)
+	assert.Equal(t, "nexusmods", spec.SourceID)
+	assert.Equal(t, "satisfactory", spec.Identifier)
+	assert.Empty(t, spec.Sources)
+}
+
+// TestGameSpecFromDetected_OverridesWin pins the rule the CLI's flags and
+// the web form both rely on: anything the caller supplied beats the
+// candidate, field by field.
+func TestGameSpecFromDetected_OverridesWin(t *testing.T) {
+	install, otherInstall, mods := t.TempDir(), t.TempDir(), t.TempDir()
+	spec := core.GameSpecFromDetected(detectedSkyrim(install), core.GameSpec{
+		Name: "My Skyrim", ID: "skyrim-modded", InstallPath: otherInstall, ModPath: mods,
+		SourceID: "curseforge", Identifier: "432", LinkMethod: domain.LinkHardlink,
+	})
+
+	assert.Equal(t, "My Skyrim", spec.Name)
+	assert.Equal(t, "skyrim-modded", spec.ID)
+	assert.Equal(t, otherInstall, spec.InstallPath)
+	assert.Equal(t, mods, spec.ModPath)
+	assert.Equal(t, domain.LinkHardlink, spec.LinkMethod)
+	// The curated map is still the base - an explicit source is ADDED to
+	// it, never a silent replacement that drops what detection knew.
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, spec.Sources)
+	assert.Equal(t, "curseforge", spec.SourceID)
+}
+
+// TestAddGame_FromDetectedKnownGame is the end-to-end claim: a prefilled
+// spec writes the same games.yaml entry `lmm game detect` would have.
+func TestAddGame_FromDetectedKnownGame(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+
+	entry, err := svc.AddGame(context.Background(), core.GameSpecFromDetected(detectedSkyrim(install), core.GameSpec{}))
+	require.NoError(t, err)
+	assert.Equal(t, "skyrim-se", entry.ID)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, entry.SourceIDs)
+	assert.Equal(t, filepath.Join(install, "Data"), entry.ModPath)
+}
+
+// TestAddGame_FromDetectedIcarusPersistsDeployModeCompile is the end-to-end
+// claim Minor 4 of the #206 review found unguarded: GameSpec.DeployMode
+// (judgement call (b), outside the brief's field list but required for
+// correctness) must actually reach the games.yaml `deploy_mode` a
+// from-detected Icarus is configured with, not just the intermediate
+// GameSpec TestGameSpecFromDetected_KnownGameWithSourceMap already pins.
+func TestAddGame_FromDetectedIcarusPersistsDeployModeCompile(t *testing.T) {
+	svc := newGameAddService(t)
+	svc.RegisterSource(&catalogLessSource{id: "icarus", name: "Icarus"})
+	install := t.TempDir()
+
+	detected := domain.DetectedGame{
+		SteamAppID: "1149460", Slug: "icarus", Name: "Icarus",
+		InstallPath: install, ModPath: filepath.Join(install, "Icarus", "Content", "Paks", "mods"),
+		DeployMode: "compile", Sources: map[string]string{"icarus": "icarus"}, Known: true,
+	}
+	_, err := svc.AddGame(context.Background(), core.GameSpecFromDetected(detected, core.GameSpec{}))
+	require.NoError(t, err)
+
+	games, err := config.LoadGames(svc.ConfigDir())
+	require.NoError(t, err)
+	require.Contains(t, games, "icarus")
+	assert.Equal(t, domain.DeployCompile, games["icarus"].DeployMode)
+}
+
+// TestAddGame_SourcesMapAndExplicitSourceMerge pins spec.Sources as the
+// base an explicit SourceID/Identifier is layered onto, which is how a
+// curated multi-source game gains a second source in one add.
+func TestAddGame_SourcesMapAndExplicitSourceMerge(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+
+	entry, err := svc.AddGame(context.Background(), core.GameSpec{
+		Sources:  map[string]string{"nexusmods": "skyrimspecialedition"},
+		SourceID: "curseforge", Identifier: "432",
+		Name: "Skyrim", ID: "skyrim-se", InstallPath: install,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition", "curseforge": "432"}, entry.SourceIDs)
+}
+
+// TestAddGame_SourcesMapAlone pins that a spec carrying only a source MAP
+// (the curated prefill's shape) is complete - no SourceID/Identifier pair
+// is required on top of it.
+func TestAddGame_SourcesMapAlone(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+
+	entry, err := svc.AddGame(context.Background(), core.GameSpec{
+		Sources: map[string]string{"nexusmods": "acme"}, Name: "Acme", ID: "acme", InstallPath: install,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "acme"}, entry.SourceIDs)
+}
+
+// TestAddGame_SourcesMapUnregisteredSource refuses a map naming a source
+// that is not registered, the same way an unregistered --source is
+// refused - and names the "sources" field so a form marks the row.
+func TestAddGame_SourcesMapUnregisteredSource(t *testing.T) {
+	svc := newGameAddService(t)
+
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		Sources: map[string]string{"nope": "acme"}, Name: "Acme", ID: "acme", InstallPath: t.TempDir(),
+	})
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "sources", specErr.Field)
+}
+
+// TestAddGame_InvalidDeployMode fails loud rather than silently defaulting
+// to extract, the rule #172 set for the same value in steam-games.yaml.
+func TestAddGame_InvalidDeployMode(t *testing.T) {
+	svc := newGameAddService(t)
+
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "nexusmods", Identifier: "acme", Name: "Acme", InstallPath: t.TempDir(),
+		DeployMode: "teleport",
+	})
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "deploy_mode", specErr.Field)
+	assert.True(t, errors.Is(err, domain.ErrInvalidDeployMode))
+}
+
+// TestFindDetectedGame resolves the Steam app id both frontends take
+// (--from-detected, from_steam_app_id) against a scan, and names the field
+// on the miss so a web form can mark the offending input.
+func TestFindDetectedGame(t *testing.T) {
+	games := []domain.DetectedGame{{SteamAppID: "489830", Slug: "skyrim-se"}, {SteamAppID: "526870", Slug: "satisfactory"}}
+
+	got, err := core.FindDetectedGame(games, "526870")
+	require.NoError(t, err)
+	assert.Equal(t, "satisfactory", got.Slug)
+
+	_, err = core.FindDetectedGame(games, "1")
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "from_steam_app_id", specErr.Field)
+	assert.Equal(t, "1", specErr.Value)
+	// #206 review Minor 7: the reason must stay frontend-neutral - both
+	// callers already scan with IncludeUnknown:true before reaching here,
+	// so telling either of them to rescan wider would not even help (the
+	// app id genuinely is not installed, or was uninstalled since the
+	// scan). The SPA's own stale-scan banner sits directly beside its own
+	// Rescan button, which said the same CLI-flavored thing redundantly.
+	assert.NotContains(t, specErr.Reason, "detect scan",
+		"the core message must not tell either frontend to run a specific command")
+}
+
+// TestExactGameCatalogMatch is the auto-pick rule: a catalog search by the
+// detected game's NAME resolves itself only when exactly one match carries
+// that same name. Anything else - several matches, a near miss, two
+// entries sharing the name - is the caller's pick to make.
+func TestExactGameCatalogMatch(t *testing.T) {
+	report := &core.GameCatalogReport{Matches: []core.GameCatalogMatch{
+		{Identifier: "432", Name: "Minecraft"},
+		{Identifier: "78022", Name: "Minecraft Dungeons"},
+	}}
+	m := core.ExactGameCatalogMatch(report, "  minecraft ")
+	require.NotNil(t, m)
+	assert.Equal(t, "432", m.Identifier)
+
+	assert.Nil(t, core.ExactGameCatalogMatch(report, "Minecraft: Java Edition"))
+	assert.Nil(t, core.ExactGameCatalogMatch(report, ""))
+	assert.Nil(t, core.ExactGameCatalogMatch(nil, "Minecraft"))
+	assert.Nil(t, core.ExactGameCatalogMatch(&core.GameCatalogReport{Matches: []core.GameCatalogMatch{
+		{Identifier: "1", Name: "Twin"}, {Identifier: "2", Name: "twin"},
+	}}, "Twin"), "two entries sharing the name is ambiguous, not an auto-pick")
+}
+
+// TestGameDetectListing_UnknownRows pins the listing's #206 shape: unknown
+// rows appear only when asked for, carry no `known` member at all (never a
+// literal false), and - crucially - carry NO index, because a detect
+// selection cannot name them. The known
+// rows' numbering is identical either way, so an index means the same row
+// whether or not the caller asked for the wider list.
+func TestGameDetectListing_UnknownRows(t *testing.T) {
+	svc := newGameAddService(t)
+	scan := []domain.DetectedGame{
+		{Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/sf"},
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", Known: true},
+		{Slug: "hades", Name: "Hades", InstallPath: "/games/hades"},
+		{Slug: "icarus", Name: "Icarus", InstallPath: "/games/icarus", Known: true},
+	}
+
+	knownOnly, err := svc.GameDetectListing(context.Background(), scan, nil, core.GameDetectListingOptions{})
+	require.NoError(t, err)
+	require.Len(t, knownOnly.Games, 2)
+	assert.Equal(t, []int{1, 2}, []int{knownOnly.Games[0].Index, knownOnly.Games[1].Index})
+
+	all, err := svc.GameDetectListing(context.Background(), scan, nil, core.GameDetectListingOptions{IncludeUnknown: true})
+	require.NoError(t, err)
+	require.Len(t, all.Games, 4)
+	assert.Equal(t, 0, all.Games[0].Index, "an unknown row is not selectable, so it has no index")
+	assert.False(t, all.Games[0].Known)
+	assert.Equal(t, 1, all.Games[1].Index)
+	assert.True(t, all.Games[1].Known)
+	assert.Equal(t, 0, all.Games[2].Index)
+	assert.Equal(t, 2, all.Games[3].Index, "known numbering must not shift when unknown rows join")
+}
+
+// TestSelectDetectedGames_RefusesUnknown: a detect selection configures a
+// game from its curated entry, and an unknown candidate has none - no mod
+// path, no sources. Naming one is refused with the sentinel both frontends
+// branch on to point at the from-detected add flow instead.
+func TestSelectDetectedGames_RefusesUnknown(t *testing.T) {
+	games := []domain.DetectedGame{
+		{SteamAppID: "489830", Slug: "skyrim-se", Known: true},
+		{SteamAppID: "526870", Slug: "satisfactory"},
+	}
+
+	_, err := core.SelectDetectedGames(games, []string{"satisfactory"})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, core.ErrUnknownDetectedGame))
+	assert.Contains(t, err.Error(), "526870")
+
+	// Indices still count known rows only, so "1" is Skyrim either way.
+	got, err := core.SelectDetectedGames(games, []string{"1"})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "skyrim-se", got[0].Slug)
 }

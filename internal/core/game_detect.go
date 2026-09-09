@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -48,6 +50,90 @@ func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
 		LinkMethod:  domain.LinkSymlink,
 		DeployMode:  deployMode,
 	}, nil
+}
+
+// GameSpecFromDetected prefills a GameSpec from one detected candidate,
+// with overrides winning field by field - #206's "if the user already has
+// the game installed, lmm should fill in most of the add-game fields
+// automatically". It is PURE: no service, no scan, no I/O, so the CLI's
+// `game add --from-detected` and POST /api/v1/games' from_steam_app_id
+// prefill identically and a frontend never re-derives a slug, a mod path
+// or a source map of its own.
+//
+// The rules, in the order a caller will care about them:
+//
+//   - Name, InstallPath, ID (from the candidate's slug) and DeployMode come
+//     from the candidate unless the caller supplied them.
+//   - ModPath comes from the candidate when detection knew one (a curated
+//     entry's mod_path, already joined onto the install path). An UNKNOWN
+//     candidate has none - detection deliberately refuses to guess - so
+//     this defaults it to <install>/mods, exactly the default a bare `game
+//     add` has always applied. A frontend showing that value should say it
+//     is a guess; core cannot tell the user that, but AddGame will not
+//     create the directory either way.
+//   - Sources: the candidate's own map when it has one (#177's Icarus),
+//     else {nexusmods: <nexus_id>} when it has that, else nothing - which
+//     is the unknown case, where the caller's SourceID/Identifier is the
+//     only mapping there is. An explicit SourceID is layered ON TOP of the
+//     curated map by AddGame rather than replacing it, so naming a source
+//     for an already-curated game ADDS it instead of silently dropping
+//     what detection knew.
+//   - LinkMethod is passed through untouched; its zero value already means
+//     symlink.
+func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
+	spec := overrides
+	if spec.Name == "" {
+		spec.Name = d.Name
+	}
+	if spec.ID == "" {
+		spec.ID = d.Slug
+	}
+	if spec.InstallPath == "" {
+		spec.InstallPath = d.InstallPath
+	}
+	if spec.ModPath == "" {
+		spec.ModPath = d.ModPath
+	}
+	if spec.ModPath == "" && spec.InstallPath != "" {
+		spec.ModPath = filepath.Join(spec.InstallPath, "mods")
+	}
+	if spec.DeployMode == "" {
+		spec.DeployMode = d.DeployMode
+	}
+	if len(spec.Sources) == 0 {
+		switch {
+		case len(d.Sources) > 0:
+			spec.Sources = maps.Clone(d.Sources)
+		case d.NexusID != "":
+			spec.Sources = map[string]string{"nexusmods": d.NexusID}
+		}
+	}
+	return spec
+}
+
+// FindDetectedGame resolves a Steam app id against a scan - the value
+// `lmm game add --from-detected` takes and POST /api/v1/games carries as
+// from_steam_app_id. The miss is a GameSpecError naming that wire field,
+// so a web form marks the offending input and the CLI prints a sentence
+// that names the app id it could not find.
+//
+// The reason is deliberately frontend-neutral (#206 review Minor 7): both
+// callers already scan with IncludeUnknown:true before reaching this
+// point, so a miss here means the app id genuinely is not installed, or
+// was uninstalled between an earlier scan and this one - not merely that
+// the caller scanned too narrowly. A frontend that has something more
+// specific to offer (the SPA's stale-scan banner sits beside its own
+// Rescan button) says so itself, rather than getting a baked-in CLI-shaped
+// suggestion in every response.
+func FindDetectedGame(games []domain.DetectedGame, appID string) (domain.DetectedGame, error) {
+	appID = strings.TrimSpace(appID)
+	for _, g := range games {
+		if g.SteamAppID == appID {
+			return g, nil
+		}
+	}
+	return domain.DetectedGame{}, newGameSpecError("from_steam_app_id", appID,
+		"no installed Steam game has that app id - it may have been uninstalled since the scan")
 }
 
 // GameDetectResult is ApplyGameDetect's outcome: which games were written
@@ -125,8 +211,28 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 // the documented repair path - so this is advisory, not a filter.
 type GameDetectEntry struct {
 	domain.DetectedGame
+	// Index is the 1-based number a selection names, counted over the
+	// KNOWN rows only. An unknown row (#206) carries 0: a detect selection
+	// configures a game from its curated entry, and an unknown candidate
+	// has none, so there is no number that could name it. 0 is therefore
+	// "not selectable here - add it with `lmm game add --from-detected
+	// <steam_app_id>`, or POST /api/v1/games with from_steam_app_id".
+	//
+	// Counting known rows only is what makes an index mean the same row
+	// whether or not the caller asked for unknown rows: adding them to the
+	// document must never renumber the ones a selection can name.
 	Index             int  `json:"index"`
 	AlreadyConfigured bool `json:"already_configured,omitzero"`
+}
+
+// GameDetectListingOptions tunes the listing document (#206).
+type GameDetectListingOptions struct {
+	// IncludeUnknown keeps the scan's unknown candidates (no `known` member
+	// at all - never a literal false) in the document. Off by default, so a
+	// caller that scanned wide can
+	// still render exactly today's known-only listing, and a caller that
+	// never asked for unknown rows cannot accidentally publish them.
+	IncludeUnknown bool
 }
 
 // GameDetectListing is the document a detect scan produces BEFORE anything
@@ -154,7 +260,7 @@ type GameDetectListing struct {
 // rather than the Service's in-memory set, matching what `lmm game detect`
 // has always done: the listing must reflect the file a concurrent `game
 // add` may have just written.
-func (s *Service) GameDetectListing(ctx context.Context, games []domain.DetectedGame, warnings []string) (*GameDetectListing, error) {
+func (s *Service) GameDetectListing(ctx context.Context, games []domain.DetectedGame, warnings []string, opts GameDetectListingOptions) (*GameDetectListing, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -164,14 +270,34 @@ func (s *Service) GameDetectListing(ctx context.Context, games []domain.Detected
 	}
 
 	listing := &GameDetectListing{Games: make([]GameDetectEntry, 0, len(games)), Warnings: warnings}
-	for i, g := range games {
+	index := 0
+	for _, g := range games {
+		if !g.Known && !opts.IncludeUnknown {
+			continue
+		}
+		// Only a known row gets a number - see GameDetectEntry.Index.
+		if g.Known {
+			index++
+		}
 		_, configured := existing[g.Slug]
-		listing.Games = append(listing.Games, GameDetectEntry{
-			DetectedGame: g, Index: i + 1, AlreadyConfigured: configured,
-		})
+		entry := GameDetectEntry{DetectedGame: g, AlreadyConfigured: configured}
+		if g.Known {
+			entry.Index = index
+		}
+		listing.Games = append(listing.Games, entry)
 	}
 	return listing, nil
 }
+
+// ErrUnknownDetectedGame is returned by SelectDetectedGames when a
+// selection names a candidate that is installed but NOT in lmm's
+// known-games list (#206). Such a row has no curated mod path and no
+// sources, so ApplyGameDetect has nothing to write; the sanctioned path is
+// the from-detected add flow, which collects exactly those two values.
+// Typed because both frontends branch on it: the CLI points at `lmm game
+// add --from-detected`, and `lmm serve` answers 400 pointing at POST
+// /api/v1/games' from_steam_app_id.
+var ErrUnknownDetectedGame = errors.New("detected game is not in the known-games list")
 
 // SelectDetectedGames resolves a caller's selection against a detect
 // listing, in the order given, returning the detected games ApplyGameDetect
@@ -196,8 +322,16 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 		return nil, errors.New("no games were detected, so there is nothing to select")
 	}
 	bySlug := make(map[string]int, len(games))
+	// byIndex maps a 1-based selection number to its row. It counts the
+	// KNOWN rows only, exactly as GameDetectEntry.Index does, so a caller
+	// that listed with IncludeUnknown and one that did not name the same
+	// game with the same number.
+	byIndex := make([]int, 0, len(games))
 	for i, g := range games {
 		bySlug[strings.ToLower(g.Slug)] = i
+		if g.Known {
+			byIndex = append(byIndex, i)
+		}
 	}
 
 	seen := make(map[int]bool, len(selectors))
@@ -206,14 +340,30 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 		sel = strings.TrimSpace(sel)
 		var idx int
 		if n, err := strconv.Atoi(sel); err == nil {
-			if n < 1 || n > len(games) {
-				return nil, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(games))
+			if len(byIndex) == 0 {
+				// "use 1-0" is not a range; the scan found installed games,
+				// just none of them in the known-games list, so a numbered
+				// selection has nothing to count. ErrUnknownDetectedGame
+				// (not a bare string) so the caller - only `lmm serve`
+				// reaches this today - can append its OWN next step
+				// (api_games.go already does, for the per-row case below);
+				// a CLI command baked into the message here would be wrong
+				// wherever a browser is what actually shows it (#206 review
+				// Minor 7).
+				return nil, fmt.Errorf("%w: nothing in this selection is in the known-games list", ErrUnknownDetectedGame)
 			}
-			idx = n - 1
+			if n < 1 || n > len(byIndex) {
+				return nil, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(byIndex))
+			}
+			idx = byIndex[n-1]
 		} else if i, ok := bySlug[strings.ToLower(sel)]; ok {
 			idx = i
 		} else {
 			return nil, fmt.Errorf("invalid selection %q: no detected game with that index or slug", sel)
+		}
+		if !games[idx].Known {
+			return nil, fmt.Errorf("%w: %s (Steam app id %s) - it is installed, but nothing tells lmm where it keeps its mods, so it has to be added from the detected game with the source and mod path filled in",
+				ErrUnknownDetectedGame, games[idx].Slug, games[idx].SteamAppID)
 		}
 		if seen[idx] {
 			return nil, fmt.Errorf("duplicate selection %q", sel)

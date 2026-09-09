@@ -8,6 +8,7 @@ package serve_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,28 +178,38 @@ var (
 )
 
 // e2eSteamDetectFixture fakes exactly enough of a Steam install for
-// app.DetectGames (internal/source/steam) to find one moddable game: a
-// STEAM_ROOT env override (steam.FindSteamRoots' own seam) pointing at a
-// throwaway root with one appmanifest, plus a <configDir>/steam-games.yaml
-// override (steam.LoadKnownGames' own seam) naming a fake app id so the
+// app.DetectGames (internal/source/steam) to find one CURATED moddable
+// game plus one UNCURATED one (#206): a STEAM_ROOT env override
+// (steam.FindSteamRoots' own seam) pointing at a throwaway root with two
+// appmanifests, plus a <configDir>/steam-games.yaml override
+// (steam.LoadKnownGames' own seam) naming only the first app id, so the
 // scan needs no real Steam library or a genuine entry in the embedded
-// default list.
+// default list. The second app id has no known-games entry, matching what
+// TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick and its siblings
+// need: a real unknown row (domain.DetectedGame.Known == false, though the
+// wire never carries a literal `"known": false`) from a live scan, not a
+// hand-built one.
 type e2eSteamDetectFixture struct {
 	Slug string
 	Name string
+
+	UnknownAppID string
+	UnknownName  string
+	UnknownSlug  string
+
+	// SteamRoot is the fake root writeE2ESteamDetectFixture built - handed
+	// back so a stale-scan scenario can remove an appmanifest out from
+	// under a live server and prove a re-scan actually misses it, rather
+	// than asserting on a canned 400.
+	SteamRoot string
 }
 
-// writeE2ESteamDetectFixture wires the fake Steam root and known-games
-// override into configDir, and creates the "installed" game directory the
-// scan's os.Stat check requires.
-func writeE2ESteamDetectFixture(t *testing.T, configDir string) e2eSteamDetectFixture {
+// writeSteamAppManifest writes one appmanifest_<appID>.acf under steamRoot
+// and creates the install directory the scan's os.Stat check requires -
+// the one appmanifest-writing step writeE2ESteamDetectFixture repeats for
+// its curated and uncurated rows.
+func writeSteamAppManifest(t *testing.T, steamRoot, appID, installDir, name string) {
 	t.Helper()
-	const appID = "999999"
-	const installDir = "E2EDetectGame"
-	slug := "e2e-detect-game"
-	name := "E2E Detect Game"
-
-	steamRoot := t.TempDir()
 	steamapps := filepath.Join(steamRoot, "steamapps")
 	require.NoError(t, os.MkdirAll(filepath.Join(steamapps, "common", installDir), 0o755))
 	manifest := `"AppState"
@@ -209,6 +220,33 @@ func writeE2ESteamDetectFixture(t *testing.T, configDir string) e2eSteamDetectFi
 }
 `
 	require.NoError(t, os.WriteFile(filepath.Join(steamapps, "appmanifest_"+appID+".acf"), []byte(manifest), 0o644))
+}
+
+// writeE2ESteamDetectFixture wires the fake Steam root and known-games
+// override into configDir. The curated row (app 999999, "E2E Detect Game")
+// keeps its long-standing slug/mod_path so every existing scenario using
+// it is unaffected; the uncurated row (app 888888, "E2E Uncurated Game")
+// carries no known-games entry, so a live scan reports it with no `known`
+// member at all over the wire (Known == false on the Go struct) with an
+// empty mod_path and a slug DERIVED by the scan itself
+// (steam.deriveSlug) - not hand-computed here, so a change to that
+// derivation cannot silently desync this fixture from what the scan
+// actually returns.
+func writeE2ESteamDetectFixture(t *testing.T, configDir string) e2eSteamDetectFixture {
+	t.Helper()
+	const appID = "999999"
+	const installDir = "E2EDetectGame"
+	slug := "e2e-detect-game"
+	name := "E2E Detect Game"
+
+	const unknownAppID = "888888"
+	const unknownInstallDir = "E2EUncuratedGame"
+	unknownName := "E2E Uncurated Game"
+	unknownSlug := "e2e-uncurated-game"
+
+	steamRoot := t.TempDir()
+	writeSteamAppManifest(t, steamRoot, appID, installDir, name)
+	writeSteamAppManifest(t, steamRoot, unknownAppID, unknownInstallDir, unknownName)
 	t.Setenv("STEAM_ROOT", steamRoot)
 
 	override := appID + `:
@@ -219,13 +257,31 @@ func writeE2ESteamDetectFixture(t *testing.T, configDir string) e2eSteamDetectFi
 `
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "steam-games.yaml"), []byte(override), 0o644))
 
-	return e2eSteamDetectFixture{Slug: slug, Name: name}
+	return e2eSteamDetectFixture{
+		Slug: slug, Name: name,
+		UnknownAppID: unknownAppID, UnknownName: unknownName, UnknownSlug: unknownSlug,
+		SteamRoot: steamRoot,
+	}
+}
+
+// removeSteamAppManifest deletes one appmanifest from a fixture's fake
+// Steam root, so the NEXT scan (a live server re-scans on every request -
+// api_games.go's own rule, never trusting a client-supplied row) misses
+// that app id entirely - the "stale scan" case a picked row's own
+// from_steam_app_id can hit if the game is uninstalled between the scan
+// that offered it and the submit that names it.
+func removeSteamAppManifest(t *testing.T, steamRoot, appID string) {
+	t.Helper()
+	require.NoError(t, os.Remove(filepath.Join(steamRoot, "steamapps", "appmanifest_"+appID+".acf")))
 }
 
 // TestE2E_FirstRunDetect_AddsTheGameAndLandsOnMissionControl drives the
 // whole first-run detect flow: "/" with zero games renders the real setup
-// flow (not the old placeholder text), the scan finds the fake Steam game,
-// selecting it and confirming lands on that game's Mission Control.
+// flow (not the old placeholder text), the scan finds the fake Steam game -
+// widened by #206 to include an UNCURATED one alongside it - selecting the
+// curated row by its checkbox and confirming lands on that game's Mission
+// Control, exactly as it always has, with the uncurated row shown (not
+// hidden) beside it and carrying no checkbox of its own.
 func TestE2E_FirstRunDetect_AddsTheGameAndLandsOnMissionControl(t *testing.T) {
 	f := newE2EFixtureNoGames(t)
 	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
@@ -235,6 +291,23 @@ func TestE2E_FirstRunDetect_AddsTheGameAndLandsOnMissionControl(t *testing.T) {
 		chromedp.WaitVisible(`[data-testid="first-run-setup"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.setup-detect__row`, chromedp.ByQuery),
 	)
+
+	// #206: both rows must be present - the curated one checkable, the
+	// uncurated one shown with "Add with details…" and no checkbox at all.
+	var rowCount, checkboxCount, addDetailsCount int
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelectorAll('.setup-detect__row').length`, &rowCount),
+		chromedp.Evaluate(`document.querySelectorAll('.setup-detect__row input[type="checkbox"]').length`, &checkboxCount),
+		chromedp.Evaluate(`document.querySelectorAll('[data-action="add-with-details"]').length`, &addDetailsCount),
+	)
+	assert.Equal(t, 2, rowCount, "the curated and uncurated rows must both be listed")
+	assert.Equal(t, 1, checkboxCount, "only the curated row gets a checkbox")
+	assert.Equal(t, 1, addDetailsCount, "only the uncurated row gets Add with details…")
+
+	var knownBadgeCount int
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.querySelectorAll('.setup-detect__row .badge--policy').length`, &knownBadgeCount))
+	assert.Equal(t, 1, knownBadgeCount, "exactly the curated row is badged Known")
 
 	// First-run readiness item 9: the game name must get its own room
 	// (never wrap mid-word) and the path - the full value still available
@@ -261,6 +334,340 @@ func TestE2E_FirstRunDetect_AddsTheGameAndLandsOnMissionControl(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fixture.Name, got.Name)
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick drives #206's
+// headline flow: an uncurated Steam game's "Add with details…" opens the
+// manual add form prefilled from the scan, choosing a source auto-searches
+// its catalog by the game's own name and pre-selects the single exact-name
+// match WITHOUT submitting anything, and confirming lands on Mission
+// Control with the games.yaml row core actually derived (not one the SPA
+// invented) - a real from_steam_app_id round trip, not a canned response.
+func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+	cat := newE2EGameCatalogSource("catalogsrc")
+	cat.entries = []source.GameEntry{
+		{ID: "77", Name: fixture.UnknownName, Slug: "uncurated-catalog-slug"},
+		{ID: "78", Name: "Some Other Game", Slug: "some-other-game"},
+	}
+	f.Svc.RegisterSource(cat)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		// A fetch spy installed before anything else in the flow, so it
+		// catches every request end to end - the never-auto-submit
+		// assertion below counts POST /api/v1/games calls from this log
+		// rather than a point-in-time DOM check (unit9 review Minor 8: the
+		// old `stillOnForm` check passed even with a 50ms injected
+		// auto-submit, since it raced the injected click rather than
+		// proving it never happened).
+		chromedp.Evaluate(`
+			window.__gamePostCount = 0;
+			const origFetch = window.fetch;
+			window.fetch = (input, init) => {
+				const path = typeof input === "string" ? input : input.url;
+				const method = (init && init.method) || (input && input.method) || "GET";
+				if (path === "/api/v1/games" && method.toUpperCase() === "POST") {
+					window.__gamePostCount++;
+				}
+				return origFetch(input, init);
+			};
+		`, nil),
+		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="add-install-path-readonly"]`, chromedp.ByQuery),
+	)
+
+	// The form must show what the scan found - no editable install path,
+	// the detected name already in the Display name field - before the
+	// user has picked anything.
+	var installPathText, nameValue string
+	f.runInBrowser(t,
+		chromedp.Text(`[data-testid="add-install-path-readonly"]`, &installPathText, chromedp.ByQuery),
+		chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery),
+	)
+	assert.Contains(t, installPathText, "E2EUncuratedGame")
+	assert.Equal(t, fixture.UnknownName, nameValue)
+
+	f.runInBrowser(t, retrySetValue(`select[name="add-source"]`, "catalogsrc"))
+
+	// The auto-search runs on choosing the source (no Search click needed)
+	// and pre-selects the exact-name match - visible as the primary button
+	// - without submitting the form.
+	f.runInBrowser(t,
+		chromedp.WaitVisible(`.setup-add__matches button.button--primary`, chromedp.ByQuery),
+	)
+	var preselectedText string
+	f.runInBrowser(t, chromedp.Text(`.setup-add__matches button.button--primary`, &preselectedText, chromedp.ByQuery))
+	assert.Equal(t, fixture.UnknownName, strings.TrimSpace(preselectedText))
+
+	// Give the page a real settling window - well past the reviewer's 50ms
+	// injected auto-submit - and count actual POST /api/v1/games calls
+	// rather than the DOM's point-in-time state: a bare "not on Mission
+	// Control yet" check passes even while a submit is mid-flight, since it
+	// races the injected click instead of proving it never happened.
+	var postCountBeforeClick int
+	f.runInBrowser(t,
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.Evaluate(`window.__gamePostCount`, &postCountBeforeClick),
+	)
+	assert.Equal(t, 0, postCountBeforeClick,
+		"an exact catalog match pre-selects, it never auto-submits")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
+	)
+
+	var postCountAfterClick int
+	f.runInBrowser(t, chromedp.Evaluate(`window.__gamePostCount`, &postCountAfterClick))
+	assert.Equal(t, 1, postCountAfterClick, "the explicit click must still submit exactly once")
+
+	var url string
+	f.runInBrowser(t, chromedp.Location(&url))
+	assert.Contains(t, url, "/g/"+fixture.UnknownSlug+"/")
+
+	got, err := f.Svc.GetGame(fixture.UnknownSlug)
+	require.NoError(t, err)
+	assert.Equal(t, fixture.UnknownName, got.Name)
+	assert.Equal(t, map[string]string{"catalogsrc": "77"}, got.SourceIDs)
+	assert.Contains(t, got.ModPath, "mods", "core derived the mod path guess, the form never sent one unedited")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FirstRunUncuratedGame_PrefillBannerHasASpaceBeforeTheAppID pins
+// Important 2 of the unit9 review: htm drops a text-only chunk containing a
+// bare newline entirely rather than collapsing it to one space, so the
+// prefill banner's own line wrap between "Steam app" and the interpolated
+// id rendered "(Steam app526870)" with no space at all on every prefill.
+// TestNoAdjacentHTMWhitespaceDrops (no_htm_whitespace_test.go) is the
+// static ratchet for the source shape; this checks the actual rendered DOM
+// text a user reads, the way the review itself verified it live.
+func TestE2E_FirstRunUncuratedGame_PrefillBannerHasASpaceBeforeTheAppID(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	var bannerText string
+	f.runInBrowser(t, chromedp.Text(`[data-testid="setup-add-detected"]`, &bannerText, chromedp.ByQuery))
+	assert.Contains(t, bannerText, "Steam app "+fixture.UnknownAppID,
+		`htm must not drop the space between "Steam app" and the interpolated id`)
+}
+
+// TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills pins
+// Important 1 of the unit9 review: GameAddForm's `detected` prop applied
+// through useEffect(…, [detected]) by object IDENTITY, so clearDetected()
+// resetting only the form's own local state (never the parent's `detected`)
+// left re-clicking the SAME row's "Add with details…" a silently dead
+// control - no prefill, no message, no console error. The fix threads an
+// onClearDetected callback up to the parent.
+func TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	var nameValue string
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Equal(t, fixture.UnknownName, nameValue, "first click must prefill")
+
+	f.runInBrowser(t, chromedp.Click(`[data-action="clear-detected"]`, chromedp.ByQuery))
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Empty(t, nameValue, "Clear must reset the form")
+
+	// Re-clicking the SAME row must prefill again - the defect left this a
+	// no-op with nothing to observe going wrong, so this is checked directly
+	// rather than inferred from an absence.
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	assert.Equal(t, fixture.UnknownName, nameValue, "re-clicking the same row must re-prefill")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupGames_ClearThenReclickSameRowReprefills is the previous
+// test's sibling on the Setup -> Games surface (setupgames.js), which wires
+// the same GameDetectSection/GameAddForm pairing independently of the
+// first-run chooser - Important 1 had to be pinned on both surfaces since
+// each caller owns its own `detected` state.
+func TestE2E_SetupGames_ClearThenReclickSameRowReprefills(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("games")),
+		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
+		chromedp.Evaluate(
+			`Array.from(document.querySelectorAll('.setup-section__actions button')).find(b => b.textContent.includes('Detect games')).click()`, nil),
+		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	var nameValue string
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Equal(t, fixture.UnknownName, nameValue, "first click must prefill")
+
+	f.runInBrowser(t, chromedp.Click(`[data-action="clear-detected"]`, chromedp.ByQuery))
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	require.Empty(t, nameValue, "Clear must reset the form")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+	f.runInBrowser(t, chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery))
+	assert.Equal(t, fixture.UnknownName, nameValue, "re-clicking the same row must re-prefill")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ManualAdd_PickInstalledGamePrefillsForm drives the manual add
+// form's OWN "Pick an installed game…" control (independent of
+// GameDetectSection's "Add with details…") - opening it, picking a row,
+// and confirming the form prefills exactly the way a hand-off from
+// GameDetectSection does: read-only install path, the name already filled
+// in, and a submit that still needs a source before it will go.
+func TestE2E_ManualAdd_PickInstalledGamePrefillsForm(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+	f.Svc.RegisterSource(newFakeSource("plain")) // no GameCatalog - identifier only
+	// The curated row's own known-games entry implies a NexusMods mapping
+	// (nexus_id in the steam-games.yaml override), layered on top of
+	// whatever source this test picks (GameSpecFromDetected's own rule) -
+	// AddGame validates every id in the resulting map is registered, so
+	// this fixture needs "nexusmods" present even though the test never
+	// searches it directly.
+	f.Svc.RegisterSource(newFakeSource("nexusmods"))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="pick-installed"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-picker"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="pick-installed-row"]`, chromedp.ByQuery),
+	)
+
+	// Two rows on offer (curated + uncurated); pick the CURATED one here -
+	// the uncurated pick is exercised end to end by the "Add with
+	// details…" test above, so this one covers the other entry point.
+	var pickCount int
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelectorAll('[data-action="pick-installed-row"]').length`, &pickCount))
+	assert.Equal(t, 2, pickCount)
+
+	f.runInBrowser(t,
+		chromedp.Evaluate(fmt.Sprintf(
+			`Array.from(document.querySelectorAll('[data-action="pick-installed-row"]')).find(b => b.textContent.includes(%q)).click()`,
+			fixture.Name), nil),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	var nameValue, installPathText string
+	f.runInBrowser(t,
+		chromedp.Value(`input[name="add-name"]`, &nameValue, chromedp.ByQuery),
+		chromedp.Text(`[data-testid="add-install-path-readonly"]`, &installPathText, chromedp.ByQuery),
+	)
+	assert.Equal(t, fixture.Name, nameValue)
+	assert.Contains(t, installPathText, "E2EDetectGame")
+
+	// The curated row's own source map is prefilled server-side, not shown
+	// here - the manual form still requires a source to be CHOSEN before it
+	// will submit, same as any other row: picking a detected row prefills
+	// display fields, it does not silently pick a source for the user.
+	var submitDisabled bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-action="add-game"]').disabled`, &submitDisabled))
+	assert.True(t, submitDisabled, "a source must still be chosen before submit is enabled")
+
+	f.runInBrowser(t,
+		retrySetValue(`select[name="add-source"]`, "plain"),
+		chromedp.SendKeys(`input[name="add-identifier"]`, "manual-id", chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
+	)
+
+	got, err := f.Svc.GetGame(fixture.Slug)
+	require.NoError(t, err)
+	assert.Equal(t, fixture.Name, got.Name)
+	assert.Equal(t, "manual-id", got.SourceIDs["plain"])
+	// "plain" has no GameCatalog, so choosing it while a detected row is
+	// active auto-runs (and gracefully swallows) a catalog search that 400s
+	// - Chrome logs that network response as an error entry independently
+	// of the SPA's own handling, the same accepted non-bug
+	// TestE2E_FirstRunManualAdd_CatalogAuthRequiredNamesTheSourceNotADeadEnd
+	// documents for its own rejected search.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_ManualAdd_StaleDetectedAppIDOffersRescan pins the stale-scan
+// error path: a row is picked, the game it names disappears from disk
+// before the submit (the CLI's own detectedGameCandidate hits the same
+// core.FindDetectedGame miss), and the form must say so and offer a
+// Rescan rather than leaving a dead end.
+func TestE2E_ManualAdd_StaleDetectedAppIDOffersRescan(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+	f.Svc.RegisterSource(newFakeSource("plain"))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	// The uncurated game is uninstalled out from under the running server -
+	// the NEXT scan (POST /api/v1/games re-scans rather than trusting the
+	// browser's own row) will not find it.
+	removeSteamAppManifest(t, fixture.SteamRoot, fixture.UnknownAppID)
+
+	f.runInBrowser(t,
+		retrySetValue(`select[name="add-source"]`, "plain"),
+		chromedp.SendKeys(`input[name="add-identifier"]`, "whatever", chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"] .modal__error`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="rescan-detected"]`, chromedp.ByQuery),
+	)
+
+	var errorText string
+	f.runInBrowser(t, chromedp.Text(`[data-testid="setup-add-game"] .modal__error`, &errorText, chromedp.ByQuery))
+	assert.Contains(t, errorText, "no installed Steam game has that app id")
+
+	var onMissionControl bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-hydrated="true"].mission-control') !== null`, &onMissionControl))
+	assert.False(t, onMissionControl, "a stale scan must not navigate away")
+
+	// Rescanning drops the stale row and reopens the picker against a
+	// fresh scan - the uninstalled game is gone from it.
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="rescan-detected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-picker"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="pick-installed-row"]`, chromedp.ByQuery),
+	)
+	var pickCount int
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelectorAll('[data-action="pick-installed-row"]').length`, &pickCount))
+	assert.Equal(t, 1, pickCount, "the uninstalled game must be gone from a fresh scan")
+
+	_, err := f.Svc.GetGame(fixture.UnknownSlug)
+	assert.Error(t, err, "the failed submit must not have written anything")
+	// "plain"'s own auto-search 400 and the from_steam_app_id rejection are
+	// both real, expected network responses this test asserts on directly -
+	// see the identical rule this suite already applies to a rejected
+	// catalog search or a rejected field submit.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
 // TestE2E_FirstRunManualAdd_CatalogPickLandsOnMissionControl drives the

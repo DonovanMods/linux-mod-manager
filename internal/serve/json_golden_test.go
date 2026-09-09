@@ -504,17 +504,19 @@ func TestServeJSONGoldens(t *testing.T) {
 		{
 			// #307/#333's game-add body: core.GameSpec's wire fields, so a
 			// core.GameSpecError's "field" member points straight at the
-			// input that produced it. game_id and mod_path are the two
-			// optional members - both populated here, since the golden's
-			// job is to pin every key's shape, not one plausible request.
+			// input that produced it. game_id, mod_path and (#206)
+			// from_steam_app_id are the optional members - all populated
+			// here, since the golden's job is to pin every key's shape, not
+			// one plausible request.
 			"game_add_request",
 			gameAddRequest{
-				SourceID:    "curseforge",
-				Identifier:  "432",
-				Name:        "Minecraft",
-				GameID:      "minecraft",
-				InstallPath: "/games/minecraft",
-				ModPath:     "/games/minecraft/mods",
+				SourceID:       "curseforge",
+				Identifier:     "432",
+				Name:           "Minecraft",
+				GameID:         "minecraft",
+				InstallPath:    "/games/minecraft",
+				ModPath:        "/games/minecraft/mods",
+				FromSteamAppID: "526870",
 			},
 		},
 		{

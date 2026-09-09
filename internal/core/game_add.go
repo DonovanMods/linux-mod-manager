@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,6 +167,36 @@ func (s *Service) SearchGameCatalog(ctx context.Context, sourceID, query string)
 	return report, nil
 }
 
+// ExactGameCatalogMatch is the ONE case a catalog search may resolve
+// itself: exactly one match whose name equals the searched name, compared
+// case-insensitively after trimming. It exists for #206's suggestion path
+// - a source was named for a detected game with no identifier, so the game
+// is looked up in that source's catalog BY ITS STEAM NAME - where silently
+// taking "the only match" would be wrong (a one-match search for "Hades"
+// can still return "Hades II") but making the user re-pick "Minecraft"
+// out of a list containing "Minecraft" is pointless friction.
+//
+// nil means "the caller picks": no match, no exact match, or - since a
+// catalog may legitimately carry two entries with the same name - more
+// than one exact match, which is ambiguous rather than automatic.
+func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogMatch {
+	name = strings.TrimSpace(name)
+	if report == nil || name == "" {
+		return nil
+	}
+	var found *GameCatalogMatch
+	for i, m := range report.Matches {
+		if !strings.EqualFold(strings.TrimSpace(m.Name), name) {
+			continue
+		}
+		if found != nil {
+			return nil
+		}
+		found = &report.Matches[i]
+	}
+	return found
+}
+
 // GameSpec is everything AddGame needs to create a game. It is the
 // seven-prompt form of cmd/lmm's old interactive flow reduced to data, so
 // the CLI's flags, the CLI's prompts and the SPA's form all produce the
@@ -184,6 +215,18 @@ func (s *Service) SearchGameCatalog(ctx context.Context, sourceID, query string)
 //   - LinkMethod is optional in the strongest sense: domain.LinkSymlink IS
 //     its zero value, so an unset field writes exactly the symlink method
 //     the CLI has always written, with no defaulting step to drift.
+//   - Sources is the FULL source map for a game that needs more than one
+//     entry (#206's prefill from a curated known-games entry, e.g. Icarus'
+//     {icarus: icarus}). Optional and additive: SourceID/Identifier is
+//     layered on top of it, so an explicit source ADDS to a prefilled map
+//     rather than replacing it, and a spec carrying only this map is
+//     complete on its own.
+//   - DeployMode is games.yaml's deploy_mode string, passed through to
+//     domain.ParseDeployMode. Optional: "" means the default (extract),
+//     exactly what every add wrote before this field existed. #206's
+//     prefill carries a curated entry's value here so `game add
+//     --from-detected` configures e.g. Icarus' compile mode the same way
+//     `game detect` does.
 type GameSpec struct {
 	SourceID    string
 	Identifier  string
@@ -192,6 +235,8 @@ type GameSpec struct {
 	InstallPath string
 	ModPath     string
 	LinkMethod  domain.LinkMethod
+	Sources     map[string]string
+	DeployMode  string
 }
 
 // AddGame validates spec, then - under the Service's single mutation slot -
@@ -244,10 +289,29 @@ func (s *Service) AddGame(ctx context.Context, spec GameSpec) (*GameListEntry, e
 	// registry pre-check (cmd/lmm/game_add.go) stays - it prints the nicer
 	// "registered: ..." hint - but is now redundant rather than the only
 	// thing enforcing it.
-	if _, err := s.GetSource(strings.TrimSpace(spec.SourceID)); err != nil {
-		return nil, &GameSpecError{
-			Field: "source_id", Value: spec.SourceID,
-			Reason: "no source is registered with that id", Err: err,
+	//
+	// Every id in the resulting map is checked, not only spec.SourceID: a
+	// prefilled Sources map (#206) can name a source the running lmm does
+	// not have registered - a curated entry for a game whose source is a
+	// custom one the user never created - and that must fail the same way,
+	// naming the "sources" field so a form marks the offending row.
+	if sourceID := strings.TrimSpace(spec.SourceID); sourceID != "" {
+		if _, err := s.GetSource(sourceID); err != nil {
+			return nil, &GameSpecError{
+				Field: "source_id", Value: spec.SourceID,
+				Reason: "no source is registered with that id", Err: err,
+			}
+		}
+	}
+	for id := range game.SourceIDs {
+		if id == strings.TrimSpace(spec.SourceID) {
+			continue
+		}
+		if _, err := s.GetSource(id); err != nil {
+			return nil, &GameSpecError{
+				Field: "sources", Value: id,
+				Reason: "no source is registered with that id", Err: err,
+			}
 		}
 	}
 	if _, exists := s.game(game.ID); exists {
@@ -271,16 +335,41 @@ func (s *Service) AddGame(ctx context.Context, spec GameSpec) (*GameListEntry, e
 // game validates the spec and builds the domain.Game AddGame persists.
 // Every rejection is a GameSpecError naming the wire field at fault.
 func (spec GameSpec) game() (*domain.Game, error) {
-	if strings.TrimSpace(spec.SourceID) == "" {
+	// The game's source map: a prefilled Sources map (a curated
+	// known-games entry, #206) is the base, and an explicit
+	// SourceID/Identifier is layered on top - so naming a source for an
+	// already-curated game adds it rather than dropping what detection
+	// knew. With neither, there is no mapping at all and the game would be
+	// unusable, which is the same refusal a bare `game add` has always
+	// made.
+	sourceID := strings.TrimSpace(spec.SourceID)
+	identifier := strings.TrimSpace(spec.Identifier)
+	sources := maps.Clone(spec.Sources)
+	if sources == nil {
+		sources = map[string]string{}
+	}
+	switch {
+	case sourceID != "":
+		if identifier == "" {
+			return nil, newGameSpecError("identifier", spec.Identifier, "the game's identifier with that source is required")
+		}
+		sources[sourceID] = identifier
+	case len(sources) == 0:
 		return nil, newGameSpecError("source_id", "", "a mod source is required")
 	}
-	identifier := strings.TrimSpace(spec.Identifier)
-	if identifier == "" {
-		return nil, newGameSpecError("identifier", spec.Identifier, "the game's identifier with that source is required")
-	}
+
 	name := strings.TrimSpace(spec.Name)
 	if name == "" {
 		return nil, newGameSpecError("name", spec.Name, "a display name is required")
+	}
+
+	deployMode, ok := domain.ParseDeployMode(strings.TrimSpace(spec.DeployMode))
+	if !ok {
+		return nil, &GameSpecError{
+			Field: "deploy_mode", Value: spec.DeployMode,
+			Reason: "unrecognised deploy mode (valid: " + domain.ValidDeployModes + ")",
+			Err:    domain.ErrInvalidDeployMode,
+		}
 	}
 
 	// An explicit id is taken as given (only slug-normalised); an absent one
@@ -289,6 +378,11 @@ func (spec GameSpec) game() (*domain.Game, error) {
 	field := "game_id"
 	if spec.ID == "" {
 		gameID, field = DeriveGameID(identifier), "identifier"
+		if identifier == "" {
+			// A Sources-only spec has no identifier to derive from, so the
+			// missing value is the id itself.
+			field = "game_id"
+		}
 	}
 	if gameID == "" {
 		return nil, newGameSpecError(field, spec.ID+identifier, "no usable game id could be derived")
@@ -329,8 +423,9 @@ func (spec GameSpec) game() (*domain.Game, error) {
 		Name:        name,
 		InstallPath: installPath,
 		ModPath:     modPath,
-		SourceIDs:   map[string]string{strings.TrimSpace(spec.SourceID): identifier},
+		SourceIDs:   sources,
 		LinkMethod:  spec.LinkMethod,
+		DeployMode:  deployMode,
 	}, nil
 }
 

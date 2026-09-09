@@ -46,6 +46,21 @@ package serve_test
 // there is no ordinary-code false-positive class to guard against the way
 // there would be for a plain "closing brace, next statement" pattern.
 //
+// gameadd.js gets one further, narrower shape: plain prose text ending in
+// a word character, immediately followed - again across a bare newline
+// and its indentation only - by an interpolation's opening ${. This is
+// exactly what the unit9 review's Important 2 found in the prefill
+// banner: "(Steam app526870)" (the wire's actual "700003" reproduced from
+// three separate rows) - "app" fused directly onto the interpolated app
+// id with no space at all, because nothing but line-wrap separated them.
+// This shape is NOT widened to the whole plan_*.js family: ordinary prose
+// wrapped across lines for readability is common style throughout this
+// codebase, and (per the note above) flagging it everywhere would be
+// noise with no way to tell a real defect from ordinary line-wrapping by
+// syntax alone. gameadd.js is scanned for it by name because that is
+// exactly the file the defect lived in and the file this ratchet exists
+// to keep it from recurring in.
+//
 // Two kinds of match are still safe on this tree and are excluded rather
 // than flagged:
 //   - A } that closes an explicit ${" "} (or ${' '}) - the fix this
@@ -79,18 +94,30 @@ var htmWhitespaceBoundary = regexp.MustCompile(`</span>[ \t]*\n[ \t]*(?:<span|\$
 // the very code that answers the finding.
 var htmWhitespaceGuarded = regexp.MustCompile(`\$\{\s*["'][ \t]+["']\s*\}$`)
 
+// htmWordBeforeInterpBoundary matches plain prose text ending in a word
+// character, immediately followed - across a bare newline and its
+// indentation only - by an interpolation's opening ${. See the file-level
+// comment above for why this shape is scoped to gameadd.js alone rather
+// than the whole plan_*.js family.
+var htmWordBeforeInterpBoundary = regexp.MustCompile(`\w[ \t]*\n[ \t]*\$\{`)
+
 // TestNoAdjacentHTMWhitespaceDrops walks the plan_*.js confirm-modal
-// renderers for a template literal that joins two inline runs, a run and
-// an interpolation, or an interpolation and a run, across a bare newline -
-// the shape that lets htm drop the joining whitespace and fuse the
-// rendered text together in front of a user approving a mutation.
+// renderers (plus gameadd.js, for its own narrower shape) for a template
+// literal that joins two inline runs, a run and an interpolation, or an
+// interpolation and a run, across a bare newline - the shape that lets htm
+// drop the joining whitespace and fuse the rendered text together in front
+// of a user approving a mutation (or, in gameadd.js's case, reading a
+// prefill banner).
 func TestNoAdjacentHTMWhitespaceDrops(t *testing.T) {
 	dir := filepath.Join(".", "spa", "app")
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
 		}
-		if filepath.Ext(path) != ".js" || !strings.HasPrefix(filepath.Base(path), "plan_") {
+		base := filepath.Base(path)
+		isPlanFile := strings.HasPrefix(base, "plan_")
+		isGameAdd := base == "gameadd.js"
+		if filepath.Ext(path) != ".js" || (!isPlanFile && !isGameAdd) {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
@@ -99,7 +126,20 @@ func TestNoAdjacentHTMWhitespaceDrops(t *testing.T) {
 		}
 		lines := strings.Split(string(data), "\n")
 
-		for _, loc := range htmWhitespaceBoundary.FindAllStringIndex(string(data), -1) {
+		// Each file gets only its own shape: plan_*.js keeps the original
+		// inline-run/interpolation boundary unchanged, and gameadd.js gets
+		// only the narrower word-before-interpolation shape its own defect
+		// was - widening the ORIGINAL shape to gameadd.js too would also
+		// flag unrelated pre-existing block-element adjacencies there
+		// (e.g. a name next to a badge <span>) that are out of scope here.
+		var locs [][]int
+		if isPlanFile {
+			locs = append(locs, htmWhitespaceBoundary.FindAllStringIndex(string(data), -1)...)
+		}
+		if isGameAdd {
+			locs = append(locs, htmWordBeforeInterpBoundary.FindAllStringIndex(string(data), -1)...)
+		}
+		for _, loc := range locs {
 			start, end := loc[0], loc[1]
 			if data[start] == '}' && htmWhitespaceGuarded.Match(data[:start+1]) {
 				continue // an explicit ${" "} already supplies the space

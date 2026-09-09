@@ -269,8 +269,16 @@ export const addGame = (spec) => post("/api/v1/games", spec);
 export const updateGameSources = (gameID, sources) =>
   put(`/api/v1/games/${encodeURIComponent(gameID)}`, { sources });
 
-/** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing. */
-export const detectGames = () => get("/api/v1/games/detect");
+/** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing.
+ * all=true (issue 206) widens it with every OTHER installed Steam game
+ * (?all=1) - no `known` member at all (never a literal false), no index,
+ * an empty mod_path - so a caller can offer "add with details" instead of
+ * hiding what it found. The Setup
+ * page's "Detect games" and the first-run flow both scan wide now; only
+ * the widened rows change (the SPA still branches on each row's own
+ * `known`), so nothing that read the narrower shape breaks. */
+export const detectGames = (all = false) =>
+  get(all ? "/api/v1/games/detect?all=1" : "/api/v1/games/detect");
 
 /** Applies a detect selection (1-based indices or slugs): core.GameDetectResult. */
 export const applyGameDetect = (select) =>

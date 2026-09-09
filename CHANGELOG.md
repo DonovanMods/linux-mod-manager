@@ -49,6 +49,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clears the query, drops any "From sources" fan-out and restores the plain
   "Library (n)" heading without losing focus (#340).
 
+- **Add a game you already have installed (#206).** Steam detection used to
+  keep only the games in lmm's embedded known-games list (13 entries), so
+  every other installed game had to be typed in by hand, twice — name,
+  install path, mod path, source. It can now return EVERY installed app as
+  a candidate: the curated ones exactly as before, the rest carrying the
+  Steam manifest's name, its install path and a slug derived from that
+  name, with no sources and an empty mod path (nothing on disk says where
+  an uncurated game keeps its mods, so detection does not pretend to know).
+  Steam's own tools — the redistributables, the Proton releases, the Linux
+  runtimes — are filtered out by a small deny-list, so the list stays a
+  list of games.
+
+  `lmm game detect --include-unknown` lists those in their own section, each
+  with the Steam app id that names it.
+  `lmm game add --from-detected <app-id>` prefills the whole add from it:
+  the display name, install path, local game id and mod path
+  (`<install>/mods` when the game is uncurated), plus the curated source map
+  when there is one — so a known installed game is added by app id alone.
+  Every existing flag still wins field by field, and for a game with no
+  curated source, `--source`
+  alone searches that source's catalog by the game's own name (`--pick`
+  chooses; a single entry whose name is exactly the game's name is taken
+  automatically). The whole flow is non-interactive and works under
+  `--json`, where `lmm game detect --include-unknown` with no selection
+  flag emits the detect LISTING document (a plain `--json` scan never
+  carries those rows at all — pass the flag to see them, as on a terminal).
+  If a plain scan finds no known games but this machine has other installed
+  Steam games with no known-games entry, it says how many and names
+  `--include-unknown`, instead of reporting nothing found. `--all`/
+  `--select` under `--json` in that same situation - nothing selectable, so
+  nothing to add - carries a warning saying so instead of a silent
+  `{"saved":[],...}`.
+
+  On the web side, `GET /api/v1/games/detect?all=1` returns the same
+  listing widened with those rows (no `known` member at all — absent means
+  not in the known-games list, a curated row carries `"known": true` — and
+  `index: 0`), and `POST /api/v1/games` takes an optional
+  `from_steam_app_id` that applies exactly the same prefill, so the web UI
+  derives no slug, mod path or source map of its own. Naming an unknown row
+  in `POST /api/v1/games/detect` is a 400 pointing at that member.
+  `domain.DetectedGame` gains an additive `known` flag.
+
+  The web UI's Setup → Games "Detect games" (and the first-run flow it
+  shares) scans wide too: a curated row is badged **Known** and still adds
+  by ticking its checkbox, and an uncurated one is shown beside it - never
+  hidden - with an **Add with details…** action in place of a checkbox (it
+  has no scan index to select with). That opens the manual add form
+  pre-filled from the scan for display - name, a read-only install path,
+  the mod path shown as `<install path>/mods` in the field's placeholder
+  and editable, the Advanced section's game id - then choosing a source
+  auto-searches its catalog by the detected game's own name and highlights
+  a single exact-name match without submitting anything (a click stands in
+  for the CLI's own non-interactive auto-pick). The manual add form also
+  gained its own **Pick an installed game…** control - the identical picker
+  and prefill, reachable without going through the detect list first.
+  Either path submits `from_steam_app_id` plus only the fields actually
+  edited, so the browser derives no slug, mod path or source map of its
+  own; a scan that has gone stale by submit time (the game was uninstalled
+  in between) names itself and offers a **Rescan** instead of a dead end.
+
 - **`lmm game edit` — change a configured game's sources (#326).** Which
   mod sources a game maps could only ever be set when the game was created,
   so a custom source added later (`lmm source add`, or the web UI's Setup →

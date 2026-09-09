@@ -74,6 +74,9 @@ function FirstRunSetup() {
   // otherwise be missing from the very picker this section exists to fill
   // (C-4).
   const [sourcesVersion, bumpSources] = useState(0);
+  // detected (issue 206) is the row an uncurated "Add with details…" click
+  // hands up here, prefilling the manual form below it.
+  const [detected, setDetected] = useState(null);
 
   async function goTo(gameID) {
     const path = await resolveGamePath(gameID).catch(() => null);
@@ -101,8 +104,16 @@ function FirstRunSetup() {
         hand.
       </p>
       <div class="setup-page__sections">
-        <${GameDetectSection} onAdded=${onDetected} />
-        <${GameAddForm} onAdded=${onAdded} refreshKey=${sourcesVersion} />
+        <${GameDetectSection}
+          onAdded=${onDetected}
+          onAddWithDetails=${setDetected}
+        />
+        <${GameAddForm}
+          onAdded=${onAdded}
+          refreshKey=${sourcesVersion}
+          detected=${detected}
+          onClearDetected=${() => setDetected(null)}
+        />
         ${
           /* C-4, epic live review: the dead end a custom-source user hit.
           The source editor lived only at /g/{game}/{profile}/setup, which

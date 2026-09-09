@@ -87,17 +87,38 @@ game, the same set the interactive "all" answer selects; --select takes
 the same 1-based indices the prompt accepts (e.g. "1,2"), including
 already-configured games' numbers for a repair.
 
+--include-unknown also lists every OTHER installed Steam game, in its own
+section (#206). Those are not numbered and cannot be selected here -
+nothing tells lmm where they keep their mods - so each is listed with its
+Steam app id for 'lmm game add --from-detected' with that app id, which
+prefills the name, install path, game id and a default mod path and asks
+only for the source. Under --json, --include-unknown with neither --all nor
+--select emits the detect LISTING document (every candidate, known and
+unknown) instead of prompting: search first, add second. A plain --json
+scan (no --include-unknown) never carries those rows at all, known or not
+- pass the flag to see them, exactly as on a terminal.
+
+If a plain scan finds no known games but this machine has OTHER installed
+Steam games lmm has no known-games entry for, it says so and names
+--include-unknown, instead of reporting "No moddable Steam games found" -
+the game is right there, just not curated yet. --all/--select in that same
+situation - nothing here is selectable, so nothing gets added - carries a
+warning saying so (under --json too) instead of a silent empty success.
+
 Examples:
   lmm game detect
   lmm game detect --all
-  lmm game detect --select 1,3`,
+  lmm game detect --select 1,3
+  lmm game detect --include-unknown
+  lmm game detect --include-unknown --json`,
 	Args: cobra.NoArgs,
 	RunE: runGameDetect,
 }
 
 var (
-	gameDetectAll    bool
-	gameDetectSelect string
+	gameDetectAll            bool
+	gameDetectSelect         string
+	gameDetectIncludeUnknown bool
 )
 
 func init() {
@@ -108,6 +129,8 @@ func init() {
 
 	gameDetectCmd.Flags().BoolVar(&gameDetectAll, "all", false, "select every not-yet-configured detected game without prompting")
 	gameDetectCmd.Flags().StringVar(&gameDetectSelect, "select", "", "comma-separated 1-based indices to add/repair without prompting (see the printed listing)")
+	gameDetectCmd.Flags().BoolVar(&gameDetectIncludeUnknown, "include-unknown", false,
+		"also list installed games that are not in the known-games list (add one with 'game add --from-detected')")
 	gameDetectCmd.MarkFlagsMutuallyExclusive("all", "select")
 
 	rootCmd.AddCommand(gameCmd)
@@ -243,7 +266,14 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir)
+	// The scan itself always goes wide (#206 Important 3): whether the
+	// unknown rows get PRINTED or SELECTABLE still follows
+	// gameDetectIncludeUnknown (below, in doGameDetect) exactly as before -
+	// this only lets doGameDetect tell "nothing installed at all" apart from
+	// "installed, but none of it is in the known-games list" so a plain scan
+	// with only the latter can say so instead of a flat "found nothing".
+	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir,
+		app.DetectOptions{IncludeUnknown: true})
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}
@@ -272,6 +302,21 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 // lookup (to mark/exclude already-configured games, #205 item 2) and for
 // saving newly selected ones.
 func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, games []domain.DetectedGame, detectWarnings []string) error {
+	// --include-unknown under --json, with no selection flag, is a pure
+	// query: the LISTING document is the answer, exactly as `game add
+	// --query` without --pick emits its catalog document rather than
+	// refusing for want of a choice. One document on stdout either way
+	// (Ruling 15), and it is the CLI's counterpart to GET
+	// /api/v1/games/detect?all=1.
+	if jsonOutput && gameDetectIncludeUnknown && !gameDetectAll && gameDetectSelect == "" {
+		listing, err := service.GameDetectListing(ctx, games, detectWarnings,
+			core.GameDetectListingOptions{IncludeUnknown: true})
+		if err != nil {
+			return err
+		}
+		return emitJSON(listing)
+	}
+
 	if len(games) == 0 {
 		if jsonOutput {
 			return emitJSON(&core.GameDetectResult{Warnings: detectWarnings})
@@ -279,6 +324,13 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		cmd.Println("No moddable Steam games found.")
 		return nil
 	}
+
+	// Only the known rows are selectable: ApplyGameDetect configures a game
+	// from its known-games entry, and an unknown candidate has none (#206).
+	// Splitting here - rather than filtering in the scan - is what lets the
+	// unknown ones still be LISTED, with the one thing that makes them
+	// actionable: their Steam app id.
+	known, unknown := splitDetectedGames(games)
 
 	existingGames, err := service.LoadGamesFromDisk()
 	if err != nil {
@@ -289,17 +341,59 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	// prompt (Ruling 2 decides the selection from --all/--select or fails)
 	// and no console text may sit beside the document.
 	if !jsonOutput {
-		cmd.Printf("Found %d moddable game(s):\n", len(games))
-		for i, g := range games {
-			marker := ""
-			if _, ok := existingGames[g.Slug]; ok {
-				marker = " " + colorGreen("[configured]")
+		if len(known) > 0 {
+			cmd.Printf("Found %d moddable game(s):\n", len(known))
+			for i, g := range known {
+				marker := ""
+				if _, ok := existingGames[g.Slug]; ok {
+					marker = " " + colorGreen("[configured]")
+				}
+				cmd.Printf("  %d. %s (%s)%s\n", i+1, g.Name, g.Slug, marker)
+				cmd.Printf("      Path: %s\n", g.InstallPath)
 			}
-			cmd.Printf("  %d. %s (%s)%s\n", i+1, g.Name, g.Slug, marker)
-			cmd.Printf("      Path: %s\n", g.InstallPath)
+		}
+		// The unknown section only renders under --include-unknown (#206):
+		// the scan itself now always finds these rows (runGameDetect), but a
+		// plain scan's baseline behavior - list known games only, say
+		// nothing about the rest - must stay exactly what it always was.
+		if gameDetectIncludeUnknown {
+			if len(known) > 0 && len(unknown) > 0 {
+				cmd.Println()
+			}
+			printUnknownDetectedGames(cmd, unknown)
 		}
 	}
-	line, err := gameDetectAnswer(cmd, reader)
+
+	if len(known) == 0 {
+		// Nothing here is selectable, so there is no prompt to print and
+		// no answer to read - the unknown section above already said what
+		// to do next (when --include-unknown asked for it).
+		if jsonOutput {
+			result := &core.GameDetectResult{Warnings: detectWarnings}
+			if msg := unknownOnlyDetectMessage(len(unknown)); msg != "" {
+				// #206 review Minor 11: --all/--select under --json with
+				// only uncurated games installed used to report an empty
+				// success ({"saved":[],"profiles":[],"warnings":[]}) - the
+				// user asked to add everything and was told nothing,
+				// silently.
+				result.Warnings = append(append([]string(nil), detectWarnings...), msg)
+			}
+			return emitJSON(result)
+		}
+		if !gameDetectIncludeUnknown && len(unknown) > 0 {
+			// #206 Important 3: the game is right there, just not curated -
+			// "No moddable Steam games found" would be a dead end for
+			// exactly the user this feature exists for. Only for the
+			// !gameDetectIncludeUnknown case: with the flag already on, the
+			// unknown section above already said everything there is to
+			// say, so repeating it here would be redundant.
+			cmd.Println(unknownOnlyDetectMessage(len(unknown)))
+			return nil
+		}
+		return nil
+	}
+	games = known
+	line, err := gameDetectAnswer(cmd, reader, len(games))
 	if err != nil {
 		return err
 	}
@@ -357,8 +451,13 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 // prompt and reads an answer via readPromptLineFrom, the CLI's one choke
 // point for the non-interactive rule (v2 Phase 3 Ruling 2) - under --json
 // with neither flag, that call returns core.ErrConfirmationRequired without
-// ever touching reader.
-func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader) (string, error) {
+// ever touching reader. count is the number of known (selectable) rows the
+// listing above just printed - the prompt's own range must match it (#206
+// review Minor 6: a fixed "[1,2/all/none]" advertised an index that did not
+// exist whenever the count was not exactly 2, most confusingly with
+// --include-unknown's unnumbered rows sitting right above it), using the
+// same "1-N" shape gameDetectSelectionIndices' own error already does.
+func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader, count int) (string, error) {
 	switch {
 	case gameDetectAll:
 		return "all", nil
@@ -366,10 +465,60 @@ func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader) (string, error) 
 		return gameDetectSelect, nil
 	default:
 		if !jsonOutput {
-			cmd.Print("Add games to config? [1,2/all/none]: ")
+			cmd.Printf("Add games to config? [1-%d/all/none]: ", count)
 		}
 		return readPromptLineFrom(reader)
 	}
+}
+
+// splitDetectedGames separates a scan into the rows a detect selection can
+// name (the known-games matches) and the rest (#206). Order is preserved
+// within each half, so the printed numbering is exactly the numbering
+// core.GameDetectListing assigns.
+func splitDetectedGames(games []domain.DetectedGame) (known, unknown []domain.DetectedGame) {
+	for _, g := range games {
+		if g.Known {
+			known = append(known, g)
+			continue
+		}
+		unknown = append(unknown, g)
+	}
+	return known, unknown
+}
+
+// printUnknownDetectedGames renders the "installed, but lmm has no curated
+// entry for it" section. It is deliberately keyed by Steam app id rather
+// than by a number: the app id is what `lmm game add --from-detected`
+// takes, and it does not shift when the scan finds one more game.
+func printUnknownDetectedGames(cmd *cobra.Command, unknown []domain.DetectedGame) {
+	if len(unknown) == 0 {
+		return
+	}
+	cmd.Printf("Installed but not in the known-games list - add with `lmm game add --from-detected <app-id>`:\n")
+	for _, g := range unknown {
+		cmd.Printf("  %s  %s (%s)\n", g.SteamAppID, g.Name, g.Slug)
+		cmd.Printf("      Path: %s\n", g.InstallPath)
+	}
+}
+
+// unknownOnlyDetectMessage names what to do when a detect scan found
+// installed games but NONE of them are known - so there is nothing
+// selectable, plain-text or --json (#206 Important 3, review Minor 11) -
+// or "" when unknownCount is 0, meaning there is nothing to say at all.
+// Wording depends on whether --include-unknown was already given: if not,
+// it names the flag that would list them; if so, the caller already saw
+// (or, under --json with no --all/--select, would see via the LISTING
+// document) every candidate, but --all/--select still selected nothing
+// since none of them have a known-games entry to select, so this points at
+// the per-game add path instead.
+func unknownOnlyDetectMessage(unknownCount int) string {
+	if unknownCount == 0 {
+		return ""
+	}
+	if gameDetectIncludeUnknown {
+		return fmt.Sprintf("%d installed game(s) are not in the known-games list and cannot be added by --all/--select; add them individually with `lmm game add --from-detected <app-id>`.", unknownCount)
+	}
+	return fmt.Sprintf("%d installed game(s) are not in the known-games list; run `lmm game detect --include-unknown` to add them.", unknownCount)
 }
 
 // gameDetectSelectionIndices parses the detect prompt's answer into the

@@ -89,10 +89,123 @@ func getLibraryPathsFromMap(root VDFMap) []string {
 	return getLibraryPaths(root)
 }
 
-// DetectGames scans Steam libraries for known moddable games and returns them.
+// DetectOptions tunes a DetectGames scan (#206).
+type DetectOptions struct {
+	// IncludeUnknown adds every OTHER installed Steam app to the result as
+	// an unknown candidate: the manifest's own name and install path, a
+	// slug derived from that name, an EMPTY ModPath and no sources. It is
+	// off by default so the known-only listing lmm has always produced -
+	// `lmm game detect`'s prompt, GET /api/v1/games/detect - does not
+	// change shape unless a caller asks for the wider list.
+	IncludeUnknown bool
+}
+
+// steamToolNamePrefixes are the Steam-shipped tools and runtimes that
+// install as ordinary apps under steamapps/common. Every one of them has
+// an appmanifest indistinguishable from a game's, so an "every installed
+// app" scan would otherwise put Proton and the redistributables at the top
+// of a list whose whole job is to name games (#206).
+//
+// The list is deliberately SMALL and matched by whole leading word (see
+// isSteamTool), never by substring: over-matching would silently hide a
+// real game, which is worse than showing one extra runtime the user can
+// simply not pick. That is why the Proton entries are spelled out rather
+// than reduced to a bare "Proton" - "Proton Pulse" and "Protonwar" are
+// games, and "Steamworld Dig 2" is not a Steamworks anything. A tool this
+// misses is a one-line addition here; nothing else depends on the list.
+var steamToolNamePrefixes = []string{
+	"Steamworks Common Redistributables",
+	"Steamworks Shared",
+	"Steam Linux Runtime", // "Steam Linux Runtime 3.0 (sniper)"
+	"Proton Experimental",
+	"Proton Hotfix",
+	"Proton Next",
+	"Proton EasyAntiCheat Runtime",
+}
+
+// isSteamTool reports whether an app manifest's display name is one of
+// Steam's own tools. A prefix matches only as a whole word - the name is
+// the prefix exactly, or the prefix followed by a space - plus the one
+// pattern a fixed list cannot cover: a numbered Proton release ("Proton
+// 9.0 (Beta)"), recognised by the digit that follows the word.
+func isSteamTool(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range steamToolNamePrefixes {
+		p := strings.ToLower(prefix)
+		if lower == p || strings.HasPrefix(lower, p+" ") {
+			return true
+		}
+	}
+	if rest, ok := strings.CutPrefix(lower, "proton "); ok && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
+		return true
+	}
+	return false
+}
+
+// deriveSlug turns a Steam display name into a candidate lmm game id:
+// lower-cased, with every run of characters that is not an ASCII letter or
+// digit collapsed to a single dash and the edges trimmed. That is stricter
+// than core.DeriveGameID (which only lower-cases and swaps spaces),
+// deliberately: a games.yaml key is a path segment, so a name like
+// "S.T.A.L.K.E.R. 2" must not derive to something containing ".." and
+// "Some/Game" must not derive to something containing a separator.
+//
+// Non-ASCII letters are dropped rather than transliterated (lmm carries no
+// Unicode folding table), so a name with none left over derives to "" and
+// the caller falls back to the app id - `lmm game add --game-id` and the
+// web form's Game id field are how a user picks something nicer.
+func deriveSlug(name string) string {
+	var b strings.Builder
+	dashPending := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			if dashPending && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			dashPending = false
+			b.WriteRune(r)
+		default:
+			dashPending = true
+		}
+	}
+	return b.String()
+}
+
+// uniqueSlug returns deriveSlug(name), disambiguated with the app id
+// whenever that slug is already spoken for - by a curated known-games
+// entry (taken is seeded with every one of them) or by an earlier unknown
+// candidate in the same scan. Steam guarantees the app id is unique, so
+// one round is always enough; a name that derives to nothing usable falls
+// straight to "app-<id>".
+func uniqueSlug(name, appID string, taken map[string]bool) string {
+	slug := deriveSlug(name)
+	if slug == "" || taken[slug] {
+		slug = "app-" + appID
+		if base := deriveSlug(name); base != "" {
+			slug = base + "-" + appID
+		}
+	}
+	return slug
+}
+
+// DetectGames scans Steam libraries for moddable games and returns them.
 // configDir is used to load the known-games list (embedded default + optional steam-games.yaml).
 // Warnings are non-fatal errors (e.g. unreadable library, parse failure) so users can diagnose.
-func DetectGames(configDir string) (games []DetectedGame, warnings []string, err error) {
+//
+// By default only games in that known-games list come back, exactly as
+// they always have. opts.IncludeUnknown widens the scan to every other
+// installed app (#206) - minus Steam's own tools - so a frontend can offer
+// "add the game you already have installed" for a title nobody has curated
+// yet. An unknown candidate carries Known=false, no sources and an EMPTY
+// ModPath: detection knows where the game is installed but has no idea
+// where it keeps its mods, and inventing a path here would make a guess
+// look like a fact. core.GameSpecFromDetected is what defaults it.
+//
+// A stale manifest (the app dir is gone) warns for a KNOWN game - the user
+// means to configure that one - and is skipped silently for an unknown
+// one, where a large library carries plenty and none is actionable.
+func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, warnings []string, err error) {
 	knownGames, err := LoadKnownGames(configDir)
 	if err != nil {
 		return nil, nil, err
@@ -103,6 +216,14 @@ func DetectGames(configDir string) (games []DetectedGame, warnings []string, err
 	}
 	var found []DetectedGame
 	seen := make(map[string]bool)
+	seenApp := make(map[string]bool)
+	// Seeded with EVERY curated slug, not just the ones this scan matched:
+	// an unknown game must never derive a slug a known-games entry owns,
+	// whether or not that game happens to be installed too.
+	takenSlugs := make(map[string]bool, len(knownGames))
+	for _, info := range knownGames {
+		takenSlugs[info.Slug] = true
+	}
 
 	for _, steamRoot := range steamRoots {
 		libraries, err := GetLibraryPaths(steamRoot)
@@ -138,16 +259,34 @@ func DetectGames(configDir string) (games []DetectedGame, warnings []string, err
 					}
 					continue
 				}
-				info, ok := knownGames[manifest.AppID]
-				if !ok {
+				info, known := knownGames[manifest.AppID]
+				if !known && (!opts.IncludeUnknown || isSteamTool(manifest.Name)) {
 					continue
 				}
-				if seen[info.Slug] {
+				if seenApp[manifest.AppID] || (known && seen[info.Slug]) {
 					continue
 				}
 				installPath := filepath.Join(libPath, "steamapps", "common", manifest.InstallDir)
 				if _, err := os.Stat(installPath); err != nil {
-					warnings = append(warnings, fmt.Sprintf("%s: install dir missing: %v", installPath, err))
+					if known {
+						warnings = append(warnings, fmt.Sprintf("%s: install dir missing: %v", installPath, err))
+					}
+					continue
+				}
+				seenApp[manifest.AppID] = true
+				if !known {
+					name := manifest.Name
+					if strings.TrimSpace(name) == "" {
+						name = manifest.InstallDir
+					}
+					slug := uniqueSlug(name, manifest.AppID, takenSlugs)
+					takenSlugs[slug] = true
+					found = append(found, DetectedGame{
+						SteamAppID:  manifest.AppID,
+						Slug:        slug,
+						Name:        name,
+						InstallPath: installPath,
+					})
 					continue
 				}
 				modPath := installPath
@@ -164,6 +303,7 @@ func DetectGames(configDir string) (games []DetectedGame, warnings []string, err
 					NexusID:     info.NexusID,
 					DeployMode:  info.DeployMode,
 					Sources:     info.Sources,
+					Known:       true,
 				})
 			}
 		}
