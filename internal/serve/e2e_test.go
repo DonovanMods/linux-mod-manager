@@ -5911,9 +5911,13 @@ func TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt(t *testing.T) {
 		chromedp.WaitVisible(`.search-page input[name="tag"]`, chromedp.ByQuery),
 		chromedp.SetValue(`.search-page input[name="tag"]`, "armour", chromedp.ByQuery),
 		// The filter is server-side: the row that survives is the one the
-		// SOURCE kept, not one this page hid.
-		chromedp.Poll(`!document.querySelector(".search-page").textContent.includes("Plain Mod")`,
-			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		// SOURCE kept, not one this page hid. Polled on BOTH halves - the
+		// negative alone is momentarily true of the loading state, which
+		// contains neither row.
+		chromedp.Poll(`(() => {
+			const t = document.querySelector(".search-page")?.textContent ?? "";
+			return t.includes("Armoured Mod") && !t.includes("Plain Mod");
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 		textContent(`.search-page`, &tagged),
 	)
 
