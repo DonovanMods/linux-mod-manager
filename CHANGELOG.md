@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Auth tokens are encrypted at rest (#79).** `lmm auth login` used to
+  write your API key into `lmm.db` as readable text — and, because the
+  database runs in WAL mode, into `lmm.db-wal` as well. Keys are now sealed
+  with **AES-256-GCM** (Go standard library only) under a 32-byte key file
+  at `$XDG_DATA_HOME/lmm/key`, created `0600` the first time you log in;
+  each row carries its own random nonce and is bound to its source id, so a
+  ciphertext copied between rows will not open. Credentials written by an
+  older lmm are re-encrypted in place on the next open, in one transaction,
+  after which the database is vacuumed and the write-ahead log truncated so
+  the plaintext is gone from both files.
+
+  Two user-visible consequences. **`lmm auth status`, `GET /api/v1/auth`
+  and the web UI's Setup page no longer show a masked stored key** — a
+  stored credential is never decrypted to build a status document, so it is
+  identified by a **fingerprint** (the first 8 hex of its SHA-256) plus when
+  it was stored and last replaced; a key supplied through an environment
+  variable, which lmm holds in the clear regardless, keeps its masked
+  `abc...xyz` form and gains a fingerprint too. On the wire that is a new
+  `key_fingerprint` field on `app.AuthStatusReport`'s source and orphan
+  rows, a new `unreadable` flag, `created_at`/`updated_at` on a source row,
+  and `key_masked` now appearing only for an environment key (it is gone
+  from orphan rows entirely, which have no plaintext to mask).
+
+  And **the key file is now part of your backup**: copying `lmm.db`
+  without `key` leaves the credentials unrecoverable — run
+  `lmm auth login <source>` again for each. A missing, loose, malformed or
+  undecryptable key is reported per source with the remedy named, and never
+  stops the rest of lmm from working. The threat model is documented
+  honestly in [docs/security.md](docs/security.md): this protects a
+  database that is copied, synced or backed up, **not** a local attacker
+  running as you.
+
 ### Changed
 
 - **`lmm import` scan mode scores its source matches instead of taking the
