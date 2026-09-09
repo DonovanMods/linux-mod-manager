@@ -2,10 +2,14 @@ package curseforge
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -254,16 +258,32 @@ func TestClient_GetGame(t *testing.T) {
 	}
 }
 
+// TestClient_GetMods covers the batch endpoint (#28): GetMods issues
+// POST /v1/mods with a {"modIds":[...]} body instead of one GET per id.
 func TestClient_GetMods(t *testing.T) {
-	t.Run("batch fetch succeeds", func(t *testing.T) {
+	// decodeModIDs reads the request the client actually sent, asserting the
+	// method, path, auth header and content type along the way.
+	decodeModIDs := func(t *testing.T, r *http.Request) []int {
+		t.Helper()
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/v1/mods", r.URL.Path)
+		assert.Equal(t, "test-api-key", r.Header.Get("x-api-key"))
+		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		var body struct {
+			ModIDs []int `json:"modIds"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		return body.ModIDs
+	}
+
+	t.Run("one batch is one request", func(t *testing.T) {
+		var requests int
+		var gotIDs []int
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			gotIDs = decodeModIDs(t, r)
 			w.Header().Set("Content-Type", "application/json")
-			switch r.URL.Path {
-			case "/v1/mods/1":
-				_, _ = w.Write([]byte(`{"data":{"id":1,"name":"Mod One"}}`))
-			case "/v1/mods/2":
-				_, _ = w.Write([]byte(`{"data":{"id":2,"name":"Mod Two"}}`))
-			}
+			_, _ = w.Write([]byte(`{"data":[{"id":1,"name":"Mod One"},{"id":2,"name":"Mod Two"}]}`))
 		}))
 		defer server.Close()
 
@@ -272,6 +292,8 @@ func TestClient_GetMods(t *testing.T) {
 
 		mods, err := client.GetMods(context.Background(), []int{1, 2})
 		require.NoError(t, err)
+		assert.Equal(t, 1, requests, "two mods must cost one round trip, not two")
+		assert.Equal(t, []int{1, 2}, gotIDs)
 		require.Len(t, mods, 2)
 		assert.Equal(t, "Mod One", mods[0].Name)
 		assert.Equal(t, "Mod Two", mods[1].Name)
@@ -284,16 +306,42 @@ func TestClient_GetMods(t *testing.T) {
 		assert.Nil(t, mods)
 	})
 
-	t.Run("one id fails - partial results plus joined error", func(t *testing.T) {
+	t.Run("more than one chunk splits at the documented boundary", func(t *testing.T) {
+		var batches [][]int
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ids := decodeModIDs(t, r)
+			batches = append(batches, ids)
 			w.Header().Set("Content-Type", "application/json")
-			switch r.URL.Path {
-			case "/v1/mods/1":
-				_, _ = w.Write([]byte(`{"data":{"id":1,"name":"Mod One"}}`))
-			case "/v1/mods/2":
-				w.WriteHeader(http.StatusInternalServerError)
-				_, _ = w.Write([]byte(`{"error":"boom"}`))
+			out := make([]string, 0, len(ids))
+			for _, id := range ids {
+				out = append(out, fmt.Sprintf(`{"id":%d,"name":"Mod %d"}`, id, id))
 			}
+			_, _ = fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(out, ","))
+		}))
+		defer server.Close()
+
+		client := NewClient(server.Client(), "test-api-key")
+		client.SetBaseURL(server.URL)
+
+		ids := make([]int, 0, modBatchSize+1)
+		for i := 1; i <= modBatchSize+1; i++ {
+			ids = append(ids, i)
+		}
+		mods, err := client.GetMods(context.Background(), ids)
+		require.NoError(t, err)
+		require.Len(t, batches, 2, "one id past the chunk size must cost exactly two requests")
+		assert.Len(t, batches[0], modBatchSize)
+		assert.Len(t, batches[1], 1)
+		assert.Len(t, mods, modBatchSize+1)
+	})
+
+	t.Run("an id the API omits is reported without losing the rest", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = decodeModIDs(t, r)
+			w.Header().Set("Content-Type", "application/json")
+			// CurseForge answers a batch with only the mods it could
+			// resolve; a delisted or unknown id is simply absent.
+			_, _ = w.Write([]byte(`{"data":[{"id":1,"name":"Mod One"}]}`))
 		}))
 		defer server.Close()
 
@@ -302,12 +350,62 @@ func TestClient_GetMods(t *testing.T) {
 
 		mods, err := client.GetMods(context.Background(), []int{1, 2})
 		require.Error(t, err)
-		require.Len(t, mods, 1, "the mod that succeeded should still be returned")
+		assert.ErrorIs(t, err, domain.ErrModNotFound)
+		require.Len(t, mods, 1, "the mod the API did return must still come back")
 		assert.Equal(t, "Mod One", mods[0].Name)
 		assert.Contains(t, err.Error(), "mod 2")
 	})
 
-	t.Run("malformed json on the only id", func(t *testing.T) {
+	t.Run("an error status fails the batch", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"boom"}`))
+		}))
+		defer server.Close()
+
+		client := NewClient(server.Client(), "test-api-key")
+		client.SetBaseURL(server.URL)
+
+		mods, err := client.GetMods(context.Background(), []int{1, 2})
+		require.Error(t, err)
+		assert.Empty(t, mods)
+		assert.Contains(t, err.Error(), "500")
+	})
+
+	t.Run("one failing chunk keeps the other chunk's results", func(t *testing.T) {
+		var seen int
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ids := decodeModIDs(t, r)
+			seen++
+			w.Header().Set("Content-Type", "application/json")
+			if len(ids) == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"error":"boom"}`))
+				return
+			}
+			out := make([]string, 0, len(ids))
+			for _, id := range ids {
+				out = append(out, fmt.Sprintf(`{"id":%d,"name":"Mod %d"}`, id, id))
+			}
+			_, _ = fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(out, ","))
+		}))
+		defer server.Close()
+
+		client := NewClient(server.Client(), "test-api-key")
+		client.SetBaseURL(server.URL)
+
+		ids := make([]int, 0, modBatchSize+1)
+		for i := 1; i <= modBatchSize+1; i++ {
+			ids = append(ids, i)
+		}
+		mods, err := client.GetMods(context.Background(), ids)
+		require.Error(t, err)
+		assert.Equal(t, 2, seen)
+		assert.Len(t, mods, modBatchSize, "the chunk that succeeded is still returned")
+	})
+
+	t.Run("malformed json", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{not-json`))

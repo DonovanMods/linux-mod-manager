@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -92,6 +93,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, result inte
 	return c.rest.DoJSON(ctx, method, path, result)
 }
 
+// doRequestWithBody is doRequest for the endpoints that send a JSON body
+// (the batch POST /v1/mods, #28). Thin wrapper around
+// httpclient.Client.DoJSONBody, so auth, size caps and error mapping are
+// the same ones every other CurseForge call goes through.
+func (c *Client) doRequestWithBody(ctx context.Context, method, path string, body, result interface{}) error {
+	return c.rest.DoJSONBody(ctx, method, path, body, result)
+}
+
 // GetGames fetches all available games with pagination
 func (c *Client) GetGames(ctx context.Context) ([]Game, error) {
 	const pageSize = 50
@@ -176,23 +185,56 @@ func (c *Client) GetMod(ctx context.Context, modID int) (*Mod, error) {
 	return &resp.Data, nil
 }
 
-// GetMods fetches multiple mods by ID (batch request)
+// modBatchSize is how many mod IDs GetMods puts in one POST /v1/mods body.
+// CurseForge documents no hard ceiling for the batch endpoint, so this is a
+// deliberately conservative chunk: 50 matches the page size the paginated
+// endpoints (GetGames, SearchMods) already cap at, keeps a single request
+// and its response comfortably small, and still turns a 200-mod update
+// check into 4 round trips instead of 200.
+const modBatchSize = 50
+
+// GetMods fetches multiple mods by ID through the batch endpoint
+// (POST /v1/mods with a {"modIds": [...]} body), in chunks of modBatchSize
+// (#28). One request per chunk, not one per id.
+//
+// Two partial-failure shapes are both non-fatal to the mods that DID come
+// back, and both surface as a joined error alongside them:
+//
+//   - a chunk whose request fails (transport error, non-2xx): the other
+//     chunks are still attempted;
+//   - an id the API simply OMITS from its response, which is how CurseForge
+//     answers for an unknown, delisted or unavailable mod: reported per id
+//     as domain.ErrModNotFound, so a caller can errors.Is it exactly as it
+//     could when this was a per-id fan-out over GetMod's own 404 mapping.
 func (c *Client) GetMods(ctx context.Context, modIDs []int) ([]Mod, error) {
 	if len(modIDs) == 0 {
 		return nil, nil
 	}
 
-	// Per-id fan-out for now; batch POST /v1/mods tracked in #28.
 	var mods []Mod
 	var errs []error
 
-	for _, id := range modIDs {
-		mod, err := c.GetMod(ctx, id)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("mod %d: %w", id, err))
+	for chunk := range slices.Chunk(modIDs, modBatchSize) {
+		body := struct {
+			ModIDs []int `json:"modIds"`
+		}{ModIDs: chunk}
+
+		var resp APIResponse[[]Mod]
+		if err := c.doRequestWithBody(ctx, http.MethodPost, "/v1/mods", body, &resp); err != nil {
+			errs = append(errs, fmt.Errorf("mods %v: %w", chunk, err))
 			continue
 		}
-		mods = append(mods, *mod)
+
+		returned := make(map[int]bool, len(resp.Data))
+		for _, m := range resp.Data {
+			returned[m.ID] = true
+		}
+		for _, id := range chunk {
+			if !returned[id] {
+				errs = append(errs, fmt.Errorf("mod %d: %w", id, domain.ErrModNotFound))
+			}
+		}
+		mods = append(mods, resp.Data...)
 	}
 
 	if len(errs) > 0 {

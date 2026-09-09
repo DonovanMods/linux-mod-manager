@@ -305,11 +305,41 @@ func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.Instal
 }
 
 // CheckUpdatesWithProgress is CheckUpdates plus a per-mod progress callback
-// (source.UpdateProgressReporter); report is called with a 1-based index
-// before each mod's remote lookup. report may be nil.
+// (source.UpdateProgressReporter); report is called once per installed mod,
+// with a 1-based index, in the order given. report may be nil.
+//
+// Since #28 the whole batch is fetched in ONE round trip per chunk of 50
+// (Client.GetMods' POST /v1/mods) instead of one GET per mod, so the
+// progress tick now fires as each mod's result is COMPARED rather than
+// before its own request - one call per mod, same order, same arguments.
+//
+// A mod whose id is not a number, and one the API omits from its batch
+// answer, are both skipped rather than fatal: the check reports the ones it
+// could make and names the ones it could not, as before.
 func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
 	var updates []domain.Update
 	var fetchErrs []error
+
+	ids := make([]int, 0, len(installed))
+	for _, inst := range installed {
+		id, err := strconv.Atoi(inst.ID)
+		if err != nil {
+			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): invalid mod ID: %w", inst.Name, inst.ID, err))
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	// GetMods' own error already names every id it could not resolve; it is
+	// kept only to explain a mod's absence below, never to abort the check.
+	fetched, fetchErr := c.client.GetMods(ctx, ids)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	byID := make(map[string]Mod, len(fetched))
+	for _, m := range fetched {
+		byID[strconv.Itoa(m.ID)] = m
+	}
 
 	for i, inst := range installed {
 		select {
@@ -322,13 +352,15 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			report(i+1, len(installed), inst.Name)
 		}
 
-		remoteMod, err := c.GetMod(ctx, inst.GameID, inst.ID)
-		if err != nil {
-			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+		data, ok := byID[inst.ID]
+		if !ok {
+			if fetchErr != nil {
+				fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, fetchErr))
+			}
 			continue
 		}
 
-		// Compare versions
+		remoteMod := modToDomain(data, inst.GameID)
 		if !isNewerVersion(inst.Version, remoteMod.Version) {
 			continue
 		}

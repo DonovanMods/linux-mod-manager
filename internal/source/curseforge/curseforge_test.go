@@ -2,8 +2,12 @@ package curseforge
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -234,36 +238,41 @@ func TestCurseForge_GetDownloadURL(t *testing.T) {
 	assert.Equal(t, "https://edge.forgecdn.net/files/1234/567/jei.jar", url)
 }
 
-func TestCurseForge_CheckUpdates(t *testing.T) {
-	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+// batchModsServer answers the batch POST /v1/mods endpoint (#28) with the
+// subset of byID whose keys the request asked for, counting requests so a
+// test can prove N mods cost ONE round trip. An id absent from byID is
+// omitted from the response, which is how CurseForge answers for a mod it
+// cannot resolve.
+func batchModsServer(t *testing.T, requests *int, byID map[int]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/mods", r.URL.Path)
+		*requests++
+
+		var body struct {
+			ModIDs []int `json:"modIds"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+
+		out := make([]string, 0, len(body.ModIDs))
+		for _, id := range body.ModIDs {
+			if doc, ok := byID[id]; ok {
+				out = append(out, doc)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-
-		// Return different versions based on call
-		if callCount == 1 {
-			// First mod has an update
-			_, _ = w.Write([]byte(`{
-				"data": {
-					"id": 238222,
-					"name": "JEI",
-					"latestFiles": [{"displayName": "jei-1.20.1-15.4.0.0"}],
-					"dateModified": "2024-01-20T10:30:00Z"
-				}
-			}`))
-		} else {
-			// Second mod is up to date
-			_, _ = w.Write([]byte(`{
-				"data": {
-					"id": 306612,
-					"name": "Fabric API",
-					"latestFiles": [{"displayName": "fabric-api-0.92.0"}],
-					"dateModified": "2024-01-15T10:30:00Z"
-				}
-			}`))
-		}
+		_, _ = fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(out, ","))
 	}))
+}
+
+func TestCurseForge_CheckUpdates(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		238222: `{"id":238222,"name":"JEI","latestFiles":[{"displayName":"jei-1.20.1-15.4.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+		306612: `{"id":306612,"name":"Fabric API","latestFiles":[{"displayName":"fabric-api-0.92.0"}],"dateModified":"2024-01-15T10:30:00Z"}`,
+	})
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
@@ -293,26 +302,75 @@ func TestCurseForge_CheckUpdates(t *testing.T) {
 	updates, err := cf.CheckUpdates(context.Background(), installed)
 	require.NoError(t, err)
 
+	// #28: the whole check is one batch request, not one per mod.
+	assert.Equal(t, 1, requests, "two installed mods must cost one round trip")
+
 	// Only JEI should have an update
 	require.Len(t, updates, 1)
 	assert.Equal(t, "238222", updates[0].InstalledMod.ID)
 	assert.Equal(t, "15.4.0.0", updates[0].NewVersion)
 }
 
-func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
+// TestCurseForge_CheckUpdatesBatchesLargeSets pins #28's real payoff: an
+// update check over more mods than one batch holds costs one request PER
+// CHUNK, not one per mod.
+func TestCurseForge_CheckUpdatesBatchesLargeSets(t *testing.T) {
+	const count = modBatchSize + 5
+	byID := make(map[int]string, count)
+	installed := make([]domain.InstalledMod, 0, count)
+	for i := 1; i <= count; i++ {
+		byID[i] = fmt.Sprintf(`{"id":%d,"name":"Mod %d","latestFiles":[{"displayName":"mod-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`, i, i)
+		installed = append(installed, domain.InstalledMod{Mod: domain.Mod{
+			ID: strconv.Itoa(i), SourceID: "curseforge", Name: fmt.Sprintf("Mod %d", i), Version: "1.0.0", GameID: "432",
+		}})
+	}
 
-		switch r.URL.Path {
-		case "/v1/mods/111":
-			_, _ = w.Write([]byte(`{"data": {"id": 111, "name": "Mod A", "latestFiles": [{"displayName": "mod-a-2.0.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
-		case "/v1/mods/222":
-			_, _ = w.Write([]byte(`{"data": {"id": 222, "name": "Mod B", "latestFiles": [{"displayName": "mod-b-1.0.0"}], "dateModified": "2024-01-15T10:30:00Z"}}`))
-		case "/v1/mods/333":
-			_, _ = w.Write([]byte(`{"data": {"id": 333, "name": "Mod C", "latestFiles": [{"displayName": "mod-c-3.5.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
-		}
-	}))
+	requests := 0
+	server := batchModsServer(t, &requests, byID)
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	updates, err := cf.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Len(t, updates, count, "every mod has a newer version upstream")
+	assert.Equal(t, 2, requests, "%d mods is two chunks of %d, so two requests", count, modBatchSize)
+}
+
+// TestCurseForge_CheckUpdatesReportsAnOmittedMod covers the batch's own
+// partial-miss shape: an id CurseForge simply leaves out of its answer is
+// named in the error, and the mods it did answer for are still checked.
+func TestCurseForge_CheckUpdatesReportsAnOmittedMod(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		111: `{"id":111,"name":"Mod A","latestFiles":[{"displayName":"mod-a-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Name: "Mod A", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "999", Name: "Gone Mod", Version: "1.0.0", GameID: "432"}},
+	}
+
+	updates, err := cf.CheckUpdates(context.Background(), installed)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update check skipped 1 mod(s)")
+	assert.Contains(t, err.Error(), "Gone Mod (id 999)")
+	require.Len(t, updates, 1, "the mod the API did answer for is still checked")
+	assert.Equal(t, "111", updates[0].InstalledMod.ID)
+}
+
+func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		111: `{"id":111,"name":"Mod A","latestFiles":[{"displayName":"mod-a-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+		222: `{"id":222,"name":"Mod B","latestFiles":[{"displayName":"mod-b-1.0.0"}],"dateModified":"2024-01-15T10:30:00Z"}`,
+		333: `{"id":333,"name":"Mod C","latestFiles":[{"displayName":"mod-c-3.5.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
@@ -349,11 +407,10 @@ func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
 }
 
 func TestCurseForge_CheckUpdates_DelegatesWithNilReport(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data": {"id": 238222, "name": "JEI", "latestFiles": [{"displayName": "jei-1.20.1-15.4.0.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
-	}))
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		238222: `{"id":238222,"name":"JEI","latestFiles":[{"displayName":"jei-1.20.1-15.4.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")

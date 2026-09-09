@@ -6,6 +6,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -101,10 +102,37 @@ func (c *Client) HTTPClient() *http.Client { return c.httpClient }
 // Non-2xx responses are first offered to ErrorMapper; if ErrorMapper returns
 // nil (or is unset), 401 is mapped to domain.ErrAuthRequired and other
 // statuses are surfaced as "API error (status N): <body>".
-func (c *Client) DoJSON(ctx context.Context, method, path string, result interface{}) (err error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, nil)
+//
+// It is DoJSONBody with no request body; the two share every rule.
+func (c *Client) DoJSON(ctx context.Context, method, path string, result interface{}) error {
+	return c.DoJSONBody(ctx, method, path, nil, result)
+}
+
+// DoJSONBody is DoJSON with a JSON request body: body is marshalled and sent
+// with a Content-Type of application/json, and the response is decoded into
+// result exactly as DoJSON decodes it - same auth header, same ErrorMapper,
+// same 401/status mapping, same capped error-body read. A nil body sends no
+// body and no Content-Type at all, which is what DoJSON delegates.
+//
+// Added for CurseForge's batch POST /v1/mods (#28), which needs a method and
+// a body DoJSON's signature cannot express; DoJSON's own signature is
+// unchanged so no existing call site moves.
+func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, result interface{}) (err error) {
+	var reader io.Reader
+	if body != nil {
+		encoded, merr := json.Marshal(body)
+		if merr != nil {
+			return fmt.Errorf("encoding request body: %w", merr)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.apiKey != "" {
 		req.Header.Set(c.authHeader, c.apiKey)

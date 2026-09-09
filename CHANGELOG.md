@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CurseForge update checks are one request per 50 mods, not one per mod
+  (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
+  posts the whole set to CurseForge's batch `POST /v1/mods` endpoint in
+  chunks of 50 (`modBatchSize`, documented at its declaration), and the
+  update-check path goes through it — a 200-mod profile costs 4 round trips
+  instead of 200. `GetMod` is unchanged for single lookups. Partial failures
+  stay partial: a chunk whose request fails does not stop the other chunks,
+  and an id CurseForge omits from its answer (an unknown, delisted or
+  unavailable mod) is named in the error while every mod that did come back
+  is still checked. The per-mod progress ticks `lmm update` renders are
+  unchanged in count, order and arguments; they now fire as each mod's
+  result is compared rather than before its own request.
+
 - **`lmm search --limit N` now really returns N (#109).** The aggregate
   search asked every source for exactly one page and merged whatever came
   back, so a source whose server-side page cap sits below its share of the
