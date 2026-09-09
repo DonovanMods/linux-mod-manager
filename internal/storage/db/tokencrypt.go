@@ -98,6 +98,12 @@ var errNotAnEnvelope = errors.New("not an encrypted token envelope")
 
 // isTokenEnvelope reports whether blob was written by sealToken. A blob
 // that fails this is a pre-#79 plaintext row.
+//
+// The one theoretical false positive is a legacy plaintext key of 16+ bytes
+// that itself begins with the four ASCII characters "lmm1"; such a row would
+// be treated as an envelope, fail to authenticate, and be reported as
+// KeyUndecryptable with the "log in again" remedy. No source issues keys in
+// that shape, and the failure is loud and recoverable rather than silent.
 func isTokenEnvelope(blob []byte) bool {
 	return len(blob) >= len(tokenEnvelopeMagic)+tokenNonceSize && string(blob[:len(tokenEnvelopeMagic)]) == tokenEnvelopeMagic
 }
