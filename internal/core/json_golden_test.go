@@ -689,8 +689,12 @@ func TestJSONGoldens(t *testing.T) {
 					Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
 					Locked: true, LockedVersion: "1.2.3", ConvertPaks: boolPtr(true),
 				},
-				Changelog: "Fixed a crash on load.",
-				Notes:     []string{"changelog unavailable: upstream timeout"},
+				// #342: the plain-text sibling of the raw Mod.Description
+				// above, pinned here because it is the only golden that
+				// carries it - a mod with no description omits the key.
+				DescriptionText: "Adds bigger backpacks.",
+				Changelog:       "Fixed a crash on load.",
+				Notes:           []string{"changelog unavailable: upstream timeout"},
 			},
 		},
 		{

@@ -6866,3 +6866,66 @@ func TestE2E_AuthSurfaceNamesTheEnvironmentVariableAsText(t *testing.T) {
 		"and must survive the first keystroke, which a placeholder does not")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ModDescriptionRendersAsProseNotMarkup is #342: domain.Mod's
+// Description carries the source's RAW markup by design (#86) and Preact
+// renders a text child as the text it is, so the page showed the reader
+// "<p>Adds bigger backpacks.</p>" - angle brackets and all - where the CLI
+// has always printed clean prose. dangerouslySetInnerHTML is forbidden
+// here, so core hands over a cleaned sibling (description_text) and both
+// surfaces render that.
+func TestE2E_ModDescriptionRendersAsProseNotMarkup(t *testing.T) {
+	const rawHTML = "<p>Adds <b>bigger</b> backpacks.</p><p>Requires SKSE &amp; SkyUI.</p>"
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{
+			ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0",
+			Author: "Ada Lovelace", Summary: "A tidy little mod.", Description: rawHTML,
+		},
+		Files:     []domain.DownloadableFile{{ID: "f1", Version: "1.0"}},
+		Changelog: "Fixed a crash on load.",
+	})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0",
+			Author: "Ada Lovelace", Summary: "A tidy little mod.", Description: rawHTML, GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+
+	var pageText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page__prose`, chromedp.ByQuery),
+		textContent(`.mod-page`, &pageText),
+	)
+	assert.Contains(t, pageText, "Adds bigger backpacks.")
+	assert.Contains(t, pageText, "Requires SKSE & SkyUI.")
+	assert.NotContains(t, pageText, "<p>", "the reader must never see the source's markup")
+	assert.NotContains(t, pageText, "<b>")
+	assert.NotContains(t, pageText, "&amp;")
+
+	// The paragraph break survives as a real paragraph rather than as two
+	// runs jammed together.
+	var paragraphs []string
+	f.runInBrowser(t, chromedp.Evaluate(
+		`Array.from(document.querySelectorAll(".mod-page__prose")).map((p) => p.textContent.trim())`,
+		&paragraphs))
+	assert.Contains(t, paragraphs, "Adds bigger backpacks.")
+	assert.Contains(t, paragraphs, "Requires SKSE & SkyUI.")
+
+	// The slide-over reads the same ModDetail document (for its changelog),
+	// so it must not surface the raw field either.
+	var panelText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.mod-row__name`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.slide-over__section[data-changelog-status="ready"]`, chromedp.ByQuery),
+		textContent(`.slide-over`, &panelText),
+	)
+	assert.NotContains(t, panelText, "<p>", "the slide-over must not render the source's markup either")
+	assert.NotContains(t, panelText, "<b>")
+	assert.Empty(t, f.BrowserErrors())
+}

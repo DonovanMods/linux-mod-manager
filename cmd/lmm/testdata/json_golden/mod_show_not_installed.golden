@@ -15,5 +15,6 @@
     "source_url": "https://example.invalid/mods/1",
     "files": [],
     "dependencies": []
-  }
+  },
+  "description_text": "Line one.\n\n\nLine & two."
 }

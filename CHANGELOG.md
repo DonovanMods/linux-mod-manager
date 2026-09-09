@@ -653,6 +653,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mod descriptions rendered as literal HTML tags in the web UI (#342).**
+  `domain.Mod.Description` carries a source's raw markup all the way to the
+  wire by design (#86), and the SPA rendered it as the text it is: a
+  NexusMods (and, since #246, a CurseForge) description showed the reader
+  `<p>Adds bigger backpacks.</p>`, angle brackets and all. `core.ModDetail`
+  now carries an additive `description_text` — the same
+  `core.CleanChangelog` pass `lmm mod show` has always printed through —
+  and the full mod page renders that as real paragraphs. The raw
+  `description` is unchanged for `--json` consumers that want the markup,
+  and `dangerouslySetInnerHTML` stays forbidden.
+
 - **`lmm auth status` named the credential lmm was NOT using (#356).** With
   both a stored token and the source's environment variable set, every
   status surface — `lmm auth status`, `GET /api/v1/auth`, the web UI's Auth

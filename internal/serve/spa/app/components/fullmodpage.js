@@ -107,6 +107,17 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   // the lock/policy state the versions table gates on.
   const installedMod = modPage.filesReport.mod ?? {};
   const detailMod = modPage.detail?.mod;
+  // core.ModDetail.description_text, NOT mod.description (issue 342): the
+  // raw field carries the source's own markup by design (issue 86), and
+  // Preact renders it as the text it is - the reader saw "<p>Adds bigger
+  // backpacks.</p>", angle brackets and all. dangerouslySetInnerHTML is
+  // forbidden here (no_unsafe_dom_test.go), and re-implementing core's
+  // cleaner in a frontend would put core logic in an adapter, so core
+  // hands over the cleaned prose and this splits its blank-line-separated
+  // paragraphs into real <p>s.
+  const descriptionParagraphs = splitParagraphs(
+    modPage.detail?.description_text,
+  );
   const installed = modPage.detail?.installed;
   const sourceID = route.sourceID;
   const modID = route.modID;
@@ -259,11 +270,13 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         </p>`
       }
       ${
-        detailMod?.description &&
+        descriptionParagraphs.length > 0 &&
         html`
           <section class="mod-page__section">
             <h2 class="plan__heading">Description</h2>
-            <p class="mod-page__prose">${detailMod.description}</p>
+            ${descriptionParagraphs.map(
+              (para) => html`<p class="mod-page__prose">${para}</p>`,
+            )}
           </section>
         `
       }
@@ -324,6 +337,20 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
  * page's PRIMARY read (hydrateModPage), so unlike every other section here
  * it has no loading/error state of its own: by the time this renders,
  * filesReport already exists. */
+// splitParagraphs turns core's cleaned description text into paragraphs:
+// blank-line-separated runs, trimmed, with empty runs dropped.
+// CleanChangelog turns each </p><p> pair into two newlines and a <br> into
+// one, so a source that uses both leaves runs of three - rendering those as
+// literal blank lines (the pre-wrap the prose class carries) would put a
+// gap in the page where the source only meant a paragraph break.
+function splitParagraphs(text) {
+  if (!text) return [];
+  return text
+    .split(/\n\s*\n/)
+    .map((para) => para.trim())
+    .filter(Boolean);
+}
+
 function FilesSection({ filesReport }) {
   return html`
     <section class="mod-page__section">

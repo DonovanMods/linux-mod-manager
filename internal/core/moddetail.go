@@ -26,6 +26,18 @@ type ModDetail struct {
 	// plain text, which is safe but drops the mod's formatting.
 	Mod       *domain.Mod      `json:"mod,omitempty"`
 	Installed *InstalledDetail `json:"installed,omitempty"`
+	// DescriptionText is Mod.Description with its markup stripped, through
+	// the same CleanChangelog path `lmm mod show` has always printed it
+	// through (#342). It exists because the raw field above cannot be
+	// rendered safely by a frontend that escapes its output - the web UI
+	// showed the reader "<p>Adds bigger backpacks.</p>" verbatim - and
+	// re-implementing the cleaner in a frontend would put core logic in an
+	// adapter. Paragraph breaks survive as newlines; nothing else does.
+	//
+	// omitzero: a mod with no description adds no key. The raw
+	// Mod.Description is untouched and stays the field a `--json` consumer
+	// that wants the markup reads.
+	DescriptionText string `json:"description_text,omitzero"`
 	// Changelog is populated best-effort from the source's optional
 	// source.ChangelogProvider capability (#87) - absent when the source
 	// does not implement it, or when it has nothing to report. A provider
@@ -64,6 +76,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	}
 	detail := &ModDetail{Mod: mod}
 	s.fillModDescription(ctx, sourceID, game, mod)
+	detail.DescriptionText = CleanChangelog(mod.Description)
 	detail.Changelog, detail.Notes = s.modChangelog(ctx, sourceID, game, modID, mod.Version)
 
 	// Only a genuine "not installed" - the ordinary case for a mod browsed
