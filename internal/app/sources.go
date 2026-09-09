@@ -52,7 +52,16 @@ func registerSource(ctx context.Context, svc *core.Service, src source.ModSource
 	// Gate on Capabilities().Auth: a key set on an auth-less source would be
 	// stored but never attached to a request.
 	if setter, ok := src.(interface{ SetAPIKey(string) }); ok && source.CapabilitiesOf(src).Auth {
-		if key := ResolveAPIKey(ctx, svc, src); key != "" {
+		key, err := ResolveAPIKey(ctx, svc, src)
+		if err != nil {
+			// #79: the credential is there but unreadable (the key file was
+			// deleted or replaced). Registering keyless is still the right
+			// outcome - the source works for anything anonymous - but
+			// silently doing so is how a user ends up debugging a 401 with
+			// no idea their key stopped being used.
+			_, _ = fmt.Fprintf(warn, "warning: source %q: %v\n", id, err) //nolint:errcheck // best-effort warning write
+		}
+		if key != "" {
 			setter.SetAPIKey(key)
 		}
 	}
@@ -84,15 +93,25 @@ func registerCustomSources(ctx context.Context, svc *core.Service, cfgDir string
 // ResolveAPIKey returns the API key for src: the environment variable named
 // by EnvKeyFor(src) wins, then the token stored by `lmm auth login`; "" if
 // neither is set.
-func ResolveAPIKey(ctx context.Context, svc *core.Service, src source.ModSource) string {
+//
+// The error is non-fatal by design and always accompanies an empty key: it
+// reports a STORED credential that exists but could not be decrypted (#79 -
+// a missing or replaced <DataDir>/key), which every caller treats as "no
+// key" while telling the user why, rather than refusing to run. An
+// environment key short-circuits before the stored one is even looked at,
+// so it is never reported when a working key is in hand.
+func ResolveAPIKey(ctx context.Context, svc *core.Service, src source.ModSource) (string, error) {
 	if key := os.Getenv(EnvKeyFor(src)); key != "" {
-		return key
+		return key, nil
 	}
 	token, err := svc.GetSourceToken(ctx, src.ID())
-	if err != nil || token == nil {
-		return ""
+	if err != nil {
+		return "", err
 	}
-	return token.APIKey
+	if token == nil {
+		return "", nil
+	}
+	return token.APIKey, nil
 }
 
 // EnvKeyFor returns the environment variable that can supply src's API key:
@@ -149,7 +168,11 @@ func ProbeSource(ctx context.Context, svc *core.Service, def source.SourceDefini
 	if a, ok := src.(interface{ SetAPIKey(string) }); ok {
 		// Same resolution as registration (env var named by EnvKeyFor, then
 		// the stored token), so a probe sees exactly the key a real run would.
-		if key := ResolveAPIKey(ctx, svc, src); key != "" {
+		key, err := ResolveAPIKey(ctx, svc, src)
+		if err != nil {
+			return "", err
+		}
+		if key != "" {
 			a.SetAPIKey(key)
 		}
 	}

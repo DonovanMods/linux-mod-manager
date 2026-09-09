@@ -37,6 +37,8 @@ func (d *DB) migrate(ctx context.Context) error {
 		migrateV10,
 		migrateV11,
 		migrateV12,
+		migrateV13,
+		migrateV14,
 	}
 
 	if version < len(migrations) {
@@ -203,5 +205,44 @@ func migrateV12(ctx context.Context, d *DB) error {
 	// (paks join the merged pak); 0 = deploy raw. Deliberately excluded
 	// from SaveInstalledMod's upsert so reinstall preserves the user's choice.
 	_, err := d.ExecContext(ctx, `ALTER TABLE installed_mods ADD COLUMN convert_paks INTEGER DEFAULT 1`)
+	return err
+}
+
+// migrateV13 gives auth_tokens a created_at, so a status surface can say how
+// long a credential has been held rather than only when it was last written
+// (#79 - the encrypted table shows presence and age instead of the key).
+// SQLite cannot default an added column to CURRENT_TIMESTAMP, so it is added
+// nullable and backfilled from updated_at, which for a row that was never
+// re-logged-in is the same instant.
+func migrateV13(ctx context.Context, d *DB) error {
+	if _, err := d.ExecContext(ctx, `ALTER TABLE auth_tokens ADD COLUMN created_at DATETIME`); err != nil {
+		return err
+	}
+	_, err := d.ExecContext(ctx, `UPDATE auth_tokens SET created_at = updated_at WHERE created_at IS NULL`)
+	return err
+}
+
+// migrateV14 adds db_meta, a one-row-per-key store for facts about the
+// database itself rather than about mods. Its first and so far only key is
+// #79's "token_scrub_pending": a durable record that the pre-encryption
+// plaintext has NOT yet been removed from the files on disk.
+//
+// It has to be durable, and it has to live outside auth_tokens. The scrub
+// (VACUUM + WAL checkpoint) cannot run inside the transaction that writes
+// the envelopes — VACUUM cannot run in a transaction at all — so the rows
+// are already sealed by the time it starts. Deriving "there is scrubbing to
+// do" from the rows therefore loses the obligation the moment the first
+// attempt fails: every later open sees a fully encrypted table and skips
+// work that never happened. The marker is written in the SAME transaction
+// as the envelopes and deleted only once both scrub steps have proved they
+// completed, so the obligation survives a crash, a contended run, and a
+// process that is killed mid-scrub.
+func migrateV14(ctx context.Context, d *DB) error {
+	_, err := d.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS db_meta (
+			key TEXT PRIMARY KEY,
+			value TEXT
+		)
+	`)
 	return err
 }

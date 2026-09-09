@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Auth tokens are encrypted at rest (#79).** `lmm auth login` used to
+  write your API key into `lmm.db` as readable text — and, because the
+  database runs in WAL mode, into `lmm.db-wal` as well. Keys are now sealed
+  with **AES-256-GCM** (Go standard library only) under a 32-byte key file
+  at `$XDG_DATA_HOME/lmm/key`, created `0600` the first time you log in;
+  each row carries its own random nonce and is bound to its source id, so a
+  ciphertext copied between rows will not open. Credentials written by an
+  older lmm are re-encrypted in place on the next open, in one transaction,
+  after which the database is vacuumed and the write-ahead log truncated so
+  the plaintext is gone from both files. Those last two steps need the
+  database uncontended, so if another lmm process has it open — `lmm serve`
+  while you run a CLI command — the migration **fails the open** and names
+  the file, rather than reporting success over a key still readable in
+  `lmm.db-wal`; close the other process and run the command again.
+
+  That cleanup is an obligation lmm writes down, not one it infers: the
+  transaction that encrypts the rows also records it in the database, and
+  the record is cleared only once the rebuild and the log truncation have
+  each proved they completed. So an open that still cannot finish it still
+  fails — it never reports success on a later try merely because the rows
+  are encrypted by then — and the first open that has the database to
+  itself finishes the job. Nothing is reported as encrypted at rest while
+  the old bytes can still be in `lmm.db` or `lmm.db-wal`. While it waits
+  for the other process, lmm says so on stderr at any `--log-level`, and
+  gives up after 45 seconds rather than hanging.
+
+  Two user-visible consequences. **`lmm auth status`, `GET /api/v1/auth`
+  and the web UI's Setup page no longer show a masked stored key** — a
+  stored credential is never shown, returned or logged, so it is identified
+  by a **fingerprint** (the first 8 hex of its SHA-256) plus when it was
+  stored and last replaced; a key supplied through an environment
+  variable, which lmm holds in the clear regardless, keeps its masked
+  `abc...xyz` form and gains a fingerprint too. On the wire that is a new
+  `key_fingerprint` field on `app.AuthStatusReport`'s source and orphan
+  rows, a new `unreadable` flag, `created_at`/`updated_at` on a source row,
+  and `key_masked` now appearing only for an environment key (it is gone
+  from orphan rows entirely, which have no plaintext to mask).
+
+  And **the key file is now part of your backup**: copying `lmm.db`
+  without `key` leaves the credentials unrecoverable — run
+  `lmm auth login <source>` again for each. A single row that will not
+  decrypt is reported per source with the remedy named and does not disturb
+  the others; a problem with the key FILE itself (missing, loose,
+  malformed) is about every credential at once, so it is reported once —
+  naming the file and the fix — and the status surface reports that instead
+  of listing sources. Neither stops anything that needs no credential from
+  working. The threat model is documented
+  honestly in [docs/security.md](docs/security.md): this protects a
+  database that is copied, synced or backed up, **not** a local attacker
+  running as you.
+
 ### Changed
 
 - **`lmm import` scan mode scores its source matches instead of taking the

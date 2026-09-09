@@ -76,6 +76,22 @@ lmm auth login curseforge
 export CURSEFORGE_API_KEY="your-api-key"
 ```
 
+#### Where the key is stored
+
+A key from `lmm auth login` is stored **encrypted** (AES-256-GCM) in
+`~/.local/share/lmm/lmm.db`, under a 32-byte key file at
+`~/.local/share/lmm/key` that lmm creates `0600` the first time you log in.
+`lmm auth status` identifies a stored credential by a short fingerprint and
+never prints it back.
+
+Be clear about what this buys you: it protects a database that gets
+**copied, synced, or backed up** — the write-ahead log included — not
+against someone already running as you on your own machine, who can read
+the key file just as easily. **The key file is the secret: back it up with
+the database, or expect to run `lmm auth login` again.** The full threat
+model, the failure modes and their fixes are in
+[docs/security.md](docs/security.md).
+
 ### Set Default Game
 
 Set a default game to avoid specifying `--game` for every command:
@@ -1771,13 +1787,14 @@ internal/
 
 lmm follows the XDG Base Directory specification. `--config` and `--data` override the resolved directories; `cache_path` in `config.yaml` overrides the cache.
 
-| Type             | Path                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| Config           | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                               |
-| Custom Sources   | `<config>/sources/*.yaml`                                                                        |
-| Database         | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                |
-| Mod Cache        | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download) |
-| Download Staging | `<data>/downloads/` (in-flight downloads and archive extraction)                                 |
+| Type             | Path                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------- |
+| Config           | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                |
+| Custom Sources   | `<config>/sources/*.yaml`                                                                         |
+| Database         | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                 |
+| Credential key   | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login` |
+| Mod Cache        | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)  |
+| Download Staging | `<data>/downloads/` (in-flight downloads and archive extraction)                                  |
 
 If an XDG variable is set but `$XDG_…/lmm` does not exist yet and the legacy `~/.config/lmm` or `~/.local/share/lmm` does, the legacy directory is used, so existing installs keep working after setting the variables. Move the directory to adopt the XDG location.
 
@@ -1786,6 +1803,7 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 ## Documentation
 
 - **[Configuration reference](docs/configuration.md)** – All options for `config.yaml` and `games.yaml` (including hooks, link method, sources).
+- **[Security](docs/security.md)** – How stored credentials are encrypted at rest, what that protects against (and what it does not), and how to recover from a lost or damaged key file.
 - **Man pages** – In [`docs/man/man1/`](docs/man/man1/), one page per command and subcommand, generated from the CLI's own `--help` text (`make man`; a drift test fails CI if the pages fall out of sync). View with `man -l docs/man/man1/lmm.1` or install to your man path.
 - **[CHANGELOG.md](CHANGELOG.md)** – Release history and notable changes.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** – How to build, test, and submit changes.

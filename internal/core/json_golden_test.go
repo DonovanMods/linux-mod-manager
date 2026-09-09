@@ -1198,6 +1198,20 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
 		},
 		{
+			// #79: the credential a frontend cannot read and the action
+			// that fixes it. Sources is present because a single damaged
+			// row names only itself - a key-file-level failure (missing,
+			// permissions, malformed) carries no sources and drops the key.
+			// Err is absent from the wire (json:"-"), like every other
+			// typed error here: it exists for errors.Is/As, not a client.
+			"token_key_error",
+			core.TokenKeyError{
+				KeyPath: "/home/u/.local/share/lmm/key",
+				Reason:  "undecryptable",
+				Sources: []string{"nexusmods"},
+			},
+		},
+		{
 			// The field-named rejection an SPA form renders against the
 			// offending input. Err is deliberately absent from the wire
 			// (json:"-"): it exists for errors.Is, not for a client.

@@ -5,24 +5,69 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 
 	_ "modernc.org/sqlite"
 )
 
 // secureFileMode is the permission mask for the database and its WAL/SHM sidecars.
-// The auth_tokens table holds API keys in plaintext, so the file must not be
-// readable by other local users.
+// The auth_tokens table holds API keys - encrypted since #79, but the file
+// must still not be readable by other local users.
 const secureFileMode = 0600
 
 // DB wraps the SQLite database connection
 type DB struct {
 	*sql.DB
 	log *slog.Logger
+
+	// warn is the always-on channel for the ONE class of message a user
+	// has to see whatever their --log-level: an operational wait that
+	// holds the open for tens of seconds (the contended credential scrub,
+	// #79). nil means silent. It is deliberately not a second logger -
+	// anything diagnostic belongs in log.
+	warn io.Writer
+
+	// path is the database file this handle opened, absolute, or
+	// ":memory:". Kept so an error can name the file the user has to act
+	// on - the credential scrub's "close the other lmm process and try
+	// again" is useless without it.
+	path string
+
+	// keyPath is the token-encryption key file (#79); "" means an
+	// ephemeral process-lifetime key, which is what an in-memory database
+	// gets. key is loaded at most once, on first need, under keyMu.
+	keyPath string
+	keyMu   sync.Mutex
+	key     []byte
+}
+
+// Options configures Open beyond the database path.
+//
+// KeyPath is the token-encryption key file (#79). The composition root
+// (internal/app) resolves it - <DataDir>/key - and passes it down, so
+// neither core nor this package has to know the XDG layout. Left empty it
+// defaults beside the database file (defaultKeyPath), which is what the
+// path-only constructors below rely on; an in-memory database gets an
+// ephemeral key instead. There is no configuration that stores a token in
+// the clear.
+type Options struct {
+	Logger  *slog.Logger
+	KeyPath string
+
+	// WarnWriter receives the handful of lines a user must see even at the
+	// CLI's default --log-level off, because they explain a wait that is
+	// happening right now: today, only the contended credential scrub
+	// (#79, re-review N1). The composition root supplies stderr. nil means
+	// silent, which is what every test and every in-process caller that has
+	// no console gets. Scope is deliberate - this is not a logging
+	// channel, and diagnostics go to Logger.
+	WarnWriter io.Writer
 }
 
 // dsnFor builds the modernc.org/sqlite DSN. Pragmas passed as _pragma= query
@@ -43,7 +88,8 @@ func dsnFor(path string) string {
 }
 
 // New creates a new database connection and runs migrations, with a
-// discarding logger. See Open for the logger-aware constructor.
+// discarding logger. See Open for the logger-aware constructor and
+// OpenWithOptions for the one that takes a token-encryption key path.
 func New(path string) (*DB, error) {
 	return Open(path, nil)
 }
@@ -53,6 +99,13 @@ func New(path string) (*DB, error) {
 // resolved against the current working directory before being placed in
 // the DSN, since a relative path in a "file:" URI is ambiguous (see dsnFor).
 func Open(path string, log *slog.Logger) (*DB, error) {
+	return OpenWithOptions(path, Options{Logger: log})
+}
+
+// OpenWithOptions is Open with the full option set - today, the
+// token-encryption key path (#79).
+func OpenWithOptions(path string, opts Options) (*DB, error) {
+	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -91,13 +144,33 @@ func Open(path string, log *slog.Logger) (*DB, error) {
 		return nil, err
 	}
 
-	database := &DB{DB: sqlDB, log: log}
+	keyPath := opts.KeyPath
+	if keyPath == "" {
+		keyPath = defaultKeyPath(dsnPath)
+	}
+	database := &DB{DB: sqlDB, log: log, warn: opts.WarnWriter, path: dsnPath, keyPath: keyPath}
 
-	if err := database.migrate(context.Background()); err != nil {
+	// One root context for the whole open sequence: the schema migrations
+	// and the credential re-encryption below share it, so this package keeps
+	// exactly one context.Background() call site (CLAUDE.md's ctx census).
+	openCtx := context.Background()
+
+	if err := database.migrate(openCtx); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
 			return nil, fmt.Errorf("running migrations: %w (closing database: %v)", err, closeErr)
 		}
 		return nil, fmt.Errorf("running migrations: %w", err)
+	}
+
+	// #79: any credential still sitting in the clear from a pre-encryption
+	// lmm is re-encrypted here, before anything can read the table. Runs on
+	// every open rather than as a numbered schema migration - see
+	// migrateTokenEncryption for why.
+	if err := database.migrateTokenEncryption(openCtx); err != nil {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
+		}
+		return nil, err
 	}
 
 	// Again after migrations: the WAL/SHM sidecars do not exist yet at the call

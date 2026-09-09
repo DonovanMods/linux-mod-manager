@@ -546,8 +546,13 @@ func TestDoAuthLogin_KeyFromEnv_StoresAndEmitsTheStatusReport(t *testing.T) {
 	require.Len(t, report.Sources, 1)
 	assert.True(t, report.Sources[0].Authenticated)
 	assert.Equal(t, "stored", report.Sources[0].Via)
-	assert.Equal(t, app.MaskAPIKey("fake-env-key-1234567890"), report.Sources[0].KeyMasked)
-	assert.NotContains(t, out, "fake-env-key-1234567890", "the document must carry only the MASKED key")
+	// The key was read from the environment but is reported as a STORED
+	// credential, because storing it is what this command just did - and a
+	// stored credential is encrypted at rest and identified by fingerprint
+	// alone (#79).
+	assert.Empty(t, report.Sources[0].KeyMasked)
+	assert.NotEmpty(t, report.Sources[0].KeyFingerprint)
+	assert.NotContains(t, out, "fake-env-key-1234567890", "the document must never carry the key itself")
 
 	token, err := svc.GetSourceToken(context.Background(), "acme-mods")
 	require.NoError(t, err)

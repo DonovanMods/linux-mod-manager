@@ -13,6 +13,8 @@ package serve
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"log/slog"
@@ -96,6 +98,15 @@ func newAuthServer(t *testing.T, sources ...source.ModSource) (*Server, *bytes.B
 	return New(t.Context(), svc, log, Options{Addr: internalTestAddr}), &logs
 }
 
+// submittedKeyFingerprint recomputes what a status document is allowed to
+// say about theSubmittedKey: the first 8 hex of its SHA-256 (#79). Spelled
+// out here rather than imported, because internal/serve does not depend on
+// the storage layer and its tests should not either.
+func submittedKeyFingerprint() string {
+	sum := sha256.Sum256([]byte(theSubmittedKey))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
 func decodeAuthReport(t *testing.T, body []byte) app.AuthStatusReport {
 	t.Helper()
 	var report app.AuthStatusReport
@@ -122,10 +133,14 @@ func TestAPIAuth_ReportsEveryAuthCapableSource(t *testing.T) {
 	requireEncodesLikeInternal(t, rec.Body.Bytes(), want)
 }
 
-// TestAPIAuthLogin_StoresAndReportsMasked drives a login end to end and
+// TestAPIAuthLogin_ReportsFingerprintOnly drives a login end to end and
 // asserts the END STATE - the token is in the DB - alongside the re-read
-// report, which shows the source authenticated with only a MASKED key.
-func TestAPIAuthLogin_StoresAndReportsMasked(t *testing.T) {
+// report, which shows the source authenticated and identifies the stored
+// key by FINGERPRINT only (#79: it is encrypted at rest and never reaches
+// the wire, so no masked form exists for it). Named for what it asserts:
+// it used to be ...StoresAndReportsMasked, which is the opposite of the
+// assertion it now carries (review, Minor 9).
+func TestAPIAuthLogin_ReportsFingerprintOnly(t *testing.T) {
 	s, _ := newAuthServer(t, &authFixtureSource{id: "acme"})
 
 	rec := doAPI(s, http.MethodPost, "/api/v1/auth/acme", `{"api_key":"`+theSubmittedKey+`"}`)
@@ -135,7 +150,9 @@ func TestAPIAuthLogin_StoresAndReportsMasked(t *testing.T) {
 	require.Len(t, report.Sources, 1)
 	assert.True(t, report.Sources[0].Authenticated)
 	assert.Equal(t, "stored", report.Sources[0].Via)
-	assert.Equal(t, app.MaskAPIKey(theSubmittedKey), report.Sources[0].KeyMasked)
+	assert.Equal(t, submittedKeyFingerprint(), report.Sources[0].KeyFingerprint)
+	assert.Empty(t, report.Sources[0].KeyMasked)
+	assert.NotContains(t, rec.Body.String(), theSubmittedKey, "the response must never carry the key itself")
 
 	token, err := s.svc.GetSourceToken(t.Context(), "acme")
 	require.NoError(t, err)
@@ -311,9 +328,10 @@ func TestAuthRequestLoggingNeverCarriesTheKey(t *testing.T) {
 	for i, body := range bodies {
 		assert.NotContains(t, body, theSubmittedKey, "response %d must never echo the API key", i)
 	}
-	// The masked form is what a response MAY carry - assert it is there, so
-	// this test cannot pass by the report having lost the source entirely.
-	assert.Contains(t, bodies[0], app.MaskAPIKey(theSubmittedKey))
+	// The FINGERPRINT is what a response may carry for a stored key (#79) -
+	// assert it is there, so this test cannot pass by the report having lost
+	// the source entirely.
+	assert.Contains(t, bodies[0], submittedKeyFingerprint())
 }
 
 // TestAuthRequestLoggingLogsNoBodyAtAll is the structural half of the pin

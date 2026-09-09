@@ -31,6 +31,23 @@ type ServiceConfig struct {
 	DataDir   string       // Directory for database and persistent data
 	CacheDir  string       // Directory for mod file cache
 	Logger    *slog.Logger // Diagnostics logger; nil means discard
+
+	// KeyPath is the token-encryption key file (#79), resolved by the
+	// composition root (internal/app: <DataDir>/key) and passed straight
+	// through to internal/storage/db - core reads it, it never derives it
+	// from an environment variable or a home directory. Empty defaults it
+	// beside the database, exactly as DataDir already positions lmm.db
+	// itself, so a caller that only supplies the three directories still
+	// gets encryption rather than a plaintext fallback.
+	KeyPath string
+
+	// WarnWriter is the always-on user-facing channel for an operational
+	// wait that happens during construction and would otherwise look like
+	// a hang - today only the contended credential scrub (#79). The
+	// composition root passes its stderr; nil means silent. It is passed
+	// straight through to internal/storage/db and is not a logging
+	// channel: diagnostics go to Logger.
+	WarnWriter io.Writer
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -104,7 +121,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 
 	// Open database
 	dbPath := filepath.Join(cfg.DataDir, "lmm.db")
-	database, err := db.Open(dbPath, log)
+	database, err := db.OpenWithOptions(dbPath, db.Options{Logger: log, KeyPath: cfg.KeyPath, WarnWriter: cfg.WarnWriter})
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -1684,12 +1701,16 @@ func (s *Service) SaveSourceToken(ctx context.Context, sourceID, apiKey string) 
 }
 
 func (s *Service) saveSourceToken(ctx context.Context, sourceID, apiKey string) error {
-	return s.db.SaveToken(ctx, sourceID, apiKey)
+	return asTokenKeyError(s.db.SaveToken(ctx, sourceID, apiKey))
 }
 
-// GetSourceToken retrieves an API token for a source
+// GetSourceToken retrieves and decrypts an API token for a source - the one
+// path that hands a credential back in the clear, for the sources that have
+// to put it on a request. Every status surface uses ListSourceTokens
+// instead (#79).
 func (s *Service) GetSourceToken(ctx context.Context, sourceID string) (*db.StoredToken, error) {
-	return s.db.GetToken(ctx, sourceID)
+	token, err := s.db.GetToken(ctx, sourceID)
+	return token, asTokenKeyError(err)
 }
 
 // DeleteSourceToken removes an API token for a source
@@ -1706,11 +1727,18 @@ func (s *Service) deleteSourceToken(ctx context.Context, sourceID string) error 
 	return s.db.DeleteToken(ctx, sourceID)
 }
 
-// ListSourceTokens returns every stored API token, including ones whose
-// source is no longer registered (e.g. the custom-source definition file
-// was removed) — used by `lmm auth status` to surface orphaned credentials.
-func (s *Service) ListSourceTokens(ctx context.Context) ([]db.StoredToken, error) {
-	return s.db.ListTokens(ctx)
+// ListSourceTokens returns every stored API token as presence, timestamps
+// and a short fingerprint - never the key itself (#79) - including ones
+// whose source is no longer registered (e.g. the custom-source definition
+// file was removed), which is how `lmm auth status` surfaces orphaned
+// credentials.
+//
+// A single row that will not decrypt comes back with Readable false rather
+// than failing the call; only a key file that is missing or unusable
+// altogether is an error, because that one is about the installation.
+func (s *Service) ListSourceTokens(ctx context.Context) ([]db.TokenInfo, error) {
+	infos, err := s.db.ListTokens(ctx)
+	return infos, asTokenKeyError(err)
 }
 
 // IsSourceAuthenticated checks if a source has a stored API token.

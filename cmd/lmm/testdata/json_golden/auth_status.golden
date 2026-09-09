@@ -6,14 +6,16 @@
       "authenticated": true,
       "via": "stored",
       "env_var": "NEXUSMODS_API_KEY",
-      "key_masked": "sto...345"
+      "key_fingerprint": "f17d546f",
+      "created_at": "<TIME>",
+      "updated_at": "<TIME>"
     }
   ],
   "orphaned": [
     {
       "id": "ghost-repo",
       "reason": "not_registered",
-      "key_masked": "lef...y12"
+      "key_fingerprint": "a26a4009"
     }
   ]
 }

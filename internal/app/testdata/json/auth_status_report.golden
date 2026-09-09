@@ -11,26 +11,29 @@
       "authenticated": true,
       "via": "env",
       "env_var": "LMM_MY_REPO_API_KEY",
-      "key_masked": "sup...789"
+      "key_masked": "sup...789",
+      "key_fingerprint": "343155f0"
     },
     {
       "id": "nexusmods",
       "name": "NexusMods",
       "authenticated": true,
       "via": "stored",
-      "key_masked": "abc...xyz"
+      "key_fingerprint": "babd9269",
+      "created_at": "2026-09-09T12:00:00Z",
+      "updated_at": "2026-09-09T12:00:00Z"
     }
   ],
   "orphaned": [
     {
       "id": "ghost-repo",
       "reason": "not_registered",
-      "key_masked": "old...key"
+      "key_fingerprint": "27fda600"
     },
     {
       "id": "local-mods",
       "reason": "auth_not_declared",
-      "key_masked": "sta...456"
+      "unreadable": true
     }
   ],
   "restart_required": true
