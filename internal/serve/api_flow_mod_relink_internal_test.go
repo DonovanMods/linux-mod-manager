@@ -84,16 +84,17 @@ func TestFlowModRelink_RequiresAModID(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "mod_id")
 }
 
-// TestFlowModRelink_UnknownModIs500WithTheEnvelope: a mod that is not
-// installed cannot be planned. The status is the generic plan failure -
-// what matters for a frontend is that it is the JSON envelope, with core's
-// own wording in it.
-func TestFlowModRelink_UnknownModIsAnEnvelope(t *testing.T) {
+// TestFlowModRelink_UnknownModIs404WithTheEnvelope is M3: a mod that is not
+// installed cannot be planned, and PlanRelinkMod's failure IS
+// domain.ErrModNotFound (it comes straight from GetInstalledMod) - so the
+// plan boundary must answer 404, not the generic plan-failure 500 every
+// other unclassified core error gets.
+func TestFlowModRelink_UnknownModIs404WithTheEnvelope(t *testing.T) {
 	s, _, game := newFlowFixtureServer(t)
 
 	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/mod_relink", game),
 		`{"source_id":"`+fixtureSourceID+`","mod_id":"nope"}`)
-	require.NotEqual(t, http.StatusOK, rec.Code)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
 	assert.Contains(t, rec.Body.String(), `"error"`)
 }

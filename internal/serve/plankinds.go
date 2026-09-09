@@ -26,9 +26,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
 // planKind is one mutation flow's registration. Every field is required;
@@ -121,6 +123,27 @@ func supportedPlanKinds() []string {
 // wrapping - fmt.Errorf("%w: %w", errBadPlanRequest, err) - so the
 // underlying error still reaches the envelope verbatim.
 var errBadPlanRequest = errors.New("invalid plan request")
+
+// planErrorStatus classifies a kind.Plan failure for handleAPIPlan (M3/M4):
+// a plan failure is the server's problem by default, a kind that can tell
+// the caller's input is at fault says so with errBadPlanRequest (400), and
+// a plan that failed because the thing it was asked to plan against does
+// not exist - a domain not-found sentinel, reached either straight from a
+// core call (PlanRelinkMod's mod lookup) or from a kind's own pre-check
+// (profile_sync's profile existence check) - answers 404, the same
+// not-found treatment every other resource lookup in this package gives.
+func planErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, errBadPlanRequest):
+		return http.StatusBadRequest
+	case errors.Is(err, domain.ErrModNotFound),
+		errors.Is(err, domain.ErrGameNotFound),
+		errors.Is(err, domain.ErrProfileNotFound):
+		return http.StatusNotFound
+	default:
+		return http.StatusInternalServerError
+	}
+}
 
 // validatingOptions is implemented by a kind's options type that needs
 // checking beyond "it was valid JSON of the right shape" - an enum that
