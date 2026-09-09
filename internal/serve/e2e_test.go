@@ -3472,11 +3472,14 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 // 6 gate review): "Not fixable" used to say only that, with a tooltip that
 // restated the same bare sentence. A LOCKED ref's version_mismatch is the
 // most common not-fixable case in practice (verify.go's own Fixable table:
-// "a non-local source AND an UNLOCKED ref"), and it is exactly the one the
-// read path (GET /api/v1/health) can decide FOR ITSELF - unlike the
-// "locked" note, which is only ever written by a --fix RUN - by cross-
-// referencing the finding's own mod_id against the already-fetched library
-// rows' own `locked` flag.
+// "a non-local source AND an UNLOCKED ref").
+//
+// Issue 334 moved the sentence to where the decision is made: the card
+// renders core.VerifyFinding.FixableReason verbatim, instead of the
+// hand-maintained table plus a lock guess cross-referenced from the
+// already-fetched library rows. So this asserts the ENGINE's wording now -
+// which names the locked version, something the client-side guess never
+// could.
 func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{
@@ -3508,7 +3511,8 @@ func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 	var rowText string
 	f.runInBrowser(t, textContent(`.card--health .card__row`, &rowText))
 	assert.Contains(t, rowText, "Not fixable", "a locked ref's version_mismatch must still say it is not fixable")
-	assert.Contains(t, rowText, "Locked to a version", "and now say WHY - the finding IS a locked version_mismatch")
+	assert.Contains(t, rowText, "locked at v1.0", "and now say WHY, in the engine's own words - the finding IS a locked version_mismatch")
+	assert.Contains(t, rowText, "unlock it first")
 	assert.NotContains(t, rowText, "Repair", "no Repair control may render for a not-fixable row")
 
 	assert.Empty(t, f.BrowserErrors())

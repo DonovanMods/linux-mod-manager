@@ -21,6 +21,7 @@
     "issues": 1,
     "warnings": 0,
     "checked": 1,
-    "has_files": true
+    "has_files": true,
+    "checked_at": "<TIME>"
   }
 }

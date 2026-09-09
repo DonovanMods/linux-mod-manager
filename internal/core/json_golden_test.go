@@ -589,18 +589,22 @@ func TestJSONGoldens(t *testing.T) {
 			// on, so this golden pins the field PRESENT. verify_report's
 			// own "ok" finding below pins the other half - omitzero, so a
 			// non-fixable row carries no key at all.
+			// Fixable and FixableReason are populated together here so both
+			// keys pin their wire shape; a real finding carries a reason
+			// only when Fixable is false (#334).
 			"verify_finding",
 			core.VerifyFinding{
 				ModID: "42", ModName: "Sample Mod", FileID: "file-1", Status: "version_mismatch",
 				Note: "recorded version does not match effective", Recorded: "1.2.2", Effective: "1.2.3", Version: "1.2.3",
-				Fixable: true,
+				Fixable:       true,
+				FixableReason: "the mod was imported locally, so there is no source to re-download from",
 			},
 		},
 		{
 			// Findings is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null" - a clean verify run reports it.
 			"verify_result",
-			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true},
+			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime},
 		},
 		{
 			"converged_file",

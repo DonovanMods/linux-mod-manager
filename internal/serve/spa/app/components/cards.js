@@ -18,36 +18,22 @@ const UPDATES_BATCH_ORIGIN = "updates:batch";
 // HEALTH_REPAIR_ALL_ORIGIN is the Health card's "Repair all" control.
 const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
 
-// NOT_FIXABLE_REASONS maps a not-fixable finding's own Status to the stock
-// reason a person would need to hear (m3, unit 6 fix wave: core.
-// VerifyFinding's Fixable field says only THAT a row won't be repaired, not
-// WHY - the doc comment on it names the closed table this mirrors). Every
-// status not in this table (a version_mismatch from a LOCAL source, say -
-// notFixableReason below handles the locked/unlocked split separately) or
-// with an entry that has nothing useful to add falls back to the plain
-// sentence this used to always show.
-const NOT_FIXABLE_REASONS = {
-  version_unverifiable: "Nothing to check it against",
-  file_count_mismatch: "Nothing to repair it with",
-  conversion_failed: "Reinstall to retry the conversion",
-};
-
 /** notFixableReason names why a finding's own Repair is absent.
- * version_mismatch is split on whether the mod is LOCKED, read off the
- * already-fetched library rows (mods) rather than the finding itself:
- * VerifyFinding.Note only ever carries "locked" on a --fix RUN's own
- * output (verify.go's resolveLast), never on the plain read this card
- * shows (task-A's own review note) - a version_mismatch can just as well
- * be not-fixable because its source is local, which this table has no
- * honest word for, so that case (and anything else this table doesn't
- * name) keeps the generic sentence rather than guessing. */
-function notFixableReason(f, mods) {
-  if (f.status === "version_mismatch") {
-    const mod = (mods ?? []).find((m) => m.id === f.mod_id);
-    if (mod?.locked) return "Locked to a version - unlock it first";
-  }
+ *
+ * Since issue 334 this is the ENGINE's own sentence, read straight off the
+ * finding (core.VerifyFinding.FixableReason), which replaced the
+ * hand-maintained status->sentence table and the locked/unlocked guess that
+ * used to live here. That guess read the lock off a separate library fetch
+ * and could not see the local-source case at all, so a version_mismatch on
+ * a locally imported mod got the generic sentence; the engine knows which
+ * of its own decision points refused the repair and says so.
+ *
+ * The generic fallback survives for a row the engine had nothing to add
+ * about - and for a finding decoded from an older document that carries no
+ * such key. */
+function notFixableReason(f) {
   return (
-    NOT_FIXABLE_REASONS[f.status] ??
+    f.fixable_reason ||
     "A verify --fix run would not attempt a repair for this finding"
   );
 }
@@ -277,9 +263,9 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                             <//>`
                           : html`<span
                               class="card__row-detail"
-                              title=${notFixableReason(f, state.mods?.mods)}
+                              title=${notFixableReason(f)}
                               >Not fixable:
-                              ${notFixableReason(f, state.mods?.mods)}</span
+                              ${notFixableReason(f)}</span
                             >`
                       }
                     </li>

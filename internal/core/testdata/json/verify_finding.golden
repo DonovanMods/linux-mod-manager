@@ -7,5 +7,6 @@
   "recorded": "1.2.2",
   "effective": "1.2.3",
   "version": "1.2.3",
-  "fixable": true
+  "fixable": true,
+  "fixable_reason": "the mod was imported locally, so there is no source to re-download from"
 }

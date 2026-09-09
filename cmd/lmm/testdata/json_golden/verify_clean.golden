@@ -13,6 +13,7 @@
     "issues": 0,
     "warnings": 0,
     "checked": 2,
-    "has_files": true
+    "has_files": true,
+    "checked_at": "<TIME>"
   }
 }
