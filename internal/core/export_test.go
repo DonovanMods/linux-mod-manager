@@ -207,9 +207,13 @@ func (s *Service) MergedPakOutcomesForTest(ctx context.Context, game *domain.Gam
 // review: Search (via core.SearchReport) is production's only remaining
 // caller, but core's own aggregate-search tests drive it directly to assert
 // on AggregateSearchResult's warnings/counts.
-func (s *Service) SearchAllSourcesForTest(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
-	return s.searchAllSources(ctx, gameID, query, category, tags, page, pageSize)
+func (s *Service) SearchAllSourcesForTest(ctx context.Context, gameID, query, category string, tags []string, page, pageSize, limit int) (AggregateSearchResult, error) {
+	return s.searchAllSources(ctx, gameID, query, category, tags, page, pageSize, limit)
 }
+
+// MaxSearchPagesPerSourceForTest exposes maxSearchPagesPerSource so #109's
+// guard test pins the real constant rather than a copy of its value.
+const MaxSearchPagesPerSourceForTest = maxSearchPagesPerSource
 
 // VerifyForTest exposes verifyGated, unexported by the same review:
 // VerifyReport (via core.VerifyReport) is production's only remaining

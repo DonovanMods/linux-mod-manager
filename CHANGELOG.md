@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm search --limit N` now really returns N (#109).** The aggregate
+  search asked every source for exactly one page and merged whatever came
+  back, so a source whose server-side page cap sits below its share of the
+  limit (NexusMods caps around 30) decided the answer: `--limit 50` returned
+  30 with hundreds of matches left. Core now advances each source's OWN page
+  cursor, round by round, until the merged hit count reaches the limit,
+  every source is exhausted, or a documented max-pages guard trips
+  (`maxSearchPagesPerSource`, 10 rounds). A source that fails on a later
+  page is reported exactly like one that fails on its first — a warning,
+  with the hits its earlier pages returned kept. `has_more` / `exhausted`
+  keep their meaning, and `lmm serve` inherits the fix through
+  `/api/v1/search?limit=`; the search page's own `?page=`/`?page_size=`
+  pagination (no `?limit=`) is deliberately untouched, so its cursor is
+  never advanced behind its back.
+
 - **`lmm update --all` applies as one batch (#324).** The command used to
   run two separate per-mod loops (auto-policy updates, then `--all`'s
   remaining ones); it now builds one selection and applies it through

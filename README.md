@@ -1604,6 +1604,8 @@ Only when **every** configured source fails does the command return an error, wh
 Error: search failed: all 1 source(s) failed: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
 ```
 
+`--limit N` (default 10) is a target, not just a ceiling: sources are paged until N merged results exist, every source runs out, or a safety bound of 10 pages per source is reached. That matters because most remote sources cap how many results one page can hold — NexusMods around 30 — so without it `--limit 50` would return 30 and stop, even with hundreds of matches left. A source that fails partway through the paging is reported as a warning like any other source failure, and the results its earlier pages returned are kept.
+
 Use `--source <id>` to search a single configured source instead of aggregating:
 
 ```bash

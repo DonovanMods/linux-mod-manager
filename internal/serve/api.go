@@ -187,6 +187,13 @@ func (s *Server) handleAPIModDetail(w http.ResponseWriter, r *http.Request) {
 // Important 1). The default (no ?limit=) stays unset/uncapped, matching
 // the /search PAGE's own call and every existing test's expectations; a
 // non-numeric ?limit= is bad input (400), the same class as a missing q.
+// Since #109 ?limit= is also core's per-source PAGING TARGET, not only a
+// ceiling: combined with ?page_size= on page 0 it makes the aggregate keep
+// pulling pages until that many merged hits exist (SearchOptions.Limit's
+// own doc comment). The omnibar's fan-out sends ?limit= alone - no
+// ?page_size= - so it stays one round per source, and the search PAGE
+// sends ?page=/?page_size= with no ?limit=, so its own pagination cursor is
+// never advanced behind its back.
 //
 // ?page=/?page_size= are #331's pagination params, for the dedicated search
 // PAGE's escape-hatch browsing (the omnibar never sets either - a live
