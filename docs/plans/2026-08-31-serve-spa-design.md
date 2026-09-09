@@ -168,10 +168,12 @@ update batches land in core (#324) with the CLI's `-i` selection picker (#254) c
 
 The epic live review measured this bar and found four commands and several flags web-unreachable
 (its C-3). The closing wave landed all of them — `purge`, `profile sync`, `mod edit`
-(`mod_relink`) and `mod convert` as web paths, `search --tag` and `install --no-deps` as wire
-options, and the source↔game mapping as a NEW capability on BOTH sides (`lmm game edit` and
+(`mod_relink`) and `mod convert` as web paths, `search --tag`, `install --no-deps`,
+`install --skip-verify` and `deploy --all` as wire options and Advanced controls, and the
+source↔game mapping as a NEW capability on BOTH sides (`lmm game edit` and
 `PUT /api/v1/games/{id}`, which neither frontend had). What remains outside parity is
-modality-bound, and this is the exhaustive list:
+modality-bound, and this is the exhaustive list — re-derived from `lmm <cmd> --help` for every
+command and every persistent flag in the closing wave's fix pass (#326):
 
 **CLI-only, by judgment.** Each is a scripting- or terminal-native affordance whose web
 equivalent already exists in a better form:
@@ -181,8 +183,20 @@ equivalent already exists in a better form:
   through the same core call.
 - `lmm gen-man` — generates the man pages for the CLI itself. There is nothing for a browser to do
   with roff.
+- `lmm completion` and `lmm help` — cobra's own two built-ins: a shell completion script and the
+  command tree's help text. Same shape as `gen-man`; both configure or describe the terminal that
+  runs them.
+- `lmm serve` — the command that starts this UI. A browser reaching it would already be looking
+  at it.
 - `--json` on every command — the web UI *is* the JSON consumer. `/api/v1` returns the identical
   documents, so the flag has no browser meaning.
+- The persistent process/output flags — `--config`, `--data`, `--verbose`, `--no-color` and
+  `--log-level`. Each configures the *process*, not the mutation: the first two are what
+  `lmm serve` itself was started with (a running server cannot re-point its own config and data
+  directories mid-session without becoming a different server), and the last three describe a
+  terminal's stdout/stderr. `-g/--game` and `--no-hooks` are the two persistent flags that are
+  NOT here: the game is the URL's own `/g/{game}/{profile}` scope, and `--no-hooks` is the "Skip
+  hooks" control on every confirm step that takes one.
 
 **Web-only, by judgment.** Nothing here is a CAPABILITY the CLI lacks — each is a rendering of
 one it has:
@@ -194,7 +208,8 @@ one it has:
   --version/--file`, and re-running with `--force`).
 
 Judged per modality, the bar is met: CLI ⊇ web, and web ⊇ CLI for everything a browser can
-meaningfully express.
+meaningfully express. Every command and flag not named above has a web path — the two lists on
+this page are the whole difference between the two frontends.
 
 ## Testing
 

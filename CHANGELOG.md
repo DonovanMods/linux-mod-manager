@@ -193,13 +193,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback. It also closes epic #276's carried TUI intents — per-item update
   selection (#74), install version/file selection (#225), uninstall options
   (#226), full mod-detail prose (#232, #86), live deploy progress (#257) and
-  mod changelog (#87) — and, unlike that epic, leaves only three things
-  CLI-only, each of them terminal-native: `profile reorder -i` (the web
-  reorders by dragging the same load order), `gen-man` (roff for the CLI's
-  own man pages) and `--json` (the web UI _is_ the JSON consumer, and
-  `/api/v1` returns the identical documents). Nothing is web-only either:
-  every browser affordance is a rendering of a CLI-reachable capability.
-  The full ledger is in the design doc's Scope section.
+  mod changelog (#87) — and, unlike that epic, leaves nothing CLI-only that
+  a browser could meaningfully express. What stays in the terminal is
+  terminal-native: `profile reorder -i` (the web reorders by dragging the
+  same load order), `gen-man`, `completion` and `help` (roff, shell scripts
+  and command-tree text), `serve` itself, `--json` (the web UI _is_ the JSON
+  consumer, and `/api/v1` returns the identical documents), and the
+  persistent process/output flags `--config`, `--data`, `--verbose`,
+  `--no-color` and `--log-level`, which configure the process rather than
+  the mutation. Nothing is web-only either: every browser affordance is a
+  rendering of a CLI-reachable capability. The full ledger — re-derived
+  command by command — is in the design doc's Scope section.
   (#327, #328, #329, #330, #331, #332, #333, #334, epic #326)
 
 - **`lmm serve`'s CSP pins `base-uri` and `form-action` (#326).** Neither
