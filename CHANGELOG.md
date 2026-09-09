@@ -75,8 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flag emits the detect LISTING document.
 
   On the web side, `GET /api/v1/games/detect?all=1` returns the same
-  listing widened with those rows (`known: false`, no index — they are
-  listed, not selectable), and `POST /api/v1/games` takes an optional
+  listing widened with those rows (no `known` member at all — absent
+  means not in the known-games list, a curated row carries `"known":
+true` — and `index: 0`), and `POST /api/v1/games` takes an optional
   `from_steam_app_id` that applies exactly the same prefill, so the web UI
   derives no slug, mod path or source map of its own. Naming an unknown row
   in `POST /api/v1/games/detect` is a 400 pointing at that member.
