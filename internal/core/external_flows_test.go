@@ -401,6 +401,49 @@ func TestExternal_InstallingAnAlreadyTrackedItem_IsRefused(t *testing.T) {
 	assert.Contains(t, err.Error(), "uninstall it first")
 }
 
+// The ruling is only binding if the INSTALL PATH asks. Before the fix
+// CheckExternalInstallExclusivity had no caller at all: PlanInstall read the
+// same row two lines later, assigned it to plan.Replaces with no external
+// check, and the user got "failed to get mod files: ... not supported"
+// instead of the ruled wording.
+func TestExternal_PlanInstall_RefusesAnAlreadyTrackedItem(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := externalTestGame(t)
+	svc.RegisterSource(newAdoptTestSource("steamworkshop"))
+	seedExternalMod(t, svc, game, "default", "3617086610", "Workshop Item")
+	ctx := context.Background()
+
+	_, err := svc.PlanInstall(ctx, game, "default", "steamworkshop", "3617086610", false)
+	require.Error(t, err)
+	assertExternalRefusal(t, err, "install")
+	assert.Contains(t, err.Error(), "uninstall it first")
+
+	t.Run("an untracked item is unaffected", func(t *testing.T) {
+		_, err := svc.PlanInstall(ctx, game, "default", "steamworkshop", "9999999999", false)
+		require.Error(t, err, "the fake source has no such mod")
+		assert.NotErrorIs(t, err, domain.ErrExternalMod,
+			"the gate only ever ADDS a refusal - it must not swallow the flow's own error")
+	})
+}
+
+// The batch path asks the same question per entry, and records the ruled
+// wording rather than letting the entry fail on a file fetch that never
+// makes sense for an item Steam already has.
+func TestExternal_PlanInstallMany_RefusesAnAlreadyTrackedEntry(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := externalTestGame(t)
+	svc.RegisterSource(newAdoptTestSource("steamworkshop"))
+	seedExternalMod(t, svc, game, "default", "3617086610", "Workshop Item")
+
+	plan, err := svc.PlanInstallMany(context.Background(), game, "default", []*domain.Mod{{
+		ID: "3617086610", SourceID: "steamworkshop", Name: "Workshop Item",
+	}}, false)
+	require.NoError(t, err, "one entry's refusal never fails the whole batch")
+	require.Len(t, plan.Batch, 1)
+	assert.Contains(t, plan.Batch[0].FetchError, core.ReasonExternalAlreadyTracked)
+	assert.Nil(t, plan.Batch[0].File)
+}
+
 // --- Row: profile reorder (Q1 omission) ---
 
 func TestExternal_Reorder_OmitsExternalMods(t *testing.T) {

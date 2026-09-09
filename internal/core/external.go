@@ -211,6 +211,10 @@ func externalKeys(mods []domain.InstalledMod) map[string]bool {
 // Not-installed and not-external both pass. A DB read failure passes too:
 // this gate only ever ADDS a refusal, and the install flow that follows
 // reports a broken database in its own words.
+//
+// Called by PlanInstall and by PlanInstallMany (per entry), both BEFORE any
+// source read, so the ruled wording is what the user sees rather than
+// whatever a Tier-1 workshop source says about files it cannot serve.
 func (s *Service) CheckExternalInstallExclusivity(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	mod, err := s.GetInstalledMod(ctx, sourceID, modID, gameID, profileName)
 	if err != nil {

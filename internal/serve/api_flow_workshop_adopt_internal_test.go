@@ -162,8 +162,27 @@ func TestAPIFlow_WorkshopAdopt_NoWorkshopSourceIsBadInput(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "Steam Workshop")
 }
 
-// dirEntryNames lists a directory's immediate entry names, sorted by the
-// filesystem's own order - enough to prove "nothing was added".
+// TestAPIFlow_InstallPlan_RefusesAnItemAlreadyTrackedFromSteam is Q2 (#269)
+// seen from the web frontend: POST /api/v1/plans/install for an item lmm
+// already tracks as external is refused with the ruled wording, so the SPA
+// cannot start a job that would put the mod in the game twice.
+func TestAPIFlow_InstallPlan_RefusesAnItemAlreadyTrackedFromSteam(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+	seedWorkshopFixture(t, svc, game)
+
+	planID, _ := planFlow(t, s, game, "workshop_adopt", `{}`)
+	j := startFlowJob(t, s, planID, "")
+	require.Equal(t, jobSucceeded, j.status().State, "%v", j.status().Error)
+
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/install", game),
+		`{"source_id":"`+workshopFixtureSourceID+`","mod_id":"3617086610"}`)
+	assert.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), core.ReasonExternalAlreadyTracked)
+}
+
+// dirEntryNames lists a directory's immediate entry names, sorted by
+// filename (os.ReadDir's own guarantee) - enough to prove "nothing was
+// added".
 func dirEntryNames(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

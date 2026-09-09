@@ -241,12 +241,13 @@ type InstallPlanEntry struct {
 	// actually emits.
 	Conflicts []Conflict `json:"conflicts,omitempty"`
 
-	// FetchError, when non-empty, is the plan-time file-resolution failure
-	// that will make Apply report this entry as Failed - with its previous
-	// installation still intact, since the skip happens before the
-	// uninstall step (#143 finding F1). Carries the fully-worded reason
-	// verbatim: "failed to get mod files: <err>" for a GetModFiles failure,
-	// or "no downloadable files available" when the filter leaves nothing.
+	// FetchError, when non-empty, is the plan-time refusal that will make
+	// Apply report this entry as Failed - with its previous installation
+	// still intact, since the skip happens before the uninstall step (#143
+	// finding F1). Carries the fully-worded reason verbatim: "failed to get
+	// mod files: <err>" for a GetModFiles failure, "no downloadable files
+	// available" when the filter leaves nothing, or an ExternalModError's
+	// own sentence for an item lmm already tracks from Steam (Q2, #269).
 	// One entry's failure never fails the plan - the rest of the batch
 	// still installs, exactly as it did mid-loop before the lift.
 	FetchError string `json:"fetch_error,omitempty"`
@@ -311,6 +312,15 @@ func (p *InstallPlan) SkipDependencies() {
 // write, filesystem write, cache write, hook execution, or download ever
 // happens here - see TestService_PlanInstall_PerformsZeroMutations.
 func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileName, sourceID, modID string, showArchived bool) (*InstallPlan, error) {
+	// Q2 (#269), before any source read: installing an lmm-managed copy of
+	// an item Steam already loads would put the mod in the game twice. Asked
+	// FIRST so the ruled wording is what the user sees - a Tier-1 workshop
+	// source answers GetModFiles with ErrNotSupported, and "failed to get
+	// mod files: not supported" explains nothing about what to do.
+	if err := s.CheckExternalInstallExclusivity(ctx, game.ID, profileName, sourceID, modID); err != nil {
+		return nil, err
+	}
+
 	mod, err := s.GetMod(ctx, sourceID, game.ID, modID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch mod: %w", err)
@@ -483,6 +493,14 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 	for _, mod := range mods {
 		entry := &InstallPlanEntry{Mod: mod}
 		plan.Batch = append(plan.Batch, entry)
+
+		// Q2 (#269), the batch path's own copy of PlanInstall's gate. One
+		// entry's refusal never fails the plan, so it is recorded the way
+		// every other plan-time refusal for this batch is.
+		if err := s.CheckExternalInstallExclusivity(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
+			entry.FetchError = err.Error()
+			continue
+		}
 
 		files, err := s.GetModFiles(ctx, mod.SourceID, mod)
 		if err != nil {
