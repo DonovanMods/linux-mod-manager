@@ -1,8 +1,10 @@
 package core_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 
@@ -77,6 +79,36 @@ func TestModDetail_Description(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, detail.Mod.Description)
 		assert.Empty(t, detail.Notes)
+	})
+
+	t.Run("a failing fetch logs at Warn, so the degradation is diagnosable", func(t *testing.T) {
+		// Track C review, finding 12: the spec calls for a Warn and NOT a
+		// Note, and "no Note" was asserted while "a Warn" was not -
+		// fillModDescription could have returned silently and stayed green.
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		svc, err := core.NewService(core.ServiceConfig{
+			ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(), Logger: logger,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+		game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+		src := newDescribingMockSource("src")
+		src.err = errors.New("upstream timeout")
+		svc.RegisterSource(src)
+		src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+		detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+		require.NoError(t, err)
+		assert.Empty(t, detail.Mod.Description)
+		assert.Empty(t, detail.Notes, "the degradation is a log line, never a note on the wire")
+
+		logged := buf.String()
+		assert.Contains(t, logged, "level=WARN", "a description that silently went missing must be diagnosable")
+		assert.Contains(t, logged, "fetching mod description failed")
+		assert.Contains(t, logged, "upstream timeout", "the upstream reason is what makes the line useful")
+		assert.Contains(t, logged, "mod_id=a")
 	})
 
 	t.Run("a failing fetch degrades to empty, never a failure", func(t *testing.T) {
