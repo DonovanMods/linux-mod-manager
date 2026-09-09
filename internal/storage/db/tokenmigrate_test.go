@@ -3,6 +3,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,15 @@ import (
 // exactly what a database from an older lmm contains.
 func seedPlaintextTokens(t *testing.T, dbPath string, keys map[string]string) {
 	t.Helper()
+	require.NoError(t, openPlaintextSeeder(t, dbPath, keys).Close())
+}
+
+// openPlaintextSeeder is seedPlaintextTokens with the connection left OPEN,
+// so the plaintext frames stay in lmm.db-wal instead of being checkpointed
+// into the main file at close. That is the state a second lmm process finds
+// when it runs the migration, and it is what the contention test needs.
+func openPlaintextSeeder(t *testing.T, dbPath string, keys map[string]string) *DB {
+	t.Helper()
 	d, err := OpenWithOptions(dbPath, Options{KeyPath: filepath.Join(t.TempDir(), "unused-key")})
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -27,7 +37,20 @@ func seedPlaintextTokens(t *testing.T, dbPath string, keys map[string]string) {
 		`, source, key)
 		require.NoError(t, err)
 	}
-	require.NoError(t, d.Close())
+	return d
+}
+
+// fileContains reports whether the file at path holds needle verbatim. A
+// missing file holds nothing - the WAL does not exist until WAL mode has
+// something to write.
+func fileContains(t *testing.T, path, needle string) bool {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false
+	}
+	require.NoError(t, err)
+	return bytes.Contains(raw, []byte(needle))
 }
 
 func TestOpen_ReencryptsLegacyPlaintextRows(t *testing.T) {
@@ -148,4 +171,60 @@ func TestSaveToken_RecordsCreatedAtAndPreservesItAcrossUpdates(t *testing.T) {
 	require.Len(t, second, 1)
 	assert.Equal(t, first[0].CreatedAt, second[0].CreatedAt, "created_at must survive a re-login")
 	assert.Equal(t, TokenFingerprint("second"), second[0].Fingerprint)
+}
+
+// TestOpen_ContendedMigrationFailsRatherThanLeavingPlaintextInTheWAL is the
+// regression for the review's Critical 1. PRAGMA wal_checkpoint does not
+// report a busy database as an ERROR - it returns busy=1 in its first result
+// column and leaves the WAL exactly where it was. Scanning that column and
+// discarding it meant a migration run while any other lmm process held the
+// database open returned SUCCESS over a credential still readable in
+// lmm.db-wal, which is the one thing #79 exists to prevent.
+//
+// The contention here is the real one: a second connection holding a read
+// transaction open across the whole migration, with the pre-#79 plaintext
+// sitting in an unchecked­pointed WAL.
+func TestOpen_ContendedMigrationFailsRatherThanLeavingPlaintextInTheWAL(t *testing.T) {
+	dir := sandboxHome(t)
+	dbPath := filepath.Join(dir, "lmm.db")
+	keyPath := filepath.Join(dir, TokenKeyFileName)
+	ctx := context.Background()
+	const legacyKey = "legacy-nexus-key-contended-1234567890"
+
+	// Left open, so the plaintext frames stay in the WAL.
+	seeder := openPlaintextSeeder(t, dbPath, map[string]string{"nexusmods": legacyKey})
+	require.True(t, fileContains(t, dbPath+"-wal", legacyKey),
+		"precondition: the pre-#79 plaintext must be sitting in the WAL")
+
+	// A reader holding its snapshot across the migration. BEGIN is deferred
+	// in SQLite, so the read lock is only taken at the first query.
+	reader, err := seeder.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, reader.QueryRowContext(ctx, "SELECT COUNT(*) FROM auth_tokens").Scan(&n))
+	require.Equal(t, 1, n)
+
+	// The open must FAIL. Succeeding here would be a lie: the row would be
+	// re-encrypted but the plaintext would still be in the sidecar.
+	contended, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	if err == nil {
+		require.NoError(t, contended.Close())
+	}
+	require.Error(t, err, "a migration that cannot scrub the WAL must not report success")
+	assert.ErrorContains(t, err, "in use by another process")
+	assert.ErrorContains(t, err, dbPath)
+
+	// Release the contention; the very next open completes the job.
+	require.NoError(t, reader.Rollback())
+	require.NoError(t, seeder.Close())
+
+	d, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+	got, err := d.GetToken(ctx, "nexusmods")
+	require.NoError(t, err)
+	assert.Equal(t, legacyKey, got.APIKey)
+	assert.False(t, fileContains(t, dbPath, legacyKey), "plaintext still present in the database")
+	assert.False(t, fileContains(t, dbPath+"-wal", legacyKey), "plaintext still present in the WAL")
 }
