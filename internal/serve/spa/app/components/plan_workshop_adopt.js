@@ -28,8 +28,6 @@ const TRACK_ONLY_NOTE =
  */
 export function WorkshopAdoptPlanView({ plan }) {
   const scan = plan.scan ?? {};
-  const items = scan.items ?? [];
-  const libraries = scan.libraries ?? [];
   const warnings = scan.warnings ?? [];
   const entries = plan.entries ?? [];
 
