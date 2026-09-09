@@ -1597,6 +1597,15 @@ func newE2EFixtureWithReorderableConflict(t *testing.T) e2eFixture {
 // some layouts, where a midpoint first primes the same mouseenter chain a
 // real drag produces.
 func dragRowTo(fromText, toText string) chromedp.Action {
+	return dragRowToChecking(fromText, toText, nil)
+}
+
+// dragRowToChecking is dragRowTo's own press/move/release sequence, split so
+// a caller can run midDrag - itself ordinary chromedp actions against ctx -
+// after the pointer has moved but BEFORE it releases (issue 338's drag-ghost
+// scenario: "the ghost must be present while a drag is in progress"). nil
+// behaves exactly like dragRowTo.
+func dragRowToChecking(fromText, toText string, midDrag chromedp.Action) chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
 		center := func(text string) (x, y float64, err error) {
 			var box []float64
@@ -1625,10 +1634,16 @@ func dragRowTo(fromText, toText string) chromedp.Action {
 		if err := input.DispatchMouseEvent(input.MousePressed, fx, fy).WithButton(input.Left).WithClickCount(1).Do(ctx); err != nil {
 			return err
 		}
-		for _, pt := range [][2]float64{{mid(fx, tx), mid(fy, ty)}, {tx, ty}} {
-			if err := input.DispatchMouseEvent(input.MouseMoved, pt[0], pt[1]).WithButton(input.Left).Do(ctx); err != nil {
+		if err := input.DispatchMouseEvent(input.MouseMoved, mid(fx, tx), mid(fy, ty)).WithButton(input.Left).Do(ctx); err != nil {
+			return err
+		}
+		if midDrag != nil {
+			if err := midDrag.Do(ctx); err != nil {
 				return err
 			}
+		}
+		if err := input.DispatchMouseEvent(input.MouseMoved, tx, ty).WithButton(input.Left).Do(ctx); err != nil {
+			return err
 		}
 		return input.DispatchMouseEvent(input.MouseReleased, tx, ty).WithButton(input.Left).WithClickCount(1).Do(ctx)
 	})

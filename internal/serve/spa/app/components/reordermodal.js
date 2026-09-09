@@ -183,9 +183,19 @@ export function ReorderModal({ modal, state, actions }) {
   // building this on mousedown/mouseenter/mouseup instead means the exact
   // same events a real drag produces are what drive it, so nothing here is
   // untestable by construction.
-  function onRowMouseDown(key) {
+  //
+  // ghostAt is that same tradeoff's own cost (issue 338, owner Demo 3): with
+  // no native drag image, nothing followed the cursor and a drag in
+  // progress was not obviously a drag at all. Tracked on mousemove rather
+  // than left to whichever row the pointer happens to be over, since
+  // onRowMouseEnter only fires at a ROW boundary - between two enters the
+  // real cursor keeps moving continuously and a ghost that only jumped
+  // row-to-row would still read as static motion.
+  const [ghostAt, setGhostAt] = useState(null);
+  function onRowMouseDown(key, e) {
     if (saving) return;
     setDragKey(key);
+    setGhostAt({ x: e.clientX, y: e.clientY });
   }
   function onRowMouseEnter(key) {
     if (!dragKey || dragKey === key) return;
@@ -201,11 +211,19 @@ export function ReorderModal({ modal, state, actions }) {
   }
   useEffect(() => {
     if (!dragKey) return;
+    function move(e) {
+      setGhostAt({ x: e.clientX, y: e.clientY });
+    }
     function stop() {
       setDragKey(null);
+      setGhostAt(null);
     }
+    window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
-    return () => window.removeEventListener("mouseup", stop);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", stop);
+    };
   }, [dragKey]);
 
   async function save() {
@@ -277,7 +295,7 @@ export function ReorderModal({ modal, state, actions }) {
               <span
                 class="reorder-row__handle"
                 aria-label=${`Drag to reorder ${mod.name}`}
-                onMouseDown=${() => onRowMouseDown(key)}
+                onMouseDown=${(e) => onRowMouseDown(key, e)}
               >
                 ⠿
               </span>
@@ -325,6 +343,21 @@ export function ReorderModal({ modal, state, actions }) {
           `;
         })}
       </ul>
+
+      ${
+        dragKey &&
+        ghostAt &&
+        html`
+          <div
+            class="reorder-ghost"
+            data-testid="reorder-ghost"
+            aria-hidden="true"
+            style=${`left: ${ghostAt.x}px; top: ${ghostAt.y}px;`}
+          >
+            <span class="reorder-row__handle">⠿</span>${" "}${modsByKey.get(dragKey)?.name}
+          </div>
+        `
+      }
 
       <section class="plan__section">
         <h3 class="plan__heading">

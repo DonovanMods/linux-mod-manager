@@ -3978,6 +3978,46 @@ func TestE2E_ReorderModal_KeyboardAndDragFlipTheWinnerAndPersist(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ReorderModal_DragShowsAGhostThatDisappearsOnDrop is issue 338
+// (owner Demo 3): the reorder modal's drag is built on plain mouse events
+// rather than the HTML5 Drag and Drop API (this file's own dragRowTo doc
+// comment explains why - chromedp, like any other input-automation tool,
+// only ever dispatches synthetic mousedown/mousemove/mouseup, which never
+// raises the browser's own dragstart/dragover), which means no
+// browser-provided drag image either: nothing visibly followed the cursor,
+// so it was not obvious a drag was even in progress. dragRowToChecking
+// (e2e_harness_test.go) splits dragRowTo's own press/move/release sequence
+// so this scenario can assert something true only WHILE the drag is
+// in-flight - the one thing an uninterruptible drag-and-drop helper cannot
+// prove.
+func TestE2E_ReorderModal_DragShowsAGhostThatDisappearsOnDrop(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var midDragGhost bool
+	f.runInBrowser(t,
+		dragRowToChecking("Mod X", "Mod Y", chromedp.Evaluate(
+			`document.querySelector('[data-testid="reorder-ghost"]') !== null`,
+			&midDragGhost,
+		)),
+	)
+	assert.True(t, midDragGhost, "a drag ghost must be present in the DOM while a drag is in progress")
+
+	var ghostAfterDrop bool
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.querySelector('[data-testid="reorder-ghost"]') !== null`, &ghostAfterDrop,
+	))
+	assert.False(t, ghostAfterDrop, "the drag ghost must be gone once the drop completes")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_ProfilesModal_CRUDExportImport is issue 332's own profiles
 // scenario: create/rename/set-default/delete inline in the modal, the
 // export route's own document fetched through the literal link the row

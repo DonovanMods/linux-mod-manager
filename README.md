@@ -883,7 +883,9 @@ deploy what the new one lists, move the game's active profile — behind the
 same plan-and-confirm every other mutation uses.
 
 **Modals** stack at most one deep: the confirm-plan modal, the **reorder**
-modal (drag a row, or use its ↑ ↓ First Last buttons, with a live
+modal (drag a row — a ghost follows the pointer and a dashed outline marks
+where it will land, since the drag itself is plain mouse events with no
+browser-provided drag image — or use its ↑ ↓ First Last buttons, with a live
 "current vs proposed winner" preview per contested path before Save
 commits), the **profiles** modal (create, rename, delete, set default,
 export, import, plus per-profile **Sync…** and **Purge…**), the **keyboard
