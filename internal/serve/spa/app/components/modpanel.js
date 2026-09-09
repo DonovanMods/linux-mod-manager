@@ -19,6 +19,7 @@ import { trapFocus } from "../focustrap.js";
 import { exitMillis } from "../motion.js";
 import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
+import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
 
 /** modUrl builds the ?mod= URL for row, on the given base path - the same
@@ -447,12 +448,21 @@ export function ModPanel({
             <section class="slide-over__section">
               <p class="plan__heading">Findings (${findings.length})</p>
               <ul class="plan__paths">
-                ${findings.map(
-                  (f) =>
-                    html`<li key=${f.file_id ?? f.status}>
-                      ${f.status}${f.note ? html` — ${f.note}` : ""}
-                    </li>`,
-                )}
+                ${
+                  // M1, unit 8 gate review: this printed the raw status slug
+                  // ("version_mismatch", "no_checksum") while the Health card
+                  // two inches to its left rendered the same finding as
+                  // prose. findingLabel is the shared answer verify.js's own
+                  // doc comment says exists "so the two surfaces can never
+                  // drift" - the slide-over is the third surface that never
+                  // adopted it.
+                  findings.map(
+                    (f) =>
+                      html`<li key=${f.file_id ?? f.status}>
+                        ${findingLabel(f)}
+                      </li>`,
+                  )
+                }
               </ul>
             </section>
           `

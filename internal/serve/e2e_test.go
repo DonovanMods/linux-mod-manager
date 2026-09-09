@@ -5003,3 +5003,36 @@ func TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus(t *testing.T) {
 		"Escape must give focus back to the control that opened the modal")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_SlideOverFindingsReadAsProse is M1 of the unit-8 gate review: the
+// slide-over printed a finding's raw status slug ("version_mismatch") while
+// the Health card two inches to its left rendered the same finding, for the
+// same mod, as "version mismatch (recorded 1.0, source reports 2.0)" -
+// verify.js#findingLabel, whose own doc comment says it was extracted "so
+// the two surfaces can never drift". The slide-over was a third surface
+// that never adopted it.
+//
+// Both surfaces are read in one pass, so the assertion is that they AGREE
+// rather than that each matches a string typed twice into this test.
+func TestE2E_SlideOverFindingsReadAsProse(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var card, panel string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
+		textContent(`.card--health .card__row-detail`, &card),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Better Boots"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Text(`.slide-over__panel`, &panel, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, panel, "version mismatch (recorded 1.0, source reports 2.0)",
+		"the slide-over must speak the same language as the card beside it")
+	assert.NotContains(t, panel, "version_mismatch",
+		"no raw status slug may reach a user")
+	assert.Contains(t, panel, strings.TrimSpace(card),
+		"the two surfaces render one finding through one helper, so their words must be identical")
+	assert.Empty(t, f.BrowserErrors())
+}
