@@ -25,6 +25,19 @@ no flag supplied are prompted for, and under --json a missing value is an
 error naming the flag rather than a prompt.
 
 .PP
+If the game is already installed via Steam, --from-detected 
+prefills nearly everything from the install itself (#206): the display
+name, the install path, the local game id, and either the curated mod
+path and source mapping (for a game in lmm's known-games list) or a
+default mod path of /mods for one that is not. List the app ids
+with 'lmm game detect --include-unknown'. Every other flag still wins
+over the prefill, so --mod-path/--game-id/--name correct a guess; for a
+game with no curated sources, name one with --source, and either give
+--id or let the source's catalog be searched by the game's own name
+(--pick chooses among the matches; a single match whose name is exactly
+the game's name is taken automatically).
+
+.PP
 Sources with a searchable game catalog (CurseForge today; any future
 source that implements one) accept --query to search it, with --pick to
 choose from the matches by number. Without --pick the matches are simply
@@ -59,8 +72,18 @@ lmm game add --source curseforge --query minecraft --json
   lmm game add --source curseforge --query minecraft --pick 1 \\
     --path ~/games/minecraft
 
+.PP
+lmm game detect --include-unknown          # list installed app ids
+  lmm game add --from-detected 526870 --source curseforge
+  # Searches CurseForge for "Satisfactory" and prints the matches
+  lmm game add --from-detected 526870 --source curseforge --pick 1
+
 
 .SH OPTIONS
+\fB--from-detected\fP=""
+	Steam app id of an installed game to prefill from (list them with 'lmm game detect --include-unknown')
+
+.PP
 \fB--game-id\fP=""
 	the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)
 

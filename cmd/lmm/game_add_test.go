@@ -99,12 +99,15 @@ func resetGameAddFlags(t *testing.T) {
 	t.Helper()
 	src, id, query, pick := gameAddSource, gameAddID, gameAddQuery, gameAddPick
 	name, gameID, path, modPath := gameAddName, gameAddGameID, gameAddPath, gameAddModPath
+	fromDetected := gameAddFromDetected
 	t.Cleanup(func() {
 		gameAddSource, gameAddID, gameAddQuery, gameAddPick = src, id, query, pick
 		gameAddName, gameAddGameID, gameAddPath, gameAddModPath = name, gameID, path, modPath
+		gameAddFromDetected = fromDetected
 	})
 	gameAddSource, gameAddID, gameAddQuery, gameAddPick = "", "", "", 0
 	gameAddName, gameAddGameID, gameAddPath, gameAddModPath = "", "", "", ""
+	gameAddFromDetected = ""
 }
 
 func newGameAddCmd() (*cobra.Command, *bytes.Buffer) {
@@ -662,4 +665,242 @@ func TestReportError_JSON_GameSpecError(t *testing.T) {
 		"    \"reason\": \"path does not exist\"\n"+
 		"  }\n"+
 		"}\n", out)
+}
+
+// --- #206: `lmm game add --from-detected <steam-app-id>` ---
+
+// fakeSteamGame fabricates a Steam library under a sandboxed HOME holding
+// one installed app, and returns its install path. Detection tests must
+// never read the host's real library, so HOME and STEAM_ROOT are both
+// overridden (steam.FindSteamRoots reads exactly those two).
+func fakeSteamGame(t *testing.T, appID, name, installDir string) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("STEAM_ROOT", "")
+	steamapps := filepath.Join(home, ".steam", "steam", "steamapps")
+	install := filepath.Join(steamapps, "common", installDir)
+	require.NoError(t, os.MkdirAll(install, 0755))
+	acf := "\n\"AppState\"\n{\n\t\"appid\"\t\t\"" + appID + "\"\n\t\"name\"\t\t\"" + name +
+		"\"\n\t\"installdir\"\t\t\"" + installDir + "\"\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(steamapps, "appmanifest_"+appID+".acf"), []byte(acf), 0644))
+	return install
+}
+
+// TestDoGameAdd_FromDetected_KnownGameNeedsNothingElse is #206's headline:
+// a curated game that is already installed is added by app id alone - the
+// name, install path, game id, mod path and source mapping all come from
+// the detection, and the result is the games.yaml entry `game detect`
+// would have written.
+func TestDoGameAdd_FromDetected_KnownGameNeedsNothingElse(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	install := fakeSteamGame(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
+	gameAddFromDetected = "489830"
+
+	cmd, buf := newGameAddCmd()
+	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "skyrim-se")
+	g := saved["skyrim-se"]
+	assert.Equal(t, "Skyrim Special Edition", g.Name)
+	assert.Equal(t, install, g.InstallPath)
+	assert.Equal(t, filepath.Join(install, "Data"), g.ModPath)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, g.SourceIDs)
+	assert.Contains(t, buf.String(), "Added Skyrim Special Edition (id: skyrim-se)")
+}
+
+// TestDoGameAdd_FromDetected_UnknownGameWithExplicitSource covers the
+// uncurated half: detection supplies everything except the source mapping,
+// and --source/--id supply that. The mod path defaults to <install>/mods.
+func TestDoGameAdd_FromDetected_UnknownGameWithExplicitSource(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	install := fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	gameAddFromDetected, gameAddSource, gameAddID = "526870", "acme-manual", "satisfactory"
+
+	cmd, _ := newGameAddCmd()
+	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "satisfactory")
+	g := saved["satisfactory"]
+	assert.Equal(t, "Satisfactory", g.Name)
+	assert.Equal(t, install, g.InstallPath)
+	assert.Equal(t, filepath.Join(install, "mods"), g.ModPath)
+	assert.Equal(t, map[string]string{"acme-manual": "satisfactory"}, g.SourceIDs)
+}
+
+// TestDoGameAdd_FromDetected_CatalogSearchesByGameName is the suggestion
+// path: --source alone on an uncurated game searches that source's catalog
+// by the game's OWN name. In a terminal the matches are printed and the
+// user picks one, exactly as the --query flow does.
+func TestDoGameAdd_FromDetected_CatalogSearchesByGameName(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
+		entries: []source.GameEntry{
+			{ID: "1", Name: "Satisfactory Deluxe", Slug: "satisfactory-deluxe"},
+			{ID: "2", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+		},
+	})
+	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	gameAddFromDetected, gameAddSource = "526870", "acme"
+
+	cmd, buf := newGameAddCmd()
+	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(strings.NewReader("1\n")), svc))
+
+	out := buf.String()
+	assert.Contains(t, out, "Found 2 game(s):")
+	assert.Contains(t, out, "Satisfactory Deluxe")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "satisfactory")
+	assert.Equal(t, map[string]string{"acme": "1"}, saved["satisfactory"].SourceIDs)
+}
+
+// TestDoGameAdd_FromDetected_CatalogSearchIsTheDocumentUnderJSON: with no
+// --pick there is nothing to choose with under --json (Ruling 2 forbids
+// the prompt), so the catalog report IS the answer - search first, add
+// second - and nothing is written.
+func TestDoGameAdd_FromDetected_CatalogSearchIsTheDocumentUnderJSON(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
+		entries: []source.GameEntry{
+			{ID: "1", Name: "Satisfactory Deluxe", Slug: "satisfactory-deluxe"},
+			{ID: "2", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+		},
+	})
+	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	gameAddFromDetected, gameAddSource = "526870", "acme"
+	withJSONOutput(t)
+
+	cmd, _ := newGameAddCmd()
+	out := runJSONCommand(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	var report core.GameCatalogReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	assert.Equal(t, "Satisfactory", report.Query, "the search term is the detected game's own name")
+	assert.Len(t, report.Matches, 2)
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Empty(t, saved, "a search adds nothing; --pick chooses")
+}
+
+// TestDoGameAdd_FromDetected_CatalogExactNameIsTakenAutomatically pins the
+// one case the suggestion resolves itself - an entry whose name IS the
+// game's name - and, in the same fixture, that a merely-similar sibling
+// does not make it ambiguous.
+func TestDoGameAdd_FromDetected_CatalogExactNameIsTakenAutomatically(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
+		entries: []source.GameEntry{
+			{ID: "77", Name: "Satisfactory", Slug: "satisfactory"},
+			{ID: "78", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+		},
+	})
+	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	gameAddFromDetected, gameAddSource = "526870", "acme"
+
+	cmd, _ := newGameAddCmd()
+	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "satisfactory", "the detected game's own slug outranks the catalog entry's")
+	assert.Equal(t, map[string]string{"acme": "77"}, saved["satisfactory"].SourceIDs)
+}
+
+// TestDoGameAdd_FromDetected_PickChoosesAmongMatches: --pick resolves the
+// search without a prompt, so the whole flow stays non-interactive.
+func TestDoGameAdd_FromDetected_PickChoosesAmongMatches(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddCatalogSource{
+		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
+		entries: []source.GameEntry{
+			{ID: "1", Name: "Satisfactory Deluxe", Slug: "satisfactory-deluxe"},
+			{ID: "2", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+		},
+	})
+	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	gameAddFromDetected, gameAddSource, gameAddPick = "526870", "acme", 2
+
+	cmd, _ := newGameAddCmd()
+	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "satisfactory")
+	assert.Equal(t, map[string]string{"acme": "2"}, saved["satisfactory"].SourceIDs)
+}
+
+// TestDoGameAdd_FromDetected_OverridesWin: every existing flag still beats
+// the prefill, field by field.
+func TestDoGameAdd_FromDetected_OverridesWin(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	install := fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	otherInstall, mods := t.TempDir(), t.TempDir()
+	gameAddFromDetected, gameAddSource, gameAddID = "526870", "acme-manual", "sf"
+	gameAddName, gameAddGameID = "My Satisfactory", "sf-modded"
+	gameAddPath, gameAddModPath = otherInstall, mods
+
+	cmd, _ := newGameAddCmd()
+	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	require.Contains(t, saved, "sf-modded")
+	g := saved["sf-modded"]
+	assert.Equal(t, "My Satisfactory", g.Name)
+	assert.Equal(t, otherInstall, g.InstallPath)
+	assert.NotEqual(t, install, g.InstallPath)
+	assert.Equal(t, mods, g.ModPath)
+}
+
+// TestDoGameAdd_FromDetected_UnknownAppID names the offending input, so a
+// web form marks the field and a shell user sees the app id they typed.
+func TestDoGameAdd_FromDetected_UnknownAppID(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
+	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	gameAddFromDetected = "999999"
+
+	cmd, _ := newGameAddCmd()
+	err := doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "from_steam_app_id", specErr.Field)
+	assert.Equal(t, "999999", specErr.Value)
+}
+
+// TestDoGameAdd_FromDetected_JSONEmitsTheGameDocument keeps the flag inside
+// Ruling 15: the add's one document on stdout, nothing else.
+func TestDoGameAdd_FromDetected_JSONEmitsTheGameDocument(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(nexusmods.New(nil, ""))
+	fakeSteamGame(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
+	gameAddFromDetected = "489830"
+	withJSONOutput(t)
+
+	cmd, buf := newGameAddCmd()
+	out := runJSONCommand(t, func() error {
+		return doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc)
+	})
+
+	assert.Empty(t, buf.String(), "no console text may sit beside the document")
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal([]byte(out), &entry))
+	assert.Equal(t, "skyrim-se", entry.ID)
 }
