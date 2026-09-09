@@ -11,13 +11,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// #316 re-verification: the multi-archive fixture that first exposed the
-// cold-vs-warm over-count used ONE member per archive, so a per-file
-// accumulator and a per-entry count differ only by the number of archives.
-// This widens it to two archives of TWO members each - where an accumulator
-// would report 2 + 4 = 6 against the entry's real 4 - and drives the same
-// mod down the cold (download) and warm (cache-hit) paths in one test, so
-// the two are compared rather than each merely being asserted.
+// #316 re-verification (review M1): FilesDeployed must be the CACHE ENTRY's
+// own file count, read once, on the cold fill and the warm hit alike.
+//
+// Widening the original one-member-per-archive fixture to two members each
+// proved nothing - with N archives of M members, a per-archive-member
+// accumulator sums to exactly N*M, the entry's own count, at every width.
+// What separates the three candidate shapes is OVERLAP: both archives here
+// carry a member at the same relative path, so they collapse into one file
+// in the entry. The entry really holds 3 files, and:
+//
+//	entry count (correct)      3
+//	per-file accumulator       4  (2 + 2, blind to the collapse)
+//	cumulative entry re-read   5 or 6 (the historical #303 bug: the whole
+//	                           entry's listing added once per planned file)
+//
+// so this fixture fails on either wrong shape rather than only on the
+// historical one - both were mutation-tested, and the per-file accumulator
+// that the older two-members-each fixture let through is now caught. Both
+// paths are driven in one test and the two counts are compared directly,
+// not each asserted against a literal in isolation.
 func TestApplyInstall_MultiMemberArchives_ColdAndWarmAgree(t *testing.T) {
 	svc := newFlowsTestService(t)
 	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
@@ -36,8 +49,8 @@ func TestApplyInstall_MultiMemberArchives_ColdAndWarmAgree(t *testing.T) {
 		id      string
 		members map[string]string
 	}{
-		{"f1", map[string]string{"a1.esp": "a1", "a2.esp": "a2"}},
-		{"f2", map[string]string{"b1.esp": "b1", "b2.esp": "b2"}},
+		{"f1", map[string]string{"a1.esp": "a1", "shared.txt": "from f1"}},
+		{"f2", map[string]string{"b1.esp": "b1", "shared.txt": "from f2"}},
 	} {
 		zipBytes, err := os.ReadFile(createTestZip(t, t.TempDir(), f.members))
 		require.NoError(t, err)
@@ -53,8 +66,8 @@ func TestApplyInstall_MultiMemberArchives_ColdAndWarmAgree(t *testing.T) {
 
 	cached, err := svc.GetGameCache(game).ListFiles("g1", "src", "mod1", "1.0")
 	require.NoError(t, err)
-	require.Len(t, cached, 4, "sanity: two archives of two members each")
-	assert.Equal(t, 4, cold.FilesDeployed, "the cold fill reports the cache entry's own file count")
+	require.Len(t, cached, 3, "sanity: two archives of two members each, sharing one path - the entry holds their union")
+	assert.Equal(t, 3, cold.FilesDeployed, "the cold fill reports the cache entry's own file count, not the sum of what each archive contributed")
 
 	// Warm: the entry survives (KeepCache), so nothing is downloaded.
 	_, err = svc.UninstallMod(context.Background(), game, "default", "src", "mod1", core.UninstallOptions{KeepCache: true})
@@ -67,5 +80,5 @@ func TestApplyInstall_MultiMemberArchives_ColdAndWarmAgree(t *testing.T) {
 
 	assert.Equal(t, cold.FilesDeployed, warm.FilesDeployed,
 		"cold and warm must report the same count for the same cache entry")
-	assert.Equal(t, 4, warm.FilesDeployed)
+	assert.Equal(t, 3, warm.FilesDeployed)
 }
