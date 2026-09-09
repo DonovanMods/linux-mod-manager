@@ -1539,6 +1539,12 @@ select {
   white-space: nowrap;
 }
 
+/* issue 340: the omnibar's own way back once it has fanned out. */
+.omnibar__clear {
+  padding: 0 var(--space-2);
+  line-height: 1;
+}
+
 .omnibar-results {
   margin-top: var(--space-6);
 }

@@ -864,7 +864,10 @@ completion whose control is no longer on screen arrives as a toast instead.
 **Enter** to fan the same text out to the game's configured sources and
 append the results below your library, installable in place, with a version
 picker where the source offers more than one. A source that fails to answer
-shows a warning row beside whatever did — never in place of it. For heavier
+shows a warning row beside whatever did — never in place of it. A **✕**
+appears in the omnibar the moment it holds text; click it (or press **Esc**
+while the field has focus) to clear the search, drop the fanned-out results
+and return to your plain library, without losing focus. For heavier
 browsing, the **search page** (`/g/{game}/{profile}/search?q=…`) adds source
 badges, download counts, summaries, category and source filters, a tag
 filter where a source honours one (`lmm search --tag`), sort and
@@ -898,6 +901,7 @@ a visible ring in both themes.
 | `Tab` / `Shift+Tab`        | anywhere                                     | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
 | `?`                        | anywhere outside a text field                | open this keyboard-shortcuts help                                                                              |
 | `Enter`                    | omnibar                                      | search the game's sources for what you typed                                                                   |
+| `Esc`                      | omnibar                                      | clear the search and return to your plain library                                                              |
 | `Esc`                      | any modal, the slide-over, any open dropdown | close it and return focus to whatever opened it                                                                |
 | `←` / `→`                  | the slide-over                               | step to the previous/next mod in the library's current order                                                   |
 | `←` / `→` / `Home` / `End` | the Setup page's section tabs                | move between sections                                                                                          |

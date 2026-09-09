@@ -2260,6 +2260,70 @@ func TestE2E_FailingSourceRendersWarningRowNotSwallowed(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_OmnibarClearRestoresTheLibrary is issue 340 (owner Demo 3): once
+// the omnibar has fanned out to sources, there was no obvious way back to
+// the plain library short of erasing the text by hand. A ✕ control (visible
+// whenever the query is non-empty, same as the fan-out button beside it)
+// and Escape while the field has focus both do the same thing: empty the
+// query, drop the "From sources" rows (main.js#searchSources' own "a blank
+// query clears whatever fan-out is showing" rule) and restore the plain
+// "Library (n)" heading - all without dropping focus out of the field, so a
+// person can start a fresh search immediately.
+func TestE2E_OmnibarClearRestoresTheLibrary(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
+	)
+
+	var libraryHeading string
+	f.runInBrowser(t, textContent(`.library__toolbar .section-header`, &libraryHeading))
+	require.Equal(t, "In your library (0)", libraryHeading,
+		"the fixture's own Alpha Mod must not match \"boots\", or this scenario proves nothing about the heading")
+
+	// --- The ✕ button. ---
+	f.runInBrowser(t,
+		chromedp.Click(`.omnibar__clear`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.omnibar-results`, chromedp.ByQuery),
+	)
+
+	var omnibarText string
+	var focusedIsOmnibar bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector(".omnibar").value`, &omnibarText),
+		chromedp.Evaluate(`document.activeElement === document.querySelector(".omnibar")`, &focusedIsOmnibar),
+		textContent(`.library__toolbar .section-header`, &libraryHeading),
+	)
+	assert.Empty(t, omnibarText, "✕ must empty the omnibar")
+	assert.True(t, focusedIsOmnibar, "✕ must leave focus in the omnibar")
+	assert.Equal(t, "Library (1)", libraryHeading, "the plain Library(n) heading must be restored")
+
+	// --- Escape, while the omnibar itself has focus, does the same. ---
+	f.runInBrowser(t,
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
+		chromedp.Focus(`.omnibar`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.omnibar-results`, chromedp.ByQuery),
+	)
+
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector(".omnibar").value`, &omnibarText),
+		chromedp.Evaluate(`document.activeElement === document.querySelector(".omnibar")`, &focusedIsOmnibar),
+		textContent(`.library__toolbar .section-header`, &libraryHeading),
+	)
+	assert.Empty(t, omnibarText, "Escape must empty the omnibar too")
+	assert.True(t, focusedIsOmnibar, "Escape must leave focus in the omnibar rather than closing/blurring it")
+	assert.Equal(t, "Library (1)", libraryHeading)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_OmnibarFanOutIsCapped is M8 (unit 5 fix wave): the omnibar's
 // fan-out set no limit at all, so a catalog with more matches than a real
 // source's own default page (NexusMods' can run past a hundred) could
