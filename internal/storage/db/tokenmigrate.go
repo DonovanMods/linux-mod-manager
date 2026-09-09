@@ -159,7 +159,7 @@ func (d *DB) retryUntilUncontended(ctx context.Context, step string, once func(c
 		}
 		pause *= 2
 	}
-	return fmt.Errorf("could not remove the pre-encryption credentials from %s: %s did not complete after %d attempts because the database is in use by another process; close any other lmm process (`lmm serve` included) and run the command again: %w", d.path, step, scrubAttempts, err)
+	return fmt.Errorf("could not remove the pre-encryption credentials from %s: %s did not complete after %d attempts, which usually means the database is in use by another process; close any other lmm process (`lmm serve` included) and run the command again: %w", d.path, step, scrubAttempts, err)
 }
 
 // vacuumOnce rebuilds the database file, dropping the free pages that can
@@ -188,7 +188,7 @@ func (d *DB) checkpointWALOnce(ctx context.Context) error {
 		return fmt.Errorf("checkpointing the write-ahead log: %w", err)
 	}
 	if busy != 0 || logFrames != 0 {
-		return fmt.Errorf("checkpointing the write-ahead log: busy=%d, %d frame(s) left in the log", busy, logFrames)
+		return fmt.Errorf("checkpointing the write-ahead log: busy=%d, %d frame(s) left in the log, %d checkpointed", busy, logFrames, checkpointed)
 	}
 	return nil
 }
