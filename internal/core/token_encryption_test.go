@@ -23,11 +23,13 @@ func sandboxDirs(t *testing.T) core.ServiceConfig {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	dataDir := filepath.Join(home, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0700))
 	return core.ServiceConfig{
 		ConfigDir: filepath.Join(home, "config"),
-		DataDir:   filepath.Join(home, "data"),
+		DataDir:   dataDir,
 		CacheDir:  filepath.Join(home, "cache"),
-		KeyPath:   filepath.Join(home, "data", "key"),
+		KeyPath:   filepath.Join(dataDir, db.TokenKeyFileName),
 	}
 }
 
@@ -38,7 +40,6 @@ func TestService_KeyPathFromTheCompositionRootIsWhereTheKeyLands(t *testing.T) {
 	cfg := sandboxDirs(t)
 	elsewhere := filepath.Join(t.TempDir(), "custom-key")
 	cfg.KeyPath = elsewhere
-	require.NoError(t, os.MkdirAll(cfg.DataDir, 0700))
 
 	svc, err := core.NewService(cfg)
 	require.NoError(t, err)

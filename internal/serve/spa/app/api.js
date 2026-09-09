@@ -290,7 +290,9 @@ export const getAuthStatus = () => get("/api/v1/auth");
 
 /** Stores sourceID's API key, live-validated where the source has a
  * validator, and answers with the re-read app.AuthStatusReport. The key
- * itself never comes back - only report.sources[].key_masked does. */
+ * itself never comes back: a stored key is encrypted at rest (#79) and the
+ * report carries only its key_fingerprint, while key_masked appears solely
+ * for a key read from the environment. */
 export const authLogin = (sourceID, apiKey) =>
   post(`/api/v1/auth/${encodeURIComponent(sourceID)}`, { api_key: apiKey });
 

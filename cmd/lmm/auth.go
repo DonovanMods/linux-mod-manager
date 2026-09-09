@@ -462,11 +462,17 @@ func doAuthStatus(ctx context.Context, service *core.Service) error {
 	for _, s := range report.Sources {
 		switch s.Via {
 		case "stored":
-			fmt.Printf("%s (%s): authenticated (key: %s)\n", s.Name, s.ID, s.KeyMasked)
+			// A stored key is encrypted at rest and never decrypted for
+			// display (#79), so this identifies it by fingerprint where it
+			// used to show a masked prefix and suffix.
+			fmt.Printf("%s (%s): authenticated (key %s)\n", s.Name, s.ID, s.KeyFingerprint)
 		case "env":
 			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", s.Name, s.ID, s.EnvVar, s.KeyMasked)
 		default:
 			fmt.Printf("%s (%s): not authenticated (run: lmm auth login %s)\n", s.Name, s.ID, s.ID)
+		}
+		if s.Unreadable {
+			fmt.Printf("%s (%s): a stored credential exists but could not be decrypted — run: lmm auth login %s\n", s.Name, s.ID, s.ID)
 		}
 	}
 
@@ -474,15 +480,24 @@ func doAuthStatus(ctx context.Context, service *core.Service) error {
 	// the token is simply stale.
 	for _, o := range report.Orphaned {
 		if o.Reason == "auth_not_declared" {
-			fmt.Printf("%s: stored token for source without auth declared (key: %s) — stale token? remove with: lmm auth logout %s\n",
-				o.ID, o.KeyMasked, o.ID)
+			fmt.Printf("%s: stored token for source without auth declared (key %s) — stale token? remove with: lmm auth logout %s\n",
+				o.ID, orphanKeyLabel(o), o.ID)
 			continue
 		}
-		fmt.Printf("%s: stored token with no matching source (key: %s) — remove with: lmm auth logout %s\n",
-			o.ID, o.KeyMasked, o.ID)
+		fmt.Printf("%s: stored token with no matching source (key %s) — remove with: lmm auth logout %s\n",
+			o.ID, orphanKeyLabel(o), o.ID)
 	}
 
 	return nil
+}
+
+// orphanKeyLabel names an orphaned credential the only way a status surface
+// may: by fingerprint, or as unreadable when it did not decrypt at all.
+func orphanKeyLabel(o app.OrphanedToken) string {
+	if o.Unreadable {
+		return "unreadable"
+	}
+	return o.KeyFingerprint
 }
 
 // printAuthInstructions prints setup steps for obtaining src's API key: its

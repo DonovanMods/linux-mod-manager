@@ -6,7 +6,9 @@
       "authenticated": true,
       "via": "stored",
       "env_var": "LMM_ACME_MODS_API_KEY",
-      "key_masked": "gol...890"
+      "key_fingerprint": "a7a46b97",
+      "created_at": "<TIME>",
+      "updated_at": "<TIME>"
     }
   ],
   "orphaned": []

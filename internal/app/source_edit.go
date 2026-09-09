@@ -235,12 +235,17 @@ func DeleteSourceDefinition(ctx context.Context, svc *core.Service, sourceID str
 // attachAPIKey sets src's API key the way registerSource does - gated on
 // the source declaring Auth, resolved env-var-first - for a source being
 // constructed outside startup.
+//
+// A stored credential that will not decrypt (#79) leaves the source
+// keyless, exactly as a source with no credential at all: this is the
+// re-key path, so the alternative would be refusing to rebuild a source
+// over a key that is already unusable.
 func attachAPIKey(ctx context.Context, svc *core.Service, src source.ModSource) {
 	setter, ok := src.(interface{ SetAPIKey(string) })
 	if !ok || !source.CapabilitiesOf(src).Auth {
 		return
 	}
-	if key := ResolveAPIKey(ctx, svc, src); key != "" {
+	if key, _ := ResolveAPIKey(ctx, svc, src); key != "" { //nolint:errcheck // reported by the status surface, not fatal here
 		setter.SetAPIKey(key)
 	}
 }

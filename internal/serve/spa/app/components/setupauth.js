@@ -5,7 +5,11 @@
 // SECRET HANDLING mirrors the backend's own rule (api_auth.go's file
 // comment): the typed key never leaves the password input except in the
 // POST body itself, and nothing here ever reads report.sources[].api_key
-// (the wire has no such member; only key_masked comes back). The field is
+// (the wire has no such member). Since #79 a STORED key is encrypted at
+// rest and is never decrypted for display either, so what comes back for
+// one is key_fingerprint - the first 8 hex of its SHA-256 - and key_masked
+// appears only for a key read from the environment, which lmm holds in the
+// clear regardless. keyLabel below renders whichever the row has. The field is
 // cleared on SUCCESS, and on a 502 (the check could not run at all -
 // nothing here to fix by editing the key); a 400 (the VALIDATOR's own
 // verdict - the key itself was wrong) keeps the typed value instead, so a
@@ -17,6 +21,16 @@
 
 import { html, useEffect, useState } from "../render.js";
 import { ApiError, getAuthStatus, authLogin, authLogout } from "../api.js";
+
+/** How a credential is named on screen (#79). A stored key is encrypted at
+ * rest, so the wire carries only its fingerprint; a key read from the
+ * environment still carries the masked form lmm has always shown, because
+ * that one is in the process environment either way. A row that would not
+ * decrypt has neither, and says so. */
+function keyLabel(row) {
+  if (row.unreadable) return "unreadable";
+  return row.key_masked || row.key_fingerprint || "";
+}
 
 export function SetupAuth() {
   const [report, setReport] = useState(null);
@@ -149,9 +163,16 @@ function AuthSourceRow({ source, onChanged }) {
         ${
           source.authenticated
             ? html`<span class="badge badge--good">authenticated</span>${" "}
-                <span class="mono">${source.key_masked}</span>${" "}
+                <span class="mono">${keyLabel(source)}</span>${" "}
                 ${source.via && html`<span class="empty-state__hint">via ${source.via}</span>`}`
             : html`<span class="badge">not authenticated</span>`
+        }
+        ${
+          source.unreadable &&
+          html`<span class="empty-state__hint"
+            >a stored credential exists but could not be decrypted — log in
+            again</span
+          >`
         }
       </span>
       ${
@@ -233,7 +254,7 @@ function OrphanedRow({ token, onChanged }) {
   return html`
     <li class="setup-auth__row" data-source=${token.id}>
       <span class="setup-auth__name">${token.id}</span>
-      <span class="mono">${token.key_masked}</span>
+      <span class="mono">${keyLabel(token)}</span>
       <span class="empty-state__hint">${token.reason}</span>
       <button
         type="button"

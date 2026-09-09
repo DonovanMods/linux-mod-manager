@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // AuthCapableSources returns every source registered on svc whose
@@ -35,16 +37,40 @@ func AuthCapableSources(svc *core.Service) []source.ModSource {
 // UI's Auth section needs it to show the "or set <ENV_VAR>" hint on a row
 // that has never been authenticated, not only one that already is via
 // env). Via distinguishes which credential is ACTIVE: a stored token
-// ("stored", from `lmm auth login`) or the environment variable
-// ("env") - KeyMasked is populated alongside Via. Authenticated is false
-// and Via/KeyMasked are empty for a source with no key from either place.
+// ("stored", from `lmm auth login`) or the environment variable ("env").
+// Authenticated is false and Via is empty for a source with no usable key
+// from either place.
+//
+// WHAT THIS SAYS ABOUT THE KEY ITSELF (#79). A STORED credential is
+// encrypted at rest and is never decrypted to build this report: the row
+// carries KeyFingerprint - the first 8 hex of the key's SHA-256, enough to
+// answer "is this still the one I pasted?" - and no KeyMasked at all. A key
+// from the ENVIRONMENT is one lmm already holds in the clear (it is in the
+// process environment either way), so that row keeps the masked form, which
+// a user can recognise at a glance, AND gains the fingerprint, so the two
+// kinds of row can be compared.
+//
+// CreatedAt/UpdatedAt are the stored credential's timestamps - when it was
+// first stored and when it was last replaced - and are zero for an
+// environment key, which has no such history.
+//
+// Unreadable marks a stored row that exists but did not decrypt (the key
+// file was replaced, or the row is damaged). Such a row is NOT
+// authenticated - nothing can be sent with it - and the environment
+// variable, if set, takes over as it would for a source with no row at all;
+// the flag stays set either way, because "there is a dead credential here,
+// log in again" is the actionable part.
 type AuthSourceStatus struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Authenticated bool   `json:"authenticated"`
-	Via           string `json:"via,omitempty"`
-	EnvVar        string `json:"env_var,omitempty"`
-	KeyMasked     string `json:"key_masked,omitempty"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Authenticated  bool      `json:"authenticated"`
+	Via            string    `json:"via,omitempty"`
+	EnvVar         string    `json:"env_var,omitempty"`
+	KeyMasked      string    `json:"key_masked,omitempty"`
+	KeyFingerprint string    `json:"key_fingerprint,omitempty"`
+	Unreadable     bool      `json:"unreadable,omitzero"`
+	CreatedAt      time.Time `json:"created_at,omitzero"`
+	UpdatedAt      time.Time `json:"updated_at,omitzero"`
 }
 
 // OrphanedToken is a stored API key AuthStatus found with no auth-capable
@@ -53,12 +79,17 @@ type AuthSourceStatus struct {
 // custom source's manifest dropped its `auth:` block) from one that isn't
 // registered at all ("not_registered" - e.g. its definition file was
 // deleted after `lmm auth login`); the two have different remedies.
-// KeyMasked carries the masked key so the plain renderer can reproduce its
-// "(key: ...)" text from this report alone.
+//
+// KeyFingerprint identifies the key so the plain renderer can reproduce its
+// "(key ...)" text from this report alone. It replaced the pre-#79 masked
+// key, which could only be produced by decrypting a credential nothing was
+// going to use - the whole point of encrypting them at rest. Unreadable
+// marks an orphan that did not decrypt at all; its fingerprint is empty.
 type OrphanedToken struct {
-	ID        string `json:"id"`
-	Reason    string `json:"reason"`
-	KeyMasked string `json:"key_masked"`
+	ID             string `json:"id"`
+	Reason         string `json:"reason"`
+	KeyFingerprint string `json:"key_fingerprint,omitempty"`
+	Unreadable     bool   `json:"unreadable,omitzero"`
 }
 
 // AuthStatusReport is `lmm auth status --json`'s document (#309): every
@@ -99,6 +130,19 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 	sources := AuthCapableSources(svc)
 	registered := make(map[string]bool, len(sources))
 
+	// ONE read of the credential table for the whole report, and it is the
+	// non-decrypting one (#79): every stored row this report mentions -
+	// a registered source's and an orphan's alike - is described from this
+	// listing, so building `lmm auth status` never puts a key in memory.
+	tokens, err := svc.ListSourceTokens(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing stored tokens: %w", err)
+	}
+	stored := make(map[string]db.TokenInfo, len(tokens))
+	for _, tok := range tokens {
+		stored[tok.SourceID] = tok
+	}
+
 	report := &AuthStatusReport{}
 	for _, src := range sources {
 		id := src.ID()
@@ -106,21 +150,23 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 
 		envKey := EnvKeyFor(src)
 		row := AuthSourceStatus{ID: id, Name: src.Name(), EnvVar: envKey}
-		token, err := svc.GetSourceToken(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("checking %s: %w", id, err)
-		}
-		switch {
-		case token != nil:
+		tok, hasRow := stored[id]
+		row.Unreadable = hasRow && !tok.Readable
+
+		switch apiKey := os.Getenv(envKey); {
+		case hasRow && tok.Readable:
 			row.Authenticated = true
 			row.Via = "stored"
-			row.KeyMasked = MaskAPIKey(token.APIKey)
-		default:
-			if apiKey := os.Getenv(envKey); apiKey != "" {
-				row.Authenticated = true
-				row.Via = "env"
-				row.KeyMasked = MaskAPIKey(apiKey)
-			}
+			row.KeyFingerprint = tok.Fingerprint
+			row.CreatedAt, row.UpdatedAt = tok.CreatedAt, tok.UpdatedAt
+		case apiKey != "":
+			// Also the fallback for a row that will not decrypt: that
+			// credential cannot authenticate anything, so it must not
+			// shadow one that can.
+			row.Authenticated = true
+			row.Via = "env"
+			row.KeyMasked = MaskAPIKey(apiKey)
+			row.KeyFingerprint = db.TokenFingerprint(apiKey)
 		}
 		report.Sources = append(report.Sources, row)
 	}
@@ -128,10 +174,6 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 	// Two distinct causes land here: the source is still registered but its
 	// declaration dropped auth (svc.GetSource succeeds), or nothing
 	// registered matches the ID at all (GetSource fails).
-	tokens, err := svc.ListSourceTokens(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("listing stored tokens: %w", err)
-	}
 	for _, tok := range tokens {
 		if registered[tok.SourceID] {
 			continue
@@ -140,7 +182,12 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 		if _, err := svc.GetSource(tok.SourceID); err == nil {
 			reason = "auth_not_declared"
 		}
-		report.Orphaned = append(report.Orphaned, OrphanedToken{ID: tok.SourceID, Reason: reason, KeyMasked: MaskAPIKey(tok.APIKey)})
+		report.Orphaned = append(report.Orphaned, OrphanedToken{
+			ID:             tok.SourceID,
+			Reason:         reason,
+			KeyFingerprint: tok.Fingerprint,
+			Unreadable:     !tok.Readable,
+		})
 	}
 
 	return report, nil
@@ -150,6 +197,10 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 // 3 chars). Keys of 8 characters or fewer are fully masked instead: showing
 // 6 of 7-8 characters exposes most of the key, defeating the point of
 // masking.
+//
+// Since #79 this is only applied to a key lmm holds in the clear anyway -
+// one read from the environment. A STORED credential is identified by
+// db.TokenFingerprint instead, which needs no decryption at all.
 func MaskAPIKey(key string) string {
 	if len(key) <= 8 {
 		return "***"

@@ -30,6 +30,9 @@ func newSandboxedService(t *testing.T) (svc *core.Service, dataDir string) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	// A real NEXUSMODS_API_KEY in the developer's shell would otherwise
+	// authenticate the built-in source out from under these assertions.
+	t.Setenv("NEXUSMODS_API_KEY", "")
 
 	dataDir = filepath.Join(home, "data")
 	require.NoError(t, os.MkdirAll(dataDir, 0700))

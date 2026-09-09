@@ -4,11 +4,12 @@ package app
 // auth_status_test.go covers doAuthStatus's PLAIN-TEXT rendering (unchanged
 // wording, now rebuilt from this report); these pin the report's data
 // assembly directly - sources sorted by ID, stored-vs-env precedence, the
-// two orphaned-token reasons, and that a masked key never carries the raw
-// secret.
+// two orphaned-token reasons, and that no rendered form of a key - masked
+// or fingerprinted - ever carries the raw secret.
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -20,6 +21,14 @@ import (
 
 func newAuthStatusTestService(t *testing.T) *core.Service {
 	t.Helper()
+	// Sandboxed HOME/XDG: these services write a token-encryption key file
+	// into their data directory (#79), so nothing may resolve to the
+	// developer's real installation.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
 	})
@@ -82,8 +91,11 @@ func TestAuthStatus_StoredVsEnvVsUnauthenticated(t *testing.T) {
 	// EnvVar is filled for every row (#333 Minor #5), even one
 	// authenticated via a STORED token rather than the environment.
 	assert.Equal(t, "NEXUSMODS_API_KEY", nx.EnvVar)
-	assert.NotEmpty(t, nx.KeyMasked)
-	assert.NotContains(t, nx.KeyMasked, "storedbuiltinkey12345")
+	// A stored key is identified by fingerprint and never masked (#79) -
+	// masking it would mean decrypting it just to print part of it.
+	assert.NotEmpty(t, nx.KeyFingerprint)
+	assert.Empty(t, nx.KeyMasked)
+	assert.NotContains(t, nx.KeyFingerprint, "storedbuiltinkey12345")
 
 	repo := byID["my-repo"]
 	assert.True(t, repo.Authenticated)
@@ -96,6 +108,7 @@ func TestAuthStatus_StoredVsEnvVsUnauthenticated(t *testing.T) {
 	assert.Empty(t, keyless.Via)
 	assert.Equal(t, "LMM_KEYLESS_REPO_API_KEY", keyless.EnvVar, "EnvVar names the hint even for a never-authenticated row")
 	assert.Empty(t, keyless.KeyMasked)
+	assert.Empty(t, keyless.KeyFingerprint)
 }
 
 // TestAuthStatus_SourcesSortedByID pins that the source rows are sorted by
@@ -176,7 +189,7 @@ func TestAuthStatus_OrphanedTokenReasons(t *testing.T) {
 	}
 	require.Len(t, report.Orphaned, 2, "a registered source's own token must not be reported as orphaned")
 	assert.Equal(t, "auth_not_declared", byID["local-mods"].Reason)
-	assert.NotEmpty(t, byID["local-mods"].KeyMasked)
+	assert.NotEmpty(t, byID["local-mods"].KeyFingerprint)
 	assert.Equal(t, "not_registered", byID["ghost-repo"].Reason)
-	assert.NotEmpty(t, byID["ghost-repo"].KeyMasked)
+	assert.NotEmpty(t, byID["ghost-repo"].KeyFingerprint)
 }

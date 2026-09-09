@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // Open resolves the installation's paths, prepares its directories, opens the
@@ -29,7 +31,11 @@ func Open(ctx context.Context, opts Options) (*core.Service, error) {
 		ConfigDir: p.ConfigDir,
 		DataDir:   p.DataDir,
 		CacheDir:  p.CacheDir,
-		Logger:    opts.Logger,
+		// This layer owns every path lmm uses, the token-encryption key
+		// included (#79): core and the storage layer are handed it, so
+		// neither has to know the XDG layout to encrypt a credential.
+		KeyPath: filepath.Join(p.DataDir, db.TokenKeyFileName),
+		Logger:  opts.Logger,
 	})
 	if err != nil {
 		return nil, err
@@ -46,11 +52,12 @@ func warnWriter(opts Options) io.Writer {
 }
 
 // ensureDirs creates the layout. The data directory is owner-only: it holds
-// lmm.db, whose auth_tokens table stores API keys in plaintext, plus the
-// downloads staging root; creating it 0700 also closes the window between
-// SQLite creating the DB at 0644 and the db package tightening it. MkdirAll
-// leaves an existing directory's mode alone, so installs predating the 0700
-// rule are re-tightened explicitly.
+// lmm.db, whose auth_tokens table stores API keys (encrypted since #79),
+// the key those are encrypted under, and the downloads staging root;
+// creating it 0700 also closes the window between SQLite creating the DB at
+// 0644 and the db package tightening it. MkdirAll leaves an existing
+// directory's mode alone, so installs predating the 0700 rule are
+// re-tightened explicitly.
 func ensureDirs(p Paths) error {
 	if err := os.MkdirAll(p.ConfigDir, 0755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)

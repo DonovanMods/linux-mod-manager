@@ -14,10 +14,15 @@
 // call to the source's own validator, and the DB write. It is never
 // logged (requestLogging records method/path/status/duration and no body -
 // pinned by TestAuthRequestLoggingNeverCarriesTheKey), never interpolated
-// into an error, and never echoed in a response: the report carries only
-// app.MaskAPIKey's masked form. A validator's own error text is passed
-// through as the 400's message, so a source must not echo the key into
-// it - the built-ins do not.
+// into an error, and never echoed in a response.
+//
+// Since #79 the write itself is encrypted at rest, and the report this file
+// answers with never decrypts one: a STORED credential appears as
+// key_fingerprint (the first 8 hex of its SHA-256) with no masked form at
+// all, and app.MaskAPIKey is applied only to a key read from the
+// environment - one lmm holds in the clear regardless. A validator's own
+// error text is passed through as the 400's message, so a source must not
+// echo the key into it - the built-ins do not.
 package serve
 
 import (

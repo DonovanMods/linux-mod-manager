@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 )
 
 // ConflictError is returned by ApplyInstall (STRICT path) and ImportArchive
@@ -154,3 +155,55 @@ var ErrConfirmationRequired = errors.New("confirmation required: pass --yes (or 
 // specific value was supplied by neither a flag nor an interactive prompt,
 // wrapped with the flag that would have answered it.
 var ErrInteractiveOnly = errors.New("this value can only be supplied interactively; pass the matching flag instead")
+
+// TokenKeyError reports that lmm could not use the key its stored
+// credentials are encrypted under (#79) - the frontend-facing translation
+// of *db.KeyError, so no frontend has to name the storage layer to branch
+// on it.
+//
+// Reason is db.KeyErrorReason's wire name:
+//
+//   - "missing"       - the key file is gone but encrypted rows remain.
+//     The credentials are unrecoverable; the remedy is to log in again.
+//   - "permissions"   - the file is readable beyond its owner; chmod 600.
+//   - "malformed"     - the file is not a 32-byte key.
+//   - "unreadable"    - it could not be read or created at all.
+//   - "undecryptable" - the KEY was fine but one row did not authenticate
+//     under it. Sources names exactly that row, so a frontend reports one
+//     broken credential rather than a global outage.
+//
+// It follows the same convention as this file's other typed errors: Unwrap
+// exposes the cause for errors.Is/As, and Details() any puts the whole
+// thing in the --json error envelope's "details" (Ruling 3).
+type TokenKeyError struct {
+	KeyPath string   `json:"key_path"`
+	Reason  string   `json:"reason"`
+	Sources []string `json:"sources,omitempty"`
+	Err     error    `json:"-"`
+}
+
+// Error returns the storage layer's own message, which already names the
+// file and the fix.
+func (e *TokenKeyError) Error() string { return e.Err.Error() }
+
+// Unwrap exposes the underlying *db.KeyError.
+func (e *TokenKeyError) Unwrap() error { return e.Err }
+
+// Details implements the --json error envelope's extension point.
+func (e *TokenKeyError) Details() any { return e }
+
+// asTokenKeyError translates a *db.KeyError anywhere in err's chain into
+// the frontend-facing TokenKeyError, and passes everything else (including
+// nil) through untouched. Applied at every Service method that touches a
+// credential, so the translation cannot be forgotten at one of them.
+func asTokenKeyError(err error) error {
+	var keyErr *db.KeyError
+	if !errors.As(err, &keyErr) {
+		return err
+	}
+	out := &TokenKeyError{KeyPath: keyErr.Path, Reason: string(keyErr.Reason), Err: err}
+	if keyErr.SourceID != "" {
+		out.Sources = []string{keyErr.SourceID}
+	}
+	return out
+}

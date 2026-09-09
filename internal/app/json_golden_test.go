@@ -15,9 +15,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+// goldenStamp is the fixed instant every credential timestamp in these
+// goldens carries (#79 gave AuthSourceStatus created_at/updated_at). A
+// literal keeps the files byte-stable; the real values come from the
+// database, which no golden can pin.
+var goldenStamp = time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 
 // updateAppJSONGoldens re-records internal/app's JSON contract goldens. Run
 // ONCE:
@@ -72,11 +79,11 @@ func TestAppJSONGoldens(t *testing.T) {
 		},
 		{
 			"auth_source_status",
-			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyMasked: "abc...xyz"},
+			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: "3a7bd3e2", CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
 		},
 		{
 			"orphaned_token",
-			OrphanedToken{ID: "ghost-repo", Reason: "not_registered", KeyMasked: "old...key"},
+			OrphanedToken{ID: "ghost-repo", Reason: "not_registered", KeyFingerprint: "0b4e7a0e"},
 		},
 		{
 			// `lmm auth status --json`'s document (#309): one authenticated
@@ -89,12 +96,12 @@ func TestAppJSONGoldens(t *testing.T) {
 				RestartRequired: true,
 				Sources: []AuthSourceStatus{
 					{ID: "keyless-repo", Name: "Keyless"},
-					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789"},
-					{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyMasked: "abc...xyz"},
+					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789", KeyFingerprint: "5d41402a"},
+					{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: "3a7bd3e2", CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
 				},
 				Orphaned: []OrphanedToken{
-					{ID: "ghost-repo", Reason: "not_registered", KeyMasked: "old...key"},
-					{ID: "local-mods", Reason: "auth_not_declared", KeyMasked: "sta...456"},
+					{ID: "ghost-repo", Reason: "not_registered", KeyFingerprint: "0b4e7a0e"},
+					{ID: "local-mods", Reason: "auth_not_declared", Unreadable: true},
 				},
 			},
 		},
