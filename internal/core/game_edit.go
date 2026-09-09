@@ -114,6 +114,14 @@ func (s *Service) validatedSourceMap(sources map[string]string) (map[string]stri
 				Reason: "no source is registered with that id", Err: err,
 			}
 		}
+		// M6 (epic review M-6): two distinct keys that trim to the same id
+		// - {" nexusmods":"a","nexusmods":"b"}, say - are legal JSON but not
+		// a legal source map: silently keeping whichever sorts last hides
+		// which value the caller actually gets, and does not tell them
+		// their input had a collision at all.
+		if _, dup := cleaned[trimmed]; dup {
+			return nil, newGameSpecError("sources", trimmed, "duplicate source id after trimming whitespace")
+		}
 		cleaned[trimmed] = strings.TrimSpace(sources[id])
 	}
 	return cleaned, nil

@@ -131,6 +131,27 @@ func TestUpdateGameSources_RefusesAnEmptySourceID(t *testing.T) {
 	assert.Equal(t, "sources", specErr.Field)
 }
 
+// TestUpdateGameSources_RefusesADuplicateAfterTrimming is M6 (epic review
+// M-6): {" nexusmods":"a","nexusmods":"b"} is legal JSON with two distinct
+// keys that trim to the same source id - before the fix this silently
+// collapsed into one entry (the sorted-last value winning, no error) with
+// nothing to say why the map does not have the shape the caller sent.
+func TestUpdateGameSources_RefusesADuplicateAfterTrimming(t *testing.T) {
+	svc := newGameAddService(t)
+	game := seedSourcesGame(t, svc)
+
+	_, err := svc.UpdateGameSources(t.Context(), game.ID, map[string]string{" nexusmods": "a", "nexusmods": "b"})
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "sources", specErr.Field)
+	assert.Equal(t, "nexusmods", specErr.Value)
+
+	reloaded, err := svc.GetGame(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "fixturegame"}, reloaded.SourceIDs,
+		"a refused edit must leave the game exactly as it was")
+}
+
 // TestUpdateGameSources_UnknownGameIsNotFound: the sentinel every
 // game-scoped 404 is built on.
 func TestUpdateGameSources_UnknownGameIsNotFound(t *testing.T) {
