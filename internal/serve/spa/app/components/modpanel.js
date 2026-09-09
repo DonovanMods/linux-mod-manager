@@ -365,7 +365,20 @@ export function ModPanel({
         <p class="slide-over__meta">
           ${row.author ? html`by ${row.author} · ` : ""}
           <span class="mono"
-            >${row.version}${row.hasUpdate && html` → ${row.updateTarget}`}</span
+            >${
+              // issue 269, the approval note's version DISPLAY rule: an
+              // external row's `version` IS Steam's 19-digit content id, so
+              // the slot a version goes shows the item's revision date
+              // instead - the same value library.js renders. The manifest
+              // still appears on this screen exactly once, labelled, in
+              // ManagedBySteam's "Steam content id" line below.
+              row.displayVersion ?? row.version
+            }${
+              // The arrow follows library.js for the same reason: the TARGET
+              // is another content id, and "newer" is all lmm can truthfully
+              // say about an update only Steam can apply.
+              row.hasUpdate && !row.external && html` → ${row.updateTarget}`
+            }${row.hasUpdate && row.external && html` → newer`}</span
           >
         </p>
 

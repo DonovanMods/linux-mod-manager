@@ -11,6 +11,7 @@ package serve_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -24,6 +25,18 @@ import (
 const (
 	e2eWorkshopSourceID = "steamworkshop"
 	e2eWorkshopFileID   = "3617086610"
+	// e2eWorkshopManifest is Steam's 19-digit content id for the tracked
+	// item - what domain.Mod.Version holds for an external mod, and what
+	// the approval note's version DISPLAY rule says no human-facing
+	// surface may print as a version. Every scenario below asserts its
+	// ABSENCE, so it lives here rather than as a literal per test.
+	e2eWorkshopManifest = "7987119735124793734"
+	// e2eWorkshopTimeUpdated is the item's Steam revision time, and
+	// e2eWorkshopRevisionDate the date every surface shows in the
+	// manifest's place. The scan and the tracked row carry the same
+	// instant, because they are the same fact read two ways.
+	e2eWorkshopTimeUpdated  = 1764767935
+	e2eWorkshopRevisionDate = "2025-12-03"
 )
 
 // e2eWorkshopSource is the fake Steam Workshop source the browser scenarios
@@ -61,8 +74,9 @@ func newE2EWorkshopFixture(t *testing.T) e2eFixture {
 	src := &e2eWorkshopSource{fakeSource: newFakeSource(e2eWorkshopSourceID)}
 	src.addMod(fakeSourceMod{Mod: domain.Mod{
 		ID: e2eWorkshopFileID, SourceID: e2eWorkshopSourceID,
-		Name: "Sample Workshop Item", Version: "7987119735124793734",
-		Author: "76561198000000000",
+		Name: "Sample Workshop Item", Version: e2eWorkshopManifest,
+		Author:    "76561198000000000",
+		UpdatedAt: time.Unix(e2eWorkshopTimeUpdated, 0).UTC(),
 	}})
 
 	steamDir := t.TempDir()
@@ -70,7 +84,7 @@ func newE2EWorkshopFixture(t *testing.T) e2eFixture {
 		Roots: []string{"/steam"},
 		Items: []domain.WorkshopItem{{
 			FileID: e2eWorkshopFileID, Path: steamDir,
-			Manifest: "7987119735124793734", TimeUpdated: 1764767935,
+			Manifest: e2eWorkshopManifest, TimeUpdated: e2eWorkshopTimeUpdated,
 		}},
 	}
 
@@ -84,8 +98,13 @@ func newE2EWorkshopFixture(t *testing.T) e2eFixture {
 	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID: e2eWorkshopFileID, SourceID: e2eWorkshopSourceID,
-			Name: "Sample Workshop Item", Version: "7987119735124793734",
+			Name: "Sample Workshop Item", Version: e2eWorkshopManifest,
 			Author: "76561198000000000", GameID: f.Game.ID,
+			// The revision date every human-facing surface shows in the
+			// manifest's place (issue 269's version DISPLAY rule). Without it
+			// the row's updated_at is the zero time, displayVersion falls
+			// back to an em dash, and no test can see a wrong date.
+			UpdatedAt: time.Unix(e2eWorkshopTimeUpdated, 0).UTC(),
 		},
 		ProfileName:  "default",
 		UpdatePolicy: domain.UpdateNotify,
@@ -98,7 +117,7 @@ func newE2EWorkshopFixture(t *testing.T) e2eFixture {
 	// it the fixture is a state adopt never produces, and every profile-scoped
 	// flow (deploy's plan among them) would simply not see the item.
 	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
-		domain.ModReference{SourceID: e2eWorkshopSourceID, ModID: e2eWorkshopFileID, Version: "7987119735124793734"}))
+		domain.ModReference{SourceID: e2eWorkshopSourceID, ModID: e2eWorkshopFileID, Version: e2eWorkshopManifest}))
 	return f
 }
 
@@ -257,7 +276,7 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	assert.Contains(t, body, "tracked from Steam — not deployed")
 	assert.NotContains(t, body, "no files to link",
 		"the external row must say why, not merely that there is nothing")
-	assert.NotContains(t, body, "7987119735124793734",
+	assert.NotContains(t, body, e2eWorkshopManifest,
 		"the version DISPLAY rule: no human surface prints Steam's content id as a version")
 	assert.Contains(t, body, "1.0", "a managed row still shows its own version")
 
@@ -362,5 +381,32 @@ func TestE2E_Workshop_AdoptPlanModalRendersItsOwnPreview(t *testing.T) {
 	assert.Contains(t, modal, "To track (1)")
 	assert.Contains(t, modal, "2025-09-16", "the revision date, never the content id")
 	assert.NotContains(t, modal, "1122334455667788990")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Workshop_ModPanelMetaShowsTheRevisionDate is the slide-over's half
+// of the approval note's version DISPLAY rule (docs/plans/2026-09-09-steam-
+// workshop-design.md, "Approved with notes"): no human-facing surface prints
+// the 19-digit manifest as a version - it shows the item's revision date, and
+// only the labelled "Steam content id" block underneath names the manifest.
+//
+// The panel's meta line printed row.version, so the content id appeared
+// TWICE on this screen: once unlabelled where a version goes, and once
+// correctly labelled by ManagedBySteam. The unlabelled one is the violation.
+func TestE2E_Workshop_ModPanelMetaShowsTheRevisionDate(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	var meta, managed string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+		textContent(`.slide-over__meta`, &meta),
+		textContent(`[data-testid="managed-by-steam"]`, &managed),
+	)
+	assert.Contains(t, meta, e2eWorkshopRevisionDate, "the meta line shows the revision date")
+	assert.NotContains(t, meta, e2eWorkshopManifest,
+		"the version DISPLAY rule: never the content id in the slot a version goes")
+	assert.Contains(t, managed, "Steam content id: "+e2eWorkshopManifest,
+		"the manifest still appears once, labelled, where the design put it")
 	assert.Empty(t, f.BrowserErrors())
 }
