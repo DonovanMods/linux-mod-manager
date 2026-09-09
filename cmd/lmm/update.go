@@ -402,11 +402,6 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 			return finish()
 		}
 	}
-	if updateDryRun {
-		// Reachable only under --json --all --dry-run; the check document
-		// was already emitted above, so there is nothing left to do.
-		return finish()
-	}
 
 	if len(selection) == 0 {
 		return finish()
