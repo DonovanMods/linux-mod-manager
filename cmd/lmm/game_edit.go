@@ -22,7 +22,7 @@ custom source added later (see 'lmm source add' and the web UI's Setup ->
 Custom sources editor) could never be attached to an existing game
 without hand-editing games.yaml.
 
---source takes "<source-id>=<identifier>" and adds or replaces one entry;
+--source takes "SOURCE-ID=IDENTIFIER" and adds or replaces one entry;
 the identifier is whatever that source knows this game by (a NexusMods
 slug, a CurseForge numeric game id, a custom source's own key) and may be
 empty for a source that needs none. --remove-source drops one entry by
@@ -50,7 +50,7 @@ func init() {
 	gameCmd.AddCommand(gameEditCmd)
 
 	gameEditCmd.Flags().StringArrayVar(&gameEditSources, "source", nil,
-		`add or replace a source mapping, as "<source-id>=<identifier>" (repeatable)`)
+		`add or replace a source mapping, as "SOURCE-ID=IDENTIFIER" (repeatable)`)
 	gameEditCmd.Flags().StringArrayVar(&gameEditRemove, "remove-source", nil,
 		"drop a source mapping by its source id (repeatable)")
 }

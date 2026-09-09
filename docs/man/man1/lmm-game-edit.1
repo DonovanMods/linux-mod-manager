@@ -20,7 +20,7 @@ Custom sources editor) could never be attached to an existing game
 without hand-editing games.yaml.
 
 .PP
---source takes "=" and adds or replaces one entry;
+--source takes "SOURCE-ID=IDENTIFIER" and adds or replaces one entry;
 the identifier is whatever that source knows this game by (a NexusMods
 slug, a CurseForge numeric game id, a custom source's own key) and may be
 empty for a source that needs none. --remove-source drops one entry by
@@ -49,7 +49,7 @@ Examples:
 
 .PP
 \fB--source\fP=[]
-	add or replace a source mapping, as "=" (repeatable)
+	add or replace a source mapping, as "SOURCE-ID=IDENTIFIER" (repeatable)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
