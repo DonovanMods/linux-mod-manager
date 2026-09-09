@@ -5674,6 +5674,52 @@ func TestE2E_AdvancedOptionsReachTheFlow(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_DeployAllIncludesDisabledMods is IMP-1(a) of the closing wave's
+// gate review.
+//
+// `deploy --all` has been on the wire since the unit that landed the kind
+// (kind_deploy.go's deployPlanRequest.All) and 8C-A's own "already on the
+// wire" list named it - but no control ever set it, so a disabled mod was
+// web-undeployable while the design's Scope claims full bidirectional
+// parity. It is a PLAN-time option (core's PlanDeploy selects
+// `opts.All || mod.Enabled`), so the assertion is the one every plan-time
+// option gets: the SERVER's own re-planned preview grows, and the apply
+// that follows lands the disabled mod's bytes.
+func TestE2E_DeployAllIncludesDisabledMods(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	// A third mod, in the profile's load order but DISABLED - the exact
+	// row the default full-profile deploy skips.
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "c", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: f.Game.ID},
+		false, map[string][]byte{"gamma.pak": []byte("gamma")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "c", Version: "1.0"}))
+
+	var before, after int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".modal .plan__mod").length`, &before),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		chromedp.Click(`.modal input[name="all"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll(".modal .plan__mod").length === 3`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Evaluate(`document.querySelectorAll(".modal .plan__mod").length`, &after),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Equal(t, 2, before, "the default full-profile deploy skips the disabled mod")
+	assert.Equal(t, 3, after, "and --all re-plans to include it")
+
+	assert.FileExists(t, filepath.Join(f.Game.ModPath, "gamma.pak"),
+		"the disabled mod's file must actually have been deployed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_PurgeFromTheProfilesModalEmptiesTheGameDirectory is C-3's purge
 // half.
 //

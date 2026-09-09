@@ -199,6 +199,13 @@ export function DeployPlanView({ plan, modal, state, actions }) {
           label="Purge the game directory first"
           hint="lmm deploy --purge. The list above updates to match."
         />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="all"
+          label="Include disabled mods"
+          hint="lmm deploy --all. PLAN-time: the mod list above grows to match."
+        />
         <${ApplyOption}
           modal=${modal}
           actions=${actions}
