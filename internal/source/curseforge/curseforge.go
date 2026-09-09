@@ -250,6 +250,22 @@ func (c *CurseForge) GetDependencies(ctx context.Context, mod *domain.Mod) ([]do
 	return refs, nil
 }
 
+// Description implements source.DescriptionFetcher (#246): CurseForge's mod
+// document has no full-description field - only a Summary, which #235
+// stopped aliasing into Description - so the real one comes from its own
+// endpoint. Returns the source's raw HTML, which is what Mod.Description
+// has always carried (the terminal display path runs it through
+// core.CleanChangelog; `mod show --json` keeps the markup).
+//
+// sourceGameID is unused: the endpoint is keyed on the mod alone.
+func (c *CurseForge) Description(ctx context.Context, _, modID string) (string, error) {
+	id, err := strconv.Atoi(modID)
+	if err != nil {
+		return "", fmt.Errorf("invalid mod ID: %w", err)
+	}
+	return c.client.GetModDescription(ctx, id)
+}
+
 // GetModFiles returns the available download files for a mod
 func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	modID, err := strconv.Atoi(mod.ID)

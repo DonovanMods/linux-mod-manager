@@ -72,6 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CurseForge mods show a real description again (#246).** #235 stopped
+  aliasing `Summary` into `Description` — honest, but it left every
+  CurseForge mod's detail view with an empty Description, because the mod
+  document has no full-description field. Sources can now implement the new
+  optional `source.DescriptionFetcher` capability, and CurseForge does, via
+  `GET /v1/mods/{modId}/description`. Only `lmm mod show` /
+  `GET /api/v1/mods/{source}/{id}` consume it — never search, never an
+  update check, either of which would pay a round trip per row — and only
+  for a mod whose description is otherwise empty. As everywhere else, the
+  raw source markup is what reaches `--json`, and the terminal runs it
+  through the existing display cleaner. A failed description fetch leaves
+  the field empty and logs a warning rather than failing the detail.
+
 - **`lmm serve` Demo 3 polish: a reorder drag ghost, "Add mods ▾", and an
   omnibar clear control (#338, #339, #340).** Three owner-named follow-ups
   from the `webui` sign-off demo. The reorder modal's drag now renders a

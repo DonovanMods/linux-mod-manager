@@ -30,6 +30,7 @@ var (
 	_ source.GameCatalog              = (*CurseForge)(nil)
 	_ source.TypeLabeler              = (*CurseForge)(nil)
 	_ source.CapabilityReporter       = (*CurseForge)(nil)
+	_ source.DescriptionFetcher       = (*CurseForge)(nil)
 )
 
 func TestCurseForge_ID(t *testing.T) {
@@ -693,4 +694,78 @@ func TestModToDomain_DescriptionNotAliasedToSummary(t *testing.T) {
 
 	assert.Equal(t, "View Items and Recipes", mod.Summary)
 	assert.Empty(t, mod.Description, "Description must not be a copy of Summary (#235)")
+}
+
+// TestCurseForge_Description covers #246: the full description comes from
+// its own endpoint (GET /v1/mods/{modId}/description), as the source's own
+// HTML, and a failure there is the caller's to degrade - it is returned, not
+// swallowed.
+func TestCurseForge_Description(t *testing.T) {
+	t.Run("returns the source HTML verbatim", func(t *testing.T) {
+		var gotPath, gotKey string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath, gotKey = r.URL.Path, r.Header.Get("x-api-key")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":"<p>Adds <b>bigger</b> backpacks.</p>"}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		got, err := cf.Description(context.Background(), "432", "238222")
+		require.NoError(t, err)
+		assert.Equal(t, "/v1/mods/238222/description", gotPath)
+		assert.Equal(t, "test-api-key", gotKey)
+		assert.Equal(t, "<p>Adds <b>bigger</b> backpacks.</p>", got,
+			"the raw markup is what Mod.Description carries (#86)")
+	})
+
+	t.Run("a non-numeric mod id fails before any request", func(t *testing.T) {
+		requests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.Description(context.Background(), "432", "not-a-number")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid mod ID")
+		assert.Zero(t, requests)
+	})
+
+	t.Run("an upstream failure is returned, not swallowed", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.Description(context.Background(), "432", "1")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, domain.ErrModNotFound)
+	})
+
+	t.Run("a response over the size cap is refused", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":"`))
+			chunk := strings.Repeat("x", 1<<16)
+			for written := 0; written <= maxResponseSize; written += len(chunk) {
+				_, _ = w.Write([]byte(chunk))
+			}
+			_, _ = w.Write([]byte(`"}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.Description(context.Background(), "432", "1")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds")
+	})
 }

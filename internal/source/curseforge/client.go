@@ -16,6 +16,14 @@ import (
 
 const (
 	defaultBaseURL = "https://api.curseforge.com"
+
+	// maxResponseSize bounds how much of any successful CurseForge response
+	// is read into memory. The largest thing this client asks for is a
+	// modBatchSize-sized batch of mod documents or a mod's full HTML
+	// description (#246); 10 MiB is orders of magnitude above either and
+	// matches the cap the custom api source already applies to its own
+	// responses.
+	maxResponseSize = 10 << 20
 )
 
 // Client wraps the CurseForge REST API v1
@@ -36,12 +44,13 @@ func NewClient(httpClient *http.Client, apiKey string) *Client {
 		apiKey:     apiKey,
 	}
 	c.rest = httpclient.New(httpclient.Options{
-		HTTPClient:  httpClient,
-		BaseURL:     defaultBaseURL,
-		APIKey:      apiKey,
-		AuthHeader:  "x-api-key",
-		AuthLabel:   "CurseForge",
-		ErrorMapper: c.mapError,
+		HTTPClient:       httpClient,
+		BaseURL:          defaultBaseURL,
+		APIKey:           apiKey,
+		AuthHeader:       "x-api-key",
+		AuthLabel:        "CurseForge",
+		ErrorMapper:      c.mapError,
+		MaxResponseBytes: maxResponseSize,
 	})
 	return c
 }
@@ -241,6 +250,20 @@ func (c *Client) GetMods(ctx context.Context, modIDs []int) ([]Mod, error) {
 		return mods, errors.Join(errs...)
 	}
 	return mods, nil
+}
+
+// GetModDescription fetches a mod's full description as the source's own
+// HTML (GET /v1/mods/{modId}/description, #246). The mod document itself
+// carries only a Summary, so this is a second round trip and is made only
+// where exactly one mod is being shown.
+func (c *Client) GetModDescription(ctx context.Context, modID int) (string, error) {
+	path := fmt.Sprintf("/v1/mods/%d/description", modID)
+
+	var resp APIResponse[string]
+	if err := c.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
+		return "", fmt.Errorf("getting mod description: %w", err)
+	}
+	return resp.Data, nil
 }
 
 // GetModFiles fetches files for a mod

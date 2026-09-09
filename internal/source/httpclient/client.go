@@ -38,17 +38,24 @@ type Options struct {
 	// Return nil to defer to the default; return a non-nil error to short-
 	// circuit (e.g. translate 404 to a domain error).
 	ErrorMapper func(status int, body []byte, requestPath string) error
+	// MaxResponseBytes caps how much of a SUCCESSFUL response body is read
+	// before decoding; a body over the cap is an error rather than an
+	// unbounded allocation. Zero (the default) reads without a cap, which is
+	// every existing caller's behaviour. Error bodies are separately capped
+	// at errorBodyLimit regardless.
+	MaxResponseBytes int64
 }
 
 // Client is a small JSON HTTP client wrapping net/http for use by mod-source
 // SDKs. Construct via New; configure via Options.
 type Client struct {
-	httpClient  *http.Client
-	baseURL     string
-	apiKey      string
-	authHeader  string
-	authLabel   string
-	errorMapper func(int, []byte, string) error
+	httpClient       *http.Client
+	baseURL          string
+	apiKey           string
+	authHeader       string
+	authLabel        string
+	errorMapper      func(int, []byte, string) error
+	maxResponseBytes int64
 }
 
 // New returns a Client configured with opts. Panics when a required field
@@ -70,12 +77,13 @@ func New(opts Options) *Client {
 		httpClient = http.DefaultClient
 	}
 	return &Client{
-		httpClient:  httpClient,
-		baseURL:     opts.BaseURL,
-		apiKey:      opts.APIKey,
-		authHeader:  opts.AuthHeader,
-		authLabel:   opts.AuthLabel,
-		errorMapper: opts.ErrorMapper,
+		httpClient:       httpClient,
+		baseURL:          opts.BaseURL,
+		apiKey:           opts.APIKey,
+		authHeader:       opts.AuthHeader,
+		authLabel:        opts.AuthLabel,
+		errorMapper:      opts.ErrorMapper,
+		maxResponseBytes: opts.MaxResponseBytes,
 	}
 }
 
@@ -167,6 +175,22 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 
 	// 204 No Content has no body to decode; treat as success.
 	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
+	if c.maxResponseBytes > 0 {
+		// Read +1 byte past the cap so "exactly at the cap" still decodes
+		// and only one byte over it is refused, before anything is parsed.
+		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
+		if readErr != nil {
+			return fmt.Errorf("reading response: %w", readErr)
+		}
+		if int64(len(payload)) > c.maxResponseBytes {
+			return fmt.Errorf("response exceeds %d bytes", c.maxResponseBytes)
+		}
+		if err := json.Unmarshal(payload, result); err != nil {
+			return fmt.Errorf("decoding response: %w", err)
+		}
 		return nil
 	}
 
