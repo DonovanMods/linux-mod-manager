@@ -328,7 +328,7 @@ function exactCatalogMatch(matches, name) {
  * pre-selects a single exact-name match without submitting anything.
  * Clearing calls `onClearDetected` so the caller drops its own reference to
  * the row too - otherwise re-clicking the same "Add with details…" hands
- * back an identical object and the effect above never re-fires (#206).
+ * back an identical object and the effect above never re-fires (issue 206).
  *
  * game/profile are optional: they are set when this form renders inside an
  * already-established Setup page (setupgames.js), and let a 401 from the
@@ -374,7 +374,7 @@ export function GameAddForm({
   // The effect keys on `detected` by object IDENTITY, so clearDetected()
   // below must also clear the parent's copy (onClearDetected) - otherwise
   // re-clicking the same row hands back the same reference, the effect
-  // does not re-run, and the click silently does nothing (#206 fix wave).
+  // does not re-run, and the click silently does nothing (issue 206 fix wave).
   useEffect(() => {
     if (detected) applyDetected(detected);
     // eslint-disable-next-line
