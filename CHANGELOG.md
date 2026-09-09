@@ -542,7 +542,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   load, and lmm's own writers (`lmm game add`, `game add --from-detected`,
   `lmm game detect`, the web UI's add-game form and `POST /api/v1/games`)
   refuse a relative value outright, with a `mod_path`-named field error,
-  rather than writing one.
+  rather than writing one. An entry that pairs a relative `mod_path` with
+  no `install_path` at all has nothing to resolve against, so it is now
+  refused when `games.yaml` is read, naming the game and the field, instead
+  of falling back to the working-directory behaviour this fixes.
 
 ## [2.0.0] - 2026-08-30
 

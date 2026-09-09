@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,5 +71,53 @@ func TestSaveGameRefusesRelativeModPath(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "games.yaml")); statErr == nil {
 		t.Error("games.yaml was written despite the refusal")
+	}
+}
+
+// #313 (review M6): a relative mod_path with no install_path to resolve it
+// against is exactly the pre-#313 behaviour - a path resolved against the
+// process CWD, a different directory per shell - and it used to pass
+// through silently. install_path is documented as required; nothing
+// enforced that, so this hole was reachable from the one thing #313 exists
+// for, a hand-written file. It is now refused at load, by the same
+// ErrRelativeModPath the write side refuses with.
+func TestLoadGamesRefusesRelativeModPathWithNoInstallPath(t *testing.T) {
+	dir := t.TempDir()
+	yaml := "games:\n  g:\n    name: G\n    mod_path: Data\n    sources:\n      nexusmods: g\n"
+	if err := os.WriteFile(filepath.Join(dir, "games.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	games, err := config.LoadGames(dir)
+	if err == nil {
+		t.Fatalf("LoadGames accepted a CWD-relative mod_path: ModPath = %q", games["g"].ModPath)
+	}
+	if !errors.Is(err, config.ErrRelativeModPath) {
+		t.Errorf("error is not ErrRelativeModPath: %v", err)
+	}
+	for _, want := range []string{"games.yaml", "mod_path", "install_path", `"g"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not name %s: %v", want, err)
+		}
+	}
+}
+
+// An empty mod_path with no install_path is not a path at all and stays
+// legal: the game simply deploys into its install path (or wherever the
+// rest of the config says), which is what every games.yaml without the key
+// already means.
+func TestLoadGamesAllowsEmptyModPathWithNoInstallPath(t *testing.T) {
+	dir := t.TempDir()
+	yaml := "games:\n  g:\n    name: G\n    sources:\n      nexusmods: g\n"
+	if err := os.WriteFile(filepath.Join(dir, "games.yaml"), []byte(yaml), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	games, err := config.LoadGames(dir)
+	if err != nil {
+		t.Fatalf("LoadGames: %v", err)
+	}
+	if got := games["g"].ModPath; got != "" {
+		t.Errorf("ModPath = %q, want empty", got)
 	}
 }

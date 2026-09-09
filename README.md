@@ -334,7 +334,7 @@ games:
     # convert_paks: true  # Optional: default; set false to deploy every prebuilt .pak mod raw instead of converting it
 ```
 
-`mod_path` is normally absolute (`~` expands). A relative value in a hand-written `games.yaml` — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory; lmm's own writers (`lmm game add`, `lmm game detect`, the web UI's add-game form) refuse a relative value and ask for an absolute path.
+`mod_path` is normally absolute (`~` expands). A relative value in a hand-written `games.yaml` — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory; an entry with a relative `mod_path` and no `install_path` to resolve it against is refused outright, naming the game and the field. lmm's own writers (`lmm game add`, `lmm game detect`, the web UI's add-game form) refuse a relative value and ask for an absolute path.
 
 Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 

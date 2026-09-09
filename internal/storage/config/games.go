@@ -42,17 +42,29 @@ func ExpandPath(path string) string {
 //
 // Callers pass the ALREADY-EXPANDED install path; expansion is the caller's
 // job so "~" is handled once, at the same place, for both fields.
-func ResolveModPath(installPath, modPath string) string {
-	if modPath == "" || filepath.IsAbs(modPath) || installPath == "" {
-		return modPath
+//
+// A relative mod_path with NO install path to resolve it against is
+// refused with ErrRelativeModPath (review M6). Returning it verbatim would
+// be exactly the pre-#313 behaviour this function exists to end - a path
+// resolved against whatever directory lmm was run from - and silently, in
+// the one case #313 is for: a hand-written games.yaml. install_path is
+// documented as required; this is what enforces it where it matters.
+func ResolveModPath(installPath, modPath string) (string, error) {
+	if modPath == "" || filepath.IsAbs(modPath) {
+		return modPath, nil
 	}
-	return filepath.Join(installPath, modPath)
+	if installPath == "" {
+		return "", fmt.Errorf("%w: %q is relative and there is no install_path to resolve it against", ErrRelativeModPath, modPath)
+	}
+	return filepath.Join(installPath, modPath), nil
 }
 
 // ErrRelativeModPath is the refusal SaveGame makes for a game whose
-// ModPath is relative. Loading tolerates one (ResolveModPath joins it);
-// WRITING one is always a bug, because the value lmm writes is the value
-// every later run - from any working directory - resolves.
+// ModPath is relative, and the one ResolveModPath makes for a relative
+// value with no install_path behind it. Loading otherwise tolerates a
+// relative value (ResolveModPath joins it onto install_path); WRITING one
+// is always a bug, because the value lmm writes is the value every later
+// run - from any working directory - resolves.
 var ErrRelativeModPath = errors.New("mod_path must be an absolute path")
 
 // HookConfigYAML is the YAML representation of hook configuration
@@ -127,11 +139,15 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			convertExplicit = true
 		}
 		installPath := ExpandPath(cfg.InstallPath)
+		modPath, err := ResolveModPath(installPath, ExpandPath(cfg.ModPath))
+		if err != nil {
+			return nil, fmt.Errorf("games.yaml: game %q: %w", id, err)
+		}
 		games[id] = &domain.Game{
 			ID:                  id,
 			Name:                cfg.Name,
 			InstallPath:         installPath,
-			ModPath:             ResolveModPath(installPath, ExpandPath(cfg.ModPath)),
+			ModPath:             modPath,
 			SourceIDs:           cfg.Sources,
 			LinkMethod:          linkMethod,
 			LinkMethodExplicit:  cfg.LinkMethod != "",

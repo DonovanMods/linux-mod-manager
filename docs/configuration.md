@@ -40,6 +40,11 @@ value — `mod_path: Data` — is resolved against that game's `install_path`,
 not against the directory you happen to run `lmm` from, so the entry means
 the same thing from every shell.
 
+A relative `mod_path` needs an `install_path` to resolve against, so an
+entry that carries one without the other is refused when `games.yaml` is
+read, naming the game and the field — the alternative is the CWD-relative
+behaviour this rule exists to end, applied silently.
+
 lmm itself never *writes* a relative `mod_path`: `lmm game add`,
 `lmm game add --from-detected`, `lmm game detect` and the web UI's add-game
 form all refuse one and ask for an absolute path instead. The join above is
