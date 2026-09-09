@@ -61,13 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtimes — are filtered out by a small deny-list, so the list stays a
   list of games.
 
-  `lmm game detect --include-unknown` lists those in their own section,
-  each with the Steam app id that names it, and `lmm game add
---from-detected <app-id>` prefills the whole add from it: the display
-  name, install path, local game id and mod path (`<install>/mods` when the
-  game is uncurated), plus the curated source map when there is one — so a
-  known installed game is added by app id alone. Every existing flag still
-  wins field by field, and for a game with no curated source, `--source`
+  `lmm game detect --include-unknown` lists those in their own section, each
+  with the Steam app id that names it.
+  `lmm game add --from-detected <app-id>` prefills the whole add from it:
+  the display name, install path, local game id and mod path
+  (`<install>/mods` when the game is uncurated), plus the curated source map
+  when there is one — so a known installed game is added by app id alone.
+  Every existing flag still wins field by field, and for a game with no
+  curated source, `--source`
   alone searches that source's catalog by the game's own name (`--pick`
   chooses; a single entry whose name is exactly the game's name is taken
   automatically). The whole flow is non-interactive and works under
@@ -75,9 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flag emits the detect LISTING document.
 
   On the web side, `GET /api/v1/games/detect?all=1` returns the same
-  listing widened with those rows (no `known` member at all — absent
-  means not in the known-games list, a curated row carries `"known":
-true` — and `index: 0`), and `POST /api/v1/games` takes an optional
+  listing widened with those rows (no `known` member at all — absent means
+  not in the known-games list, a curated row carries `"known": true` — and
+  `index: 0`), and `POST /api/v1/games` takes an optional
   `from_steam_app_id` that applies exactly the same prefill, so the web UI
   derives no slug, mod path or source map of its own. Naming an unknown row
   in `POST /api/v1/games/detect` is a 400 pointing at that member.
