@@ -4896,3 +4896,50 @@ func TestE2E_UpdatesCardAndConfirmMarkALockedRow(t *testing.T) {
 		"the row that WILL be updated still shows what it will move to")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile is I2 of the
+// unit-8 gate review.
+//
+// <ProfilePicker> was wrapped whole in <InlineJob>, so a finished switch
+// morphed the PICKER: the application's primary context control became a
+// "Done ✕" that did not time out, and the route, the library and the deploy
+// indicator all went on describing the profile the user had just switched
+// AWAY from - the indicator reading "1 change undeployed" for a profile
+// whose Deploy plan says there is nothing to deploy.
+//
+// A button that becomes its own job's progress is the design (Deploy does
+// exactly that); a NAVIGATION control that does is a control the user has
+// lost. So the switch morphs a slot of its own, and the screen follows the
+// machine when the job lands.
+func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var location, indicator, library string
+	var pickerInsideJob bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		// The route follows the machine: this is the assertion, not a
+		// convenience wait - it never arrives without the fix.
+		chromedp.WaitVisible(`.profile-picker__trigger[data-profile="hardcore"]`, chromedp.ByQuery),
+		chromedp.Location(&location),
+		chromedp.Evaluate(`Boolean(document.querySelector(".job-progress .profile-picker"))`, &pickerInsideJob),
+		textContent(`.deploy-indicator`, &indicator),
+		chromedp.Text(`.library`, &library, chromedp.ByQuery),
+	)
+
+	assert.True(t, strings.HasSuffix(location, "/g/g1/hardcore"),
+		"a confirmed switch must take the screen with it, not leave the URL on the profile it left")
+	assert.False(t, pickerInsideJob,
+		"the profile picker must never be the control a switch job morphs - it is how you navigate")
+	assert.Equal(t, "Deployed", strings.TrimSpace(indicator),
+		"the indicator must describe the profile now on screen, whose deploy is a no-op after the switch")
+	assert.Contains(t, library, "Beta Mod", "the library must list what the profile it moved to holds")
+	assert.NotContains(t, library, "Alpha Mod", "and not what the profile it left held")
+	assert.Empty(t, f.BrowserErrors())
+}

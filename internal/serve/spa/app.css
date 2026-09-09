@@ -1847,6 +1847,14 @@ select {
   font-size: 0.9em;
 }
 
+/* The switch job's own slot in the top bar (I2, unit 8 gate review) - it
+ * exists so that a running/finished switch has somewhere to morph that is
+ * NOT the profile picker. Empty for the whole time no switch is in flight,
+ * and collapsed then, so it costs the bar nothing. */
+.app-bar__switch:empty {
+  display: none;
+}
+
 /* The library header's live line while a job runs. */
 .library__live {
   color: var(--accent);

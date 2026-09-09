@@ -26,12 +26,19 @@ import { ActivityBell } from "./tray.js";
 // per-mod controls use "install:fake/123" and friends.
 const DEPLOY_ORIGIN = "deploy";
 
-// SWITCH_ORIGIN is the profile picker's own "Switch and deploy…" control.
-// ONE origin for the whole picker rather than one per profile row: the
-// menu closes the instant a switch is confirmed, so the only control left
-// to morph is the picker itself - and a switch is not a mutation you can
-// have two of in flight anyway (core's beginOp would serialize them, and
-// the second's plan would be stale before it started).
+// SWITCH_ORIGIN is the "Switch and deploy…" control's own origin. ONE
+// origin rather than one per profile row: the menu closes the instant a
+// switch is confirmed, so no per-row control survives to morph - and a
+// switch is not a mutation you can have two of in flight anyway (core's
+// beginOp would serialize them, and the second's plan would be stale
+// before it started).
+//
+// It morphs a SLOT of its own in the bar, never the picker (I2, unit 8 gate
+// review). The picker used to be wrapped whole in <InlineJob>, so a
+// finished switch replaced the application's primary context control with a
+// "Done ✕" that did not time out. A button that becomes its own job's
+// progress is the design - Deploy does exactly that - but a NAVIGATION
+// control that does is a control the user has lost.
 const SWITCH_ORIGIN = "switch";
 
 export function TopBar({
@@ -53,6 +60,36 @@ export function TopBar({
   // listener needs one source of truth to close instead of three.
   const [openPicker, setOpenPicker] = useState(null);
   const barRef = useRef(null);
+
+  // The profile a "Switch and deploy…" is currently moving to, remembered
+  // from the click that started it (I2, unit 8 gate review). core.
+  // SwitchResult reports counts, not the target's name, and the switch job
+  // outlives the dropdown that named it - so the one place that still knows
+  // is the control that asked. A ref rather than state: nothing renders
+  // from it, and a re-render mid-job must not be able to lose it.
+  const pendingSwitch = useRef(null);
+  const switchJobID = state.origins?.[SWITCH_ORIGIN];
+  const switchState = (state.jobsIndex ?? []).find(
+    (row) => row.id === switchJobID,
+  )?.state;
+
+  // When the switch lands, the screen follows the machine. Without this the
+  // route, the library and the deploy indicator all went on describing the
+  // profile the user had just switched away from - the indicator reading
+  // "1 change undeployed" for a profile whose Deploy plan says there is
+  // nothing to deploy, two statements about the same profile contradicting
+  // each other on the same screen.
+  //
+  // Navigating remounts Mission Control (app.js keys it on game:profile),
+  // so this effect's own ref starts empty on the other side and cannot
+  // navigate twice for one job.
+  useEffect(() => {
+    if (switchState !== "succeeded") return;
+    const to = pendingSwitch.current;
+    pendingSwitch.current = null;
+    if (!to || to === route.profile) return;
+    navigate(contextPath(route.game, to));
+  }, [switchJobID, switchState, route.game, route.profile]);
 
   // ?job={id} opens the tray on that entry - the annotation the deleted
   // /jobs/{id} page's 301 now points at (spa.go). It is an effect rather
@@ -103,16 +140,24 @@ export function TopBar({
         onOpen=${() => setOpenPicker("game")}
         onClose=${() => setOpenPicker(null)}
       />
-      <${InlineJob} origin=${SWITCH_ORIGIN} state=${state} actions=${actions}>
-        <${ProfilePicker}
-          status=${status}
-          route=${route}
-          open=${openPicker === "profile"}
-          onOpen=${() => setOpenPicker("profile")}
-          onClose=${() => setOpenPicker(null)}
+      <${ProfilePicker}
+        status=${status}
+        route=${route}
+        open=${openPicker === "profile"}
+        onOpen=${() => setOpenPicker("profile")}
+        onClose=${() => setOpenPicker(null)}
+        onSwitchRequested=${(name) => {
+          pendingSwitch.current = name;
+        }}
+        actions=${actions}
+      />
+      <span class="app-bar__switch">
+        <${InlineJob}
+          origin=${SWITCH_ORIGIN}
+          state=${state}
           actions=${actions}
-        />
-      <//>
+        ><//>
+      </span>
       <span
         class="deploy-indicator ${undeployed > 0 ? "deploy-indicator--pending" : ""}"
       >
@@ -258,7 +303,15 @@ function GamePicker({ status, games, open, onOpen, onClose }) {
  * "which profile does this game deploy"): switching to the active profile
  * is the plan's own AlreadyActive case, with nothing to move.
  */
-function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
+function ProfilePicker({
+  status,
+  route,
+  open,
+  onOpen,
+  onClose,
+  onSwitchRequested,
+  actions,
+}) {
   const profiles = status.profiles ?? [];
 
   function pick(name) {
@@ -269,6 +322,12 @@ function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
 
   function switchTo(name) {
     onClose();
+    // Told BEFORE the plan opens rather than on Confirm: the modal can be
+    // cancelled, and a target remembered for a switch that never started is
+    // harmless (nothing reads it until a switch job actually succeeds),
+    // while a target recorded only on Confirm would have to be threaded
+    // through the modal's own callbacks to get there.
+    onSwitchRequested?.(name);
     actions.openPlan({
       kind: "switch",
       origin: SWITCH_ORIGIN,
@@ -290,6 +349,7 @@ function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
         type="button"
         class="picker__trigger profile-picker__trigger"
         data-picker="profile"
+        data-profile=${route.profile}
         aria-haspopup="true"
         aria-expanded=${open ? "true" : "false"}
         onClick=${() => (open ? onClose() : onOpen())}
