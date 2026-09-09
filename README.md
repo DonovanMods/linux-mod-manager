@@ -233,11 +233,18 @@ show` carries the same information (`locked`, `locked_version`), and bulk
 instead reports a refused apply as `status: "skipped", reason: "locked"`, and
 `lmm update rollback` of a locked mod is refused the same way — before its
 "Rolling back..." header, with the same remedies and JSON document. `lmm verify` still reports a locked mod's version-record
-mismatches, but `--fix` refuses to rewrite a locked mod's record (other,
-unlocked mods in the same run are still fixed) — and when the installed
-version hasn't yet converged to a lock's target, `verify` prints an
-informational "lock pending convergence" note rather than treating it as
-drift to repair.
+mismatches, but `--fix` refuses to rewrite a locked mod's record, and
+refuses its missing-file, missing-checksum and pak re-ingest repairs too
+whenever the source cannot identify the recorded version's own file — every
+one of those repairs downloads into the _recorded_ (locked) version's cache
+slot, so filling it with whatever the source serves today is exactly what a
+lock exists to prevent. A source that does not version its files at all
+(Icarus, for one) can never identify it, so a locked mod there is repaired
+by unlocking first. Other, unlocked mods in the same run are still fixed,
+and each refusal reports as a `--fix skipped:` line naming the unlock
+remedy, not as a repair that failed. Separately, when the installed version
+hasn't yet converged to a lock's target, `verify` prints an informational
+"lock pending convergence" note rather than treating it as drift to repair.
 
 ### Pak conversion (Icarus)
 
@@ -1642,7 +1649,12 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are
 still fixed) since the record is the lock's target, not drift to repair —
-move the lock instead. Separately, when a locked mod's installed version
+move the lock instead. A locked mod's MISSING, NO CHECKSUM and NEEDS
+REINGEST repairs are refused on the same grounds whenever the source cannot
+identify the recorded version's own file: each of them downloads into the
+recorded version's cache slot, and a source that does not stamp a version on
+its files (Icarus, for one) can never identify it — unlock first to repair
+such a mod. Separately, when a locked mod's installed version
 hasn't yet converged to the lock (see [Locking mods to a
 version](#locking-mods-to-a-version)), `verify` prints an informational
 "lock pending convergence" note rather than treating it as an issue.
