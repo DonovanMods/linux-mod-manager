@@ -225,7 +225,12 @@ export function Library({
   // than hand kind_updates.go's own planUpdatesKind a mod it can only file
   // under `not_found`.
   function updatableSelectedRows() {
-    return selectedRows().filter((r) => r.hasUpdate);
+    // issue 269: an EXTERNAL row is excluded even when it HAS an update.
+    // ApplyUpdateBatch declines it (core.ReasonExternalNoUpdate) and no
+    // choice in this UI changes that, so counting it would enable a button,
+    // state a batch size and open a confirm step for work that will never
+    // happen - the same defect the deploy dry run had.
+    return selectedRows().filter((r) => r.hasUpdate && !r.isExternal);
   }
 
   function batchUpdate() {
@@ -259,7 +264,11 @@ export function Library({
     return html`
       <div class="row-menu">
         ${
+          // issue 269: not offered for an external row, for the reason
+          // updatableSelectedRows states - and matching the slide-over, which
+          // hides Update for the same mod.
           row.hasUpdate &&
+          !row.isExternal &&
           html`<button
             type="button"
             class="row-menu__item"

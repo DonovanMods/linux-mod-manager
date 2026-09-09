@@ -20,7 +20,12 @@
 // own TTL, same as a Cancelled plan always has.
 
 import { html } from "../render.js";
-import { lockedNote, modKey } from "../modrows.js";
+import {
+  EXTERNAL_UPDATE_NOTE,
+  isoDate,
+  lockedNote,
+  modKey,
+} from "../modrows.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** rowKey identifies one UpdateBatchPlan row - the same "source:id" key
@@ -38,6 +43,14 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
   // row promised an update that could not happen; the count is stated up
   // front and the row itself says so instead of showing an arrow.
   const lockedCount = updates.filter((u) => u.locked).length;
+  // issue 269: the same rule for an EXTERNAL row, which ApplyUpdateBatch
+  // declines outright (core.ReasonExternalNoUpdate). Defensive rather than
+  // reachable: neither control that opens this modal offers an external row a
+  // checkbox any more, so no batch this SPA plans should contain one. It is
+  // rendered honestly if one ever arrives - a plan document is whatever the
+  // server sent, and a renderer that only tells the truth about the inputs it
+  // expects is how the deploy dry run went wrong in the first place.
+  const externalCount = updates.filter((u) => u.installed_mod.external).length;
 
   /** drop re-plans with every CURRENTLY planned row except `key`. A no-op
    * when it is the only row left - nothing meaningful for Confirm to apply
@@ -74,11 +87,33 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
         </h3>`
       }
       ${
+        externalCount > 0 &&
+        html`<h3 class="plan__heading plan__heading--warn">
+          ${`${externalCount} of them will be skipped — Steam applies these itself.`}
+        </h3>`
+      }
+      ${
         updates.length > 0 &&
         html`
           <ul class="plan__paths" data-testid="updates-batch-rows">
             ${updates.map((u) => {
               const key = rowKey(u);
+              // ONE string per row rather than adjacent interpolations: htm
+              // collapses the whitespace between those, and at this indent
+              // Prettier is free to break the line in the middle of the arrow,
+              // which puts a real newline into the rendered text (the trap
+              // cards.js#conflictLabel documents).
+              //
+              // Locked is tested first because a row can be BOTH, and core
+              // gives the LOCKED wording precedence when it is
+              // (internal/core/update.go#planUpdateBase) - the two surfaces
+              // must agree on which reason they name.
+              const skipped = u.locked || Boolean(u.installed_mod.external);
+              const detail = u.locked
+                ? `will be skipped — ${lockedNote(u)}`
+                : u.installed_mod.external
+                  ? `will be skipped — ${EXTERNAL_UPDATE_NOTE}`
+                  : `${u.installed_mod.version} → ${u.new_version}`;
               return html`
                 <li key=${key} class="plan__mod">
                   <label>
@@ -91,15 +126,9 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
                     />
                     <span class="plan__mod-name">${u.installed_mod.name}</span
                     >${" "}
-                    ${
-                      u.locked
-                        ? html`<span class="plan__mod-detail"
-                            >${`will be skipped — ${lockedNote(u)}`}</span
-                          >`
-                        : html`<span class="plan__mod-detail mono"
-                            >${u.installed_mod.version} → ${u.new_version}</span
-                          >`
-                    }
+                    <span class="plan__mod-detail ${skipped ? "" : "mono"}"
+                      >${detail}</span
+                    >
                   </label>
                 </li>
               `;

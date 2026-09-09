@@ -458,3 +458,131 @@ func TestE2E_Workshop_StopTrackingConfirmOmitsTheContentID(t *testing.T) {
 		"the version DISPLAY rule: no human surface prints Steam's content id as a version")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// e2eWorkshopNewManifest is the content id a Workshop UPDATE moves the item
+// to - the target version, and as unreadable as the installed one.
+const e2eWorkshopNewManifest = "8888888888888888888"
+
+// setWorkshopCatalogVersion moves modID's CATALOG entry to version, which is
+// the whole of what fakeSource.CheckUpdates compares against - so this is how
+// a scenario gets an update to appear for an already-installed row.
+func setWorkshopCatalogVersion(t *testing.T, f e2eFixture, modID, version string) {
+	t.Helper()
+	src, err := f.Svc.GetSource(e2eWorkshopSourceID)
+	require.NoError(t, err)
+	ws, ok := src.(*e2eWorkshopSource)
+	require.True(t, ok)
+	entry, ok := ws.mods[modID]
+	require.True(t, ok, "no catalog entry for %s", modID)
+	entry.Mod.Version = version
+}
+
+// cardRowJS reads one Updates-card row by the mod it names. The rows carry no
+// stable selector of their own, and an EXTERNAL row deliberately has no
+// checkbox to key off (unlike the locked-row scenarios, which select on
+// aria-label), so this matches on the visible name instead.
+func cardRowJS(name, expr string) string {
+	return `(() => {
+		const row = Array.from(document.querySelectorAll(".card--updates .card__row"))
+			.find((r) => r.textContent.includes(` + strconvQuote(name) + `));
+		return row ? (` + expr + `) : null;
+	})()`
+}
+
+func strconvQuote(s string) string { return `"` + s + `"` }
+
+// TestE2E_Workshop_UpdatesCardMarksTheExternalRowAndOffersNoTick is the
+// headline Tier-1 surface, and it broke the version DISPLAY rule twice over:
+// it rendered "Sample Workshop Item 7987119735124793734 →
+// 8888888888888888888" - two content ids where a version pair goes - and
+// offered the row as a checked, apply-able update with no mark at all, while
+// core's own batch declines it (issue 324/269). That is the same defect as the
+// deploy dry run: a preview promising what the flow will never do.
+//
+// A LOCKED row stays tickable with a marker because a lock is the user's own
+// reversible choice; an external row can never be applied by lmm under any
+// choice available in this UI, so it carries the mark and NO checkbox - it
+// never enters the selection, the count, or the batch.
+func TestE2E_Workshop_UpdatesCardMarksTheExternalRowAndOffersNoTick(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+	seedWorkshopManagedMod(t, f)
+	setWorkshopCatalogVersion(t, f, e2eWorkshopFileID, e2eWorkshopNewManifest)
+	setWorkshopCatalogVersion(t, f, "managed-1", "2.0")
+
+	var externalRow, managedRow string
+	var externalBoxes, managedBoxes int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		chromedp.Evaluate(cardRowJS("Sample Workshop Item", "row.textContent"), &externalRow),
+		chromedp.Evaluate(cardRowJS("Sample Workshop Item", `row.querySelectorAll("input[type=checkbox]").length`), &externalBoxes),
+		chromedp.Evaluate(cardRowJS("Managed Mod", "row.textContent"), &managedRow),
+		chromedp.Evaluate(cardRowJS("Managed Mod", `row.querySelectorAll("input[type=checkbox]").length`), &managedBoxes),
+	)
+
+	assert.Contains(t, externalRow, e2eWorkshopRevisionDate+" → newer",
+		"the revision date and an honest target, never two content ids")
+	assert.NotContains(t, externalRow, e2eWorkshopManifest)
+	assert.NotContains(t, externalRow, e2eWorkshopNewManifest)
+	assert.Contains(t, externalRow, "will be skipped — Steam applies this itself",
+		"marked on the control the user meets first, the sibling of the lock mark")
+	assert.Equal(t, 0, externalBoxes,
+		"no checkbox: lmm can never apply this update, whatever the user picks")
+	assert.Equal(t, 1, managedBoxes, "an ordinary row is unaffected")
+	assert.Contains(t, managedRow, "1.0 → 2.0")
+
+	// The apply count excludes it: ticking every box this card offers plans a
+	// batch of ONE, and the external row is not in it.
+	var title, modal string
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelectorAll(".card--updates .card__row input[type=checkbox]").forEach((cb) => cb.click());`, nil),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="updates"] .modal__title`, &title),
+		textContent(`.modal[data-kind="updates"] .plan`, &modal),
+	)
+	assert.Equal(t, "Update 1 mod", title, "one applicable update, not two")
+	assert.Contains(t, modal, "Managed Mod")
+	assert.NotContains(t, modal, "Sample Workshop Item")
+	assert.NotContains(t, modal, e2eWorkshopManifest)
+	assert.NotContains(t, modal, e2eWorkshopNewManifest)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Workshop_BatchUpdateExcludesTheExternalRow covers the library's
+// OWN route into the same batch: the row checkboxes and the batch bar's
+// Update. updatableSelectedRows() filtered on hasUpdate alone, so a selection
+// of one external row enabled the button and planned a batch core would only
+// decline.
+func TestE2E_Workshop_BatchUpdateExcludesTheExternalRow(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+	seedWorkshopManagedMod(t, f)
+	setWorkshopCatalogVersion(t, f, e2eWorkshopFileID, e2eWorkshopNewManifest)
+	setWorkshopCatalogVersion(t, f, "managed-1", "2.0")
+
+	selectRowJS := func(name string) string {
+		return `Array.from(document.querySelectorAll(".mod-row"))
+			.find((r) => r.textContent.includes("` + name + `"))
+			.querySelector("td.col--select input").click();`
+	}
+
+	var externalOnlyDisabled bool
+	var title string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(selectRowJS("Sample Workshop Item"), nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('[data-action="batch-update"]').disabled`, &externalOnlyDisabled),
+		chromedp.Evaluate(selectRowJS("Managed Mod"), nil),
+		chromedp.Click(`[data-action="batch-update"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="updates"] .modal__title`, &title),
+	)
+
+	assert.True(t, externalOnlyDisabled,
+		"a selection of external rows alone offers no update to apply")
+	assert.Equal(t, "Update 1 mod", title,
+		"the mixed selection plans only the row lmm can actually update")
+	assert.Empty(t, f.BrowserErrors())
+}

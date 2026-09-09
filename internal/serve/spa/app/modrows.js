@@ -35,6 +35,19 @@ export function lockedNote(update) {
   return version ? `locked at v${version}` : "locked";
 }
 
+/** EXTERNAL_UPDATE_NOTE is lockedNote's sibling for an EXTERNAL row (issue
+ * 269): the short reason the Updates card and its confirm modal give for a
+ * row neither of them will apply. Core says the same thing at length in
+ * core.ReasonExternalNoUpdate; this is the phrase that fits on a row.
+ *
+ * The two refusals are NOT the same shape, and the surfaces treat them
+ * differently on purpose. A lock is the user's own reversible choice, so a
+ * locked row stays tickable and merely carries a mark. Steam's ownership of
+ * a Workshop item is not reversible from anywhere in this UI - lmm can
+ * report the update and can never apply it - so an external row carries the
+ * mark and no checkbox at all, and never reaches the batch. */
+export const EXTERNAL_UPDATE_NOTE = "Steam applies this itself";
+
 /**
  * Builds one library row per installed mod (mods: core.ModList's own "mods"
  * array, already in the profile's load order): the ModListing fields

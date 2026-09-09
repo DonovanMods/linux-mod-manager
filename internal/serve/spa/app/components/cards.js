@@ -8,7 +8,12 @@
 import { html, useState } from "../render.js";
 import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
-import { lockedNote, modKey } from "../modrows.js";
+import {
+  EXTERNAL_UPDATE_NOTE,
+  isoDate,
+  lockedNote,
+  modKey,
+} from "../modrows.js";
 import { relativeTime } from "../relativetime.js";
 import { conflictLabel } from "../conflicts.js";
 
@@ -176,21 +181,48 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
               <ul class="card__list">
                 ${rows.map((u) => {
                   const key = modKey(u.installed_mod);
+                  // issue 269: an EXTERNAL row is one ApplyUpdateBatch declines
+                  // outright, and no choice available in this UI can change
+                  // that - so it is rendered, marked, and given no checkbox.
+                  // It therefore never enters `selected`, never reaches the
+                  // count on the button, and never reaches the batch. (A
+                  // LOCKED row keeps its checkbox: a lock is the user's own
+                  // reversible choice, so ticking it is a coherent thing to
+                  // do once the lock is lifted.)
+                  const external = Boolean(u.installed_mod.external);
+                  // ONE string, not adjacent interpolations: htm collapses
+                  // the whitespace between those, and at this indent Prettier
+                  // is free to break the line in the middle of the arrow -
+                  // which puts a real newline into the rendered text (the trap
+                  // conflictLabel below documents). The version DISPLAY rule
+                  // (issue 269's approval note) is why the external form
+                  // exists: its version pair would otherwise be two 19-digit
+                  // Steam content ids, so it reads as the item's revision date
+                  // and an honest "newer" - the pair library.js renders for
+                  // the same row.
+                  const detail = external
+                    ? `${isoDate(u.installed_mod.updated_at) || "—"} → newer`
+                    : `${u.installed_mod.version} → ${u.new_version}`;
                   return html`
                     <li key=${key} class="card__row">
-                      <input
-                        type="checkbox"
-                        aria-label=${`Select ${u.installed_mod.name} for update`}
-                        checked=${selected.has(key)}
-                        onChange=${() => toggle(key)}
-                      />
+                      ${
+                        external
+                          ? html`<span
+                              class="card__row-spacer"
+                              aria-hidden="true"
+                            ></span>`
+                          : html`<input
+                              type="checkbox"
+                              aria-label=${`Select ${u.installed_mod.name} for update`}
+                              checked=${selected.has(key)}
+                              onChange=${() => toggle(key)}
+                            />`
+                      }
                       <span class="card__row-name" title=${u.installed_mod.name}
                         >${u.installed_mod.name}</span
                       >
-                      <span
-                        class="mono card__row-detail"
-                        title=${`${u.installed_mod.version} → ${u.new_version}`}
-                        >${u.installed_mod.version} → ${u.new_version}</span
+                      <span class="mono card__row-detail" title=${detail}
+                        >${detail}</span
                       >
                       ${
                         // Owner item 3, unit 8 gate review: a locked row was
@@ -204,6 +236,15 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                           data-testid="update-lock"
                           title=${`This update will be skipped: ${lockedNote(u)}`}
                           >${`🔒 ${lockedNote(u)}`}</span
+                        >`
+                      }
+                      ${
+                        external &&
+                        html`<span
+                          class="card__row-lock"
+                          data-testid="update-external"
+                          title=${`This update will be skipped: ${EXTERNAL_UPDATE_NOTE}`}
+                          >${`will be skipped — ${EXTERNAL_UPDATE_NOTE}`}</span
                         >`
                       }
                     </li>
