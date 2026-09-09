@@ -5199,6 +5199,29 @@ func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.card--updates .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// issue 344: the terminal STATE and the terminal LABEL do not arrive
+		// together. jobprogress.js renders the outcome the instant the job
+		// summary says "succeeded", while the tally behind "1 applied / 1
+		// skipped" is a SECOND read (jobresult.js -> GET
+		// /api/v1/jobs/{id}), so the control carries a bare "Done" for the
+		// frames in between. Reading the text straight after the state wait
+		// therefore sampled whichever label happened to be there, which is
+		// what made this test fail once in a full -race suite run.
+		//
+		// The label is waited out rather than the render deferred: holding
+		// the terminal render until the tally settles was tried, and it
+		// loses the outcome entirely on any control whose CONTAINER
+		// unmounts on completion (Mission Control's profile attention card
+		// disappears the moment the profile is applied). Carrying the tally
+		// on the job SUMMARY - so the first terminal render already has it -
+		// is the regression-free fix, and is filed as #364 (post-v2.0).
+		chromedp.Poll(
+			`(() => {
+				const el = document.querySelector(".card--updates .job-progress__text");
+				return Boolean(el) && el.textContent.trim() !== "" && el.textContent.trim() !== "Done";
+			})()`, nil,
+			chromedp.WithPollingInterval(50*time.Millisecond),
+		),
 		textContent(`.card--updates .job-progress__text`, &inline),
 		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.tray__row .tray__skips`, chromedp.ByQuery),
