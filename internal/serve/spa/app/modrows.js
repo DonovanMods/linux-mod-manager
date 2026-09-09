@@ -80,6 +80,16 @@ export function buildRows(mods, updates, findings, conflicts) {
       loadOrder: index + 1,
       hasUpdate: Boolean(update),
       updateTarget: update?.new_version ?? "",
+      // issue 269: an EXTERNAL mod is tracked, never deployed. The row carries
+      // the flag verbatim from domain.InstalledMod so the badge, the hidden
+      // actions and the deployable counts all read one fact.
+      isExternal: Boolean(mod.external),
+      // The version SHOWN for an external row is its revision date: the
+      // version field holds Steam's 19-digit content id, which is the
+      // item's version identity and not a version anybody can read.
+      displayVersion: mod.external
+        ? isoDate(mod.updated_at) || "—"
+        : mod.version,
       hasHealthIssue: unhealthyIDs.has(mod.id),
       hasConflict: conflictKeys.has(key),
     };
@@ -129,6 +139,27 @@ export function sortRows(rows, sort) {
 }
 
 /**
+ * Counts EXTERNAL mods (issue 269) - the ones lmm tracks but never deploys,
+ * because another agent owns their files. Reported separately from the
+ * library's own count so "12 mods" is never read as twelve deployments lmm
+ * made.
+ */
+export function countExternal(mods) {
+  return (mods ?? []).reduce((n, m) => n + (m.external ? 1 : 0), 0);
+}
+
+/**
+ * isoDate renders a wire timestamp as a plain date, or "" when there is
+ * none. Shared by the library row and the mod panel so both say the same
+ * thing about the same item (issue 269).
+ */
+export function isoDate(value) {
+  if (!value) return "";
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? "" : new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
  * Counts installed mods whose desired state (Enabled) disagrees with what is
  * actually on disk (Deployed) - the top bar's undeployed-changes indicator.
  * Both fields live on every ModListing already; nothing else needs fetching
@@ -136,7 +167,10 @@ export function sortRows(rows, sort) {
  */
 export function countUndeployed(mods) {
   return (mods ?? []).reduce(
-    (n, m) => n + (m.enabled !== m.deployed ? 1 : 0),
+    // issue 269: an external mod's Deployed is true and never mutates, so it can
+    // never be an undeployed change - the guard is belt-and-braces against
+    // a row whose flags drifted.
+    (n, m) => n + (!m.external && m.enabled !== m.deployed ? 1 : 0),
     0,
   );
 }

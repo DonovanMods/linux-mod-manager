@@ -60,6 +60,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database that is copied, synced or backed up, **not** a local attacker
   running as you.
 
+### Added
+
+- **Steam Workshop tracking (#345, part of #269).** lmm can now track the
+  Steam Workshop items you are already subscribed to. It reads Steam's own
+  bookkeeping across every Steam library on the machine, records each
+  installed item, and checks it for updates through Valve's keyless
+  metadata API — with no account, no API key and no `steamcmd`.
+  `lmm game detect` maps a game whose Workshop manifest shows installed
+  items to the new built-in `steamworkshop` source (`--no-workshop` opts
+  out), `lmm import --workshop` records them, and the web UI's library,
+  mod panel and full mod page render the same facts.
+  lmm **never** moves, copies, downloads or deletes a Workshop item's
+  files: the Steam client owns them where they sit. Such a mod is marked
+  EXTERNAL — counted and listed everywhere, refused by deploy, enable,
+  disable, update-apply, rollback and re-link, skipped by purge and by a
+  profile switch, absent from conflict detection and from the reorder
+  list, and uninstalled by removing lmm's tracking only. See the README's
+  Steam Workshop section for what that does and does not cover; searching
+  the Workshop (needs a personal API key) and downloading items (needs
+  `steamcmd`) land in later units.
+
 ### Changed
 
 - **`lmm import` scan mode scores its source matches instead of taking the

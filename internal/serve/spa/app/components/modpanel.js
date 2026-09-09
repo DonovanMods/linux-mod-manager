@@ -369,6 +369,8 @@ export function ModPanel({
           >
         </p>
 
+        ${row.external && html`<${ManagedBySteam} row=${row} />`}
+
         <${ModSettingsControls}
           row=${row}
           actions=${actions}
@@ -382,6 +384,7 @@ export function ModPanel({
         <div class="slide-over__actions">
           ${
             row.hasUpdate &&
+            !row.external &&
             html`<${InlineJob}
               origin=${origin("update")}
               state=${state}
@@ -403,25 +406,28 @@ export function ModPanel({
               </button>
             <//>`
           }
-          <${InlineJob}
-            origin=${origin("toggle")}
-            state=${state}
-            actions=${actions}
-          >
-            <button
-              type="button"
-              class="button"
-              onClick=${() =>
-                actions.startToggle({
-                  action: row.enabled ? "disable" : "enable",
-                  sourceID: row.source_id,
-                  modID: row.id,
-                  origin: origin("toggle"),
-                })}
+          ${
+            !row.external &&
+            html`<${InlineJob}
+              origin=${origin("toggle")}
+              state=${state}
+              actions=${actions}
             >
-              ${row.enabled ? "Disable" : "Enable"}
-            </button>
-          <//>
+              <button
+                type="button"
+                class="button"
+                onClick=${() =>
+                  actions.startToggle({
+                    action: row.enabled ? "disable" : "enable",
+                    sourceID: row.source_id,
+                    modID: row.id,
+                    origin: origin("toggle"),
+                  })}
+              >
+                ${row.enabled ? "Disable" : "Enable"}
+              </button>
+            <//>`
+          }
           <${InlineJob}
             origin=${origin("uninstall")}
             state=${state}
@@ -434,12 +440,14 @@ export function ModPanel({
                 actions.openPlan({
                   kind: "uninstall",
                   origin: origin("uninstall"),
-                  title: `Uninstall ${row.name}`,
-                  confirmLabel: "Uninstall",
+                  title: row.external
+                    ? `Stop tracking ${row.name}`
+                    : `Uninstall ${row.name}`,
+                  confirmLabel: row.external ? "Stop tracking" : "Uninstall",
                   options: { source_id: row.source_id, mod_id: row.id },
                 })}
             >
-              Uninstall
+              ${row.external ? "Stop tracking" : "Uninstall"}
             </button>
           <//>
         </div>
@@ -663,5 +671,37 @@ export function ModSettingsControls({ row, actions, panelRef }) {
       }
       ${state.error && html`<p class="empty-state__hint">${state.error}</p>`}
     </div>
+  `;
+}
+
+/**
+ * ManagedBySteam is the "this mod is not lmm's to manage" block (issue 269).
+ *
+ * It states the fact once, in one place, for both the slide-over and the
+ * full mod page: Steam owns the item's files where they sit, lmm tracks it
+ * and reports its updates, and the actions that would imply otherwise
+ * (deploy, enable/disable, update, rollback, relink) are not shown at all
+ * rather than shown-and-refused. Uninstall stays, reworded, because
+ * removing lmm's tracking IS something the user can do here.
+ */
+const STEAM_OWNERSHIP_NOTE =
+  "lmm tracks this Steam Workshop item and checks it for updates. " +
+  "Steam owns its files and applies its updates the next time you launch " +
+  "the game. Uninstalling it here removes lmm's tracking only - unsubscribe " +
+  "in the Steam client to remove the item itself.";
+
+export function ManagedBySteam({ row }) {
+  return html`
+    <section class="slide-over__section" data-testid="managed-by-steam">
+      <h3 class="slide-over__heading">Managed by Steam</h3>
+      <p class="slide-over__detail mono">${row.external_path}</p>
+      <p class="slide-over__detail">${STEAM_OWNERSHIP_NOTE}</p>
+      ${
+        row.version &&
+        html`<p class="slide-over__detail mono">
+          Steam content id: ${row.version}
+        </p>`
+      }
+    </section>
   `;
 }

@@ -23,6 +23,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -129,11 +130,17 @@ type WorkshopAdoptResult struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
-// ErrNoWorkshopSource reports that the game maps no source capable of
+// errNoWorkshopSource reports that the game maps no source capable of
 // scanning locally-installed Workshop items - in practice, that games.yaml
 // has no `steamworkshop: <appid>` entry for it. `lmm game edit --source
 // steamworkshop=<appid>` (or re-running `lmm game detect`) is the fix.
-var errNoWorkshopSource = fmt.Errorf("no Steam Workshop source is configured for this game")
+var errNoWorkshopSource = errors.New("no Steam Workshop source is configured for this game - map it with 'lmm game edit --source steamworkshop=<appid>', or re-run 'lmm game detect'")
+
+// IsNoWorkshopSource reports whether err is the "this game has no Steam
+// Workshop mapping" refusal. It is the CALLER'S input that is wrong, not
+// the server's state, so a frontend answers it as bad input (400) with the
+// sentence above rather than as an internal failure.
+func IsNoWorkshopSource(err error) bool { return errors.Is(err, errNoWorkshopSource) }
 
 // workshopSourceFor resolves the game's workshop-capable source, its
 // registry id (the id every adopted row is keyed under) and the app id it is

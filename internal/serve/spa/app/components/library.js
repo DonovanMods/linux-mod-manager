@@ -14,7 +14,12 @@
 import { html, useEffect, useState } from "../render.js";
 import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
-import { formatDate, FILTER_NAMES, SORT_NAMES } from "../modrows.js";
+import {
+  formatDate,
+  countExternal,
+  FILTER_NAMES,
+  SORT_NAMES,
+} from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 
@@ -393,10 +398,24 @@ export function Library({
     ? `In your library (${visible.length})`
     : `Library (${visible.length})`;
 
+  // issue 269: reported separately from the library count, so "12 mods" is never
+  // read as twelve deployments lmm made. Uses an existing class - the
+  // colour ratchets forbid a new literal.
+  // `mods` here is the core.ModList DOCUMENT, not its array (the prop is
+  // passed straight through from Mission Control's state), so the count
+  // reads its own "mods" member.
+  const externalCount = countExternal(mods?.mods);
+
   return html`
     <section class="library">
       <div class="library__toolbar">
         <h2 class="section-header">${libraryLabel}</h2>
+        ${
+          externalCount > 0 &&
+          html`<span class="library__live"
+            >${`${externalCount} tracked by Steam`}</span
+          >`
+        }
         ${
           liveActivity &&
           html`<span class="library__live" role="status">${liveActivity}</span>`
@@ -510,7 +529,11 @@ export function Library({
                           }
                         </td>
                         <td class="col--version mono">
-                          ${row.version}${row.hasUpdate && html` → ${row.updateTarget}`}
+                          ${row.displayVersion ?? row.version}${
+                            row.hasUpdate &&
+                            !row.isExternal &&
+                            html` → ${row.updateTarget}`
+                          }${row.hasUpdate && row.isExternal && html` → newer`}
                         </td>
                         <td class="col--author">${row.author || "—"}</td>
                         <td class="col--source mono">${row.source_id}</td>
@@ -545,6 +568,14 @@ export function Library({
                               class="badge"
                               title="Locked to ${row.locked_version}"
                               >🔒</span
+                            >`
+                          }
+                          ${
+                            row.isExternal &&
+                            html`<span
+                              class="badge"
+                              title="Tracked from your Steam subscription - Steam owns this item's files"
+                              >Steam</span
                             >`
                           }
                           <span class="badge badge--policy"
