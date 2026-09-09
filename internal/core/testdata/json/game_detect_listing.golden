@@ -7,7 +7,16 @@
       "install_path": "/games/skyrim",
       "mod_path": "/games/skyrim/Data",
       "nexus_id": "skyrimspecialedition",
+      "known": true,
       "index": 1
+    },
+    {
+      "steam_app_id": "526870",
+      "slug": "satisfactory",
+      "name": "Satisfactory",
+      "install_path": "/games/satisfactory",
+      "mod_path": "",
+      "index": 0
     }
   ],
   "warnings": [

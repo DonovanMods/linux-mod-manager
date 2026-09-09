@@ -1188,10 +1188,24 @@ func TestJSONGoldens(t *testing.T) {
 				DetectedGame: domain.DetectedGame{
 					SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
 					InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
-					NexusID: "skyrimspecialedition",
+					NexusID: "skyrimspecialedition", Known: true,
 				},
 				Index:             1,
 				AlreadyConfigured: true,
+			},
+		},
+		{
+			// #206's unknown row, pinned as its own golden because a client
+			// branches on exactly these two absences: no "known" member
+			// (omitzero) and "index": 0, which is what says "installed, but
+			// a detect selection cannot name it - add it from the detected
+			// game instead".
+			"game_detect_entry_unknown",
+			core.GameDetectEntry{
+				DetectedGame: domain.DetectedGame{
+					SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
+					InstallPath: "/games/satisfactory",
+				},
 			},
 		},
 		{
@@ -1204,9 +1218,18 @@ func TestJSONGoldens(t *testing.T) {
 					DetectedGame: domain.DetectedGame{
 						SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
 						InstallPath: "/games/skyrim", ModPath: "/games/skyrim/Data",
-						NexusID: "skyrimspecialedition",
+						NexusID: "skyrimspecialedition", Known: true,
 					},
 					Index: 1,
+				}, {
+					// The wider listing (GET /api/v1/games/detect?all=1,
+					// `lmm game detect --include-unknown`) mixes both row
+					// kinds in scan order; the known rows keep 1..N and the
+					// unknown ones carry no index at all (#206).
+					DetectedGame: domain.DetectedGame{
+						SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory",
+						InstallPath: "/games/satisfactory",
+					},
 				}},
 				Warnings: []string{"steam library /mnt/games could not be read"},
 			},
