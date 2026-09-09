@@ -337,6 +337,9 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 				cmd.Printf("      Path: %s\n", g.InstallPath)
 			}
 		}
+		if len(known) > 0 && len(unknown) > 0 {
+			cmd.Println()
+		}
 		printUnknownDetectedGames(cmd, unknown)
 	}
 
@@ -446,7 +449,7 @@ func printUnknownDetectedGames(cmd *cobra.Command, unknown []domain.DetectedGame
 	if len(unknown) == 0 {
 		return
 	}
-	cmd.Printf("\nInstalled but not in the known-games list - add with `lmm game add --from-detected <app-id>`:\n")
+	cmd.Printf("Installed but not in the known-games list - add with `lmm game add --from-detected <app-id>`:\n")
 	for _, g := range unknown {
 		cmd.Printf("  %s  %s (%s)\n", g.SteamAppID, g.Name, g.Slug)
 		cmd.Printf("      Path: %s\n", g.InstallPath)

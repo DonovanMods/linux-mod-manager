@@ -516,6 +516,7 @@ func TestDoGameDetect_OnlyUnknownFound_NoPrompt(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "Installed but not in the known-games list")
 	assert.NotContains(t, buf.String(), "Add games to config?")
+	assert.False(t, strings.HasPrefix(buf.String(), "\n"), "no known games means no earlier section, so no leading blank line either (#206 review Minor 11)")
 }
 
 // TestDoGameDetect_ConsoleNumberingMatchesListingIndex is the agreement
