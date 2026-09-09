@@ -52,6 +52,28 @@ process. That is deliberate: succeeding here would tell you your
 credentials are encrypted while a backup or a file sync could still copy
 them in the clear.
 
+That promise needs the obligation to outlive the attempt, so it is written
+down rather than inferred. `VACUUM` cannot run inside a transaction, so the
+rows are already encrypted by the time the file cleanup starts; the
+transaction that encrypts them therefore also records
+`token_scrub_pending` in the database's own `db_meta` table, and that
+marker is deleted only once the rebuild has returned **and** the
+checkpoint's own result columns have proved the log is empty. Every open
+asks the marker — not the rows — whether there is cleanup owed, and honours
+it before anything reads a credential. So:
+
+- an open that cannot finish the cleanup fails, however many times it has
+  already failed. It never reports success on a second try just because the
+  rows now look encrypted.
+- the next open with the database to itself finishes the job, and only then
+  is the marker cleared.
+- nothing is ever reported as encrypted at rest while the pre-encryption
+  bytes can still be in `lmm.db` or `lmm.db-wal`.
+
+The wait is bounded and it tells you it is happening: lmm prints one line
+when it starts waiting for the other process (up to 45 seconds) and one
+when that ends, on stderr, whatever your `--log-level`.
+
 ### Threat model — read this part
 
 Encryption at rest protects a database that **leaves your machine**:

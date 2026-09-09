@@ -20,10 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after which the database is vacuumed and the write-ahead log truncated so
   the plaintext is gone from both files. Those last two steps need the
   database uncontended, so if another lmm process has it open — `lmm serve`
-  while you run a CLI command — that one-shot migration **fails the open**
-  and names the file, rather than reporting success over a key still
-  readable in `lmm.db-wal`; close the other process and run the command
-  again.
+  while you run a CLI command — the migration **fails the open** and names
+  the file, rather than reporting success over a key still readable in
+  `lmm.db-wal`; close the other process and run the command again.
+
+  That cleanup is an obligation lmm writes down, not one it infers: the
+  transaction that encrypts the rows also records it in the database, and
+  the record is cleared only once the rebuild and the log truncation have
+  each proved they completed. So an open that still cannot finish it still
+  fails — it never reports success on a later try merely because the rows
+  are encrypted by then — and the first open that has the database to
+  itself finishes the job. Nothing is reported as encrypted at rest while
+  the old bytes can still be in `lmm.db` or `lmm.db-wal`. While it waits
+  for the other process, lmm says so on stderr at any `--log-level`, and
+  gives up after 45 seconds rather than hanging.
 
   Two user-visible consequences. **`lmm auth status`, `GET /api/v1/auth`
   and the web UI's Setup page no longer show a masked stored key** — a
