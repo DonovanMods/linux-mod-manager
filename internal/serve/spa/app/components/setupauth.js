@@ -93,6 +93,15 @@ function AuthSourceRow({ source, onChanged }) {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // app.AuthStatusReport.RestartRequired (issue 334), read off the
+  // MUTATION's own response: the credential is stored, but the running
+  // server did not pick it up (its live re-key could not get the mutation
+  // gate in time, or the source could not be rebuilt) and will keep using
+  // the old one until restarted. It is kept in row state rather than read
+  // from `source`, because the reload that follows is a plain GET, which
+  // reports no such event and would erase the fact a moment after it
+  // happened.
+  const [restartRequired, setRestartRequired] = useState(false);
 
   async function login(e) {
     e.preventDefault();
@@ -100,7 +109,8 @@ function AuthSourceRow({ source, onChanged }) {
     setBusy(true);
     setError(null);
     try {
-      await authLogin(source.id, key);
+      const report = await authLogin(source.id, key);
+      setRestartRequired(Boolean(report?.restart_required));
       // Cleared only on success - a 400 keeps the typed value (see this
       // file's own SECRET HANDLING comment, first-run readiness item 6).
       setApiKey("");
@@ -122,7 +132,8 @@ function AuthSourceRow({ source, onChanged }) {
     setBusy(true);
     setError(null);
     try {
-      await authLogout(source.id);
+      const report = await authLogout(source.id);
+      setRestartRequired(Boolean(report?.restart_required));
       await onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
@@ -177,6 +188,13 @@ function AuthSourceRow({ source, onChanged }) {
             `
       }
       ${error && html`<p class="modal__error">${error}</p>`}
+      ${
+        restartRequired &&
+        html`<p class="setup-auth__restart" data-testid="auth-restart-required">
+          Saved, but this server is still using the previous credential —
+          restart <span class="mono">lmm serve</span> to pick it up.
+        </p>`
+      }
     </li>
   `;
 }

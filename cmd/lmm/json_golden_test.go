@@ -473,6 +473,26 @@ func TestJSONGolden_AuthLogin(t *testing.T) {
 	assertJSONCLIGolden(t, "auth_login", out)
 }
 
+// --- auth logout (#335) ---
+
+// TestJSONGolden_AuthLogout pins `lmm auth logout --json`'s CLI-facing
+// document (#335): the re-read app.AuthStatusReport, the same shape
+// `lmm auth status --json` and `lmm serve`'s DELETE /api/v1/auth/{source}
+// answer - replacing the prose line that used to break the
+// one-document-on-stdout invariant.
+func TestJSONGolden_AuthLogout(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "acme-mods", "golden-stored-key-1234567890"))
+	withJSONOutput(t)
+
+	out := captureStdout(t, func() error {
+		return doAuthLogout(context.Background(), svc, []string{"acme-mods"})
+	})
+	assertJSONCLIGolden(t, "auth_logout", out)
+}
+
 // --- update ---
 
 func TestJSONGolden_Update(t *testing.T) {

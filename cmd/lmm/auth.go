@@ -408,16 +408,35 @@ func authDisplayName(service *core.Service, sourceID string) string {
 
 func runAuthLogout(cmd *cobra.Command, args []string) error {
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
-		sourceID, err := resolveLogoutSource(ctx, service, args)
-		if err != nil {
-			return err
-		}
-		if err := service.DeleteSourceToken(ctx, sourceID); err != nil {
-			return fmt.Errorf("removing token: %w", err)
-		}
-		fmt.Printf("Removed %s credentials.\n", authDisplayName(service, sourceID))
-		return nil
+		return doAuthLogout(ctx, service, args)
 	})
+}
+
+// doAuthLogout removes a source's stored credential and reports what is
+// left. Split out from runAuthLogout so the --json document is testable
+// without driving cobra (the same split doAuthLogin already has).
+//
+// #335: --json emits the re-read app.AuthStatusReport rather than the prose
+// line, which is what every other --json command does (one document on
+// stdout) and what `lmm serve`'s DELETE /api/v1/auth/{source} already
+// answered - so the CLI and the web route stopped disagreeing about what a
+// logout even answers. The report is re-read AFTER the delete, so it
+// describes the state the command left behind: the row this logout emptied,
+// and - since a logout can move a row between the two lists - anything else
+// that changed with it. The plain-text line is unchanged.
+func doAuthLogout(ctx context.Context, service *core.Service, args []string) error {
+	sourceID, err := resolveLogoutSource(ctx, service, args)
+	if err != nil {
+		return err
+	}
+	if err := service.DeleteSourceToken(ctx, sourceID); err != nil {
+		return fmt.Errorf("removing token: %w", err)
+	}
+	if jsonOutput {
+		return doAuthStatus(ctx, service)
+	}
+	fmt.Printf("Removed %s credentials.\n", authDisplayName(service, sourceID))
+	return nil
 }
 
 func runAuthStatus(cmd *cobra.Command, args []string) error {

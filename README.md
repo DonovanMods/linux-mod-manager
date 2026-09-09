@@ -1218,6 +1218,8 @@ that run would have applied:
 | `lmm game add` (flag-driven)                  | `core.GameListEntry` — the same row `lmm game list --json` prints for it                                                                                                                                                             |
 | `lmm game add --query` (no `--pick`)          | `core.GameCatalogReport` — `{source_id, query, matches[]}`                                                                                                                                                                           |
 | `lmm auth login --key-from-env`/`--key-stdin` | `app.AuthStatusReport` — the same document `lmm auth status --json` prints                                                                                                                                                           |
+| `lmm auth logout [source]`                    | `app.AuthStatusReport` — the same document, re-read after the removal                                                                                                                                                                |
+| `lmm update --all`                            | `core.UpdateBatchResult` — `{game_id, profile, applied[], failed[], skipped[]}`; without `--all` a bulk run is a CHECK and emits `core.UpdateCheckReport`                                                                             |
 | `lmm game set-default` / `clear-default`      | `core.SettingsResult` — `{default_game}`                                                                                                                                                                                             |
 
 **`--json` never prompts.** Every confirmation has a flag that decides it
@@ -1326,7 +1328,7 @@ under its issue number:
 | `lmm status`                                              | Show current status                                                                                                                                  |
 | `lmm update`                                              | Check for and apply auto-updates                                                                                                                     |
 | `lmm update <mod-id>`                                     | Update a specific mod                                                                                                                                |
-| `lmm update --all`                                        | Apply all available updates                                                                                                                          |
+| `lmm update --all`                                        | Apply all available updates in one batch — locked mods are skipped and reported together, a failure on one mod does not stop the rest                 |
 | `lmm update --dry-run`                                    | Preview what would update                                                                                                                            |
 | `lmm update rollback <mod-id>`                            | Rollback to previous version                                                                                                                         |
 | `lmm verify`                                              | Verify cached mod files (see below)                                                                                                                  |
@@ -1356,7 +1358,7 @@ under its issue number:
 | `lmm auth login [source]`                                 | Authenticate with a source (any source declaring auth; nexusmods/curseforge validated live)                                                          |
 | `lmm auth login <source> --key-from-env`                  | Read the key from the source's own environment variable (`NEXUSMODS_API_KEY`, `CURSEFORGE_API_KEY`, or the derived `LMM_<ID>_API_KEY`) — no prompt   |
 | `lmm auth login <source> --key-stdin`                     | Read the key as exactly one line from stdin — no prompt                                                                                              |
-| `lmm auth logout [source]`                                | Remove stored credentials                                                                                                                            |
+| `lmm auth logout [source]`                                | Remove stored credentials (under `--json`, prints the re-read `lmm auth status` document)                                                             |
 | `lmm auth status`                                         | Show authentication status                                                                                                                           |
 | `lmm profile list`                                        | List profiles                                                                                                                                        |
 | `lmm profile create <name>`                               | Create a profile                                                                                                                                     |

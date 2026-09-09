@@ -56,7 +56,7 @@ func (r *authKeyRequest) validate() error {
 // registered auth-capable source's state (stored key, environment
 // variable, or neither) plus any stored token belonging to none of them.
 func (s *Server) handleAPIAuth(w http.ResponseWriter, r *http.Request) {
-	s.writeAuthStatus(w, r.Context(), http.StatusOK)
+	s.writeAuthStatus(w, r.Context(), http.StatusOK, false)
 }
 
 // handleAPIAuthLogin answers POST /api/v1/auth/{source}: validate the key
@@ -106,8 +106,7 @@ func (s *Server) handleAPIAuthLogin(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, errors.New("storing the credential failed"))
 		return
 	}
-	s.rekeySource(ctx, sourceID)
-	s.writeAuthStatus(w, ctx, http.StatusOK)
+	s.writeAuthStatus(w, ctx, http.StatusOK, s.rekeySource(ctx, sourceID))
 }
 
 // handleAPIAuthLogout answers DELETE /api/v1/auth/{source} with the re-read
@@ -139,8 +138,7 @@ func (s *Server) handleAPIAuthLogout(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.rekeySource(ctx, sourceID)
-	s.writeAuthStatus(w, ctx, http.StatusOK)
+	s.writeAuthStatus(w, ctx, http.StatusOK, s.rekeySource(ctx, sourceID))
 }
 
 // rekeyGrace bounds how long a credential write waits for the mutation
@@ -160,14 +158,26 @@ const rekeyGrace = 5 * time.Second
 // constructed source carrying the new key, put into the registry under the
 // mutation gate (app.RekeySource), so nothing has to restart.
 //
-// A failure is logged, not surfaced. The two ways it can fail are a source
-// that cannot be rebuilt (a definition file deleted underneath us) and the
-// gate not coming free within rekeyGrace, and in BOTH the honest answer to
-// the caller is the one it already has - the key is stored - with the same
-// "picked up at the next start" behaviour lmm had before #333. Turning
-// either into an HTTP failure would report a credential write that did
-// happen as one that did not.
-func (s *Server) rekeySource(ctx context.Context, sourceID string) {
+// A failure is logged, not surfaced as an HTTP error. The two ways it can
+// fail are a source that cannot be rebuilt (a definition file deleted
+// underneath us) and the gate not coming free within rekeyGrace, and in
+// BOTH the honest answer to the caller is the one it already has - the key
+// is stored - with the same "picked up at the next start" behaviour lmm had
+// before #333. Turning either into an HTTP failure would report a
+// credential write that did happen as one that did not.
+//
+// It DOES reach the caller now, as a fact rather than a failure: this
+// returns true when the swap did not take effect, which the response
+// document carries as AuthStatusReport.RestartRequired (#334, Unit 7 review
+// Minor #6). Before that the response said "authenticated" and the only
+// trace of the miss was this WARN, so a user whose next search still used
+// the old key had nothing to go on.
+//
+// A source that was never swapped BECAUSE there was nothing to swap - not
+// registered, or not auth-capable, both of which RekeySource reports as
+// (false, nil) - needs no restart: nothing about how any request behaves
+// depended on it.
+func (s *Server) rekeySource(ctx context.Context, sourceID string) (restartRequired bool) {
 	ctx, cancel := context.WithTimeout(ctx, rekeyGrace)
 	defer cancel()
 
@@ -175,19 +185,25 @@ func (s *Server) rekeySource(ctx context.Context, sourceID string) {
 	case err != nil:
 		s.log.Warn("serve: credential stored, but the running source was not re-keyed; restart lmm serve to pick it up",
 			"source", sourceID, "err", err)
+		return true
 	case swapped:
 		s.log.Debug("serve: re-keyed the running source", "source", sourceID)
 	}
+	return false
 }
 
 // writeAuthStatus assembles and writes app.AuthStatusReport, the one
-// document every route in this file answers with.
-func (s *Server) writeAuthStatus(w http.ResponseWriter, ctx context.Context, status int) {
+// document every route in this file answers with. restartRequired is
+// rekeySource's own verdict, stamped onto the report so a caller that just
+// changed a credential learns whether the running process actually picked
+// it up (#334); a plain read passes false.
+func (s *Server) writeAuthStatus(w http.ResponseWriter, ctx context.Context, status int, restartRequired bool) {
 	report, err := app.AuthStatus(ctx, s.svc)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
+	report.RestartRequired = restartRequired
 	s.writeJSON(w, status, report)
 }
 

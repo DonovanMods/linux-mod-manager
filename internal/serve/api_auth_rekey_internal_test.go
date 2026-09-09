@@ -104,6 +104,8 @@ func TestAPIAuthLogin_ReKeysTheRunningSource(t *testing.T) {
 
 	assert.Equal(t, "key-B", liveKey(t, s),
 		"the next call through the registry uses the new key - no restart")
+	assert.False(t, decodeAuthReport(t, rec.Body.Bytes()).RestartRequired,
+		"a swap that took effect must not ask for a restart (#334)")
 }
 
 func TestAPIAuthLogout_ReKeysTheRunningSourceBackToNothing(t *testing.T) {
@@ -115,6 +117,7 @@ func TestAPIAuthLogout_ReKeysTheRunningSourceBackToNothing(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	assert.Equal(t, "(none)", liveKey(t, s), "a logout falls back to the env/none state immediately")
+	assert.False(t, decodeAuthReport(t, rec.Body.Bytes()).RestartRequired)
 }
 
 // TestAPIAuthLogin_EnvironmentStillWins pins that the re-key resolves the
@@ -133,6 +136,11 @@ func TestAPIAuthLogin_EnvironmentStillWins(t *testing.T) {
 // source cannot be rebuilt, so the live swap fails - and the request still
 // succeeds, because the key IS stored. That is the pre-#333 "picked up at
 // the next start" behaviour, not a credential write to report as failed.
+//
+// #334 (Unit 7 review Minor #6) makes the miss VISIBLE: the response says
+// restart_required, so the surface can tell the user the key is saved but
+// nothing will use it until a restart. Before that the only trace was a
+// server-side WARN, and the response simply said "authenticated".
 func TestAPIAuthLogin_ReKeyFailureStillStoresTheCredential(t *testing.T) {
 	s := newRekeyFixtureServer(t)
 	path, err := app.SourceDefinitionFile(s.svc.ConfigDir(), echoSourceID)
@@ -147,4 +155,6 @@ func TestAPIAuthLogin_ReKeyFailureStillStoresTheCredential(t *testing.T) {
 	require.NotNil(t, token)
 	assert.Equal(t, "key-B", token.APIKey)
 	assert.Equal(t, "(none)", liveKey(t, s), "the live source is untouched until a restart")
+	assert.True(t, decodeAuthReport(t, rec.Body.Bytes()).RestartRequired,
+		"the response must SAY the running process did not pick the key up")
 }

@@ -81,9 +81,12 @@ func TestAppJSONGoldens(t *testing.T) {
 		{
 			// `lmm auth status --json`'s document (#309): one authenticated
 			// row via a stored token, one via env, one never authenticated,
-			// plus both OrphanedToken reasons.
+			// plus both OrphanedToken reasons. RestartRequired is set here
+			// (#334) to pin its key's wire shape; the empty report below
+			// pins that an unset one carries no key at all.
 			"auth_status_report",
 			AuthStatusReport{
+				RestartRequired: true,
 				Sources: []AuthSourceStatus{
 					{ID: "keyless-repo", Name: "Keyless"},
 					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789"},

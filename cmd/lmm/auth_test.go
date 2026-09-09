@@ -777,3 +777,49 @@ func TestAuthStatus_RendersDisplayNameAlongsideID(t *testing.T) {
 	assert.Contains(t, lines, "Nexus Mods (nexusmods): authenticated via NEXUSMODS_API_KEY (key: tes...890)")
 	assert.Contains(t, lines, "CurseForge (curseforge): not authenticated (run: lmm auth login curseforge)")
 }
+
+// --- #335: `lmm auth logout --json` ---
+
+// TestDoAuthLogout_JSON_EmitsTheReReadStatusReport is #335: logout used to
+// print prose under --json, breaking the one-document-on-stdout invariant
+// every other --json command holds to, and disagreeing with `lmm serve`'s
+// DELETE /api/v1/auth/{source}, which already answered this document.
+func TestDoAuthLogout_JSON_EmitsTheReReadStatusReport(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	t.Setenv("LMM_ACME_MODS_API_KEY", "")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "acme-mods", "stored-key-1234567890"))
+	withJSONOutput(t)
+
+	out := captureStdout(t, func() error {
+		return doAuthLogout(context.Background(), svc, []string{"acme-mods"})
+	})
+
+	var report app.AuthStatusReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report),
+		"logout must emit ONE document, not prose: %q", out)
+	assert.NotContains(t, out, "Removed", "the prose line must not travel beside the document")
+
+	require.Len(t, report.Sources, 1)
+	assert.Equal(t, "acme-mods", report.Sources[0].ID)
+	assert.False(t, report.Sources[0].Authenticated,
+		"the report is re-read AFTER the delete, so it describes what the logout left behind")
+	assert.Empty(t, report.Orphaned)
+
+	token, err := svc.GetSourceToken(context.Background(), "acme-mods")
+	require.NoError(t, err)
+	assert.Nil(t, token, "the credential really is gone")
+}
+
+// TestDoAuthLogout_PlainTextUnchanged is the control: #335 changed the
+// --json path only.
+func TestDoAuthLogout_PlainTextUnchanged(t *testing.T) {
+	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
+	svc := newAuthLoginService(t, src)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "acme-mods", "stored-key-1234567890"))
+
+	out := captureStdout(t, func() error {
+		return doAuthLogout(context.Background(), svc, []string{"acme-mods"})
+	})
+	assert.Equal(t, "Removed Acme Mods credentials.\n", out)
+}

@@ -1894,6 +1894,16 @@ select {
   gap: var(--space-2);
 }
 
+/* The live re-key missed its window (issue 334): the key IS saved, so this
+ * is a caution, not an error - it takes the whole row's width so the
+ * sentence reads as one line under the controls it concerns. */
+.setup-auth__restart {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--warn);
+  font-size: 0.9em;
+}
+
 /* Custom sources: the YAML editor (setupsources.js). No editor library
  * (task brief's own call) - line numbers are a plain CSS counter column
  * beside a bare <textarea>. */

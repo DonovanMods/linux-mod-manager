@@ -527,6 +527,17 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-source="authy"] .mono') !== null`, &maskedVisible))
 	assert.True(t, maskedVisible, "the masked form must render once authenticated")
 
+	// Issue 334 (Unit 7 review Minor #6): this fixture's source is
+	// registered in memory with no definition file behind it, so
+	// app.RekeySource cannot rebuild it and the live swap genuinely fails -
+	// which is precisely the condition restart_required exists to report.
+	// Before it, the row said "authenticated" and nothing else, while the
+	// running server kept using the old credential.
+	var restartNotice string
+	f.runInBrowser(t, textContent(`[data-source="authy"] [data-testid="auth-restart-required"]`, &restartNotice))
+	assert.Contains(t, restartNotice, "restart",
+		"a login the running server did not pick up must SAY so, not claim success in silence")
+
 	f.runInBrowser(t,
 		chromedp.Click(`[data-source="authy"] button.button--small`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-source="authy"] input[type="password"]`, chromedp.ByQuery),
