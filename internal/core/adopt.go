@@ -82,14 +82,25 @@ type AdoptMatch struct {
 	// ResolvedFile), which is what ApplyAdopt adopts. It is the same value
 	// as the corresponding LocalScan.Untracked entry.
 	Untracked ScanResult `json:"untracked"`
-	// Mod is the source hit itself - the first searchable source's first
-	// result - kept as the match's provenance. nil means no match.
+	// Mod is the source hit itself - the best-scoring candidate across
+	// every searchable source (#27) - kept as the match's provenance. nil
+	// means no candidate cleared the confidence threshold, so the entry
+	// stays untracked and is adopted as a local mod.
 	Mod *domain.Mod `json:"mod,omitempty"`
 	// File is the matched source's own file this archive corresponds to
 	// (#139), resolved by EXACT FileName match only (no version fallback: a
 	// name-search match is not strong enough evidence for a guess). nil when
 	// nothing resolved.
 	File *domain.DownloadableFile `json:"file,omitempty"`
+	// Score is how confident the match is, 0..1, from adopt_score.go's
+	// name-similarity rule plus its version-agreement bonus (#27). Present
+	// only alongside a Mod: a refused candidate is not a match, so its
+	// score is not part of the plan.
+	Score float64 `json:"score,omitzero"`
+	// ScoreClass is the band Score falls in - "exact", "strong" or
+	// "probable" - so a frontend can say how sure the match is without
+	// interpreting a float. Empty when Mod is nil.
+	ScoreClass AdoptMatchClass `json:"score_class,omitzero"`
 	// Error is set only when EVERY searchable source errored - the
 	// tryMatchSources semantics this flow preserves: any source that
 	// responds at all, even with zero results, makes "no match" the honest
@@ -311,7 +322,7 @@ func (s *Service) matchUntracked(ctx context.Context, game *domain.Game, r *Scan
 		return
 	}
 
-	matched, err := s.matchScannedMod(ctx, game, r.Mod.Name)
+	matched, score, err := s.matchScannedMod(ctx, game, r.Mod.Name, r.Mod.Version)
 	if err != nil {
 		m.Error = err.Error()
 		return
@@ -321,6 +332,8 @@ func (s *Service) matchUntracked(ctx context.Context, game *domain.Game, r *Scan
 	}
 
 	m.Mod = matched
+	m.Score = score
+	m.ScoreClass = adoptMatchClass(score)
 	r.Mod.ID = matched.ID
 	r.Mod.SourceID = matched.SourceID
 	r.Mod.Name = matched.Name
@@ -347,29 +360,40 @@ func (s *Service) matchUntracked(ctx context.Context, game *domain.Game, r *Scan
 }
 
 // matchScannedMod searches every source configured for game that declares
-// search capability, in SourcesForGame's ID-sorted order (design §4.2:
-// "curseforge" before "nexusmods" alphabetically, so typical two-built-in
-// setups keep today's outcome), and returns the first source whose search
-// turns up a result - the "first non-empty result wins" acceptance rule
-// scan matching has always used (tighter scoring tracked in #27). A
-// per-source search failure does not abort the round; remaining sources are
-// still tried.
+// search capability, in SourcesForGame's ID-sorted order, SCORES every
+// candidate the searches turn up against the scanned archive's own detected
+// name and version, and returns the best one - or nil when none of them
+// clears adoptMatchThreshold (#27).
 //
-// Error semantics (PR #124 review round 1): a single source failing does
-// not make the overall round a failure - any source that responds at all,
-// even with zero results, proves a real search happened and "no match" is
-// the honest outcome (nil, nil), not a stale error from an unrelated source
-// that happened to fail first. An error is returned only when EVERY
-// searchable source failed - lastErr then reports the most recent one. No
-// search-capable sources configured is likewise a clean no-match, not an
-// error (the loop never runs, so anySucceeded stays false but so does
-// lastErr).
-func (s *Service) matchScannedMod(ctx context.Context, game *domain.Game, modName string) (*domain.Mod, error) {
+// It used to return the first hit from the first source that had one, which
+// mis-attributed an archive whenever a source's own relevance ranking put a
+// different mod first: searching "skyui" returns "SkyUI Flashlite", and the
+// archive would then be tracked as that mod, with its version history and
+// its update target. Candidates are now compared across ALL sources rather
+// than within the first one that answers, because the best match for an
+// archive is not necessarily in the alphabetically-first source; see
+// adopt_score.go for the rule and its tie-breaks. A source whose search
+// returns an EXACT name match ends the round early - nothing can beat it,
+// so the remaining sources are not worth a round trip.
+//
+// The returned score is the best one seen even when it was refused, so a
+// caller can report how close the nearest miss came.
+//
+// Error semantics (PR #124 review round 1) are unchanged: a single source
+// failing does not make the overall round a failure - any source that
+// responds at all, even with zero results, proves a real search happened
+// and "no match" is the honest outcome (nil, nil), not a stale error from
+// an unrelated source that happened to fail first. An error is returned
+// only when EVERY searchable source failed - lastErr then reports the most
+// recent one. No search-capable sources configured is likewise a clean
+// no-match, not an error.
+func (s *Service) matchScannedMod(ctx context.Context, game *domain.Game, modName, modVersion string) (*domain.Mod, float64, error) {
 	sources, err := s.SourcesForGame(game.ID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
+	var candidates []domain.Mod
 	var lastErr error
 	anySucceeded := false
 	for _, src := range sources {
@@ -383,16 +407,19 @@ func (s *Service) matchScannedMod(ctx context.Context, game *domain.Game, modNam
 			continue
 		}
 		anySucceeded = true
-		if len(searchResult.Mods) > 0 {
-			// Return the first (best) match. Tighter scoring tracked in #27.
-			return &searchResult.Mods[0], nil
+		candidates = append(candidates, searchResult.Mods...)
+
+		if best, score := adoptBestCandidate(modName, modVersion, candidates); best != nil && score >= 1 {
+			return best, score, nil
 		}
 	}
 
-	if anySucceeded {
-		return nil, nil
+	if !anySucceeded && lastErr != nil {
+		return nil, 0, lastErr
 	}
-	return nil, lastErr
+
+	best, score := adoptBestCandidate(modName, modVersion, candidates)
+	return best, score, nil
 }
 
 // ApplyAdoptBackfill re-fetches and saves the source metadata missing from

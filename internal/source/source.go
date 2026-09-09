@@ -81,6 +81,26 @@ type ChangelogProvider interface {
 	Changelog(ctx context.Context, sourceGameID, modID, version string) (string, error)
 }
 
+// DescriptionFetcher is implemented by sources whose mod document carries no
+// full description, and that can supply one with a SECOND call (#246:
+// CurseForge's GET /v1/mods/{modId}/description - the mod response has only
+// a Summary, so since #235 Description came back empty).
+//
+// The extra round trip is why this is its own interface rather than
+// something GetMod does for itself: core consumes it from Service.ModDetail
+// and nowhere else, so it is paid once, for the ONE mod a user is looking
+// at, and never once per row in a search or an update check.
+//
+// Unlike ChangelogProvider, an implementation returns the source's own raw
+// markup (typically HTML), because that is what Mod.Description has always
+// carried all the way to `--json` (#86, ModDetail's own doc comment); the
+// terminal display path runs it through core.CleanChangelog. An
+// implementation MUST bound how much it reads, exactly as every other
+// source call does.
+type DescriptionFetcher interface {
+	Description(ctx context.Context, sourceGameID, modID string) (string, error)
+}
+
 // LocalFileServer marks a source that may legitimately return file:// download
 // URLs (a directory source). core refuses file:// URLs from any source that
 // does not implement it or whose ServesLocalFiles returns false: a remote

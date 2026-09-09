@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,10 +161,14 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		return source.SearchResult{}, err
 	}
 
-	pageSize := query.PageSize
-	if pageSize == 0 {
-		pageSize = 20
-	}
+	// The EFFECTIVE page size, not the requested one: the client clamps
+	// anything over CurseForge's own maximum, and an index computed from a
+	// size the API refused strides past every row in between - page 1 of a
+	// requested 100 would ask for index 100 while page 0 returned rows
+	// 0-49 (Track C review, finding 1). Clamping here keeps this source's
+	// own offsets contiguous and lets it report the size really in effect,
+	// which is what a caller paging it has to page on.
+	pageSize := clampSearchPageSize(query.PageSize)
 	index := query.Page * pageSize
 
 	// Parse category if provided
@@ -250,6 +255,22 @@ func (c *CurseForge) GetDependencies(ctx context.Context, mod *domain.Mod) ([]do
 	return refs, nil
 }
 
+// Description implements source.DescriptionFetcher (#246): CurseForge's mod
+// document has no full-description field - only a Summary, which #235
+// stopped aliasing into Description - so the real one comes from its own
+// endpoint. Returns the source's raw HTML, which is what Mod.Description
+// has always carried (the terminal display path runs it through
+// core.CleanChangelog; `mod show --json` keeps the markup).
+//
+// sourceGameID is unused: the endpoint is keyed on the mod alone.
+func (c *CurseForge) Description(ctx context.Context, _, modID string) (string, error) {
+	id, err := strconv.Atoi(modID)
+	if err != nil {
+		return "", fmt.Errorf("invalid mod ID: %w", err)
+	}
+	return c.client.GetModDescription(ctx, id)
+}
+
 // GetModFiles returns the available download files for a mod
 func (c *CurseForge) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	modID, err := strconv.Atoi(mod.ID)
@@ -305,11 +326,46 @@ func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.Instal
 }
 
 // CheckUpdatesWithProgress is CheckUpdates plus a per-mod progress callback
-// (source.UpdateProgressReporter); report is called with a 1-based index
-// before each mod's remote lookup. report may be nil.
+// (source.UpdateProgressReporter); report is called once per installed mod,
+// with a 1-based index, in the order given. report may be nil.
+//
+// Since #28 the whole batch is fetched in ONE round trip per chunk of 50
+// (Client.GetMods' POST /v1/mods) instead of one GET per mod, so the
+// progress tick now fires as each mod's result is COMPARED rather than
+// before its own request - one call per mod, same order, same arguments.
+//
+// A mod whose id is not a number, and one the API omits from its batch
+// answer, are both skipped rather than fatal: the check reports the ones it
+// could make and names the ones it could not, as before.
 func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
 	var updates []domain.Update
-	var fetchErrs []error
+	// skipped holds ONE reason per mod that could not be checked - never
+	// two for the same mod, and never the whole batch error repeated per
+	// mod (Track C review, finding 8).
+	var skipped []error
+
+	ids := make([]int, 0, len(installed))
+	unparseable := make(map[string]bool)
+	for _, inst := range installed {
+		id, err := strconv.Atoi(inst.ID)
+		if err != nil {
+			skipped = append(skipped, fmt.Errorf("%s (id %s): invalid mod ID: %w", inst.Name, inst.ID, err))
+			unparseable[inst.ID] = true
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	// GetMods' own error already names every id it could not resolve; it is
+	// kept only to explain a mod's absence below, never to abort the check.
+	fetched, fetchErr := c.client.GetMods(ctx, ids)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	byID := make(map[string]Mod, len(fetched))
+	for _, m := range fetched {
+		byID[strconv.Itoa(m.ID)] = m
+	}
 
 	for i, inst := range installed {
 		select {
@@ -322,13 +378,21 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			report(i+1, len(installed), inst.Name)
 		}
 
-		remoteMod, err := c.GetMod(ctx, inst.GameID, inst.ID)
-		if err != nil {
-			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, err))
+		if unparseable[inst.ID] {
+			continue // already reported above; it was never in the batch
+		}
+
+		data, ok := byID[inst.ID]
+		if !ok {
+			// Its own reason, not the batch's: fetchErr names every id the
+			// whole call could not resolve, so stapling it here once per
+			// absent mod turned one failed chunk of 50 into 50 copies of a
+			// 50-id string. The batch error is attached once, below.
+			skipped = append(skipped, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, domain.ErrModNotFound))
 			continue
 		}
 
-		// Compare versions
+		remoteMod := modToDomain(data, inst.GameID)
 		if !isNewerVersion(inst.Version, remoteMod.Version) {
 			continue
 		}
@@ -340,8 +404,16 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 		})
 	}
 
-	if len(fetchErrs) > 0 {
-		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), errors.Join(fetchErrs...))
+	if len(skipped) > 0 {
+		errs := skipped
+		if fetchErr != nil {
+			// Why the ids are missing - a chunk whose REQUEST failed reads
+			// as "not found" per mod above, which is true but not the
+			// reason. Attached once, and outside the count, which counts
+			// mods.
+			errs = append(slices.Clone(skipped), fmt.Errorf("batch fetch: %w", fetchErr))
+		}
+		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(skipped), errors.Join(errs...))
 	}
 	return updates, nil
 }

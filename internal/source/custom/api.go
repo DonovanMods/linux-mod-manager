@@ -74,10 +74,73 @@ func (a *API) ExchangeToken(ctx context.Context, code string) (*source.Token, er
 	return nil, fmt.Errorf("source %q: authentication: %w", a.id, source.ErrNotSupported)
 }
 
-// GetDependencies implements source.ModSource; always unsupported in v1
-// (design §4).
+// GetDependencies implements source.ModSource via the dependencies endpoint
+// (#122). An api source used to hard-disable dependency resolution because
+// the definition had no way to express "ask the API what this mod needs";
+// declaring endpoints.dependencies + mappings.dependency is that way, and a
+// definition that declares neither still answers ErrNotSupported, which
+// core's resolver degrades to "no dependencies" silently.
+//
+// An entry whose source_id is unmapped, or maps to nothing, refers to a mod
+// in THIS source - the self-contained catalogue every custom source is
+// unless it says otherwise (Manifest.GetDependencies makes the same
+// assumption unconditionally).
 func (a *API) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
-	return nil, fmt.Errorf("source %q: dependencies: %w", a.id, source.ErrNotSupported)
+	ep := a.endpoints.Dependencies
+	if ep == nil {
+		return nil, fmt.Errorf("source %q: dependencies: %w", a.id, source.ErrNotSupported)
+	}
+
+	vals := map[string]string{"mod_id": mod.ID, "game_id": mod.GameID}
+	doc, err := a.getJSON(ctx, a.baseURL+buildEndpointURL(ep.Path, vals))
+	if err != nil {
+		return nil, fmt.Errorf("listing dependencies for %s: %w", mod.ID, err)
+	}
+
+	items, err := a.listFromDoc(doc, ep.List, fmt.Sprintf("mod %s", mod.ID))
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make([]domain.ModReference, 0, len(items))
+	for i, item := range items {
+		modID := pathString(item, a.mappings.Dependency, "mod_id")
+		if modID == "" {
+			return nil, fmt.Errorf("source %q: mod %s: %s[%d]: missing required field %q (mapped from %q)",
+				a.id, mod.ID, ep.List, i, "mod_id", a.mappings.Dependency["mod_id"])
+		}
+		sourceID := pathString(item, a.mappings.Dependency, "source_id")
+		if sourceID == "" {
+			sourceID = a.id
+		}
+		refs = append(refs, domain.ModReference{
+			SourceID: sourceID,
+			ModID:    modID,
+			Version:  pathString(item, a.mappings.Dependency, "version"),
+		})
+	}
+	return refs, nil
+}
+
+// listFromDoc resolves an endpoint's list dot-path to a JSON array, with
+// the tolerances every list endpoint shares: a missing path is an error (a
+// silent empty would look like "this mod has none"), an explicit null is an
+// empty list (a Go-backed API's json.Marshal of a nil slice, the standard
+// zero-hits shape for such APIs), and anything that is not an array is an
+// error. subject names what the request was about, for the error message.
+func (a *API) listFromDoc(doc any, listPath, subject string) ([]any, error) {
+	listVal, ok := lookupPath(doc, listPath)
+	if !ok {
+		return nil, fmt.Errorf("source %q: %s: response has no %q array", a.id, subject, listPath)
+	}
+	if listVal == nil {
+		return []any{}, nil
+	}
+	items, ok := listVal.([]any)
+	if !ok {
+		return nil, fmt.Errorf("source %q: %s: %q is not an array", a.id, subject, listPath)
+	}
+	return items, nil
 }
 
 // SetAPIKey provides the API key resolved at startup (env var or token store).
@@ -91,7 +154,7 @@ func (a *API) IsAuthenticated() bool { return a.apiKey != "" }
 func (a *API) Capabilities() source.Capabilities {
 	return source.Capabilities{
 		Search:       a.endpoints.Search != nil,
-		Dependencies: false,
+		Dependencies: a.endpoints.Dependencies != nil,
 		Updates:      a.endpoints.GetMod != nil,
 		Auth:         a.auth != nil,
 		Versions:     a.endpoints.ModFiles != nil,
@@ -232,19 +295,9 @@ func (a *API) Search(ctx context.Context, query source.SearchQuery) (source.Sear
 		return source.SearchResult{}, fmt.Errorf("searching: %w", err)
 	}
 
-	listVal, ok := lookupPath(doc, ep.List)
-	if !ok {
-		return source.SearchResult{}, fmt.Errorf("source %q: searching: response has no %q array", a.id, ep.List)
-	}
-	if listVal == nil {
-		// A Go-backed API's json.Marshal of a nil slice emits `null`, the
-		// standard zero-hits shape for such APIs — treat it as empty, not
-		// an error.
-		listVal = []any{}
-	}
-	items, ok := listVal.([]any)
-	if !ok {
-		return source.SearchResult{}, fmt.Errorf("source %q: searching: %q is not an array", a.id, ep.List)
+	items, err := a.listFromDoc(doc, ep.List, "searching")
+	if err != nil {
+		return source.SearchResult{}, err
 	}
 
 	mods := make([]domain.Mod, 0, len(items))
@@ -303,19 +356,9 @@ func (a *API) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.Downlo
 		return nil, fmt.Errorf("listing files for %s: %w", mod.ID, err)
 	}
 
-	listVal, ok := lookupPath(doc, ep.List)
-	if !ok {
-		return nil, fmt.Errorf("source %q: mod %s: response has no %q array", a.id, mod.ID, ep.List)
-	}
-	if listVal == nil {
-		// A Go-backed API's json.Marshal of a nil slice emits `null`, the
-		// standard zero-hits shape for such APIs — treat it as empty, not
-		// an error.
-		listVal = []any{}
-	}
-	items, ok := listVal.([]any)
-	if !ok {
-		return nil, fmt.Errorf("source %q: mod %s: %q is not an array", a.id, mod.ID, ep.List)
+	items, err := a.listFromDoc(doc, ep.List, fmt.Sprintf("mod %s", mod.ID))
+	if err != nil {
+		return nil, err
 	}
 
 	files := make([]domain.DownloadableFile, 0, len(items))

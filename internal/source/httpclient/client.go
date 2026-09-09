@@ -6,6 +6,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,17 +38,24 @@ type Options struct {
 	// Return nil to defer to the default; return a non-nil error to short-
 	// circuit (e.g. translate 404 to a domain error).
 	ErrorMapper func(status int, body []byte, requestPath string) error
+	// MaxResponseBytes caps how much of a SUCCESSFUL response body is read
+	// before decoding; a body over the cap is an error rather than an
+	// unbounded allocation. Zero (the default) reads without a cap, which is
+	// every existing caller's behaviour. Error bodies are separately capped
+	// at errorBodyLimit regardless.
+	MaxResponseBytes int64
 }
 
 // Client is a small JSON HTTP client wrapping net/http for use by mod-source
 // SDKs. Construct via New; configure via Options.
 type Client struct {
-	httpClient  *http.Client
-	baseURL     string
-	apiKey      string
-	authHeader  string
-	authLabel   string
-	errorMapper func(int, []byte, string) error
+	httpClient       *http.Client
+	baseURL          string
+	apiKey           string
+	authHeader       string
+	authLabel        string
+	errorMapper      func(int, []byte, string) error
+	maxResponseBytes int64
 }
 
 // New returns a Client configured with opts. Panics when a required field
@@ -69,12 +77,13 @@ func New(opts Options) *Client {
 		httpClient = http.DefaultClient
 	}
 	return &Client{
-		httpClient:  httpClient,
-		baseURL:     opts.BaseURL,
-		apiKey:      opts.APIKey,
-		authHeader:  opts.AuthHeader,
-		authLabel:   opts.AuthLabel,
-		errorMapper: opts.ErrorMapper,
+		httpClient:       httpClient,
+		baseURL:          opts.BaseURL,
+		apiKey:           opts.APIKey,
+		authHeader:       opts.AuthHeader,
+		authLabel:        opts.AuthLabel,
+		errorMapper:      opts.ErrorMapper,
+		maxResponseBytes: opts.MaxResponseBytes,
 	}
 }
 
@@ -101,10 +110,37 @@ func (c *Client) HTTPClient() *http.Client { return c.httpClient }
 // Non-2xx responses are first offered to ErrorMapper; if ErrorMapper returns
 // nil (or is unset), 401 is mapped to domain.ErrAuthRequired and other
 // statuses are surfaced as "API error (status N): <body>".
-func (c *Client) DoJSON(ctx context.Context, method, path string, result interface{}) (err error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, nil)
+//
+// It is DoJSONBody with no request body; the two share every rule.
+func (c *Client) DoJSON(ctx context.Context, method, path string, result interface{}) error {
+	return c.DoJSONBody(ctx, method, path, nil, result)
+}
+
+// DoJSONBody is DoJSON with a JSON request body: body is marshalled and sent
+// with a Content-Type of application/json, and the response is decoded into
+// result exactly as DoJSON decodes it - same auth header, same ErrorMapper,
+// same 401/status mapping, same capped error-body read. A nil body sends no
+// body and no Content-Type at all, which is what DoJSON delegates.
+//
+// Added for CurseForge's batch POST /v1/mods (#28), which needs a method and
+// a body DoJSON's signature cannot express; DoJSON's own signature is
+// unchanged so no existing call site moves.
+func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, result interface{}) (err error) {
+	var reader io.Reader
+	if body != nil {
+		encoded, merr := json.Marshal(body)
+		if merr != nil {
+			return fmt.Errorf("encoding request body: %w", merr)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.apiKey != "" {
 		req.Header.Set(c.authHeader, c.apiKey)
@@ -122,23 +158,48 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, result interfa
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
+		// errBody, not body: the REQUEST body is this function's own
+		// parameter, and shadowing it here read as if it were being
+		// reassigned (Track C review, finding 10).
+		errBody, readErr := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
 		if readErr != nil {
 			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
 		}
 		if c.errorMapper != nil {
-			if mapped := c.errorMapper(resp.StatusCode, body, path); mapped != nil {
+			if mapped := c.errorMapper(resp.StatusCode, errBody, path); mapped != nil {
 				return mapped
 			}
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("%w: %s API key required", domain.ErrAuthRequired, c.authLabel)
 		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(errBody))
 	}
 
 	// 204 No Content has no body to decode; treat as success.
 	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+
+	if c.maxResponseBytes > 0 {
+		// Read +1 byte past the cap so "exactly at the cap" still decodes
+		// and only one byte over it is refused, before anything is parsed.
+		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, c.maxResponseBytes+1))
+		if readErr != nil {
+			return fmt.Errorf("reading response: %w", readErr)
+		}
+		if int64(len(payload)) > c.maxResponseBytes {
+			return fmt.Errorf("response exceeds %d bytes", c.maxResponseBytes)
+		}
+		// Decoded through the SAME json.Decoder the uncapped path below
+		// uses, not json.Unmarshal: the two disagree on trailing data
+		// (Decode reads one document and ignores the rest, Unmarshal
+		// errors) and on the message an empty body produces, and only
+		// CurseForge sets a cap - a per-caller split in a shared client
+		// (Track C review, finding 9).
+		if err := json.NewDecoder(bytes.NewReader(payload)).Decode(result); err != nil {
+			return fmt.Errorf("decoding response: %w", err)
+		}
 		return nil
 	}
 

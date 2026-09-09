@@ -127,6 +127,84 @@ func TestSourceDefinitionValidate(t *testing.T) {
 			*d = validAPIDef()
 			d.API.Mappings.Mod["fancyness"] = "x"
 		}, `mappings.mod: unknown key "fancyness"`},
+		// #122: the declarative dependencies endpoint.
+		{"valid dependencies endpoint", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps", List: "dependencies"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id", "source_id": "source", "version": "min_version"}
+		}, ""},
+		{"dependencies endpoint missing path", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{List: "dependencies"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id"}
+		}, "dependencies: path is required"},
+		{"dependencies endpoint missing list", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id"}
+		}, "dependencies: list is required"},
+		{"dependencies without a mod_id mapping", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps", List: "dependencies"}
+		}, `mappings.dependency: "mod_id" is required`},
+		{"unknown dependency mapping key", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps", List: "dependencies"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id", "optional": "is_optional"}
+		}, `mappings.dependency: unknown key "optional"`},
+		{"dependency mappings without the endpoint are pointless but harmless", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id"}
+		}, ""},
+
+		// #121: the declarative auth.validate probe.
+		{"valid auth validate probe", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me", Status: 200, Field: "user.id"},
+			}
+		}, ""},
+		{"auth validate defaults to GET and any 2xx", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me"},
+			}
+		}, ""},
+		{"auth validate without a path", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{},
+			}
+		}, "auth.validate.path is required"},
+		{"auth validate with an unsupported method", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me", Method: "DELETE"},
+			}
+		}, "auth.validate.method"},
+		{"auth validate with an impossible status", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me", Status: 42},
+			}
+		}, "auth.validate.status"},
+		{"auth validate without an api_key block", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{Validate: &AuthValidateConfig{Path: "/me"}}
+		}, "auth.api_key is required"},
+		{"auth validate is api-only", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{URL: "https://x.test/m.yaml", Auth: &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me"},
+			}}
+		}, "auth.validate is only supported"},
 		{"api unknown file mapping key", func(d *SourceDefinition) {
 			*d = validAPIDef()
 			d.API.Mappings.File["sha512"] = "x"

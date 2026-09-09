@@ -437,6 +437,9 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			// The matched shape: source hit, resolved file, no errors.
+			// Score/ScoreClass are #27's additive confidence pair, present
+			// exactly because a Mod is - a refused candidate carries
+			// neither.
 			"adopt_match",
 			core.AdoptMatch{
 				Untracked: core.ScanResult{
@@ -444,14 +447,21 @@ func TestJSONGoldens(t *testing.T) {
 					Mod: &jsonGoldenMod, MatchedSource: "nexusmods",
 					ResolvedFile: &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
 				},
-				Mod:  &jsonGoldenMod,
-				File: &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
+				Mod:        &jsonGoldenMod,
+				Score:      1,
+				ScoreClass: core.AdoptMatchExact,
+				File:       &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
 			},
 		},
 		{
-			// Every optional key populated at once (Error and FileError are
-			// mutually exclusive on a real match) - the point is to pin each
-			// key's wire shape, not to be a plausible plan.
+			// Every optional key of a plan populated at once, across TWO
+			// match entries rather than one, because AdoptMatch's own
+			// invariants make some of them mutually exclusive and a golden
+			// is the frozen contract a frontend reads (Track C review,
+			// finding 5): Score/ScoreClass are present "only alongside a
+			// Mod", so the entry that carries them carries a Mod, and the
+			// entry that carries Error - set only when EVERY source failed,
+			// which is not a match - carries neither.
 			"adopt_plan",
 			core.AdoptPlan{
 				GameID:  "skyrim-se",
@@ -463,14 +473,29 @@ func TestJSONGoldens(t *testing.T) {
 					}},
 					ExtractModeWarning: false,
 				},
-				Matches: []core.AdoptMatch{{
-					Untracked: core.ScanResult{
-						FilePath: "/games/skyrim/Data/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
-						Mod: &jsonGoldenMod, MatchedSource: "local",
+				Matches: []core.AdoptMatch{
+					{
+						// Matched, but its source's file listing failed:
+						// the match stands, the adoption is marker-less.
+						Untracked: core.ScanResult{
+							FilePath: "/games/skyrim/Data/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
+							Mod: &jsonGoldenMod, MatchedSource: "nexusmods",
+						},
+						Mod:        &jsonGoldenMod,
+						Score:      0.82,
+						ScoreClass: core.AdoptMatchProbable,
+						FileError:  "listing source files: rate limited",
 					},
-					Error:     "search failed: rate limited",
-					FileError: "listing source files: rate limited",
-				}},
+					{
+						// Every searchable source failed, so there is no
+						// match, no score and no class - only the error.
+						Untracked: core.ScanResult{
+							FilePath: "/games/skyrim/Data/other-mod-2.0.zip", FileName: "other-mod-2.0.zip",
+							Mod: &jsonGoldenMod, MatchedSource: "local",
+						},
+						Error: "search failed: rate limited",
+					},
+				},
 				Duplicates: []string{"already-installed-1.0.zip"},
 				SkipMatch:  false,
 			},

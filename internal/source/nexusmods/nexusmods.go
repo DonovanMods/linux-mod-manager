@@ -95,7 +95,16 @@ func (n *NexusMods) ExchangeToken(ctx context.Context, code string) (*source.Tok
 	return nil, fmt.Errorf("NexusMods uses API key authentication, not OAuth")
 }
 
-// Search finds mods matching the query
+// Search finds mods matching the query.
+//
+// Paging contract (Track C review, finding 1): the upstream offset is
+// page*pageSize, which is contiguous for any page size the API honours -
+// but the GraphQL search caps a page at around 30 rows and announces that
+// nowhere, and it reports no total either, so this returns the REQUESTED
+// PageSize and TotalCount 0. A caller therefore cannot tell a clamped page
+// from a last page except by its length, which is exactly what core's
+// aggregate relies on: a short page ends the paging for this source rather
+// than being followed by one at an offset the cap makes wrong.
 func (n *NexusMods) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	pageSize := query.PageSize
 	if pageSize == 0 {

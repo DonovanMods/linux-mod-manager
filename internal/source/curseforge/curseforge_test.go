@@ -2,8 +2,12 @@ package curseforge
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -26,6 +30,7 @@ var (
 	_ source.GameCatalog              = (*CurseForge)(nil)
 	_ source.TypeLabeler              = (*CurseForge)(nil)
 	_ source.CapabilityReporter       = (*CurseForge)(nil)
+	_ source.DescriptionFetcher       = (*CurseForge)(nil)
 )
 
 func TestCurseForge_ID(t *testing.T) {
@@ -91,6 +96,42 @@ func TestCurseForge_Search(t *testing.T) {
 	assert.Equal(t, int64(150000000), mods[0].Downloads)
 	assert.Equal(t, int64Ptr(5000), mods[0].Endorsements)
 	assert.Equal(t, "https://example.com/jei.png", mods[0].PictureURL)
+}
+
+// TestCurseForge_SearchOffsetsAreContiguousWhenThePageSizeIsClamped is the
+// Track C review's finding 1, in the source it was provable against. The
+// client clamps any pageSize over 50 to the API maximum, but Search
+// computed its upstream index from the REQUESTED size and reported that
+// size back, so paging it at --limit 100 asked for index 0 (rows 0-49) and
+// then index 100 (rows 100-149): rows 50-99 were never fetched, and the
+// result still claimed a page size of 100.
+func TestCurseForge_SearchOffsetsAreContiguousWhenThePageSizeIsClamped(t *testing.T) {
+	var gotIndex, gotPageSize []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIndex = append(gotIndex, r.URL.Query().Get("index"))
+		gotPageSize = append(gotPageSize, r.URL.Query().Get("pageSize"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"pagination":{"index":0,"pageSize":50,"resultCount":50,"totalCount":500}}`))
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	var reported []int
+	for _, page := range []int{0, 1, 2} {
+		res, err := cf.Search(context.Background(), source.SearchQuery{
+			GameID: "432", Query: "x", Page: page, PageSize: 100,
+		})
+		require.NoError(t, err)
+		reported = append(reported, res.PageSize)
+	}
+
+	assert.Equal(t, []string{"50", "50", "50"}, gotPageSize, "the API maximum is what is really requested")
+	assert.Equal(t, []string{"0", "50", "100"}, gotIndex,
+		"consecutive pages must be consecutive rows, not strided by the size the API refused")
+	assert.Equal(t, []int{50, 50, 50}, reported,
+		"the reported page size must be the one in effect, so a caller can page on it")
 }
 
 func TestCurseForge_Search_InvalidGameID(t *testing.T) {
@@ -234,36 +275,41 @@ func TestCurseForge_GetDownloadURL(t *testing.T) {
 	assert.Equal(t, "https://edge.forgecdn.net/files/1234/567/jei.jar", url)
 }
 
-func TestCurseForge_CheckUpdates(t *testing.T) {
-	callCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+// batchModsServer answers the batch POST /v1/mods endpoint (#28) with the
+// subset of byID whose keys the request asked for, counting requests so a
+// test can prove N mods cost ONE round trip. An id absent from byID is
+// omitted from the response, which is how CurseForge answers for a mod it
+// cannot resolve.
+func batchModsServer(t *testing.T, requests *int, byID map[int]string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "/v1/mods", r.URL.Path)
+		*requests++
+
+		var body struct {
+			ModIDs []int `json:"modIds"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+
+		out := make([]string, 0, len(body.ModIDs))
+		for _, id := range body.ModIDs {
+			if doc, ok := byID[id]; ok {
+				out = append(out, doc)
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-
-		// Return different versions based on call
-		if callCount == 1 {
-			// First mod has an update
-			_, _ = w.Write([]byte(`{
-				"data": {
-					"id": 238222,
-					"name": "JEI",
-					"latestFiles": [{"displayName": "jei-1.20.1-15.4.0.0"}],
-					"dateModified": "2024-01-20T10:30:00Z"
-				}
-			}`))
-		} else {
-			// Second mod is up to date
-			_, _ = w.Write([]byte(`{
-				"data": {
-					"id": 306612,
-					"name": "Fabric API",
-					"latestFiles": [{"displayName": "fabric-api-0.92.0"}],
-					"dateModified": "2024-01-15T10:30:00Z"
-				}
-			}`))
-		}
+		_, _ = fmt.Fprintf(w, `{"data":[%s]}`, strings.Join(out, ","))
 	}))
+}
+
+func TestCurseForge_CheckUpdates(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		238222: `{"id":238222,"name":"JEI","latestFiles":[{"displayName":"jei-1.20.1-15.4.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+		306612: `{"id":306612,"name":"Fabric API","latestFiles":[{"displayName":"fabric-api-0.92.0"}],"dateModified":"2024-01-15T10:30:00Z"}`,
+	})
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
@@ -293,26 +339,115 @@ func TestCurseForge_CheckUpdates(t *testing.T) {
 	updates, err := cf.CheckUpdates(context.Background(), installed)
 	require.NoError(t, err)
 
+	// #28: the whole check is one batch request, not one per mod.
+	assert.Equal(t, 1, requests, "two installed mods must cost one round trip")
+
 	// Only JEI should have an update
 	require.Len(t, updates, 1)
 	assert.Equal(t, "238222", updates[0].InstalledMod.ID)
 	assert.Equal(t, "15.4.0.0", updates[0].NewVersion)
 }
 
-func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
+// TestCurseForge_CheckUpdatesBatchesLargeSets pins #28's real payoff: an
+// update check over more mods than one batch holds costs one request PER
+// CHUNK, not one per mod.
+func TestCurseForge_CheckUpdatesBatchesLargeSets(t *testing.T) {
+	const count = modBatchSize + 5
+	byID := make(map[int]string, count)
+	installed := make([]domain.InstalledMod, 0, count)
+	for i := 1; i <= count; i++ {
+		byID[i] = fmt.Sprintf(`{"id":%d,"name":"Mod %d","latestFiles":[{"displayName":"mod-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`, i, i)
+		installed = append(installed, domain.InstalledMod{Mod: domain.Mod{
+			ID: strconv.Itoa(i), SourceID: "curseforge", Name: fmt.Sprintf("Mod %d", i), Version: "1.0.0", GameID: "432",
+		}})
+	}
 
-		switch r.URL.Path {
-		case "/v1/mods/111":
-			_, _ = w.Write([]byte(`{"data": {"id": 111, "name": "Mod A", "latestFiles": [{"displayName": "mod-a-2.0.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
-		case "/v1/mods/222":
-			_, _ = w.Write([]byte(`{"data": {"id": 222, "name": "Mod B", "latestFiles": [{"displayName": "mod-b-1.0.0"}], "dateModified": "2024-01-15T10:30:00Z"}}`))
-		case "/v1/mods/333":
-			_, _ = w.Write([]byte(`{"data": {"id": 333, "name": "Mod C", "latestFiles": [{"displayName": "mod-c-3.5.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
-		}
-	}))
+	requests := 0
+	server := batchModsServer(t, &requests, byID)
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	updates, err := cf.CheckUpdates(context.Background(), installed)
+	require.NoError(t, err)
+	assert.Len(t, updates, count, "every mod has a newer version upstream")
+	assert.Equal(t, 2, requests, "%d mods is two chunks of %d, so two requests", count, modBatchSize)
+}
+
+// TestCurseForge_CheckUpdatesReportsAnOmittedMod covers the batch's own
+// partial-miss shape: an id CurseForge simply leaves out of its answer is
+// named in the error, and the mods it did answer for are still checked.
+func TestCurseForge_CheckUpdatesReportsAnOmittedMod(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		111: `{"id":111,"name":"Mod A","latestFiles":[{"displayName":"mod-a-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Name: "Mod A", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "999", Name: "Gone Mod", Version: "1.0.0", GameID: "432"}},
+	}
+
+	updates, err := cf.CheckUpdates(context.Background(), installed)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update check skipped 1 mod(s)")
+	assert.Contains(t, err.Error(), "Gone Mod (id 999)")
+	require.Len(t, updates, 1, "the mod the API did answer for is still checked")
+	assert.Equal(t, "111", updates[0].InstalledMod.ID)
+}
+
+// TestCurseForge_CheckUpdatesReportsEachSkipReasonOnce is the Track C
+// review's finding 8: a mod whose id is not numeric was reported TWICE -
+// once by the id-collection loop and again by the compare loop, which could
+// not find it in the batch answer either - and every absent mod had the
+// WHOLE joined batch error stapled to it, so one failed chunk of 50
+// produced fifty copies of a fifty-id error string. Each skipped mod now
+// gets exactly one reason of its own, and the batch error is attached once
+// as its own entry.
+func TestCurseForge_CheckUpdatesReportsEachSkipReasonOnce(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		111: `{"id":111,"name":"Mod A","latestFiles":[{"displayName":"mod-a-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Name: "Mod A", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "not-a-number", Name: "Hand Made", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "999", Name: "Gone Mod", Version: "1.0.0", GameID: "432"}},
+	}
+
+	updates, err := cf.CheckUpdates(context.Background(), installed)
+	require.Error(t, err)
+	require.Len(t, updates, 1, "the mod the API did answer for is still checked")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "update check skipped 2 mod(s)")
+	assert.Equal(t, 1, strings.Count(msg, "Hand Made (id not-a-number)"),
+		"an unparseable id is reported once, not once per loop:\n%s", msg)
+	assert.Equal(t, 1, strings.Count(msg, "invalid mod ID"),
+		"and with one reason, not two:\n%s", msg)
+	assert.Equal(t, 1, strings.Count(msg, "Gone Mod (id 999)"),
+		"an omitted id is reported once:\n%s", msg)
+	assert.ErrorIs(t, err, domain.ErrModNotFound,
+		"an omitted mod stays errors.Is-able as not found")
+}
+
+func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		111: `{"id":111,"name":"Mod A","latestFiles":[{"displayName":"mod-a-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+		222: `{"id":222,"name":"Mod B","latestFiles":[{"displayName":"mod-b-1.0.0"}],"dateModified":"2024-01-15T10:30:00Z"}`,
+		333: `{"id":333,"name":"Mod C","latestFiles":[{"displayName":"mod-c-3.5.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
@@ -349,11 +484,10 @@ func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
 }
 
 func TestCurseForge_CheckUpdates_DelegatesWithNilReport(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"data": {"id": 238222, "name": "JEI", "latestFiles": [{"displayName": "jei-1.20.1-15.4.0.0"}], "dateModified": "2024-01-20T10:30:00Z"}}`))
-	}))
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		238222: `{"id":238222,"name":"JEI","latestFiles":[{"displayName":"jei-1.20.1-15.4.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
 	defer server.Close()
 
 	cf := New(server.Client(), "test-api-key")
@@ -636,4 +770,78 @@ func TestModToDomain_DescriptionNotAliasedToSummary(t *testing.T) {
 
 	assert.Equal(t, "View Items and Recipes", mod.Summary)
 	assert.Empty(t, mod.Description, "Description must not be a copy of Summary (#235)")
+}
+
+// TestCurseForge_Description covers #246: the full description comes from
+// its own endpoint (GET /v1/mods/{modId}/description), as the source's own
+// HTML, and a failure there is the caller's to degrade - it is returned, not
+// swallowed.
+func TestCurseForge_Description(t *testing.T) {
+	t.Run("returns the source HTML verbatim", func(t *testing.T) {
+		var gotPath, gotKey string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath, gotKey = r.URL.Path, r.Header.Get("x-api-key")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":"<p>Adds <b>bigger</b> backpacks.</p>"}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		got, err := cf.Description(context.Background(), "432", "238222")
+		require.NoError(t, err)
+		assert.Equal(t, "/v1/mods/238222/description", gotPath)
+		assert.Equal(t, "test-api-key", gotKey)
+		assert.Equal(t, "<p>Adds <b>bigger</b> backpacks.</p>", got,
+			"the raw markup is what Mod.Description carries (#86)")
+	})
+
+	t.Run("a non-numeric mod id fails before any request", func(t *testing.T) {
+		requests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.Description(context.Background(), "432", "not-a-number")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid mod ID")
+		assert.Zero(t, requests)
+	})
+
+	t.Run("an upstream failure is returned, not swallowed", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.Description(context.Background(), "432", "1")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, domain.ErrModNotFound)
+	})
+
+	t.Run("a response over the size cap is refused", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":"`))
+			chunk := strings.Repeat("x", 1<<16)
+			for written := 0; written <= maxResponseSize; written += len(chunk) {
+				_, _ = w.Write([]byte(chunk))
+			}
+			_, _ = w.Write([]byte(`"}`))
+		}))
+		defer server.Close()
+
+		cf := New(server.Client(), "test-api-key")
+		cf.client.SetBaseURL(server.URL)
+
+		_, err := cf.Description(context.Background(), "432", "1")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "exceeds")
+	})
 }

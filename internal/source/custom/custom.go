@@ -17,7 +17,7 @@ func New(def SourceDefinition) (source.ModSource, error) {
 	case TypeManifest:
 		return NewManifest(def)
 	case TypeAPI:
-		return NewAPI(def)
+		return NewAPISource(def)
 	default:
 		return nil, fmt.Errorf("source type %q is not yet supported", def.Type)
 	}

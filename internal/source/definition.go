@@ -3,6 +3,7 @@ package source
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -48,6 +49,40 @@ type ManifestConfig struct {
 // LMM_<ID>_API_KEY env var or the DB token store at startup.
 type AuthConfig struct {
 	APIKey *APIKeyConfig `yaml:"api_key"`
+	// Validate declares the live key-check probe `lmm auth login` runs
+	// before storing a key (#121). Absent: the key is stored unvalidated
+	// and exercised on first use, which is all a custom source could
+	// promise before this existed. Supported on api sources only - a
+	// manifest source has one document URL, not a base URL to hang a probe
+	// path off.
+	Validate *AuthValidateConfig `yaml:"validate"`
+}
+
+// AuthValidateConfig describes a request that succeeds only for a valid API
+// key, so a custom api source can implement the same live check
+// (source.KeyValidator) the built-in sources do (#121). It is declarative on
+// purpose: a YAML-defined source cannot ship code, so the probe has to be
+// expressible as "call this, expect that".
+//
+// The request goes to the api source's own base URL plus Path, carrying the
+// candidate key exactly the way every other request to that source carries
+// it (AuthConfig.APIKey's header or query placement).
+type AuthValidateConfig struct {
+	// Method is the HTTP method for the probe: GET (the default when
+	// empty), HEAD, or POST. Nothing that could mutate state is accepted -
+	// a key check must be safe to run on every `lmm auth login`.
+	Method string `yaml:"method"`
+	// Path is the probe's path, appended to the api source's base_url
+	// exactly as an endpoint path is. Required.
+	Path string `yaml:"path"`
+	// Status is the exact HTTP status a valid key must produce. Zero (the
+	// default) accepts any 2xx, which is what most APIs answer.
+	Status int `yaml:"status"`
+	// Field is an optional JSON dot-path that must be PRESENT in the
+	// response for the key to count as valid - for an API that answers 200
+	// with an anonymous document rather than 401 when the key is missing.
+	// Same dot-path vocabulary as the endpoint mappings; no array indexing.
+	Field string `yaml:"field"`
 }
 
 // APIKeyConfig says where the API key is attached on requests.
@@ -71,6 +106,13 @@ type APIEndpoints struct {
 	GetMod      *EndpointConfig `yaml:"get_mod"`
 	ModFiles    *EndpointConfig `yaml:"mod_files"`
 	DownloadURL *EndpointConfig `yaml:"download_url"`
+	// Dependencies lists a mod's required mods (#122). Declaring it is what
+	// turns Capabilities().Dependencies on for an api source - it was
+	// hard-false before, because there was no endpoint concept to express
+	// "ask the API what this mod needs". Path takes {mod_id}/{game_id};
+	// List is the dot-path to the array, mapped through
+	// APIMappings.Dependency.
+	Dependencies *EndpointConfig `yaml:"dependencies"`
 }
 
 // EndpointConfig configures a single API endpoint.
@@ -85,6 +127,12 @@ type EndpointConfig struct {
 type APIMappings struct {
 	Mod  map[string]string `yaml:"mod"` // domain field key -> JSON dot-path
 	File map[string]string `yaml:"file"`
+	// Dependency maps one entry of the dependencies endpoint's list onto a
+	// domain.ModReference (#122). "mod_id" is required whenever
+	// Endpoints.Dependencies is defined; "source_id" is optional and
+	// defaults to this source's own ID, which is what a self-contained
+	// catalogue wants; "version" is optional.
+	Dependency map[string]string `yaml:"dependency"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -101,6 +149,12 @@ var knownFileMappingKeys = map[string]bool{
 	"id": true, "name": true, "filename": true, "version": true, "size": true,
 }
 
+// knownDependencyMappingKeys are the domain.ModReference fields a
+// dependency mapping may target (#122).
+var knownDependencyMappingKeys = map[string]bool{
+	"mod_id": true, "source_id": true, "version": true,
+}
+
 // validateEndpointsAndMappings checks the api block's endpoint/mapping rules
 // (design §4): at least one endpoint, per-endpoint required fields, required
 // mapping keys, and no unknown mapping keys.
@@ -113,6 +167,7 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 		{"get_mod", c.Endpoints.GetMod},
 		{"mod_files", c.Endpoints.ModFiles},
 		{"download_url", c.Endpoints.DownloadURL},
+		{"dependencies", c.Endpoints.Dependencies},
 	}
 
 	defined := false
@@ -137,6 +192,9 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 	if c.Endpoints.DownloadURL != nil && c.Endpoints.DownloadURL.Field == "" {
 		return errors.New("endpoints.download_url: field is required")
 	}
+	if c.Endpoints.Dependencies != nil && c.Endpoints.Dependencies.List == "" {
+		return errors.New("endpoints.dependencies: list is required")
+	}
 
 	if c.Mappings.Mod["id"] == "" {
 		return errors.New(`mappings.mod: "id" is required`)
@@ -146,6 +204,9 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 	}
 	if c.Endpoints.ModFiles != nil && c.Mappings.File["id"] == "" {
 		return errors.New(`mappings.file: "id" is required when mod_files is defined`)
+	}
+	if c.Endpoints.Dependencies != nil && c.Mappings.Dependency["mod_id"] == "" {
+		return errors.New(`mappings.dependency: "mod_id" is required when dependencies is defined`)
 	}
 	for k := range c.Mappings.Mod {
 		if !knownModMappingKeys[k] {
@@ -157,12 +218,18 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 			return fmt.Errorf("mappings.file: unknown key %q", k)
 		}
 	}
+	for k := range c.Mappings.Dependency {
+		if !knownDependencyMappingKeys[k] {
+			return fmt.Errorf("mappings.dependency: unknown key %q", k)
+		}
+	}
 	return nil
 }
 
 // validateAuth checks an optional auth block. Shared by manifest (Phase 3)
-// and api (Phase 4) validation.
-func validateAuth(a *AuthConfig) error {
+// and api (Phase 4) validation; allowValidate is false for the manifest
+// type, which has no base URL for a probe path to hang off (#121).
+func validateAuth(a *AuthConfig, allowValidate bool) error {
 	if a == nil {
 		return nil
 	}
@@ -174,6 +241,29 @@ func validateAuth(a *AuthConfig) error {
 	}
 	if a.APIKey.Name == "" {
 		return errors.New("auth.api_key.name is required")
+	}
+	if a.Validate == nil {
+		return nil
+	}
+	if !allowValidate {
+		return errors.New("auth.validate is only supported on api sources")
+	}
+	return a.Validate.validate()
+}
+
+// validate checks the probe's own fields (#121). Nothing here touches the
+// network: a probe is only exercised by an explicit `lmm auth login`.
+func (v *AuthValidateConfig) validate() error {
+	if v.Path == "" {
+		return errors.New("auth.validate.path is required")
+	}
+	switch strings.ToUpper(v.Method) {
+	case "", http.MethodGet, http.MethodHead, http.MethodPost:
+	default:
+		return fmt.Errorf(`auth.validate.method must be GET, HEAD or POST, got %q`, v.Method)
+	}
+	if v.Status != 0 && (v.Status < 100 || v.Status > 599) {
+		return fmt.Errorf("auth.validate.status must be a valid HTTP status code, got %d", v.Status)
 	}
 	return nil
 }
@@ -235,7 +325,7 @@ func (d *SourceDefinition) Validate() error {
 				return fmt.Errorf("manifest.refresh: %w", err)
 			}
 		}
-		if err := validateAuth(d.Manifest.Auth); err != nil {
+		if err := validateAuth(d.Manifest.Auth, false); err != nil {
 			return fmt.Errorf("manifest: %w", err)
 		}
 	case TypeAPI:
@@ -251,7 +341,7 @@ func (d *SourceDefinition) Validate() error {
 		if err := d.checkURL(d.API.BaseURL); err != nil {
 			return fmt.Errorf("api.base_url: %w", err)
 		}
-		if err := validateAuth(d.API.Auth); err != nil {
+		if err := validateAuth(d.API.Auth, true); err != nil {
 			return fmt.Errorf("api: %w", err)
 		}
 		if err := d.API.validateEndpointsAndMappings(); err != nil {

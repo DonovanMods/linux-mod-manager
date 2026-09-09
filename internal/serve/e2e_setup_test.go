@@ -1465,6 +1465,41 @@ func TestE2E_Adopt_SeededUntrackedModBecomesTracked(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_Adopt_ProbableMatchShowsItsConfidenceBand is the browser half of
+// #27 (Track C review, finding 4): the CLI's scan readout annotates a match
+// short of an exact name with its band, and this modal - the one a user
+// clicks "confirm" in - must say the same thing. The seeded directory is
+// named after the SHORT name a mod is known by while the catalogue row
+// carries a subtitle, which is what the head-segment rule accepts, capped
+// at "probable" precisely so the elision is visible here.
+func TestE2E_Adopt_ProbableMatchShowsItsConfidenceBand(t *testing.T) {
+	src := newFakeSource("fake").addMod(fakeSourceMod{
+		Mod: domain.Mod{
+			ID: "77", SourceID: "fake", GameID: "testgame",
+			Name: "Ordinator - Perks of Skyrim", Version: "9.31",
+		},
+	})
+	f := newE2EFixtureFromSource(t, src)
+
+	handPlaced := filepath.Join(f.Game.ModPath, "Ordinator")
+	require.NoError(t, os.MkdirAll(handPlaced, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(handPlaced, "data.txt"), []byte("x"), 0o644))
+
+	var row string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("adopt")),
+		chromedp.WaitVisible(`[data-testid="setup-adopt"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="plan-adopt"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="adopt"] .plan`, chromedp.ByQuery),
+		chromedp.Text(`.modal .plan__mods li`, &row, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, row, "Ordinator - Perks of Skyrim", "the matched catalogue name is shown")
+	assert.Contains(t, row, "[probable match]",
+		"a match short of an exact name must carry its band, as the CLI's readout does")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_FirstRunCustomSourceThroughToAMappedGame is C-4 of the epic live
 // review, driven as the review's own new-user drive drove it.
 //

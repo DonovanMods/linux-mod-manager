@@ -532,6 +532,11 @@ api:
     api_key:
       in: header # "header" or "query"
       name: X-API-Key
+    validate: # optional (api sources only): the live key check `lmm auth login` runs
+      method: GET # optional: GET (default), HEAD or POST — nothing that could mutate state
+      path: /me # required: appended to base_url, like an endpoint path
+      status: 200 # optional: the exact status a valid key must produce (default: any 2xx)
+      field: user.id # optional: a JSON dot-path that must be present in the response
   endpoints: # each endpoint is optional; an undefined one is a capability gap (see below)
     search:
       path: /mods?game={game_id}&q={query}&page={page}&limit={page_size}
@@ -545,6 +550,9 @@ api:
     download_url:
       path: /files/{file_id}/download
       field: url # required: dot-path to the URL string in the response
+    dependencies: # declaring this is what enables dependency resolution for the source
+      path: /mods/{mod_id}/dependencies
+      list: requires # required: dot-path to the dependency array
   mappings:
     mod: # domain field -> JSON dot-path
       id: id
@@ -561,21 +569,25 @@ api:
       filename: file_name
       version: version
       size: size_bytes
+    dependency: # one entry of the dependencies list -> a mod reference
+      mod_id: id # required when endpoints.dependencies is defined
+      source_id: source # optional; defaults to this source's own id
+      version: min_version # optional
 ```
 
 **Placeholders** — every `{placeholder}` in an endpoint's `path` is substituted with a URL-escaped value before the request is made; a placeholder with no value for that request is left in the URL as-is:
 
-| Placeholder   | Value                                                                                                                                    | Used by                                          |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `{game_id}`   | The current game's ID for this source (from the search query, the mod being fetched/installed, or an installed mod during update checks) | `search`, `get_mod`, `mod_files`, `download_url` |
-| `{query}`     | The search text                                                                                                                          | `search`                                         |
-| `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                         |
-| `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                         |
-| `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                         |
-| `{category}`  | The search query's category filter (NexusMods: a name, CurseForge: an id), empty when unset                                              | `search`                                         |
-| `{tags}`      | The search query's tag filters, comma-joined, empty when unset                                                                           | `search`                                         |
-| `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`           |
-| `{file_id}`   | The file ID                                                                                                                              | `download_url`                                   |
+| Placeholder   | Value                                                                                                                                    | Used by                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `{game_id}`   | The current game's ID for this source (from the search query, the mod being fetched/installed, or an installed mod during update checks) | `search`, `get_mod`, `mod_files`, `download_url`, `dependencies` |
+| `{query}`     | The search text                                                                                                                          | `search`                                                         |
+| `{page}`      | The internal 0-based page number, plus `page_start` (default `1`)                                                                        | `search`                                                         |
+| `{page_size}` | The requested page size (defaults to 20 when unspecified or ≤ 0)                                                                         | `search`                                                         |
+| `{offset}`    | The internal 0-based page × `page_size` — independent of `page_start`, for offset-paginated APIs                                         | `search`                                                         |
+| `{category}`  | The search query's category filter (NexusMods: a name, CurseForge: an id), empty when unset                                              | `search`                                                         |
+| `{tags}`      | The search query's tag filters, comma-joined, empty when unset                                                                           | `search`                                                         |
+| `{mod_id}`    | The mod ID                                                                                                                               | `get_mod`, `mod_files`, `download_url`, `dependencies`           |
+| `{file_id}`   | The file ID                                                                                                                              | `download_url`                                                   |
 
 **`mappings.mod` keys** (`id` and `name` are required; every other key is optional and left at its zero value when unmapped or the path doesn't resolve):
 
@@ -602,7 +614,15 @@ api:
 | `version`  | no                             | —                                        |
 | `size`     | no                             | Size in bytes                            |
 
-Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at load time (typo detection) instead of silently mapping to nothing.
+**`mappings.dependency` keys** (`mod_id` is required only when `dependencies` is defined):
+
+| Key         | Required                          | Domain field                                           |
+| ----------- | --------------------------------- | ------------------------------------------------------ |
+| `mod_id`    | **yes** (when `dependencies` set) | The required mod's ID                                  |
+| `source_id` | no                                | The source the dependency lives in (default: this one) |
+| `version`   | no                                | Minimum/required version, recorded on the reference    |
+
+Unknown keys anywhere in `mappings.mod`, `mappings.file` or `mappings.dependency` fail validation at load time (typo detection) instead of silently mapping to nothing.
 
 **Capability gaps** — an endpoint you don't define makes the corresponding operation report "not supported" instead of failing at load time:
 
@@ -610,16 +630,20 @@ Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at lo
 - no `get_mod` → fetching a single mod is unsupported, and so are update checks (`api` sources check for updates by calling `get_mod` on each installed mod and comparing versions)
 - no `mod_files` → listing a mod's files is unsupported, and so is the `versions` capability (per-file version→file resolution, used by `install --version` and profile version convergence)
 - no `download_url` → resolving a download URL is unsupported
-- dependency resolution (`GetDependencies`) is **always** unsupported for `api` sources — there is no dependency endpoint in v1
+- no `dependencies` → dependency resolution is unsupported, and lmm installs the source's mods on their own
 
-`lmm source list`'s `CAPABILITIES` column reflects exactly this: a definition with only `get_mod` shows `updates`; adding `search` adds `search` to that list; `auth` appears only when the definition declares an `auth` block; `versions` appears once `mod_files` is defined. That `versions` flag only advertises the endpoint's presence, though — whether `install --version` can actually resolve a given mod depends on whether the files that mod's `mod_files` call returns carry version info, checked dynamically per call (see `install --version`'s own entry below).
+`lmm source list`'s `CAPABILITIES` column reflects exactly this: a definition with only `get_mod` shows `updates`; adding `search` adds `search` to that list; `auth` appears only when the definition declares an `auth` block; `versions` appears once `mod_files` is defined; `deps` appears once `dependencies` is defined. That `versions` flag only advertises the endpoint's presence, though — whether `install --version` can actually resolve a given mod depends on whether the files that mod's `mod_files` call returns carry version info, checked dynamically per call (see `install --version`'s own entry below).
 
 **Guardrails:**
 
-- Requests are `GET` only, and only JSON responses are understood — no POST, GraphQL, or scraping.
+- Mod-data requests are `GET` only, and only JSON responses are understood — no GraphQL or scraping. (`auth.validate` may declare `HEAD` or `POST` for its own probe, which fetches no mod data.)
 - `api.base_url` must be `https://` unless the definition sets `allow_http: true` (same rule as `manifest` sources).
 - Every request is bounded by a 30-second timeout.
 - Responses are capped at 10 MiB; a larger response fails the operation instead of being read into memory.
+
+**Key validation** — an `api` source that declares `auth.validate` is checked **live** by `lmm auth login <id>` (and by the web UI's authentication screen) before the key is stored, exactly as NexusMods and CurseForge are. The probe request goes to `base_url` + `path`, carrying the candidate key the same way every other request to that source carries it, and the key passes when the response matches `status` (or, with no `status`, is any 2xx) and — when `field` is set — contains that JSON dot-path. `field` exists for an API that answers `200` with an anonymous document rather than refusing outright. `401`/`403` mean the key was rejected; anything else means the service could not answer, which is reported as a failure to check rather than a bad key, and the response body is never quoted back (the one thing a rejection body might echo is the key itself). A definition **without** `auth.validate` keeps the old behaviour: the key is stored unvalidated and exercised on first use, and `lmm auth login` says so instead of claiming it authenticated.
+
+**Dependencies** — an `api` source resolves mod dependencies only when it declares `endpoints.dependencies` and `mappings.dependency`; without them the source reports no dependency capability and lmm installs its mods on their own, exactly as before. Each entry of the endpoint's `list` becomes one mod reference: `mod_id` is required, `version` is optional, and `source_id` is optional and defaults to **this** source — a self-contained catalogue needs only `mod_id`. A dependency naming another source is resolved against that source when the game maps it, and reported as a missing dependency when it does not.
 
 **Credentials** — `api` sources use the same `auth.api_key` block as `manifest` sources (see [Authentication](#authentication) below): the resolved key is attached to every API request per `in: header` / `in: query`. For downloads, both header- and query-mode keys are only sent when the URL returned by `download_url` shares scheme and host with `api.base_url` — an endpoint that hands back a third-party CDN URL never receives the source's key, in either form. If a download is redirected to a different scheme or host, a header-mode key is stripped before the redirect is followed (the same v1.8.0 machinery `manifest` sources use).
 
@@ -638,7 +662,7 @@ manifest:
 
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
-  2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
+  2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store. An `api` source that also declares `auth.validate` has its key checked live before it is stored (see [API Sources](#api-sources)); every other custom source stores it unvalidated and exercises it on first use.
 - The resolved key is always attached to the manifest fetch itself (the request for the mod list document); for `api` sources, it's attached to every request built from an `endpoints.*.path` template (search, get_mod, mod_files, download_url).
 - File downloads follow the same same-origin rule regardless of whether the key is `in: header` or `in: query`:
   - **Remote manifests** (`https://` URL): the key (as a header, or appended to the URL) is only sent to file downloads whose scheme and host match the manifest URL's — a manifest pointing files at a third-party CDN never receives the source's key, in either form.
@@ -1569,7 +1593,7 @@ with `--json`, `--dry-run` emits the plan document itself rather than its render
 
 `lmm import` has two distinct modes, chosen by whether an archive path is given:
 
-- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured — stopping at the first source that returns a result; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
+- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Candidates are **scored** against the scanned name, and against the version too when the filename carries one: the best-scoring candidate across all sources wins, ties break deterministically (version agreement, then source ID, then mod ID), an exact name match ends the lookup early, and anything that does not clear the confidence bar is left **untracked** and imported as local rather than adopted as a similarly-named mod — searching `skyui` should never quietly attach your archive to `SkyUI Flashlite`. Three differences are refused outright, however close the rest of the name is: a **differing sequel number** (`Sim Settlements 2` is never `Sim Settlements 3`), **any difference at all in a name shorter than twelve letters** (`Vortex` is never `Vertex`), and **whole extra words** (`RaceMenu` is not `RaceMenu Special Edition`). A subtitle set off by punctuation is the exception: `Ordinator` matches `Ordinator - Perks of Skyrim`, and `HDT-SMP` matches `HDT-SMP (Skinned Mesh Physics)`, always as a `[probable match]` so the elided subtitle is visible before you confirm. A mod that stays local this way is fully usable — it just has no update target; re-link it with `lmm mod edit --source`. The scan readout annotates any match short of an exact name with its confidence (`[strong match]`, `[probable match]`). Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
 - **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import. `--dry-run` previews it: the archive's table of contents is read (never extracted), so the preview names the mod, the files it would deploy, and any file it would overwrite, without writing anything ([#314](https://github.com/DonovanMods/linux-mod-manager/issues/314)).
 
 Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it.
@@ -1603,6 +1627,8 @@ Only when **every** configured source fails does the command return an error, wh
 ```
 Error: search failed: all 1 source(s) failed: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
 ```
+
+`--limit N` (default 10) is a target, not just a ceiling: sources are paged until N merged results exist, every source runs out, or a safety bound of 10 pages per source is reached. A source is only paged while it honours the page size it was asked for, which is what keeps consecutive pages consecutive **rows**: most remote APIs cap how many results one page can hold (CurseForge at 50, NexusMods around 30), and asking such a source for "page 2 of 100" fetches rows 100–149 while rows 50–99 were never returned at all. So a source whose cap is below `--limit` contributes one capped page and is not paged further — `--limit 100` can legitimately come back with fewer than 100 results, and `has_more` says so — but every result you do get is really among the first ones that source had. Ask for a smaller `--limit` (at or below a source's cap) to page it further. A source that fails partway through the paging is reported as a warning like any other source failure, and the results its earlier pages returned are kept.
 
 Use `--source <id>` to search a single configured source instead of aggregating:
 

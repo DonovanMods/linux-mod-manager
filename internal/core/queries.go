@@ -454,7 +454,15 @@ type SearchHit struct {
 // it (searchAllSources' own per-source cursor). The CLI's single-page call
 // never sets either, matching their historical "always page 0" behavior.
 // Limit caps how many hits SearchReport.Mods returns (0 or negative applies
-// no cap, matching a non-positive PageSize's "no opinion" convention);
+// no cap, matching a non-positive PageSize's "no opinion" convention). It is
+// also a TARGET, not just a ceiling (#109): a positive Limit alongside a
+// positive PageSize on page 0 makes the aggregate path keep paging each
+// source's own cursor until that many merged hits exist, every source is
+// exhausted, or searchAllSources' max-pages guard trips - so a source whose
+// server-side page cap sits below its share of the limit no longer decides
+// how many results `--limit N` returns. Every other shape stays a single
+// round; see searchAllSources' doc comment for why.
+//
 // SearchReport.TotalResults always reports the untruncated count regardless
 // (final review, Important #3 / #302: the cap lives here, in core, so a
 // caller applying its own --limit and `lmm serve` rendering the same call
@@ -536,7 +544,7 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 
 	var found []domain.Mod
 	if opts.SourceID == "" {
-		agg, err := s.searchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize)
+		agg, err := s.searchAllSources(ctx, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize, opts.Limit)
 		if err != nil {
 			return nil, err
 		}

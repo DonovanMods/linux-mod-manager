@@ -3,6 +3,7 @@ package httpclient_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -212,4 +213,138 @@ func TestDoJSON_ContextCancellationPropagates(t *testing.T) {
 	err := c.DoJSON(ctx, http.MethodGet, "/", &out)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context canceled")
+}
+
+// TestDoJSONBody covers the body-carrying variant added for CurseForge's
+// TestCappedAndUncappedReadsDecodeIdentically is the Track C review's
+// finding 9: MaxResponseBytes switched the decode from a streaming
+// json.Decoder to json.Unmarshal over the buffered payload, and the two
+// disagree - Decode reads ONE document and ignores whatever follows,
+// Unmarshal rejects trailing data, and an empty body reads as "EOF" one way
+// and "unexpected end of JSON input" the other. Only CurseForge sets a cap
+// today, so that was a silent per-caller split in a shared client.
+func TestCappedAndUncappedReadsDecodeIdentically(t *testing.T) {
+	bodies := map[string]string{
+		"trailing data after the document": "{\"ok\":true}\n{\"ok\":false}",
+		"an empty body":                    "",
+	}
+	for name, payload := range bodies {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, payload)
+			}))
+			defer server.Close()
+
+			call := func(cap int64) (bool, error) {
+				c := httpclient.New(httpclient.Options{
+					HTTPClient: server.Client(), BaseURL: server.URL,
+					AuthHeader: "x-api-key", AuthLabel: "Test", MaxResponseBytes: cap,
+				})
+				var out struct {
+					OK bool `json:"ok"`
+				}
+				err := c.DoJSON(context.Background(), http.MethodGet, "/things", &out)
+				return out.OK, err
+			}
+
+			uncappedOK, uncappedErr := call(0)
+			cappedOK, cappedErr := call(1 << 20)
+
+			assert.Equal(t, uncappedOK, cappedOK, "the capped read must decode what the uncapped read decodes")
+			if uncappedErr == nil {
+				assert.NoError(t, cappedErr)
+				return
+			}
+			require.Error(t, cappedErr)
+			assert.Equal(t, uncappedErr.Error(), cappedErr.Error(),
+				"the two paths must fail with the same message")
+		})
+	}
+}
+
+// batch POST /v1/mods (#28): the body is sent as JSON with a Content-Type,
+// the auth header still rides along, and non-2xx responses map exactly as
+// DoJSON's do.
+func TestDoJSONBody(t *testing.T) {
+	t.Run("sends the marshalled body with auth and content type", func(t *testing.T) {
+		var gotMethod, gotPath, gotKey, gotType string
+		var gotBody []byte
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotMethod, gotPath = r.Method, r.URL.Path
+			gotKey = r.Header.Get("x-api-key")
+			gotType = r.Header.Get("Content-Type")
+			gotBody, _ = io.ReadAll(r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+		defer server.Close()
+
+		c := httpclient.New(httpclient.Options{
+			HTTPClient: server.Client(), BaseURL: server.URL,
+			APIKey: "k", AuthHeader: "x-api-key", AuthLabel: "Test",
+		})
+		var out struct {
+			OK bool `json:"ok"`
+		}
+		require.NoError(t, c.DoJSONBody(context.Background(), http.MethodPost, "/things",
+			map[string][]int{"ids": {1, 2}}, &out))
+
+		assert.Equal(t, http.MethodPost, gotMethod)
+		assert.Equal(t, "/things", gotPath)
+		assert.Equal(t, "k", gotKey)
+		assert.Equal(t, "application/json", gotType)
+		assert.JSONEq(t, `{"ids":[1,2]}`, string(gotBody))
+		assert.True(t, out.OK)
+	})
+
+	t.Run("a nil body sends no body and no content type", func(t *testing.T) {
+		var gotType string
+		var gotLen int64
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotType = r.Header.Get("Content-Type")
+			gotLen = r.ContentLength
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer server.Close()
+
+		c := httpclient.New(httpclient.Options{
+			HTTPClient: server.Client(), BaseURL: server.URL,
+			AuthHeader: "x-api-key", AuthLabel: "Test",
+		})
+		var out map[string]any
+		require.NoError(t, c.DoJSONBody(context.Background(), http.MethodGet, "/x", nil, &out))
+		assert.Empty(t, gotType)
+		assert.Zero(t, gotLen)
+	})
+
+	t.Run("401 maps to ErrAuthRequired like DoJSON", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		defer server.Close()
+
+		c := httpclient.New(httpclient.Options{
+			HTTPClient: server.Client(), BaseURL: server.URL,
+			AuthHeader: "x-api-key", AuthLabel: "Test",
+		})
+		err := c.DoJSONBody(context.Background(), http.MethodPost, "/x", map[string]int{"a": 1}, &struct{}{})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, domain.ErrAuthRequired)
+	})
+
+	t.Run("an unmarshallable body fails before any request", func(t *testing.T) {
+		requests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+		defer server.Close()
+
+		c := httpclient.New(httpclient.Options{
+			HTTPClient: server.Client(), BaseURL: server.URL,
+			AuthHeader: "x-api-key", AuthLabel: "Test",
+		})
+		err := c.DoJSONBody(context.Background(), http.MethodPost, "/x", make(chan int), &struct{}{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "encoding request body")
+		assert.Zero(t, requests)
+	})
 }

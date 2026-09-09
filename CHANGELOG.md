@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm import` scan mode scores its source matches instead of taking the
+  first hit (#27).** An untracked archive used to be adopted as whatever the
+  first search-capable source returned first, so searching `skyui` could
+  attach the archive to _SkyUI Flashlite_ — a different mod, with a
+  different version history and a different update target, and nothing on
+  screen to say so. Candidates from **every** configured source are now
+  scored against the scanned name (and its parsed version, when the filename
+  carries one), the best one wins, and anything that does not clear the
+  confidence bar leaves the entry **untracked** — imported as local, which
+  is recoverable, rather than mis-attributed, which is not. Ties break
+  deterministically (version agreement, then source ID, then mod ID), and an
+  exact name match ends the lookup without searching the remaining sources.
+  `core.AdoptMatch` gains two additive fields, `score` and `score_class`
+  (`exact`/`strong`/`probable`), and the scan readout annotates any match
+  short of an exact name with its band — in the CLI and in `lmm serve`'s
+  adopt plan alike. Three differences are refused outright however close the
+  rest of the name is: a differing sequel number (_Sim Settlements 2_ is
+  never _Sim Settlements 3_), any difference at all in a name shorter than
+  twelve letters (_Vortex_ is never _Vertex_), and whole extra words
+  (_RaceMenu_ is not _RaceMenu Special Edition_). A subtitle set off by
+  punctuation is the exception, so the common catalogue shape still adopts:
+  _Ordinator_ matches _Ordinator - Perks of Skyrim_, always as a
+  `[probable match]` so the elided subtitle is visible before you confirm.
+
+- **CurseForge update checks are one request per 50 mods, not one per mod
+  (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
+  posts the whole set to CurseForge's batch `POST /v1/mods` endpoint in
+  chunks of 50 (`modBatchSize`, documented at its declaration), and the
+  update-check path goes through it — a 200-mod profile costs 4 round trips
+  instead of 200. `GetMod` is unchanged for single lookups. Partial failures
+  stay partial: a chunk whose request fails does not stop the other chunks,
+  and an id CurseForge omits from its answer (an unknown, delisted or
+  unavailable mod) is named in the error while every mod that did come back
+  is still checked — each skipped mod named once, with its own reason, and
+  the batch error attached once rather than once per mod. The per-mod
+  progress ticks `lmm update` renders are unchanged in count, order and
+  arguments; they now fire as each mod's result is compared rather than
+  before its own request.
+
+- **`lmm search --limit N` pages its sources instead of returning one page
+  each (#109).** The aggregate search asked every source for exactly one
+  page and merged whatever came back, so a source whose page cap sits below
+  its share of the limit decided the answer: `--limit 50` returned 30 with
+  hundreds of matches left. Core now advances each source's OWN page
+  cursor, round by round, until the merged hit count reaches the limit,
+  every source is exhausted, or a documented max-pages guard trips
+  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only while it
+  honours the page size it was asked for: an API that silently caps the
+  page (CurseForge at 50, NexusMods around 30) computes its next offset
+  from the size that was REQUESTED, so paging it would fetch rows 100–149
+  while rows 50–99 were never returned — a strided sample with holes, which
+  after ranking is indistinguishable from a complete answer. So `--limit
+100` may still come back with fewer than 100 results, and `has_more` says
+  so, but every result really is among the first ones its source had. A
+  source that fails on a later page is reported exactly like one that fails
+  on its first — a warning, with the hits its earlier pages returned kept —
+  and no longer counts as exhausted. CurseForge now clamps and reports its
+  own effective page size so its offsets stay contiguous. `lmm serve`
+  inherits all of it through `/api/v1/search?limit=`; the search page's own
+  `?page=`/`?page_size=` pagination (no `?limit=`) is deliberately
+  untouched, so its cursor is never advanced behind its back.
+
 - **`lmm update --all` applies as one batch (#324).** The command used to
   run two separate per-mod loops (auto-policy updates, then `--all`'s
   remaining ones); it now builds one selection and applies it through
@@ -43,6 +105,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Plain-text output is unchanged.
 
 ### Added
+
+- **Custom `api` sources can resolve dependencies (#122).** They reported no
+  dependency capability unconditionally, because the definition had no way
+  to express "ask the API what this mod needs". Declaring
+  `endpoints.dependencies` (a `path` plus the `list` dot-path) and
+  `mappings.dependency` (`mod_id`, plus optional `source_id` and `version`)
+  turns it on, and core's existing dependency resolver reads it like any
+  other source's. An entry with no mapped `source_id` refers to a mod in the
+  same source, which is what a self-contained catalogue wants. A definition
+  that declares neither is unchanged — still an honest capability gap.
+
+- **Custom `api` sources can validate their API key live (#121).** Their
+  keys were stored unvalidated — "validated on first use" — because a YAML
+  definition had no way to say what a valid key looks like. It does now: an
+  `auth.validate` block declares a probe (`method`, `path`, an optional
+  exact `status`, and an optional JSON `field` that must be present), and a
+  source that declares one is checked live by `lmm auth login` and the web
+  UI's authentication screen, exactly as NexusMods and CurseForge are. A
+  rejection (`401`/`403`) is reported as a bad key; anything else is
+  reported as "could not check", which is not the same thing, and a
+  rejection body is never quoted back. A definition **without** the block
+  behaves exactly as before. Malformed probes fail definition validation
+  (`auth.validate.path is required`, an unsupported method, an impossible
+  status, or a `validate` block on a `manifest` source, which has no base
+  URL to hang a probe path off).
+
+- **CurseForge mods show a real description again (#246).** #235 stopped
+  aliasing `Summary` into `Description` — honest, but it left every
+  CurseForge mod's detail view with an empty Description, because the mod
+  document has no full-description field. Sources can now implement the new
+  optional `source.DescriptionFetcher` capability, and CurseForge does, via
+  `GET /v1/mods/{modId}/description`. Only `lmm mod show` /
+  `GET /api/v1/mods/{source}/{id}` consume it — never search, never an
+  update check, either of which would pay a round trip per row — and only
+  for a mod whose description is otherwise empty. As everywhere else, the
+  raw source markup is what reaches `--json`, and the terminal runs it
+  through the existing display cleaner. A failed description fetch leaves
+  the field empty and logs a warning rather than failing the detail.
 
 - **`lmm serve` Demo 3 polish: a reorder drag ghost, "Add mods ▾", and an
   omnibar clear control (#338, #339, #340).** Three owner-named follow-ups

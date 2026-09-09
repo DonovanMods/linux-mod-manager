@@ -63,6 +63,7 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		return nil, fmt.Errorf("mod not found: %w", err)
 	}
 	detail := &ModDetail{Mod: mod}
+	s.fillModDescription(ctx, sourceID, game, mod)
 	detail.Changelog, detail.Notes = s.modChangelog(ctx, sourceID, game, modID, mod.Version)
 
 	// Only a genuine "not installed" - the ordinary case for a mod browsed
@@ -97,6 +98,48 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 	}
 	detail.Installed = info
 	return detail, nil
+}
+
+// fillModDescription best-effort completes mod.Description from sourceID's
+// optional source.DescriptionFetcher capability (#246), in place. It is
+// ModDetail's ONLY caller by design: the fetch is a second round trip per
+// mod, which is affordable for the one mod a detail view shows and is not
+// affordable for a search page or an update check (see
+// source.DescriptionFetcher's own doc comment).
+//
+// Three things make it a no-op: a source that does not implement the
+// interface, a mod that already carries a description (nothing to complete,
+// so nothing worth a round trip), and a fetch that returns empty. A fetch
+// that FAILS degrades to leaving the field empty and logs at Warn - unlike
+// modChangelog's Note, because Description is a field of the mod document
+// itself rather than a ModDetail decoration, and inventing a note about an
+// empty field would put a degradation message on the wire where a frontend
+// would have to render it next to the description it is about.
+func (s *Service) fillModDescription(ctx context.Context, sourceID string, game *domain.Game, mod *domain.Mod) {
+	if mod == nil || mod.Description != "" {
+		return
+	}
+	src, err := s.registry.Get(sourceID)
+	if err != nil {
+		return
+	}
+	fetcher, ok := src.(source.DescriptionFetcher)
+	if !ok {
+		return
+	}
+
+	sourceGameID := game.ID
+	if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
+		sourceGameID = id
+	}
+
+	description, err := fetcher.Description(ctx, sourceGameID, mod.ID)
+	if err != nil {
+		s.logger().Warn("fetching mod description failed",
+			"source_id", sourceID, "mod_id", mod.ID, "err", err)
+		return
+	}
+	mod.Description = description
 }
 
 // modChangelog best-effort fetches modID's changelog text from sourceID's

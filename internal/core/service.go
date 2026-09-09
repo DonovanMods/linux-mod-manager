@@ -405,12 +405,146 @@ func sourceHasMore(res source.SearchResult, page, pageSize int) bool {
 	return len(res.Mods) == pageSize
 }
 
+// maxSearchPagesPerSource bounds how many successive pages searchAllSources
+// will pull from any ONE source while filling a caller's requested limit
+// (#109). Ten rounds is far more than any real query needs - a source
+// capped at 5 results per page still contributes 50 - and exists purely as
+// a stop against a source that answers every page with a full page forever
+// (a buggy or hostile API), which would otherwise spin the loop until the
+// limit or the context died. Hitting it is not exhaustion: the aggregate
+// still reports Exhausted false, so a caller can offer another page.
+const maxSearchPagesPerSource = 10
+
+// searchSourceState is one source's own cursor and accumulated results
+// across searchAllSources' page rounds. Each round's goroutine owns exactly
+// one element, so the fields are written without synchronisation.
+type searchSourceState struct {
+	id string
+	// cursor is the next page index to request from this source. Sources
+	// paginate INDEPENDENTLY (AggregateSearchResult.Exhausted's doc
+	// comment), so each carries its own.
+	cursor int
+	// attempted mirrors the old per-source attempted flag: true once a
+	// search was really tried against this source, false for a silent skip
+	// (no Search capability, or a runtime source.ErrNotSupported on the
+	// first round).
+	attempted bool
+	// active is "worth asking for another page": set when the source is
+	// searchable, cleared when it exhausts, errors, or - the case finding 1
+	// of the Track C review added - when the source could not honour the
+	// page size it was asked for, so its next offset would skip rows.
+	active bool
+	// hasMore is "this source might still hold results we did not fetch",
+	// which is NOT the same question as active: a source that clamped the
+	// requested page size has more AND cannot be paged for it. Exhausted is
+	// built from this one.
+	hasMore   bool
+	succeeded bool
+	// err is the FIRST failure this source hit, on any round. A failure on
+	// a later page is reported exactly like a first-page failure - a
+	// Warning - and the hits the earlier pages did return are kept.
+	err   error
+	mods  []domain.Mod
+	total int // the source's most recently reported TotalCount
+}
+
+// pagedSourceHasMore is sourceHasMore's counterpart for searchAllSources'
+// multi-round #109 loop, where a source's own cursor has already advanced
+// page by page. The accurate question there is not "could a page N+1 exist
+// at the REQUESTED page size" but "has this source handed over everything
+// it says it has": a source whose server-side cap sits below the requested
+// page size - #109's whole premise - answers in SHORT pages, which
+// sourceHasMore's requested-size arithmetic reads as exhausted while rows
+// remain. fetched is how many mods this source has contributed so far.
+//
+// Without a reported TotalCount there is nothing to count against, so any
+// non-empty page is treated as possibly having a successor. That optimism
+// is free: it only ever reaches Exhausted, never a round trip - whether the
+// source is ASKED again is sourceIsPageable's decision, and a source that
+// answered short is not asked (Track C review, finding 7 - the extra
+// always-empty round trip against a source reporting no total is gone with
+// it). This rule is used ONLY while looping; the single-round path keeps
+// sourceHasMore verbatim, so Exhausted/HasMore are unchanged for every
+// caller that does not ask for a limit.
+func pagedSourceHasMore(res source.SearchResult, fetched, pageSize int) bool {
+	if pageSize <= 0 {
+		return false
+	}
+	if len(res.Mods) == 0 {
+		// An empty page ends this source regardless of what a (possibly
+		// wrong) TotalCount claims.
+		return false
+	}
+	if res.TotalCount > 0 {
+		return fetched < res.TotalCount
+	}
+	return true
+}
+
+// sourceIsPageable reports whether this source may be asked for page N+1
+// after answering with res, which is a narrower question than "might it
+// have more" (pagedSourceHasMore). searchAllSources addresses a page by
+// INDEX at the size it requested, and a source computes its own upstream
+// offset the same way - both built-ins do it literally, as page*pageSize.
+// So the next page is only fetchable at a contiguous offset when this page
+// was a FULL page of exactly the size that was asked for (Track C review,
+// finding 1):
+//
+//   - A source that reports a different effective PageSize clamped the
+//     request (CurseForge caps at 50), and page 1 of a requested 100 would
+//     start 50 rows past where page 0 ended.
+//   - A source that clamps SILENTLY - no PageSize, no TotalCount, which is
+//     what NexusMods does with its own ~30 cap - is caught by the same
+//     rule, because a clamped page is necessarily a short one.
+//   - A short page from a source that is genuinely finished is stopped by
+//     this too, which costs nothing: there was nothing left to fetch.
+//
+// The cost of the rule is under-fetching rather than mis-fetching: a
+// clamping source contributes one page and the merged count may fall short
+// of the caller's limit. That is the deliberate trade - a short answer is
+// visibly short, while a strided one looks exactly like a complete one
+// after rankAggregate has reordered it.
+func sourceIsPageable(res source.SearchResult, pageSize int) bool {
+	if pageSize <= 0 {
+		return false
+	}
+	if res.PageSize > 0 && res.PageSize != pageSize {
+		return false
+	}
+	return len(res.Mods) == pageSize
+}
+
 // searchAllSources searches every source configured for a game concurrently
 // and merges the results (design §5). Per-source failures become Warnings —
 // one flaky API must not hide local modlets; only all-sources-failed is an
 // error. Sources without search capability are skipped silently. Pagination
-// is per-source: page N requests page N from each source and merges.
-func (s *Service) searchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize int) (AggregateSearchResult, error) {
+// is per-source: round 1 asks every searchable source for page `page` and
+// merges.
+//
+// #109: when the caller wants a specific NUMBER of merged hits, one round
+// is not enough. A source whose server-side page cap sits below its share
+// of the limit (NexusMods caps around 30) can only ever return that cap, so
+// `--limit 50` used to return 30 even with hundreds of matches left. When
+// limit > 0, the search keeps advancing the cursor of every source that
+// might still have a page N+1 until the merged hit count reaches limit,
+// every source is exhausted, or maxSearchPagesPerSource rounds have run.
+// Every other shape stays exactly one round:
+//
+//   - limit <= 0: there is no target to fill, so nothing to loop toward.
+//   - pageSize <= 0: no page size means no next-page concept at all
+//     (sourceHasMore's own rule), so there is no cursor to advance.
+//   - page > 0: the caller is driving its OWN pagination cursor - `lmm
+//     serve`'s search page sends page+page_size and no limit - and pulling
+//     pages past the one it asked for would swallow the hits it is about to
+//     request as its next page.
+//
+// Known limit (#109's own Tier-2 note): a source that silently CLAMPS the
+// requested page size while reporting neither a TotalCount nor its
+// effective PageSize reads as exhausted under sourceHasMore's short-page
+// heuristic, and the loop stops early for it. The heuristic is unchanged
+// here on purpose - Exhausted/HasMore keep their existing semantics - and
+// the honest fix is a per-source max-page-size capability.
+func (s *Service) searchAllSources(ctx context.Context, gameID, query, category string, tags []string, page, pageSize, limit int) (AggregateSearchResult, error) {
 	game, ok := s.game(gameID)
 	if !ok {
 		return AggregateSearchResult{}, fmt.Errorf("game not found: %s", gameID)
@@ -435,61 +569,129 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 	}
 	sort.Strings(sourceIDs)
 
-	var result AggregateSearchResult
-	type slot struct {
-		res source.SearchResult
-		err error
-	}
-	slots := make([]slot, len(sourceIDs))
-	attempted := make([]bool, len(sourceIDs))
-
-	g, gctx := errgroup.WithContext(ctx)
+	states := make([]searchSourceState, len(sourceIDs))
 	for i, sourceID := range sourceIDs {
+		st := &states[i]
+		st.id = sourceID
+		st.cursor = page
 		src, ok := registeredByID[sourceID]
 		if !ok {
 			// Reproduce the exact not-found error. Sound while Get stays a
 			// pure map read and registration stays startup-only (single call
 			// site in cmd/lmm root); revisit if the registry ever hot-reloads.
 			_, err := s.registry.Get(sourceID)
-			slots[i].err = err
-			attempted[i] = true
+			st.attempted = true
+			st.err = err
 			continue
 		}
 		if !source.CapabilitiesOf(src).Search {
 			continue // silent skip (design §5)
 		}
-		attempted[i] = true
-		i, sourceID := i, sourceID
-		g.Go(func() error {
-			res, err := s.SearchMods(gctx, sourceID, gameID, query, category, tags, page, pageSize)
-			if err != nil {
-				if errors.Is(err, source.ErrNotSupported) {
-					attempted[i] = false // runtime capability gap: silent skip, not a warning
-					return nil
-				}
-				slots[i].err = err
-				return nil // never abort the group: siblings keep searching
-			}
-			slots[i].res = res
-			return nil
-		})
+		st.attempted = true
+		st.active = true
 	}
-	_ = g.Wait() // goroutines always return nil; errors live in slots
 
+	rounds := 1
+	if limit > 0 && pageSize > 0 && page == 0 {
+		rounds = maxSearchPagesPerSource
+	}
+	paging := rounds > 1
+
+	for range rounds {
+		anyActive := false
+		for i := range states {
+			if states[i].active {
+				anyActive = true
+				break
+			}
+		}
+		if !anyActive {
+			break // every source has exhausted, errored, or was skipped
+		}
+
+		g, gctx := errgroup.WithContext(ctx)
+		for i := range states {
+			st := &states[i]
+			if !st.active {
+				continue
+			}
+			g.Go(func() error {
+				res, err := s.SearchMods(gctx, st.id, gameID, query, category, tags, st.cursor, pageSize)
+				if err != nil {
+					st.active = false
+					if errors.Is(err, source.ErrNotSupported) && !st.succeeded {
+						st.attempted = false // runtime capability gap: silent skip, not a warning
+						return nil
+					}
+					st.err = err
+					return nil // never abort the group: siblings keep searching
+				}
+				st.succeeded = true
+				st.mods = append(st.mods, res.Mods...)
+				st.total = res.TotalCount
+				if paging {
+					// The two questions are kept apart: what this source
+					// might still hold, and whether we can safely ask it
+					// for that. A clamping source answers yes and no.
+					//
+					// Has-more is the UNION of the two heuristics, as it
+					// was before sourceIsPageable existed: they answer
+					// differently for a source returning SHORT pages
+					// (pagedSourceHasMore is right) and for one returning
+					// MORE than the page size it was asked for
+					// (sourceHasMore is right, and it is what a `--limit 2`
+					// against a source handing back its whole three-mod
+					// catalogue reports), and neither is wrong about the
+					// source it describes. The optimism costs nothing now:
+					// it only ever reaches Exhausted, never a round trip.
+					st.hasMore = sourceHasMore(res, st.cursor, pageSize) ||
+						pagedSourceHasMore(res, len(st.mods), pageSize)
+					st.active = st.hasMore && sourceIsPageable(res, pageSize)
+				} else {
+					st.hasMore = sourceHasMore(res, st.cursor, pageSize)
+					st.active = st.hasMore
+				}
+				st.cursor++
+				return nil
+			})
+		}
+		_ = g.Wait() // goroutines always return nil; errors live in the states
+
+		merged := 0
+		for i := range states {
+			merged += len(states[i].mods)
+		}
+		if limit > 0 && merged >= limit {
+			break
+		}
+	}
+
+	var result AggregateSearchResult
 	succeeded := 0
+	attemptedCount := 0
 	allExhausted := true // vacuously true until a succeeding source proves otherwise
-	for i, sourceID := range sourceIDs {
-		if !attempted[i] {
+	for i := range states {
+		st := &states[i]
+		if !st.attempted {
 			continue
 		}
-		if slots[i].err != nil {
-			result.Warnings = append(result.Warnings, newSourceWarning(sourceID, slots[i].err))
+		attemptedCount++
+		if st.err != nil {
+			result.Warnings = append(result.Warnings, newSourceWarning(st.id, st.err))
+			// A source whose search was cut short by an error is the
+			// definition of "might have more": it kept st.succeeded from an
+			// earlier page, so without this the report claimed there was
+			// nothing left for a source that merely broke (Track C review,
+			// finding 6).
+			allExhausted = false
+		}
+		if !st.succeeded {
 			continue
 		}
 		succeeded++
-		result.Mods = append(result.Mods, slots[i].res.Mods...)
-		result.TotalCount += slots[i].res.TotalCount
-		if sourceHasMore(slots[i].res, page, pageSize) {
+		result.Mods = append(result.Mods, st.mods...)
+		result.TotalCount += st.total
+		if st.hasMore {
 			allExhausted = false
 		}
 	}
@@ -497,12 +699,6 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 
 	rankAggregate(result.Mods, query)
 
-	attemptedCount := 0
-	for _, a := range attempted {
-		if a {
-			attemptedCount++
-		}
-	}
 	result.AttemptedCount = attemptedCount
 	if attemptedCount > 0 && succeeded == 0 {
 		errs := make([]error, 0, len(result.Warnings))
