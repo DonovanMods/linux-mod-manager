@@ -345,7 +345,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
   // spellcheck is written as a BOOLEAN below, not as the string "false"
   // (IMP-3, the closing wave's gate review). Preact assigns it as a DOM
   // PROPERTY, and the non-empty string "false" is truthy - so the
-  // spellcheck="false" this file carried since #333 measured in a browser
+  // spellcheck="false" this file carried since issue 333 measured in a browser
   // as getAttribute("spellcheck") === "true", and the YAML editor really
   // did draw red squiggles under every key. It is the only HTML
   // boolean/enumerated attribute this application writes literally: every
