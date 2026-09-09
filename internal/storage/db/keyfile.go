@@ -124,6 +124,13 @@ func readTokenKey(path string) ([]byte, error) {
 // appeared between the read and this call is never overwritten - losing a
 // key silently loses every credential encrypted under it. A lost race falls
 // back to reading what the winner wrote.
+//
+// The write is fsync'd, file and directory both, before the key is handed
+// back. It has to be: the caller's very next act is a database write that
+// depends on it, and SQLite makes that one durable. A power loss in
+// between would otherwise leave encrypted rows beside a zero-length key -
+// the one state from which the credential cannot be recovered at all
+// (review, Minor 6).
 func createTokenKey(path string) ([]byte, error) {
 	key, err := newTokenKey()
 	if err != nil {
@@ -140,10 +147,29 @@ func createTokenKey(path string) ([]byte, error) {
 		_ = f.Close()
 		return nil, &KeyError{Path: path, Reason: KeyUnreadable, Err: err}
 	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return nil, &KeyError{Path: path, Reason: KeyUnreadable, Err: err}
+	}
 	if err := f.Close(); err != nil {
 		return nil, &KeyError{Path: path, Reason: KeyUnreadable, Err: err}
 	}
+	syncDir(filepath.Dir(path))
 	return key, nil
+}
+
+// syncDir flushes a directory entry, so the key file's NAME survives a
+// power loss and not just its contents. Best effort by design: the file's
+// own contents are already synced by the time this runs, and some
+// filesystems refuse to open or fsync a directory at all - not a reason to
+// fail a login.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // tokenKey returns the key this database encrypts credentials under,
