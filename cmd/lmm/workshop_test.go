@@ -294,6 +294,46 @@ func TestDeploy_ExternalModReadsTheSameDryRunAndLive(t *testing.T) {
 	assert.DirExists(t, steamDir, "Steam still owns its files")
 }
 
+// The uninstall confirmation must not state falsehoods about a mod lmm does
+// not own. Before the fix the dry run printed "Would remove 0 file(s) from
+// the game directory" and "Cache entry would be deleted" - there is no cache
+// entry, and --keep-cache is a documented no-op for this row.
+func TestUninstall_DryRunSaysItRemovesTrackingOnly(t *testing.T) {
+	svc, game, _, steamDir := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+
+	plan, err := svc.PlanUninstall(context.Background(), game, "default",
+		"steamworkshop", "3617086610", core.UninstallOptions{})
+	require.NoError(t, err)
+	require.True(t, plan.External, "precondition: core classes the row external")
+
+	out := captureStdout(t, func() error { renderUninstallPlan(plan, "default"); return nil })
+	assert.Contains(t, out, core.UninstallExternalNote)
+	assert.Contains(t, out, steamDir, "the confirmation names where the item really lives")
+	assert.NotContains(t, out, "Cache entry would be deleted", "there is no cache entry")
+	assert.NotContains(t, out, "file(s) from the game directory", "lmm deploys none of its files")
+}
+
+// The LIVE readout too: "Uninstalled" claims more than happened, and the
+// note reached stdout only under --verbose (via result.Notes) before.
+func TestUninstall_LiveReadoutSaysItStoppedTracking(t *testing.T) {
+	svc, game, _, _ := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+
+	oldProfile := uninstallProfile
+	uninstallProfile = "default"
+	t.Cleanup(func() { uninstallProfile = oldProfile })
+
+	out := captureStdout(t, func() error {
+		return doUninstall(context.Background(), svc, game, "3617086610")
+	})
+	assert.Contains(t, out, "Stopped tracking: Sample Workshop Item")
+	assert.Contains(t, out, core.UninstallExternalNote)
+	assert.NotContains(t, out, "Uninstalled:", "lmm removed its tracking, not the mod")
+}
+
 func TestPrintBatchSkips_SplitsLockedFromSteamWorkshop(t *testing.T) {
 	out := captureStdout(t, func() error {
 		printBatchSkips([]core.UpdateApplyResult{

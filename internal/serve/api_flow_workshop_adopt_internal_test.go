@@ -174,3 +174,17 @@ func dirEntryNames(t *testing.T, dir string) []string {
 	}
 	return names
 }
+
+// TestUninstallPlanViewQuotesCoresExternalNote is the anti-drift ratchet for
+// the one #269 sentence the SPA has to hold as its own literal: there is no
+// bundler and no shared string table, so plan_uninstall.js spells out
+// core.UninstallExternalNote. If the wording moves in core and not there,
+// the CLI and the web UI would tell the user two different things about the
+// same refusal - which is exactly what internal/core/external.go exists to
+// prevent.
+func TestUninstallPlanViewQuotesCoresExternalNote(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("spa", "app", "components", "plan_uninstall.js"))
+	require.NoError(t, err)
+	assert.Contains(t, string(src), core.UninstallExternalNote,
+		"plan_uninstall.js must quote core.UninstallExternalNote verbatim")
+}

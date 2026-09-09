@@ -12,6 +12,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
@@ -142,6 +143,33 @@ func TestE2E_Workshop_ModPanelHidesTheActionsLmmCannotPerform(t *testing.T) {
 	assert.NotContains(t, actions, "Update")
 	assert.Contains(t, actions, "Stop tracking", "uninstall says what it really does")
 	assert.Contains(t, managed, "Steam owns its files")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Workshop_StopTrackingConfirmSaysOnlyWhatItReallyDoes closes the
+// gap between that button and the modal it opens: the confirmation used to
+// read "Not currently deployed - nothing to remove" (contradicting
+// Deployed: true, which the design makes load-bearing) and "The cached
+// download is deleted too", and still offered "Keep the cached download" -
+// so the body and the button disagreed on the same screen.
+func TestE2E_Workshop_StopTrackingConfirmSaysOnlyWhatItReallyDoes(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+		chromedp.Click(`.slide-over__actions .button--danger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="uninstall"]`, &body),
+	)
+	assert.Contains(t, body, core.UninstallExternalNote)
+	assert.NotContains(t, body, "The cached download is deleted too",
+		"there is no cache entry for a Steam-owned item")
+	assert.NotContains(t, body, "Keep the cached download",
+		"an option that can do nothing is not offered")
+	assert.NotContains(t, body, "Not currently deployed",
+		"it IS deployed - by Steam, which is the whole point")
 	assert.Empty(t, f.BrowserErrors())
 }
 
