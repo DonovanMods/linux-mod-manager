@@ -88,6 +88,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Custom `api` sources can validate their API key live (#121).** Their
+  keys were stored unvalidated — "validated on first use" — because a YAML
+  definition had no way to say what a valid key looks like. It does now: an
+  `auth.validate` block declares a probe (`method`, `path`, an optional
+  exact `status`, and an optional JSON `field` that must be present), and a
+  source that declares one is checked live by `lmm auth login` and the web
+  UI's authentication screen, exactly as NexusMods and CurseForge are. A
+  rejection (`401`/`403`) is reported as a bad key; anything else is
+  reported as "could not check", which is not the same thing, and a
+  rejection body is never quoted back. A definition **without** the block
+  behaves exactly as before. Malformed probes fail definition validation
+  (`auth.validate.path is required`, an unsupported method, an impossible
+  status, or a `validate` block on a `manifest` source, which has no base
+  URL to hang a probe path off).
+
 - **CurseForge mods show a real description again (#246).** #235 stopped
   aliasing `Summary` into `Description` — honest, but it left every
   CurseForge mod's detail view with an empty Description, because the mod

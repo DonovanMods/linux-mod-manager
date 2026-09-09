@@ -532,6 +532,11 @@ api:
     api_key:
       in: header # "header" or "query"
       name: X-API-Key
+    validate: # optional (api sources only): the live key check `lmm auth login` runs
+      method: GET # optional: GET (default), HEAD or POST — nothing that could mutate state
+      path: /me # required: appended to base_url, like an endpoint path
+      status: 200 # optional: the exact status a valid key must produce (default: any 2xx)
+      field: user.id # optional: a JSON dot-path that must be present in the response
   endpoints: # each endpoint is optional; an undefined one is a capability gap (see below)
     search:
       path: /mods?game={game_id}&q={query}&page={page}&limit={page_size}
@@ -616,10 +621,12 @@ Unknown keys anywhere in `mappings.mod` or `mappings.file` fail validation at lo
 
 **Guardrails:**
 
-- Requests are `GET` only, and only JSON responses are understood — no POST, GraphQL, or scraping.
+- Mod-data requests are `GET` only, and only JSON responses are understood — no GraphQL or scraping. (`auth.validate` may declare `HEAD` or `POST` for its own probe, which fetches no mod data.)
 - `api.base_url` must be `https://` unless the definition sets `allow_http: true` (same rule as `manifest` sources).
 - Every request is bounded by a 30-second timeout.
 - Responses are capped at 10 MiB; a larger response fails the operation instead of being read into memory.
+
+**Key validation** — an `api` source that declares `auth.validate` is checked **live** by `lmm auth login <id>` (and by the web UI's authentication screen) before the key is stored, exactly as NexusMods and CurseForge are. The probe request goes to `base_url` + `path`, carrying the candidate key the same way every other request to that source carries it, and the key passes when the response matches `status` (or, with no `status`, is any 2xx) and — when `field` is set — contains that JSON dot-path. `field` exists for an API that answers `200` with an anonymous document rather than refusing outright. `401`/`403` mean the key was rejected; anything else means the service could not answer, which is reported as a failure to check rather than a bad key, and the response body is never quoted back (the one thing a rejection body might echo is the key itself). A definition **without** `auth.validate` keeps the old behaviour: the key is stored unvalidated and exercised on first use, and `lmm auth login` says so instead of claiming it authenticated.
 
 **Credentials** — `api` sources use the same `auth.api_key` block as `manifest` sources (see [Authentication](#authentication) below): the resolved key is attached to every API request per `in: header` / `in: query`. For downloads, both header- and query-mode keys are only sent when the URL returned by `download_url` shares scheme and host with `api.base_url` — an endpoint that hands back a third-party CDN URL never receives the source's key, in either form. If a download is redirected to a different scheme or host, a header-mode key is stripped before the redirect is followed (the same v1.8.0 machinery `manifest` sources use).
 
@@ -638,7 +645,7 @@ manifest:
 
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
-  2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store.
+  2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store. An `api` source that also declares `auth.validate` has its key checked live before it is stored (see [API Sources](#api-sources)); every other custom source stores it unvalidated and exercises it on first use.
 - The resolved key is always attached to the manifest fetch itself (the request for the mod list document); for `api` sources, it's attached to every request built from an `endpoints.*.path` template (search, get_mod, mod_files, download_url).
 - File downloads follow the same same-origin rule regardless of whether the key is `in: header` or `in: query`:
   - **Remote manifests** (`https://` URL): the key (as a header, or appended to the URL) is only sent to file downloads whose scheme and host match the manifest URL's — a manifest pointing files at a third-party CDN never receives the source's key, in either form.

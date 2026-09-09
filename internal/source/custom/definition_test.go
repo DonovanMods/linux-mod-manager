@@ -127,6 +127,54 @@ func TestSourceDefinitionValidate(t *testing.T) {
 			*d = validAPIDef()
 			d.API.Mappings.Mod["fancyness"] = "x"
 		}, `mappings.mod: unknown key "fancyness"`},
+		// #121: the declarative auth.validate probe.
+		{"valid auth validate probe", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me", Status: 200, Field: "user.id"},
+			}
+		}, ""},
+		{"auth validate defaults to GET and any 2xx", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me"},
+			}
+		}, ""},
+		{"auth validate without a path", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{},
+			}
+		}, "auth.validate.path is required"},
+		{"auth validate with an unsupported method", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me", Method: "DELETE"},
+			}
+		}, "auth.validate.method"},
+		{"auth validate with an impossible status", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me", Status: 42},
+			}
+		}, "auth.validate.status"},
+		{"auth validate without an api_key block", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Auth = &AuthConfig{Validate: &AuthValidateConfig{Path: "/me"}}
+		}, "auth.api_key is required"},
+		{"auth validate is api-only", func(d *SourceDefinition) {
+			d.Type = TypeManifest
+			d.Directory = nil
+			d.Manifest = &ManifestConfig{URL: "https://x.test/m.yaml", Auth: &AuthConfig{
+				APIKey:   &APIKeyConfig{In: "header", Name: "X-API-Key"},
+				Validate: &AuthValidateConfig{Path: "/me"},
+			}}
+		}, "auth.validate is only supported"},
 		{"api unknown file mapping key", func(d *SourceDefinition) {
 			*d = validAPIDef()
 			d.API.Mappings.File["sha512"] = "x"

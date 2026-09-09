@@ -11,15 +11,16 @@ import "github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 // every existing custom.SourceDefinition/custom.Type*/custom.*Config
 // reference - in this package and its tests - compiling unchanged.
 type (
-	SourceDefinition = source.SourceDefinition
-	DirectoryConfig  = source.DirectoryConfig
-	ManifestConfig   = source.ManifestConfig
-	AuthConfig       = source.AuthConfig
-	APIKeyConfig     = source.APIKeyConfig
-	APIConfig        = source.APIConfig
-	APIEndpoints     = source.APIEndpoints
-	EndpointConfig   = source.EndpointConfig
-	APIMappings      = source.APIMappings
+	SourceDefinition   = source.SourceDefinition
+	DirectoryConfig    = source.DirectoryConfig
+	ManifestConfig     = source.ManifestConfig
+	AuthConfig         = source.AuthConfig
+	APIKeyConfig       = source.APIKeyConfig
+	AuthValidateConfig = source.AuthValidateConfig
+	APIConfig          = source.APIConfig
+	APIEndpoints       = source.APIEndpoints
+	EndpointConfig     = source.EndpointConfig
+	APIMappings        = source.APIMappings
 )
 
 // Source type identifiers for SourceDefinition.Type.
