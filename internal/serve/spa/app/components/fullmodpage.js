@@ -16,6 +16,16 @@
 // this page's own per-mod mutations are the versions table's Update-to/
 // Rollback pair instead.
 //
+// HEADING LEVELS. Every one of this page's sections is an <h2> under the
+// mod's own <h1> (MIN-3, the closing wave's gate review). They used to be
+// a mix: Findings and Conflicts were h2 while Description, Changelog,
+// Dependencies, Files, Versions and Job history were h3, because both
+// classes had been mapped mechanically in I-3 (section-header -> h2,
+// plan__heading -> h3) and this is the one page where both appear as
+// SIBLINGS. The h3s came after the h2s, so heading navigation read them as
+// children of "Conflicts". The class is unchanged and .plan__heading sets
+// its own size and weight, so nothing about the page looks different.
+//
 // Unlike the slide-over, this page owns its own reads (main.js's
 // hydrateModPage): core.ModFilesReport (primary, fatal on failure),
 // core.ModDetail and the versions document (both optional - see that
@@ -252,7 +262,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         detailMod?.description &&
         html`
           <section class="mod-page__section">
-            <h3 class="plan__heading">Description</h3>
+            <h2 class="plan__heading">Description</h2>
             <p class="mod-page__prose">${detailMod.description}</p>
           </section>
         `
@@ -261,7 +271,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         modPage.detail &&
         html`
           <section class="mod-page__section">
-            <h3 class="plan__heading">Changelog</h3>
+            <h2 class="plan__heading">Changelog</h2>
             ${
               modPage.detail.changelog
                 ? html`<p class="mod-page__prose">
@@ -276,9 +286,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         (detailMod?.dependencies ?? []).length > 0 &&
         html`
           <section class="mod-page__section">
-            <h3 class="plan__heading">
+            <h2 class="plan__heading">
               Dependencies (${detailMod.dependencies.length})
-            </h3>
+            </h2>
             <ul class="plan__paths">
               ${detailMod.dependencies.map(
                 (d) =>
@@ -317,7 +327,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
 function FilesSection({ filesReport }) {
   return html`
     <section class="mod-page__section">
-      <h3 class="plan__heading">Files</h3>
+      <h2 class="plan__heading">Files</h2>
       ${
         filesReport.merged_pak_only
           ? html`<p class="empty-state__hint">
@@ -399,7 +409,7 @@ function VersionsSection({
 
   return html`
     <section class="mod-page__section">
-      <h3 class="plan__heading">Versions</h3>
+      <h2 class="plan__heading">Versions</h2>
       <${VersionsTable}
         modPage=${modPage}
         installed=${installed}
@@ -579,7 +589,7 @@ function JobHistorySection({ state, sourceID, modID }) {
 
   return html`
     <section class="mod-page__section">
-      <h3 class="plan__heading">Job history</h3>
+      <h2 class="plan__heading">Job history</h2>
       ${
         history.status === "loading"
           ? html`<p class="app-booting">Loading job history…</p>`
