@@ -30,16 +30,18 @@ function modUrl(basePath, row) {
   return url.pathname + url.search;
 }
 
-/** findingsFor returns modID's own VerifyFinding rows, excluding "ok". */
-function findingsFor(health, modID) {
+/** findingsFor returns modID's own VerifyFinding rows, excluding "ok".
+ * Shared with the full mod page since I-5 (epic live review). */
+export function findingsFor(health, modID) {
   return (health?.result?.findings ?? []).filter(
     (f) => f.mod_id === modID && f.status !== "ok",
   );
 }
 
 /** conflictsFor returns the ProfileConflict rows that name row's key, either
- * as the current owner or as one of the other providers. */
-function conflictsFor(conflicts, key) {
+ * as the current owner or as one of the other providers. Shared with the
+ * full mod page since I-5 (epic live review). */
+export function conflictsFor(conflicts, key) {
   return (conflicts?.conflicts ?? []).filter(
     (c) => c.owner.key === key || c.also_in.some((m) => m.key === key),
   );
@@ -224,7 +226,7 @@ export function ModPanel({
           >
             ×
           </button>
-          <p class="section-header">${catalogMod.name}</p>
+          <h2 class="section-header">${catalogMod.name}</h2>
           <p class="slide-over__meta">
             ${catalogMod.author ? html`by ${catalogMod.author} · ` : ""}
             <span class="mono">${catalogMod.version}</span> ·
@@ -267,7 +269,7 @@ export function ModPanel({
             class="slide-over__section"
             data-changelog-status=${changelog.status}
           >
-            <p class="plan__heading">Changelog</p>
+            <h3 class="plan__heading">Changelog</h3>
             ${
               changelog.status === "loading"
                 ? html`<p class="empty-state__hint">Loading changelog…</p>`
@@ -307,7 +309,7 @@ export function ModPanel({
           >
             ×
           </button>
-          <p class="section-header">Mod details</p>
+          <h2 class="section-header">Mod details</h2>
           <p class="empty-state__hint">
             <span class="mono">${sourceID} / ${modID}</span> is not in this
             profile's library.
@@ -359,7 +361,7 @@ export function ModPanel({
           </button>
         </div>
 
-        <p class="section-header">${row.name}</p>
+        <h2 class="section-header">${row.name}</h2>
         <p class="slide-over__meta">
           ${row.author ? html`by ${row.author} · ` : ""}
           <span class="mono"
@@ -446,7 +448,7 @@ export function ModPanel({
           findings.length > 0 &&
           html`
             <section class="slide-over__section">
-              <p class="plan__heading">Findings (${findings.length})</p>
+              <h3 class="plan__heading">Findings (${findings.length})</h3>
               <ul class="plan__paths">
                 ${
                   // M1, unit 8 gate review: this printed the raw status slug
@@ -471,7 +473,7 @@ export function ModPanel({
           conflicts.length > 0 &&
           html`
             <section class="slide-over__section">
-              <p class="plan__heading">Conflicts (${conflicts.length})</p>
+              <h3 class="plan__heading">Conflicts (${conflicts.length})</h3>
               <ul class="plan__paths">
                 ${conflicts.map(
                   (c) =>
@@ -493,7 +495,7 @@ export function ModPanel({
           class="slide-over__section"
           data-changelog-status=${changelog.status}
         >
-          <p class="plan__heading">Changelog</p>
+          <h3 class="plan__heading">Changelog</h3>
           ${
             changelog.status === "loading"
               ? html`<p class="empty-state__hint">Loading changelog…</p>`
@@ -537,13 +539,19 @@ function changelogPreview(text) {
   return trimmed.length > limit ? `${trimmed.slice(0, limit)}…` : trimmed;
 }
 
-/** ModSettingsControls is the slide-over's editable lock + update-policy
- * pair, over the thin api_mod_settings.go routes (no plan, no job - a
- * single DB write with nothing to preview). Local status/error state only:
- * a successful write lets refreshAfterModSetting (main.js) bring fresh
- * data back down through `row` on the next render, so this component
- * never has to hold its own copy of what changed. */
-function ModSettingsControls({ row, actions, panelRef }) {
+/** ModSettingsControls is the editable lock + update-policy pair, over the
+ * thin api_mod_settings.go routes (no plan, no job - a single DB write with
+ * nothing to preview). Local status/error state only: a successful write
+ * lets refreshAfterModSetting (main.js) bring fresh data back down through
+ * `row` on the next render, so this component never has to hold its own
+ * copy of what changed.
+ *
+ * Shared with the full mod page since I-5 (epic live review): "More info →"
+ * used to lead to a surface with FEWER actions than the panel it came from,
+ * on a page whose own design section opens with "Everything, unlimited
+ * room". panelRef is optional - it exists for the slide-over's focus rule
+ * (below), and the full mod page has no panel to return focus TO. */
+export function ModSettingsControls({ row, actions, panelRef }) {
   const [state, setState] = useState({ busy: false, error: "" });
 
   // M4: the checkbox/select's own `disabled` attribute (set below, for the
@@ -554,7 +562,10 @@ function ModSettingsControls({ row, actions, panelRef }) {
   // the arrow steps, which rely on the panel - not some stray control -
   // holding focus) usable after a settings interaction.
   function restorePanelFocus() {
-    panelRef.current?.focus();
+    // panelRef?, not panelRef.current? - the full mod page (I-5) renders
+    // these controls with no panel at all, and reading .current off an
+    // absent ref is a TypeError, not a no-op.
+    panelRef?.current?.focus();
   }
 
   async function toggleLock() {
@@ -565,6 +576,29 @@ function ModSettingsControls({ row, actions, panelRef }) {
       } else {
         await actions.setModLock(row.source_id, row.id, "");
       }
+      setState({ busy: false, error: "" });
+    } catch (err) {
+      setState({
+        busy: false,
+        error: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      restorePanelFocus();
+    }
+  }
+
+  // convert_paks is a TRI-STATE on the wire (core.ModListing): null means
+  // pak conversion does not apply to this mod at all - not a merge-compile
+  // game, or no pak merge source - which is distinct from a non-null false
+  // meaning "applies, and is off". So the control renders only when the
+  // wire says the question is even askable (C-3).
+  const convertApplies =
+    row.convert_paks !== null && row.convert_paks !== undefined;
+
+  async function toggleConvert() {
+    setState({ busy: true, error: "" });
+    try {
+      await actions.setModConvert(row.source_id, row.id, !row.convert_paks);
       setState({ busy: false, error: "" });
     } catch (err) {
       setState({
@@ -614,6 +648,19 @@ function ModSettingsControls({ row, actions, panelRef }) {
           <option value="pinned">Pinned</option>
         </select>
       </label>
+      ${
+        convertApplies &&
+        html`<label class="slide-over__setting">
+          <input
+            type="checkbox"
+            name="convert-paks"
+            checked=${row.convert_paks}
+            disabled=${state.busy}
+            onChange=${toggleConvert}
+          />
+          Convert paks
+        </label>`
+      }
       ${state.error && html`<p class="empty-state__hint">${state.error}</p>`}
     </div>
   `;

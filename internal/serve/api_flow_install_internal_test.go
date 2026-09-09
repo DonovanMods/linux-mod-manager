@@ -176,3 +176,59 @@ func TestFlowInstall_WithoutCSRF_IsRefused(t *testing.T) {
 	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, installModID, game.ID, "default")
 	require.ErrorIs(t, err, domain.ErrModNotFound)
 }
+
+// TestFlowInstall_PlanCarriesDependenciesByDefault is the control for the
+// two no_deps tests below: without the option, the dependency is resolved
+// and shown.
+func TestFlowInstall_PlanCarriesDependenciesByDefault(t *testing.T) {
+	s, _, game, _ := newInstallFixtureServer(t)
+
+	_, raw := planFlow(t, s, game, "install", installPlanBody(dependentModID))
+	assert.Contains(t, string(raw), "Better Boots", "the dependency must be on the plan")
+}
+
+// TestFlowInstall_NoDepsDropsThemFromThePlan is #326's parity fix (epic
+// live review C-3: "`install --no-deps` - no option on the plan kind at
+// all"). It is a PLAN-time option, like the CLI's flag: the confirm modal
+// must show what the job is going to do, not a dependency list the apply
+// will ignore.
+func TestFlowInstall_NoDepsDropsThemFromThePlan(t *testing.T) {
+	s, _, game, _ := newInstallFixtureServer(t)
+
+	_, raw := planFlow(t, s, game, "install",
+		`{"source_id":"`+fixtureSourceID+`","mod_id":"`+dependentModID+`","no_deps":true}`)
+	assert.NotContains(t, string(raw), "Better Boots", "no_deps must clear the resolved dependencies")
+	assert.Contains(t, string(raw), `"dependencies": []`)
+	assert.Contains(t, string(raw), "Fancy Cape", "the primary mod is still what the plan is about")
+}
+
+// TestFlowInstall_NoDepsInstallsThePrimaryAlone is the end state: the
+// dependency never lands in the database or the game directory.
+func TestFlowInstall_NoDepsInstallsThePrimaryAlone(t *testing.T) {
+	s, svc, game, _ := newInstallFixtureServer(t)
+
+	j := runFlow(t, s, game, "install",
+		`{"source_id":"`+fixtureSourceID+`","mod_id":"`+dependentModID+`","no_deps":true}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, dependentModID, game.ID, "default")
+	require.NoError(t, err, "the primary mod installs")
+	assert.FileExists(t, deployedPath(game, dependentFile))
+
+	_, err = svc.GetInstalledMod(t.Context(), fixtureSourceID, installModID, game.ID, "default")
+	assert.ErrorIs(t, err, domain.ErrModNotFound, "the dropped dependency must not be installed")
+	assert.NoFileExists(t, deployedPath(game, installModFile))
+}
+
+// TestFlowInstall_WithoutNoDepsTheDependencyIsInstalled is the same flow
+// with the option off, so the option is pinned as the thing that made the
+// difference rather than the fixture.
+func TestFlowInstall_WithoutNoDepsTheDependencyIsInstalled(t *testing.T) {
+	s, svc, game, _ := newInstallFixtureServer(t)
+
+	j := runFlow(t, s, game, "install", installPlanBody(dependentModID), "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	_, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, installModID, game.ID, "default")
+	assert.NoError(t, err, "the dependency installs when it is not dropped")
+}

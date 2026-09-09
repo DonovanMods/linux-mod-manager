@@ -493,9 +493,14 @@ type SearchOptions struct {
 //     lines: rendering them is the frontend's job.
 //   - Page/PageSize echo SearchOptions.Page/PageSize verbatim (#331: the
 //     search PAGE's own pagination controls need nothing else to confirm
-//     which page a report answers). Both omitzero: the CLI's own single-page
-//     call never sets either, so its report carries neither key at all
-//     rather than two zeroes that look like a real page 0 of size 0.
+//     which page a report answers). Both omitzero, so an unset one carries
+//     no key at all rather than a zero that looks like a real page 0 of
+//     size 0. Measured (#326, epic live review D-2): `lmm search` always
+//     sets PageSize - --limit defaults to 10 and searchPageSize feeds it
+//     straight through - so its document always carries page_size and never
+//     page; `/api/v1/search` called with no page params sets NEITHER, so
+//     its document carries neither. The two differ in exactly that way and
+//     no other.
 //   - HasMore reports whether the sources queried might have a page N+1:
 //     AggregateSearchResult.Exhausted negated on the aggregate path,
 //     sourceHasMore's own per-source heuristic on a named --source. Always

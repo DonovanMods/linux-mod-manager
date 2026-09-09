@@ -18,9 +18,10 @@
 // install's own conflict round trip works.
 
 import { html } from "../render.js";
+import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** ImportArchivePlanView renders core.ImportArchivePlan (internal/core/import_archive.go). */
-export function ImportArchivePlanView({ plan }) {
+export function ImportArchivePlanView({ plan, modal, actions }) {
   const conflicts = plan.conflicts ?? [];
   const warnings = plan.warnings ?? [];
   const hooks = plan.hooks ?? [];
@@ -49,7 +50,7 @@ export function ImportArchivePlanView({ plan }) {
       }
 
       <section class="plan__section">
-        <p class="plan__heading">Files (${files.length})</p>
+        <h3 class="plan__heading">Files (${files.length})</h3>
         ${
           files.length > 0
             ? html`
@@ -68,7 +69,7 @@ export function ImportArchivePlanView({ plan }) {
         plan.merged_artifact &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Merged artifact</p>
+            <h3 class="plan__heading">Merged artifact</h3>
             <p>
               <span class="mono">${plan.merged_artifact.artifact}</span> would
               be affected.
@@ -80,9 +81,9 @@ export function ImportArchivePlanView({ plan }) {
         conflicts.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading plan__heading--warn">
+            <h3 class="plan__heading plan__heading--warn">
               Conflicts (${conflicts.length})
-            </p>
+            </h3>
             <ul class="plan__paths">
               ${conflicts.map(
                 (c) =>
@@ -102,7 +103,7 @@ export function ImportArchivePlanView({ plan }) {
         warnings.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading plan__heading--warn">Warnings</p>
+            <h3 class="plan__heading plan__heading--warn">Warnings</h3>
             <ul class="plan__paths">
               ${warnings.map((w, i) => html`<li key=${i}>${w}</li>`)}
             </ul>
@@ -113,11 +114,28 @@ export function ImportArchivePlanView({ plan }) {
         hooks.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Hooks (${hooks.length})</p>
+            <h3 class="plan__heading">Hooks (${hooks.length})</h3>
             <p class="mono plan__hooks">${hooks.join(" → ")}</p>
           </section>
         `
       }
+
+      <${PlanAdvanced}>
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm import --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
     </div>
   `;
 }

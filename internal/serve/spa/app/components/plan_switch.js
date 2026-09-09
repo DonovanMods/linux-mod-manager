@@ -31,7 +31,7 @@ function ModList({ heading, mods, testID }) {
   if (!mods || mods.length === 0) return null;
   return html`
     <section class="plan__section">
-      <p class="plan__heading">${heading} (${mods.length})</p>
+      <h3 class="plan__heading">${heading} (${mods.length})</h3>
       <ul class="plan__paths" data-testid=${testID}>
         ${mods.map(
           (m) => html`
@@ -90,9 +90,9 @@ export function SwitchPlanView({ plan }) {
         toInstall.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">
+            <h3 class="plan__heading">
               Download and install (${toInstall.length})
-            </p>
+            </h3>
             <ul class="plan__paths" data-testid="switch-to-install">
               ${toInstall.map((ref) => {
                 const prior = priorVersions[`${ref.source_id}:${ref.mod_id}`];

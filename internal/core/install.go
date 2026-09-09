@@ -252,6 +252,30 @@ type InstallPlanEntry struct {
 	FetchError string `json:"fetch_error,omitempty"`
 }
 
+// SkipDependencies drops every dependency the plan resolved, so
+// ApplyInstall installs the primary mod alone - `lmm install --no-deps`,
+// and the same clearing a local-source mod gets (its "dependencies" can
+// only ever be unresolvable references).
+//
+// It lives here rather than in each frontend because it is FOUR coupled
+// fields, not one: the resolved set, the unresolvable references, the
+// cycle flag and the resolution warnings all describe the dependency pass,
+// and a frontend that cleared three of them would leave a confirm screen
+// warning about dependencies it is not going to install. The CLI and
+// `lmm serve`'s "install" plan kind both call this, so the option cannot
+// mean two different things in the two frontends (#326).
+//
+// It mutates the plan in place, before Apply: PlanInstall's doc comment
+// already names this as the sanctioned way to express --no-deps ("a caller
+// that wants to skip Dependencies can simply ignore or clear them before
+// calling ApplyInstall").
+func (p *InstallPlan) SkipDependencies() {
+	p.Dependencies = nil
+	p.MissingDependencies = nil
+	p.CycleDetected = false
+	p.DependencyWarnings = nil
+}
+
 // PlanInstall computes what installing (sourceID, modID) into profileName
 // would do - the pure, read-only half of the pre-extraction CLI's doInstall
 // (cmd/lmm/install.go), extracted with zero mutations so a caller can

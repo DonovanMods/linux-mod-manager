@@ -65,6 +65,14 @@ type installPlanRequest struct {
 	// ShowArchived mirrors `lmm install --show-archived`: it widens both the
 	// plan's own file filter and the candidate pool.
 	ShowArchived bool `json:"show_archived,omitzero"`
+	// NoDeps mirrors `lmm install --no-deps` (#326). It is PLAN-time, not
+	// apply-time, because it changes what the plan SAYS: core's
+	// InstallPlan.SkipDependencies drops the resolved set, the unresolvable
+	// references, the cycle flag and the resolution warnings together, so
+	// the confirm modal cannot warn about dependencies the job will not
+	// install. The CLI applies it at exactly the same point, through the
+	// same core call.
+	NoDeps bool `json:"no_deps,omitzero"`
 }
 
 // validate implements validatingOptions.
@@ -89,6 +97,13 @@ type installApplyRequest struct {
 	// Force and SkipHooks mirror `lmm install --force/--no-hooks`.
 	Force     bool `json:"force,omitzero"`
 	SkipHooks bool `json:"skip_hooks,omitzero"`
+	// SkipVerify mirrors `lmm install --skip-verify` (#326, the closing
+	// wave's parity ledger). APPLY-time, because that is where core reads
+	// it: InstallOptions.SkipVerify gates the checksum a download's result
+	// carries from being saved and from being reported as an
+	// InstallChecksumComputed event. It changes nothing about what the plan
+	// SAYS, so it never re-plans.
+	SkipVerify bool `json:"skip_verify,omitzero"`
 }
 
 // installOptions renders the request as the core options struct.
@@ -99,6 +114,7 @@ func (r installApplyRequest) installOptions() core.InstallOptions {
 		AcceptConflicts: r.AcceptConflicts,
 		Force:           r.Force,
 		SkipHooks:       r.SkipHooks,
+		SkipVerify:      r.SkipVerify,
 	}
 }
 
@@ -121,6 +137,9 @@ func planInstallKind(ctx context.Context, s *Server, sel selection, opts any) (a
 	plan, err := s.svc.PlanInstall(ctx, sel.Game, sel.Profile, req.SourceID, req.ModID, req.ShowArchived)
 	if err != nil {
 		return nil, nil, err
+	}
+	if req.NoDeps {
+		plan.SkipDependencies()
 	}
 	return plan, &pendingInstall{Game: sel.Game, Plan: plan}, nil
 }

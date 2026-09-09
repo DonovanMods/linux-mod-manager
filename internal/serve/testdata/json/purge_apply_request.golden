@@ -1,0 +1,5 @@
+{
+  "uninstall": true,
+  "force": true,
+  "skip_hooks": true
+}

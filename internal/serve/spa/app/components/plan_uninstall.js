@@ -5,9 +5,10 @@
 // reference implementation for every later kind's renderer).
 
 import { html } from "../render.js";
+import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 
 /** UninstallPlanView renders core.UninstallPlan (internal/core/uninstall.go). */
-export function UninstallPlanView({ plan }) {
+export function UninstallPlanView({ plan, modal, actions }) {
   const files = plan.files ?? [];
   const hooks = plan.hooks ?? [];
 
@@ -23,7 +24,7 @@ export function UninstallPlanView({ plan }) {
         files.length > 0
           ? html`
               <section class="plan__section">
-                <p class="plan__heading">Files removed (${files.length})</p>
+                <h3 class="plan__heading">Files removed (${files.length})</h3>
                 <ul class="plan__paths">
                   ${files.map((f) => html`<li key=${f} class="mono">${f}</li>`)}
                 </ul>
@@ -35,7 +36,7 @@ export function UninstallPlanView({ plan }) {
             </p>`
       }
 
-      <p class="plan__note">
+      <p class="plan__note" data-testid="uninstall-cache-note">
         ${
           plan.keep_cache
             ? "The cached download is kept."
@@ -47,11 +48,37 @@ export function UninstallPlanView({ plan }) {
         hooks.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Hooks (${hooks.length})</p>
+            <h3 class="plan__heading">Hooks (${hooks.length})</h3>
             <p class="mono plan__hooks">${hooks.join(" → ")}</p>
           </section>
         `
       }
+
+      <${PlanAdvanced}>
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="keep_cache"
+          alsoApply
+          label="Keep the cached download"
+          hint="lmm uninstall --keep-cache. Reinstalling later needs no download."
+        />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          alsoApply
+          label="Skip hooks"
+          hint="lmm --no-hooks. The list above updates to match."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm uninstall --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
     </div>
   `;
 }

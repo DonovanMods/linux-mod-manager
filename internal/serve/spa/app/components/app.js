@@ -80,7 +80,11 @@ export function App({ state, onThemeChange, actions }) {
   const overlays = html`
     ${
       modalType === "plan" &&
-      html`<${ConfirmPlanModal} modal=${state.modal} actions=${actions} />`
+      html`<${ConfirmPlanModal}
+        modal=${state.modal}
+        state=${state}
+        actions=${actions}
+      />`
     }
     ${
       modalType === "reorder" &&

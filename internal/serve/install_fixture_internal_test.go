@@ -33,7 +33,9 @@ import (
 const (
 	installModID   = "m2"
 	conflictModID  = "m3"
+	dependentModID = "m4"
 	installModFile = "Mods/boots.pak"
+	dependentFile  = "Mods/cape.pak"
 )
 
 // installSourceMod is one catalog entry: the mod, its downloadable files,
@@ -42,6 +44,10 @@ type installSourceMod struct {
 	mod     domain.Mod
 	files   []domain.DownloadableFile
 	members map[string]string // file ID -> the single path inside its zip
+	// deps is what GetDependencies answers for this mod - empty for every
+	// entry but "m4", which exists so #326's no_deps option has a real
+	// dependency to drop.
+	deps []domain.ModReference
 }
 
 // installSource is a source.ModSource with a working download: every file
@@ -91,6 +97,15 @@ func newInstallSource(t *testing.T) *installSource {
 			{ID: "f1", Name: "Main 1.0", FileName: "boots-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
 		},
 		members: map[string]string{"f1": installModFile, "f2": installModFile},
+	}
+	// A mod that DEPENDS on installModID - the only entry with a
+	// dependency, so `install --no-deps`/no_deps has something to drop
+	// without changing what every other fixture test plans (#326).
+	s.mods[dependentModID] = &installSourceMod{
+		mod:     domain.Mod{ID: dependentModID, SourceID: fixtureSourceID, Name: "Fancy Cape", Version: "1.0", GameID: "g1"},
+		files:   []domain.DownloadableFile{{ID: "d1", Name: "Main", FileName: "cape.zip", Version: "1.0", Category: "MAIN", IsPrimary: true, Size: 48}},
+		members: map[string]string{"d1": dependentFile},
+		deps:    []domain.ModReference{{SourceID: fixtureSourceID, ModID: installModID}},
 	}
 	// One file, whose archive member is the path "m1" already deployed.
 	s.mods[conflictModID] = &installSourceMod{
@@ -148,8 +163,12 @@ func (s *installSource) GetMod(_ context.Context, _, modID string) (*domain.Mod,
 	return &mod, nil
 }
 
-func (*installSource) GetDependencies(context.Context, *domain.Mod) ([]domain.ModReference, error) {
-	return nil, nil
+func (s *installSource) GetDependencies(_ context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
+	entry, ok := s.mods[mod.ID]
+	if !ok {
+		return nil, nil
+	}
+	return append([]domain.ModReference(nil), entry.deps...), nil
 }
 
 func (s *installSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {

@@ -1913,3 +1913,264 @@ func newE2EFixtureWithALockedAndAnUnlockedUpdate(t *testing.T) e2eFixture {
 		BrowserErrors: browserErrors,
 	}
 }
+
+// startE2EProxyDelayingProfileReads fronts an already-running backend with a
+// reverse proxy that sleeps for delay before forwarding any GET whose
+// `profile` query parameter names profile, and forwards everything else
+// untouched.
+//
+// It exists for exactly one thing: making C-1's hydrate() race
+// DETERMINISTIC. A profile switch leaves two hydrations in flight at once -
+// onJobDone's (read under the OLD profile, main.js) and the route change's
+// (the new one) - and the store belongs to whichever settles last. On a
+// loopback server both settle in microseconds, so which one wins is decided
+// by the scheduler; the epic live review measured the stale one winning
+// ~10% of the time. Slowing only the OLD profile's reads inverts that into
+// a certainty: the stale hydration is now guaranteed to land last, so a
+// scenario that asserts the NEW profile's documents are on screen fails
+// every single run without the fence and passes every single run with it.
+//
+// GET only. The switch's own plan/apply are POSTs and must not be delayed:
+// the scenario needs the JOB to finish promptly and the READS to lag.
+func startE2EProxyDelayingProfileReads(t *testing.T, backend, profile string, delay time.Duration) string {
+	t.Helper()
+
+	return startE2EDelayingProxy(t, backend, delay, func(r *http.Request) bool {
+		return r.Method == http.MethodGet && r.URL.Query().Get("profile") == profile
+	})
+}
+
+// startE2EDelayingProxy is the shape both delaying proxies share: a reverse
+// proxy in front of an already-running backend that sleeps for delay before
+// forwarding any request shouldDelay says yes to, and forwards everything
+// else untouched.
+//
+// The Host and Origin rewrites are not optional. The server's own Host
+// allow-list (middleware.go's DNS-rebinding guard) and originCheck both
+// compare against the address the request claims, which is this proxy's
+// once a browser is talking to it - so a plain NewSingleHostReverseProxy
+// gets every request refused and the SPA never loads at all.
+func startE2EDelayingProxy(t *testing.T, backend string, delay time.Duration, shouldDelay func(*http.Request) bool) string {
+	t.Helper()
+
+	backendURL, err := url.Parse(backend)
+	require.NoError(t, err)
+
+	proxy := &httputil.ReverseProxy{
+		Transport: e2eProxyTransport(t),
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(backendURL)
+			r.Out.Host = backendURL.Host
+			// Same reason startE2EServerWithDelayedJobStart rewrites it:
+			// originCheck (middleware.go) compares Origin against r.Host,
+			// which is the BACKEND's address once this proxy has rewritten
+			// it, so the browser's own Origin (this proxy) has to move too
+			// or every mutation through here is refused as cross-origin.
+			if r.Out.Header.Get("Origin") != "" {
+				r.Out.Header.Set("Origin", "http://"+backendURL.Host)
+			}
+		},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if shouldDelay(r) {
+			time.Sleep(delay)
+		}
+		proxy.ServeHTTP(w, r)
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyServer := &http.Server{Handler: mux}
+	served := make(chan error, 1)
+	go func() { served <- proxyServer.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = proxyServer.Close()
+		if err := <-served; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("proxy server: %v", err)
+		}
+	})
+
+	return "http://" + ln.Addr().String()
+}
+
+// startE2EProxyDelayingTheNthModFilesRead fronts an already-running backend
+// with a reverse proxy that sleeps for delay before forwarding the nth GET
+// of a mod-files read (/api/v1/mods/{source}/{id}/files) SCOPED TO profile,
+// and forwards everything else untouched.
+//
+// Scoped to one profile because the scenario it serves needs the OTHER
+// profile's read of the same mod to run unblocked, and because two
+// hydrations of the same mod page under the same profile issue the
+// IDENTICAL URL - which Chrome will not run concurrently at all (its HTTP
+// cache takes a single-writer lock on an in-flight cacheable GET and queues
+// the duplicate behind it), so no proxy delay could order them.
+//
+// Its subject is MIN-2 of the closing wave's gate review, and it is the
+// same trick startE2EProxyDelayingProfileReads plays for C-1: two
+// hydrations of the SAME mod page settle in microseconds on a loopback
+// server, so which one lands last is the scheduler's choice. Delaying
+// exactly one of them makes the out-of-order landing a certainty instead.
+//
+// The mod-files read specifically, because it is hydrateModPage's PRIMARY
+// read - the one whose write resets detail, versions and updates to null.
+func startE2EProxyDelayingTheNthModFilesRead(t *testing.T, backend, profile string, n int, delay time.Duration) string {
+	t.Helper()
+
+	var seen atomic.Int64
+	return startE2EDelayingProxy(t, backend, delay, func(r *http.Request) bool {
+		if r.Method != http.MethodGet ||
+			!strings.HasPrefix(r.URL.Path, "/api/v1/mods/") ||
+			!strings.HasSuffix(r.URL.Path, "/files") ||
+			r.URL.Query().Get("profile") != profile {
+			return false
+		}
+		return int(seen.Add(1)) == n
+	})
+}
+
+// newE2EFixtureWithASwitchTargetAndSlowStaleReads is
+// newE2EFixtureWithASwitchTarget served through the profile-read-delaying
+// proxy above, pointed at the profile the scenario switches AWAY from.
+func newE2EFixtureWithASwitchTargetAndSlowStaleReads(t *testing.T, delay time.Duration) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithASwitchTarget(t)
+	f.BaseURL = startE2EProxyDelayingProfileReads(t, f.BaseURL, f.Profile, delay)
+	return f
+}
+
+// newE2EFixtureWithAnUnlistedInstall seeds the state `lmm profile sync`
+// exists for, which is the MIRROR of newE2EFixtureWithAnUnappliedProfile's:
+// a mod installed and enabled in the database that the profile's own load
+// order does not list.
+//
+// Alpha Mod is in both; Beta Mod is installed only. So the profile's own
+// mod count (1) runs BEHIND the installed rows (2), which is what Mission
+// Control's profile card reads to decide it has a sync to offer.
+func newE2EFixtureWithAnUnlistedInstall(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.pak": []byte("alpha content")})
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"beta.pak": []byte("beta content")})
+
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+	return f
+}
+
+// compileE2ESource is the browser harness's fakeSource plus
+// source.MergeCompiler, so a fixture game can be DeployCompile.
+//
+// Pak conversion is only meaningful for a game whose deploy mode compiles a
+// merged artifact AND whose mod has a retained file the compiler classifies
+// as convertible - core resolves the game's ONE compile-capable source to
+// decide, so a game mapping none has nothing to convert and
+// core.ModListing's tri-state convert_paks stays null. It is the same
+// shaped stand-in api_mod_convert_internal_test.go builds one package
+// boundary away, for the same reason: nothing here compiles or reads a real
+// pak, which is internal/source and internal/core's ground to cover.
+type compileE2ESource struct{ *fakeSource }
+
+func (*compileE2ESource) ValidateSource(string) error { return nil }
+func (*compileE2ESource) MergeCompile(context.Context, string, []source.MergeSource, string) ([]string, []source.MergeFailure, error) {
+	return nil, nil, nil
+}
+func (*compileE2ESource) ResolveBaseArtifact(*domain.Game) (string, error) { return "", nil }
+func (*compileE2ESource) FingerprintBase(string) (string, error)           { return "", nil }
+func (*compileE2ESource) IsNativeMergeSource(name string) bool             { return name == "exmodz" }
+func (*compileE2ESource) IsConvertibleArtifact(name string) bool           { return name == "pak" }
+func (*compileE2ESource) ClassifyMergeSource(id string) (string, bool) {
+	if id == "pak" {
+		return "pak", true
+	}
+	return "exmodz", false
+}
+func (*compileE2ESource) MergedArtifactName() string            { return "zzz_LMM_Merged_P.pak" }
+func (*compileE2ESource) MergedArtifactLabel() string           { return "Merged Pak" }
+func (*compileE2ESource) RestoredArtifactName(id string) string { return id + "_P.pak" }
+
+var _ source.MergeCompiler = (*compileE2ESource)(nil)
+
+// newE2EFixtureWithAConvertibleMod is the world `lmm mod convert` acts on: a
+// DeployCompile game whose one installed mod carries a pak-kind retained
+// file, which is the only state in which core.ModListing's convert_paks is
+// non-null and the SPA offers the toggle at all.
+func newE2EFixtureWithAConvertibleMod(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	src := &compileE2ESource{fakeSource: newFakeSource("fake")}
+	svc.RegisterSource(src)
+
+	ctx := t.Context()
+	game := &domain.Game{
+		ID:          "g1",
+		Name:        "Compile Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+		DeployMode:  domain.DeployCompile,
+		ConvertPaks: true,
+		SourceIDs:   map[string]string{"fake": ""},
+	}
+	require.NoError(t, svc.SaveGame(ctx, game))
+	_, err = svc.NewProfileManager().Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(ctx, game.ID))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: "fake", Name: "Convertible Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		ConvertPaks:  true,
+		FileIDs:      []string{"pak"},
+	}))
+	require.NoError(t, svc.NewProfileManager().AddMod(ctx, game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "m1", Version: "1.0"}))
+
+	baseURL := startE2EServer(t, svc)
+	browserCtx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx:           browserCtx,
+		BaseURL:       baseURL,
+		Svc:           svc,
+		Game:          game,
+		Profile:       "default",
+		BrowserErrors: browserErrors,
+	}
+}
+
+// newE2EFixtureWithATagCapableSource is the world `lmm search --tag` acts
+// on: a game whose one source is registered under the id the SPA's own
+// TAG_CAPABLE_SOURCES list names (searchpage.js), holding one tagged mod
+// and one untagged one so the filter has something to actually narrow.
+//
+// The source is this package's fakeSource under the nexusmods id, not a
+// real client: nothing here talks to NexusMods, and the property under test
+// is that the FILTER reaches the source at all - which fakeSource's own tag
+// support (fakeModHasEveryTag) answers exactly as well.
+func newE2EFixtureWithATagCapableSource(t *testing.T) e2eFixture {
+	t.Helper()
+	src := newFakeSource("nexusmods")
+	src.addMod(fakeSourceMod{
+		Mod:  domain.Mod{ID: "armoured", SourceID: "nexusmods", Name: "Armoured Mod", Version: "1.0"},
+		Tags: []string{"armour"},
+	})
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{ID: "plain", SourceID: "nexusmods", Name: "Plain Mod", Version: "1.0"},
+	})
+	return newE2EFixtureFromSource(t, src)
+}

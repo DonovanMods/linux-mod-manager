@@ -126,6 +126,10 @@ export function search(query, opts, context) {
   if (opts?.limit != null) url.searchParams.set("limit", String(opts.limit));
   if (opts?.category) url.searchParams.set("category", opts.category);
   if (opts?.source) url.searchParams.set("source", opts.source);
+  // ?tag= is REPEATABLE and narrows on every one it is given (AND), which
+  // is why it appends rather than sets. An empty list appends nothing -
+  // absent means "no filter", never a "" tag.
+  for (const tag of opts?.tags ?? []) url.searchParams.append("tag", tag);
   return get(url.pathname + url.search);
 }
 
@@ -155,6 +159,18 @@ export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
   post(scoped(`${modPath(sourceID, modID)}/update-policy`, context), {
     policy,
   });
+
+/**
+ * Turns sourceID/modID's pak conversion on or off (C-3: `lmm mod convert`).
+ * Returns core.ModSettingResult directly - a single-step write beside
+ * lock/unlock/update-policy, not a job.
+ *
+ * `enabled` is REQUIRED on the wire: an absent, null or {} body is a 400,
+ * deliberately, because every one of those shapes used to answer 200 and
+ * silently turn conversion OFF.
+ */
+export const setModConvert = (sourceID, modID, enabled, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/convert`, context), { enabled });
 
 // profilePath builds one profile's /api/v1/profiles/{name} base path -
 // shared by every named-profile route below (api_profiles.go's own doc
@@ -239,6 +255,19 @@ export const gameCatalog = (sourceID, query) => {
  * same row listGames() returns - splice it straight in rather than
  * re-reading. */
 export const addGame = (spec) => post("/api/v1/games", spec);
+
+/**
+ * Replaces gameID's whole source map (C-4: `lmm game edit`). Returns the
+ * same core.GameListEntry row listGames() carries.
+ *
+ * REPLACEMENT, not a patch: an omitted source id is REMOVED, so a caller
+ * always sends the whole map. An empty map is refused (a game mapping no
+ * source can neither search nor install), and a removal that would orphan
+ * an installed mod is a 409 naming the mods - both come back as the usual
+ * envelope for the caller to render in place.
+ */
+export const updateGameSources = (gameID, sources) =>
+  put(`/api/v1/games/${encodeURIComponent(gameID)}`, { sources });
 
 /** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing. */
 export const detectGames = () => get("/api/v1/games/detect");

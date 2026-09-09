@@ -8,12 +8,32 @@
 // put those on screen in the order a user decides by.
 
 import { html } from "../render.js";
+import {
+  PlanAdvanced,
+  PlanOption,
+  PlanSelect,
+  ApplyOption,
+} from "./planoptions.js";
 
 /** DeployPlanView renders core.DeployPlan (internal/core/deploy.go). */
-export function DeployPlanView({ plan }) {
+export function DeployPlanView({ plan, modal, state, actions }) {
   const mods = plan.mods ?? [];
   const purge = plan.purge ?? [];
   const hooks = plan.hooks ?? [];
+
+  // M-9 of the epic live review: this list showed both contenders' copies
+  // of a contested path with nothing to say which one wins, so a deploy
+  // preview over a real conflict read as if both would land. The fact
+  // exists - it is the Conflicts card's own document, already fetched for
+  // this route - so the paths carry it rather than the user having to
+  // cross-reference two surfaces. Keyed by path to the winner's own key,
+  // exactly as core.ProfileConflict reports it.
+  const winnerByPath = new Map(
+    (state?.conflicts?.conflicts ?? []).map((c) => [
+      c.path,
+      c.load_order_winner,
+    ]),
+  );
 
   if (plan.no_changes) {
     return html`
@@ -35,7 +55,7 @@ export function DeployPlanView({ plan }) {
         purge.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Purge first (${purge.length})</p>
+            <h3 class="plan__heading">Purge first (${purge.length})</h3>
             <ul class="plan__paths">
               ${purge.map((p) => html`<li key=${p} class="mono">${p}</li>`)}
             </ul>
@@ -44,7 +64,7 @@ export function DeployPlanView({ plan }) {
       }
 
       <section class="plan__section">
-        <p class="plan__heading">Mods (${mods.length})</p>
+        <h3 class="plan__heading">Mods (${mods.length})</h3>
         <ul class="plan__mods">
           ${mods.map(
             (mod) => html`
@@ -74,7 +94,22 @@ export function DeployPlanView({ plan }) {
                   (mod.link ?? []).length > 0 &&
                   html`
                     <ul class="plan__paths">
-                      ${mod.link.map((p) => html`<li key=${p} class="mono">${p}</li>`)}
+                      ${mod.link.map((p) => {
+                        const winner = winnerByPath.get(p);
+                        const key = `${mod.ref.source_id}:${mod.ref.mod_id}`;
+                        return html`<li key=${p} class="mono">
+                          ${p}${" "}
+                          ${
+                            winner &&
+                            (winner.key === key
+                              ? html`<span class="plan__winner">(wins)</span>`
+                              : html`<span
+                                  class="plan__winner plan__winner--loses"
+                                  >(loses to ${winner.name})</span
+                                >`)
+                          }
+                        </li>`;
+                      })}
                     </ul>
                   `
                 }
@@ -97,7 +132,7 @@ export function DeployPlanView({ plan }) {
         plan.merged &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Merged artifact</p>
+            <h3 class="plan__heading">Merged artifact</h3>
             <p>
               <span class="mono">${plan.merged.artifact}</span> carrying
               ${mergedSummary(plan.merged)}
@@ -109,11 +144,83 @@ export function DeployPlanView({ plan }) {
         hooks.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Hooks (${hooks.length})</p>
+            <h3 class="plan__heading">Hooks (${hooks.length})</h3>
             <p class="mono plan__hooks">${hooks.join(" → ")}</p>
           </section>
         `
       }
+
+      <${PlanAdvanced}>
+        <${PlanSelect}
+          modal=${modal}
+          actions=${actions}
+          name="deploy-mod"
+          label="Only this mod"
+          hint="lmm deploy <mod-id>. The whole profile, unless you narrow it."
+          value=${modal?.options?.mod_id ?? ""}
+          options=${{
+            entries: [
+              { value: "", label: "The whole profile" },
+              ...mods.map((m) => ({
+                value: `${m.ref.source_id}/${m.ref.mod_id}`,
+                label: m.name,
+              })),
+            ],
+            // mod_id and source_id are two fields of one choice, so they
+            // are always written together - clearing the select has to
+            // clear BOTH, or the next plan would carry half an answer.
+            patch: (v) => {
+              const [sourceID, modID] = v.split("/");
+              return { source_id: sourceID ?? "", mod_id: modID ?? "" };
+            },
+          }}
+        />
+        <${PlanSelect}
+          modal=${modal}
+          actions=${actions}
+          name="link_method"
+          label="Link method"
+          hint="lmm deploy --method. The game's own setting, unless you override it."
+          value=${modal?.options?.link_method ?? ""}
+          options=${{
+            entries: [
+              { value: "", label: "The game's setting" },
+              { value: "symlink", label: "symlink" },
+              { value: "hardlink", label: "hardlink" },
+              { value: "copy", label: "copy" },
+            ],
+            patch: (v) => ({ link_method: v }),
+          }}
+        />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="purge"
+          label="Purge the game directory first"
+          hint="lmm deploy --purge. The list above updates to match."
+        />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="all"
+          label="Include disabled mods"
+          hint="lmm deploy --all. PLAN-time: the mod list above grows to match."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks. Apply-time only, so the list above still shows what would otherwise run."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm deploy --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
     </div>
   `;
 }

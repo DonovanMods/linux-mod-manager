@@ -2,9 +2,10 @@
 // (issue 330's new "rollback" plan kind, kind_rollback.go).
 
 import { html } from "../render.js";
+import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** RollbackPlanView renders core.RollbackPlan (internal/core/rollback.go). */
-export function RollbackPlanView({ plan }) {
+export function RollbackPlanView({ plan, modal, actions }) {
   return html`
     <div class="plan plan--rollback">
       <p class="plan__summary">
@@ -26,6 +27,23 @@ export function RollbackPlanView({ plan }) {
           missing - this rollback would fail.
         </p>`
       }
+
+      <${PlanAdvanced}>
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm --force. Carry on past a failure that would otherwise stop the flow."
+        />
+      <//>
     </div>
   `;
 }

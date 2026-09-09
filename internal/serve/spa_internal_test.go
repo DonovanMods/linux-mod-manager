@@ -121,6 +121,23 @@ func TestSPAShell_CSPAdmitsTheInlineScriptByHash(t *testing.T) {
 	assert.NotContains(t, csp, "unsafe-eval")
 }
 
+// TestSPAShell_CSPPinsBaseURIAndFormAction is the epic live review's M-8:
+// default-src covers NEITHER of these, so without them an injected <base>
+// could re-point every relative module URL and an injected form could post
+// the CSRF token off-origin. Defence in depth - Preact escapes everything
+// and TestNoUnsafeDOMWrites/TestNoUnsafeTemplateCasts are ratcheted, so
+// there is no injection vector today - but they cost one directive each.
+func TestSPAShell_CSPPinsBaseURIAndFormAction(t *testing.T) {
+	s, _, _ := newFlowFixtureServer(t)
+
+	rec := doAPI(s, http.MethodGet, "/", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	csp := rec.Header().Get("Content-Security-Policy")
+
+	assert.Contains(t, csp, "base-uri 'self'")
+	assert.Contains(t, csp, "form-action 'self'")
+}
+
 // TestSPAAssets_Served covers the two asset trees the shell pulls: the
 // SPA's own files under /static/, and the pinned third-party modules under
 // /vendor/. Both are embedded in the binary, never read from disk.

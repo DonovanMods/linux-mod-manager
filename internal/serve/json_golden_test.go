@@ -53,6 +53,8 @@ var goldenDeployResult = &core.DeployResult{
 	RawFallbacks:   1,
 }
 
+func boolPtr(b bool) *bool { return &b }
+
 func TestServeJSONGoldens(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -247,6 +249,10 @@ func TestServeJSONGoldens(t *testing.T) {
 				ModID:        "m2",
 				Version:      "2.0",
 				ShowArchived: true,
+				// #326: `lmm install --no-deps`. Populated here for the same
+				// reason every other optional member is - this golden pins
+				// every key's shape, not one plausible request.
+				NoDeps: true,
 			},
 		},
 		{
@@ -257,6 +263,11 @@ func TestServeJSONGoldens(t *testing.T) {
 				AcceptConflicts: true,
 				Force:           true,
 				SkipHooks:       true,
+				// #326: `lmm install --skip-verify`, the closing wave's
+				// last parity-ledger flag. Populated for the same reason
+				// every other optional member is - this golden pins every
+				// key's shape, not one plausible request.
+				SkipVerify: true,
 			},
 		},
 		{
@@ -311,6 +322,54 @@ func TestServeJSONGoldens(t *testing.T) {
 		{
 			"rollback_apply_request",
 			rollbackApplyRequest{Force: true, SkipHooks: true},
+		},
+		{
+			// #326's pak-conversion body (epic live review C-3): a REQUIRED
+			// boolean (I-1: enforced by handleAPIModConvert refusing a nil
+			// Enabled, since json/v2 has no "required" tag), so the key is
+			// always present on the wire - `lmm mod convert <mod-id>
+			// <on|off>` makes the caller say which way, and an omitted
+			// member must never silently mean "off".
+			"mod_convert_request",
+			modConvertRequest{Enabled: boolPtr(true)},
+		},
+		{
+			// #326's three parity kinds (epic live review C-3). purge
+			// carries the same three options at plan and apply time for the
+			// reason #226 gives for uninstall's: the plan is computed with
+			// them so the preview tells the truth, and the apply carries
+			// what the confirm modal finally chose.
+			"purge_plan_request",
+			purgePlanRequest{Uninstall: true, SkipHooks: true},
+		},
+		{
+			"purge_apply_request",
+			purgeApplyRequest{Uninstall: true, Force: true, SkipHooks: true},
+		},
+		{
+			// profile_sync names its target profile in the body, like its
+			// two siblings; ApplyProfileSync takes no options, so its apply
+			// struct has no json tags and pins nothing (the same shape
+			// switch and profile_apply have).
+			"profile_sync_plan_request",
+			profileSyncPlanRequest{Profile: "survival"},
+		},
+		{
+			// mod_relink's split follows core's own: the RE-LINK is plan
+			// time (it is what the plan describes - From, To, the lock
+			// refusal), the metadata overrides are apply time
+			// (core.RelinkOptions is what ApplyRelinkMod reads them from).
+			"mod_relink_plan_request",
+			modRelinkPlanRequest{
+				ModID:       "m1",
+				SourceID:    "fake",
+				NewSourceID: "curseforge",
+				NewModID:    "999",
+			},
+		},
+		{
+			"mod_relink_apply_request",
+			modRelinkApplyRequest{Name: "Renamed", Version: "2.0", Author: "Somebody"},
 		},
 		{
 			// The two profile flows' plan requests. Neither has an apply
@@ -457,6 +516,18 @@ func TestServeJSONGoldens(t *testing.T) {
 				InstallPath: "/games/minecraft",
 				ModPath:     "/games/minecraft/mods",
 			},
+		},
+		{
+			// #326's source<->game mapping body (epic live review C-4): the
+			// FULL map the game ends up with, keyed by registered source id.
+			// Two entries with one empty identifier, because both shapes are
+			// real - a NexusMods slug, and a directory source that keys the
+			// game by nothing at all.
+			"game_sources_request",
+			gameSourcesRequest{Sources: map[string]string{
+				"nexusmods":  "skyrimspecialedition",
+				"local-mods": "",
+			}},
 		},
 		{
 			// The detect apply's body: which listing rows to add, named by

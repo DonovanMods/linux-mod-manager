@@ -56,7 +56,7 @@ export function AdoptPlanView({ plan }) {
       }
 
       <section class="plan__section">
-        <p class="plan__heading">To adopt (${matches.length})</p>
+        <h3 class="plan__heading">To adopt (${matches.length})</h3>
         <ul class="plan__mods">
           ${matches.map(
             (m) => html`
@@ -74,9 +74,9 @@ export function AdoptPlanView({ plan }) {
         duplicates.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading plan__heading--warn">
+            <h3 class="plan__heading plan__heading--warn">
               Likely duplicates (${duplicates.length})
-            </p>
+            </h3>
             <ul class="plan__paths">
               ${duplicates.map((d) => html`<li key=${d} class="mono">${d}</li>`)}
             </ul>

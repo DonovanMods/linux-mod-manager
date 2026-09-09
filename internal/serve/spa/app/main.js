@@ -18,6 +18,7 @@ import {
   setModLock as apiSetModLock,
   clearModLock as apiClearModLock,
   setModUpdatePolicy as apiSetModUpdatePolicy,
+  setModConvert as apiSetModConvert,
   getModDetail,
   getModFiles,
   getModVersions,
@@ -28,6 +29,7 @@ import { resolveGamePath } from "./navigation.js";
 import {
   connectActivity,
   isOriginMounted,
+  mountedOriginsSnapshot,
   registerOrigin,
 } from "./activity.js";
 
@@ -89,6 +91,52 @@ async function maybeRedirectFromChooser(games) {
   if (path) navigate(path, { replace: true });
 }
 
+// hydrateSeq is the fence every route-scoped write in this module passes
+// before it lands (C-1, epic live review).
+//
+// hydrate() is not the only thing that starts one: onJobDone re-hydrates on
+// every completed job, reading the route at THAT instant, while the profile
+// picker's own navigate is deferred to a microtask - so a confirmed switch
+// leaves two hydrations racing, one under the profile being left and one
+// under the profile moved to, both writing the same four store slots. The
+// store belonged to whichever settled last, which meant Mission Control
+// could render the previous profile's mods, updates, health and conflicts
+// under the new profile's URL: the wrong-context bug class path-based
+// routing exists to prevent, re-entering through the store instead of the
+// URL.
+//
+// A monotonic counter rather than a route-key comparison, for the case a
+// route key cannot see: TWO hydrations of the SAME route (a job completing
+// while a slice retry is in flight) are equally capable of landing out of
+// order, and only the newest one's answer is current. Claiming a number
+// invalidates every claim before it, whatever route it was made for.
+let hydrateSeq = 0;
+
+/** beginHydration claims the next fence number, invalidating every write
+ * still in flight behind an older one. */
+function beginHydration() {
+  hydrateSeq += 1;
+  return hydrateSeq;
+}
+
+/** isCurrentHydration reports whether seq is still the newest claim - the
+ * check a slice reload (which claims no number of its own) makes so a route
+ * change during its fetch drops its answer rather than writing another
+ * context's document into the store. */
+function isCurrentHydration(seq) {
+  return seq === hydrateSeq;
+}
+
+/** commitHydration writes patch into the store only while seq is still the
+ * newest claim, and reports whether it did - so a caller with more work to
+ * do after the write can stop instead of continuing to fetch for a route
+ * nobody is looking at. */
+function commitHydration(seq, patch) {
+  if (!isCurrentHydration(seq)) return false;
+  store.set(patch);
+  return true;
+}
+
 /**
  * Loads the documents the current route needs.
  *
@@ -101,13 +149,16 @@ async function maybeRedirectFromChooser(games) {
  * questions.
  */
 async function hydrate(route) {
+  const seq = beginHydration();
+
   if (route.view === "chooser") {
     try {
       const status = await get("/api/v1/status");
-      store.set({ status, games: status.games, error: null });
+      if (!commitHydration(seq, { status, games: status.games, error: null }))
+        return;
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      store.set({ status: null, games: null, error: message });
+      commitHydration(seq, { status: null, games: null, error: message });
       return;
     }
     await maybeRedirectFromChooser(store.get().games);
@@ -120,12 +171,13 @@ async function hydrate(route) {
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    store.set({
+    const committed = commitHydration(seq, {
       status,
       games: allStatus.games,
       error: null,
       fetchErrors: { ...store.get().fetchErrors, status: null },
     });
+    if (!committed) return;
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
     // A RE-hydrate (main.js's onJobDone runs this on every job completion,
@@ -135,17 +187,17 @@ async function hydrate(route) {
     // The fatal `error` slice is reserved for the FIRST load, where there
     // is nothing on screen yet to protect (the I3 rule, applied here).
     if (store.get().status) {
-      store.set({
+      commitHydration(seq, {
         fetchErrors: { ...store.get().fetchErrors, status: message },
       });
       return;
     }
-    store.set({ status: null, games: null, error: message });
+    commitHydration(seq, { status: null, games: null, error: message });
     return;
   }
 
   if (route.view === "mod") {
-    await hydrateModPage(route, context);
+    await hydrateModPage(route, context, seq);
     return;
   }
   if (route.view === "search") {
@@ -164,7 +216,7 @@ async function hydrate(route) {
     get(scoped("/api/v1/health", context)),
     get(scoped("/api/v1/conflicts", context)),
   ]);
-  store.set({
+  commitHydration(seq, {
     mods: settled(mods),
     updates: settled(updates),
     health: settled(health),
@@ -206,11 +258,11 @@ async function hydrate(route) {
  * way or the other, which is what keeps this page's own InlineJob outcome
  * on screen through the re-hydrate a job's own completion triggers.
  */
-async function hydrateModPage(route, context) {
+async function hydrateModPage(route, context, seq = hydrateSeq) {
   const key = `${route.sourceID}/${route.modID}`;
   const reHydrating = store.get().modPage?.key === key;
   if (!reHydrating) {
-    store.set({ modPage: { key, filesReport: null, error: null } });
+    commitHydration(seq, { modPage: { key, filesReport: null, error: null } });
   }
 
   let filesReport;
@@ -220,34 +272,64 @@ async function hydrateModPage(route, context) {
     if (store.get().modPage?.key !== key) return;
     if (reHydrating) return;
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({ modPage: { key, filesReport: null, error: message } });
+    commitHydration(seq, {
+      modPage: { key, filesReport: null, error: message },
+    });
     return;
   }
   if (store.get().modPage?.key !== key) return;
-  store.set({
-    modPage: {
-      key,
-      filesReport,
-      error: null,
-      detail: null,
-      detailError: null,
-      versions: null,
-      versionsError: null,
-      updates: null,
-    },
-  });
+  // Both writes above and below pass the SAME fence the final one does
+  // (MIN-2 of the closing wave's gate review). They were guarded by
+  // modPage.key alone, which cannot see the case the counter exists for:
+  // TWO hydrations of the SAME mod page - a job completing while a cold
+  // load is in flight, exactly the pair onJobDone creates - can land out of
+  // order, and the older one's filesReport write resets detail, versions
+  // and updates to null. The newer hydration has already written its
+  // extras by then, so they stay blank until something hydrates again.
+  // Narrow, but it is the class C-1 closed everywhere else.
+  if (
+    !commitHydration(seq, {
+      modPage: {
+        key,
+        filesReport,
+        error: null,
+        detail: null,
+        detailError: null,
+        versions: null,
+        versionsError: null,
+        updates: null,
+      },
+    })
+  ) {
+    return;
+  }
 
   // updates joins the versions table against the ONE version
   // CheckGameUpdates would actually land this mod on (C1) - fetched
   // alongside detail/versions, both I3-style: a source that cannot answer
   // degrades this page's EXTRAS, never blanks the identity/files a real
   // install record already answered for.
-  const [detail, versions, updates] = await Promise.allSettled([
-    getModDetail(route.sourceID, route.modID, context),
-    getModVersions(route.sourceID, route.modID, context),
-    get(scoped("/api/v1/updates", context)),
-  ]);
+  //
+  // mods/health/conflicts join them since I-5 (epic live review): the full
+  // mod page now carries this mod's lock and update policy, its Uninstall,
+  // its findings and its conflicts, and all four are answered by those
+  // three PROFILE-scoped documents rather than by anything mod-specific on
+  // the wire. They land in the TOP-LEVEL store slots, not under modPage,
+  // because they are the same documents Mission Control renders for the
+  // same context - a second copy under another key is how two surfaces
+  // come to disagree about one profile. That also means arriving here from
+  // a cold deep link warms them for the "Back to library" that follows.
+  const [detail, versions, updates, mods, health, conflicts] =
+    await Promise.allSettled([
+      getModDetail(route.sourceID, route.modID, context),
+      getModVersions(route.sourceID, route.modID, context),
+      get(scoped("/api/v1/updates", context)),
+      get(scoped("/api/v1/mods", context)),
+      get(scoped("/api/v1/health", context)),
+      get(scoped("/api/v1/conflicts", context)),
+    ]);
   if (store.get().modPage?.key !== key) return;
+  if (!isCurrentHydration(seq)) return;
   store.set({
     modPage: {
       ...store.get().modPage,
@@ -256,6 +338,15 @@ async function hydrateModPage(route, context) {
       versions: settled(versions),
       versionsError: failureMessage(versions),
       updates: settled(updates),
+    },
+    mods: settled(mods) ?? store.get().mods,
+    health: settled(health) ?? store.get().health,
+    conflicts: settled(conflicts) ?? store.get().conflicts,
+    fetchErrors: {
+      ...store.get().fetchErrors,
+      mods: failureMessage(mods),
+      health: failureMessage(health),
+      conflicts: failureMessage(conflicts),
     },
   });
 }
@@ -269,19 +360,26 @@ async function hydrateModPage(route, context) {
  * stale document into the new context.
  */
 async function reload(key, path) {
+  // Reads the CURRENT fence number without claiming one (C-1): a slice
+  // retry is not a hydration and must not invalidate one, but its own
+  // answer is just as capable of landing after a route change as
+  // hydrate()'s was - scoping the REQUEST to the route at call time only
+  // decides which document is fetched, never which route is on screen when
+  // it comes back.
+  const seq = hydrateSeq;
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
   try {
     const value = await get(scoped(path, context));
-    store.set({
+    commitHydration(seq, {
       [key]: value,
       fetchErrors: { ...store.get().fetchErrors, [key]: null },
     });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({
+    commitHydration(seq, {
       fetchErrors: { ...store.get().fetchErrors, [key]: message },
     });
   }
@@ -299,6 +397,7 @@ async function reload(key, path) {
  * that could not be open unless Mission Control had already loaded once.
  */
 async function reloadStatus() {
+  const seq = hydrateSeq;
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
@@ -308,14 +407,16 @@ async function reloadStatus() {
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    store.set({
+    commitHydration(seq, {
       status,
       games: allStatus.games,
       fetchErrors: { ...store.get().fetchErrors, status: null },
     });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({ fetchErrors: { ...store.get().fetchErrors, status: message } });
+    commitHydration(seq, {
+      fetchErrors: { ...store.get().fetchErrors, status: message },
+    });
   }
 }
 
@@ -422,7 +523,13 @@ function facetsFromReport(report) {
  * recomputing from it would make every OTHER category vanish from its own
  * picker the moment one was chosen. Reset only on a genuinely new query.
  */
-async function runSearchPage({ query, page, category = "", source = "" }) {
+async function runSearchPage({
+  query,
+  page,
+  category = "",
+  source = "",
+  tags = "",
+}) {
   const q = (query ?? "").trim();
   searchPageSeq += 1;
   const seq = searchPageSeq;
@@ -448,6 +555,7 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
       pageSize: SEARCH_PAGE_SIZE,
       category,
       source,
+      tags,
       report: null,
       error: null,
       facets,
@@ -456,7 +564,13 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
   try {
     const report = await apiSearch(
       q,
-      { page, pageSize: SEARCH_PAGE_SIZE, category, source },
+      {
+        page,
+        pageSize: SEARCH_PAGE_SIZE,
+        category,
+        source,
+        tags: splitTags(tags),
+      },
       context,
     );
     if (searchPageSeq !== seq) return;
@@ -469,6 +583,7 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
         pageSize: SEARCH_PAGE_SIZE,
         category,
         source,
+        tags,
         report,
         error: null,
         facets: nextFacets,
@@ -484,6 +599,7 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
         pageSize: SEARCH_PAGE_SIZE,
         category,
         source,
+        tags,
         report: null,
         error: err instanceof ApiError ? err.message : String(err),
         facets,
@@ -492,8 +608,20 @@ async function runSearchPage({ query, page, category = "", source = "" }) {
   }
 }
 
+/** splitTags turns the tag field's raw text into the repeated ?tag= values
+ * the wire takes (C-3, `lmm search --tag`). Comma OR whitespace separated,
+ * because a user typing a tag list will use whichever they are used to, and
+ * empties are dropped rather than sent as a "" tag - absent means no
+ * filter. */
+function splitTags(raw) {
+  return (raw ?? "")
+    .split(/[,\s]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
 /** searchPageGoTo re-runs the search page at a different page, keeping the
- * current query/category/source - the Next/Prev controls' own action. */
+ * current query/category/source/tags - the Next/Prev controls' own action. */
 function searchPageGoTo(page) {
   const current = store.get().searchPage;
   if (!current) return;
@@ -502,6 +630,7 @@ function searchPageGoTo(page) {
     page,
     category: current.category,
     source: current.source,
+    tags: current.tags,
   });
 }
 
@@ -515,6 +644,24 @@ function searchPageSetCategory(category) {
     page: 0,
     category,
     source: current.source,
+    tags: current.tags,
+  });
+}
+
+/** searchPageSetTags applies `lmm search --tag` at page 0 (C-3). Tags are
+ * NOT a facet the report can offer options for - no source reports its own
+ * tag vocabulary on the wire - so this is a free-text field rather than a
+ * select, and the search page only offers it where a source actually
+ * honours it. */
+function searchPageSetTags(tags) {
+  const current = store.get().searchPage;
+  if (!current) return;
+  runSearchPage({
+    query: current.query,
+    page: 0,
+    category: current.category,
+    source: current.source,
+    tags,
   });
 }
 
@@ -526,6 +673,7 @@ function searchPageSetSource(source) {
     page: 0,
     category: current.category,
     source,
+    tags: current.tags,
   });
 }
 
@@ -551,12 +699,20 @@ async function openPlan({
   title,
   confirmLabel,
   options,
+  applyOptions,
   onConfirmed,
   openerSelector,
+  context: contextOverride,
 }) {
   modalSeq += 1;
   const seq = modalSeq;
-  const context = {
+  // The selected context, unless the caller names another (C-3). Every
+  // mutation started from a control that is ABOUT the current profile uses
+  // the default; the profiles modal's own per-row Purge…/Sync… are the
+  // exception, because the row names a profile that may not be the selected
+  // one and the plan handle binds the profile at PLAN time - so the scope
+  // has to be right before the plan is computed, not after.
+  const context = contextOverride ?? {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
@@ -591,6 +747,13 @@ async function openPlan({
     confirmLabel,
     seq,
     options,
+    context: contextOverride,
+    // applyOptions is normally undefined at open time and filled in by the
+    // renderer's own controls (setPlanOptions). It is carried HERE for
+    // replanWith (below), which re-opens the same plan with a changed
+    // plan-time option and must not throw away an apply-time choice the
+    // user already made in the same modal.
+    applyOptions,
     onConfirmed,
     openerSelector,
   };
@@ -611,6 +774,38 @@ async function openPlan({
     if (modalSeq !== seq) return;
     store.set({ modal: { ...base, status: "error", ...describe(err) } });
   }
+}
+
+/**
+ * replanWith re-computes the OPEN plan with one plan-time option changed
+ * (C-3, epic live review).
+ *
+ * A plan-time option is one that changes what the plan SAYS - install's
+ * show_archived and no_deps, uninstall's keep_cache, deploy's link method.
+ * Patching it locally would leave the preview on screen describing a
+ * mutation other than the one Confirm submits, which is the exact dishonesty
+ * the Plan/Apply split exists to prevent. So the modal re-plans: same kind,
+ * same origin, same words, a new plan.
+ *
+ * applyPatch moves an apply-time twin along with it, for the fields that
+ * live in both halves of a kind's request (kind_uninstall.go/kind_purge.go
+ * each take keep_cache/uninstall/skip_hooks twice - plan-time so the preview
+ * is honest, apply-time because the flow reads its own options).
+ */
+async function replanWith(planPatch, applyPatch) {
+  const modal = store.get().modal;
+  if (!modal || modal.type !== "plan") return;
+  await openPlan({
+    kind: modal.kind,
+    origin: modal.origin,
+    title: modal.title,
+    confirmLabel: modal.confirmLabel,
+    options: { ...(modal.options ?? {}), ...planPatch },
+    applyOptions: { ...(modal.applyOptions ?? {}), ...(applyPatch ?? {}) },
+    onConfirmed: modal.onConfirmed,
+    openerSelector: modal.openerSelector,
+    context: modal.context,
+  });
 }
 
 /** closeModal closes whatever the shared modal slot currently holds -
@@ -1099,6 +1294,20 @@ async function setModUpdatePolicy(sourceID, modID, policy) {
   await refreshAfterModSetting(sourceID, modID);
 }
 
+/** setModConvert is `lmm mod convert` (C-3) - the fourth mod setting, and
+ * the same shape as the other three: one gated write, nothing to preview,
+ * refreshing whatever is on screen on success. It is only ever offered for
+ * a mod whose ModListing carries a non-null convert_paks, which is the wire
+ * saying pak conversion applies to this mod at all. */
+async function setModConvert(sourceID, modID, enabled) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiSetModConvert(sourceID, modID, enabled, context);
+  await refreshAfterModSetting(sourceID, modID);
+}
+
 /** reloadModPageSlice re-fetches one of the full mod page's two
  * supplementary reads (detail/versions) in isolation - the I3 retry
  * affordance the four Mission Control reads already offer, applied to this
@@ -1139,6 +1348,22 @@ function describe(err) {
  * submits). A no-op when no modal is open, which happens only if a renderer
  * fires this after the user has already cancelled - nothing left to patch.
  */
+/**
+ * setPlanConfirmationText records what the user has typed into a
+ * destructive plan's own type-the-name gate (C-3: purge).
+ *
+ * Store state rather than the renderer's own useState, because the thing
+ * that READS it is the modal's Confirm button (confirmplan.js), which is a
+ * sibling of the renderer and not its child. Written from onInput - an
+ * event handler, outside Preact's render/effect cycle - for the same reason
+ * setPlanOptions is (plan_install.js's header comment).
+ */
+function setPlanConfirmationText(text) {
+  const modal = store.get().modal;
+  if (!modal) return;
+  store.set({ modal: { ...modal, confirmationText: text } });
+}
+
 function setPlanOptions(patch) {
   const modal = store.get().modal;
   if (!modal) return;
@@ -1158,6 +1383,36 @@ function clearOrigin(origin) {
   const origins = { ...store.get().origins };
   delete origins[origin];
   store.set({ origins });
+}
+
+// succeededOriginReleaseMillis is how long a SUCCEEDED job keeps the control
+// it was started from before that control returns to being itself (I-2,
+// epic live review).
+//
+// "The control you clicked morphs into its progress" reads correctly on a
+// row or a card, where the outcome simply stays where you left it. On the
+// top bar's Deploy it meant the application's primary action was
+// unavailable until the user closed a success message: install something
+// else, and the way to deploy it was to first dismiss the last deploy's
+// "Done". A success has nothing left to say a few seconds later - the tray
+// keeps the whole session's record either way - so it hands the control
+// back on its own.
+//
+// FAILURES are deliberately exempt. A failure carries the next step (the
+// envelope's own message, and often the affordance that answers it - the
+// conflict round trip's Overwrite button lives inside this readout), so it
+// waits for the user. Same reason toasts only auto-dismiss on success.
+const succeededOriginReleaseMillis = 4000;
+
+/** releaseSucceededOrigin hands origin's control back once the job it is
+ * showing has had its few seconds on screen. Guarded on the origin still
+ * naming THAT job: a control the user has already started something else
+ * from must not be cleared out from under the new job. */
+function releaseSucceededOrigin(origin, jobID) {
+  setTimeout(() => {
+    if (store.get().origins[origin] !== jobID) return;
+    clearOrigin(origin);
+  }, succeededOriginReleaseMillis);
 }
 
 let toastSeq = 0;
@@ -1220,6 +1475,17 @@ async function onJobDone(summary) {
     waiter(summary);
   }
 
+  // The toast rule is a question about the screen AS THE JOB LANDED, and
+  // the next two lines change that screen: refreshSearchResults puts the
+  // omnibar's (and the search page's) result list into its loading state,
+  // which unmounts the very row this job's outcome is being rendered on.
+  // Asking isOriginMounted afterwards therefore got "no" for every install
+  // started from a search row, and every one of them toasted on top of the
+  // inline outcome the user was already looking at (C-2). The set is
+  // snapshotted here, BEFORE anything can unmount, and consulted below once
+  // the origin is actually known.
+  const mountedAtCompletion = mountedOriginsSnapshot();
+
   hydrate(store.get().route);
   refreshSearchResults();
 
@@ -1229,7 +1495,15 @@ async function onJobDone(summary) {
   await awaitBindings();
 
   const origin = originOf(summary.id);
-  if (origin && isOriginMounted(origin)) return;
+  if (origin && summary.state === "succeeded")
+    releaseSucceededOrigin(origin, summary.id);
+
+  // Either tense counts as "in view": the snapshot answers for a control
+  // this function's own refresh took off screen, and the live check for a
+  // control that only MOUNTED once the binding landed (a row rendered by
+  // the very refresh above).
+  if (origin && (mountedAtCompletion.has(origin) || isOriginMounted(origin)))
+    return;
 
   pushToast(
     summary.state === "failed"
@@ -1307,14 +1581,18 @@ const actions = {
   closePlan: closeModal,
   confirmPlan,
   setPlanOptions,
+  setPlanConfirmationText,
+  replanWith,
   searchSources,
   searchPageGoTo,
   searchPageSetCategory,
   searchPageSetSource,
+  searchPageSetTags,
   startToggle,
   setModLock,
   clearModLock,
   setModUpdatePolicy,
+  setModConvert,
   clearOrigin,
   dismissToast,
   // pushToast is exposed directly (I1, unit 6 fix wave): the row menu's own

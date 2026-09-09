@@ -35,6 +35,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lmm game edit` — change a configured game's sources (#326).** Which
+  mod sources a game maps could only ever be set when the game was created,
+  so a custom source added later (`lmm source add`, or the web UI's Setup →
+  Custom sources editor) could not be attached to an existing game without
+  hand-editing `games.yaml`. `lmm game edit <game-id>` takes a repeatable
+  `--source <id>=<identifier>`, which adds or replaces one mapping, and a
+  repeatable `--remove-source <id>`, which drops one; removals apply first
+  (so one run can re-point an id), and the identifier may be empty for a
+  source that needs none. `--json` prints the same `core.GameListEntry` row `lmm game list`
+  does. The web twin is `PUT /api/v1/games/{id}` — a new capability on
+  **both** sides, which is why the web UI's first-run flow used to dead-end
+  for a directory-source user.
+
+- **The last four CLI commands reach `lmm serve` (#326).** `purge`,
+  `profile sync` and `mod edit` join the plan-kind table as `purge`,
+  `profile_sync` and `mod_relink` — each the same Plan → confirm → job flow
+  every other mutation uses, over core's existing pairs — and `mod convert`
+  (the pak-conversion toggle for a compile-mode game) becomes
+  `POST /api/v1/mods/{source}/{id}/convert`, a single-step write beside
+  lock/unlock/update-policy. Two flags gained the wire options they were
+  missing: `GET /api/v1/search` takes a repeatable `?tag=`
+  (`lmm search --tag`), and the `install` plan takes `no_deps`
+  (`lmm install --no-deps`), whose four-field clearing now lives in core as
+  `InstallPlan.SkipDependencies` so both frontends mean the same thing by
+  it.
+
 - **`lmm serve` — a local web UI that can do everything the CLI can
   (epic #326).** `lmm serve` starts a single-page application on
   `127.0.0.1:7420` (`--addr` to change it, `--no-open` to skip opening a
@@ -79,25 +105,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   screen arrives as a toast instead. Jobs run under the server's own
   context, so closing the tab never interrupts one. Every plan kind the CLI
   has is wired: deploy, install, uninstall, update batches, rollback,
-  profile switch, profile apply, profile import, archive import, adopt and
-  verify repair — plus enable/disable, the two single-step toggles with
-  nothing to preview.
+  profile switch, profile apply, profile sync, profile import, purge,
+  archive import, adopt, mod re-link and verify repair — plus enable/disable
+  and mod lock/update-policy/pak-conversion, the single-step writes with
+  nothing to preview. Each confirm step carries that command's own flags in
+  an **Advanced** section (`--show-archived`, `--no-deps`, `--keep-cache`,
+  `deploy <mod-id>`/`--method`/`--purge`, `--force`, `--no-hooks`); the ones
+  that change what the plan SAYS re-compute it, so the preview always
+  describes the mutation Confirm submits.
   **Modals**: confirm-plan (one framework, one renderer per kind), reorder
   (drag or keyboard, with a live "current vs proposed winner" preview per
-  contested path), profiles (create/rename/delete/set-default/export/import),
-  and a batch uninstall.
+  contested path), profiles (create/rename/delete/set-default/export/import,
+  plus per-profile Sync… and Purge…), and a batch uninstall. Purge is the
+  one mutation that asks for more than a click: its Confirm stays disabled
+  until the profile's own name is typed back.
 
   **The admin surface is in the UI too** — the reason this is full
   bidirectional parity rather than a read-mostly dashboard. A `/setup` page
-  carries Games (the configured table, Steam detection, manual add,
-  set/clear default), Authentication (per-source status, log in/out, an
-  environment-variable hint, orphaned-token removal, and an honest
+  carries Games (the configured table with its sources and a per-row
+  "Edit sources…" editor, Steam detection, manual add, set/clear default),
+  Authentication (per-source status, log in/out, the environment variable
+  named beside the field, orphaned-token removal, and an honest
   "restart required" when a live re-key could not take effect),
   Custom sources (a line-numbered YAML editor with validate-then-save, an
   optional live probe, delete, download), Archive import (upload, optional
   source/mod-id link, confirm, conflict/Overwrite) and Adopt (scan, preview,
   confirm). With no games configured yet, `/` is the first-run flow, sharing
-  its detect/add components with the Games section so the two cannot drift.
+  its detect/add components with the Games section so the two cannot drift —
+  and the custom-source editor with it, because a game can only be added
+  against a source that already exists and nothing about defining one is
+  game-scoped.
 
   It is built on `/api/v1`, whose responses are the same documents
   `lmm <cmd> --json` prints, with the CLI's own `{"error", "details"}`
@@ -124,10 +161,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The UI follows the system's light/dark preference with a persisted
   override, both palettes meeting WCAG AA contrast; every control is
   reachable and operable by keyboard (`?` opens a shortcuts help listing
-  every binding), dialogs contain focus and give it
-  back, and `prefers-reduced-motion` disables every animation. Desktop only
-  (1080p and up) and localhost only, by design — there is no remote access,
-  no authentication, and no mobile layout.
+  every binding), every route renders exactly one `<h1>` and its sections
+  are real headings (ratcheted, so heading navigation keeps working),
+  dialogs contain focus and give it back, and `prefers-reduced-motion`
+  disables every animation. The activity bell and the keyboard help are on
+  every route, not only home. Desktop only (1080p and up) and localhost
+  only, by design — there is no remote access, no authentication, and no
+  mobile layout.
+
+  Two correctness fixes worth naming, both found by driving the finished
+  build. A re-hydration started under the profile you were leaving could
+  land after the one for the profile you moved to and repaint Mission
+  Control with the wrong profile's mods, health and conflicts — the
+  wrong-context bug class the path-based routing exists to prevent,
+  re-entering through the store instead of the URL; every route-scoped write
+  now passes a monotonic fence. And an install started from the omnibar
+  reported its outcome inline **and** raised a toast saying the same thing,
+  because the code deciding "is the control on screen?" had itself just
+  taken the control off screen; the answer is now snapshotted before
+  anything can move. A finished job also hands its control back after a few
+  seconds when it SUCCEEDED (failures stay pinned — they carry the next
+  step), so the top bar's Deploy is never held hostage by a success
+  message.
 
   This replaces the page-per-command web UI of epic #276 (#319/#320/#321/
   #322/#323), which converted the TUI too literally — six pages mapped to
@@ -138,8 +193,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback. It also closes epic #276's carried TUI intents — per-item update
   selection (#74), install version/file selection (#225), uninstall options
   (#226), full mod-detail prose (#232, #86), live deploy progress (#257) and
-  mod changelog (#87) — and, unlike that epic, leaves nothing CLI-only.
+  mod changelog (#87) — and, unlike that epic, leaves nothing CLI-only that
+  a browser could meaningfully express. What stays in the terminal is
+  terminal-native: `profile reorder -i` (the web reorders by dragging the
+  same load order), `gen-man`, `completion` and `help` (roff, shell scripts
+  and command-tree text), `serve` itself, `--json` (the web UI _is_ the JSON
+  consumer, and `/api/v1` returns the identical documents), and the
+  persistent process/output flags `--config`, `--data`, `--verbose`,
+  `--no-color` and `--log-level`, which configure the process rather than
+  the mutation. Nothing is web-only either: every browser affordance is a
+  rendering of a CLI-reachable capability. The full ledger — re-derived
+  command by command — is in the design doc's Scope section.
   (#327, #328, #329, #330, #331, #332, #333, #334, epic #326)
+
+- **`lmm serve`'s CSP pins `base-uri` and `form-action` (#326).** Neither
+  is covered by `default-src`, so without them an injected `<base href>`
+  could re-point the shell's relative module URLs and an injected form could
+  post the page's CSRF token off-origin. Defence in depth — every DOM write
+  goes through Preact and both unsafe-write ratchets are green — at one
+  directive each.
 
 - **`lmm profile reorder -i` — an interactive load-order picker (#254).**
   Setting a load order used to mean naming every mod ID positionally, which

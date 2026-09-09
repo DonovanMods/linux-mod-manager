@@ -354,3 +354,87 @@ func TestServer_APISearch_UnresolvedSelection_Renders404(t *testing.T) {
 	decodeStrict(t, rec.Body.Bytes(), &envelope)
 	assert.Contains(t, envelope.Error, "nope")
 }
+
+// TestServer_APISearch_TagParam_ForwardsToTheSourceFilter is #326's
+// parity fix (epic live review C-3: "`search --tag` - no tag param on
+// /api/v1/search"). ?tag= forwards verbatim into
+// core.SearchOptions.Tags - the same field `lmm search --tag` sets - and
+// like that flag it is REPEATABLE, so several tags narrow together.
+// Support varies by source (NexusMods honours it today); a source that
+// ignores tags simply returns what it always would, which is exactly what
+// the CLI flag does too.
+func TestServer_APISearch_TagParam_ForwardsToTheSourceFilter(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:  domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Alpha", Version: "1.0"},
+		Tags: []string{"lore-friendly", "armor"},
+	})
+	src.addMod(fakeSourceMod{
+		Mod:  domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Beta", Version: "1.0"},
+		Tags: []string{"armor"},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&tag=lore-friendly", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	require.Len(t, report.Mods, 1, "only the lore-friendly mod must match, server-side")
+	assert.Equal(t, "1", report.Mods[0].ID)
+
+	want, err := svc.Search(context.Background(), game, "default", "boots",
+		core.SearchOptions{Tags: []string{"lore-friendly"}})
+	require.NoError(t, err)
+	requireEncodesLike(t, rec.Body.Bytes(), want)
+}
+
+// TestServer_APISearch_TagParam_IsRepeatable pins the AND semantics `lmm
+// search --tag a --tag b` has: every named tag must match.
+func TestServer_APISearch_TagParam_IsRepeatable(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:  domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Alpha", Version: "1.0"},
+		Tags: []string{"lore-friendly", "armor"},
+	})
+	src.addMod(fakeSourceMod{
+		Mod:  domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Beta", Version: "1.0"},
+		Tags: []string{"lore-friendly"},
+	})
+	svc, _ := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet,
+		"http://"+testAddr+"/api/v1/search?q=boots&tag=lore-friendly&tag=armor", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	require.Len(t, report.Mods, 1)
+	assert.Equal(t, "1", report.Mods[0].ID)
+}
+
+// TestServer_APISearch_NoTagParam_IsUnfiltered guards the default: absent
+// ?tag= must leave SearchOptions.Tags nil, not an empty-string filter that
+// a real source would treat as a tag named "".
+func TestServer_APISearch_NoTagParam_IsUnfiltered(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Boots Alpha", Version: "1.0"}})
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "2", SourceID: "fake", Name: "Boots Beta", Version: "1.0"}, Tags: []string{"armor"}})
+	svc, _ := newFixtureServiceWithSource(t, src)
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var report core.SearchReport
+	decodeStrict(t, rec.Body.Bytes(), &report)
+	assert.Len(t, report.Mods, 2)
+}

@@ -168,6 +168,73 @@ func gameAddErrorStatus(err error) int {
 	}
 }
 
+// gameSourcesRequest is PUT /api/v1/games/{id}'s body: the FULL source map
+// the game should end up with, keyed by registered source id with that
+// game's identifier for each ("skyrimspecialedition", "1704", or "" for a
+// source that keys the game by nothing else).
+//
+// A replacement, not a patch: an id the map omits is removed, which is the
+// only way a form can express "stop using this source" without a second
+// verb. The CLI's `lmm game edit --source/--remove-source` flags are a
+// delta it resolves into exactly this map before calling the same core
+// seam.
+type gameSourcesRequest struct {
+	Sources map[string]string `json:"sources"`
+}
+
+// handleAPIGameSources answers PUT /api/v1/games/{id} with the game's own
+// core.GameListEntry row, re-read after the write - the same document GET
+// /api/v1/games carries and `lmm game list --json` prints, so the Setup
+// page's Games table splices the response straight back into its list.
+//
+// This is #326's C-4 fix: the sources map was the one part of games.yaml
+// neither frontend could change, so a custom source created in the Setup
+// editor sat at "In use: -" until the user stopped the server and edited
+// the file by hand.
+//
+// Like the lock/policy routes it is a SINGLE-STEP mutation rather than a
+// job: core.Service.UpdateGameSources is one gated write with nothing to
+// preview and no progress to report (mod_settings.go's own rule for the
+// settings class). An unregistered source id is 400 carrying
+// core.GameSpecError's {field, value, reason} - field "sources" - so the
+// form marks the offending row; an unknown game id is 404.
+func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
+	var req gameSourcesRequest
+	if err := decodeAPIBody(w, r, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	entry, err := s.svc.UpdateGameSources(r.Context(), r.PathValue("id"), req.Sources)
+	if err != nil {
+		s.writeAPIError(w, gameSourcesErrorStatus(err), err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, entry)
+}
+
+// gameSourcesErrorStatus classifies an UpdateGameSources failure: an
+// unknown game is 404, a rejected map is the caller's input (400), a
+// removal a game's own installed mods still depend on is a 409 collision
+// with state the caller could not have known about from the map alone
+// (M5, epic review M-4 - GameSourceInUseError, the mirror of how a game
+// collision on `lmm game add`/POST /api/v1/games is classified), and
+// anything else is a real write failure (500).
+func gameSourcesErrorStatus(err error) int {
+	var specErr *core.GameSpecError
+	var inUseErr *core.GameSourceInUseError
+	switch {
+	case errors.Is(err, domain.ErrGameNotFound):
+		return http.StatusNotFound
+	case errors.As(err, &specErr):
+		return http.StatusBadRequest
+	case errors.As(err, &inUseErr):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // handleAPIGamesDetect answers GET /api/v1/games/detect with the
 // core.GameDetectListing document: every moddable Steam game the scan
 // found, its 1-based index, whether games.yaml already holds it, and the

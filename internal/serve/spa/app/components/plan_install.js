@@ -38,6 +38,7 @@
 // file picker beneath it.
 
 import { html, useState } from "../render.js";
+import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 
 /** distinctVersions returns pool's Version values, first-seen order (the
  * pool's own FilterAndSortFiles order - newest/primary-favoring - so the
@@ -55,7 +56,7 @@ function distinctVersions(pool) {
 }
 
 /** InstallPlanView renders core.InstallPlan (internal/core/install.go). */
-export function InstallPlanView({ plan, actions }) {
+export function InstallPlanView({ plan, modal, actions }) {
   const pool = plan.file_pool ?? [];
   const versions = distinctVersions(pool);
   // The version SELECT only earns its place once there is more than one
@@ -66,7 +67,14 @@ export function InstallPlanView({ plan, actions }) {
   const showVersionPicker = versions.length > 1;
   const defaultVersion = plan.files?.[0]?.version ?? plan.mod.version;
 
-  const [version, setVersion] = useState(defaultVersion);
+  // Seeded from applyOptions, not merely from the plan (C-3): a PLAN-time
+  // option (show_archived, no_deps) re-plans, which remounts this view with
+  // a fresh plan document - and a picked version already written into
+  // applyOptions would otherwise be silently replaced on screen by the
+  // default while Confirm still submitted the pick.
+  const [version, setVersion] = useState(
+    modal?.applyOptions?.version ?? defaultVersion,
+  );
   const filesForVersion = pool.filter((f) => f.version === version);
   const showFilePicker = filesForVersion.length > 1;
   const showPicker = showVersionPicker || showFilePicker;
@@ -153,7 +161,7 @@ export function InstallPlanView({ plan, actions }) {
         deps.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Dependencies (${deps.length})</p>
+            <h3 class="plan__heading">Dependencies (${deps.length})</h3>
             <ul class="plan__mods">
               ${deps.map(
                 (d) => html`<li key=${`${d.source_id}/${d.id}`}>${d.name}</li>`,
@@ -186,9 +194,9 @@ export function InstallPlanView({ plan, actions }) {
         conflicts.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading plan__heading--warn">
+            <h3 class="plan__heading plan__heading--warn">
               Conflicts (${conflicts.length})
-            </p>
+            </h3>
             <ul class="plan__paths">
               ${conflicts.map(
                 (c) =>
@@ -200,6 +208,44 @@ export function InstallPlanView({ plan, actions }) {
           </section>
         `
       }
+
+      <${PlanAdvanced}>
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="show_archived"
+          label="Include archived files"
+          hint="lmm install --show-archived. Widens the candidate pool above."
+        />
+        <${PlanOption}
+          modal=${modal}
+          actions=${actions}
+          name="no_deps"
+          label="Skip dependencies"
+          hint="lmm install --no-deps. The dependency lists above clear to match."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_hooks"
+          label="Skip hooks"
+          hint="lmm --no-hooks."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="force"
+          label="Force"
+          hint="lmm install --force. Carry on past a failure that would otherwise stop the flow."
+        />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_verify"
+          label="Skip checksum recording"
+          hint="lmm install --skip-verify. Apply-time only: nothing about the plan above changes."
+        />
+      <//>
     </div>
   `;
 }

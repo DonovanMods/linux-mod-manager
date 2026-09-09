@@ -127,14 +127,7 @@ func (s *Server) handleAPIPlan(w http.ResponseWriter, r *http.Request) {
 
 	document, pending, err := kind.Plan(r.Context(), s, sel, opts)
 	if err != nil {
-		// A plan failure is the server's problem by default; a kind that
-		// can tell the caller's input is at fault says so with
-		// errBadPlanRequest (plankinds.go).
-		status := http.StatusInternalServerError
-		if errors.Is(err, errBadPlanRequest) {
-			status = http.StatusBadRequest
-		}
-		s.writeAPIError(w, status, err)
+		s.writeAPIError(w, planErrorStatus(err), err)
 		return
 	}
 

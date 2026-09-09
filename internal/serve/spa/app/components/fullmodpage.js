@@ -16,6 +16,16 @@
 // this page's own per-mod mutations are the versions table's Update-to/
 // Rollback pair instead.
 //
+// HEADING LEVELS. Every one of this page's sections is an <h2> under the
+// mod's own <h1> (MIN-3, the closing wave's gate review). They used to be
+// a mix: Findings and Conflicts were h2 while Description, Changelog,
+// Dependencies, Files, Versions and Job history were h3, because both
+// classes had been mapped mechanically in I-3 (section-header -> h2,
+// plan__heading -> h3) and this is the one page where both appear as
+// SIBLINGS. The h3s came after the h2s, so heading navigation read them as
+// children of "Conflicts". The class is unchanged and .plan__heading sets
+// its own size and weight, so nothing about the page looks different.
+//
 // Unlike the slide-over, this page owns its own reads (main.js's
 // hydrateModPage): core.ModFilesReport (primary, fatal on failure),
 // core.ModDetail and the versions document (both optional - see that
@@ -38,43 +48,29 @@
 // what ApplyRollback/ApplyUpdate would refuse server-side anyway.
 
 import { html, useEffect, useMemo, useState } from "../render.js";
-import { navigate, contextPath } from "../router.js";
-import { currentTheme, cycleTheme } from "../theme.js";
+import { contextPath } from "../router.js";
 import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
+import { AwayBar } from "./awaybar.js";
+import { findingLabel } from "../verify.js";
+import { ModSettingsControls, findingsFor, conflictsFor } from "./modpanel.js";
 
 /** BackLink is this page's one route out - always to Mission Control as it
  * stood, never the browser's own history stack. */
-function BackLink({ to }) {
-  return html`<a
-    class="mod-page__back"
-    href=${to}
-    onClick=${(e) => {
-      e.preventDefault();
-      navigate(to);
-    }}
-    >← Back to library</a
-  >`;
-}
-
 export function FullModPage({ state, route, onThemeChange, actions }) {
   const home = contextPath(route.game, route.profile);
   const modPage = state.modPage;
   const key = `${route.sourceID}/${route.modID}`;
 
   const header = html`
-    <header class="app-bar">
-      <span class="app-bar__brand">LMM</span>
-      <${BackLink} to=${home} />
-      <button
-        type="button"
-        class="theme-toggle"
-        onClick=${() => onThemeChange(cycleTheme())}
-      >
-        Theme: ${currentTheme()}
-      </button>
-    </header>
+    <${AwayBar}
+      state=${state}
+      route=${route}
+      home=${home}
+      onThemeChange=${onThemeChange}
+      actions=${actions}
+    />
   `;
 
   // Loading until the PRIMARY read has landed one way or the other:
@@ -116,6 +112,26 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   const modID = route.modID;
   const origin = (action) => `mod:${sourceID}/${modID}:${action}`;
 
+  // The lock/policy pair reads the LIBRARY listing first and the live
+  // ModDetail only as a fallback (I-5): core.ModListing carries locked,
+  // locked_version and update_policy without asking the source anything,
+  // so a mod whose source is offline still gets working controls - the same
+  // degradation rule the identity/files half of this page already follows.
+  const listing = (state.mods?.mods ?? []).find(
+    (m) => m.source_id === sourceID && m.id === modID,
+  );
+  const settingsSource = listing ?? installed;
+  const settingsRow = settingsSource && {
+    source_id: sourceID,
+    id: modID,
+    locked: Boolean(settingsSource.locked),
+    locked_version: settingsSource.locked_version,
+    update_policy: settingsSource.update_policy,
+  };
+
+  const findings = findingsFor(state.health, modID);
+  const conflicts = conflictsFor(state.conflicts, `${sourceID}:${modID}`);
+
   return html`
     ${header}
     <main id="main" class="app-main mod-page">
@@ -128,7 +144,12 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         ${installed?.locked && " · locked"}
       </p>
 
-      <div class="mod-page__section">
+      ${
+        settingsRow &&
+        html`<${ModSettingsControls} row=${settingsRow} actions=${actions} />`
+      }
+
+      <div class="mod-page__section mod-page__actions">
         <${InlineJob}
           origin=${origin("toggle")}
           state=${state}
@@ -148,8 +169,81 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             ${installedMod.enabled ? "Disable" : "Enable"}
           </button>
         <//>
+        <${InlineJob}
+          origin=${origin("uninstall")}
+          state=${state}
+          actions=${actions}
+        >
+          <button
+            type="button"
+            class="button button--danger"
+            data-action="uninstall"
+            onClick=${() =>
+              actions.openPlan({
+                kind: "uninstall",
+                origin: origin("uninstall"),
+                title: `Uninstall ${installedMod.name}`,
+                confirmLabel: "Uninstall",
+                options: { source_id: sourceID, mod_id: modID },
+              })}
+          >
+            Uninstall
+          </button>
+        <//>
+        <button
+          type="button"
+          class="button"
+          data-action="relink"
+          onClick=${() =>
+            actions.openPlan({
+              kind: "mod_relink",
+              origin: origin("relink"),
+              title: `Re-link ${installedMod.name}`,
+              confirmLabel: "Re-link",
+              options: { mod_id: modID, source_id: sourceID },
+            })}
+        >
+          Re-link…
+        </button>
       </div>
 
+      ${
+        findings.length > 0 &&
+        html`
+          <section class="mod-page__section" data-testid="mod-page-findings">
+            <h2 class="plan__heading">Findings (${findings.length})</h2>
+            <ul class="plan__paths">
+              ${findings.map(
+                (f) =>
+                  html`<li key=${f.file_id ?? f.status}>
+                    ${findingLabel(f)}
+                  </li>`,
+              )}
+            </ul>
+          </section>
+        `
+      }
+      ${
+        conflicts.length > 0 &&
+        html`
+          <section class="mod-page__section" data-testid="mod-page-conflicts">
+            <h2 class="plan__heading">Conflicts (${conflicts.length})</h2>
+            <ul class="plan__paths">
+              ${conflicts.map(
+                (c) =>
+                  html`<li key=${c.path} class="mono">
+                    ${c.path}
+                    ${
+                      c.load_order_winner.key === `${sourceID}:${modID}`
+                        ? " (wins)"
+                        : ` (loses to ${c.load_order_winner.name})`
+                    }
+                  </li>`,
+              )}
+            </ul>
+          </section>
+        `
+      }
       ${
         modPage.detailError &&
         html`<p class="empty-state__hint">
@@ -168,7 +262,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         detailMod?.description &&
         html`
           <section class="mod-page__section">
-            <p class="plan__heading">Description</p>
+            <h2 class="plan__heading">Description</h2>
             <p class="mod-page__prose">${detailMod.description}</p>
           </section>
         `
@@ -177,7 +271,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         modPage.detail &&
         html`
           <section class="mod-page__section">
-            <p class="plan__heading">Changelog</p>
+            <h2 class="plan__heading">Changelog</h2>
             ${
               modPage.detail.changelog
                 ? html`<p class="mod-page__prose">
@@ -192,9 +286,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         (detailMod?.dependencies ?? []).length > 0 &&
         html`
           <section class="mod-page__section">
-            <p class="plan__heading">
+            <h2 class="plan__heading">
               Dependencies (${detailMod.dependencies.length})
-            </p>
+            </h2>
             <ul class="plan__paths">
               ${detailMod.dependencies.map(
                 (d) =>
@@ -233,7 +327,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
 function FilesSection({ filesReport }) {
   return html`
     <section class="mod-page__section">
-      <p class="plan__heading">Files</p>
+      <h2 class="plan__heading">Files</h2>
       ${
         filesReport.merged_pak_only
           ? html`<p class="empty-state__hint">
@@ -241,7 +335,10 @@ function FilesSection({ filesReport }) {
               artifact.
             </p>`
           : (filesReport.files ?? []).length === 0
-            ? html`<p class="empty-state__hint">No files recorded.</p>`
+            ? html`<p class="empty-state__hint">
+                No deployed files tracked. (Files are tracked on install;
+                existing mods may need to be redeployed.)
+              </p>`
             : html`
                 <table class="mod-page__table">
                   <thead>
@@ -312,7 +409,7 @@ function VersionsSection({
 
   return html`
     <section class="mod-page__section">
-      <p class="plan__heading">Versions</p>
+      <h2 class="plan__heading">Versions</h2>
       <${VersionsTable}
         modPage=${modPage}
         installed=${installed}
@@ -402,7 +499,7 @@ function VersionsTable({
         <tr>
           <th>Version</th>
           <th>State</th>
-          <th></th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody>
@@ -420,7 +517,16 @@ function VersionsTable({
           return html`
             <tr key=${v}>
               <td class="mono">${v}</td>
-              <td>${isInstalled ? "installed" : ""}</td>
+              ${
+                /* M-6: an em dash rather than an empty cell. A blank
+                under a "State" header reads as a rendering failure; the
+                state of a version that is neither installed nor the checked
+                update target is genuinely "nothing to say", and the table
+                should say so. */ ""
+              }
+              <td>
+                ${isInstalled ? "installed" : isUpdateTarget ? "available" : "—"}
+              </td>
               <td>
                 ${
                   isUpdateTarget
@@ -446,7 +552,7 @@ function VersionsTable({
                           Update to ${v}
                         </button>
                       <//>`
-                    : ""
+                    : "—"
                 }
               </td>
             </tr>
@@ -483,7 +589,7 @@ function JobHistorySection({ state, sourceID, modID }) {
 
   return html`
     <section class="mod-page__section">
-      <p class="plan__heading">Job history</p>
+      <h2 class="plan__heading">Job history</h2>
       ${
         history.status === "loading"
           ? html`<p class="app-booting">Loading job history…</p>`

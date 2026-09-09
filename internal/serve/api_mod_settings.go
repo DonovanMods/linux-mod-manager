@@ -1,8 +1,8 @@
 // api_mod_settings.go answers the slide-over's and the full mod page's
-// EDITABLE lock and update-policy controls (docs/plans/2026-08-31-serve-spa
-// -design.md §Slide-over: "lock + policy controls (editable)") over three
-// thin POST routes - Service.SetModLock/ClearModLock/SetModUpdatePolicy
-// verbatim, each already a single beginOp-gated call with nothing to
+// EDITABLE lock, update-policy and pak-conversion controls (docs/plans/2026-08-31-serve-spa
+// -design.md §Slide-over: "lock + policy controls (editable)") over four
+// thin POST routes - Service.SetModLock/ClearModLock/SetModUpdatePolicy/
+// SetModConvertPaks verbatim, each already a single beginOp-gated call with nothing to
 // preview (mirroring EnableMod/DisableMod's own shape, mod_settings.go's own
 // doc comment).
 //
@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -34,6 +35,17 @@ import (
 // version only when locking from the full mod page's versions table.
 type modLockRequest struct {
 	Version string `json:"version,omitzero"`
+}
+
+// modConvertRequest is POST /api/v1/mods/{source}/{id}/convert's request
+// body: whether this mod's prebuilt .pak should be converted into the
+// profile's merged artifact. Enabled is a *bool, not bool, because
+// json/v2 has no "required" struct tag option to enforce presence on
+// decode - `lmm mod convert <mod-id> <on|off>` makes the caller say which
+// way, and a nil pointer (empty body, "{}", or an explicit null) must be
+// refused by handleAPIModConvert rather than silently landing on false.
+type modConvertRequest struct {
+	Enabled *bool `json:"enabled"`
 }
 
 // modUpdatePolicyRequest is POST /api/v1/mods/{source}/{id}/update-policy's
@@ -117,6 +129,58 @@ func (s *Server) handleAPIModUpdatePolicy(w http.ResponseWriter, r *http.Request
 	result, err := s.svc.SetModUpdatePolicy(r.Context(), sourceID, modID, sel.Game.ID, sel.Profile, req.Policy)
 	if err != nil {
 		s.writeAPIError(w, s.modSettingErrorStatus(r.Context(), sourceID, modID, sel, err), err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, result)
+}
+
+// handleAPIModConvert answers POST /api/v1/mods/{source}/{id}/convert with
+// the same core.ModSettingResult document `lmm mod convert --json` emits.
+//
+// #326 (epic live review C-3): this is the Icarus pak-conversion toggle -
+// the one missing web path the review said it would not defer, since it is
+// a first-class supported game's per-mod setting. Single-step and
+// job-free like its lock/policy siblings, for the reason this file's doc
+// comment gives.
+//
+// It reproduces `lmm mod convert`'s own guard rather than inventing one: a
+// mod with no pak-kind merge source has nothing to convert or leave raw,
+// so the request is 400 (bad input - this mod cannot take this setting)
+// with the CLI's exact wording, not a stored flag nothing will ever read.
+// The check runs against a live GetInstalledMod, which also gives the
+// not-found path its 404 before any write is attempted.
+func (s *Server) handleAPIModConvert(w http.ResponseWriter, r *http.Request) {
+	var req modConvertRequest
+	if err := decodeAPIBody(w, r, &req); err != nil {
+		s.writeAPIError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Enabled == nil {
+		s.writeAPIError(w, http.StatusBadRequest, errors.New(`"enabled" is required`))
+		return
+	}
+
+	sourceID, modID := r.PathValue("source"), r.PathValue("id")
+	sel, ok := s.resolveReadyAPISelection(w, r)
+	if !ok {
+		return
+	}
+
+	ctx := r.Context()
+	mod, err := s.svc.GetInstalledMod(ctx, sourceID, modID, sel.Game.ID, sel.Profile)
+	if err != nil {
+		s.writeAPIError(w, s.modSettingErrorStatus(ctx, sourceID, modID, sel, err), err)
+		return
+	}
+	if !s.svc.ModHasPakMergeSource(sel.Game, mod) {
+		s.writeAPIError(w, http.StatusBadRequest,
+			fmt.Errorf("mod %s has no pak merge source: pak conversion does not apply", modID))
+		return
+	}
+
+	result, err := s.svc.SetModConvertPaks(ctx, sourceID, modID, sel.Game.ID, sel.Profile, *req.Enabled)
+	if err != nil {
+		s.writeAPIError(w, s.modSettingErrorStatus(ctx, sourceID, modID, sel, err), err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)

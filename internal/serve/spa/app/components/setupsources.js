@@ -28,7 +28,16 @@ directory:
   path: /path/to/mods
 `;
 
-export function SetupSources() {
+/**
+ * SetupSources is the custom-source editor.
+ *
+ * onChanged (optional, C-4) fires after the registry has actually changed -
+ * a save or a delete - for a caller rendering something else that lists
+ * sources beside it. First run is that caller: its game form's source
+ * picker is fetched once on mount, so a source defined right there would
+ * otherwise not appear in the very form the section exists to feed.
+ */
+export function SetupSources({ onChanged } = {}) {
   const [sources, setSources] = useState(null);
   const [inUseBy, setInUseBy] = useState({}); // {sourceID: [gameID, ...]}
   // gameNames maps a game id to its display name (Minor 8: the in-use
@@ -82,6 +91,7 @@ export function SetupSources() {
   async function afterSave() {
     setEditing(null);
     await reload();
+    onChanged?.();
   }
 
   return html`
@@ -105,7 +115,10 @@ export function SetupSources() {
                 inUseBy=${inUseBy[s.id] ?? []}
                 gameNames=${gameNames}
                 onEdit=${() => setEditing(s.id)}
-                onChanged=${reload}
+                onChanged=${async () => {
+                  await reload();
+                  onChanged?.();
+                }}
               />
             `,
           )}
@@ -320,8 +333,24 @@ function SourceEditor({ id, onSaved, onCancel }) {
     }
   }
 
-  const lines = yaml.split("\n").length;
+  // A trailing newline is a line TERMINATOR, not an empty last line, so it
+  // must not add a number of its own (M-4/M-3 of the epic live review: the
+  // gutter ran one past the document). Never below 1 - an empty editor
+  // still has a line 1 to type on.
+  const lines = Math.max(
+    1,
+    yaml.split("\n").length - (yaml.endsWith("\n") ? 1 : 0),
+  );
 
+  // spellcheck is written as a BOOLEAN below, not as the string "false"
+  // (IMP-3, the closing wave's gate review). Preact assigns it as a DOM
+  // PROPERTY, and the non-empty string "false" is truthy - so the
+  // spellcheck="false" this file carried since issue 333 measured in a browser
+  // as getAttribute("spellcheck") === "true", and the YAML editor really
+  // did draw red squiggles under every key. It is the only HTML
+  // boolean/enumerated attribute this application writes literally: every
+  // other "true"/"false" literal under spa/app is a data-* or aria-*
+  // attribute, which ARE strings by spec and are correct as written.
   return html`
     <div class="source-editor" data-testid="source-editor">
       ${loadError && html`<p class="modal__error">${loadError}</p>`}
@@ -331,7 +360,7 @@ function SourceEditor({ id, onSaved, onCancel }) {
         </div>
         <textarea
           class="source-editor__textarea mono"
-          spellcheck="false"
+          spellcheck=${false}
           value=${yaml}
           onInput=${onEdit}
         ></textarea>

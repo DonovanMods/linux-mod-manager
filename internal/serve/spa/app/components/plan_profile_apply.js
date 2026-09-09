@@ -19,7 +19,7 @@ function ModList({ heading, mods, testID }) {
   if (!mods || mods.length === 0) return null;
   return html`
     <section class="plan__section">
-      <p class="plan__heading">${heading} (${mods.length})</p>
+      <h3 class="plan__heading">${heading} (${mods.length})</h3>
       <ul class="plan__paths" data-testid=${testID}>
         ${mods.map(
           (m) => html`
@@ -72,7 +72,7 @@ export function ProfileApplyPlanView({ plan }) {
         toInstall.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Install (${toInstall.length})</p>
+            <h3 class="plan__heading">Install (${toInstall.length})</h3>
             <ul class="plan__paths" data-testid="profile-apply-to-install">
               ${toInstall.map((entry) => {
                 const ref = entry.ref ?? {};

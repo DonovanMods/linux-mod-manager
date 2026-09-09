@@ -13,12 +13,12 @@
 
 import { html, useEffect, useRef, useState } from "../render.js";
 import { navigate, contextPath, setupPath } from "../router.js";
-import { currentTheme, cycleTheme } from "../theme.js";
 import { SetupGames } from "./setupgames.js";
 import { SetupAuth } from "./setupauth.js";
 import { SetupSources } from "./setupsources.js";
 import { SetupImportArchive } from "./setupimport.js";
 import { SetupAdopt } from "./setupadopt.js";
+import { AwayBar } from "./awaybar.js";
 
 const SECTIONS = [
   { key: "games", label: "Games" },
@@ -27,18 +27,6 @@ const SECTIONS = [
   { key: "archive", label: "Archive import" },
   { key: "adopt", label: "Adopt" },
 ];
-
-function BackLink({ to }) {
-  return html`<a
-    class="mod-page__back"
-    href=${to}
-    onClick=${(e) => {
-      e.preventDefault();
-      navigate(to);
-    }}
-    >← Back to library</a
-  >`;
-}
 
 export function SetupPage({ state, route, onThemeChange, actions }) {
   const [section, setSection] = useState(
@@ -88,17 +76,13 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
 
   const home = contextPath(route.game, route.profile);
   const header = html`
-    <header class="app-bar">
-      <span class="app-bar__brand">LMM</span>
-      <${BackLink} to=${home} />
-      <button
-        type="button"
-        class="theme-toggle"
-        onClick=${() => onThemeChange(cycleTheme())}
-      >
-        Theme: ${currentTheme()}
-      </button>
-    </header>
+    <${AwayBar}
+      state=${state}
+      route=${route}
+      home=${home}
+      onThemeChange=${onThemeChange}
+      actions=${actions}
+    />
   `;
 
   if (state.error) {
@@ -117,7 +101,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
   return html`
     ${header}
     <main id="main" class="app-main setup-page" data-testid="setup-page">
-      <p class="section-header">Setup</p>
+      <h1 class="section-header">Setup</h1>
       <nav class="setup-nav" role="tablist" aria-label="Setup sections">
         ${SECTIONS.map(
           (s, i) => html`
@@ -147,6 +131,20 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
         role="tabpanel"
         aria-labelledby=${`setup-tab-${section}`}
       >
+        ${
+          // IMP-2 of the closing wave's gate review: this page's five
+          // sections contributed no headings at all, so a screen-reader
+          // user navigating Setup by heading got "Setup" and then nothing.
+          // aria-labelledby (above) names the panel but creates no heading,
+          // and the section's VISIBLE title is its own tab - drawing it a
+          // second time inside the panel would say the same thing twice.
+          // So: a real <h2>, announced rather than drawn, the same call
+          // Mission Control's own <h1> makes. It moves with the tab, which
+          // is what makes each of the five a real heading in turn.
+          html`<h2 class="section-header visually-hidden">
+            ${SECTIONS.find((s) => s.key === section)?.label ?? "Setup"}
+          </h2>`
+        }
         ${
           section === "games" &&
           html`<${SetupGames}

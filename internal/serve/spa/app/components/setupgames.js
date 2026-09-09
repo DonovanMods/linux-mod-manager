@@ -3,7 +3,15 @@
 // uses (gameadd.js), and default-game set/clear.
 
 import { html, useEffect, useState } from "../render.js";
-import { ApiError, listGames, post, del } from "../api.js";
+import {
+  ApiError,
+  listGames,
+  listSources,
+  updateGameSources,
+  post,
+  del,
+} from "../api.js";
+import { SourcesMapEditor } from "./sourcesmap.js";
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
 
 /** setDefaultGame/clearDefaultGame are this section's own two mutations -
@@ -20,6 +28,11 @@ export function SetupGames({ actions, game, profile }) {
   const [showAdd, setShowAdd] = useState(false);
   const [busyID, setBusyID] = useState(null);
   const [rowError, setRowError] = useState(null);
+  const [sources, setSources] = useState(null);
+  // Which row's source map is open for editing, and the draft it holds.
+  // One at a time: two open editors over the same replacement-shaped PUT is
+  // two ways to lose an edit.
+  const [editing, setEditing] = useState(null); // {id, map}
 
   async function reload() {
     try {
@@ -32,7 +45,34 @@ export function SetupGames({ actions, game, profile }) {
 
   useEffect(() => {
     reload();
+    // The registered sources are what the mapping editor offers; a failure
+    // there degrades that ONE control (no editor) rather than the table.
+    listSources()
+      .then((rows) => setSources(rows.filter((r) => r.type !== "error")))
+      .catch(() => setSources([]));
   }, []);
+
+  async function saveSources() {
+    if (!editing) return;
+    setBusyID(editing.id);
+    setRowError(null);
+    try {
+      await updateGameSources(editing.id, editing.map);
+      setEditing(null);
+      await reload();
+      await actions.reloadStatus();
+    } catch (err) {
+      // The 409 a removal that would orphan installed mods answers with
+      // names the mods; the envelope's own message already says so, so it
+      // is rendered verbatim rather than re-worded here.
+      setRowError({
+        id: editing.id,
+        message: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      setBusyID(null);
+    }
+  }
 
   async function afterAdd() {
     setShowDetect(false);
@@ -84,6 +124,7 @@ export function SetupGames({ actions, game, profile }) {
             <th>Name</th>
             <th class="col--path">Install path</th>
             <th class="col--path">Mod path</th>
+            <th>Sources</th>
             <th>Default</th>
           </tr>
         </thead>
@@ -101,6 +142,26 @@ export function SetupGames({ actions, game, profile }) {
                   ${g.mod_path}
                 </td>
                 <td>
+                  <span class="mono"
+                    >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span
+                  >${" "}
+                  <button
+                    type="button"
+                    class="button button--small"
+                    data-action="edit-sources"
+                    data-game=${g.id}
+                    disabled=${busyID === g.id || sources === null}
+                    onClick=${() =>
+                      setEditing(
+                        editing?.id === g.id
+                          ? null
+                          : { id: g.id, map: { ...(g.source_ids ?? {}) } },
+                      )}
+                  >
+                    ${editing?.id === g.id ? "Cancel" : "Edit sources…"}
+                  </button>
+                </td>
+                <td>
                   <button
                     type="button"
                     class="button button--small ${g.default ? "button--primary" : ""}"
@@ -115,6 +176,28 @@ export function SetupGames({ actions, game, profile }) {
                   }
                 </td>
               </tr>
+              ${
+                editing?.id === g.id &&
+                html`<tr key=${`${g.id}-sources`} class="setup-table__editor">
+                  <td colspan="5">
+                    <${SourcesMapEditor}
+                      sources=${sources}
+                      value=${editing.map}
+                      disabled=${busyID === g.id}
+                      onChange=${(map) => setEditing({ id: g.id, map })}
+                    />
+                    <button
+                      type="button"
+                      class="button button--small button--primary"
+                      data-action="save-sources"
+                      disabled=${busyID === g.id}
+                      onClick=${saveSources}
+                    >
+                      ${busyID === g.id ? "Saving…" : "Save sources"}
+                    </button>
+                  </td>
+                </tr>`
+              }
             `,
           )}
         </tbody>

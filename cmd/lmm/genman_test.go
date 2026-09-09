@@ -130,8 +130,8 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	assert.Equal(t, 22, checked,
-		"expected exactly 22 commands with angle-bracket Use args; update this count if the command tree changed")
+	assert.Equal(t, 23, checked,
+		"expected exactly 23 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
 var angleBracketArgsRE = regexp.MustCompile(`<[^>]+>`)

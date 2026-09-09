@@ -396,8 +396,21 @@ func TestAPIGameClearDefault_RequiresCSRF(t *testing.T) {
 // text/plain one.
 func TestAPIGamesUnknownSubpath(t *testing.T) {
 	s := newGamesServer(t)
-	rec := doAPI(s, http.MethodGet, "/api/v1/games/nope", "")
+	rec := doAPI(s, http.MethodGet, "/api/v1/games/nope/whatever", "")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+}
+
+// TestAPIGamesIDIsPUTOnly is the same fallback seen from a path that IS
+// claimed, just not for this method: since #326 gave /api/v1/games/{id} a
+// PUT (the source<->game mapping), a GET of it answers 405 naming PUT
+// rather than the generic 404 it used to get when nothing claimed the path
+// at all.
+func TestAPIGamesIDIsPUTOnly(t *testing.T) {
+	s := newGamesServer(t)
+	rec := doAPI(s, http.MethodGet, "/api/v1/games/nope", "")
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+	assert.Equal(t, "PUT", rec.Header().Get("Allow"))
 	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
 }
 

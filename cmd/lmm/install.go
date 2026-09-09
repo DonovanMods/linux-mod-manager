@@ -548,10 +548,9 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	}
 
 	if installNoDeps || mod.SourceID == domain.SourceLocal {
-		plan.Dependencies = nil
-		plan.MissingDependencies = nil
-		plan.CycleDetected = false
-		plan.DependencyWarnings = nil
+		// One core call, shared with `lmm serve`'s install plan kind, so
+		// --no-deps and the API's no_deps cannot drift apart (#326).
+		plan.SkipDependencies()
 	}
 
 	// If there are dependencies to install (or unresolvable ones to warn
@@ -940,13 +939,11 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 	return nil
 }
 
-// promptMultiSelection prompts the user to select one or more numbers
-// Accepts formats like: "1", "1,3,5", "1-3", "1..3", "1,3-5"
-func promptMultiSelection(prompt string, defaultChoice, max int) ([]int, error) {
-	return promptMultiSelectionFrom(os.Stdin, prompt, defaultChoice, max)
-}
-
-// promptMultiSelectionFrom is the testable core of promptMultiSelection
+// promptMultiSelectionFrom reads one or more numbers from r, accepting
+// "1", "1,3,5", "1-3", "1..3" and "1,3-5". Its os.Stdin wrapper
+// (promptMultiSelection) was deleted in #326: nothing had called it since
+// the flows that prompt started passing their own reader, and it was one
+// of the 37 baselined trunk findings (M-10)
 func promptMultiSelectionFrom(r io.Reader, prompt string, defaultChoice, max int) ([]int, error) {
 	reader := bufio.NewReader(r)
 

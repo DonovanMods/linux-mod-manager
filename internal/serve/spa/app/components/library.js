@@ -180,6 +180,24 @@ export function Library({
     }
   }
 
+  // toggleConvert is the ⋯ menu's own `lmm mod convert` (C-3). Same
+  // menu-closes-so-a-toast-is-the-only-place-left shape as toggleLock
+  // above. Offered only when core.ModListing's tri-state convert_paks is
+  // non-null, which is the wire saying pak conversion applies to this mod
+  // at all.
+  async function toggleConvert(row) {
+    setMenuKey(null);
+    try {
+      await actions.setModConvert(row.source_id, row.id, !row.convert_paks);
+    } catch (err) {
+      actions.pushToast({
+        tone: "failure",
+        title: `Couldn't change pak conversion for ${row.name}`,
+        detail: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  }
+
   function openReorder() {
     actions.openReorderModal({ profileName: state.route.profile });
   }
@@ -276,6 +294,35 @@ export function Library({
         >
           ${row.locked ? "Unlock" : "Lock"}
         </button>
+        ${
+          row.convert_paks !== null &&
+          row.convert_paks !== undefined &&
+          html`<button
+            type="button"
+            class="row-menu__item"
+            data-action="toggle-convert"
+            onClick=${() => toggleConvert(row)}
+          >
+            ${row.convert_paks ? "Disable pak conversion" : "Enable pak conversion"}
+          </button>`
+        }
+        <button
+          type="button"
+          class="row-menu__item"
+          data-action="relink"
+          onClick=${() => {
+            setMenuKey(null);
+            actions.openPlan({
+              kind: "mod_relink",
+              origin: origin("relink"),
+              title: `Re-link ${row.name}`,
+              confirmLabel: "Re-link",
+              options: { mod_id: row.id, source_id: row.source_id },
+            });
+          }}
+        >
+          Re-link…
+        </button>
         <button
           type="button"
           class="row-menu__item"
@@ -297,7 +344,7 @@ export function Library({
     if (error) {
       return html`
         <section class="library">
-          <p class="section-header">Library</p>
+          <h2 class="section-header">Library</h2>
           <div class="empty-state empty-state--error">
             <p>Couldn't load your library: ${error}</p>
             <button
@@ -326,7 +373,7 @@ export function Library({
     };
     return html`
       <section class="library">
-        <p class="section-header">Library</p>
+        <h2 class="section-header">Library</h2>
         <div class="empty-state">
           <p>No mods installed yet.</p>
           <p class="empty-state__hint">
@@ -367,7 +414,7 @@ export function Library({
   return html`
     <section class="library">
       <div class="library__toolbar">
-        <p class="section-header">${libraryLabel}</p>
+        <h2 class="section-header">${libraryLabel}</h2>
         ${
           liveActivity &&
           html`<span class="library__live" role="status">${liveActivity}</span>`

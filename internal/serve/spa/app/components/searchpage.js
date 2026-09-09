@@ -17,22 +17,13 @@
 // round trip; its own label says so (Important 1c).
 
 import { html, useMemo, useState } from "../render.js";
-import { navigate, contextPath } from "../router.js";
-import { currentTheme, cycleTheme } from "../theme.js";
+import { contextPath } from "../router.js";
 import { SourceResultsList } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
+import { AwayBar } from "./awaybar.js";
 
-function BackLink({ to }) {
-  return html`<a
-    class="mod-page__back"
-    href=${to}
-    onClick=${(e) => {
-      e.preventDefault();
-      navigate(to);
-    }}
-    >← Back to library</a
-  >`;
-}
+// See tagsSupported below.
+const TAG_CAPABLE_SOURCES = new Set(["nexusmods"]);
 
 export function SearchPage({ state, route, onThemeChange, actions }) {
   // Hooks run unconditionally, before any of the branches below return -
@@ -60,19 +51,25 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     return hits;
   }, [hits, sort]);
 
+  // TAG_CAPABLE_SOURCES is the set of built-in sources whose search honours
+  // ?tag= (core.SearchOptions.Tags). It is a client-side list because
+  // nothing on the wire advertises the capability per source - the same
+  // reason `lmm search --tag`'s own help says support varies. Kept narrow
+  // deliberately: showing the filter where it does nothing is the failure
+  // mode worth avoiding.
+  const tagsSupported = Object.keys(state?.status?.source_ids ?? {}).some(
+    (id) => TAG_CAPABLE_SOURCES.has(id),
+  );
+
   const home = contextPath(route.game, route.profile);
   const header = html`
-    <header class="app-bar">
-      <span class="app-bar__brand">LMM</span>
-      <${BackLink} to=${home} />
-      <button
-        type="button"
-        class="theme-toggle"
-        onClick=${() => onThemeChange(cycleTheme())}
-      >
-        Theme: ${currentTheme()}
-      </button>
-    </header>
+    <${AwayBar}
+      state=${state}
+      route=${route}
+      home=${home}
+      onThemeChange=${onThemeChange}
+      actions=${actions}
+    />
   `;
 
   if (!query) {
@@ -114,9 +111,9 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     ${header}
     <main id="main" class="app-main search-page" data-hydrated="true">
       <div class="search-page__toolbar">
-        <p class="section-header">
+        <h1 class="section-header">
           Results for “${searchPage.query}” — ${pageSummary}
-        </p>
+        </h1>
         ${
           (facets?.categories.length ?? 0) > 0 &&
           html`
@@ -152,6 +149,26 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
                   (s) => html`<option key=${s} value=${s}>${s}</option>`,
                 )}
               </select>
+            </label>
+          `
+        }
+        ${
+          // `lmm search --tag` (C-3). Offered only where a source actually
+          // honours it - NexusMods is the one that does, and a filter that
+          // silently narrows nothing is worse than no filter at all. The
+          // game's own source map is what answers that, since it is the set
+          // /api/v1/search will fan out across.
+          tagsSupported &&
+          html`
+            <label class="library__control">
+              Tags
+              <input
+                type="search"
+                name="tag"
+                placeholder="e.g. armour, lore-friendly"
+                value=${searchPage.tags ?? ""}
+                onChange=${(e) => actions.searchPageSetTags(e.currentTarget.value)}
+              />
             </label>
           `
         }

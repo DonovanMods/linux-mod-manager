@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -957,6 +958,20 @@ func TestE2E_PostJobRehydrateFailureLeavesMissionControlOnScreen(t *testing.T) {
 // control to the thing it was, ready to be used again. A progress readout
 // that never goes away would leave the top bar with no Deploy button after
 // the first deploy of the session.
+//
+// I-1 of the epic live review: this scenario timed out once in three suite
+// runs (30.5 s, a timeout rather than an assertion) while passing 10/10 in
+// isolation - a contention-sensitive wait, not a defect. chromedp.WaitVisible
+// depends on the browser's node tracking noticing a mutation, which the
+// harness has documented failing to do for a later removal (waitGone); asked
+// of the PAGE with an explicit polling interval instead, the same question
+// is answered by the page's own DOM every 50 ms and cannot be missed.
+//
+// The wait and the dismissing click are ONE in-page expression rather than
+// two round trips. A succeeded job now releases its own control after a few
+// seconds (I-2), so a separate Poll-then-Click would be racing that timer to
+// prove the manual dismiss works; clicking inside the poll closes the window
+// entirely.
 func TestE2E_DeployDismissesBackToTheButton(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
@@ -966,9 +981,14 @@ func TestE2E_DeployDismissesBackToTheButton(t *testing.T) {
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-		chromedp.Click(`.job-progress__dismiss`, chromedp.ByQuery),
-		chromedp.WaitVisible(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.Poll(`(() => {
+			const el = document.querySelector('.job-progress[data-state="succeeded"] .job-progress__dismiss');
+			if (!el) return false;
+			el.click();
+			return true;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Poll(`document.querySelector('[data-action="deploy"]') !== null`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 	)
 
 	assert.Empty(t, f.BrowserErrors())
@@ -2458,11 +2478,15 @@ func TestE2E_ConflictOverwriteRoundTripSucceeds(t *testing.T) {
 // TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage is I4 (unit 5
 // fix wave): installing from the DEDICATED SEARCH PAGE and hitting a
 // conflict used to be a dead end there - app.js renders SearchPage with no
-// TopBar, so there is no activity bell/tray on that route at all, and the
+// TopBar, so there was no activity bell/tray on that route at all, and the
 // tray was the ONLY place the Overwrite affordance rendered. tray.js's own
 // OverwriteButton now renders INLINE beside the failed row's own job chip
-// (jobprogress.js), so this scenario completes without a tray anywhere in
-// reach.
+// (jobprogress.js), so this scenario completes on the ROW alone.
+//
+// The search page has since regained the frame's own bell (I-6, epic live
+// review), so the scenario no longer proves the row is the only way in by
+// the tray's absence. It proves it directly instead: the tray is never
+// opened, and the round trip completes from the row.
 func TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage(t *testing.T) {
 	f := newE2EFixtureWithSearchableMods(t)
 	deployedPath := filepath.Join(f.Game.ModPath, filepath.FromSlash(e2eSearchDeployedFile))
@@ -2478,11 +2502,11 @@ func TestE2E_ConflictOverwriteRoundTripSucceedsFromTheSearchPage(t *testing.T) {
 		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
 	)
 
-	var trayPresent bool
+	var trayOpen bool
 	f.runInBrowser(t,
-		chromedp.Evaluate(`document.querySelector(".activity-bell__trigger") !== null`, &trayPresent),
+		chromedp.Evaluate(`document.querySelector(".tray") !== null`, &trayOpen),
 	)
-	require.False(t, trayPresent, "the search page has no top bar/tray at all - the row is the only way in")
+	require.False(t, trayOpen, "nothing opens the tray here - the row is the only way in")
 
 	f.runInBrowser(t,
 		chromedp.Click(row+` button[data-action="overwrite"]`, chromedp.ByQuery),
@@ -4668,7 +4692,7 @@ func TestE2E_Keyboard_ModalContainsFocusAndGivesItBack(t *testing.T) {
 	var focused string
 	f.runInBrowser(t,
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		waitGone(`.modal`),
 		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? ""`, &focused),
 	)
 	assert.Equal(t, "deploy", focused,
@@ -5120,5 +5144,1219 @@ func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
 		"at 1280px the mod name must not be truncated - the detail gives up the room first")
 	assert.True(t, titled,
 		"both halves must carry their own full text as a title, so nothing cut is unrecoverable")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo is C-1 of the
+// epic live review, made deterministic.
+//
+// A confirmed profile switch leaves TWO hydrations in flight at once:
+// onJobDone reads the route at the instant the job lands (main.js) - still
+// the OLD profile, because the picker's own navigate is deferred to a
+// microtask - and the route change that follows hydrates the new one. Both
+// write Mission Control's four documents into the same store slots, so the
+// screen belongs to whichever settles last. When that is the stale one, the
+// application renders the previous profile's mods, updates, health and
+// conflicts under the new profile's URL: exactly the wrong-context bug class
+// path-based routing was introduced to make impossible, re-entering through
+// the store instead of the URL.
+//
+// TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile catches this, but
+// only when the scheduler happens to lose the race (~10% of runs). Here the
+// fixture delays every GET scoped to the profile being LEFT, which
+// guarantees the stale hydration lands last - so this scenario fails on
+// every single run without the fence, and passes on every single run with
+// it.
+func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) {
+	const staleReadDelay = 400 * time.Millisecond
+	f := newE2EFixtureWithASwitchTargetAndSlowStaleReads(t, staleReadDelay)
+
+	var location, indicator, library string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		// The profile being left is fully on screen before anything moves:
+		// without this the scenario could switch away before the FIRST
+		// (equally delayed) hydration had landed, and prove nothing.
+		chromedp.Poll(
+			`document.querySelector(".library")?.textContent.includes("Alpha Mod")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__trigger[data-profile="hardcore"]`, chromedp.ByQuery),
+		// The precondition: wait until the stale hydration has reached its
+		// first write. That write is the scoped status pair, and a resource
+		// timing entry is recorded when a response completes - so a second
+		// `profile=default` status request (the first was the initial
+		// hydration) means the response that would repaint the deploy
+		// indicator with the other profile's state is in the page's hands.
+		chromedp.Poll(
+			`window.performance.getEntriesByType("resource").filter(`+
+				`(e) => e.name.includes("/api/v1/status") && e.name.includes("profile=default")).length >= 2`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+		// Then a settle window - deliberately a sleep, and the one place in
+		// this suite where that is the right instrument. The assertion here
+		// is an ABSENCE (no stale document lands), and an absence can only
+		// be proved by giving the write that must not happen the time it
+		// would have needed. Unfenced, the status commit above is followed
+		// immediately by the four Mission Control reads, each of which pays
+		// the fixture's delay once more before repainting the library; this
+		// window is comfortably longer than that whole sequence. Fenced,
+		// the hydration stops at the status pair and never issues them at
+		// all, so there is no later request left to wait for instead.
+		chromedp.Sleep(3*staleReadDelay),
+		chromedp.Location(&location),
+		textContent(`.deploy-indicator`, &indicator),
+		chromedp.Text(`.library`, &library, chromedp.ByQuery),
+	)
+
+	assert.True(t, strings.HasSuffix(location, "/g/g1/hardcore"),
+		"the switch must take the URL with it")
+	assert.Contains(t, library, "Beta Mod",
+		"the library must hold the profile now in the URL, not the one the stale hydration answered for")
+	assert.NotContains(t, library, "Alpha Mod",
+		"a hydration started under the profile the user left must not repaint the profile they moved to")
+	assert.Equal(t, "Deployed", strings.TrimSpace(indicator),
+		"the deploy indicator must describe the profile on screen")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// succeededOriginReleaseBudget is main.js#succeededOriginReleaseMillis, as
+// the two I-2 scenarios below need to reason about it: long enough that a
+// pinned failure is provably pinned, short enough that a released success
+// does not stretch the suite. Kept as a Go constant rather than read out of
+// the module, because a scenario that derived its own budget from the code
+// under test could not fail if that code changed.
+const succeededOriginReleaseBudget = 4 * time.Second
+
+// searchRefreshedAfterTheJob is the poll every C-2 scenario uses to sample
+// the toast decision at a point where it has definitely been made.
+//
+// onJobDone runs to its toast decision in a microtask or two: it starts the
+// re-hydrate, starts the search refresh, waits for any in-flight job start
+// to bind, and then decides. The search refresh's own RESPONSE lands well
+// after that, so a second /api/v1/search resource entry is a marker that is
+// strictly later than the decision - which is what makes "no toast" an
+// assertion rather than a sampling race.
+const searchRefreshedAfterTheJob = `window.performance.getEntriesByType("resource")` +
+	`.filter((e) => e.name.includes("/api/v1/search")).length >= 2`
+
+// TestE2E_OmnibarInstallReportsInlineWithoutAlsoToasting is C-2 of the epic
+// live review, success half.
+//
+// The design's toast rule is "completion/failure when its origin isn't
+// on-screen; never for things in view" (§Jobs). Installing from the omnibar
+// broke it on the application's single most common flow: onJobDone called
+// refreshSearchResults() BEFORE reading isOriginMounted, and that call puts
+// the omnibar's result list into its loading state, which unmounts the very
+// row rendering the outcome. By the time the rule was consulted, the answer
+// had been changed by the code asking the question - so every omnibar
+// install reported inline AND toasted.
+func TestE2E_OmnibarInstallReportsInlineWithoutAlsoToasting(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	var toasts int
+	var inline string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		chromedp.Poll(searchRefreshedAfterTheJob, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(row+` .job-progress`, &inline),
+		chromedp.Evaluate(`document.querySelectorAll(".toast").length`, &toasts),
+	)
+
+	assert.Contains(t, inline, "Done", "the outcome must resurface on the row that started it")
+	assert.Zero(t, toasts,
+		"the row is on screen and already says so - a toast repeating it is the design's own "+
+			"'never for things in view'")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SearchPageInstallConflictReportsInlineWithoutAlsoToasting is C-2's
+// failure half, on the route where the toast is most misleading: the search
+// page has no tray, so its inline row is the ONLY place the conflict and its
+// Overwrite affordance live - and a toast beside it says the same sentence
+// with nothing to do about it.
+func TestE2E_SearchPageInstallConflictReportsInlineWithoutAlsoToasting(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchConflictModID)
+	var toasts int
+	var inline string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("clash")),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` button[data-action="overwrite"]`, chromedp.ByQuery),
+		chromedp.Poll(searchRefreshedAfterTheJob, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(row+` .job-progress`, &inline),
+		chromedp.Evaluate(`document.querySelectorAll(".toast").length`, &toasts),
+	)
+
+	assert.Contains(t, inline, "conflict", "the failure must resurface on the row, with its own next step")
+	assert.Zero(t, toasts,
+		"the failure is on screen with the affordance that answers it - a toast can only repeat it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SucceededDeployReleasesTheButtonOnItsOwn is I-2 of the epic live
+// review.
+//
+// A finished job stayed on its control until the user dismissed it by hand.
+// That rule reads correctly on a row or a card - the outcome is where you
+// left it - but on the top bar's DEPLOY it means the application's primary
+// action is unavailable until you close a success message: install
+// something else and the way to deploy it is to first dismiss the last
+// deploy's "Done ✕". A success has nothing left to say a few seconds later
+// (the tray keeps the record), so it releases the control on its own.
+func TestE2E_SucceededDeployReleasesTheButtonOnItsOwn(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// Nothing is clicked between here and the assertion: the button
+		// comes back because the timer ran, not because anything dismissed
+		// it.
+		chromedp.Poll(`document.querySelector('[data-action="deploy"]') !== null`,
+			nil, chromedp.WithPollingInterval(100*time.Millisecond)),
+	)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FailedDeployStaysPinnedUntilDismissed is I-2's other half, and the
+// reason the release is not simply "every finished job".
+//
+// A failure carries the next step - the message, and often an affordance
+// that answers it (the conflict round trip's Overwrite) - so it waits for
+// the user rather than for a timer. This scenario deliberately waits LONGER
+// than the success release before it looks.
+func TestE2E_FailedDeployStaysPinnedUntilDismissed(t *testing.T) {
+	f := newE2EFixtureWithFailingDeploy(t)
+
+	var stillFailed, deployButtonBack bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="failed"]`, chromedp.ByQuery),
+		// Longer than a success would need to release itself, so "still
+		// pinned" is a fact about the rule and not about how fast this ran.
+		chromedp.Sleep(2*succeededOriginReleaseBudget),
+		chromedp.Evaluate(`document.querySelector('.job-progress[data-state="failed"]') !== null`, &stillFailed),
+		chromedp.Evaluate(`document.querySelector('[data-action="deploy"]') !== null`, &deployButtonBack),
+	)
+
+	assert.True(t, stillFailed, "a failure carries its own next step and must wait for the user, not a timer")
+	assert.False(t, deployButtonBack, "the control is still the failure's, until it is dismissed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ConflictsCardSaysWhatToDoAboutAStaleWinner is I-4 of the epic live
+// review.
+//
+// A conflict is "stale" when the file's CURRENT deployed provider is not the
+// one the profile's load order now names - a fact about the deploy, not
+// about the conflict, so the sentence has to say what closes the gap. The
+// card rendered a bare "(stale)"; `lmm conflicts` renders
+// "(stale — redeploy to apply)" (cmd/lmm/conflicts.go) for the identical
+// document. The web told the user something was wrong and not what to do,
+// on the one card whose whole job is to name a next step.
+//
+// The scenario makes a conflict stale the way a user does: reorder the
+// profile so the other mod wins, without redeploying.
+func TestE2E_ConflictsCardSaysWhatToDoAboutAStaleWinner(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+		chromedp.Poll(`(() => {
+			const btn = Array.from(document.querySelectorAll(".reorder-row"))
+				.find((r) => r.textContent.includes("Mod X"))
+				?.querySelector('[aria-label="Move Mod X to highest priority"]');
+			if (!btn || btn.disabled) return false;
+			btn.click();
+			return true;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Click(`[data-action="save-order"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var card string
+	f.runInBrowser(t,
+		chromedp.Poll(`document.querySelector(".card--conflicts")?.textContent.includes("stale")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(`.card--conflicts`, &card),
+	)
+
+	assert.Contains(t, card, "stale — redeploy to apply",
+		"the card must carry the CLI's own actionable sentence, not a bare (stale)")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// countH1s asks the page how many top-level headings it is rendering.
+func countH1s(out *int) chromedp.Action {
+	return chromedp.Evaluate(`document.querySelectorAll("h1").length`, out)
+}
+
+// TestE2E_EveryRouteRendersExactlyOneH1 is I-3's ratchet.
+//
+// The epic live review's keyboard/screen-reader pass found the application
+// contained no heading elements at all outside the full mod page: every
+// section title was a styled <p class="section-header"> or
+// <p class="plan__heading">, so heading navigation - the primary way a
+// screen-reader user moves around a page - found nothing on Mission
+// Control, the chooser, first run, search or Setup. WCAG 1.3.1 and 2.4.6
+// are about the structure, not the styling, and the classes are unchanged:
+// the tags carry the meaning the CSS was already carrying visually.
+//
+// One h1 per route is the ratchet because both failure modes are real: zero
+// (the state this fixes) leaves a screen reader with no landmark, and two
+// leaves it with no idea which one names the page. Asked of a real browser
+// because it is a claim about a rendered document, and because there is no
+// other place in this repo that executes the SPA.
+func TestE2E_EveryRouteRendersExactlyOneH1(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "a"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+		{"setup", f.HomePath() + "/setup", `.setup-page`},
+	}
+	for _, route := range routes {
+		var h1s int
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			countH1s(&h1s),
+		)
+		assert.Equal(t, 1, h1s, "%s must render exactly one <h1>", route.name)
+	}
+	assert.Empty(t, f.BrowserErrors())
+
+	chooser := newE2EMultiGameFixture(t)
+	var chooserH1s int
+	chooser.runInBrowser(t,
+		chromedp.Navigate(chooser.BaseURL+"/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		countH1s(&chooserH1s),
+	)
+	assert.Equal(t, 1, chooserH1s, "the game chooser must render exactly one <h1>")
+	assert.Empty(t, chooser.BrowserErrors())
+
+	firstRun := newE2EFixtureNoGames(t)
+	var firstRunH1s int
+	firstRun.runInBrowser(t,
+		chromedp.Navigate(firstRun.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="first-run-setup"]`, chromedp.ByQuery),
+		countH1s(&firstRunH1s),
+	)
+	assert.Equal(t, 1, firstRunH1s, "first run must render exactly one <h1>")
+	assert.Empty(t, firstRun.BrowserErrors())
+}
+
+// headingTexts returns every h1/h2 the document currently renders, tagged
+// with its level - so an assertion can say both "these are the sections"
+// and "they are the level they claim to be".
+func headingTexts(selector string, out *[]string) chromedp.Action {
+	return chromedp.Evaluate(
+		`Array.from(document.querySelectorAll(`+"`"+selector+"`"+`)).map(h => h.textContent.trim().replace(/\s+/g, " "))`,
+		out,
+	)
+}
+
+// TestE2E_EveryRouteRendersItsSectionsAsHeadings is IMP-2's ratchet, and
+// TestE2E_EveryRouteRendersExactlyOneH1's sibling.
+//
+// The h1 ratchet counts h1s only, which is why it stayed green through the
+// half of I-3 that never landed: Mission Control's four attention cards
+// were still <p class="card__title"> and Setup's five sections contributed
+// no heading at all, so the two screens a user spends the most time on
+// answered heading navigation with "h1 → Library" and "h1" respectively.
+// The CHANGELOG's a11y paragraph claims "its sections are real headings",
+// and this is what makes that sentence checkable.
+//
+// The expected SET, not merely a count: a count cannot tell a section that
+// regressed to a <p> from one that was renamed, and this ratchet's whole
+// job is to notice a heading quietly becoming a styled paragraph again.
+// The fixture is the one that renders all four cards at once
+// (newE2EFixtureWithAttention: an available update, two health findings, a
+// real file conflict, and a mod installed but absent from the profile) -
+// a fixture where a card happened not to render would ratchet nothing.
+func TestE2E_EveryRouteRendersItsSectionsAsHeadings(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var home []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll("h2").length === 5`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		headingTexts("h2", &home),
+	)
+	assert.Equal(t, []string{
+		"⬆ Updates (1)", "⚠ Health (2)", "◎ Profile (1)", "⇄ Conflicts (1)", "Library (3)",
+	}, home, "Mission Control's four attention cards and its library are its sections")
+
+	var modPage []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "boots")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll(".mod-page h2").length === 5`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		headingTexts(".mod-page h2", &modPage),
+	)
+	// One level for all of them (MIN-3): Findings/Conflicts used to be h2
+	// while Description/Changelog/Files/Versions/Job history were h3 - and
+	// the h3s came AFTER the h2s, so they read as children of "Findings".
+	// This row is the mix itself: Findings (the old h2) beside four of the
+	// old h3s.
+	assert.Equal(t, []string{"Findings (2)", "Changelog", "Files", "Versions", "Job history"}, modPage,
+		"the full mod page's sections are siblings, not a Findings subtree")
+
+	// Setup renders ONE section at a time (a tablist), so "its five
+	// sections are real headings" is a claim about each tab in turn: the
+	// panel's own h2 moves with the selection.
+	for _, s := range []struct{ key, label string }{
+		{"games", "Games"},
+		{"auth", "Authentication"},
+		{"sources", "Custom sources"},
+		{"archive", "Archive import"},
+		{"adopt", "Adopt"},
+	} {
+		var setup []string
+		f.runInBrowser(t,
+			chromedp.Navigate(f.HomePath()+"/setup"),
+			chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+			chromedp.Click(`.setup-nav__tab[data-section="`+s.key+`"]`, chromedp.ByQuery),
+			chromedp.Poll(`document.querySelector("#setup-panel h2")?.textContent.trim() === `+
+				"`"+s.label+"`", nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+			headingTexts("#setup-panel h2", &setup),
+		)
+		assert.Equal(t, []string{s.label}, setup,
+			"Setup's %s panel must name itself with a real heading", s.key)
+	}
+
+	// The three routes whose whole content IS their h1 - a results
+	// summary, a list of game cards, a single add form - have no sections
+	// to name, and inventing one would be worse than having none. Pinned
+	// so that a section ARRIVING on one of them has to come with a
+	// heading.
+	var search []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/g/"+f.Game.ID+"/"+f.Profile+"/search?q=a"),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		headingTexts(".search-page h2", &search),
+	)
+	assert.Empty(t, search, "the search page's own h1 is its only section")
+	assert.Empty(t, f.BrowserErrors())
+
+	chooser := newE2EMultiGameFixture(t)
+	var chooserH2s []string
+	chooser.runInBrowser(t,
+		chromedp.Navigate(chooser.BaseURL+"/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		headingTexts(".game-chooser h2", &chooserH2s),
+	)
+	assert.Empty(t, chooserH2s, "the chooser's own h1 is its only section")
+	assert.Empty(t, chooser.BrowserErrors())
+}
+
+// TestE2E_TheYAMLEditorReallyHasSpellcheckOff is IMP-3 of the closing
+// wave's gate review.
+//
+// setupsources.js has carried spellcheck="false" since #333 and the epic
+// reviewer still saw red squiggles under every YAML key. Reading the source
+// says the attribute is there; reading the DOM says what it became. Preact
+// assigns spellcheck as a PROPERTY, and the non-empty string "false" is
+// truthy, so the element ended up with spellcheck === true and
+// getAttribute("spellcheck") === "true" - the exact opposite of what the
+// markup appeared to ask for.
+//
+// So this asserts what a BROWSER computed, not what the file says: an
+// earlier fix-wave item was closed as "does not reproduce" on a source read
+// alone, and this is the class of bug only the DOM can settle.
+func TestE2E_TheYAMLEditorReallyHasSpellcheckOff(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var attribute string
+	var property bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=sources"),
+		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-editor"] textarea`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('[data-testid="source-editor"] textarea').getAttribute("spellcheck") ?? "(absent)"`, &attribute),
+		chromedp.Evaluate(`document.querySelector('[data-testid="source-editor"] textarea').spellcheck`, &property),
+	)
+
+	assert.Equal(t, "false", attribute,
+		"the YAML editor's rendered spellcheck attribute must be \"false\"")
+	assert.False(t, property,
+		"and the DOM property with it - the string \"false\" is truthy, which is how this got missed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen is MIN-2 of
+// the closing wave's gate review - C-1's fence, applied to the two writes
+// in hydrateModPage that escaped it.
+//
+// The primary read's write (and the error write beside it) were guarded by
+// modPage.key alone. That key is "source/id" and carries NO profile, so it
+// cannot tell two hydrations of one mod page apart at all - and onJobDone
+// re-hydrates on every completed job, including one another client started.
+// Here that leaves a job's re-hydrate for the profile being left in flight
+// while the profile moved to has already loaded and written its own
+// documents; the older one's filesReport write then resets detail, versions
+// and updates to null, and since its own extras arrive AFTER its fence
+// check they never replace them. The page keeps its Changelog and Versions
+// headings but empties them until something hydrates it again.
+//
+// The profile is what makes this drivable rather than merely arguable: two
+// hydrations under the SAME profile issue the identical URL, and Chrome's
+// HTTP cache takes a single-writer lock on an in-flight cacheable GET, so
+// the duplicate queues behind it and cannot land out of order at all. A
+// different profile is a different URL - and the same modPage.key.
+//
+// Made deterministic the way C-1's own scenario is: a proxy delays exactly
+// the stale profile's second mod-files read, so the stale hydration is
+// GUARANTEED to land last rather than winning a scheduler coin-toss.
+func TestE2E_ASlowStaleModPageHydrationCannotBlankTheOneOnScreen(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	// A second profile carrying the same mod, so the page the scenario
+	// moves to renders the same modPage.key from a different URL.
+	_, err := f.Svc.NewProfileManager().Create(t.Context(), f.Game.ID, "other")
+	require.NoError(t, err)
+	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: f.Game.ID},
+		ProfileName:  "other",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	// The SECOND read scoped to "default" is the delayed one: the first is
+	// the cold load that puts the page on screen, and the second belongs to
+	// the job's re-hydrate - the one this scenario makes stale.
+	f.BaseURL = startE2EProxyDelayingTheNthModFilesRead(t, f.BaseURL, "default", 2, 2*time.Second)
+
+	modPage := func(profile string) string {
+		return f.BaseURL + "/g/" + f.Game.ID + "/" + profile + "/mod/fake/boots"
+	}
+
+	f.runInBrowser(t,
+		chromedp.Navigate(modPage("default")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		// The extras are the subject, so wait until they are really there.
+		chromedp.Poll(`Array.from(document.querySelectorAll(".mod-page h2")).some(h => h.textContent.trim() === "Changelog")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+
+	// A job finishing anywhere re-hydrates the route on screen, and THAT
+	// hydration's files read is the delayed one.
+	startEnableFromAnotherClient(t, f, "fake", "x")
+	time.Sleep(300 * time.Millisecond)
+
+	// Move to the other profile's copy of this page while that is still
+	// fetching - the same two calls router.js's own navigate() makes, so
+	// this is an in-app route change and not a reload that would throw the
+	// in-flight hydration away with the whole document.
+	f.runInBrowser(t,
+		chromedp.Evaluate(`window.history.pushState(null, "", "/g/`+f.Game.ID+`/other/mod/fake/boots");
+			window.dispatchEvent(new PopStateEvent("popstate"));`, nil),
+		chromedp.Poll(`Array.from(document.querySelectorAll(".mod-page h2")).some(h => h.textContent.trim() === "Changelog")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+
+	// Long enough for the delayed read to have landed and repainted. The
+	// Changelog and Versions SECTIONS are the observable: both are gated on
+	// modPage.detail / modPage.versions being non-null, so a write that
+	// resets them to null takes the headings off the page entirely.
+	var headings []string
+	f.runInBrowser(t,
+		chromedp.Sleep(3*time.Second),
+		headingTexts(".mod-page h2", &headings),
+	)
+
+	assert.Contains(t, headings, "Changelog",
+		"a hydration older than the one on screen must not blank the mod page's live detail")
+	assert.Contains(t, headings, "Versions",
+		"nor its versions table")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp is I-6 of the
+// epic live review.
+//
+// The three routes that leave home - Setup, the full mod page, the search
+// page - each hand-rolled their own header (brand, "← Back to library",
+// theme) and between them dropped the whole frame. Start a long archive
+// import from Setup and there was no tray to watch it in; a deploy running
+// in another tab was invisible there; the `?` key still worked but the
+// button naming it was gone. Those are frame concerns, not home concerns.
+//
+// The bell is opened on each route, not merely counted, because a bell that
+// renders and cannot open its tray would pass a presence check and still
+// leave the user with nowhere to watch a job.
+func TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "a"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+		{"setup", f.HomePath() + "/setup", `.setup-page`},
+	}
+	for _, route := range routes {
+		var shortcutsButtons int
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+			chromedp.WaitVisible(`.tray`, chromedp.ByQuery),
+			chromedp.Evaluate(`document.querySelectorAll('[data-action="shortcuts"]').length`, &shortcutsButtons),
+			// Escape closes it and hands the keyboard back to the trigger -
+			// the same rule the home bar's dropdowns obey, now that both bars
+			// share one implementation of it (dismiss.js). settleEffects
+			// first: that listener is installed by an effect, and Preact
+			// flushes effects after paint, which a headless browser is often
+			// not doing.
+			settleEffects(),
+			chromedp.KeyEvent(kb.Escape),
+			waitGone(`.tray`),
+		)
+		assert.Equal(t, 1, shortcutsButtons,
+			"%s must offer the keyboard help, exactly once", route.name)
+	}
+
+	var focused string
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="shortcuts"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="shortcuts"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? ""`, &focused),
+	)
+	assert.Equal(t, "shortcuts", focused,
+		"the help opened from Setup's own bar must return focus to the button that opened it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPageCarriesEverythingTheSlideOverDoes is I-5 of the epic
+// live review.
+//
+// "More info →" led to a page with FEWER actions than the panel it came
+// from: the slide-over offered Update, Enable/Disable, Uninstall, an
+// editable lock and update policy, the mod's own findings and its
+// conflicts; the full page offered Enable/Disable and the versions table.
+// A deep link or a bookmark therefore landed on the LESS capable surface,
+// on a page whose own design section opens with "Everything, unlimited
+// room".
+//
+// Driven as a deep link rather than through the slide-over on purpose: the
+// three profile-scoped documents this page now needs (mods, health,
+// conflicts) are Mission Control's, and arriving here cold is the case
+// where nothing has fetched them yet.
+func TestE2E_FullModPageCarriesEverythingTheSlideOverDoes(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var lockPresent, uninstall bool
+	var policy, findings string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "boots")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="mod-page-findings"]`, chromedp.ByQuery),
+		textContent(`[data-testid="mod-page-findings"]`, &findings),
+		chromedp.Evaluate(`document.querySelector('.slide-over__settings input[type="checkbox"]') !== null`, &lockPresent),
+		chromedp.Evaluate(`document.querySelector('.mod-page [data-action="uninstall"]') !== null`, &uninstall),
+		chromedp.Evaluate(`document.querySelector(".slide-over__settings select")?.value ?? ""`, &policy),
+	)
+
+	assert.True(t, lockPresent, "the page must carry the editable lock the slide-over has")
+	assert.True(t, uninstall, "the page must carry Uninstall")
+	assert.Equal(t, "notify", policy, "the page must carry the editable update policy")
+	assert.Contains(t, findings, "version mismatch",
+		"the page must carry this mod's own verify findings, in the engine's own words")
+
+	assert.Empty(t, f.BrowserErrors())
+
+	// Conflicts, and the lock actually WRITING - a control that renders and
+	// does nothing would satisfy every assertion above. Both are driven on
+	// Mod Y, which is in the profile's own load order (Better Boots is
+	// installed but never added to it, so its lock legitimately 404s), and
+	// both run deliberately AFTER the BrowserErrors assertion: Mod X/Y are
+	// seeded into the DB and the cache but not into the fake source's
+	// catalog, so this page's LIVE reads (ModDetail, versions) 404 by
+	// design - the degradation this page has always handled, and a network
+	// log entry the plain assert.Empty above would fail on for a reason
+	// that is not this scenario's subject.
+	var conflicts string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "y")),
+		chromedp.WaitVisible(`[data-testid="mod-page-conflicts"]`, chromedp.ByQuery),
+		textContent(`[data-testid="mod-page-conflicts"]`, &conflicts),
+		chromedp.Click(`.slide-over__settings input[type="checkbox"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('.slide-over__settings input[type="checkbox"]').checked === true`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+	assert.Contains(t, conflicts, "shared.esp",
+		"the page must carry this mod's own file conflicts")
+	assert.Contains(t, conflicts, "(wins)",
+		"and say which side of each one it is on")
+
+	list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+	require.NoError(t, err)
+	idx := slices.IndexFunc(list.Mods, func(m core.ModListing) bool { return m.ID == "y" })
+	require.GreaterOrEqual(t, idx, 0)
+	assert.True(t, list.Mods[idx].Locked, "the lock the page rendered must have reached the database")
+}
+
+// TestE2E_AdvancedOptionsReachTheFlow is C-3's option half.
+//
+// Every flag in this scenario has been on the wire since the unit that
+// landed its kind; nothing in the SPA ever set one, so `--keep-cache`,
+// `--show-archived`, `--no-deps`, `--no-hooks`, `--force` and
+// `deploy --method/--purge/<mod-id>` were CLI-only in practice while the
+// design's Scope claims full bidirectional parity.
+//
+// Both halves are driven, because they behave differently by construction:
+// a PLAN-time option re-computes the plan (so the preview cannot describe
+// one mutation while Confirm submits another), and an APPLY-time one is a
+// local patch on a plan already computed. The assertions are on the END
+// STATE - what is on disk and in the cache afterwards - not on the request.
+func TestE2E_AdvancedOptionsReachTheFlow(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	// --- APPLY-time, and a PLAN-time twin: uninstall --keep-cache. ---
+	// keep_cache rides both halves (kind_uninstall.go takes it twice), so
+	// the preview's own sentence about the cache has to move with it.
+	var noteBefore, noteAfter string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Alpha Mod"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll(".slide-over__actions button")).find((b) => b.textContent.trim() === "Uninstall").click()`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="uninstall"] .plan`, chromedp.ByQuery),
+		textContent(`[data-testid="uninstall-cache-note"]`, &noteBefore),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		chromedp.Click(`.modal input[name="keep_cache"]`, chromedp.ByQuery),
+		// The re-plan is the assertion: the preview's cache sentence flips
+		// because the SERVER recomputed it, not because the client edited
+		// a string.
+		chromedp.Poll(`document.querySelector('[data-testid="uninstall-cache-note"]')?.textContent.includes("kept")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(`[data-testid="uninstall-cache-note"]`, &noteAfter),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.Contains(t, noteBefore, "deleted", "the default preview says the cache goes too")
+	assert.Contains(t, noteAfter, "kept", "and the re-planned one says it stays")
+
+	require.Eventually(t, func() bool {
+		list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+		return err == nil && !slices.ContainsFunc(list.Mods, func(m core.ModListing) bool {
+			return m.ID == "a"
+		})
+	}, 10*time.Second, 100*time.Millisecond, "the uninstall must actually have run")
+
+	assert.True(t, f.Svc.GetGameCache(f.Game).Exists(f.Game.ID, "fake", "a", "1.0"),
+		"--keep-cache must have kept the cached download the default would have deleted")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_DeployAllIncludesDisabledMods is IMP-1(a) of the closing wave's
+// gate review.
+//
+// `deploy --all` has been on the wire since the unit that landed the kind
+// (kind_deploy.go's deployPlanRequest.All) and 8C-A's own "already on the
+// wire" list named it - but no control ever set it, so a disabled mod was
+// web-undeployable while the design's Scope claims full bidirectional
+// parity. It is a PLAN-time option (core's PlanDeploy selects
+// `opts.All || mod.Enabled`), so the assertion is the one every plan-time
+// option gets: the SERVER's own re-planned preview grows, and the apply
+// that follows lands the disabled mod's bytes.
+func TestE2E_DeployAllIncludesDisabledMods(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	// A third mod, in the profile's load order but DISABLED - the exact
+	// row the default full-profile deploy skips.
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "c", SourceID: "fake", Name: "Gamma Mod", Version: "1.0", GameID: f.Game.ID},
+		false, map[string][]byte{"gamma.pak": []byte("gamma")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "c", Version: "1.0"}))
+
+	var before, after int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".modal .plan__mod").length`, &before),
+		chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+		chromedp.Click(`.modal input[name="all"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelectorAll(".modal .plan__mod").length === 3`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Evaluate(`document.querySelectorAll(".modal .plan__mod").length`, &after),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Equal(t, 2, before, "the default full-profile deploy skips the disabled mod")
+	assert.Equal(t, 3, after, "and --all re-plans to include it")
+
+	assert.FileExists(t, filepath.Join(f.Game.ModPath, "gamma.pak"),
+		"the disabled mod's file must actually have been deployed")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_InstallSkipVerifySkipsTheChecksumRecord is IMP-1(b) of the
+// closing wave's gate review.
+//
+// `lmm install --skip-verify` was the one CLI flag with no wire field at
+// all: core.InstallOptions.SkipVerify existed and the CLI set it, but
+// `grep -ri "skip.verify" internal/serve/` returned nothing. It is an
+// APPLY-time option - it changes nothing about what the plan says, only
+// whether the download's computed checksum is stored - so the assertion is
+// on the DB row the install writes, and the control's absence would leave
+// nothing that could clear it.
+func TestE2E_InstallSkipVerifySkipsTheChecksumRecord(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	// The control mod first, installed with the DEFAULT options: without
+	// it, "no checksum" would be indistinguishable from "this fixture
+	// never records one".
+	installFromOmnibar(t, f, "multi", searchResultRow("fake", e2eSearchMultiFileModID), false)
+	installFromOmnibar(t, f, "boots", searchResultRow("fake", e2eSearchInstallModID), true)
+
+	files, err := f.Svc.GetFilesWithChecksums(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err)
+
+	sums := map[string]string{}
+	for _, file := range files {
+		sums[file.ModID] = file.Checksum
+	}
+	assert.NotEmpty(t, sums[e2eSearchMultiFileModID],
+		"the default install must still record the checksum it computed")
+	assert.Empty(t, sums[e2eSearchInstallModID],
+		"--skip-verify must have kept the checksum out of the database")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// installFromOmnibar fans out for `query`, installs `row` and waits for its
+// job, optionally ticking the confirm step's Advanced "Skip checksum
+// recording" first.
+func installFromOmnibar(t *testing.T, f e2eSearchFixture, query, row string, skipVerify bool) {
+	t.Helper()
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, query, chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+	)
+	if skipVerify {
+		f.runInBrowser(t,
+			chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+			chromedp.Click(`.modal input[name="skip_verify"]`, chromedp.ByQuery),
+			chromedp.Poll(`document.querySelector('.modal input[name="skip_verify"]').checked === true`,
+				nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		)
+	}
+	f.runInBrowser(t,
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+}
+
+// TestE2E_PurgeOfAnEmptyProfileStillOffersItsConfirmGate is MIN-4 of the
+// closing wave's gate review.
+//
+// plan_purge.js returned early on an empty plan WITHOUT rendering the
+// type-the-profile-name input, while confirmplan.js's typedNameFor.purge
+// still demands that name back for this kind - so Confirm sat permanently
+// disabled with nothing on screen explaining why. Nothing was lost (there
+// is nothing to purge), but a control that cannot be operated and does not
+// say why is a bug report waiting to happen, and it would break outright
+// the moment the input moved.
+func TestE2E_PurgeOfAnEmptyProfileStillOffersItsConfirmGate(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var note string
+	var beforeTyping, afterTyping bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="purge-profile"][data-profile="default"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="purge"] .plan`, chromedp.ByQuery),
+		textContent(`.modal .plan__note`, &note),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &beforeTyping),
+		chromedp.SendKeys(`input[name="purge-confirm"]`, "default", chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('.modal [data-action="confirm"]').disabled === false`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &afterTyping),
+	)
+
+	assert.Contains(t, note, "Nothing to purge",
+		"the empty plan still says what it found")
+	assert.True(t, beforeTyping, "and still gates Confirm behind the profile name")
+	assert.False(t, afterTyping, "which the user can now actually satisfy")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_PurgeFromTheProfilesModalEmptiesTheGameDirectory is C-3's purge
+// half.
+//
+// `lmm purge` had no plan kind, no route and no control at all - one of the
+// four whole commands the epic live review found web-unreachable in a UI
+// whose design Scope claims full bidirectional parity. It is also the most
+// destructive single click in the application, so it is the one that draws
+// a type-the-profile-name gate; the scenario proves the gate is real by
+// trying Confirm before typing.
+func TestE2E_PurgeFromTheProfilesModalEmptiesTheGameDirectory(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	deployed := filepath.Join(f.Game.ModPath, "alpha.pak")
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+	require.FileExists(t, deployed, "the scenario needs something deployed to purge")
+
+	var confirmDisabled, confirmEnabled bool
+	f.runInBrowser(t,
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="purge-profile"][data-profile="default"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="purge"] .plan`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &confirmDisabled),
+		chromedp.SendKeys(`input[name="purge-confirm"]`, "default", chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('.modal [data-action="confirm"]').disabled === false`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &confirmEnabled),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.True(t, confirmDisabled,
+		"a purge must not be one click away - Confirm stays disabled until the profile is typed back")
+	assert.False(t, confirmEnabled, "and must become available once it is")
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(deployed)
+		return os.IsNotExist(err)
+	}, 10*time.Second, 100*time.Millisecond, "the purge must actually have emptied the game directory")
+
+	// Records preserved: the default (no --uninstall) is exactly what the
+	// plan's own sentence promised.
+	list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+	require.NoError(t, err)
+	assert.NotEmpty(t, list.Mods, "without --uninstall the mod records stay")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfileSyncFromTheCardAddsWhatIsInstalled is C-3's profile-sync
+// half - the other whole command with no web path at all.
+//
+// Sync is the mirror image of `profile apply`: apply converges the INSTALL
+// SET onto what the profile lists, sync converges the PROFILE onto what is
+// actually installed. The fixture is seeded on the sync side of that
+// mirror - a mod installed and enabled in the database that the profile's
+// own load order does not list - which is what makes the Profile card
+// render a Sync… at all.
+func TestE2E_ProfileSyncFromTheCardAddsWhatIsInstalled(t *testing.T) {
+	f := newE2EFixtureWithAnUnlistedInstall(t)
+
+	var card string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--profile`, chromedp.ByQuery),
+		textContent(`.card--profile`, &card),
+		chromedp.Click(`.card--profile [data-action="sync-profile"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_sync"] .plan`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="sync-to-add"]`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.Contains(t, card, "not in this profile",
+		"the card must say which way the drift runs")
+
+	require.Eventually(t, func() bool {
+		profile, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+		return err == nil && slices.ContainsFunc(profile.Mods, func(r domain.ModReference) bool {
+			return r.ModID == "b"
+		})
+	}, 10*time.Second, 100*time.Millisecond,
+		"the sync must have added the installed-but-unlisted mod to the profile's load order")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_RelinkFromTheRowMenuMovesTheModsIdentity is C-3's `lmm mod edit`
+// half - the third whole command with no web path at all.
+//
+// The renderer IS the form here: a re-link needs the user to say WHERE to
+// re-link to before there is anything to preview, and those fields are
+// plan-time, so each change re-plans rather than opening a second dialog in
+// front of the confirm modal. What is on screen is therefore always a
+// preview of exactly what Confirm will submit.
+func TestE2E_RelinkFromTheRowMenuMovesTheModsIdentity(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var fromTo string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.Click(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="mod_relink"] .plan`, chromedp.ByQuery),
+		// A blank form is a legal metadata-only edit, and the preview says
+		// so rather than showing an empty modal with a live Confirm.
+		textContent(`[data-testid="relink-from-to"]`, &fromTo),
+		chromedp.SetValue(`input[name="relink-mod-id"]`, "renamed", chromedp.ByQuery),
+		// SetValue fires `change`, which is the commit event this input
+		// re-plans on - typing every keystroke into a round trip would be a
+		// plan per character.
+		chromedp.Poll(`document.querySelector('[data-testid="relink-from-to"]')?.textContent.includes("renamed")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.Contains(t, fromTo, "fake:a", "the untouched plan is the mod as it stands")
+
+	require.Eventually(t, func() bool {
+		list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+		return err == nil && slices.ContainsFunc(list.Mods, func(m core.ModListing) bool {
+			return m.ID == "renamed"
+		})
+	}, 10*time.Second, 100*time.Millisecond,
+		"the re-link must have moved the mod's identity in the database")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_PakConversionTogglesOnlyWhereItApplies is C-3's `lmm mod convert`
+// half, and the one the epic live review said it would not defer: it is the
+// Icarus pak-conversion toggle on a first-class supported game, and it had
+// no route at all.
+//
+// core.ModListing's convert_paks is a TRI-STATE - null means the question
+// does not apply to this mod (not a merge-compile game, or no pak merge
+// source), which is distinct from a non-null false meaning "applies, and is
+// off". The control renders on the null case's absence as much as on the
+// other's presence, so both are asserted.
+func TestE2E_PakConversionTogglesOnlyWhereItApplies(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var menuItems int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('.row-menu [data-action="toggle-convert"]').length`, &menuItems),
+	)
+	assert.Zero(t, menuItems,
+		"a game with no pak merge source must not offer a conversion toggle at all - "+
+			"convert_paks is null there, and a control for a question that does not apply is worse than none")
+	assert.Empty(t, f.BrowserErrors())
+
+	// And the case it DOES apply to: a DeployCompile game whose mod carries
+	// a pak-kind retained file. The toggle is offered, and it writes.
+	c := newE2EFixtureWithAConvertibleMod(t)
+	var label string
+	c.runInBrowser(t,
+		chromedp.Navigate(c.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Convertible Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu [data-action="toggle-convert"]`, chromedp.ByQuery),
+		textContent(`.row-menu [data-action="toggle-convert"]`, &label),
+		chromedp.Click(`.row-menu [data-action="toggle-convert"]`, chromedp.ByQuery),
+	)
+
+	assert.Equal(t, "Disable pak conversion", label,
+		"the menu item must name what the click will DO, read off the mod's current state")
+
+	require.Eventually(t, func() bool {
+		list, err := c.Svc.ListMods(t.Context(), c.Game, "default")
+		if err != nil || len(list.Mods) == 0 {
+			return false
+		}
+		return list.Mods[0].ConvertPaks != nil && !*list.Mods[0].ConvertPaks
+	}, 10*time.Second, 100*time.Millisecond,
+		"the toggle must have reached the database")
+	assert.Empty(t, c.BrowserErrors())
+}
+
+// TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt is C-3's
+// `lmm search --tag` half.
+//
+// Task A put ?tag= on GET /api/v1/search; nothing in the SPA set it. The
+// interesting half of wiring it is not the field but the GATE: tag support
+// varies by source (NexusMods honours it), nothing on the wire advertises
+// the capability per source, and a filter that silently narrows nothing is
+// worse than no filter. So both cases are driven - the fake source's game,
+// which must not offer it, and a game mapping nexusmods, which must.
+func TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var fields int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("boots")),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('.search-page input[name="tag"]').length`, &fields),
+	)
+	assert.Zero(t, fields,
+		"a game whose sources do not honour tags must not offer a tag filter")
+	assert.Empty(t, f.BrowserErrors())
+
+	g := newE2EFixtureWithATagCapableSource(t)
+	var tagged string
+	g.runInBrowser(t,
+		chromedp.Navigate(g.BaseURL+"/g/"+g.Game.ID+"/"+g.Profile+"/search?q=mod"),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.search-page input[name="tag"]`, chromedp.ByQuery),
+		chromedp.SetValue(`.search-page input[name="tag"]`, "armour", chromedp.ByQuery),
+		// The filter is server-side: the row that survives is the one the
+		// SOURCE kept, not one this page hid. Polled on BOTH halves - the
+		// negative alone is momentarily true of the loading state, which
+		// contains neither row.
+		chromedp.Poll(`(() => {
+			const t = document.querySelector(".search-page")?.textContent ?? "";
+			return t.includes("Armoured Mod") && !t.includes("Plain Mod");
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(`.search-page`, &tagged),
+	)
+
+	assert.Contains(t, tagged, "Armoured Mod",
+		"the tagged row must survive the filter")
+	assert.NotContains(t, tagged, "Plain Mod",
+		"the untagged row must not")
+	assert.Empty(t, g.BrowserErrors())
+}
+
+// TestE2E_DeployPreviewMarksWhichContenderWins is M-9 of the epic live
+// review: the deploy plan listed both contenders' copies of a contested
+// path with nothing to say which one would actually be there afterwards, so
+// a preview over a real conflict read as if both would land. The fact lives
+// in the Conflicts document this route has already fetched.
+func TestE2E_DeployPreviewMarksWhichContenderWins(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	var plan string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal .plan__winner`, chromedp.ByQuery),
+		textContent(`.modal .plan`, &plan),
+	)
+
+	assert.Contains(t, plan, "(wins)",
+		"the winning contender's copy of the contested path must say so")
+	assert.Contains(t, plan, "(loses to",
+		"and the losing one must name who takes it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AuthSurfaceNamesTheEnvironmentVariableAsText is M-1/D-3: the env
+// var was a PLACEHOLDER in a ~190px field on a ~900px row - visibly
+// truncated to "or set NEXUSMODS_API_KE" and gone entirely the moment the
+// user typed. It is the only place the UI names the variable, and the
+// README says it is shown beside the field.
+func TestE2E_AuthSurfaceNamesTheEnvironmentVariableAsText(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	var body string
+	var stillThereAfterTyping bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=auth"),
+		chromedp.WaitVisible(`.setup-auth__env-var`, chromedp.ByQuery),
+		textContent(`.setup-auth__env-var`, &body),
+		chromedp.SendKeys(`.setup-auth__login input[type="password"]`, "secret", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".setup-auth__env-var") !== null`, &stillThereAfterTyping),
+	)
+
+	assert.Contains(t, body, "_API_KEY",
+		"the environment variable must be named as text, not as a placeholder")
+	assert.True(t, stillThereAfterTyping,
+		"and must survive the first keystroke, which a placeholder does not")
 	assert.Empty(t, f.BrowserErrors())
 }
