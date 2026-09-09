@@ -629,6 +629,42 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
 
+// TestE2E_SourcesTableActionsColumnIsTheSameWidthOnEveryRow is N-2 of the
+// epic re-review (= epic M-4): the previous fix put `display: flex` on the
+// actions <td> itself, which computes it out of the table's own row layout
+// - so a built-in source's EMPTY actions cell (no Download/Edit/Delete)
+// measured its own near-zero content width instead of the column's real
+// width, leaving that row's bottom border a detached fragment instead of
+// running the column's full span. "fake" (a built-in, non-custom type) has
+// no actions; "my-mods" (a custom directory source) has all three - so
+// their last cell's rendered widths, and the header's blank one above them,
+// must all agree.
+func TestE2E_SourcesTableActionsColumnIsTheSameWidthOnEveryRow(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+	dir := t.TempDir()
+	yaml := []byte("id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: " + dir + "\n")
+	_, err := app.SaveSourceDefinition(f.Ctx, f.Svc, "", yaml)
+	require.NoError(t, err)
+
+	var widths []float64
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("sources")),
+		chromedp.WaitVisible(`tr[data-source="fake"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`tr[data-source="my-mods"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".setup-table__actions"))
+				.map((el) => el.getBoundingClientRect().width)
+		`, &widths),
+	)
+
+	require.Len(t, widths, 3, "the header th plus the two rows' td, all sharing the class")
+	assert.InDelta(t, widths[0], widths[1], 1,
+		"the built-in row's (empty) actions cell must be the header's width, not its own content's")
+	assert.InDelta(t, widths[0], widths[2], 1,
+		"the custom row's (populated) actions cell must be the same width too")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_Sources_InUseNamesTheGameNotItsID pins Minor 8 (unit7-review.md):
 // core.SourceInUseError.Games carries ids by design, but a user knows their
 // games by title - both the "In use" column and the delete refusal must
