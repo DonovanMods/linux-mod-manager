@@ -26,6 +26,10 @@ export function SetupGames({ actions, game, profile }) {
   const [error, setError] = useState(null);
   const [showDetect, setShowDetect] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  // detected (issue 206) is the row an uncurated "Add with details…" click, or
+  // the add form's own "Pick an installed game…" picker, hands up here -
+  // null opens a blank manual form.
+  const [detected, setDetected] = useState(null);
   const [busyID, setBusyID] = useState(null);
   const [rowError, setRowError] = useState(null);
   const [sources, setSources] = useState(null);
@@ -77,6 +81,7 @@ export function SetupGames({ actions, game, profile }) {
   async function afterAdd() {
     setShowDetect(false);
     setShowAdd(false);
+    setDetected(null);
     await reload();
     await actions.reloadStatus();
   }
@@ -214,19 +219,32 @@ export function SetupGames({ actions, game, profile }) {
         <button
           type="button"
           class="button button--small"
-          onClick=${() => setShowAdd((v) => !v)}
+          onClick=${() => {
+            setDetected(null);
+            setShowAdd((v) => !v);
+          }}
         >
           ${showAdd ? "Hide add form" : "Add a game manually…"}
         </button>
       </div>
 
-      ${showDetect && html`<${GameDetectSection} onAdded=${afterAdd} />`}
+      ${
+        showDetect &&
+        html`<${GameDetectSection}
+          onAdded=${afterAdd}
+          onAddWithDetails=${(row) => {
+            setDetected(row);
+            setShowAdd(true);
+          }}
+        />`
+      }
       ${
         showAdd &&
         html`<${GameAddForm}
           onAdded=${afterAdd}
           game=${game}
           profile=${profile}
+          detected=${detected}
         />`
       }
     </div>

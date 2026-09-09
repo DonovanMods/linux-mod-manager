@@ -2580,6 +2580,15 @@ select {
   list-style: none;
 }
 
+/* "Pick an installed game…" (issue 206): the same row/name/path layout as
+   setup-detect__list above, reused rather than redefined - it's the
+   identical shape, just click-to-pick instead of check-to-select. */
+.setup-add__picker {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
 /* Authentication. */
 .setup-auth__list {
   margin: 0;
