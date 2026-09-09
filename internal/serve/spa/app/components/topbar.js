@@ -72,7 +72,18 @@ export function TopBar({
       }
     }
     function handleKeyDown(e) {
-      if (e.key === "Escape") setOpenPicker(null);
+      if (e.key !== "Escape") return;
+      // Focus goes back to the trigger that owns this dropdown (issue 334's
+      // a11y pass). Without it Escape closes the menu and leaves the
+      // keyboard nowhere - the focused menu item has just been removed from
+      // the document, so the next Tab restarts from the top of the page.
+      // Queried fresh here rather than captured at open: the trigger is
+      // re-rendered while the menu is up (its own aria-expanded changes).
+      const trigger = barRef.current?.querySelector(
+        `[data-picker="${openPicker}"]`,
+      );
+      setOpenPicker(null);
+      if (trigger instanceof HTMLElement) trigger.focus();
     }
     document.addEventListener("pointerdown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
@@ -198,6 +209,9 @@ function GamePicker({ status, games, open, onOpen, onClose }) {
       <button
         type="button"
         class="picker__trigger game-picker__trigger"
+        data-picker="game"
+        aria-haspopup="true"
+        aria-expanded=${open ? "true" : "false"}
         onClick=${() => (open ? onClose() : onOpen())}
       >
         ${status.name} ▾
@@ -275,6 +289,9 @@ function ProfilePicker({ status, route, open, onOpen, onClose, actions }) {
       <button
         type="button"
         class="picker__trigger profile-picker__trigger"
+        data-picker="profile"
+        aria-haspopup="true"
+        aria-expanded=${open ? "true" : "false"}
         onClick=${() => (open ? onClose() : onOpen())}
       >
         ${route.profile} ▾

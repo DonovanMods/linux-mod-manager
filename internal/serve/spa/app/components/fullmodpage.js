@@ -90,13 +90,15 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     (!modPage.filesReport && !modPage.error)
   ) {
     return html`${header}
-      <main class="app-main"><p class="app-booting">Loading…</p></main>`;
+      <main id="main" class="app-main">
+        <p class="app-booting">Loading…</p>
+      </main>`;
   }
 
   if (modPage.error) {
     return html`
       ${header}
-      <main class="app-main">
+      <main id="main" class="app-main">
         <p class="app-error">${modPage.error}</p>
       </main>
     `;
@@ -116,7 +118,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
 
   return html`
     ${header}
-    <main class="app-main mod-page">
+    <main id="main" class="app-main mod-page">
       <h1 class="mod-page__title">${installedMod.name}</h1>
       <p class="mod-page__meta">
         ${installedMod.author ? html`by ${installedMod.author} · ` : ""}

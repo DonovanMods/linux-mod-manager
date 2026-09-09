@@ -30,20 +30,20 @@
   /* Text. */
   --text-primary: #10151c;
   --text-secondary: #4a5461;
-  --text-muted: #6b7583;
+  --text-muted: #5f6874;
   --text-inverted: #f7f9fb;
 
   /* Lines. */
   --border-subtle: #d8dce2;
-  --border-strong: #b3bac4;
-  --focus-ring: #b06a00;
+  --border-strong: #767f8d;
+  --focus-ring: #8f5500;
 
   /* The amber primary action, and the good/warn/conflict semantics. */
-  --accent: #b06a00;
-  --accent-hover: #8d5500;
+  --accent: #8f5500;
+  --accent-hover: #6f4200;
   --accent-contrast: #ffffff;
-  --good: #1c7c3c;
-  --warn: #a86a00;
+  --good: #1a7238;
+  --warn: #8f5a00;
   --danger: #b3261e;
 
   /* Type. */
@@ -82,7 +82,7 @@
     --text-inverted: #0b0f14;
 
     --border-subtle: #223044;
-    --border-strong: #33455e;
+    --border-strong: #5e7594;
     --focus-ring: #f0a92b;
 
     --accent: #f0a92b;
@@ -111,7 +111,7 @@
   --text-inverted: #0b0f14;
 
   --border-subtle: #223044;
-  --border-strong: #33455e;
+  --border-strong: #5e7594;
   --focus-ring: #f0a92b;
 
   --accent: #f0a92b;
@@ -180,6 +180,27 @@ pre,
 
 .app-root {
   min-height: 100vh;
+}
+
+/* The skip link: off screen until it is focused, then a real control in the
+ * top-left corner. Moved with `top` rather than hidden with display/
+ * visibility, both of which would take it out of the tab order entirely and
+ * make it unreachable by the only input method it exists for. */
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: -4rem;
+  left: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  top: var(--space-3);
 }
 
 /*
@@ -256,7 +277,12 @@ input[type="search"],
 input[type="text"],
 select {
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-subtle);
+  /* --border-strong, not --border-subtle (issue 334's a11y pass): a control
+   * whose fill barely differs from the page behind it has only its border
+   * to identify it as a control, which WCAG 2.1 SC 1.4.11 holds to 3:1.
+   * --border-subtle stays what its name says - a divider between things
+   * that are already obviously separate. */
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface-sunken);
   color: var(--text-primary);
@@ -265,7 +291,7 @@ select {
 
 .theme-toggle {
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-secondary);
@@ -385,7 +411,7 @@ select {
 .picker__action {
   flex: 0 0 auto;
   padding: 0 var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-secondary);
@@ -2005,8 +2031,17 @@ select {
   resize: vertical;
 }
 
+/* The textarea sits flush inside an overflow:hidden frame, so its own
+ * outline would be clipped - the FRAME wears the focus ring instead
+ * (issue 334's a11y pass). Before this the editor was the one focusable
+ * control in the application with no focus indicator at all. */
 .source-editor__textarea:focus {
   outline: none;
+}
+
+.source-editor__frame:has(.source-editor__textarea:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .source-editor__report {

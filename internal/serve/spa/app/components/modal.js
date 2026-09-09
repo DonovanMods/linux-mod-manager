@@ -13,6 +13,7 @@
 // never fork it" true in code rather than only in a comment.
 
 import { html, useEffect, useRef } from "../render.js";
+import { trapFocus } from "../focustrap.js";
 
 /**
  * The modal shell: a scrim, a labelled dialog panel, a title, the caller's
@@ -63,14 +64,17 @@ export function Modal({
     document.addEventListener("keydown", handleKeyDown);
     // Focus the panel on open: without it the keyboard focus stays on the
     // control that opened the modal, which is now behind a scrim, and Tab
-    // would start walking the page underneath instead of the dialog. This
-    // only fixes where Tab STARTS - there is no focus trap (the page behind
-    // the panel is neither inert nor aria-hidden), so Tab can still walk out
-    // of the dialog once it starts. Full keyboard containment is Unit 8's
-    // a11y pass.
+    // would start walking the page underneath instead of the dialog.
+    //
+    // That only fixes where Tab STARTS, so issue 334's a11y pass adds the
+    // containment this comment used to promise: trapFocus cycles Tab and
+    // Shift+Tab within the panel, so the keyboard cannot reach the page
+    // behind the scrim that a sighted user can already see is out of reach.
     const opener = document.activeElement;
     panelRef.current?.focus();
+    const releaseTrap = trapFocus(() => panelRef.current);
     return () => {
+      releaseTrap();
       document.removeEventListener("keydown", handleKeyDown);
       // Focus returns to the opener on unmount (issue 332), whichever of the
       // shell's own exits fired (Escape, scrim click, ✕, or the caller's own

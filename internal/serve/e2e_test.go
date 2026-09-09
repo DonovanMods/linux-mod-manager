@@ -4514,3 +4514,163 @@ mods: []
 		"the offer must land on the profiles list showing what the import created")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_Keyboard_EveryScreenIsTraversable is issue 334's keyboard pass,
+// asserted rather than eyeballed: on every screen this application has, one
+// full Tab pass reaches every control and never drops focus to the
+// document.
+//
+// Dropping focus is the failure that matters and the one that is invisible
+// in a screenshot: a control that removes itself from the DOM while it has
+// focus (a menu item, a row that a mutation just replaced) leaves the
+// keyboard cursor nowhere, and the user's next Tab restarts at the top of
+// the page. Its own subtests are the screens, so a failure names which one.
+func TestE2E_Keyboard_EveryScreenIsTraversable(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	screens := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"mission-control", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"slide-over", f.SlideOverPath("fake", "boots"), `.slide-over__panel`},
+		{"mod-page", f.ModPagePath("fake", "boots"), `.mod-page`},
+		{"search-page", f.HomePath() + "/search?q=boots", `.search-page[data-hydrated="true"]`},
+		// The setup page's own panel loads its section asynchronously, so
+		// the readiness selector is a control INSIDE the panel - waiting on
+		// the page frame alone would walk a half-rendered screen.
+		{"setup", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/setup", `.setup-page__body button`},
+	}
+
+	for _, screen := range screens {
+		t.Run(screen.name, func(t *testing.T) {
+			f.runInBrowser(t,
+				chromedp.Navigate(screen.path),
+				chromedp.WaitVisible(screen.ready, chromedp.ByQuery),
+			)
+			assertKeyboardTraversal(t, f, screen.name)
+		})
+	}
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Keyboard_ModalContainsFocusAndGivesItBack covers the containment
+// modal.js's own comment promised and issue 332 deferred: a dialog over a
+// scrim must not let Tab walk the page behind it, and closing it must put
+// the cursor back where it came from.
+//
+// Both halves matter to the same person. Without the trap a keyboard user
+// tabs out of the dialog into a library they cannot see and starts pressing
+// Enter on rows behind a scrim; without the return they land back at the
+// top of the document after every confirmation.
+func TestE2E_Keyboard_ModalContainsFocusAndGivesItBack(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var inside []bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Focus(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		// Comfortably more presses than the dialog has controls, so the
+		// walk goes round its end at least twice.
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			for range 12 {
+				if err := chromedp.KeyEvent(kb.Tab).Do(ctx); err != nil {
+					return err
+				}
+				var in bool
+				if err := chromedp.Evaluate(
+					`Boolean(document.querySelector(".modal")?.contains(document.activeElement))`,
+					&in).Do(ctx); err != nil {
+					return err
+				}
+				inside = append(inside, in)
+			}
+			return nil
+		}),
+	)
+	for i, in := range inside {
+		assert.Truef(t, in, "Tab press %d walked out of the dialog", i+1)
+	}
+
+	var focused string
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? ""`, &focused),
+	)
+	assert.Equal(t, "deploy", focused,
+		"closing must return focus to the control that opened it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Keyboard_EscapeFromAPickerReturnsFocusToItsTrigger is the same
+// rule for the top bar's three dropdowns (issue 334): Escape closes the
+// menu, and because the focused menu item is removed from the document by
+// that very close, something has to put the cursor back - or the next Tab
+// starts over at the top of the page.
+func TestE2E_Keyboard_EscapeFromAPickerReturnsFocusToItsTrigger(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var expandedWhileOpen, focusedAfter, expandedAfter string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".profile-picker__trigger").getAttribute("aria-expanded")`, &expandedWhileOpen),
+		// Focus a control INSIDE the menu, which is what a keyboard user
+		// would be on when they press Escape - and what the close removes.
+		//
+		// The page's own .focus(), not chromedp.Focus: CDP's DOM.focus
+		// leaves the page in a state where a synthetic Escape never reaches
+		// the document listener at all (reproduced - the menu simply stays
+		// open), which would make this scenario pass or fail on a CDP
+		// detail rather than on the behaviour it is about.
+		chromedp.Evaluate(`document.querySelector('.picker__row[data-profile="hardcore"] .picker__item').focus()`, nil),
+		chromedp.KeyEvent(kb.Escape),
+		// Poll rather than WaitNotPresent: chromedp's own node-tracking
+		// never reports this <ul> gone within the same Run that removed it
+		// (reproduced - it times out at the harness's full 30s), while the
+		// page's own querySelector sees it immediately.
+		chromedp.Poll(`document.querySelector(".profile-picker__menu") === null`, nil),
+		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &focusedAfter),
+		chromedp.Evaluate(`document.querySelector(".profile-picker__trigger").getAttribute("aria-expanded")`, &expandedAfter),
+	)
+
+	assert.Equal(t, "true", expandedWhileOpen, "an open dropdown must say so")
+	assert.Equal(t, "false", expandedAfter)
+	assert.Contains(t, focusedAfter, "profile-picker__trigger",
+		"Escape must hand the cursor back to the trigger it came from")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Keyboard_SkipLinkJumpsPastTheTopBar covers the shell's own skip
+// link (issue 334): the first Tab on any screen offers a way past the top
+// bar's seven-odd controls, which a keyboard user would otherwise walk
+// through on every single route.
+func TestE2E_Keyboard_SkipLinkJumpsPastTheTopBar(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var firstStop, hash string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Tab),
+		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &firstStop),
+		chromedp.KeyEvent(kb.Enter),
+		chromedp.Evaluate(`location.hash`, &hash),
+	)
+
+	assert.Equal(t, "skip-link", firstStop, "the skip link must be the first tab stop")
+	assert.Equal(t, "#main", hash)
+
+	var mainExists bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.getElementById("main") !== null`, &mainExists))
+	assert.True(t, mainExists, "the skip link must point at a target that exists")
+	assert.Empty(t, f.BrowserErrors())
+}

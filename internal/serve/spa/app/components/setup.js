@@ -104,7 +104,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
   if (state.error) {
     return html`
       ${header}
-      <main class="app-main">
+      <main id="main" class="app-main">
         <p class="app-error">${state.error}</p>
       </main>
     `;
@@ -116,7 +116,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
 
   return html`
     ${header}
-    <main class="app-main setup-page" data-testid="setup-page">
+    <main id="main" class="app-main setup-page" data-testid="setup-page">
       <p class="section-header">Setup</p>
       <nav class="setup-nav" role="tablist" aria-label="Setup sections">
         ${SECTIONS.map(

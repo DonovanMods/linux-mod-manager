@@ -43,6 +43,17 @@
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
+    <!--
+      The skip link (issue 334's a11y pass). Every screen puts its top bar -
+      two pickers, the deploy control, the omnibar, the activity bell, the
+      theme toggle - ahead of the content, which a keyboard user would
+      otherwise have to walk past on every single page.
+
+      It lives in the SHELL rather than in a component so it is the very
+      first thing in the tab order on every route, including before main.js
+      has mounted anything. Each screen's own <main> carries id="main".
+    -->
+    <a class="skip-link" href="#main">Skip to content</a>
     <div id="app" class="app-root">
       <p class="app-booting">Loading&#8230;</p>
     </div>

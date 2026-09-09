@@ -83,7 +83,10 @@ export function ActivityBell({
       <button
         type="button"
         class="picker__trigger activity-bell__trigger"
+        data-picker="activity"
         aria-label=${`Activity (${count})`}
+        aria-haspopup="true"
+        aria-expanded=${open ? "true" : "false"}
         onClick=${toggle}
       >
         🔔${

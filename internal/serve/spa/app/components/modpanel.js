@@ -15,6 +15,7 @@
 // the one section that fetches, lazily, once the panel is open.
 
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
+import { trapFocus } from "../focustrap.js";
 import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
 import { InlineJob } from "./jobprogress.js";
@@ -132,7 +133,14 @@ export function ModPanel({
     // reliably reach a bare document-level listener the way a real
     // keypress does once something holds focus.
     panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    // Keyboard containment, matching the modal's (issue 334's a11y pass):
+    // this panel has a scrim over the page too, and nothing but this told
+    // the Tab key so.
+    const releaseTrap = trapFocus(() => panelRef.current);
+    return () => {
+      releaseTrap();
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [contextPath]);
 
   /** closeOnScrim closes only when the click landed on the scrim ITSELF,
@@ -182,6 +190,7 @@ export function ModPanel({
       <div
         class="slide-over"
         role="dialog"
+        aria-modal="true"
         aria-label="${catalogMod.name} details"
         onClick=${closeOnScrim}
       >
@@ -264,6 +273,7 @@ export function ModPanel({
       <div
         class="slide-over"
         role="dialog"
+        aria-modal="true"
         aria-label="Mod details"
         onClick=${closeOnScrim}
       >
@@ -294,6 +304,7 @@ export function ModPanel({
     <div
       class="slide-over"
       role="dialog"
+      aria-modal="true"
       aria-label="${row.name} details"
       onClick=${closeOnScrim}
     >

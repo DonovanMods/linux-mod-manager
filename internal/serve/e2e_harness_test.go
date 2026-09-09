@@ -53,6 +53,8 @@ import (
 	"github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -1634,4 +1636,96 @@ func newE2EFixtureWithAnUnappliedProfile(t *testing.T) e2eSearchFixture {
 	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
 		domain.ModReference{SourceID: "fake", ModID: e2eSearchInstallModID}))
 	return f
+}
+
+// focusableSelectorJS mirrors spa/app/focustrap.js's own FOCUSABLE list -
+// the elements a browser hands focus to on Tab. Kept in sync by intent
+// rather than by a ratchet: it is a browser fact, not an application one,
+// and the two would only drift if the browser's own rules changed.
+const focusableSelectorJS = "'" +
+	`a[href]:not([tabindex="-1"]), ` +
+	`button:not([disabled]):not([tabindex="-1"]), ` +
+	`input:not([disabled]):not([tabindex="-1"]), ` +
+	`select:not([disabled]):not([tabindex="-1"]), ` +
+	`textarea:not([disabled]):not([tabindex="-1"]), ` +
+	`[tabindex]:not([tabindex="-1"])` + "'"
+
+// countFocusableJS counts the RENDERED focusable elements one Tab pass can
+// reach - how many presses a full pass takes.
+//
+// Scoped to the OVERLAY when one is open, because that is what a focus trap
+// makes true: with a modal or a slide-over on screen the reachable set is
+// that panel's, and the page behind the scrim is deliberately out of reach
+// (spa/app/focustrap.js). Counting the whole document there would assert
+// the exact bug the trap exists to prevent.
+const countFocusableJS = `(() => {
+	const root = document.querySelector(".modal, .slide-over__panel") ?? document;
+	return [...root.querySelectorAll(` + focusableSelectorJS + `)]
+		.filter((el) => el.getClientRects().length > 0).length;
+})()`
+
+// activeElementJS describes whatever holds focus, or "" when nothing in the
+// page does. The empty string is the whole point: focus landing on <body>
+// is focus LOST - the keyboard user's cursor has fallen off the screen and
+// their next Tab restarts from the top.
+const activeElementJS = `(() => {
+	const el = document.activeElement;
+	if (!el || el === document.body || el === document.documentElement) return "";
+	const label = (el.getAttribute("aria-label") || el.textContent || "").trim();
+	return el.tagName.toLowerCase() + "|" + (el.className || "") + "|" + label.slice(0, 40);
+})()`
+
+// tabThrough presses Tab n times, recording what holds focus after each
+// press. An entry is "" for a press that lost focus to the document.
+func tabThrough(n int, out *[]string) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		for range n {
+			if err := chromedp.KeyEvent(kb.Tab).Do(ctx); err != nil {
+				return err
+			}
+			var seen string
+			if err := chromedp.Evaluate(activeElementJS, &seen).Do(ctx); err != nil {
+				return err
+			}
+			*out = append(*out, seen)
+		}
+		return nil
+	})
+}
+
+// assertKeyboardTraversal walks every focusable control on the page
+// currently loaded in f's browser and fails if focus is ever lost.
+//
+// One full pass, sized from the page itself: pressing Tab exactly as many
+// times as there are focusable elements should visit each of them and come
+// back round. A screen with an unreachable region fails by visiting fewer
+// distinct elements than it has; a screen that drops focus fails on the ""
+// entry.
+func assertKeyboardTraversal(t *testing.T, f e2eFixture, screen string) {
+	t.Helper()
+
+	var count int
+	f.runInBrowser(t, chromedp.Evaluate(countFocusableJS, &count))
+	require.Greater(t, count, 3, "%s: too few focusable controls to be a real screen", screen)
+
+	var visited []string
+	f.runInBrowser(t, tabThrough(count, &visited))
+
+	distinct := map[string]bool{}
+	for i, seen := range visited {
+		require.NotEmptyf(t, seen,
+			"%s: focus was lost to the document on Tab press %d of %d - the previous stop was %q",
+			screen, i+1, count, previousStop(visited, i))
+		distinct[seen] = true
+	}
+	assert.GreaterOrEqualf(t, len(distinct), count-1,
+		"%s: one pass visited only %d distinct controls out of %d focusable ones",
+		screen, len(distinct), count)
+}
+
+func previousStop(visited []string, i int) string {
+	if i == 0 {
+		return "(the page's own starting focus)"
+	}
+	return visited[i-1]
 }

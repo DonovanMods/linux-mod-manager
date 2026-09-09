@@ -148,7 +148,7 @@ export function App({ state, onThemeChange, actions }) {
         Theme: ${currentTheme()}
       </button>
     </header>
-    <main class="app-main">
+    <main id="main" class="app-main">
       ${error && html`<p class="app-error">${error}</p>`}
       <${GameChooser} games=${state.games} />
     </main>

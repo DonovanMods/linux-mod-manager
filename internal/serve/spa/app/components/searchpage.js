@@ -78,7 +78,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   if (!query) {
     return html`
       ${header}
-      <main class="app-main search-page">
+      <main id="main" class="app-main search-page">
         <p class="empty-state__hint">
           Search from the omnibar (or a deep link with ?q=) to browse results
           here.
@@ -89,7 +89,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
 
   if (!matches || searchPage.status === "loading") {
     return html`${header}
-      <main class="app-main search-page">
+      <main id="main" class="app-main search-page">
         <p class="app-booting">Searching…</p>
       </main>`;
   }
@@ -97,7 +97,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   if (searchPage.status === "error") {
     return html`
       ${header}
-      <main class="app-main search-page">
+      <main id="main" class="app-main search-page">
         <p class="app-error">Couldn't search: ${searchPage.error}</p>
       </main>
     `;
@@ -112,7 +112,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
 
   return html`
     ${header}
-    <main class="app-main search-page" data-hydrated="true">
+    <main id="main" class="app-main search-page" data-hydrated="true">
       <div class="search-page__toolbar">
         <p class="section-header">
           Results for “${searchPage.query}” — ${pageSummary}

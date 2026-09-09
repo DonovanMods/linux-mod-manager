@@ -89,7 +89,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
       <header class="app-bar app-bar--minimal">
         <span class="app-bar__brand">LMM</span>
       </header>
-      <main class="app-main">
+      <main id="main" class="app-main">
         <p class="app-error">${error}</p>
         <p><a href="/" onClick=${goToChooser}>Choose a different game</a></p>
       </main>
@@ -146,7 +146,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
           ${fetchErrors.status} — showing the last loaded data.
         </p>`
       }
-      <main class="mission-control__body">
+      <main id="main" class="mission-control__body">
         <${AttentionCards}
           state=${state}
           updates=${updates}
