@@ -23,8 +23,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -246,15 +244,20 @@ func (d *DB) vacuumOnce(ctx context.Context) error {
 // database it could not checkpoint as busy=1 with a nil error, and a
 // TRUNCATE that completed leaves no frames behind - so anything other than
 // busy=0 with an empty log means the plaintext may still be in the sidecar.
+//
+// A database that is not in WAL mode - ":memory:", or a file opened with a
+// rollback journal - answers busy=0 with BOTH counts at -1, measured on
+// this driver. It is a row, not sql.ErrNoRows, so the negative count is the
+// only thing that distinguishes "no WAL to checkpoint" from "checkpointed
+// nothing"; treating it as a plain result would reject the database with
+// "0 frame(s) left in the log".
 func (d *DB) checkpointWALOnce(ctx context.Context) error {
 	var busy, logFrames, checkpointed int
-	err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed)
-	if errors.Is(err, sql.ErrNoRows) {
-		// An in-memory database has no WAL at all; nothing to scrub.
-		return nil
-	}
-	if err != nil {
+	if err := d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
 		return fmt.Errorf("checkpointing the write-ahead log: %w", err)
+	}
+	if logFrames < 0 {
+		return nil
 	}
 	if busy != 0 || logFrames != 0 {
 		return fmt.Errorf("checkpointing the write-ahead log: busy=%d, %d frame(s) left in the log, %d checkpointed", busy, logFrames, checkpointed)

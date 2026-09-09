@@ -452,3 +452,24 @@ func TestOpen_TheScrubMarkerIsIdempotentAcrossReopens(t *testing.T) {
 		assert.False(t, fileContains(t, dbPath+"-wal", legacyKey), "plaintext still present in the WAL")
 	}
 }
+
+// TestCheckpointWALOnce_ADatabaseWithNoWALHasNothingToCheckpoint pins the
+// real shape of the non-WAL answer (re-review N2). The guard here used to
+// test for sql.ErrNoRows, which this driver never returns from PRAGMA
+// wal_checkpoint - so an in-memory database would have been REJECTED with
+// "0 frame(s) left in the log" rather than skipped, had one ever reached
+// the scrub. The actual answer is a row with both counts at -1.
+func TestCheckpointWALOnce_ADatabaseWithNoWALHasNothingToCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	d, err := OpenWithOptions(":memory:", Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+	var busy, logFrames, checkpointed int
+	require.NoError(t, d.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").
+		Scan(&busy, &logFrames, &checkpointed),
+		"the pragma answers with a row, not sql.ErrNoRows")
+	assert.Negative(t, logFrames, "a database with no WAL reports a negative frame count")
+
+	assert.NoError(t, d.checkpointWALOnce(ctx))
+}
