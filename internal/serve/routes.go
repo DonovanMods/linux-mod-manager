@@ -51,6 +51,11 @@ func (s *Server) routes() {
 	// comes to exist - so none resolves a ?game= selection.
 	s.mux.Handle("GET /api/v1/games", s.wrap(s.handleAPIGames))
 	s.mux.Handle("POST /api/v1/games", s.wrap(s.handleAPIGameAdd))
+	// The source<->game mapping (#326, epic live review C-4): the one part
+	// of games.yaml neither frontend could reach. A single-step write like
+	// lock/policy, answering the same core.GameListEntry row the listing
+	// carries.
+	s.mux.Handle("PUT /api/v1/games/{id}", s.wrap(s.handleAPIGameSources))
 	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
 	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))
 	s.mux.Handle("POST /api/v1/games/detect", s.wrap(s.handleAPIGameDetectApply))

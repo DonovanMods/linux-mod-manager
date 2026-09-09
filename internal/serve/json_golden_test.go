@@ -459,6 +459,18 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #326's source<->game mapping body (epic live review C-4): the
+			// FULL map the game ends up with, keyed by registered source id.
+			// Two entries with one empty identifier, because both shapes are
+			// real - a NexusMods slug, and a directory source that keys the
+			// game by nothing at all.
+			"game_sources_request",
+			gameSourcesRequest{Sources: map[string]string{
+				"nexusmods":  "skyrimspecialedition",
+				"local-mods": "",
+			}},
+		},
+		{
 			// The detect apply's body: which listing rows to add, named by
 			// 1-based index or slug (core.SelectDetectedGames resolves
 			// both, so the golden carries one of each).
