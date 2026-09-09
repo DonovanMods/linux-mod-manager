@@ -176,16 +176,18 @@ function authRequiredMessage(sourceName, game, profile) {
 }
 
 // KNOWN_FIELD_ERRORS is every GameSpecError.Field errorFor() below actually
-// renders an input for. "game_id" is a real wire field (core.GameSpec.ID,
-// set only from a catalog match's own game_id) this form has no input
-// for - a rejection naming it must fall back to the form-wide banner
-// rather than silently marking nothing (Minor 2).
+// renders an input for. "game_id" (core.GameSpec.ID, the local games.yaml
+// key) used to have no input at all - set only from a catalog match's own
+// game_id - so a rejection naming it fell back to the form-wide banner
+// (Minor 2). N-6, epic re-review, gave it a manual Advanced input, so it
+// joins this set the same as every other named field.
 const KNOWN_FIELD_ERRORS = new Set([
   "source_id",
   "identifier",
   "name",
   "install_path",
   "mod_path",
+  "game_id",
 ]);
 
 // identifierHints names the per-source example/placeholder the "Identifier
@@ -462,6 +464,31 @@ export function GameAddForm({ onAdded, game, profile, refreshKey }) {
         </p>`
       }
       ${errorFor("identifier") && html`<p class="modal__error">${errorFor("identifier")}</p>`}
+
+      <details
+        class="setup-add__advanced"
+        data-testid="setup-add-advanced"
+        open=${Boolean(errorFor("game_id"))}
+      >
+        <summary>Advanced</summary>
+        <label class="plan__control">
+          Game id
+          <input
+            type="text"
+            name="add-game-id"
+            placeholder="derived automatically if left blank"
+            value=${spec.gameID ?? ""}
+            onInput=${(e) =>
+              patch({ gameID: e.currentTarget.value || undefined })}
+          />
+        </label>
+        <p class="empty-state__hint">
+          The local games.yaml key (--game-id). Set automatically by a
+          catalog match above; override it here to choose it by hand.
+        </p>
+        ${errorFor("game_id") && html`<p class="modal__error">${errorFor("game_id")}</p>`}
+      </details>
+
       ${
         (sources ?? []).length > 1 &&
         html`
