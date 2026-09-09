@@ -28,6 +28,7 @@ import { resolveGamePath } from "./navigation.js";
 import {
   connectActivity,
   isOriginMounted,
+  mountedOriginsSnapshot,
   registerOrigin,
 } from "./activity.js";
 
@@ -1280,6 +1281,17 @@ async function onJobDone(summary) {
     waiter(summary);
   }
 
+  // The toast rule is a question about the screen AS THE JOB LANDED, and
+  // the next two lines change that screen: refreshSearchResults puts the
+  // omnibar's (and the search page's) result list into its loading state,
+  // which unmounts the very row this job's outcome is being rendered on.
+  // Asking isOriginMounted afterwards therefore got "no" for every install
+  // started from a search row, and every one of them toasted on top of the
+  // inline outcome the user was already looking at (C-2). The set is
+  // snapshotted here, BEFORE anything can unmount, and consulted below once
+  // the origin is actually known.
+  const mountedAtCompletion = mountedOriginsSnapshot();
+
   hydrate(store.get().route);
   refreshSearchResults();
 
@@ -1289,7 +1301,12 @@ async function onJobDone(summary) {
   await awaitBindings();
 
   const origin = originOf(summary.id);
-  if (origin && isOriginMounted(origin)) return;
+  // Either tense counts as "in view": the snapshot answers for a control
+  // this function's own refresh took off screen, and the live check for a
+  // control that only MOUNTED once the binding landed (a row rendered by
+  // the very refresh above).
+  if (origin && (mountedAtCompletion.has(origin) || isOriginMounted(origin)))
+    return;
 
   pushToast(
     summary.state === "failed"

@@ -61,6 +61,24 @@ export function isOriginMounted(origin) {
 }
 
 /**
+ * mountedOriginsSnapshot returns the origins on screen RIGHT NOW, as a set
+ * that later unmounts cannot change (C-2, epic live review).
+ *
+ * isOriginMounted answers about the present, which is the wrong tense for
+ * the toast rule when the code asking the question has itself moved the
+ * screen on in the meantime: main.js#onJobDone refreshes the search results
+ * (putting the omnibar's list into its loading state, which unmounts the
+ * very row rendering the outcome) before it can even know WHICH origin the
+ * finished job belongs to - that answer needs an in-flight job start to
+ * bind first. Taking the whole set up front, and consulting it afterwards,
+ * is what lets the two happen in that order without the refresh deciding
+ * the answer.
+ */
+export function mountedOriginsSnapshot() {
+  return new Set(mountedOrigins.keys());
+}
+
+/**
  * Connects the session stream to store, and calls onJobDone for each job
  * that reaches a terminal state while connected.
  *

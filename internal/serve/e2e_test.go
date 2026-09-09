@@ -5201,3 +5201,86 @@ func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) 
 		"the deploy indicator must describe the profile on screen")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// searchRefreshedAfterTheJob is the poll every C-2 scenario uses to sample
+// the toast decision at a point where it has definitely been made.
+//
+// onJobDone runs to its toast decision in a microtask or two: it starts the
+// re-hydrate, starts the search refresh, waits for any in-flight job start
+// to bind, and then decides. The search refresh's own RESPONSE lands well
+// after that, so a second /api/v1/search resource entry is a marker that is
+// strictly later than the decision - which is what makes "no toast" an
+// assertion rather than a sampling race.
+const searchRefreshedAfterTheJob = `window.performance.getEntriesByType("resource")` +
+	`.filter((e) => e.name.includes("/api/v1/search")).length >= 2`
+
+// TestE2E_OmnibarInstallReportsInlineWithoutAlsoToasting is C-2 of the epic
+// live review, success half.
+//
+// The design's toast rule is "completion/failure when its origin isn't
+// on-screen; never for things in view" (§Jobs). Installing from the omnibar
+// broke it on the application's single most common flow: onJobDone called
+// refreshSearchResults() BEFORE reading isOriginMounted, and that call puts
+// the omnibar's result list into its loading state, which unmounts the very
+// row rendering the outcome. By the time the rule was consulted, the answer
+// had been changed by the code asking the question - so every omnibar
+// install reported inline AND toasted.
+func TestE2E_OmnibarInstallReportsInlineWithoutAlsoToasting(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchInstallModID)
+	var toasts int
+	var inline string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		chromedp.Poll(searchRefreshedAfterTheJob, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(row+` .job-progress`, &inline),
+		chromedp.Evaluate(`document.querySelectorAll(".toast").length`, &toasts),
+	)
+
+	assert.Contains(t, inline, "Done", "the outcome must resurface on the row that started it")
+	assert.Zero(t, toasts,
+		"the row is on screen and already says so - a toast repeating it is the design's own "+
+			"'never for things in view'")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SearchPageInstallConflictReportsInlineWithoutAlsoToasting is C-2's
+// failure half, on the route where the toast is most misleading: the search
+// page has no tray, so its inline row is the ONLY place the conflict and its
+// Overwrite affordance live - and a toast beside it says the same sentence
+// with nothing to do about it.
+func TestE2E_SearchPageInstallConflictReportsInlineWithoutAlsoToasting(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	row := searchResultRow("fake", e2eSearchConflictModID)
+	var toasts int
+	var inline string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SearchPagePath("clash")),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="failed"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` button[data-action="overwrite"]`, chromedp.ByQuery),
+		chromedp.Poll(searchRefreshedAfterTheJob, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(row+` .job-progress`, &inline),
+		chromedp.Evaluate(`document.querySelectorAll(".toast").length`, &toasts),
+	)
+
+	assert.Contains(t, inline, "conflict", "the failure must resurface on the row, with its own next step")
+	assert.Zero(t, toasts,
+		"the failure is on screen with the affordance that answers it - a toast can only repeat it")
+	assert.Empty(t, f.BrowserErrors())
+}
