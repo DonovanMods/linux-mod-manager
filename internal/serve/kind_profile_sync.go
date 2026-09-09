@@ -66,6 +66,16 @@ type pendingProfileSync struct {
 }
 
 // planProfileSyncKind implements planKind.Plan for "profile_sync".
+//
+// M4 (coordinator correction, epic review M-3): an unknown profile name is
+// NOT refused here. PlanProfileSync tolerates a missing profile.yaml on
+// purpose - it computes the plan as if the profile were empty (Missing:
+// true) and ApplyProfileSync creates the file - which is CLI parity, not a
+// bug: `lmm profile sync <name>` has always behaved this way (see
+// ProfileSyncPlan.Missing's doc comment). The web wire inherits that
+// deliberately; a caller must render Missing:true rather than treat 200 as
+// purely informational (TestFlowProfileSync_UnknownProfileNamesAMissingProfile
+// pins the fact, not a refusal).
 func planProfileSyncKind(ctx context.Context, s *Server, sel selection, opts any) (any, any, error) {
 	req, ok := opts.(profileSyncPlanRequest)
 	if !ok {

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -68,6 +69,33 @@ func TestFlowProfileSync_NoChangesIsStillASuccessfulJob(t *testing.T) {
 
 	j := runFlow(t, s, game, "profile_sync", `{"profile":"default"}`, "")
 	assert.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+}
+
+// TestFlowProfileSync_UnknownProfileNamesAMissingProfile is M4 (coordinator
+// correction, epic review M-3): an unrecognised profile name is NOT
+// refused - it is CORE's deliberate behaviour, matching `lmm profile
+// sync`'s own CLI parity, that PlanProfileSync computes the plan as if the
+// profile were empty and reports Missing:true, and ApplyProfileSync then
+// creates the profile.yaml. This pins the fact on the wire (200, not 404,
+// with missing:true on the plan) and that Apply really does create it, so
+// a regression toward "silently swallow the flag" or "quietly stop
+// creating it" is caught either way. Task B's confirm modal must render
+// missing:true rather than treat 200 as purely informational.
+func TestFlowProfileSync_UnknownProfileNamesAMissingProfile(t *testing.T) {
+	s, svc, game := newFlowFixtureServer(t)
+
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/plans/profile_sync", game), `{"profile":"nope"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"missing": true`)
+
+	_, err := svc.NewProfileManager().Get(t.Context(), game.ID, "nope")
+	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "planning must not create the profile")
+
+	j := runFlow(t, s, game, "profile_sync", `{"profile":"nope"}`, "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	_, err = svc.NewProfileManager().Get(t.Context(), game.ID, "nope")
+	assert.NoError(t, err, "applying a Missing:true plan must create the profile")
 }
 
 // TestFlowProfileSync_RequiresAProfile pins the request's one validation.
