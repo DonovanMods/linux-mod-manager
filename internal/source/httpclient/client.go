@@ -158,19 +158,22 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
+		// errBody, not body: the REQUEST body is this function's own
+		// parameter, and shadowing it here read as if it were being
+		// reassigned (Track C review, finding 10).
+		errBody, readErr := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
 		if readErr != nil {
 			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
 		}
 		if c.errorMapper != nil {
-			if mapped := c.errorMapper(resp.StatusCode, body, path); mapped != nil {
+			if mapped := c.errorMapper(resp.StatusCode, errBody, path); mapped != nil {
 				return mapped
 			}
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("%w: %s API key required", domain.ErrAuthRequired, c.authLabel)
 		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
+		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(errBody))
 	}
 
 	// 204 No Content has no body to decode; treat as success.
