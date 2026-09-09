@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -5547,4 +5548,73 @@ func TestE2E_EveryRouteKeepsTheActivityBellAndTheShortcutsHelp(t *testing.T) {
 	assert.Equal(t, "shortcuts", focused,
 		"the help opened from Setup's own bar must return focus to the button that opened it")
 	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPageCarriesEverythingTheSlideOverDoes is I-5 of the epic
+// live review.
+//
+// "More info →" led to a page with FEWER actions than the panel it came
+// from: the slide-over offered Update, Enable/Disable, Uninstall, an
+// editable lock and update policy, the mod's own findings and its
+// conflicts; the full page offered Enable/Disable and the versions table.
+// A deep link or a bookmark therefore landed on the LESS capable surface,
+// on a page whose own design section opens with "Everything, unlimited
+// room".
+//
+// Driven as a deep link rather than through the slide-over on purpose: the
+// three profile-scoped documents this page now needs (mods, health,
+// conflicts) are Mission Control's, and arriving here cold is the case
+// where nothing has fetched them yet.
+func TestE2E_FullModPageCarriesEverythingTheSlideOverDoes(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var lockPresent, uninstall bool
+	var policy, findings string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "boots")),
+		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="mod-page-findings"]`, chromedp.ByQuery),
+		textContent(`[data-testid="mod-page-findings"]`, &findings),
+		chromedp.Evaluate(`document.querySelector('.slide-over__settings input[type="checkbox"]') !== null`, &lockPresent),
+		chromedp.Evaluate(`document.querySelector('.mod-page [data-action="uninstall"]') !== null`, &uninstall),
+		chromedp.Evaluate(`document.querySelector(".slide-over__settings select")?.value ?? ""`, &policy),
+	)
+
+	assert.True(t, lockPresent, "the page must carry the editable lock the slide-over has")
+	assert.True(t, uninstall, "the page must carry Uninstall")
+	assert.Equal(t, "notify", policy, "the page must carry the editable update policy")
+	assert.Contains(t, findings, "version mismatch",
+		"the page must carry this mod's own verify findings, in the engine's own words")
+
+	assert.Empty(t, f.BrowserErrors())
+
+	// Conflicts, and the lock actually WRITING - a control that renders and
+	// does nothing would satisfy every assertion above. Both are driven on
+	// Mod Y, which is in the profile's own load order (Better Boots is
+	// installed but never added to it, so its lock legitimately 404s), and
+	// both run deliberately AFTER the BrowserErrors assertion: Mod X/Y are
+	// seeded into the DB and the cache but not into the fake source's
+	// catalog, so this page's LIVE reads (ModDetail, versions) 404 by
+	// design - the degradation this page has always handled, and a network
+	// log entry the plain assert.Empty above would fail on for a reason
+	// that is not this scenario's subject.
+	var conflicts string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "y")),
+		chromedp.WaitVisible(`[data-testid="mod-page-conflicts"]`, chromedp.ByQuery),
+		textContent(`[data-testid="mod-page-conflicts"]`, &conflicts),
+		chromedp.Click(`.slide-over__settings input[type="checkbox"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('.slide-over__settings input[type="checkbox"]').checked === true`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+	assert.Contains(t, conflicts, "shared.esp",
+		"the page must carry this mod's own file conflicts")
+	assert.Contains(t, conflicts, "(wins)",
+		"and say which side of each one it is on")
+
+	list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+	require.NoError(t, err)
+	idx := slices.IndexFunc(list.Mods, func(m core.ModListing) bool { return m.ID == "y" })
+	require.GreaterOrEqual(t, idx, 0)
+	assert.True(t, list.Mods[idx].Locked, "the lock the page rendered must have reached the database")
 }

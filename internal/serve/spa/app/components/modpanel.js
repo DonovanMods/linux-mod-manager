@@ -30,16 +30,18 @@ function modUrl(basePath, row) {
   return url.pathname + url.search;
 }
 
-/** findingsFor returns modID's own VerifyFinding rows, excluding "ok". */
-function findingsFor(health, modID) {
+/** findingsFor returns modID's own VerifyFinding rows, excluding "ok".
+ * Shared with the full mod page since I-5 (epic live review). */
+export function findingsFor(health, modID) {
   return (health?.result?.findings ?? []).filter(
     (f) => f.mod_id === modID && f.status !== "ok",
   );
 }
 
 /** conflictsFor returns the ProfileConflict rows that name row's key, either
- * as the current owner or as one of the other providers. */
-function conflictsFor(conflicts, key) {
+ * as the current owner or as one of the other providers. Shared with the
+ * full mod page since I-5 (epic live review). */
+export function conflictsFor(conflicts, key) {
   return (conflicts?.conflicts ?? []).filter(
     (c) => c.owner.key === key || c.also_in.some((m) => m.key === key),
   );
@@ -537,13 +539,19 @@ function changelogPreview(text) {
   return trimmed.length > limit ? `${trimmed.slice(0, limit)}…` : trimmed;
 }
 
-/** ModSettingsControls is the slide-over's editable lock + update-policy
- * pair, over the thin api_mod_settings.go routes (no plan, no job - a
- * single DB write with nothing to preview). Local status/error state only:
- * a successful write lets refreshAfterModSetting (main.js) bring fresh
- * data back down through `row` on the next render, so this component
- * never has to hold its own copy of what changed. */
-function ModSettingsControls({ row, actions, panelRef }) {
+/** ModSettingsControls is the editable lock + update-policy pair, over the
+ * thin api_mod_settings.go routes (no plan, no job - a single DB write with
+ * nothing to preview). Local status/error state only: a successful write
+ * lets refreshAfterModSetting (main.js) bring fresh data back down through
+ * `row` on the next render, so this component never has to hold its own
+ * copy of what changed.
+ *
+ * Shared with the full mod page since I-5 (epic live review): "More info →"
+ * used to lead to a surface with FEWER actions than the panel it came from,
+ * on a page whose own design section opens with "Everything, unlimited
+ * room". panelRef is optional - it exists for the slide-over's focus rule
+ * (below), and the full mod page has no panel to return focus TO. */
+export function ModSettingsControls({ row, actions, panelRef }) {
   const [state, setState] = useState({ busy: false, error: "" });
 
   // M4: the checkbox/select's own `disabled` attribute (set below, for the
@@ -554,7 +562,10 @@ function ModSettingsControls({ row, actions, panelRef }) {
   // the arrow steps, which rely on the panel - not some stray control -
   // holding focus) usable after a settings interaction.
   function restorePanelFocus() {
-    panelRef.current?.focus();
+    // panelRef?, not panelRef.current? - the full mod page (I-5) renders
+    // these controls with no panel at all, and reading .current off an
+    // absent ref is a TypeError, not a no-op.
+    panelRef?.current?.focus();
   }
 
   async function toggleLock() {

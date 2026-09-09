@@ -43,6 +43,8 @@ import { loadModJobHistory, candidateJobKey } from "../jobhistory.js";
 import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { AwayBar } from "./awaybar.js";
+import { findingLabel } from "../verify.js";
+import { ModSettingsControls, findingsFor, conflictsFor } from "./modpanel.js";
 
 /** BackLink is this page's one route out - always to Mission Control as it
  * stood, never the browser's own history stack. */
@@ -100,6 +102,26 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
   const modID = route.modID;
   const origin = (action) => `mod:${sourceID}/${modID}:${action}`;
 
+  // The lock/policy pair reads the LIBRARY listing first and the live
+  // ModDetail only as a fallback (I-5): core.ModListing carries locked,
+  // locked_version and update_policy without asking the source anything,
+  // so a mod whose source is offline still gets working controls - the same
+  // degradation rule the identity/files half of this page already follows.
+  const listing = (state.mods?.mods ?? []).find(
+    (m) => m.source_id === sourceID && m.id === modID,
+  );
+  const settingsSource = listing ?? installed;
+  const settingsRow = settingsSource && {
+    source_id: sourceID,
+    id: modID,
+    locked: Boolean(settingsSource.locked),
+    locked_version: settingsSource.locked_version,
+    update_policy: settingsSource.update_policy,
+  };
+
+  const findings = findingsFor(state.health, modID);
+  const conflicts = conflictsFor(state.conflicts, `${sourceID}:${modID}`);
+
   return html`
     ${header}
     <main id="main" class="app-main mod-page">
@@ -112,7 +134,12 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         ${installed?.locked && " · locked"}
       </p>
 
-      <div class="mod-page__section">
+      ${
+        settingsRow &&
+        html`<${ModSettingsControls} row=${settingsRow} actions=${actions} />`
+      }
+
+      <div class="mod-page__section mod-page__actions">
         <${InlineJob}
           origin=${origin("toggle")}
           state=${state}
@@ -132,8 +159,66 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             ${installedMod.enabled ? "Disable" : "Enable"}
           </button>
         <//>
+        <${InlineJob}
+          origin=${origin("uninstall")}
+          state=${state}
+          actions=${actions}
+        >
+          <button
+            type="button"
+            class="button button--danger"
+            data-action="uninstall"
+            onClick=${() =>
+              actions.openPlan({
+                kind: "uninstall",
+                origin: origin("uninstall"),
+                title: `Uninstall ${installedMod.name}`,
+                confirmLabel: "Uninstall",
+                options: { source_id: sourceID, mod_id: modID },
+              })}
+          >
+            Uninstall
+          </button>
+        <//>
       </div>
 
+      ${
+        findings.length > 0 &&
+        html`
+          <section class="mod-page__section" data-testid="mod-page-findings">
+            <h2 class="plan__heading">Findings (${findings.length})</h2>
+            <ul class="plan__paths">
+              ${findings.map(
+                (f) =>
+                  html`<li key=${f.file_id ?? f.status}>
+                    ${findingLabel(f)}
+                  </li>`,
+              )}
+            </ul>
+          </section>
+        `
+      }
+      ${
+        conflicts.length > 0 &&
+        html`
+          <section class="mod-page__section" data-testid="mod-page-conflicts">
+            <h2 class="plan__heading">Conflicts (${conflicts.length})</h2>
+            <ul class="plan__paths">
+              ${conflicts.map(
+                (c) =>
+                  html`<li key=${c.path} class="mono">
+                    ${c.path}
+                    ${
+                      c.load_order_winner.key === `${sourceID}:${modID}`
+                        ? " (wins)"
+                        : ` (loses to ${c.load_order_winner.name})`
+                    }
+                  </li>`,
+              )}
+            </ul>
+          </section>
+        `
+      }
       ${
         modPage.detailError &&
         html`<p class="empty-state__hint">

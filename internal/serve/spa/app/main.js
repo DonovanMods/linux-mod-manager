@@ -196,7 +196,7 @@ async function hydrate(route) {
   }
 
   if (route.view === "mod") {
-    await hydrateModPage(route, context);
+    await hydrateModPage(route, context, seq);
     return;
   }
   if (route.view === "search") {
@@ -257,7 +257,7 @@ async function hydrate(route) {
  * way or the other, which is what keeps this page's own InlineJob outcome
  * on screen through the re-hydrate a job's own completion triggers.
  */
-async function hydrateModPage(route, context) {
+async function hydrateModPage(route, context, seq = hydrateSeq) {
   const key = `${route.sourceID}/${route.modID}`;
   const reHydrating = store.get().modPage?.key === key;
   if (!reHydrating) {
@@ -293,12 +293,27 @@ async function hydrateModPage(route, context) {
   // alongside detail/versions, both I3-style: a source that cannot answer
   // degrades this page's EXTRAS, never blanks the identity/files a real
   // install record already answered for.
-  const [detail, versions, updates] = await Promise.allSettled([
-    getModDetail(route.sourceID, route.modID, context),
-    getModVersions(route.sourceID, route.modID, context),
-    get(scoped("/api/v1/updates", context)),
-  ]);
+  //
+  // mods/health/conflicts join them since I-5 (epic live review): the full
+  // mod page now carries this mod's lock and update policy, its Uninstall,
+  // its findings and its conflicts, and all four are answered by those
+  // three PROFILE-scoped documents rather than by anything mod-specific on
+  // the wire. They land in the TOP-LEVEL store slots, not under modPage,
+  // because they are the same documents Mission Control renders for the
+  // same context - a second copy under another key is how two surfaces
+  // come to disagree about one profile. That also means arriving here from
+  // a cold deep link warms them for the "Back to library" that follows.
+  const [detail, versions, updates, mods, health, conflicts] =
+    await Promise.allSettled([
+      getModDetail(route.sourceID, route.modID, context),
+      getModVersions(route.sourceID, route.modID, context),
+      get(scoped("/api/v1/updates", context)),
+      get(scoped("/api/v1/mods", context)),
+      get(scoped("/api/v1/health", context)),
+      get(scoped("/api/v1/conflicts", context)),
+    ]);
   if (store.get().modPage?.key !== key) return;
+  if (!isCurrentHydration(seq)) return;
   store.set({
     modPage: {
       ...store.get().modPage,
@@ -307,6 +322,15 @@ async function hydrateModPage(route, context) {
       versions: settled(versions),
       versionsError: failureMessage(versions),
       updates: settled(updates),
+    },
+    mods: settled(mods) ?? store.get().mods,
+    health: settled(health) ?? store.get().health,
+    conflicts: settled(conflicts) ?? store.get().conflicts,
+    fetchErrors: {
+      ...store.get().fetchErrors,
+      mods: failureMessage(mods),
+      health: failureMessage(health),
+      conflicts: failureMessage(conflicts),
     },
   });
 }

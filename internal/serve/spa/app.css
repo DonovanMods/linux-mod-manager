@@ -1919,6 +1919,15 @@ select {
   margin-bottom: var(--space-6);
 }
 
+/* The full mod page's own action row (I-5): the same shape the slide-over's
+   actions use, since they are now the same set of actions. */
+.mod-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
 .mod-page__prose {
   color: var(--text-secondary);
   white-space: pre-wrap;
