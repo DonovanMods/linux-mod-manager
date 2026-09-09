@@ -134,11 +134,11 @@ func TestCheckUpdatesRefreshing_BypassesTheMetadataCache(t *testing.T) {
 	assert.Equal(t, 2, fx.calls, "--refresh asks Steam again")
 }
 
-func TestDescribeItems_ReportsUnavailabilityPerItem(t *testing.T) {
+func TestDescribeMods_ReportsUnavailabilityPerItem(t *testing.T) {
 	fx := serveFixture(t, "getpublishedfiledetails_mixed_result9.json")
 	src := newTestSource(t, fx.srv.URL, t.TempDir(), nil)
 
-	statuses, err := src.DescribeItems(context.Background(), "1133870",
+	statuses, err := src.DescribeMods(context.Background(), "1133870",
 		[]string{"3617086610", "2900001111", "4000000000"}, false)
 	require.NoError(t, err)
 	require.Len(t, statuses, 3)

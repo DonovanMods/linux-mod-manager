@@ -58,11 +58,13 @@ type Source struct {
 }
 
 var (
-	_ source.ModSource              = (*Source)(nil)
-	_ source.CapabilityReporter     = (*Source)(nil)
-	_ source.TypeLabeler            = (*Source)(nil)
-	_ source.WorkshopScanner        = (*Source)(nil)
-	_ source.UpdateProgressReporter = (*Source)(nil)
+	_ source.ModSource               = (*Source)(nil)
+	_ source.CapabilityReporter      = (*Source)(nil)
+	_ source.TypeLabeler             = (*Source)(nil)
+	_ source.WorkshopScanner         = (*Source)(nil)
+	_ source.UpdateProgressReporter  = (*Source)(nil)
+	_ source.RefreshingUpdateChecker = (*Source)(nil)
+	_ source.BatchModDescriber       = (*Source)(nil)
 )
 
 // New constructs a Steam Workshop source.

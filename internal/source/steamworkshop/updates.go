@@ -113,28 +113,18 @@ func compareRevision(im domain.InstalledMod, d itemDetails) (newVersion string, 
 	return time.Unix(d.TimeUpdated, 0).UTC().Format(time.RFC3339), true
 }
 
-// ItemStatus is what a caller learns about one tracked item beyond whether
-// it has an update: whether Valve still describes it at all, and the
-// human-facing revision date lmm shows instead of a 19-digit content id.
-type ItemStatus struct {
-	FileID string
-	// Unavailable reports an item Valve returned result != 1 for - delisted,
-	// deleted or made private while the user is still subscribed.
-	Unavailable bool
-	// Note explains Unavailable in one sentence, empty otherwise.
-	Note string
-	// Mod is the mapped metadata; the zero value when Unavailable.
-	Mod domain.Mod
-}
-
-// DescribeItems resolves metadata for a batch of published-file ids and
-// reports one status per id, in the order given. refresh bypasses the
-// metadata cache (`lmm update --refresh` and the SPA's refresh action).
+// DescribeMods implements source.BatchModDescriber: it resolves metadata
+// for a batch of published-file ids in as few round trips as Valve's
+// hundred-per-request limit allows, and reports one entry per id in the
+// order given. refresh bypasses the metadata cache.
 //
-// It is the batch read the adopt plan and `lmm mod show` share. Per-item
-// unavailability is data, never an error; only a failure to reach Valve at
-// all is returned as one.
-func (s *Source) DescribeItems(ctx context.Context, gameID string, fileIDs []string, refresh bool) ([]ItemStatus, error) {
+// It is the batch read a workshop adopt needs: thirty subscribed items
+// resolve in one request rather than thirty. Per-item unavailability is
+// data, never an error - an item Valve refuses to describe is still on disk
+// and still loaded by the game, so it stays adoptable with only the
+// identity the ACF carries. Only a failure to reach Valve at all is
+// returned as an error.
+func (s *Source) DescribeMods(ctx context.Context, gameID string, fileIDs []string, refresh bool) ([]source.ModDescription, error) {
 	if len(fileIDs) == 0 {
 		return nil, nil
 	}
@@ -142,18 +132,18 @@ func (s *Source) DescribeItems(ctx context.Context, gameID string, fileIDs []str
 	if err != nil {
 		return nil, fmt.Errorf("source %q: describing items: %w", sourceID, err)
 	}
-	out := make([]ItemStatus, 0, len(fileIDs))
+	out := make([]source.ModDescription, 0, len(fileIDs))
 	for _, id := range fileIDs {
 		d, ok := details[id]
 		if !ok || !d.available() {
-			out = append(out, ItemStatus{
-				FileID:      id,
+			out = append(out, source.ModDescription{
+				ModID:       id,
 				Unavailable: true,
 				Note:        "Steam does not describe this item - it may be delisted, deleted or private",
 			})
 			continue
 		}
-		out = append(out, ItemStatus{FileID: id, Mod: modFromDetails(d, gameID)})
+		out = append(out, source.ModDescription{ModID: id, Mod: modFromDetails(d, gameID)})
 	}
 	return out, nil
 }

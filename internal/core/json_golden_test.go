@@ -1105,6 +1105,84 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #269: what a workshop scan says - the app, the libraries it
+			// was found in, and the items themselves. Warnings left empty
+			// to pin that its omitempty drops the key on a clean scan.
+			"workshop_scan",
+			core.WorkshopScan{
+				GameID:    "space-engineers-2",
+				AppID:     "1133870",
+				Libraries: []string{"/home/user/.steam/steam"},
+				Items: []domain.WorkshopItem{{
+					FileID:      "3617086610",
+					Path:        "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+					SizeOnDisk:  572330,
+					Manifest:    "7987119735124793734",
+					TimeUpdated: 1764767935,
+				}},
+				Tracked:   1,
+				Untracked: 1,
+			},
+		},
+		{
+			// One entry Steam described in full. Its ACF facts and its
+			// metadata are separate keys on purpose: the manifest is what
+			// is on disk, the mod is what Steam publishes about it.
+			"workshop_adopt_entry",
+			core.WorkshopAdoptEntry{
+				FileID:      "3617086610",
+				Path:        "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+				SizeOnDisk:  572330,
+				Manifest:    "7987119735124793734",
+				TimeUpdated: 1764767935,
+				Mod: &domain.Mod{
+					ID: "3617086610", SourceID: "steamworkshop", Name: "Sample Workshop Item",
+					Version: "7987119735124793734", Author: "76561198000000000",
+					GameID: "space-engineers-2", Category: "Blueprint", UpdatedAt: fixedTime,
+					SourceURL: "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+				},
+			},
+		},
+		{
+			// A plan carrying one describable entry and one Steam refuses to
+			// describe - the golden's job is to pin every key's wire shape,
+			// including the unavailable/note pair, not to be a plausible
+			// plan. The unexported snapshot field must not appear at all.
+			"workshop_adopt_plan",
+			core.WorkshopAdoptPlan{
+				GameID:  "space-engineers-2",
+				Profile: "default",
+				Scan: &core.WorkshopScan{
+					GameID: "space-engineers-2", AppID: "1133870",
+					Libraries: []string{"/home/user/.steam/steam"},
+					Items:     []domain.WorkshopItem{},
+					Untracked: 2,
+					Warnings:  []string{"could not fetch Steam metadata (items are still adoptable): timeout"},
+				},
+				Entries: []core.WorkshopAdoptEntry{
+					{
+						FileID: "3617086610", Manifest: "7987119735124793734", TimeUpdated: 1764767935,
+						Path: "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+					},
+					{
+						FileID:      "2900001111",
+						Path:        "/home/user/.steam/steam/steamapps/workshop/content/1133870/2900001111",
+						Unavailable: true,
+						Note:        "Steam does not describe this item - it may be delisted, deleted or private",
+					},
+				},
+			},
+		},
+		{
+			"workshop_adopt_result",
+			core.WorkshopAdoptResult{
+				Adopted:  28,
+				Skipped:  1,
+				Failed:   1,
+				Warnings: []string{"Workshop item 2900001111: could not update profile: profile is read-only"},
+			},
+		},
+		{
 			// #269: an update lmm can REPORT but never apply. external says
 			// which kind of refusal this is; refusal is the existing field,
 			// reused rather than a second refusal-rendering path.

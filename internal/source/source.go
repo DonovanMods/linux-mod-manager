@@ -149,6 +149,32 @@ type WorkshopScanner interface {
 	ScanWorkshopItems(ctx context.Context, sourceGameID string) (WorkshopScan, error)
 }
 
+// ModDescription is one BatchModDescriber answer. Unavailable marks a mod
+// the source will not describe at all - delisted, deleted or private - with
+// Note explaining it in one sentence; Mod is the zero value in that case.
+// It is a per-item FACT, never an error: one dead item in a batch of thirty
+// must not blind the other twenty-nine.
+type ModDescription struct {
+	ModID       string
+	Mod         domain.Mod
+	Unavailable bool
+	Note        string
+}
+
+// BatchModDescriber is implemented by sources that can resolve MANY mods'
+// metadata in one round trip, so a flow with a list of ids in hand does not
+// have to make one GetMod call per id (#269: a workshop adopt routinely has
+// thirty subscribed items to describe, and Valve's endpoint takes a hundred
+// per request).
+//
+// refresh asks the source to bypass any local metadata cache, the same
+// meaning it has on RefreshingUpdateChecker. The result has one entry per
+// requested id, in the order given. An error means the source could not be
+// reached at all.
+type BatchModDescriber interface {
+	DescribeMods(ctx context.Context, sourceGameID string, modIDs []string, refresh bool) ([]ModDescription, error)
+}
+
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade
 // gracefully (hide the action, show a notice) rather than treat it as a failure.
