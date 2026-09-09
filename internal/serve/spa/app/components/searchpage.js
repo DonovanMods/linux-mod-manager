@@ -114,9 +114,9 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     ${header}
     <main id="main" class="app-main search-page" data-hydrated="true">
       <div class="search-page__toolbar">
-        <p class="section-header">
+        <h1 class="section-header">
           Results for “${searchPage.query}” — ${pageSummary}
-        </p>
+        </h1>
         ${
           (facets?.categories.length ?? 0) > 0 &&
           html`

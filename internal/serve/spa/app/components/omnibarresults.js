@@ -26,7 +26,7 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   if (omnibarSearch.status === "error") {
     return html`
       <section class="library omnibar-results">
-        <p class="section-header">From sources</p>
+        <h2 class="section-header">From sources</h2>
         <p class="empty-state__hint">
           Couldn't search sources: ${omnibarSearch.error}
         </p>
@@ -40,9 +40,9 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
 
   return html`
     <section class="library omnibar-results">
-      <p class="section-header">
+      <h2 class="section-header">
         From sources (${hits.length})${warningsCaption(warnings)}
-      </p>
+      </h2>
       ${
         report.attempted_count === 0 &&
         html`<p class="empty-state__hint">

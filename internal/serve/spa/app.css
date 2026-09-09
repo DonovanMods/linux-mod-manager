@@ -209,6 +209,24 @@ pre,
   outline-offset: 2px;
 }
 
+/* visually-hidden takes an element out of the VISUAL layout while leaving
+   it in the accessibility tree - the standard clip-rect recipe, not
+   display:none (which removes it from both) and not a zero opacity (which
+   leaves it taking up space). Mission Control's own <h1> is its only user:
+   heading navigation needs a route title, and the top bar already renders
+   that context as two pickers (I-3, epic live review). */
+.visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+}
+
 /* Confident, tracked section headers - the Launcher signature. */
 .section-header {
   margin: 0 0 var(--space-3);

@@ -77,7 +77,7 @@ export function GameDetectSection({ onAdded }) {
 
   return html`
     <div class="setup-detect" data-testid="setup-detect">
-      <p class="plan__heading">Detect games</p>
+      <h3 class="plan__heading">Detect games</h3>
       ${
         error &&
         html`
@@ -335,7 +335,7 @@ export function GameAddForm({ onAdded, game, profile }) {
 
   return html`
     <form class="setup-add" data-testid="setup-add-game" onSubmit=${submit}>
-      <p class="plan__heading">Add a game manually</p>
+      <h3 class="plan__heading">Add a game manually</h3>
 
       <label class="plan__control">
         Source

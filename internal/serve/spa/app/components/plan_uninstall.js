@@ -23,7 +23,7 @@ export function UninstallPlanView({ plan }) {
         files.length > 0
           ? html`
               <section class="plan__section">
-                <p class="plan__heading">Files removed (${files.length})</p>
+                <h3 class="plan__heading">Files removed (${files.length})</h3>
                 <ul class="plan__paths">
                   ${files.map((f) => html`<li key=${f} class="mono">${f}</li>`)}
                 </ul>
@@ -47,7 +47,7 @@ export function UninstallPlanView({ plan }) {
         hooks.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Hooks (${hooks.length})</p>
+            <h3 class="plan__heading">Hooks (${hooks.length})</h3>
             <p class="mono plan__hooks">${hooks.join(" → ")}</p>
           </section>
         `

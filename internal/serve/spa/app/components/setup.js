@@ -117,7 +117,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
   return html`
     ${header}
     <main id="main" class="app-main setup-page" data-testid="setup-page">
-      <p class="section-header">Setup</p>
+      <h1 class="section-header">Setup</h1>
       <nav class="setup-nav" role="tablist" aria-label="Setup sections">
         ${SECTIONS.map(
           (s, i) => html`

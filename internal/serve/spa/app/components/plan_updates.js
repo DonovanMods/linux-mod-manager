@@ -68,9 +68,9 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
       </p>
       ${
         lockedCount > 0 &&
-        html`<p class="plan__heading plan__heading--warn">
+        html`<h3 class="plan__heading plan__heading--warn">
           ${`${lockedCount} of them will be skipped — locked.`}
-        </p>`
+        </h3>`
       }
       ${
         updates.length > 0 &&
@@ -110,9 +110,9 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
         notFound.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading plan__heading--warn">
+            <h3 class="plan__heading plan__heading--warn">
               No longer offers an update (${notFound.length})
-            </p>
+            </h3>
             <ul class="plan__paths">
               ${notFound.map(
                 (key) => html`<li key=${key} class="mono">${key}</li>`,

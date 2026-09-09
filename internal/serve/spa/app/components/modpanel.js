@@ -224,7 +224,7 @@ export function ModPanel({
           >
             ×
           </button>
-          <p class="section-header">${catalogMod.name}</p>
+          <h2 class="section-header">${catalogMod.name}</h2>
           <p class="slide-over__meta">
             ${catalogMod.author ? html`by ${catalogMod.author} · ` : ""}
             <span class="mono">${catalogMod.version}</span> ·
@@ -267,7 +267,7 @@ export function ModPanel({
             class="slide-over__section"
             data-changelog-status=${changelog.status}
           >
-            <p class="plan__heading">Changelog</p>
+            <h3 class="plan__heading">Changelog</h3>
             ${
               changelog.status === "loading"
                 ? html`<p class="empty-state__hint">Loading changelog…</p>`
@@ -307,7 +307,7 @@ export function ModPanel({
           >
             ×
           </button>
-          <p class="section-header">Mod details</p>
+          <h2 class="section-header">Mod details</h2>
           <p class="empty-state__hint">
             <span class="mono">${sourceID} / ${modID}</span> is not in this
             profile's library.
@@ -359,7 +359,7 @@ export function ModPanel({
           </button>
         </div>
 
-        <p class="section-header">${row.name}</p>
+        <h2 class="section-header">${row.name}</h2>
         <p class="slide-over__meta">
           ${row.author ? html`by ${row.author} · ` : ""}
           <span class="mono"
@@ -446,7 +446,7 @@ export function ModPanel({
           findings.length > 0 &&
           html`
             <section class="slide-over__section">
-              <p class="plan__heading">Findings (${findings.length})</p>
+              <h3 class="plan__heading">Findings (${findings.length})</h3>
               <ul class="plan__paths">
                 ${
                   // M1, unit 8 gate review: this printed the raw status slug
@@ -471,7 +471,7 @@ export function ModPanel({
           conflicts.length > 0 &&
           html`
             <section class="slide-over__section">
-              <p class="plan__heading">Conflicts (${conflicts.length})</p>
+              <h3 class="plan__heading">Conflicts (${conflicts.length})</h3>
               <ul class="plan__paths">
                 ${conflicts.map(
                   (c) =>
@@ -493,7 +493,7 @@ export function ModPanel({
           class="slide-over__section"
           data-changelog-status=${changelog.status}
         >
-          <p class="plan__heading">Changelog</p>
+          <h3 class="plan__heading">Changelog</h3>
           ${
             changelog.status === "loading"
               ? html`<p class="empty-state__hint">Loading changelog…</p>`

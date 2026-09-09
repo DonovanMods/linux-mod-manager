@@ -297,7 +297,7 @@ export function Library({
     if (error) {
       return html`
         <section class="library">
-          <p class="section-header">Library</p>
+          <h2 class="section-header">Library</h2>
           <div class="empty-state empty-state--error">
             <p>Couldn't load your library: ${error}</p>
             <button
@@ -326,7 +326,7 @@ export function Library({
     };
     return html`
       <section class="library">
-        <p class="section-header">Library</p>
+        <h2 class="section-header">Library</h2>
         <div class="empty-state">
           <p>No mods installed yet.</p>
           <p class="empty-state__hint">
@@ -367,7 +367,7 @@ export function Library({
   return html`
     <section class="library">
       <div class="library__toolbar">
-        <p class="section-header">${libraryLabel}</p>
+        <h2 class="section-header">${libraryLabel}</h2>
         ${
           liveActivity &&
           html`<span class="library__live" role="status">${liveActivity}</span>`

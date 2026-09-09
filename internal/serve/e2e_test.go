@@ -5416,3 +5416,69 @@ func TestE2E_ConflictsCardSaysWhatToDoAboutAStaleWinner(t *testing.T) {
 		"the card must carry the CLI's own actionable sentence, not a bare (stale)")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// countH1s asks the page how many top-level headings it is rendering.
+func countH1s(out *int) chromedp.Action {
+	return chromedp.Evaluate(`document.querySelectorAll("h1").length`, out)
+}
+
+// TestE2E_EveryRouteRendersExactlyOneH1 is I-3's ratchet.
+//
+// The epic live review's keyboard/screen-reader pass found the application
+// contained no heading elements at all outside the full mod page: every
+// section title was a styled <p class="section-header"> or
+// <p class="plan__heading">, so heading navigation - the primary way a
+// screen-reader user moves around a page - found nothing on Mission
+// Control, the chooser, first run, search or Setup. WCAG 1.3.1 and 2.4.6
+// are about the structure, not the styling, and the classes are unchanged:
+// the tags carry the meaning the CSS was already carrying visually.
+//
+// One h1 per route is the ratchet because both failure modes are real: zero
+// (the state this fixes) leaves a screen reader with no landmark, and two
+// leaves it with no idea which one names the page. Asked of a real browser
+// because it is a claim about a rendered document, and because there is no
+// other place in this repo that executes the SPA.
+func TestE2E_EveryRouteRendersExactlyOneH1(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	routes := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"home", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"mod page", f.ModPagePath("fake", "a"), `.mod-page`},
+		{"search page", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/search?q=a", `.search-page[data-hydrated="true"]`},
+		{"setup", f.HomePath() + "/setup", `.setup-page`},
+	}
+	for _, route := range routes {
+		var h1s int
+		f.runInBrowser(t,
+			chromedp.Navigate(route.path),
+			chromedp.WaitVisible(route.ready, chromedp.ByQuery),
+			countH1s(&h1s),
+		)
+		assert.Equal(t, 1, h1s, "%s must render exactly one <h1>", route.name)
+	}
+	assert.Empty(t, f.BrowserErrors())
+
+	chooser := newE2EMultiGameFixture(t)
+	var chooserH1s int
+	chooser.runInBrowser(t,
+		chromedp.Navigate(chooser.BaseURL+"/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		countH1s(&chooserH1s),
+	)
+	assert.Equal(t, 1, chooserH1s, "the game chooser must render exactly one <h1>")
+	assert.Empty(t, chooser.BrowserErrors())
+
+	firstRun := newE2EFixtureNoGames(t)
+	var firstRunH1s int
+	firstRun.runInBrowser(t,
+		chromedp.Navigate(firstRun.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="first-run-setup"]`, chromedp.ByQuery),
+		countH1s(&firstRunH1s),
+	)
+	assert.Equal(t, 1, firstRunH1s, "first run must render exactly one <h1>")
+	assert.Empty(t, firstRun.BrowserErrors())
+}

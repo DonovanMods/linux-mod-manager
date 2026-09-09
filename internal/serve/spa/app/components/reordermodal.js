@@ -327,10 +327,10 @@ export function ReorderModal({ modal, state, actions }) {
       </ul>
 
       <section class="plan__section">
-        <p class="plan__heading">
+        <h3 class="plan__heading">
           Conflict preview
           ${preview.status === "loading" ? " — computing…" : ""}
-        </p>
+        </h3>
         ${
           preview.status === "error"
             ? html`<p class="modal__error">

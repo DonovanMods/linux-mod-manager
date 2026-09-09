@@ -17,7 +17,7 @@ function RefList({ heading, refs }) {
   if (!refs || refs.length === 0) return null;
   return html`
     <section class="plan__section">
-      <p class="plan__heading">${heading} (${refs.length})</p>
+      <h3 class="plan__heading">${heading} (${refs.length})</h3>
       <ul class="plan__paths">
         ${refs.map(
           (ref) =>

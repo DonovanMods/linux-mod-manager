@@ -168,7 +168,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         detailMod?.description &&
         html`
           <section class="mod-page__section">
-            <p class="plan__heading">Description</p>
+            <h3 class="plan__heading">Description</h3>
             <p class="mod-page__prose">${detailMod.description}</p>
           </section>
         `
@@ -177,7 +177,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         modPage.detail &&
         html`
           <section class="mod-page__section">
-            <p class="plan__heading">Changelog</p>
+            <h3 class="plan__heading">Changelog</h3>
             ${
               modPage.detail.changelog
                 ? html`<p class="mod-page__prose">
@@ -192,9 +192,9 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         (detailMod?.dependencies ?? []).length > 0 &&
         html`
           <section class="mod-page__section">
-            <p class="plan__heading">
+            <h3 class="plan__heading">
               Dependencies (${detailMod.dependencies.length})
-            </p>
+            </h3>
             <ul class="plan__paths">
               ${detailMod.dependencies.map(
                 (d) =>
@@ -233,7 +233,7 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
 function FilesSection({ filesReport }) {
   return html`
     <section class="mod-page__section">
-      <p class="plan__heading">Files</p>
+      <h3 class="plan__heading">Files</h3>
       ${
         filesReport.merged_pak_only
           ? html`<p class="empty-state__hint">
@@ -312,7 +312,7 @@ function VersionsSection({
 
   return html`
     <section class="mod-page__section">
-      <p class="plan__heading">Versions</p>
+      <h3 class="plan__heading">Versions</h3>
       <${VersionsTable}
         modPage=${modPage}
         installed=${installed}
@@ -483,7 +483,7 @@ function JobHistorySection({ state, sourceID, modID }) {
 
   return html`
     <section class="mod-page__section">
-      <p class="plan__heading">Job history</p>
+      <h3 class="plan__heading">Job history</h3>
       ${
         history.status === "loading"
           ? html`<p class="app-booting">Loading job history…</p>`

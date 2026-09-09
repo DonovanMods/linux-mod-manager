@@ -29,7 +29,7 @@ export function GameChooser({ games }) {
 
   return html`
     <div class="game-chooser" data-hydrated="true">
-      <p class="section-header">Choose a game</p>
+      <h1 class="section-header">Choose a game</h1>
       <div class="game-chooser__grid">
         ${games.map((game) => html`<${GameCard} key=${game.id} game=${game} />`)}
       </div>
@@ -87,7 +87,7 @@ function FirstRunSetup() {
       data-hydrated="true"
       data-testid="first-run-setup"
     >
-      <p class="section-header">Set up your first game</p>
+      <h1 class="section-header">Set up your first game</h1>
       <p class="empty-state__hint">
         No games are configured yet. Detect one automatically, or add it by
         hand.

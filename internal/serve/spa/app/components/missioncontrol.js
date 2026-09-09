@@ -147,6 +147,23 @@ export function MissionControl({ state, onThemeChange, actions }) {
         </p>`
       }
       <main id="main" class="mission-control__body">
+        ${
+          /* The route's own heading (I-3, epic live review).
+
+          Heading navigation is how a screen-reader user moves around a
+          page, and this application had no heading elements at all outside
+          the full mod page - every section title was a styled <p>. Mission
+          Control's own title is the context it is showing, which the top
+          bar already renders as two interactive pickers: repeating it as
+          visible text would say the same thing twice on the densest screen
+          in the product, so it is announced rather than drawn. Every other
+          route's h1 IS visible ("Setup", "Choose a game", the search
+          summary, the mod's own name) - this is the one place where the
+          heading and the design genuinely disagree. */ ""
+        }
+        <h1 class="visually-hidden">
+          ${status.name ?? route.game} — ${route.profile}
+        </h1>
         <${AttentionCards}
           state=${state}
           updates=${updates}

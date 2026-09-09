@@ -69,9 +69,9 @@ export function SetupAuth() {
         orphaned.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading plan__heading--warn">
+            <h3 class="plan__heading plan__heading--warn">
               Orphaned credentials (${orphaned.length})
-            </p>
+            </h3>
             <ul class="setup-auth__list">
               ${orphaned.map(
                 (o) =>

@@ -35,7 +35,7 @@ export function DeployPlanView({ plan }) {
         purge.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Purge first (${purge.length})</p>
+            <h3 class="plan__heading">Purge first (${purge.length})</h3>
             <ul class="plan__paths">
               ${purge.map((p) => html`<li key=${p} class="mono">${p}</li>`)}
             </ul>
@@ -44,7 +44,7 @@ export function DeployPlanView({ plan }) {
       }
 
       <section class="plan__section">
-        <p class="plan__heading">Mods (${mods.length})</p>
+        <h3 class="plan__heading">Mods (${mods.length})</h3>
         <ul class="plan__mods">
           ${mods.map(
             (mod) => html`
@@ -97,7 +97,7 @@ export function DeployPlanView({ plan }) {
         plan.merged &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Merged artifact</p>
+            <h3 class="plan__heading">Merged artifact</h3>
             <p>
               <span class="mono">${plan.merged.artifact}</span> carrying
               ${mergedSummary(plan.merged)}
@@ -109,7 +109,7 @@ export function DeployPlanView({ plan }) {
         hooks.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Hooks (${hooks.length})</p>
+            <h3 class="plan__heading">Hooks (${hooks.length})</h3>
             <p class="mono plan__hooks">${hooks.join(" → ")}</p>
           </section>
         `

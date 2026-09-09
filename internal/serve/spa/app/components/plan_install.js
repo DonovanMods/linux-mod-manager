@@ -153,7 +153,7 @@ export function InstallPlanView({ plan, actions }) {
         deps.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading">Dependencies (${deps.length})</p>
+            <h3 class="plan__heading">Dependencies (${deps.length})</h3>
             <ul class="plan__mods">
               ${deps.map(
                 (d) => html`<li key=${`${d.source_id}/${d.id}`}>${d.name}</li>`,
@@ -186,9 +186,9 @@ export function InstallPlanView({ plan, actions }) {
         conflicts.length > 0 &&
         html`
           <section class="plan__section">
-            <p class="plan__heading plan__heading--warn">
+            <h3 class="plan__heading plan__heading--warn">
               Conflicts (${conflicts.length})
-            </p>
+            </h3>
             <ul class="plan__paths">
               ${conflicts.map(
                 (c) =>

@@ -295,7 +295,7 @@ function CreateProfileForm({ context, afterMutation }) {
 
   return html`
     <form class="profiles-create" onSubmit=${submit}>
-      <p class="plan__heading">Create a profile</p>
+      <h3 class="plan__heading">Create a profile</h3>
       <div class="profiles-create__row">
         <input
           type="text"
@@ -351,7 +351,7 @@ function ImportProfileForm({ actions, close }) {
 
   return html`
     <div class="profiles-import">
-      <p class="plan__heading">Import a profile</p>
+      <h3 class="plan__heading">Import a profile</h3>
       <label class="button button--small">
         ${busy ? "Reading…" : "Choose file…"}
         <input
