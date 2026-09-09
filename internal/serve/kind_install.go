@@ -65,6 +65,14 @@ type installPlanRequest struct {
 	// ShowArchived mirrors `lmm install --show-archived`: it widens both the
 	// plan's own file filter and the candidate pool.
 	ShowArchived bool `json:"show_archived,omitzero"`
+	// NoDeps mirrors `lmm install --no-deps` (#326). It is PLAN-time, not
+	// apply-time, because it changes what the plan SAYS: core's
+	// InstallPlan.SkipDependencies drops the resolved set, the unresolvable
+	// references, the cycle flag and the resolution warnings together, so
+	// the confirm modal cannot warn about dependencies the job will not
+	// install. The CLI applies it at exactly the same point, through the
+	// same core call.
+	NoDeps bool `json:"no_deps,omitzero"`
 }
 
 // validate implements validatingOptions.
@@ -121,6 +129,9 @@ func planInstallKind(ctx context.Context, s *Server, sel selection, opts any) (a
 	plan, err := s.svc.PlanInstall(ctx, sel.Game, sel.Profile, req.SourceID, req.ModID, req.ShowArchived)
 	if err != nil {
 		return nil, nil, err
+	}
+	if req.NoDeps {
+		plan.SkipDependencies()
 	}
 	return plan, &pendingInstall{Game: sel.Game, Plan: plan}, nil
 }

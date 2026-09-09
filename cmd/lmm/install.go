@@ -548,10 +548,9 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	}
 
 	if installNoDeps || mod.SourceID == domain.SourceLocal {
-		plan.Dependencies = nil
-		plan.MissingDependencies = nil
-		plan.CycleDetected = false
-		plan.DependencyWarnings = nil
+		// One core call, shared with `lmm serve`'s install plan kind, so
+		// --no-deps and the API's no_deps cannot drift apart (#326).
+		plan.SkipDependencies()
 	}
 
 	// If there are dependencies to install (or unresolvable ones to warn

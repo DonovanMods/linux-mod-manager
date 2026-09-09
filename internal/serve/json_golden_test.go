@@ -247,6 +247,10 @@ func TestServeJSONGoldens(t *testing.T) {
 				ModID:        "m2",
 				Version:      "2.0",
 				ShowArchived: true,
+				// #326: `lmm install --no-deps`. Populated here for the same
+				// reason every other optional member is - this golden pins
+				// every key's shape, not one plausible request.
+				NoDeps: true,
 			},
 		},
 		{

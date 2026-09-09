@@ -3414,3 +3414,25 @@ func TestService_ApplyInstall_CancelledEnsureProfileExists_RecordsFailureNotSile
 		"the cancelled completing-write must be recorded as failed, not silently dropped")
 	assert.NotContains(t, installedRefNames(result.Installed), "Dep One")
 }
+
+// TestInstallPlan_SkipDependencies pins `lmm install --no-deps`'s whole
+// effect, now that it is one core call both frontends make (#326): all
+// FOUR dependency-pass fields are cleared together, so no confirm screen
+// can warn about dependencies the apply will not install.
+func TestInstallPlan_SkipDependencies(t *testing.T) {
+	plan := &core.InstallPlan{
+		Mod:                 domain.Mod{ID: "m1", SourceID: "fake", Name: "Mod One"},
+		Dependencies:        []domain.Mod{{ID: "dep", SourceID: "fake"}},
+		MissingDependencies: []domain.ModReference{{SourceID: "fake", ModID: "gone"}},
+		CycleDetected:       true,
+		DependencyWarnings:  []core.DependencyWarning{{SourceID: "fake", ModID: "m1", Message: "boom"}},
+	}
+
+	plan.SkipDependencies()
+
+	assert.Nil(t, plan.Dependencies)
+	assert.Nil(t, plan.MissingDependencies)
+	assert.False(t, plan.CycleDetected)
+	assert.Nil(t, plan.DependencyWarnings)
+	assert.Equal(t, "m1", plan.Mod.ID, "the primary mod is untouched")
+}
