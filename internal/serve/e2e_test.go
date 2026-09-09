@@ -5221,6 +5221,14 @@ func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) 
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// succeededOriginReleaseBudget is main.js#succeededOriginReleaseMillis, as
+// the two I-2 scenarios below need to reason about it: long enough that a
+// pinned failure is provably pinned, short enough that a released success
+// does not stretch the suite. Kept as a Go constant rather than read out of
+// the module, because a scenario that derived its own budget from the code
+// under test could not fail if that code changed.
+const succeededOriginReleaseBudget = 4 * time.Second
+
 // searchRefreshedAfterTheJob is the poll every C-2 scenario uses to sample
 // the toast decision at a point where it has definitely been made.
 //
@@ -5301,5 +5309,65 @@ func TestE2E_SearchPageInstallConflictReportsInlineWithoutAlsoToasting(t *testin
 	assert.Contains(t, inline, "conflict", "the failure must resurface on the row, with its own next step")
 	assert.Zero(t, toasts,
 		"the failure is on screen with the affordance that answers it - a toast can only repeat it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SucceededDeployReleasesTheButtonOnItsOwn is I-2 of the epic live
+// review.
+//
+// A finished job stayed on its control until the user dismissed it by hand.
+// That rule reads correctly on a row or a card - the outcome is where you
+// left it - but on the top bar's DEPLOY it means the application's primary
+// action is unavailable until you close a success message: install
+// something else and the way to deploy it is to first dismiss the last
+// deploy's "Done ✕". A success has nothing left to say a few seconds later
+// (the tray keeps the record), so it releases the control on its own.
+func TestE2E_SucceededDeployReleasesTheButtonOnItsOwn(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// Nothing is clicked between here and the assertion: the button
+		// comes back because the timer ran, not because anything dismissed
+		// it.
+		chromedp.Poll(`document.querySelector('[data-action="deploy"]') !== null`,
+			nil, chromedp.WithPollingInterval(100*time.Millisecond)),
+	)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FailedDeployStaysPinnedUntilDismissed is I-2's other half, and the
+// reason the release is not simply "every finished job".
+//
+// A failure carries the next step - the message, and often an affordance
+// that answers it (the conflict round trip's Overwrite) - so it waits for
+// the user rather than for a timer. This scenario deliberately waits LONGER
+// than the success release before it looks.
+func TestE2E_FailedDeployStaysPinnedUntilDismissed(t *testing.T) {
+	f := newE2EFixtureWithFailingDeploy(t)
+
+	var stillFailed, deployButtonBack bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="failed"]`, chromedp.ByQuery),
+		// Longer than a success would need to release itself, so "still
+		// pinned" is a fact about the rule and not about how fast this ran.
+		chromedp.Sleep(2*succeededOriginReleaseBudget),
+		chromedp.Evaluate(`document.querySelector('.job-progress[data-state="failed"]') !== null`, &stillFailed),
+		chromedp.Evaluate(`document.querySelector('[data-action="deploy"]') !== null`, &deployButtonBack),
+	)
+
+	assert.True(t, stillFailed, "a failure carries its own next step and must wait for the user, not a timer")
+	assert.False(t, deployButtonBack, "the control is still the failure's, until it is dismissed")
 	assert.Empty(t, f.BrowserErrors())
 }

@@ -1221,6 +1221,36 @@ function clearOrigin(origin) {
   store.set({ origins });
 }
 
+// succeededOriginReleaseMillis is how long a SUCCEEDED job keeps the control
+// it was started from before that control returns to being itself (I-2,
+// epic live review).
+//
+// "The control you clicked morphs into its progress" reads correctly on a
+// row or a card, where the outcome simply stays where you left it. On the
+// top bar's Deploy it meant the application's primary action was
+// unavailable until the user closed a success message: install something
+// else, and the way to deploy it was to first dismiss the last deploy's
+// "Done". A success has nothing left to say a few seconds later - the tray
+// keeps the whole session's record either way - so it hands the control
+// back on its own.
+//
+// FAILURES are deliberately exempt. A failure carries the next step (the
+// envelope's own message, and often the affordance that answers it - the
+// conflict round trip's Overwrite button lives inside this readout), so it
+// waits for the user. Same reason toasts only auto-dismiss on success.
+const succeededOriginReleaseMillis = 4000;
+
+/** releaseSucceededOrigin hands origin's control back once the job it is
+ * showing has had its few seconds on screen. Guarded on the origin still
+ * naming THAT job: a control the user has already started something else
+ * from must not be cleared out from under the new job. */
+function releaseSucceededOrigin(origin, jobID) {
+  setTimeout(() => {
+    if (store.get().origins[origin] !== jobID) return;
+    clearOrigin(origin);
+  }, succeededOriginReleaseMillis);
+}
+
 let toastSeq = 0;
 const toastDismissMillis = 8000;
 
@@ -1301,6 +1331,9 @@ async function onJobDone(summary) {
   await awaitBindings();
 
   const origin = originOf(summary.id);
+  if (origin && summary.state === "succeeded")
+    releaseSucceededOrigin(origin, summary.id);
+
   // Either tense counts as "in view": the snapshot answers for a control
   // this function's own refresh took off screen, and the live check for a
   // control that only MOUNTED once the binding landed (a row rendered by
