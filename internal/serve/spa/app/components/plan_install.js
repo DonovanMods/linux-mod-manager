@@ -238,6 +238,13 @@ export function InstallPlanView({ plan, modal, actions }) {
           label="Force"
           hint="lmm install --force. Carry on past a failure that would otherwise stop the flow."
         />
+        <${ApplyOption}
+          modal=${modal}
+          actions=${actions}
+          name="skip_verify"
+          label="Skip checksum recording"
+          hint="lmm install --skip-verify. Apply-time only: nothing about the plan above changes."
+        />
       <//>
     </div>
   `;

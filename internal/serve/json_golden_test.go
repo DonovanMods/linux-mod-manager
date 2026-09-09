@@ -263,6 +263,11 @@ func TestServeJSONGoldens(t *testing.T) {
 				AcceptConflicts: true,
 				Force:           true,
 				SkipHooks:       true,
+				// #326: `lmm install --skip-verify`, the closing wave's
+				// last parity-ledger flag. Populated for the same reason
+				// every other optional member is - this golden pins every
+				// key's shape, not one plausible request.
+				SkipVerify: true,
 			},
 		},
 		{

@@ -5720,6 +5720,69 @@ func TestE2E_DeployAllIncludesDisabledMods(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_InstallSkipVerifySkipsTheChecksumRecord is IMP-1(b) of the
+// closing wave's gate review.
+//
+// `lmm install --skip-verify` was the one CLI flag with no wire field at
+// all: core.InstallOptions.SkipVerify existed and the CLI set it, but
+// `grep -ri "skip.verify" internal/serve/` returned nothing. It is an
+// APPLY-time option - it changes nothing about what the plan says, only
+// whether the download's computed checksum is stored - so the assertion is
+// on the DB row the install writes, and the control's absence would leave
+// nothing that could clear it.
+func TestE2E_InstallSkipVerifySkipsTheChecksumRecord(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	// The control mod first, installed with the DEFAULT options: without
+	// it, "no checksum" would be indistinguishable from "this fixture
+	// never records one".
+	installFromOmnibar(t, f, "multi", searchResultRow("fake", e2eSearchMultiFileModID), false)
+	installFromOmnibar(t, f, "boots", searchResultRow("fake", e2eSearchInstallModID), true)
+
+	files, err := f.Svc.GetFilesWithChecksums(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err)
+
+	sums := map[string]string{}
+	for _, file := range files {
+		sums[file.ModID] = file.Checksum
+	}
+	assert.NotEmpty(t, sums[e2eSearchMultiFileModID],
+		"the default install must still record the checksum it computed")
+	assert.Empty(t, sums[e2eSearchInstallModID],
+		"--skip-verify must have kept the checksum out of the database")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// installFromOmnibar fans out for `query`, installs `row` and waits for its
+// job, optionally ticking the confirm step's Advanced "Skip checksum
+// recording" first.
+func installFromOmnibar(t *testing.T, f e2eSearchFixture, query, row string, skipVerify bool) {
+	t.Helper()
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, query, chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(row, chromedp.ByQuery),
+		chromedp.Click(row+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+	)
+	if skipVerify {
+		f.runInBrowser(t,
+			chromedp.Click(`[data-testid="plan-advanced"] summary`, chromedp.ByQuery),
+			chromedp.Click(`.modal input[name="skip_verify"]`, chromedp.ByQuery),
+			chromedp.Poll(`document.querySelector('.modal input[name="skip_verify"]').checked === true`,
+				nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		)
+	}
+	f.runInBrowser(t,
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(row+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+}
+
 // TestE2E_PurgeFromTheProfilesModalEmptiesTheGameDirectory is C-3's purge
 // half.
 //

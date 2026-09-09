@@ -97,6 +97,13 @@ type installApplyRequest struct {
 	// Force and SkipHooks mirror `lmm install --force/--no-hooks`.
 	Force     bool `json:"force,omitzero"`
 	SkipHooks bool `json:"skip_hooks,omitzero"`
+	// SkipVerify mirrors `lmm install --skip-verify` (#326, the closing
+	// wave's parity ledger). APPLY-time, because that is where core reads
+	// it: InstallOptions.SkipVerify gates the checksum a download's result
+	// carries from being saved and from being reported as an
+	// InstallChecksumComputed event. It changes nothing about what the plan
+	// SAYS, so it never re-plans.
+	SkipVerify bool `json:"skip_verify,omitzero"`
 }
 
 // installOptions renders the request as the core options struct.
@@ -107,6 +114,7 @@ func (r installApplyRequest) installOptions() core.InstallOptions {
 		AcceptConflicts: r.AcceptConflicts,
 		Force:           r.Force,
 		SkipHooks:       r.SkipHooks,
+		SkipVerify:      r.SkipVerify,
 	}
 }
 
