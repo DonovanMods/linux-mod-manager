@@ -689,6 +689,17 @@ const bindingJobs = new Map();
 // exposes on its own.
 if (typeof window !== "undefined") {
   window.__lmmBindingJobsSize = () => bindingJobs.size;
+
+  // Exposed for the GenericPlanView scenario only (issue 334, the m8
+  // carry): the fallback renderer's whole contract is about a kind wired
+  // BEFORE its renderer exists, so by construction no control in this
+  // application ever opens one - every registered kind has a renderer
+  // (planrenderers.js). Handing a test the same entry point every control
+  // uses is the only way to drive the fallback through the real modal, the
+  // real Confirm and a real job rather than asserting about a component in
+  // isolation. It adds no capability: openPlan only computes a plan, which
+  // is exactly what a POST from the console could already do.
+  window.__lmmOpenPlan = (spec) => actions.openPlan(spec);
 }
 
 /** startBinding runs work (an async fn returning nothing) as origin's

@@ -4376,3 +4376,51 @@ func TestE2E_ProfileCard_AbsentWhenTheProfileIsAlreadyApplied(t *testing.T) {
 	assert.Zero(t, cards, "every listed mod is installed - there is nothing to apply")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_GenericPlanView_RendersAnUnknownKindsPlanAsData keeps the
+// confirm-plan framework's FALLBACK renderer honest (the m8 carry from
+// issue 332's review, closed here).
+//
+// Every kind plankinds.go registers now has a renderer of its own, so the
+// fallback is by construction unreachable from any control in the
+// application - which is exactly why it needs a driver: it exists for the
+// NEXT kind, wired before its renderer is written, and a mutation in that
+// state must still preview honestly rather than show an empty modal with a
+// live Confirm button under it.
+//
+// plankind_fallback_test.go registers such a kind (test-only, mutating
+// nothing), and this drives it through the real modal, the real Confirm and
+// a real job: the plan document's own content renders, the "no dedicated
+// preview yet" note says so plainly, and the outcome resurfaces.
+func TestE2E_GenericPlanView_RendersAnUnknownKindsPlanAsData(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		// The top bar's own Deploy origin, so this job has a control on
+		// screen to morph into - the fallback kind has no control of its
+		// own by definition, and an origin nobody has mounted would
+		// resurface as a toast instead, which is a different rule's test.
+		chromedp.Evaluate(`window.__lmmOpenPlan({
+			kind: "e2e_no_renderer",
+			origin: "deploy",
+			title: "A kind with no renderer",
+			confirmLabel: "Run it",
+			options: {},
+		})`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="e2e_no_renderer"] .plan--generic`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="e2e_no_renderer"]`, &body),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, body, "no dedicated preview yet",
+		"the fallback must say what it is, not pretend to be a designed preview")
+	assert.Contains(t, body, "first unrendered step",
+		"the plan document's own content must reach the screen")
+	assert.Contains(t, body, f.Profile)
+	assert.Empty(t, f.BrowserErrors())
+}
