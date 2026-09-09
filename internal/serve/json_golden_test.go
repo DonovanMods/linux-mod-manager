@@ -53,6 +53,8 @@ var goldenDeployResult = &core.DeployResult{
 	RawFallbacks:   1,
 }
 
+func boolPtr(b bool) *bool { return &b }
+
 func TestServeJSONGoldens(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -318,11 +320,13 @@ func TestServeJSONGoldens(t *testing.T) {
 		},
 		{
 			// #326's pak-conversion body (epic live review C-3): a REQUIRED
-			// boolean, so the key is always present - `lmm mod convert
-			// <mod-id> <on|off>` makes the caller say which way, and an
-			// omitted member decoding to false would silently mean "off".
+			// boolean (I-1: enforced by handleAPIModConvert refusing a nil
+			// Enabled, since json/v2 has no "required" tag), so the key is
+			// always present on the wire - `lmm mod convert <mod-id>
+			// <on|off>` makes the caller say which way, and an omitted
+			// member must never silently mean "off".
 			"mod_convert_request",
-			modConvertRequest{Enabled: true},
+			modConvertRequest{Enabled: boolPtr(true)},
 		},
 		{
 			// #326's three parity kinds (epic live review C-3). purge

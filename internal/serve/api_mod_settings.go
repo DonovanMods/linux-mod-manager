@@ -39,12 +39,13 @@ type modLockRequest struct {
 
 // modConvertRequest is POST /api/v1/mods/{source}/{id}/convert's request
 // body: whether this mod's prebuilt .pak should be converted into the
-// profile's merged artifact. It is a REQUIRED boolean rather than an
-// omitzero one - `lmm mod convert <mod-id> <on|off>` makes the caller say
-// which way, and a missing member decoding to false would silently mean
-// "off".
+// profile's merged artifact. Enabled is a *bool, not bool, because
+// json/v2 has no "required" struct tag option to enforce presence on
+// decode - `lmm mod convert <mod-id> <on|off>` makes the caller say which
+// way, and a nil pointer (empty body, "{}", or an explicit null) must be
+// refused by handleAPIModConvert rather than silently landing on false.
 type modConvertRequest struct {
-	Enabled bool `json:"enabled"`
+	Enabled *bool `json:"enabled"`
 }
 
 // modUpdatePolicyRequest is POST /api/v1/mods/{source}/{id}/update-policy's
@@ -154,6 +155,10 @@ func (s *Server) handleAPIModConvert(w http.ResponseWriter, r *http.Request) {
 		s.writeAPIError(w, http.StatusBadRequest, err)
 		return
 	}
+	if req.Enabled == nil {
+		s.writeAPIError(w, http.StatusBadRequest, errors.New(`"enabled" is required`))
+		return
+	}
 
 	sourceID, modID := r.PathValue("source"), r.PathValue("id")
 	sel, ok := s.resolveReadyAPISelection(w, r)
@@ -173,7 +178,7 @@ func (s *Server) handleAPIModConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.svc.SetModConvertPaks(ctx, sourceID, modID, sel.Game.ID, sel.Profile, req.Enabled)
+	result, err := s.svc.SetModConvertPaks(ctx, sourceID, modID, sel.Game.ID, sel.Profile, *req.Enabled)
 	if err != nil {
 		s.writeAPIError(w, s.modSettingErrorStatus(ctx, sourceID, modID, sel, err), err)
 		return

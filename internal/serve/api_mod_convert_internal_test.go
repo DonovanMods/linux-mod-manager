@@ -153,6 +153,38 @@ func TestAPIModConvert_UnknownModIs404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }
 
+// TestAPIModConvert_MissingEnabledIs400 is I-1: the wire contract says
+// "enabled" is required, "since a missing member decoding to false would
+// silently mean 'off'" (this file's request doc comment) - but json/v2 has
+// no "required" struct tag, and decodeAPIBody short-circuits an empty body
+// before any decode runs, so all three ways of omitting the member must be
+// refused explicitly rather than landing on false. Before the fix, all
+// three answered 200 and flipped ConvertPaks to false regardless of the
+// mod's prior setting.
+func TestAPIModConvert_MissingEnabledIs400(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty body", ""},
+		{"empty object", `{}`},
+		{"enabled explicitly null", `{"enabled":null}`},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			s, svc, game := newConvertServer(t, []string{"pak"})
+
+			rec := doAPI(s, http.MethodPost, scoped("/api/v1/mods/"+fixtureSourceID+"/m1/convert", game), tt.body)
+			require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "enabled")
+
+			mod, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, "m1", game.ID, "default")
+			require.NoError(t, err)
+			assert.True(t, mod.ConvertPaks, "a refused request must not write")
+		})
+	}
+}
+
 // TestAPIModConvert_RejectsUnknownMembers pins the strict decode.
 func TestAPIModConvert_RejectsUnknownMembers(t *testing.T) {
 	s, _, game := newConvertServer(t, []string{"pak"})
