@@ -197,6 +197,19 @@ equivalent already exists in a better form:
   terminal's stdout/stderr. `-g/--game` and `--no-hooks` are the two persistent flags that are
   NOT here: the game is the URL's own `/g/{game}/{profile}` scope, and `--no-hooks` is the "Skip
   hooks" control on every confirm step that takes one.
+- `lmm auth login --key-from-env`/`--key-stdin` — terminal-native ways to hand over a secret
+  without typing it into a form; the web's own `type=password` field is the equivalent affordance,
+  and there is no browser analogue of "read this from an env var" or a piped stdin.
+- `lmm search -l/--limit` — the web paginates the results at a fixed page size instead of taking an
+  arbitrary limit; `← Prev` / `Next →` is the browser's own answer to "how much do I see at once".
+
+The epic re-review's own N-7 named two further omissions — `--version` and `lmm game add
+--game-id` — that the polish wave closed rather than left as exceptions (#326): the running
+server's display version now rides the SPA shell itself (a `<meta name="lmm-version">`, surfaced
+in the shortcuts help), and the manual add form's Advanced disclosure carries a "Game id" input
+mapped to the same request field the catalog path already filled in silently. Neither belongs on
+this list any more — both are bidirectional now, which is why they are not named as exceptions
+below either.
 
 **Web-only, by judgment.** Nothing here is a CAPABILITY the CLI lacks — each is a rendering of
 one it has:
