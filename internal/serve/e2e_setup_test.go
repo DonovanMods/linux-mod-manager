@@ -352,6 +352,25 @@ func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
 
 	f.runInBrowser(t,
 		chromedp.Navigate(f.BaseURL+"/"),
+		// A fetch spy installed before anything else in the flow, so it
+		// catches every request end to end - the never-auto-submit
+		// assertion below counts POST /api/v1/games calls from this log
+		// rather than a point-in-time DOM check (unit9 review Minor 8: the
+		// old `stillOnForm` check passed even with a 50ms injected
+		// auto-submit, since it raced the injected click rather than
+		// proving it never happened).
+		chromedp.Evaluate(`
+			window.__gamePostCount = 0;
+			const origFetch = window.fetch;
+			window.fetch = (input, init) => {
+				const path = typeof input === "string" ? input : input.url;
+				const method = (init && init.method) || (input && input.method) || "GET";
+				if (path === "/api/v1/games" && method.toUpperCase() === "POST") {
+					window.__gamePostCount++;
+				}
+				return origFetch(input, init);
+			};
+		`, nil),
 		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
 		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
@@ -380,14 +399,28 @@ func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
 	var preselectedText string
 	f.runInBrowser(t, chromedp.Text(`.setup-add__matches button.button--primary`, &preselectedText, chromedp.ByQuery))
 	assert.Equal(t, fixture.UnknownName, strings.TrimSpace(preselectedText))
-	var stillOnForm bool
-	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-hydrated="true"].mission-control') === null`, &stillOnForm))
-	assert.True(t, stillOnForm, "an exact catalog match pre-selects, it never auto-submits")
+
+	// Give the page a real settling window - well past the reviewer's 50ms
+	// injected auto-submit - and count actual POST /api/v1/games calls
+	// rather than the DOM's point-in-time state: a bare "not on Mission
+	// Control yet" check passes even while a submit is mid-flight, since it
+	// races the injected click instead of proving it never happened.
+	var postCountBeforeClick int
+	f.runInBrowser(t,
+		chromedp.Sleep(300*time.Millisecond),
+		chromedp.Evaluate(`window.__gamePostCount`, &postCountBeforeClick),
+	)
+	assert.Equal(t, 0, postCountBeforeClick,
+		"an exact catalog match pre-selects, it never auto-submits")
 
 	f.runInBrowser(t,
 		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
 	)
+
+	var postCountAfterClick int
+	f.runInBrowser(t, chromedp.Evaluate(`window.__gamePostCount`, &postCountAfterClick))
+	assert.Equal(t, 1, postCountAfterClick, "the explicit click must still submit exactly once")
 
 	var url string
 	f.runInBrowser(t, chromedp.Location(&url))
