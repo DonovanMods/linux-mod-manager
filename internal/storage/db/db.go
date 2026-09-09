@@ -127,7 +127,12 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 	}
 	database := &DB{DB: sqlDB, log: log, keyPath: keyPath}
 
-	if err := database.migrate(context.Background()); err != nil {
+	// One root context for the whole open sequence: the schema migrations
+	// and the credential re-encryption below share it, so this package keeps
+	// exactly one context.Background() call site (CLAUDE.md's ctx census).
+	openCtx := context.Background()
+
+	if err := database.migrate(openCtx); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
 			return nil, fmt.Errorf("running migrations: %w (closing database: %v)", err, closeErr)
 		}
@@ -138,7 +143,7 @@ func OpenWithOptions(path string, opts Options) (*DB, error) {
 	// lmm is re-encrypted here, before anything can read the table. Runs on
 	// every open rather than as a numbered schema migration - see
 	// migrateTokenEncryption for why.
-	if err := database.migrateTokenEncryption(context.Background()); err != nil {
+	if err := database.migrateTokenEncryption(openCtx); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
 			return nil, fmt.Errorf("%w (closing database: %v)", err, closeErr)
 		}
