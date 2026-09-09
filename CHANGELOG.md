@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slipping in between two of its items — the price of the one freshness
   window the batch checks against (see `ApplyUpdateBatch`'s doc comment).
 
+- **`lmm search --category` against NexusMods takes a category NAME
+  (#343).** It used to take a numeric category id, and NexusMods' current
+  `ModsFilter` defines no id-keyed category filter at all — only
+  `categoryName` — so the flag now means the category as NexusMods spells
+  it (`--category Armour`). **CurseForge still takes its numeric id**; the
+  flag's help, the man page and the README name both. The fix that made a
+  category-filtered NexusMods search work again at all is under Fixed
+  (#337, #343).
+
 - **`lmm auth logout --json` prints a document, not prose (#335).** It emits
   the re-read `app.AuthStatusReport` — the same document
   `lmm auth status --json` prints and `lmm serve`'s
