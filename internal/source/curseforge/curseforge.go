@@ -161,10 +161,14 @@ func (c *CurseForge) Search(ctx context.Context, query source.SearchQuery) (sour
 		return source.SearchResult{}, err
 	}
 
-	pageSize := query.PageSize
-	if pageSize == 0 {
-		pageSize = 20
-	}
+	// The EFFECTIVE page size, not the requested one: the client clamps
+	// anything over CurseForge's own maximum, and an index computed from a
+	// size the API refused strides past every row in between - page 1 of a
+	// requested 100 would ask for index 100 while page 0 returned rows
+	// 0-49 (Track C review, finding 1). Clamping here keeps this source's
+	// own offsets contiguous and lets it report the size really in effect,
+	// which is what a caller paging it has to page on.
+	pageSize := clampSearchPageSize(query.PageSize)
 	index := query.Page * pageSize
 
 	// Parse category if provided

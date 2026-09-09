@@ -98,6 +98,42 @@ func TestCurseForge_Search(t *testing.T) {
 	assert.Equal(t, "https://example.com/jei.png", mods[0].PictureURL)
 }
 
+// TestCurseForge_SearchOffsetsAreContiguousWhenThePageSizeIsClamped is the
+// Track C review's finding 1, in the source it was provable against. The
+// client clamps any pageSize over 50 to the API maximum, but Search
+// computed its upstream index from the REQUESTED size and reported that
+// size back, so paging it at --limit 100 asked for index 0 (rows 0-49) and
+// then index 100 (rows 100-149): rows 50-99 were never fetched, and the
+// result still claimed a page size of 100.
+func TestCurseForge_SearchOffsetsAreContiguousWhenThePageSizeIsClamped(t *testing.T) {
+	var gotIndex, gotPageSize []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotIndex = append(gotIndex, r.URL.Query().Get("index"))
+		gotPageSize = append(gotPageSize, r.URL.Query().Get("pageSize"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"pagination":{"index":0,"pageSize":50,"resultCount":50,"totalCount":500}}`))
+	}))
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	var reported []int
+	for _, page := range []int{0, 1, 2} {
+		res, err := cf.Search(context.Background(), source.SearchQuery{
+			GameID: "432", Query: "x", Page: page, PageSize: 100,
+		})
+		require.NoError(t, err)
+		reported = append(reported, res.PageSize)
+	}
+
+	assert.Equal(t, []string{"50", "50", "50"}, gotPageSize, "the API maximum is what is really requested")
+	assert.Equal(t, []string{"0", "50", "100"}, gotIndex,
+		"consecutive pages must be consecutive rows, not strided by the size the API refused")
+	assert.Equal(t, []int{50, 50, 50}, reported,
+		"the reported page size must be the one in effect, so a caller can page on it")
+}
+
 func TestCurseForge_Search_InvalidGameID(t *testing.T) {
 	cf := New(nil, "test-api-key")
 

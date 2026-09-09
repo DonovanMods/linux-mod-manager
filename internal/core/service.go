@@ -430,9 +430,15 @@ type searchSourceState struct {
 	// first round).
 	attempted bool
 	// active is "worth asking for another page": set when the source is
-	// searchable, cleared when it exhausts, errors, or the loop ends. Read
-	// after the loop it doubles as this source's own has-more answer.
-	active    bool
+	// searchable, cleared when it exhausts, errors, or - the case finding 1
+	// of the Track C review added - when the source could not honour the
+	// page size it was asked for, so its next offset would skip rows.
+	active bool
+	// hasMore is "this source might still hold results we did not fetch",
+	// which is NOT the same question as active: a source that clamped the
+	// requested page size has more AND cannot be paged for it. Exhausted is
+	// built from this one.
+	hasMore   bool
 	succeeded bool
 	// err is the FIRST failure this source hit, on any round. A failure on
 	// a later page is reported exactly like a first-page failure - a
@@ -452,19 +458,60 @@ type searchSourceState struct {
 // remain. fetched is how many mods this source has contributed so far.
 //
 // Without a reported TotalCount there is nothing to count against, so any
-// non-empty page is treated as possibly having a successor and the
-// maxSearchPagesPerSource guard becomes the real bound. This rule is used
-// ONLY while looping; the single-round path keeps sourceHasMore verbatim,
-// so Exhausted/HasMore are unchanged for every caller that does not ask for
-// a limit.
+// non-empty page is treated as possibly having a successor. That optimism
+// is free: it only ever reaches Exhausted, never a round trip - whether the
+// source is ASKED again is sourceIsPageable's decision, and a source that
+// answered short is not asked (Track C review, finding 7 - the extra
+// always-empty round trip against a source reporting no total is gone with
+// it). This rule is used ONLY while looping; the single-round path keeps
+// sourceHasMore verbatim, so Exhausted/HasMore are unchanged for every
+// caller that does not ask for a limit.
 func pagedSourceHasMore(res source.SearchResult, fetched, pageSize int) bool {
 	if pageSize <= 0 {
+		return false
+	}
+	if len(res.Mods) == 0 {
+		// An empty page ends this source regardless of what a (possibly
+		// wrong) TotalCount claims.
 		return false
 	}
 	if res.TotalCount > 0 {
 		return fetched < res.TotalCount
 	}
-	return len(res.Mods) > 0
+	return true
+}
+
+// sourceIsPageable reports whether this source may be asked for page N+1
+// after answering with res, which is a narrower question than "might it
+// have more" (pagedSourceHasMore). searchAllSources addresses a page by
+// INDEX at the size it requested, and a source computes its own upstream
+// offset the same way - both built-ins do it literally, as page*pageSize.
+// So the next page is only fetchable at a contiguous offset when this page
+// was a FULL page of exactly the size that was asked for (Track C review,
+// finding 1):
+//
+//   - A source that reports a different effective PageSize clamped the
+//     request (CurseForge caps at 50), and page 1 of a requested 100 would
+//     start 50 rows past where page 0 ended.
+//   - A source that clamps SILENTLY - no PageSize, no TotalCount, which is
+//     what NexusMods does with its own ~30 cap - is caught by the same
+//     rule, because a clamped page is necessarily a short one.
+//   - A short page from a source that is genuinely finished is stopped by
+//     this too, which costs nothing: there was nothing left to fetch.
+//
+// The cost of the rule is under-fetching rather than mis-fetching: a
+// clamping source contributes one page and the merged count may fall short
+// of the caller's limit. That is the deliberate trade - a short answer is
+// visibly short, while a strided one looks exactly like a complete one
+// after rankAggregate has reordered it.
+func sourceIsPageable(res source.SearchResult, pageSize int) bool {
+	if pageSize <= 0 {
+		return false
+	}
+	if res.PageSize > 0 && res.PageSize != pageSize {
+		return false
+	}
+	return len(res.Mods) == pageSize
 }
 
 // searchAllSources searches every source configured for a game concurrently
@@ -582,24 +629,15 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 				st.succeeded = true
 				st.mods = append(st.mods, res.Mods...)
 				st.total = res.TotalCount
-				st.active = sourceHasMore(res, st.cursor, pageSize)
 				if paging {
-					// Either heuristic thinking there might be more is
-					// enough to ask again: they answer differently for a
-					// source that returns SHORT pages (pagedSourceHasMore's
-					// case) and for one that returns MORE than the page size
-					// it was asked for (sourceHasMore's), and neither is
-					// wrong about the source it describes. The loop's own
-					// bounds - the limit and maxSearchPagesPerSource - keep
-					// the optimism cheap.
-					st.active = st.active || pagedSourceHasMore(res, len(st.mods), pageSize)
-					if len(res.Mods) == 0 {
-						// An empty page ends this source regardless of what
-						// a (possibly wrong) TotalCount claims - otherwise a
-						// source overstating its total would be asked for
-						// page after empty page until the guard tripped.
-						st.active = false
-					}
+					// The two questions are kept apart: what this source
+					// might still hold, and whether we can safely ask it
+					// for that. A clamping source answers yes and no.
+					st.hasMore = pagedSourceHasMore(res, len(st.mods), pageSize)
+					st.active = st.hasMore && sourceIsPageable(res, pageSize)
+				} else {
+					st.hasMore = sourceHasMore(res, st.cursor, pageSize)
+					st.active = st.hasMore
 				}
 				st.cursor++
 				return nil
@@ -628,6 +666,12 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		attemptedCount++
 		if st.err != nil {
 			result.Warnings = append(result.Warnings, newSourceWarning(st.id, st.err))
+			// A source whose search was cut short by an error is the
+			// definition of "might have more": it kept st.succeeded from an
+			// earlier page, so without this the report claimed there was
+			// nothing left for a source that merely broke (Track C review,
+			// finding 6).
+			allExhausted = false
 		}
 		if !st.succeeded {
 			continue
@@ -635,7 +679,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		succeeded++
 		result.Mods = append(result.Mods, st.mods...)
 		result.TotalCount += st.total
-		if st.active {
+		if st.hasMore {
 			allExhausted = false
 		}
 	}

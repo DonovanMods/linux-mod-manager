@@ -153,14 +153,27 @@ func (c *Client) GetGame(ctx context.Context, gameID int) (*Game, error) {
 	return &resp.Data, nil
 }
 
+// maxSearchPageSize is the largest pageSize CurseForge's paginated
+// endpoints honour; anything larger is silently answered with this many
+// rows. It is named (rather than inlined as it was) because a CALLER has to
+// know it: an offset computed from a page size the API refused skips every
+// row between the two (Track C review, finding 1), so curseforge.Search
+// clamps with clampSearchPageSize before it computes its index.
+const maxSearchPageSize = 50
+
+// clampSearchPageSize is the page size CurseForge will actually use for a
+// requested one: its own default when none is asked for, and never more
+// than maxSearchPageSize.
+func clampSearchPageSize(pageSize int) int {
+	if pageSize <= 0 {
+		return 20
+	}
+	return min(pageSize, maxSearchPageSize)
+}
+
 // SearchMods searches for mods with the given parameters
 func (c *Client) SearchMods(ctx context.Context, gameID int, query string, categoryID int, pageSize, index int) ([]Mod, *Pagination, error) {
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	if pageSize > 50 {
-		pageSize = 50 // API max
-	}
+	pageSize = clampSearchPageSize(pageSize)
 
 	params := url.Values{}
 	params.Set("gameId", strconv.Itoa(gameID))
