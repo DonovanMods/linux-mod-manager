@@ -167,6 +167,28 @@ func TestE2E_Workshop_ModPanelHidesTheActionsLmmCannotPerform(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_Workshop_ModPanelOffersNoAutoUpdatePolicy is the same rule applied
+// to the settings block: "auto" is refused server-side, so offering it could
+// only produce an inline error - and this panel's own ManagedBySteam
+// comment states the principle it follows, "not shown at all rather than
+// shown-and-refused".
+func TestE2E_Workshop_ModPanelOffersNoAutoUpdatePolicy(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	var options []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath(e2eWorkshopSourceID, e2eWorkshopFileID)),
+		chromedp.WaitVisible(`[data-testid="managed-by-steam"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".slide-over__settings select option"))
+				.map((o) => o.value);
+		`, &options),
+	)
+	assert.Equal(t, []string{"notify", "pinned"}, options,
+		"the two policies that mean something for an item Steam owns")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_Workshop_StopTrackingConfirmSaysOnlyWhatItReallyDoes closes the
 // gap between that button and the modal it opens: the confirmation used to
 // read "Not currently deployed - nothing to remove" (contradicting
