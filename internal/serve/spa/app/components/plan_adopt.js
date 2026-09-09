@@ -98,11 +98,23 @@ export function AdoptPlanView({ plan }) {
   `;
 }
 
-/** matchDetail is one AdoptMatch's own status line. */
+/**
+ * matchDetail is one AdoptMatch's own status line.
+ *
+ * The confidence band (#27) is rendered exactly as the CLI renders it
+ * (cmd/lmm/import.go's scan readout): an EXACT name match stays
+ * unannotated so the common case gains no noise, and anything less says
+ * which band it is - this modal is the last thing between a probable match
+ * and a mod tracked as the wrong one.
+ */
 function matchDetail(m) {
   if (m.error) return `no source matched: ${m.error}`;
   if (!m.mod) return "no source match - will be adopted as a local mod";
+  const band =
+    m.score_class && m.score_class !== "exact"
+      ? ` [${m.score_class} match]`
+      : "";
   return m.file
-    ? `matched ${m.mod.name} (${m.mod.source_id})`
-    : `matched ${m.mod.name} (${m.mod.source_id}) - no exact file to link`;
+    ? `matched ${m.mod.name} (${m.mod.source_id})${band}`
+    : `matched ${m.mod.name} (${m.mod.source_id})${band} - no exact file to link`;
 }
