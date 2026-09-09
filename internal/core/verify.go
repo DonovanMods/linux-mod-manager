@@ -469,7 +469,7 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		return result, err
 	}
 
-	if err := r.perFileWalk(files); err != nil {
+	if err := r.perFileWalk(files, prof); err != nil {
 		// Cancelled mid-pass: return the partial result already
 		// accumulated, same contract Task 3's brief specifies.
 		return result, err
@@ -645,7 +645,7 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 // CHECKSUM/NEEDS REINGEST --fix redownload repairs inline at each site;
 // Task 5 adds the one repair this walk does NOT own (version_mismatch's,
 // in versionPass below).
-func (r *verifyRun) perFileWalk(files []DeployedFile) error {
+func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) error {
 	gameCache := r.svc.GetGameCache(r.game)
 	for _, f := range files {
 		if err := r.ctx.Err(); err != nil {
@@ -662,6 +662,9 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			r.finding(VerifyFinding{ModID: f.ModID, FileID: f.FileID, Status: "skipped"}, VerifyEvent{})
 			continue
 		}
+		// #325: every repair below redownloads into the RECORDED version's
+		// cache slot, so each one has to know whether that record is a lock.
+		ref := prof.FindRef(f.SourceID, f.ModID)
 
 		// #221 lazy migration: a convert-eligible pak whose cache entry
 		// predates pak retention (deployable pak present, no retained
@@ -697,7 +700,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// re-ingest either retains the source or it doesn't reach this
 			// far).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID); rerr != nil {
+				if _, rerr := r.redownloadModFile(r.ctx, mod, f.FileID, ref); rerr != nil {
 					r.resolveLast("needs_reingest", fmt.Sprintf("re-ingest failed: %v", rerr))
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-ingest failed: %v", rerr)})
 				} else {
@@ -723,8 +726,16 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// #224 Task 4: ported verbatim from doVerify (originally lines
 			// 765-799).
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
 				switch {
+				case errors.Is(err, ErrModLocked):
+					// #325: refused, not failed - the slot is untouched and
+					// the row keeps reporting MISSING. Note is the short,
+					// machine-checkable reason versionPass's own lock
+					// refusal already uses; the sentence is the text
+					// surface (VerifyEvRepairDetail).
+					r.resolveLast("missing", "locked")
+					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: "--fix skipped: " + strings.TrimPrefix(err.Error(), ErrModLocked.Error()+": ")})
 				case err != nil:
 					r.resolveLast("missing", err.Error())
 					r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("Re-download failed: %v", err)})
@@ -753,7 +764,7 @@ func (r *verifyRun) perFileWalk(files []DeployedFile) error {
 			// verbatim from doVerify (originally lines 804-846), including
 			// the "ok"+ChecksumPopulated main-line emission on success.
 			if r.opts.Fix && mod.SourceID != domain.SourceLocal {
-				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID)
+				persisted, err := r.redownloadModFile(r.ctx, mod, f.FileID, ref)
 				switch {
 				case err != nil:
 					r.result.Warnings++

@@ -447,6 +447,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`verify --fix` no longer writes the source's current bytes into a locked
+  mod's pinned cache slot (#325).** The version repair already refused to
+  move a locked record, but the missing-file repair then redownloaded
+  anyway — and every download lands in the *recorded* version's slot, so a
+  mod pinned at v1.0 could end up holding v2.0's files while the database
+  still said v1.0. The file repairs now fetch a locked ref's file only when
+  the source can identify it as the recorded version's own; otherwise they
+  refuse, leave the slot untouched, and report the finding as still
+  outstanding with the "unlock it first" remedy. Unlocked mods are
+  unchanged. `lmm serve`'s Health repair runs the same core tier and
+  inherits this.
+
 - **A refused import reports a cleanup it could not finish (#310).** The
   conflict refusal removes the cache entry it created, and a failed removal
   used to disappear into a debug log — leaving an orphaned copy of the whole

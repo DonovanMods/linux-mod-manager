@@ -271,8 +271,14 @@ func TestFlowHealthFix_LockedFinding_StaysOutstanding(t *testing.T) {
 
 	report, ok := j.status().Result.(*core.VerifyReport)
 	require.True(t, ok, "the stored result must be the core document")
-	assert.Equal(t, 1, report.Result.Issues,
-		"the locked mismatch must still be counted as outstanding, not zeroed out by the refused repair")
+	// TWO outstanding since #325: the version_mismatch the lock refuses to
+	// move, AND the missing cache entry - which used to be "repaired" by
+	// redownloading the source's CURRENT (3.0.0) bytes into the recorded
+	// (locked, 2.0.0) slot, the very slot-mismatch C1 fixed for unlocked
+	// mods. Refusing that leaves the file genuinely missing, and honestly
+	// counted, until the ref is unlocked.
+	assert.Equal(t, 2, report.Result.Issues,
+		"the locked mismatch AND the locked missing file must both stay outstanding, not be zeroed out by repairs that could not run")
 
 	var refused *core.VerifyFinding
 	for i := range report.Result.Findings {
