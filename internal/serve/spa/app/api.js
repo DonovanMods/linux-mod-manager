@@ -256,6 +256,19 @@ export const gameCatalog = (sourceID, query) => {
  * re-reading. */
 export const addGame = (spec) => post("/api/v1/games", spec);
 
+/**
+ * Replaces gameID's whole source map (C-4: `lmm game edit`). Returns the
+ * same core.GameListEntry row listGames() carries.
+ *
+ * REPLACEMENT, not a patch: an omitted source id is REMOVED, so a caller
+ * always sends the whole map. An empty map is refused (a game mapping no
+ * source can neither search nor install), and a removal that would orphan
+ * an installed mod is a 409 naming the mods - both come back as the usual
+ * envelope for the caller to render in place.
+ */
+export const updateGameSources = (gameID, sources) =>
+  put(`/api/v1/games/${encodeURIComponent(gameID)}`, { sources });
+
 /** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing. */
 export const detectGames = () => get("/api/v1/games/detect");
 

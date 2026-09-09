@@ -969,3 +969,104 @@ func TestE2E_Adopt_SeededUntrackedModBecomesTracked(t *testing.T) {
 	assert.True(t, found, "the hand-placed directory must now be a tracked installed mod")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_FirstRunCustomSourceThroughToAMappedGame is C-4 of the epic live
+// review, driven as the review's own new-user drive drove it.
+//
+// The dead end: the custom-source editor lived only at
+// /g/{game}/{profile}/setup, which needs a game; the first-run game form
+// offered only sources that already existed; and NEITHER frontend could add
+// a source to an existing game. So the case the README leads with - a
+// directory source over a local mod folder - could not be started at all
+// without stopping the server and hand-editing games.yaml.
+//
+// This is the whole path in one go: define the source on first run, add a
+// game against it, and confirm the mapping is real by reading the game back.
+func TestE2E_FirstRunCustomSourceThroughToAMappedGame(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	modsDir := t.TempDir()
+	installDir := t.TempDir()
+
+	yaml := "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: " + modsDir + "\n"
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="first-run-setup"]`, chromedp.ByQuery),
+		// The section is a disclosure rather than always-open: a user who
+		// already has a built-in source configured should not have to scroll
+		// past a YAML editor to add their game.
+		chromedp.Click(`[data-testid="first-run-sources"] summary`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
+		chromedp.SetValue(`.source-editor__textarea`, yaml, chromedp.ByQuery),
+		// Save stays disabled until Validate has reported the draft valid -
+		// the editor's own rule, unchanged here.
+		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.source-editor__report .plan__note`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="save-source"]`, chromedp.ByQuery),
+		// Hot-registered: the source is live in the running process, which
+		// is what lets the add form below offer it with no restart.
+		chromedp.WaitVisible(`tr[data-source="my-mods"]`, chromedp.ByQuery),
+	)
+
+	f.runInBrowser(t,
+		chromedp.Poll(`Array.from(document.querySelectorAll('select[name="add-source"] option')).some((o) => o.value === "my-mods")`,
+			nil, chromedp.WithPollingInterval(100*time.Millisecond)),
+		chromedp.SetValue(`select[name="add-source"]`, "my-mods", chromedp.ByQuery),
+		chromedp.SetValue(`input[name="add-name"]`, "My Game", chromedp.ByQuery),
+		chromedp.SetValue(`input[name="add-install-path"]`, installDir, chromedp.ByQuery),
+		// A directory source's identifier is legitimately empty, so the form
+		// has to accept that - it is the shape the README's own example uses.
+		chromedp.SetValue(`input[name="add-identifier"]`, "local", chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+	)
+
+	games := f.Svc.ListGames()
+	require.Len(t, games, 1)
+	assert.Contains(t, games[0].SourceIDs, "my-mods",
+		"the game added on first run must map the source the same flow just created")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupGamesEditSourcesMapsAnExistingGame is C-4's other half: a
+// source created AFTER the game exists.
+//
+// This is the "In use: —" state the review's drive got stuck in - the source
+// saves beautifully and then sits there, because neither frontend could
+// attach it to a game. The Games table's own row now can, over
+// PUT /api/v1/games/{id}.
+func TestE2E_SetupGamesEditSourcesMapsAnExistingGame(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+	dir := t.TempDir()
+
+	yaml := "id: my-mods\nname: My Mods\ntype: directory\ndirectory:\n  path: " + dir + "\n"
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("sources")),
+		chromedp.WaitVisible(`[data-testid="setup-sources"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="new-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
+		chromedp.SetValue(`.source-editor__textarea`, yaml, chromedp.ByQuery),
+		chromedp.Click(`[data-action="validate-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.source-editor__report .plan__note`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="save-source"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`tr[data-source="my-mods"]`, chromedp.ByQuery),
+
+		chromedp.Navigate(f.SetupPath("games")),
+		chromedp.WaitVisible(`[data-testid="setup-games"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="edit-sources"][data-game="g1"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="sources-map"]`, chromedp.ByQuery),
+		chromedp.Click(`input[name="source-my-mods"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="save-sources"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('[data-testid="setup-games"]')?.textContent.includes("my-mods")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+
+	games := f.Svc.ListGames()
+	require.Len(t, games, 1)
+	assert.Contains(t, games[0].SourceIDs, "my-mods",
+		"the mapping the table wrote must be on disk, not just on screen")
+	assert.Contains(t, games[0].SourceIDs, "fake",
+		"and a replacement-shaped PUT must not have dropped the source it already had")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}

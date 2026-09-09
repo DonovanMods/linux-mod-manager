@@ -17,6 +17,7 @@ import { html, useState } from "../render.js";
 import { navigate } from "../router.js";
 import { resolveGamePath } from "../navigation.js";
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
+import { SetupSources } from "./setupsources.js";
 
 export function GameChooser({ games }) {
   if (games === null) {
@@ -67,6 +68,13 @@ function GameCard({ game }) {
  * Control - there is nothing else to configure before the library has
  * something to show. */
 function FirstRunSetup() {
+  // Bumped whenever the custom-source section below changes the registry,
+  // and handed to the game form as its refreshKey: the form fetches the
+  // source list once on mount, so a source defined right here would
+  // otherwise be missing from the very picker this section exists to fill
+  // (C-4).
+  const [sourcesVersion, bumpSources] = useState(0);
+
   async function goTo(gameID) {
     const path = await resolveGamePath(gameID).catch(() => null);
     if (path) navigate(path);
@@ -94,7 +102,29 @@ function FirstRunSetup() {
       </p>
       <div class="setup-page__sections">
         <${GameDetectSection} onAdded=${onDetected} />
-        <${GameAddForm} onAdded=${onAdded} />
+        <${GameAddForm} onAdded=${onAdded} refreshKey=${sourcesVersion} />
+        ${
+          /* C-4, epic live review: the dead end a custom-source user hit.
+          The source editor lived only at /g/{game}/{profile}/setup, which
+          needs a game; a game could only be added against a source that
+          already existed. So a directory-source user - the case the README
+          leads with - could not start at all without hand-editing
+          games.yaml. Nothing about this editor is game-scoped (its routes
+          are /api/v1/sources, flat), so it belongs here as much as it does
+          on Setup, and the add form above will list whatever it creates. */ ""
+        }
+        <details
+          class="setup-add__custom-sources"
+          data-testid="first-run-sources"
+        >
+          <summary>Define a custom source first</summary>
+          <p class="empty-state__hint">
+            A game can only be added against a source that already exists. If
+            your mods come from a local directory, a manifest or your own API,
+            define that source here and it will appear in the form above.
+          </p>
+          <${SetupSources} onChanged=${() => bumpSources((v) => v + 1)} />
+        </details>
       </div>
     </div>
   `;

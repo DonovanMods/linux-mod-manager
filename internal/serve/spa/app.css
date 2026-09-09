@@ -1419,6 +1419,35 @@ select {
   font-size: 0.85em;
 }
 
+/* The game-source mapping editor (C-4), shared by the Games table's own
+   "Edit sources…" row and the add form's "Also map" section. */
+.sources-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.sources-map__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sources-map__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 16rem;
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+.sources-map__identifier {
+  flex: 1 1 12rem;
+}
+
 /* The inline form a plan renderer draws when the mutation needs an answer
    before it has anything to preview (C-3: mod re-link). */
 .plan__form {

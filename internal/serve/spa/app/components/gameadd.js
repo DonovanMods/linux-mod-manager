@@ -19,8 +19,10 @@ import {
   detectGames,
   gameCatalog,
   listSources,
+  updateGameSources,
 } from "../api.js";
 import { navigate, setupPath } from "../router.js";
+import { SourcesMapEditor } from "./sourcesmap.js";
 
 /**
  * GameDetectSection scans for Steam installs and offers to add the ones not
@@ -207,6 +209,12 @@ const identifierHints = {
 function emptySpec() {
   return {
     sourceID: "",
+    // extraSources is the C-4 multi-select: sources BESIDES the primary one
+    // this game should also map. POST /api/v1/games takes exactly one
+    // source+identifier pair (it is what makes the game addressable at
+    // all), so extras are applied by a PUT immediately afterwards - the
+    // same replacement-shaped call the Games table's own editor makes.
+    extraSources: {},
     query: "",
     matches: null, // null = not searched yet; [] = searched, nothing found
     noCatalog: false,
@@ -232,7 +240,7 @@ function emptySpec() {
  * to build that link from - so the same 401 there falls back to naming the
  * section in plain text.
  */
-export function GameAddForm({ onAdded, game, profile }) {
+export function GameAddForm({ onAdded, game, profile, refreshKey }) {
   const [sources, setSources] = useState(null);
   const [spec, setSpec] = useState(emptySpec);
   const [searching, setSearching] = useState(false);
@@ -241,11 +249,15 @@ export function GameAddForm({ onAdded, game, profile }) {
   const [fieldError, setFieldError] = useState(null); // {field, reason}
   const [formError, setFormError] = useState(null);
 
+  // refreshKey (C-4) is the caller's way of saying "the source registry
+  // changed": first run renders the custom-source editor beside this form,
+  // and a source defined there has to appear in this picker without a
+  // reload. Every other caller omits it and this runs exactly once.
   useEffect(() => {
     listSources()
       .then((rows) => setSources(rows.filter((r) => r.type !== "error")))
       .catch(() => setSources([]));
-  }, []);
+  }, [refreshKey]);
 
   function patch(fields) {
     setSpec((prev) => ({ ...prev, ...fields }));
@@ -300,7 +312,7 @@ export function GameAddForm({ onAdded, game, profile }) {
     setFieldError(null);
     setFormError(null);
     try {
-      const entry = await addGame({
+      let entry = await addGame({
         source_id: spec.sourceID,
         identifier: spec.identifier,
         name: spec.name,
@@ -308,6 +320,25 @@ export function GameAddForm({ onAdded, game, profile }) {
         install_path: spec.installPath,
         mod_path: spec.modPath || undefined,
       });
+      // The extras ride a second call, and the game is REAL by the time it
+      // runs - so a failure here is reported without pretending the add
+      // itself failed, and the row the caller is handed is the one that
+      // actually exists.
+      const extras = Object.keys(spec.extraSources).filter(
+        (id) => id !== spec.sourceID,
+      );
+      if (extras.length > 0) {
+        const map = { [spec.sourceID]: spec.identifier };
+        for (const id of extras) map[id] = spec.extraSources[id];
+        try {
+          entry = await updateGameSources(entry.id, map);
+        } catch (err) {
+          setFormError(
+            `${spec.name} was added, but its extra sources were not mapped: ` +
+              (err instanceof ApiError ? err.message : String(err)),
+          );
+        }
+      }
       setSpec(emptySpec());
       onAdded?.(entry);
     } catch (err) {
@@ -431,6 +462,24 @@ export function GameAddForm({ onAdded, game, profile }) {
         </p>`
       }
       ${errorFor("identifier") && html`<p class="modal__error">${errorFor("identifier")}</p>`}
+      ${
+        (sources ?? []).length > 1 &&
+        html`
+          <details class="setup-add__extra-sources">
+            <summary>Also map other sources (optional)</summary>
+            <p class="empty-state__hint">
+              A game can draw mods from more than one source. The identifier may
+              be empty - that is how a directory source is normally configured.
+            </p>
+            <${SourcesMapEditor}
+              sources=${(sources ?? []).filter((s) => s.id !== spec.sourceID)}
+              value=${spec.extraSources}
+              disabled=${busy}
+              onChange=${(map) => patch({ extraSources: map })}
+            />
+          </details>
+        `
+      }
 
       <label class="plan__control">
         Display name

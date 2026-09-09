@@ -28,7 +28,16 @@ directory:
   path: /path/to/mods
 `;
 
-export function SetupSources() {
+/**
+ * SetupSources is the custom-source editor.
+ *
+ * onChanged (optional, C-4) fires after the registry has actually changed -
+ * a save or a delete - for a caller rendering something else that lists
+ * sources beside it. First run is that caller: its game form's source
+ * picker is fetched once on mount, so a source defined right there would
+ * otherwise not appear in the very form the section exists to feed.
+ */
+export function SetupSources({ onChanged } = {}) {
   const [sources, setSources] = useState(null);
   const [inUseBy, setInUseBy] = useState({}); // {sourceID: [gameID, ...]}
   // gameNames maps a game id to its display name (Minor 8: the in-use
@@ -82,6 +91,7 @@ export function SetupSources() {
   async function afterSave() {
     setEditing(null);
     await reload();
+    onChanged?.();
   }
 
   return html`
@@ -105,7 +115,10 @@ export function SetupSources() {
                 inUseBy=${inUseBy[s.id] ?? []}
                 gameNames=${gameNames}
                 onEdit=${() => setEditing(s.id)}
-                onChanged=${reload}
+                onChanged=${async () => {
+                  await reload();
+                  onChanged?.();
+                }}
               />
             `,
           )}
