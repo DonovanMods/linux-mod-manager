@@ -83,12 +83,28 @@ export function TopBar({
   // Navigating remounts Mission Control (app.js keys it on game:profile),
   // so this effect's own ref starts empty on the other side and cannot
   // navigate twice for one job.
+  //
+  // navigate() itself is deferred to a microtask (unit-8 gate re-review,
+  // R1) rather than called here directly. This effect runs synchronously
+  // during Preact's commit - the SSE frame that flips switchState lands
+  // inside a store.set that is still being rendered when this effect body
+  // runs. router.js#navigate pushes history state and dispatches
+  // "popstate" IN THE SAME TICK, and main.js answers that synchronously
+  // with its own store.set -> draw() -> render() on the SAME container:
+  // a second, RE-ENTRANT render nested inside the commit the first one
+  // hasn't finished. Preact's own tree only ever tracks the outer commit,
+  // so the inner render's DOM becomes an orphan sibling it never diffs
+  // against again - two Mission Controls, the stale one on top, surviving
+  // every later navigation because nothing ever revisits it.
+  // queueMicrotask runs this after the current commit has finished (still
+  // before the browser paints), so the resulting render is an ordinary,
+  // top-level one Preact's diff actually owns.
   useEffect(() => {
     if (switchState !== "succeeded") return;
     const to = pendingSwitch.current;
     pendingSwitch.current = null;
     if (!to || to === route.profile) return;
-    navigate(contextPath(route.game, to));
+    queueMicrotask(() => navigate(contextPath(route.game, to)));
   }, [switchJobID, switchState, route.game, route.profile]);
 
   // ?job={id} opens the tray on that entry - the annotation the deleted

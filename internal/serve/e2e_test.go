@@ -4921,6 +4921,8 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 
 	var location, indicator, library string
 	var pickerInsideJob bool
+	var missionControls, appBars, libraries int
+	var missionControlsAfterNav, appBarsAfterNav int
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
@@ -4942,10 +4944,31 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 			`document.querySelector(".deploy-indicator")?.textContent.trim() === "Deployed"`,
 			nil, chromedp.WithPollingInterval(50*time.Millisecond),
 		),
+		// The count is the assertion the unit-8 gate re-review's R1 asked
+		// for: the earlier selector-based assertions below each resolve
+		// against whichever copy comes first in document order, which is
+		// the STALE one when the navigate-during-commit bug reintroduces a
+		// second, orphaned Mission Control - so they kept passing on the
+		// doubled screen. A count does not have that blind spot.
+		chromedp.Evaluate(`document.querySelectorAll(".mission-control").length`, &missionControls),
+		chromedp.Evaluate(`document.querySelectorAll(".app-bar").length`, &appBars),
+		chromedp.Evaluate(`document.querySelectorAll(".library").length`, &libraries),
 		chromedp.Location(&location),
 		chromedp.Evaluate(`Boolean(document.querySelector(".job-progress .profile-picker"))`, &pickerInsideJob),
 		textContent(`.deploy-indicator`, &indicator),
 		chromedp.Text(`.library`, &library, chromedp.ByQuery),
+
+		// The orphan does not just sit on this screen - it survives further
+		// SPA navigation (the re-review's own drive: it followed onto
+		// Setup, and coming back made two AGAIN). A round trip to Setup and
+		// back is what proves it is gone for good, not just absent from
+		// the one screen the earlier assertions happened to check.
+		chromedp.Click(`[data-action="setup"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+		chromedp.Click(`.mod-page__back`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".mission-control").length`, &missionControlsAfterNav),
+		chromedp.Evaluate(`document.querySelectorAll(".app-bar").length`, &appBarsAfterNav),
 	)
 
 	assert.True(t, strings.HasSuffix(location, "/g/g1/hardcore"),
@@ -4955,6 +4978,16 @@ func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
 	assert.Equal(t, "Deployed", strings.TrimSpace(indicator),
 		"the indicator must describe the profile now on screen, whose deploy is a no-op after the switch")
 	assert.Contains(t, library, "Beta Mod", "the library must list what the profile it moved to holds")
+	assert.Equal(t, 1, missionControls,
+		"a confirmed switch must leave exactly one Mission Control on screen, not a stale copy and a live one")
+	assert.Equal(t, 1, appBars,
+		"a confirmed switch must leave exactly one top bar, not the profile left behind stacked above the one moved to")
+	assert.Equal(t, 1, libraries,
+		"a confirmed switch must leave exactly one library, not the old profile's stacked above the new one")
+	assert.Equal(t, 1, missionControlsAfterNav,
+		"the orphan must not survive a further SPA navigation away and back")
+	assert.Equal(t, 1, appBarsAfterNav,
+		"the orphan top bar must not survive a further SPA navigation away and back")
 	assert.Empty(t, f.BrowserErrors())
 }
 
