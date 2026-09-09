@@ -790,6 +790,26 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   own report says `via: env` for the same reason: that IS the key it will
   send.
 
+- **A relative `mod_path` now means the same thing everywhere (#363).** A
+  hand-written `games.yaml` has always taken `mod_path: Data` as
+  "`<install_path>/Data`", but `lmm game add`, `game add --from-detected`,
+  the web UI's add-game form and `POST /api/v1/games` refused the same
+  string outright ("the mod path must be absolute"), so one value meant two
+  different things depending on how it reached lmm. Every write path now
+  resolves it the way the loader does and records the **resolved absolute
+  path**, so the file still reads back identically from any working
+  directory. `~` is expanded first on both paths — including at an
+  interactive prompt, where no shell did it — so `~/mods` is an absolute
+  path rather than something joined onto the install path. The only refusal
+  left is a relative mod path with no `install_path` to resolve it against,
+  which now names `install_path` (the value that is actually missing).
+
+- **A credential scrub that runs out of time says which file and what to do
+  (#79).** The 45-second budget's own exit returned a bare `context
+deadline exceeded`, dropping the database path and the "close any other
+  lmm process and run the command again" remedy that every other scrub
+  failure carries. Both exits now share one message.
+
 - **NexusMods `--tag` and `--category` work again (#337, #343).** The
   GraphQL client still sent `tagNames` and `categoryId`, neither of which
   NexusMods' `ModsFilter` defines any more, so **every** tag- or

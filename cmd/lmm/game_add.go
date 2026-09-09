@@ -68,7 +68,10 @@ it explicitly on either path, e.g. to avoid a collision with an existing
 game.
 
 The install path must already exist. The mod path is not created here;
-deploy creates it on demand.
+deploy creates it on demand. Either path may use "~", and the mod path may
+be given relative to the install path - "Data" means "<install path>/Data",
+exactly as it does in a hand-written games.yaml - with the resolved
+absolute path being what lmm records.
 
 Examples:
   lmm game add
@@ -112,7 +115,7 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddName, "name", "", "display name (defaults to the catalog match's name)")
 	gameAddCmd.Flags().StringVar(&gameAddGameID, "game-id", "", "the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)")
 	gameAddCmd.Flags().StringVar(&gameAddPath, "path", "", "game install path (must exist)")
-	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory (default: <install path>/mods)")
+	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory, absolute or relative to the install path (default: <install path>/mods)")
 	gameAddCmd.Flags().StringVar(&gameAddFromDetected, "from-detected", "",
 		"Steam app id of an installed game to prefill from (list them with 'lmm game detect --include-unknown')")
 	gameAddCmd.MarkFlagsMutuallyExclusive("id", "query")

@@ -61,10 +61,16 @@ func ResolveModPath(installPath, modPath string) (string, error) {
 
 // ErrRelativeModPath is the refusal SaveGame makes for a game whose
 // ModPath is relative, and the one ResolveModPath makes for a relative
-// value with no install_path behind it. Loading otherwise tolerates a
-// relative value (ResolveModPath joins it onto install_path); WRITING one
-// is always a bug, because the value lmm writes is the value every later
-// run - from any working directory - resolves.
+// value with no install_path behind it.
+//
+// The two are not the same rule. LOADING tolerates a relative value and
+// joins it onto install_path; SAVING requires an already-resolved absolute
+// one, because the value lmm writes is the value every later run - from any
+// working directory - reads back. What #363 changed is where the
+// resolution happens on the write path: core.GameSpec.game() now runs
+// ResolveModPath itself, so a frontend may accept "Data" from a user and
+// still hand SaveGame an absolute path. SaveGame's own refusal stays as
+// the backstop for a caller that skipped that step.
 var ErrRelativeModPath = errors.New("mod_path must be an absolute path")
 
 // HookConfigYAML is the YAML representation of hook configuration

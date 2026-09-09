@@ -35,20 +35,24 @@ Defines moddable games. Each game is keyed by a unique slug (e.g. `skyrim-se`).
 
 #### `mod_path` and relative values
 
-`mod_path` is normally an absolute path (`~` is expanded). A **relative**
-value — `mod_path: Data` — is resolved against that game's `install_path`,
-not against the directory you happen to run `lmm` from, so the entry means
-the same thing from every shell.
+`mod_path` may be **absolute, or relative to `install_path` — everywhere**.
+A relative value — `mod_path: Data` — is resolved against that game's
+`install_path`, never against the directory you happen to run `lmm` from,
+so the entry means the same thing from every shell. `~` is expanded first,
+so `~/mods` is an absolute path, not a relative one.
+
+The same rule applies on every path that *writes* a game, not just to a
+hand-written file: `lmm game add`, `lmm game add --from-detected`,
+`lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all
+accept `Data` and store the resolved absolute path, so the file lmm writes
+reads back identically from any working directory.
 
 A relative `mod_path` needs an `install_path` to resolve against, so an
-entry that carries one without the other is refused when `games.yaml` is
-read, naming the game and the field — the alternative is the CWD-relative
-behaviour this rule exists to end, applied silently.
-
-lmm itself never *writes* a relative `mod_path`: `lmm game add`,
-`lmm game add --from-detected`, `lmm game detect` and the web UI's add-game
-form all refuse one and ask for an absolute path instead. The join above is
-purely for hand-written `games.yaml` entries.
+entry that carries one without the other is refused — when `games.yaml` is
+read, naming the game and the field, and at the prompt/form/API, where the
+refusal names `install_path`, the value that is actually missing. The
+alternative is the CWD-relative behaviour this rule exists to end, applied
+silently.
 
 ### Hooks (games.yaml)
 
