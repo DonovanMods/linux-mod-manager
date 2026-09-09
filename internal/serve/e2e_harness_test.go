@@ -422,6 +422,40 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 	return "http://" + addr.String()
 }
 
+// e2eProxyTransport returns a private http.Transport for one fixture's
+// reverse proxy, whose idle connections are closed by a cleanup registered
+// HERE - which is to say after startE2EServer's own shutdown cleanup and
+// therefore, cleanups being LIFO, before it.
+//
+// This is the fix for the Unit 5 flake
+// (TestE2E_OverlappingInstallAndToggleBothTrackCorrectly failing ~1 in 10
+// under -race with "shutting down: context deadline exceeded"). The cause,
+// found from a goroutine dump at the moment of failure: a reverse proxy
+// with no Transport of its own uses http.DefaultTransport, a process-wide
+// pool that outlives the proxy server closing. When two requests are
+// genuinely in flight at once - which is the entire point of the
+// overlapping-jobs fixture - the Transport dials a second connection to the
+// backend, and the loser of that race is parked in the idle pool having
+// never written a request. On the BACKEND that connection is StateNew, and
+// net/http's Shutdown deliberately refuses to treat a StateNew connection
+// as idle until it has sat there for five seconds (go issue 22682). The
+// fixture's ShutdownGrace is five seconds, so Shutdown spun out its whole
+// grace waiting for a connection nothing was ever going to send a request
+// on, and Serve returned the deadline error.
+//
+// Closing the fixture's OWN idle connections at teardown removes that
+// connection before the backend is asked to shut down, which makes the
+// teardown deterministic rather than a race against that five-second
+// timer. A private Transport (rather than DefaultTransport.CloseIdle
+// Connections()) keeps one fixture's teardown from disturbing another's
+// in-flight connections when tests run in parallel.
+func e2eProxyTransport(t *testing.T) *http.Transport {
+	t.Helper()
+	tr := &http.Transport{}
+	t.Cleanup(tr.CloseIdleConnections)
+	return tr
+}
+
 // startE2EServerWithFailingPath is startE2EServer plus a reverse proxy in
 // front of the real server that can answer one exact request path with a
 // 500 JSON error envelope instead of forwarding it - simulating an upstream
@@ -443,6 +477,7 @@ func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath str
 	require.NoError(t, err)
 
 	proxy := &httputil.ReverseProxy{
+		Transport: e2eProxyTransport(t),
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(backendURL)
 			r.Out.Host = backendURL.Host
@@ -1268,6 +1303,7 @@ func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay, t
 	require.NoError(t, err)
 
 	proxy := &httputil.ReverseProxy{
+		Transport: e2eProxyTransport(t),
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(backendURL)
 			r.Out.Host = backendURL.Host
