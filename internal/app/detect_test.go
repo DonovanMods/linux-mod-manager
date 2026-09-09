@@ -19,7 +19,7 @@ func TestDetectGames_NoSteamLibrary(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	configDir := t.TempDir()
 
-	games, warnings, err := DetectGames(context.Background(), configDir)
+	games, warnings, err := DetectGames(context.Background(), configDir, DetectOptions{})
 
 	require.NoError(t, err)
 	assert.Empty(t, games)
@@ -35,7 +35,7 @@ func TestDetectGames_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err := DetectGames(ctx, t.TempDir())
+	_, _, err := DetectGames(ctx, t.TempDir(), DetectOptions{})
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.Canceled))

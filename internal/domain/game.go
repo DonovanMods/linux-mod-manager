@@ -156,6 +156,20 @@ type DetectedGame struct {
 	NexusID     string            `json:"nexus_id,omitempty"`    // NexusMods game domain ID. Optional: "" for games with no NexusMods presence (#177).
 	DeployMode  string            `json:"deploy_mode,omitempty"` // games.yaml's deploy_mode string, passed through from GameInfo.DeployMode. Optional: "" means the default (extract).
 	Sources     map[string]string `json:"sources,omitempty"`     // games.yaml's sources map, passed through from GameInfo.Sources. Optional: nil means "derive {nexusmods: NexusID}".
+	// Known reports whether the Steam app id matched lmm's known-games
+	// list (the embedded steam-games.yaml plus the user's override). A
+	// known candidate carries that entry's curated slug, mod path, deploy
+	// mode and sources; an unknown one carries only what the app manifest
+	// itself said - the Steam name, the install path, a slug derived from
+	// the name - with an EMPTY ModPath and no sources, because nothing on
+	// disk says where that game keeps its mods (#206).
+	//
+	// omitzero, so today's known-only detection emits exactly the shape it
+	// always did except for this one added key, and an unknown row is the
+	// one that carries no "known" member at all. Absent therefore reads as
+	// "not in the known-games list", which is also what a pre-#206 client
+	// decoding this document would assume of every row it had never seen.
+	Known bool `json:"known,omitzero"`
 }
 
 // ValidDeployModes is ValidLinkMethods' counterpart for ParseDeployMode.

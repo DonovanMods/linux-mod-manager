@@ -175,6 +175,8 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// A CURATED candidate: every field the known-games entry
+			// supplies, plus #206's "known": true.
 			"detected_game",
 			domain.DetectedGame{
 				SteamAppID:  "489830",
@@ -185,6 +187,22 @@ func TestJSONGoldens(t *testing.T) {
 				NexusID:     "skyrimspecialedition",
 				DeployMode:  "extract",
 				Sources:     map[string]string{"nexusmods": "skyrimspecialedition"},
+				Known:       true,
+			},
+		},
+		{
+			// #206's OTHER half, pinned as its own golden because its
+			// absences are the contract: an installed game nobody has
+			// curated carries the manifest's name, a derived slug and an
+			// install path - an EMPTY mod path, no sources, no nexus id,
+			// and no "known" member at all (omitzero). A client that reads
+			// this row must default the mod path itself and say so.
+			"detected_game_unknown",
+			domain.DetectedGame{
+				SteamAppID:  "526870",
+				Slug:        "satisfactory",
+				Name:        "Satisfactory",
+				InstallPath: "/home/user/.steam/steam/steamapps/common/Satisfactory",
 			},
 		},
 		{

@@ -247,7 +247,7 @@ func gameSourcesErrorStatus(err error) int {
 // (core.GameDetectListing, goldened with the rest).
 func (s *Server) handleAPIGamesDetect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir())
+	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
@@ -287,7 +287,7 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir())
+	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

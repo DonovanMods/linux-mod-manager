@@ -243,7 +243,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir)
+	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir, app.DetectOptions{})
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}

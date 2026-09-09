@@ -8,5 +8,6 @@
   "deploy_mode": "extract",
   "sources": {
     "nexusmods": "skyrimspecialedition"
-  }
+  },
+  "known": true
 }
