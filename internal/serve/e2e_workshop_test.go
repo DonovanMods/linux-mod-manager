@@ -93,6 +93,11 @@ func newE2EWorkshopFixture(t *testing.T) e2eFixture {
 		External:     true,
 		ExternalPath: steamDir,
 	}))
+	// The profile ref ApplyWorkshopAdopt writes alongside the DB row: without
+	// it the fixture is a state adopt never produces, and every profile-scoped
+	// flow (deploy's plan among them) would simply not see the item.
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: e2eWorkshopSourceID, ModID: e2eWorkshopFileID, Version: "7987119735124793734"}))
 	return f
 }
 
@@ -154,6 +159,47 @@ func TestE2E_Workshop_FullModPageHidesRelinkAndRollback(t *testing.T) {
 	assert.Contains(t, page, "Managed by Steam")
 	assert.NotContains(t, page, "Re-link…", "there is no link to move")
 	assert.NotContains(t, page, "Roll back", "lmm never held a previous copy")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched is the SPA half
+// of the dry-run/live agreement the CLI now keeps: an external row appears
+// in the deploy plan classed "external", saying what lmm will NOT do with
+// it. Before the fix plan_deploy.js fell through to its empty-link-list
+// branch and read "no files to link", which is true of it and says nothing.
+func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	// One ordinary, undeployed mod, so Mission Control offers a Deploy at
+	// all - an all-external profile has nothing to deploy by construction.
+	src, err := f.Svc.GetSource(e2eWorkshopSourceID)
+	require.NoError(t, err)
+	ws, ok := src.(*e2eWorkshopSource)
+	require.True(t, ok)
+	ws.addMod(fakeSourceMod{Mod: domain.Mod{
+		ID: "managed-1", SourceID: e2eWorkshopSourceID, Name: "Managed Mod", Version: "1.0",
+	}})
+	seedInstalledMod(t, f.Svc, f.Game, domain.Mod{
+		ID: "managed-1", SourceID: e2eWorkshopSourceID, Name: "Managed Mod",
+		Version: "1.0", GameID: f.Game.ID,
+	}, true, map[string][]byte{"managed.pak": []byte("managed")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: e2eWorkshopSourceID, ModID: "managed-1", Version: "1.0"}))
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="deploy"]`, &body),
+	)
+	assert.Contains(t, body, "Managed Mod")
+	assert.Contains(t, body, "managed.pak")
+	assert.Contains(t, body, "Sample Workshop Item")
+	assert.Contains(t, body, "tracked from Steam — not deployed")
+	assert.NotContains(t, body, "no files to link",
+		"the external row must say why, not merely that there is nothing")
 	assert.Empty(t, f.BrowserErrors())
 }
 

@@ -70,7 +70,7 @@ export function DeployPlanView({ plan, modal, state, actions }) {
             (mod) => html`
               <li
                 key=${`${mod.ref.source_id}/${mod.ref.mod_id}`}
-                class="plan__mod ${mod.skipped ? "plan__mod--skipped" : ""}"
+                class="plan__mod ${mod.skipped || mod.class === "external" ? "plan__mod--skipped" : ""}"
               >
                 <span class="plan__mod-name">${mod.name}</span>${" "}
                 ${
@@ -236,9 +236,15 @@ function mergedSummary(merged) {
 }
 
 /** modDetail is one plan row's own status line: why it will not deploy, or
- * how it will. The three states are mutually exclusive in the document
- * (DeployPlanMod: Skipped, Redownload, or a plain link list). */
+ * how it will. The states are mutually exclusive in the document
+ * (DeployPlanMod: class "external", Skipped, Redownload, or a plain link
+ * list).
+ *
+ * #269: an external row is checked FIRST and by class, not by an empty link
+ * list - "no files to link" is true of it but says nothing, and the preview
+ * must not read as though lmm merely found nothing to do. */
 function modDetail(mod) {
+  if (mod.class === "external") return "tracked from Steam — not deployed";
   if (mod.skipped) return `skipped — ${mod.skipped}`;
   if (mod.redownload) return "cache missing — will re-download first";
   const count = (mod.link ?? []).length;

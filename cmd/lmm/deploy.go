@@ -223,6 +223,15 @@ func doDeploy(ctx context.Context, service *core.Service, game *domain.Game, arg
 			fmt.Println()
 		case core.DeploySkipped:
 			fmt.Printf("  %s %s - %s\n", colorRed("✗"), p.ModName, p.Detail)
+		case core.DeployExternalSkipped:
+			// #269: not a failure and not a deployment - Steam already has
+			// this item where the game reads it. Emitted by the live deploy
+			// and, since the dry run must not promise a deployment lmm never
+			// makes, by renderDeployPlan too. Detail carries ExternalPath.
+			fmt.Printf("  ⊘ %s — tracked from Steam, not deployed\n", p.ModName)
+			if verbose && p.Detail != "" {
+				fmt.Printf("    %s\n", p.Detail)
+			}
 		case core.DeployDeployed:
 			// #255: on a compile game, label how the mod's content actually
 			// reaches the game dir - "(merged)" rides the merged artifact
@@ -374,6 +383,13 @@ func renderDeployPlan(plan *core.DeployPlan, progress func(core.Event), printHea
 		}
 		if m.Skipped != "" {
 			progress(core.ModEvent{Scope: scope, Phase: core.DeploySkipped, Detail: m.Skipped})
+			continue
+		}
+		if m.Class == core.DeployModExternal {
+			// #269: an external mod deploys nothing, so it is neither
+			// deployable nor a red skip. Rendered through the LIVE path's
+			// own phase, which is what keeps the two readouts identical.
+			progress(core.ModEvent{Scope: scope, Phase: core.DeployExternalSkipped, Class: m.Class})
 			continue
 		}
 		if m.Redownload {

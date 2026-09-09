@@ -263,6 +263,37 @@ func TestPrintExternalUpdateSummary_SilentWithNoExternalUpdates(t *testing.T) {
 	assert.Empty(t, strings.TrimSpace(out))
 }
 
+// The dry run and the live run must say the SAME thing about the same
+// profile. Before the fix renderDeployPlan walked past DeployModExternal,
+// counted it as deployable and printed a green "âœ“ <name>" - promising a
+// deployment lmm never makes - while the live path emitted
+// DeployExternalSkipped, which no case in the CLI's switch handled, so it
+// printed nothing at all.
+func TestDeploy_ExternalModReadsTheSameDryRunAndLive(t *testing.T) {
+	svc, game, _, steamDir := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+
+	oldProfile, oldDry := deployProfile, deployDryRun
+	deployProfile = "default"
+	t.Cleanup(func() { deployProfile, deployDryRun = oldProfile, oldDry })
+
+	deployDryRun = true
+	dry := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+	deployDryRun = false
+	live := captureStdout(t, func() error { return doDeploy(context.Background(), svc, game, nil) })
+
+	for name, out := range map[string]string{"dry run": dry, "live": live} {
+		assert.Contains(t, out, "Sample Workshop Item", "%s names the item", name)
+		assert.Contains(t, out, "tracked from Steam, not deployed", "%s says what lmm will not do", name)
+		assert.NotContains(t, out, "âœ“ Sample Workshop Item",
+			"%s must not promise a deployment lmm never makes", name)
+	}
+	assert.Contains(t, dry, "Would deploy: 0", "an external mod is not deployable")
+	assert.Contains(t, dry, "Skipped: 1")
+	assert.DirExists(t, steamDir, "Steam still owns its files")
+}
+
 func TestPrintBatchSkips_SplitsLockedFromSteamWorkshop(t *testing.T) {
 	out := captureStdout(t, func() error {
 		printBatchSkips([]core.UpdateApplyResult{
