@@ -103,7 +103,10 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 	}
 	sort.Strings(rows)
 	for _, row := range rows {
-		fmt.Fprintln(h, row)
+		// A hash.Hash never fails a write (its own contract), so the error
+		// is discarded rather than threaded through a fingerprint that has
+		// no failure mode of its own.
+		_, _ = fmt.Fprintln(h, row)
 	}
 
 	// The profile file, for the lock state the version pass reads. A
@@ -118,7 +121,7 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		}
 		sort.Strings(refs)
 		for _, ref := range refs {
-			fmt.Fprintln(h, ref)
+			_, _ = fmt.Fprintln(h, ref)
 		}
 	}
 
