@@ -227,6 +227,20 @@ func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, pr
 // an update writes the DB, the profile and the game directory, and the
 // mutation slot beginOp holds is service-wide anyway.
 //
+// The mutation slot is held for the WHOLE batch, not released between items
+// (#324 review, Minor 6) - a deliberate choice, not an oversight. The one
+// freshness window above only proves the world hasn't moved between the
+// selection and the FIRST item; releasing the slot between items would let
+// an interleaved mutation (a toggle, a deploy, another update) move the
+// world again before the next item's PlanUpdateFrom re-plans it, silently
+// widening "one freshness window" into "N of them, whichever survive the
+// gaps". The retired per-mod loops released the slot between iterations,
+// which is real: a caller that used to be able to slip a toggle or deploy
+// in between two updates of a long batch now waits for the entire batch to
+// finish first. Releasing and re-checking staleness per item would preserve
+// that concurrency, but it is a different design (effectively N freshness
+// windows) - not this one.
+//
 // One freshness window: checkPlanFresh runs ONCE, as the first statement
 // inside the op, against the whole batch's snapshot. A world that moved
 // between the selection and the confirm refuses the batch as stale having

@@ -19,7 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core.UpdateBatchResult`, where it previously emitted the check document
   and silently ignored the flag. A `--json` run WITHOUT `--all`, and any
   `--dry-run`, are unchanged: still the check document, still applying
-  nothing.
+  nothing. One consequence worth naming: the batch holds the service's
+  single mutation slot for its **entire** duration rather than releasing it
+  between items, so a toggle or deploy started from `lmm serve`'s web UI
+  while a long batch is running now waits for the whole batch instead of
+  slipping in between two of its items — the price of the one freshness
+  window the batch checks against (see `ApplyUpdateBatch`'s doc comment).
 
 - **`lmm auth logout --json` prints a document, not prose (#335).** It emits
   the re-read `app.AuthStatusReport` — the same document
