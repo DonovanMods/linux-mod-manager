@@ -1457,6 +1457,14 @@ select {
   margin-top: var(--space-4);
 }
 
+/* Which contender wins a contested path, inline in the deploy preview
+   (M-9). The losing note is muted rather than coloured: it is a fact about
+   load order, not a failure. */
+.plan__winner {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 /* The type-the-name gate on a destructive plan (C-3: purge). */
 .plan__confirm-name {
   display: flex;
@@ -1714,12 +1722,17 @@ select {
   }
 }
 
+/* M-2 of the epic live review: this was nowrap + ellipsis, which clipped a
+   real failure ("file conflict detected: 2 file(s) wou…") on a row with
+   ~1400px of empty space to its left, leaving the full sentence nowhere but
+   a toast that should not have been there either (C-2). A job readout is at
+   most a couple of lines of prose; letting it wrap costs nothing and is the
+   difference between a message and a hint that there was one. */
 .job-progress__text {
   flex: 1;
+  min-width: 0;
   color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .job-progress--succeeded .job-progress__text {
@@ -2255,20 +2268,33 @@ select {
 /* surface earns one (design doc §Scope).                                  */
 /* ---------------------------------------------------------------------- */
 
+/* M-7: both of these were a narrow centred column on a 1920px page while
+   Mission Control used the full width - inconsistent density on a product
+   whose design says "desktop only, >= 1080p, density tuned". They now share
+   Mission Control's own measure (the 130rem cap above applies to .app-main
+   at >= 1440px), and their SECTIONS become columns once there is room for
+   two, which is what actually fills the space: a 60rem form stretched to
+   1900px is worse than a narrow one, not better. */
 .setup-page {
-  max-width: 60rem;
-  margin: 0 auto;
+  max-width: 100%;
 }
 
 .game-chooser--first-run {
-  max-width: 40rem;
-  margin: 0 auto;
+  max-width: 100%;
 }
 
 .setup-page__sections {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+}
+
+@media (min-width: 1440px) {
+  .setup-page__sections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
 }
 
 .setup-nav {
@@ -2388,8 +2414,14 @@ select {
   text-overflow: ellipsis;
 }
 
+/* M-4: display:flex on a <td> takes it out of the table's own row layout,
+   so an EMPTY one (a built-in source has no actions) collapsed to nothing
+   and left the surrounding cell borders floating out of line with the rest
+   of the row. inline-flex keeps the cell a table cell and lays the buttons
+   out inside it, which is what was wanted all along. */
 .setup-table__actions {
-  display: flex;
+  display: inline-flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
@@ -2492,6 +2524,12 @@ select {
 /* The live re-key missed its window (issue 334): the key IS saved, so this
  * is a caution, not an error - it takes the whole row's width so the
  * sentence reads as one line under the controls it concerns. */
+/* M-1/D-3: the env var is text beside the field, not a placeholder inside
+   it. It is the only place the UI names the variable. */
+.setup-auth__env-var {
+  white-space: nowrap;
+}
+
 .setup-auth__restart {
   flex: 1 0 100%;
   margin: 0;

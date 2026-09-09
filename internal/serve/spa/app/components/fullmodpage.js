@@ -325,7 +325,10 @@ function FilesSection({ filesReport }) {
               artifact.
             </p>`
           : (filesReport.files ?? []).length === 0
-            ? html`<p class="empty-state__hint">No files recorded.</p>`
+            ? html`<p class="empty-state__hint">
+                No deployed files tracked. (Files are tracked on install;
+                existing mods may need to be redeployed.)
+              </p>`
             : html`
                 <table class="mod-page__table">
                   <thead>
@@ -486,7 +489,7 @@ function VersionsTable({
         <tr>
           <th>Version</th>
           <th>State</th>
-          <th></th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody>
@@ -504,7 +507,16 @@ function VersionsTable({
           return html`
             <tr key=${v}>
               <td class="mono">${v}</td>
-              <td>${isInstalled ? "installed" : ""}</td>
+              ${
+                /* M-6: an em dash rather than an empty cell. A blank
+                under a "State" header reads as a rendering failure; the
+                state of a version that is neither installed nor the checked
+                update target is genuinely "nothing to say", and the table
+                should say so. */ ""
+              }
+              <td>
+                ${isInstalled ? "installed" : isUpdateTarget ? "available" : "—"}
+              </td>
               <td>
                 ${
                   isUpdateTarget
@@ -530,7 +542,7 @@ function VersionsTable({
                           Update to ${v}
                         </button>
                       <//>`
-                    : ""
+                    : "—"
                 }
               </td>
             </tr>

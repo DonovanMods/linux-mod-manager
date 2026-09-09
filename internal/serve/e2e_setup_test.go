@@ -484,10 +484,14 @@ func TestE2E_Auth_RejectedThenAcceptedNeverExposesTheKey(t *testing.T) {
 	// #333 Minor #5: the environment-variable hint must show for a row
 	// that has NEVER been authenticated, not only one authenticated via
 	// env - app.AuthStatus now fills EnvVar for every auth-capable row.
-	var placeholder string
-	f.runInBrowser(t, chromedp.AttributeValue(
-		`[data-source="authy"] input[type="password"]`, "placeholder", &placeholder, nil, chromedp.ByQuery))
-	assert.Equal(t, "or set LMM_AUTHY_API_KEY", placeholder)
+	//
+	// It is TEXT beside the field rather than a placeholder inside it since
+	// M-1/D-3 of the epic live review: as a placeholder it was visibly
+	// truncated in a ~190px input and vanished on the first keystroke, in
+	// the one place the UI names the variable at all.
+	var envHint string
+	f.runInBrowser(t, textContent(`[data-source="authy"] .setup-auth__env-var`, &envHint))
+	assert.Equal(t, "or set LMM_AUTHY_API_KEY", envHint)
 
 	f.runInBrowser(t,
 		chromedp.SendKeys(`[data-source="authy"] input[type="password"]`, badKey, chromedp.ByQuery),

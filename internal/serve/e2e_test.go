@@ -5923,3 +5923,53 @@ func TestE2E_SearchTagFilterAppearsOnlyForASourceThatHonoursIt(t *testing.T) {
 		"the untagged row must not")
 	assert.Empty(t, g.BrowserErrors())
 }
+
+// TestE2E_DeployPreviewMarksWhichContenderWins is M-9 of the epic live
+// review: the deploy plan listed both contenders' copies of a contested
+// path with nothing to say which one would actually be there afterwards, so
+// a preview over a real conflict read as if both would land. The fact lives
+// in the Conflicts document this route has already fetched.
+func TestE2E_DeployPreviewMarksWhichContenderWins(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	var plan string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal .plan__winner`, chromedp.ByQuery),
+		textContent(`.modal .plan`, &plan),
+	)
+
+	assert.Contains(t, plan, "(wins)",
+		"the winning contender's copy of the contested path must say so")
+	assert.Contains(t, plan, "(loses to",
+		"and the losing one must name who takes it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AuthSurfaceNamesTheEnvironmentVariableAsText is M-1/D-3: the env
+// var was a PLACEHOLDER in a ~190px field on a ~900px row - visibly
+// truncated to "or set NEXUSMODS_API_KE" and gone entirely the moment the
+// user typed. It is the only place the UI names the variable, and the
+// README says it is shown beside the field.
+func TestE2E_AuthSurfaceNamesTheEnvironmentVariableAsText(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	var body string
+	var stillThereAfterTyping bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()+"/setup?section=auth"),
+		chromedp.WaitVisible(`.setup-auth__env-var`, chromedp.ByQuery),
+		textContent(`.setup-auth__env-var`, &body),
+		chromedp.SendKeys(`.setup-auth__login input[type="password"]`, "secret", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".setup-auth__env-var") !== null`, &stillThereAfterTyping),
+	)
+
+	assert.Contains(t, body, "_API_KEY",
+		"the environment variable must be named as text, not as a placeholder")
+	assert.True(t, stillThereAfterTyping,
+		"and must survive the first keystroke, which a placeholder does not")
+	assert.Empty(t, f.BrowserErrors())
+}

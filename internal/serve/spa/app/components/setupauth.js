@@ -172,7 +172,7 @@ function AuthSourceRow({ source, onChanged }) {
                   type="password"
                   autocomplete="off"
                   aria-label=${`API key for ${source.name}`}
-                  placeholder=${source.env_var ? `or set ${source.env_var}` : "API key"}
+                  placeholder="API key"
                   value=${apiKey}
                   disabled=${busy}
                   onInput=${(e) => setApiKey(e.currentTarget.value)}
@@ -184,6 +184,17 @@ function AuthSourceRow({ source, onChanged }) {
                 >
                   ${busy ? "Checking…" : "Log in"}
                 </button>
+                ${
+                  // M-1/D-3: this was a PLACEHOLDER, in a ~190px field on a
+                  // ~900px row - visibly truncated to "or set NEXUSMODS_API_KE"
+                  // and gone entirely the moment the user typed. It is the
+                  // only place the UI names the variable, and the README
+                  // says it is shown beside the field, so it is text now.
+                  source.env_var &&
+                  html`<span class="setup-auth__env-var empty-state__hint"
+                    >or set <span class="mono">${source.env_var}</span></span
+                  >`
+                }
               </form>
             `
       }

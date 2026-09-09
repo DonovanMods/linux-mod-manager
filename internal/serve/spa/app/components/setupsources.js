@@ -333,7 +333,14 @@ function SourceEditor({ id, onSaved, onCancel }) {
     }
   }
 
-  const lines = yaml.split("\n").length;
+  // A trailing newline is a line TERMINATOR, not an empty last line, so it
+  // must not add a number of its own (M-4/M-3 of the epic live review: the
+  // gutter ran one past the document). Never below 1 - an empty editor
+  // still has a line 1 to type on.
+  const lines = Math.max(
+    1,
+    yaml.split("\n").length - (yaml.endsWith("\n") ? 1 : 0),
+  );
 
   return html`
     <div class="source-editor" data-testid="source-editor">

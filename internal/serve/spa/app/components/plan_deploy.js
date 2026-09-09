@@ -16,10 +16,24 @@ import {
 } from "./planoptions.js";
 
 /** DeployPlanView renders core.DeployPlan (internal/core/deploy.go). */
-export function DeployPlanView({ plan, modal, actions }) {
+export function DeployPlanView({ plan, modal, state, actions }) {
   const mods = plan.mods ?? [];
   const purge = plan.purge ?? [];
   const hooks = plan.hooks ?? [];
+
+  // M-9 of the epic live review: this list showed both contenders' copies
+  // of a contested path with nothing to say which one wins, so a deploy
+  // preview over a real conflict read as if both would land. The fact
+  // exists - it is the Conflicts card's own document, already fetched for
+  // this route - so the paths carry it rather than the user having to
+  // cross-reference two surfaces. Keyed by path to the winner's own key,
+  // exactly as core.ProfileConflict reports it.
+  const winnerByPath = new Map(
+    (state?.conflicts?.conflicts ?? []).map((c) => [
+      c.path,
+      c.load_order_winner,
+    ]),
+  );
 
   if (plan.no_changes) {
     return html`
@@ -80,7 +94,22 @@ export function DeployPlanView({ plan, modal, actions }) {
                   (mod.link ?? []).length > 0 &&
                   html`
                     <ul class="plan__paths">
-                      ${mod.link.map((p) => html`<li key=${p} class="mono">${p}</li>`)}
+                      ${mod.link.map((p) => {
+                        const winner = winnerByPath.get(p);
+                        const key = `${mod.ref.source_id}:${mod.ref.mod_id}`;
+                        return html`<li key=${p} class="mono">
+                          ${p}${" "}
+                          ${
+                            winner &&
+                            (winner.key === key
+                              ? html`<span class="plan__winner">(wins)</span>`
+                              : html`<span
+                                  class="plan__winner plan__winner--loses"
+                                  >(loses to ${winner.name})</span
+                                >`)
+                          }
+                        </li>`;
+                      })}
                     </ul>
                   `
                 }
