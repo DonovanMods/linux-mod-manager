@@ -354,6 +354,25 @@ func TestPurge_DryRunNamesWhatItLeavesAlone(t *testing.T) {
 	assert.Contains(t, out, "Left alone (tracked from Steam): Sample Workshop Item")
 }
 
+// The version DISPLAY rule is one date per instant, on every surface. `lmm
+// mod show` renders a .UTC() time and the SPA renders toISOString, so this
+// formatter must be UTC too or the same item reads as two different dates
+// for a user far enough east - a bug no test in the reviewer's timezone
+// could see.
+func TestWorkshopRevisionDate_IsUTCWhateverTheMachinesZone(t *testing.T) {
+	// time.Local is process-global, so it is moved and put back around the
+	// two calls rather than in a Cleanup - nothing else in this package runs
+	// in parallel, and the window is one function call wide.
+	saved := time.Local
+	time.Local = time.FixedZone("LINT", 14*60*60) // Kiritimati, UTC+14
+	// 1764767935 = 2025-12-03T12:38:55Z, which is 2025-12-04 locally there.
+	got, empty := workshopRevisionDate(1764767935), workshopRevisionDate(0)
+	time.Local = saved
+
+	assert.Equal(t, "2025-12-03", got)
+	assert.Empty(t, empty)
+}
+
 func TestPrintBatchSkips_SplitsLockedFromSteamWorkshop(t *testing.T) {
 	out := captureStdout(t, func() error {
 		printBatchSkips([]core.UpdateApplyResult{
