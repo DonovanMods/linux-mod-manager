@@ -131,6 +131,20 @@ type VerifyFinding struct {
 	// inputs, so the two can never disagree about a row. The wordings are
 	// sentence fragments in the engine's own voice, meant to be rendered
 	// after a lead-in like "Not fixable: ".
+	//
+	// One deliberate hedge (#325, review M2). A LOCKED ref's missing /
+	// no_checksum / needs_reingest rows still report Fixable true with no
+	// reason, even though the repair may refuse at attempt time: whether
+	// the source can still serve the recorded version's own file is a
+	// question only a network call answers, and a reporting-only run must
+	// not pay for one. Fixable's own wording is what stays true here ("a
+	// --fix run would ATTEMPT a repair" - it does attempt, then declines),
+	// and Fixable must NOT be set false on the strength of the lock alone:
+	// that would suppress the affordance for a source that CAN serve the
+	// version, which is the common case. So the same locked mod can carry a
+	// version_mismatch row that says "Not fixable: the ref is locked ..."
+	// beside a missing row that offers Repair; the refusal for the second
+	// one arrives on the repaired document, as note "locked".
 	FixableReason string `json:"fixable_reason,omitzero"`
 }
 
