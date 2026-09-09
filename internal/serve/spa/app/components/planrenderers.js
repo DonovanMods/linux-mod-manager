@@ -35,6 +35,7 @@ import { SwitchPlanView } from "./plan_switch.js";
 import { ProfileApplyPlanView } from "./plan_profile_apply.js";
 import { PurgePlanView } from "./plan_purge.js";
 import { ProfileSyncPlanView } from "./plan_profile_sync.js";
+import { RelinkPlanView } from "./plan_mod_relink.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
 // "profile_import" each get their real renderer here, replacing the
@@ -61,6 +62,7 @@ const renderers = {
   // web-unreachable (C-3).
   purge: PurgePlanView,
   profile_sync: ProfileSyncPlanView,
+  mod_relink: RelinkPlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */

@@ -2010,3 +2010,92 @@ func newE2EFixtureWithAnUnlistedInstall(t *testing.T) e2eFixture {
 		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
 	return f
 }
+
+// compileE2ESource is the browser harness's fakeSource plus
+// source.MergeCompiler, so a fixture game can be DeployCompile.
+//
+// Pak conversion is only meaningful for a game whose deploy mode compiles a
+// merged artifact AND whose mod has a retained file the compiler classifies
+// as convertible - core resolves the game's ONE compile-capable source to
+// decide, so a game mapping none has nothing to convert and
+// core.ModListing's tri-state convert_paks stays null. It is the same
+// shaped stand-in api_mod_convert_internal_test.go builds one package
+// boundary away, for the same reason: nothing here compiles or reads a real
+// pak, which is internal/source and internal/core's ground to cover.
+type compileE2ESource struct{ *fakeSource }
+
+func (*compileE2ESource) ValidateSource(string) error { return nil }
+func (*compileE2ESource) MergeCompile(context.Context, string, []source.MergeSource, string) ([]string, []source.MergeFailure, error) {
+	return nil, nil, nil
+}
+func (*compileE2ESource) ResolveBaseArtifact(*domain.Game) (string, error) { return "", nil }
+func (*compileE2ESource) FingerprintBase(string) (string, error)           { return "", nil }
+func (*compileE2ESource) IsNativeMergeSource(name string) bool             { return name == "exmodz" }
+func (*compileE2ESource) IsConvertibleArtifact(name string) bool           { return name == "pak" }
+func (*compileE2ESource) ClassifyMergeSource(id string) (string, bool) {
+	if id == "pak" {
+		return "pak", true
+	}
+	return "exmodz", false
+}
+func (*compileE2ESource) MergedArtifactName() string            { return "zzz_LMM_Merged_P.pak" }
+func (*compileE2ESource) MergedArtifactLabel() string           { return "Merged Pak" }
+func (*compileE2ESource) RestoredArtifactName(id string) string { return id + "_P.pak" }
+
+var _ source.MergeCompiler = (*compileE2ESource)(nil)
+
+// newE2EFixtureWithAConvertibleMod is the world `lmm mod convert` acts on: a
+// DeployCompile game whose one installed mod carries a pak-kind retained
+// file, which is the only state in which core.ModListing's convert_paks is
+// non-null and the SPA offers the toggle at all.
+func newE2EFixtureWithAConvertibleMod(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	src := &compileE2ESource{fakeSource: newFakeSource("fake")}
+	svc.RegisterSource(src)
+
+	ctx := t.Context()
+	game := &domain.Game{
+		ID:          "g1",
+		Name:        "Compile Game",
+		InstallPath: t.TempDir(),
+		ModPath:     t.TempDir(),
+		LinkMethod:  domain.LinkSymlink,
+		DeployMode:  domain.DeployCompile,
+		ConvertPaks: true,
+		SourceIDs:   map[string]string{"fake": ""},
+	}
+	require.NoError(t, svc.SaveGame(ctx, game))
+	_, err = svc.NewProfileManager().Create(ctx, game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(ctx, game.ID))
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "m1", SourceID: "fake", Name: "Convertible Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		ConvertPaks:  true,
+		FileIDs:      []string{"pak"},
+	}))
+	require.NoError(t, svc.NewProfileManager().AddMod(ctx, game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "m1", Version: "1.0"}))
+
+	baseURL := startE2EServer(t, svc)
+	browserCtx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx:           browserCtx,
+		BaseURL:       baseURL,
+		Svc:           svc,
+		Game:          game,
+		Profile:       "default",
+		BrowserErrors: browserErrors,
+	}
+}

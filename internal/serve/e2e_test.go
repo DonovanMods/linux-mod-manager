@@ -5771,3 +5771,112 @@ func TestE2E_ProfileSyncFromTheCardAddsWhatIsInstalled(t *testing.T) {
 		"the sync must have added the installed-but-unlisted mod to the profile's load order")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_RelinkFromTheRowMenuMovesTheModsIdentity is C-3's `lmm mod edit`
+// half - the third whole command with no web path at all.
+//
+// The renderer IS the form here: a re-link needs the user to say WHERE to
+// re-link to before there is anything to preview, and those fields are
+// plan-time, so each change re-plans rather than opening a second dialog in
+// front of the confirm modal. What is on screen is therefore always a
+// preview of exactly what Confirm will submit.
+func TestE2E_RelinkFromTheRowMenuMovesTheModsIdentity(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var fromTo string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.Click(`.row-menu [data-action="relink"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="mod_relink"] .plan`, chromedp.ByQuery),
+		// A blank form is a legal metadata-only edit, and the preview says
+		// so rather than showing an empty modal with a live Confirm.
+		textContent(`[data-testid="relink-from-to"]`, &fromTo),
+		chromedp.SetValue(`input[name="relink-mod-id"]`, "renamed", chromedp.ByQuery),
+		// SetValue fires `change`, which is the commit event this input
+		// re-plans on - typing every keystroke into a round trip would be a
+		// plan per character.
+		chromedp.Poll(`document.querySelector('[data-testid="relink-from-to"]')?.textContent.includes("renamed")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.Contains(t, fromTo, "fake:a", "the untouched plan is the mod as it stands")
+
+	require.Eventually(t, func() bool {
+		list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+		return err == nil && slices.ContainsFunc(list.Mods, func(m core.ModListing) bool {
+			return m.ID == "renamed"
+		})
+	}, 10*time.Second, 100*time.Millisecond,
+		"the re-link must have moved the mod's identity in the database")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_PakConversionTogglesOnlyWhereItApplies is C-3's `lmm mod convert`
+// half, and the one the epic live review said it would not defer: it is the
+// Icarus pak-conversion toggle on a first-class supported game, and it had
+// no route at all.
+//
+// core.ModListing's convert_paks is a TRI-STATE - null means the question
+// does not apply to this mod (not a merge-compile game, or no pak merge
+// source), which is distinct from a non-null false meaning "applies, and is
+// off". The control renders on the null case's absence as much as on the
+// other's presence, so both are asserted.
+func TestE2E_PakConversionTogglesOnlyWhereItApplies(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var menuItems int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Alpha Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('.row-menu [data-action="toggle-convert"]').length`, &menuItems),
+	)
+	assert.Zero(t, menuItems,
+		"a game with no pak merge source must not offer a conversion toggle at all - "+
+			"convert_paks is null there, and a control for a question that does not apply is worse than none")
+	assert.Empty(t, f.BrowserErrors())
+
+	// And the case it DOES apply to: a DeployCompile game whose mod carries
+	// a pak-kind retained file. The toggle is offered, and it writes.
+	c := newE2EFixtureWithAConvertibleMod(t)
+	var label string
+	c.runInBrowser(t,
+		chromedp.Navigate(c.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-row"))
+				.find((r) => r.textContent.includes("Convertible Mod"))
+				.querySelector(".row-menu-cell button").click()
+		`, nil),
+		chromedp.WaitVisible(`.row-menu [data-action="toggle-convert"]`, chromedp.ByQuery),
+		textContent(`.row-menu [data-action="toggle-convert"]`, &label),
+		chromedp.Click(`.row-menu [data-action="toggle-convert"]`, chromedp.ByQuery),
+	)
+
+	assert.Equal(t, "Disable pak conversion", label,
+		"the menu item must name what the click will DO, read off the mod's current state")
+
+	require.Eventually(t, func() bool {
+		list, err := c.Svc.ListMods(t.Context(), c.Game, "default")
+		if err != nil || len(list.Mods) == 0 {
+			return false
+		}
+		return list.Mods[0].ConvertPaks != nil && !*list.Mods[0].ConvertPaks
+	}, 10*time.Second, 100*time.Millisecond,
+		"the toggle must have reached the database")
+	assert.Empty(t, c.BrowserErrors())
+}

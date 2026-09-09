@@ -156,6 +156,18 @@ export const setModUpdatePolicy = (sourceID, modID, policy, context) =>
     policy,
   });
 
+/**
+ * Turns sourceID/modID's pak conversion on or off (C-3: `lmm mod convert`).
+ * Returns core.ModSettingResult directly - a single-step write beside
+ * lock/unlock/update-policy, not a job.
+ *
+ * `enabled` is REQUIRED on the wire: an absent, null or {} body is a 400,
+ * deliberately, because every one of those shapes used to answer 200 and
+ * silently turn conversion OFF.
+ */
+export const setModConvert = (sourceID, modID, enabled, context) =>
+  post(scoped(`${modPath(sourceID, modID)}/convert`, context), { enabled });
+
 // profilePath builds one profile's /api/v1/profiles/{name} base path -
 // shared by every named-profile route below (api_profiles.go's own doc
 // comment: the profile is named in the PATH, never ?profile=).

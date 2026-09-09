@@ -180,6 +180,21 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             Uninstall
           </button>
         <//>
+        <button
+          type="button"
+          class="button"
+          data-action="relink"
+          onClick=${() =>
+            actions.openPlan({
+              kind: "mod_relink",
+              origin: origin("relink"),
+              title: `Re-link ${installedMod.name}`,
+              confirmLabel: "Re-link",
+              options: { mod_id: modID, source_id: sourceID },
+            })}
+        >
+          Re-link…
+        </button>
       </div>
 
       ${

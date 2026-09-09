@@ -32,8 +32,11 @@ function RefList({ heading, refs, names, testID }) {
           const key = refKey(ref);
           return html`
             <li key=${key} class="plan__mod">
-              <span class="plan__mod-name">${names?.[key] ?? key}</span>
-              ${ref.version && html` <span class="mono">${ref.version}</span>`}
+              <span class="plan__mod-name">${names?.[key] ?? key}</span>${" "}
+              ${
+                // htm-ws-ok: the ${" "} above already carries the gap.
+                ref.version && html`<span class="mono">${ref.version}</span>`
+              }
             </li>
           `;
         })}

@@ -587,6 +587,29 @@ export function ModSettingsControls({ row, actions, panelRef }) {
     }
   }
 
+  // convert_paks is a TRI-STATE on the wire (core.ModListing): null means
+  // pak conversion does not apply to this mod at all - not a merge-compile
+  // game, or no pak merge source - which is distinct from a non-null false
+  // meaning "applies, and is off". So the control renders only when the
+  // wire says the question is even askable (C-3).
+  const convertApplies =
+    row.convert_paks !== null && row.convert_paks !== undefined;
+
+  async function toggleConvert() {
+    setState({ busy: true, error: "" });
+    try {
+      await actions.setModConvert(row.source_id, row.id, !row.convert_paks);
+      setState({ busy: false, error: "" });
+    } catch (err) {
+      setState({
+        busy: false,
+        error: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      restorePanelFocus();
+    }
+  }
+
   async function changePolicy(policy) {
     setState({ busy: true, error: "" });
     try {
@@ -625,6 +648,19 @@ export function ModSettingsControls({ row, actions, panelRef }) {
           <option value="pinned">Pinned</option>
         </select>
       </label>
+      ${
+        convertApplies &&
+        html`<label class="slide-over__setting">
+          <input
+            type="checkbox"
+            name="convert-paks"
+            checked=${row.convert_paks}
+            disabled=${state.busy}
+            onChange=${toggleConvert}
+          />
+          Convert paks
+        </label>`
+      }
       ${state.error && html`<p class="empty-state__hint">${state.error}</p>`}
     </div>
   `;

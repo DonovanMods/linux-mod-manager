@@ -18,6 +18,7 @@ import {
   setModLock as apiSetModLock,
   clearModLock as apiClearModLock,
   setModUpdatePolicy as apiSetModUpdatePolicy,
+  setModConvert as apiSetModConvert,
   getModDetail,
   getModFiles,
   getModVersions,
@@ -1231,6 +1232,20 @@ async function setModUpdatePolicy(sourceID, modID, policy) {
   await refreshAfterModSetting(sourceID, modID);
 }
 
+/** setModConvert is `lmm mod convert` (C-3) - the fourth mod setting, and
+ * the same shape as the other three: one gated write, nothing to preview,
+ * refreshing whatever is on screen on success. It is only ever offered for
+ * a mod whose ModListing carries a non-null convert_paks, which is the wire
+ * saying pak conversion applies to this mod at all. */
+async function setModConvert(sourceID, modID, enabled) {
+  const context = {
+    game: store.get().route.game,
+    profile: store.get().route.profile,
+  };
+  await apiSetModConvert(sourceID, modID, enabled, context);
+  await refreshAfterModSetting(sourceID, modID);
+}
+
 /** reloadModPageSlice re-fetches one of the full mod page's two
  * supplementary reads (detail/versions) in isolation - the I3 retry
  * affordance the four Mission Control reads already offer, applied to this
@@ -1514,6 +1529,7 @@ const actions = {
   setModLock,
   clearModLock,
   setModUpdatePolicy,
+  setModConvert,
   clearOrigin,
   dismissToast,
   // pushToast is exposed directly (I1, unit 6 fix wave): the row menu's own

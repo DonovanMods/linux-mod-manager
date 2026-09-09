@@ -40,7 +40,7 @@ import { planRendererFor } from "./planrenderers.js";
  * the same I3 rule the read surface follows - a failure is never rendered
  * as an all-clear.
  */
-export function ConfirmPlanModal({ modal, actions }) {
+export function ConfirmPlanModal({ modal, state, actions }) {
   // type: "plan" self-guards this modal against the shared slot's other two
   // shapes (reorder/profiles, main.js#openReorderModal/openProfilesModal) -
   // store.js's own doc comment: "another shape in this same slot".
@@ -140,6 +140,7 @@ export function ConfirmPlanModal({ modal, actions }) {
             : html`<${PlanView}
                 plan=${plan}
                 modal=${modal}
+                state=${state}
                 actions=${actions}
               />`
       }

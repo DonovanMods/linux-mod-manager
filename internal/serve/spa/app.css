@@ -1419,6 +1419,15 @@ select {
   font-size: 0.85em;
 }
 
+/* The inline form a plan renderer draws when the mutation needs an answer
+   before it has anything to preview (C-3: mod re-link). */
+.plan__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
 /* The type-the-name gate on a destructive plan (C-3: purge). */
 .plan__confirm-name {
   display: flex;
