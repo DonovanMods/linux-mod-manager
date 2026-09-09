@@ -9,6 +9,7 @@ import { html, useState } from "../render.js";
 import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
 import { modKey } from "../modrows.js";
+import { relativeTime } from "../relativetime.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
 // distinct from a single-mod update's own "mod:{source}/{id}:update"
@@ -207,13 +208,20 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
   `;
 }
 
-// HealthCard carries the design doc's "re-run" (onReverify, a plain
-// re-fetch of /api/v1/health - it also doubles as the I3 CardError retry
-// above). Its sibling "last-verify timestamp" is NOT implemented:
-// core.VerifyResult carries no timestamp field, and adding one is a wire
-// change (core/testdata JSON goldens, the serve JSON-contract ratchet) this
-// unit's gate explicitly keeps frozen - filed as a follow-up core change
-// rather than silently dropped.
+// HealthCard carries both halves of the design doc's "last-verify
+// timestamp + re-run" (§Mission Control): onReverify is a plain re-fetch of
+// /api/v1/health (it also doubles as the I3 CardError retry above), and the
+// timestamp is core.VerifyResult.checked_at, the field issue 334 added for
+// exactly this line after issue 332 had to carry it.
+//
+// It renders as an AGE, not a clock time: what a reader needs from it is
+// whether the findings below are minutes or days old. checked_at is stamped
+// at the START of a verify run (internal/core/verify.go), which is the
+// honest anchor - a run that stopped halfway still checked what it checked,
+// at that moment.
+//
+// omitzero on the wire means a hand-built VerifyResult carries no such key
+// at all, so the line is omitted rather than rendered as an invalid date.
 function HealthCard({ state, findings, result, error, onReverify, actions }) {
   function repair(modID, name) {
     actions.openPlan({
@@ -235,11 +243,22 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
     });
   }
 
+  // ONE string, not adjacent interpolations - htm's whitespace collapsing
+  // (see conflictLabel below) would fuse "verified" to the age.
+  const checked = relativeTime(result?.checked_at);
+  const lastVerified = checked ? `Last verified ${checked}` : "";
+
   return html`
     <div class="card card--health">
       <p class="card__title">
         ⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}
       </p>
+      ${
+        lastVerified &&
+        html`<p class="card__meta" data-testid="health-last-verified">
+          ${lastVerified}
+        </p>`
+      }
       ${
         error
           ? html`<${CardError}

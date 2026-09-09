@@ -4424,3 +4424,26 @@ func TestE2E_GenericPlanView_RendersAnUnknownKindsPlanAsData(t *testing.T) {
 	assert.Contains(t, body, f.Profile)
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_HealthCard_SaysWhenItLastVerified renders the other half of the
+// design's "last-verify timestamp + re-run" (§Mission Control), which issue
+// 332 had to carry because core.VerifyResult had no such field: issue 334
+// added checked_at, and the card now says how OLD the health it is showing
+// is, which is the only thing a reader actually wants from that timestamp.
+//
+// The verify runs when the page loads, so the honest assertion is "just
+// now" - the phrase relativetime.js produces for anything under a minute.
+func TestE2E_HealthCard_SaysWhenItLastVerified(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var line string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="health-last-verified"]`, chromedp.ByQuery),
+		textContent(`[data-testid="health-last-verified"]`, &line),
+	)
+
+	assert.Equal(t, "Last verified just now", line)
+	assert.Empty(t, f.BrowserErrors())
+}

@@ -508,6 +508,15 @@ select {
   color: var(--accent);
 }
 
+/* A card's own supporting line, under its title - the Health card's "Last
+ * verified …" (issue 334). Muted and small: it qualifies the card, it is
+ * not one of its rows. */
+.card__meta {
+  margin: calc(var(--space-2) * -1) 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 .card__list {
   margin: 0 0 var(--space-3);
   padding: 0;
