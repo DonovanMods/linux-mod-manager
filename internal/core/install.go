@@ -808,6 +808,16 @@ type InstallResult struct {
 	// deployed. Always false for a non-DeployCompile game.
 	MergedPakSyncFailed bool `json:"merged_pak_sync_failed"`
 
+	// ProfileWriteFailed is true when this install could not record its
+	// profile ref - the profile could not be created, or the UpsertMod that
+	// writes the ref failed. The mod IS installed (cached, deployed and in
+	// the database) either way; only the profile entry is missing, so a
+	// renderer must not claim it was added to the profile (#312). It is a
+	// FLAG rather than something a frontend recovers by reading the
+	// matching Notes entry: the note is an English sentence, this is the
+	// datum. True in the BATCH path when ANY mod's profile write failed.
+	ProfileWriteFailed bool `json:"profile_write_failed,omitempty"`
+
 	Warnings []string `json:"warnings,omitempty"`
 	Notes    []string `json:"notes,omitempty"`
 }
@@ -1864,6 +1874,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			return nil
 		}
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
+		result.ProfileWriteFailed = true
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
@@ -1881,6 +1892,7 @@ func (s *Service) applyInstallBatchMod(ctx context.Context, game *domain.Game, p
 			return nil
 		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
+		result.ProfileWriteFailed = true
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: scope, Phase: InstallNote, Detail: msg})
 	}
@@ -2331,6 +2343,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 			return nil, cerr
 		}
 		msg := fmt.Sprintf("Warning: could not create profile: %v", err)
+		result.ProfileWriteFailed = true
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}
@@ -2345,6 +2358,7 @@ func (s *Service) deployPrimary(ctx context.Context, game *domain.Game, plan *In
 			return nil, cerr
 		}
 		msg := fmt.Sprintf("Warning: could not update profile: %v", err)
+		result.ProfileWriteFailed = true
 		result.Notes = append(result.Notes, msg)
 		emit(StepEvent{Scope: modScope, Phase: InstallNote, Detail: msg})
 	}

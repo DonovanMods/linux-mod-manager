@@ -447,6 +447,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed profile write is no longer invisible on `lmm install`'s plain
+  output (#312).** When the mod installed but its profile ref could not be
+  written (an unloadable profile YAML, EACCES, a cancelled create), core
+  recorded "could not create profile" / "could not update profile" on
+  `InstallResult.Notes` — but those notes are `--verbose`-only, so the
+  default readout showed nothing and then claimed `Added to profile: <name>`
+  for a ref that was never written. The notes now print on the readout
+  without `-v`, that line becomes `NOT added to profile: <name>`, and the
+  batch summary says the profile was not updated for at least one mod.
+  `InstallResult` gains an additive `profile_write_failed` flag so a
+  frontend branches on the datum instead of the sentence.
+
 - **The install conflict block's per-mod groups print in a stable order
   (#315).** The "From <mod> (<id>):" groups the CLI prints before the
   overwrite prompt were built in a map and iterated, so the same conflict
