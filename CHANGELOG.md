@@ -48,20 +48,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arguments; they now fire as each mod's result is compared rather than
   before its own request.
 
-- **`lmm search --limit N` now really returns N (#109).** The aggregate
-  search asked every source for exactly one page and merged whatever came
-  back, so a source whose server-side page cap sits below its share of the
-  limit (NexusMods caps around 30) decided the answer: `--limit 50` returned
-  30 with hundreds of matches left. Core now advances each source's OWN page
+- **`lmm search --limit N` pages its sources instead of returning one page
+  each (#109).** The aggregate search asked every source for exactly one
+  page and merged whatever came back, so a source whose page cap sits below
+  its share of the limit decided the answer: `--limit 50` returned 30 with
+  hundreds of matches left. Core now advances each source's OWN page
   cursor, round by round, until the merged hit count reaches the limit,
   every source is exhausted, or a documented max-pages guard trips
-  (`maxSearchPagesPerSource`, 10 rounds). A source that fails on a later
-  page is reported exactly like one that fails on its first — a warning,
-  with the hits its earlier pages returned kept. `has_more` / `exhausted`
-  keep their meaning, and `lmm serve` inherits the fix through
-  `/api/v1/search?limit=`; the search page's own `?page=`/`?page_size=`
-  pagination (no `?limit=`) is deliberately untouched, so its cursor is
-  never advanced behind its back.
+  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only while it
+  honours the page size it was asked for: an API that silently caps the
+  page (CurseForge at 50, NexusMods around 30) computes its next offset
+  from the size that was REQUESTED, so paging it would fetch rows 100–149
+  while rows 50–99 were never returned — a strided sample with holes, which
+  after ranking is indistinguishable from a complete answer. So `--limit
+100` may still come back with fewer than 100 results, and `has_more` says
+  so, but every result really is among the first ones its source had. A
+  source that fails on a later page is reported exactly like one that fails
+  on its first — a warning, with the hits its earlier pages returned kept —
+  and no longer counts as exhausted. CurseForge now clamps and reports its
+  own effective page size so its offsets stay contiguous. `lmm serve`
+  inherits all of it through `/api/v1/search?limit=`; the search page's own
+  `?page=`/`?page_size=` pagination (no `?limit=`) is deliberately
+  untouched, so its cursor is never advanced behind its back.
 
 - **`lmm update --all` applies as one batch (#324).** The command used to
   run two separate per-mod loops (auto-policy updates, then `--all`'s

@@ -633,7 +633,19 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					// The two questions are kept apart: what this source
 					// might still hold, and whether we can safely ask it
 					// for that. A clamping source answers yes and no.
-					st.hasMore = pagedSourceHasMore(res, len(st.mods), pageSize)
+					//
+					// Has-more is the UNION of the two heuristics, as it
+					// was before sourceIsPageable existed: they answer
+					// differently for a source returning SHORT pages
+					// (pagedSourceHasMore is right) and for one returning
+					// MORE than the page size it was asked for
+					// (sourceHasMore is right, and it is what a `--limit 2`
+					// against a source handing back its whole three-mod
+					// catalogue reports), and neither is wrong about the
+					// source it describes. The optimism costs nothing now:
+					// it only ever reaches Exhausted, never a round trip.
+					st.hasMore = sourceHasMore(res, st.cursor, pageSize) ||
+						pagedSourceHasMore(res, len(st.mods), pageSize)
 					st.active = st.hasMore && sourceIsPageable(res, pageSize)
 				} else {
 					st.hasMore = sourceHasMore(res, st.cursor, pageSize)
