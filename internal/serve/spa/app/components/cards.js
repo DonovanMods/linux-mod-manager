@@ -407,7 +407,7 @@ function ProfileCard({ state, notInstalled, actions }) {
 
   return html`
     <div class="card card--profile">
-      <p class="card__title">◎ Profile</p>
+      <p class="card__title">${`◎ Profile (${notInstalled})`}</p>
       <ul class="card__list">
         <li class="card__row">
           <span class="card__row-name">${sentence}</span>

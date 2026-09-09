@@ -4410,6 +4410,11 @@ func TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists(t *testing.T) {
 	)
 
 	assert.Contains(t, card, "1 mod in this profile is not installed")
+	// M6, unit 8 gate review: the Profile card's title carried no count
+	// where its three siblings read "⬆ Updates (1)" / "⚠ Health (2)" /
+	// "⇄ Conflicts (1)".
+	assert.Contains(t, card, "Profile (1)",
+		"the card's title must carry its count, like every other attention card's")
 	assert.Contains(t, plan, "Better Boots", "the plan names what it would install")
 
 	deployed, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "boots.pak"))
