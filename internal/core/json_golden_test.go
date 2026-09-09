@@ -548,6 +548,16 @@ func TestJSONGoldens(t *testing.T) {
 			// folds its count in here (`lmm serve` does; the CLI reports it
 			// separately and leaves this zero, in which case the document
 			// is byte-identical to what it was before the field existed).
+			// #308's shared per-item failure entry, goldened on its OWN
+			// (the AST coverage ratchet requires it, and rightly: it is a
+			// type two documents embed, so its keys are contract twice
+			// over). Every member populated - an adopt failure that matched
+			// no catalogue mod carries no source_id/mod_id, which the two
+			// result goldens below already show.
+			"item_failure",
+			core.ItemFailure{SourceID: "nexusmods", ModID: "99", Name: "Sample Mod", Reason: "failed to fetch mod: upstream timeout"},
+		},
+		{
 			"adopt_result",
 			core.AdoptResult{
 				Adopted: 2, Skipped: 1, Failed: 1, Backfilled: 3,
