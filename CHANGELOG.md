@@ -35,6 +35,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`lmm serve` Demo 3 polish: a reorder drag ghost, "Add mods ▾", and an
+  omnibar clear control (#338, #339, #340).** Three owner-named follow-ups
+  from the `webui` sign-off demo. The reorder modal's drag now renders a
+  ghost that follows the pointer plus a dashed drop-target outline, since
+  its plain-mouse-event drag (deliberate, for chromedp/keyboard parity) has
+  no native browser drag image; keyboard reordering is unchanged (#338).
+  Mission Control's library — both the populated toolbar and the
+  empty-library state, sharing one component — gained an **Add mods ▾**
+  control with Search sources… (focuses the omnibar), Import an archive…
+  and Adopt untracked mods…, all landing on existing flows rather than new
+  ones (#339). The omnibar gained a ✕ control (and an Esc binding) that
+  clears the query, drops any "From sources" fan-out and restores the plain
+  "Library (n)" heading without losing focus (#340).
+
 - **`lmm game edit` — change a configured game's sources (#326).** Which
   mod sources a game maps could only ever be set when the game was created,
   so a custom source added later (`lmm source add`, or the web UI's Setup →

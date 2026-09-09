@@ -1539,6 +1539,12 @@ select {
   white-space: nowrap;
 }
 
+/* issue 340: the omnibar's own way back once it has fanned out. */
+.omnibar__clear {
+  padding: 0 var(--space-2);
+  line-height: 1;
+}
+
 .omnibar-results {
   margin-top: var(--space-6);
 }
@@ -2157,15 +2163,46 @@ select {
   border-bottom: none;
 }
 
+/* issue 338: a dashed outline marks the row's OWN slot as the current drop
+ * target - the list already re-splices it there live (reordermodal.js's own
+ * onRowMouseEnter), so this row IS where a drop would land right now. */
 .reorder-row--dragging {
   background: var(--surface-sunken);
   opacity: 0.7;
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
 }
 
 .reorder-row__handle {
   color: var(--text-muted);
   cursor: grab;
   user-select: none;
+}
+
+/* The drag ghost (issue 338, owner Demo 3): with no native HTML5 drag image
+ * (reordermodal.js's own header comment on why this is plain mouse events),
+ * nothing followed the cursor and a drag in progress was not obviously a
+ * drag at all. position: fixed and centred on the pointer, decorative
+ * (aria-hidden - the real row it is a stand-in for still carries the name)
+ * and inert to pointer events so it can never itself become a drop target.
+ * z-index sits above .modal-scrim's 40 - the modal is the only thing on
+ * screen a ghost could otherwise render under. It tracks mousemove 1:1 with
+ * no transition of its own, so there is no motion for prefers-reduced-
+ * motion to need to suppress. */
+.reorder-ghost {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-overlay);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-raised);
+  pointer-events: none;
 }
 
 .reorder-row__position {

@@ -55,6 +55,21 @@ export function TopBar({
 }) {
   const undeployed = countUndeployed(mods);
 
+  // omnibarRef is the clear control's own way back into the field (issue
+  // 340, owner Demo 3): "search sources ↵" clearing has always left the way
+  // OUT unattended - once fanned out, the only way back to the plain
+  // library was to erase the text by hand. ✕ and Escape both clear the
+  // query AND the fan-out (actions.searchSources("") is main.js's own
+  // "a blank query clears whatever fan-out is showing" rule) and then hand
+  // the keyboard straight back here, so a person is never dropped out of
+  // the field they were just typing in.
+  const omnibarRef = useRef(null);
+  function clearOmnibar() {
+    onQueryChange("");
+    actions.searchSources("");
+    omnibarRef.current?.focus();
+  }
+
   // Which of the three dropdowns (game/profile/activity) is open, lifted
   // here rather than left as each picker's own useState (M5): opening one
   // must close whatever else was open, and a single outside-click/Escape
@@ -185,6 +200,7 @@ export function TopBar({
       <//>
       <div class="app-bar__search" role="search">
         <input
+          ref=${omnibarRef}
           type="search"
           class="omnibar"
           name="q"
@@ -194,11 +210,28 @@ export function TopBar({
           onInput=${(e) => onQueryChange(e.currentTarget.value)}
           onKeyDown=${(e) => {
             if (e.key === "Enter") actions.searchSources(query);
+            else if (e.key === "Escape") {
+              // Without preventDefault, a WebKit-family browser's own
+              // built-in "clear a search field on Escape" behaviour fires
+              // alongside this handler - it empties the DOM value but
+              // never touches state.omnibarSearch, leaving the "From
+              // sources" rows on screen under a blank field.
+              e.preventDefault();
+              clearOmnibar();
+            }
           }}
         />
         ${
           query.trim() &&
           html`
+            <button
+              type="button"
+              class="button button--small omnibar__clear"
+              aria-label="Clear search"
+              onClick=${clearOmnibar}
+            >
+              ✕
+            </button>
             <button
               type="button"
               class="button button--small omnibar__fanout"

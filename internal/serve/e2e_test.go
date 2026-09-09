@@ -289,6 +289,92 @@ func TestE2E_EmptyLibraryShowsInlineHint(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// openAddModsMenu opens the "Add mods ▾" dropdown wherever it currently
+// renders (the library toolbar or the empty-library state - issue 339 puts
+// the SAME component in both) and clicks the menu item whose text contains
+// label.
+func openAddModsMenu(label string) chromedp.Action {
+	return chromedp.Tasks{
+		chromedp.Click(`[data-action="add-mods"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.add-mods-menu__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(`
+			Array.from(document.querySelectorAll(".add-mods-menu__menu button"))
+				.find((b) => b.textContent.includes(%q))?.click();
+		`, label), nil),
+	}
+}
+
+// TestE2E_AddModsMenu_SearchSourcesFocusesTheOmnibar is issue 339 (owner
+// Demo 3): once a library has mods, Archive import and Adopt lived only
+// under ⚙ Setup, and a populated library offered no "add mods" affordance
+// at all - a user with a downloaded archive had to already know to go
+// there. "Add mods ▾"'s own "Search sources…" lands on the design's
+// EXISTING flow (the omnibar's own fan-out) rather than a fourth one, so
+// its whole job is handing the keyboard to that field.
+func TestE2E_AddModsMenu_SearchSourcesFocusesTheOmnibar(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		openAddModsMenu("Search sources"),
+	)
+
+	var focusedIsOmnibar bool
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.activeElement === document.querySelector(".omnibar")`, &focusedIsOmnibar,
+	))
+	assert.True(t, focusedIsOmnibar, `"Search sources…" must focus the omnibar`)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AddModsMenu_ImportAnArchiveOpensSetup covers the second entry,
+// against a POPULATED library (library.js's own toolbar placement).
+func TestE2E_AddModsMenu_ImportAnArchiveOpensSetup(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		openAddModsMenu("Import an archive"),
+		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+		chromedp.Poll(
+			`document.querySelector("#setup-panel h2")?.textContent.trim() === "Archive import"`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+	)
+
+	var heading string
+	f.runInBrowser(t, textContent(`#setup-panel h2`, &heading))
+	assert.Equal(t, "Archive import", heading)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_AddModsMenu_AdoptOpensSetup covers the third entry, against the
+// EMPTY library state - issue 339's own "consider the same entries in the
+// empty-library state so both states share one component", proven here by
+// using the identical [data-action="add-mods"]/.add-mods-menu__menu
+// selectors the populated-library scenarios above use.
+func TestE2E_AddModsMenu_AdoptOpensSetup(t *testing.T) {
+	f := newE2EFixture(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library .empty-state`, chromedp.ByQuery),
+		openAddModsMenu("Adopt untracked mods"),
+		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+		chromedp.Poll(
+			`document.querySelector("#setup-panel h2")?.textContent.trim() === "Adopt"`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+	)
+
+	var heading string
+	f.runInBrowser(t, textContent(`#setup-panel h2`, &heading))
+	assert.Equal(t, "Adopt", heading)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_RowNameOpensSlideOverByKeyboard guards Minor 6: the row-open
 // affordance was a bare `<td onClick>` - not focusable, not activatable by
 // keyboard - making the primary navigation on the primary screen
@@ -2260,6 +2346,70 @@ func TestE2E_FailingSourceRendersWarningRowNotSwallowed(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_OmnibarClearRestoresTheLibrary is issue 340 (owner Demo 3): once
+// the omnibar has fanned out to sources, there was no obvious way back to
+// the plain library short of erasing the text by hand. A ✕ control (visible
+// whenever the query is non-empty, same as the fan-out button beside it)
+// and Escape while the field has focus both do the same thing: empty the
+// query, drop the "From sources" rows (main.js#searchSources' own "a blank
+// query clears whatever fan-out is showing" rule) and restore the plain
+// "Library (n)" heading - all without dropping focus out of the field, so a
+// person can start a fresh search immediately.
+func TestE2E_OmnibarClearRestoresTheLibrary(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
+	)
+
+	var libraryHeading string
+	f.runInBrowser(t, textContent(`.library__toolbar .section-header`, &libraryHeading))
+	require.Equal(t, "In your library (0)", libraryHeading,
+		"the fixture's own Alpha Mod must not match \"boots\", or this scenario proves nothing about the heading")
+
+	// --- The ✕ button. ---
+	f.runInBrowser(t,
+		chromedp.Click(`.omnibar__clear`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.omnibar-results`, chromedp.ByQuery),
+	)
+
+	var omnibarText string
+	var focusedIsOmnibar bool
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector(".omnibar").value`, &omnibarText),
+		chromedp.Evaluate(`document.activeElement === document.querySelector(".omnibar")`, &focusedIsOmnibar),
+		textContent(`.library__toolbar .section-header`, &libraryHeading),
+	)
+	assert.Empty(t, omnibarText, "✕ must empty the omnibar")
+	assert.True(t, focusedIsOmnibar, "✕ must leave focus in the omnibar")
+	assert.Equal(t, "Library (1)", libraryHeading, "the plain Library(n) heading must be restored")
+
+	// --- Escape, while the omnibar itself has focus, does the same. ---
+	f.runInBrowser(t,
+		chromedp.SendKeys(`.omnibar`, "boots", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .search-result`, chromedp.ByQuery),
+		chromedp.Focus(`.omnibar`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.omnibar-results`, chromedp.ByQuery),
+	)
+
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelector(".omnibar").value`, &omnibarText),
+		chromedp.Evaluate(`document.activeElement === document.querySelector(".omnibar")`, &focusedIsOmnibar),
+		textContent(`.library__toolbar .section-header`, &libraryHeading),
+	)
+	assert.Empty(t, omnibarText, "Escape must empty the omnibar too")
+	assert.True(t, focusedIsOmnibar, "Escape must leave focus in the omnibar rather than closing/blurring it")
+	assert.Equal(t, "Library (1)", libraryHeading)
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_OmnibarFanOutIsCapped is M8 (unit 5 fix wave): the omnibar's
 // fan-out set no limit at all, so a catalog with more matches than a real
 // source's own default page (NexusMods' can run past a hundred) could
@@ -3824,6 +3974,46 @@ func TestE2E_ReorderModal_KeyboardAndDragFlipTheWinnerAndPersist(t *testing.T) {
 		report, err := f.Svc.GetProfileConflictsForOrder(t.Context(), f.Game, "default", nil)
 		return err == nil && len(report) == 1 && report[0].LoadOrderWinner.Key == "fake:y"
 	}, 5*time.Second, 50*time.Millisecond, "the drag's own save must persist through the API too")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ReorderModal_DragShowsAGhostThatDisappearsOnDrop is issue 338
+// (owner Demo 3): the reorder modal's drag is built on plain mouse events
+// rather than the HTML5 Drag and Drop API (this file's own dragRowTo doc
+// comment explains why - chromedp, like any other input-automation tool,
+// only ever dispatches synthetic mousedown/mousemove/mouseup, which never
+// raises the browser's own dragstart/dragover), which means no
+// browser-provided drag image either: nothing visibly followed the cursor,
+// so it was not obvious a drag was even in progress. dragRowToChecking
+// (e2e_harness_test.go) splits dragRowTo's own press/move/release sequence
+// so this scenario can assert something true only WHILE the drag is
+// in-flight - the one thing an uninterruptible drag-and-drop helper cannot
+// prove.
+func TestE2E_ReorderModal_DragShowsAGhostThatDisappearsOnDrop(t *testing.T) {
+	f := newE2EFixtureWithReorderableConflict(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--conflicts`, chromedp.ByQuery),
+		chromedp.Click(`.card--conflicts [data-action="resolve"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="reorder-list"]`, chromedp.ByQuery),
+	)
+
+	var midDragGhost bool
+	f.runInBrowser(t,
+		dragRowToChecking("Mod X", "Mod Y", chromedp.Evaluate(
+			`document.querySelector('[data-testid="reorder-ghost"]') !== null`,
+			&midDragGhost,
+		)),
+	)
+	assert.True(t, midDragGhost, "a drag ghost must be present in the DOM while a drag is in progress")
+
+	var ghostAfterDrop bool
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.querySelector('[data-testid="reorder-ghost"]') !== null`, &ghostAfterDrop,
+	))
+	assert.False(t, ghostAfterDrop, "the drag ghost must be gone once the drop completes")
 
 	assert.Empty(t, f.BrowserErrors())
 }

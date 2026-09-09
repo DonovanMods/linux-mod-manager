@@ -812,7 +812,10 @@ Pak conversion appears only where it applies. Filter (all/enabled/updatable/
 unhealthy) and sort (load order/name/recently installed) narrow it, and
 selecting rows raises a batch bar (Enable / Disable / Uninstall / Update
 selected). More columns appear as the display widens: author and install
-date at 1440px, source and link method at 1920px.
+date at 1440px, source and link method at 1920px. Its toolbar also carries
+**Add mods ▾**: Search sources… (focuses the omnibar), Import an archive…
+and Adopt untracked mods… — the same three flows, and the same component,
+the empty-library state offers before you have installed a first mod.
 
 Clicking a row opens the **slide-over**: author, installed → available
 version, an editable lock, update policy and (where it applies) pak
@@ -864,7 +867,10 @@ completion whose control is no longer on screen arrives as a toast instead.
 **Enter** to fan the same text out to the game's configured sources and
 append the results below your library, installable in place, with a version
 picker where the source offers more than one. A source that fails to answer
-shows a warning row beside whatever did — never in place of it. For heavier
+shows a warning row beside whatever did — never in place of it. A **✕**
+appears in the omnibar the moment it holds text; click it (or press **Esc**
+while the field has focus) to clear the search, drop the fanned-out results
+and return to your plain library, without losing focus. For heavier
 browsing, the **search page** (`/g/{game}/{profile}/search?q=…`) adds source
 badges, download counts, summaries, category and source filters, a tag
 filter where a source honours one (`lmm search --tag`), sort and
@@ -877,7 +883,9 @@ deploy what the new one lists, move the game's active profile — behind the
 same plan-and-confirm every other mutation uses.
 
 **Modals** stack at most one deep: the confirm-plan modal, the **reorder**
-modal (drag a row, or use its ↑ ↓ First Last buttons, with a live
+modal (drag a row — a ghost follows the pointer and a dashed outline marks
+where it will land, since the drag itself is plain mouse events with no
+browser-provided drag image — or use its ↑ ↓ First Last buttons, with a live
 "current vs proposed winner" preview per contested path before Save
 commits), the **profiles** modal (create, rename, delete, set default,
 export, import, plus per-profile **Sync…** and **Purge…**), the **keyboard
@@ -898,6 +906,7 @@ a visible ring in both themes.
 | `Tab` / `Shift+Tab`        | anywhere                                     | move through the controls; the first stop on every screen is **Skip to content**, which jumps past the top bar |
 | `?`                        | anywhere outside a text field                | open this keyboard-shortcuts help                                                                              |
 | `Enter`                    | omnibar                                      | search the game's sources for what you typed                                                                   |
+| `Esc`                      | omnibar                                      | clear the search and return to your plain library                                                              |
 | `Esc`                      | any modal, the slide-over, any open dropdown | close it and return focus to whatever opened it                                                                |
 | `←` / `→`                  | the slide-over                               | step to the previous/next mod in the library's current order                                                   |
 | `←` / `→` / `Home` / `End` | the Setup page's section tabs                | move between sections                                                                                          |

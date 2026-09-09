@@ -35,6 +35,11 @@ export const shortcutRows = [
   },
   {
     keys: "Esc",
+    where: "omnibar",
+    what: "clear the search and return to your plain library",
+  },
+  {
+    keys: "Esc",
     where: "any modal, the slide-over, any open dropdown",
     what: "close it and return focus to whatever opened it",
   },
