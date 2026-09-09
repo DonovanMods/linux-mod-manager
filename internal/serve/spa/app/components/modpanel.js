@@ -653,7 +653,7 @@ export function ModSettingsControls({ row, actions, panelRef }) {
         >
           <option value="notify">Notify</option>
           ${
-            // #269: SetModUpdatePolicy refuses "auto" for an external mod
+            // issue 269: SetModUpdatePolicy refuses "auto" for an external mod
             // (lmm cannot apply a Workshop update, so the policy would never
             // do anything), and this panel's own ManagedBySteam rule is "not
             // shown at all rather than shown-and-refused".

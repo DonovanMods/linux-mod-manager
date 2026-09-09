@@ -83,7 +83,7 @@ export function DeployPlanView({ plan, modal, state, actions }) {
                   // that reads as a missing value rather than an absent
                   // field.
                   //
-                  // #269: an external row's version IS Steam's 19-digit
+                  // issue 269: an external row's version IS Steam's 19-digit
                   // content id, and the approval note's version DISPLAY rule
                   // says no human-facing surface prints one as a version.
                   // DeployPlanMod carries no timestamp to show a date
@@ -169,7 +169,7 @@ export function DeployPlanView({ plan, modal, state, actions }) {
           options=${{
             entries: [
               { value: "", label: "The whole profile" },
-              // #269: `lmm deploy --mod <external>` is refused with
+              // issue 269: `lmm deploy --mod <external>` is refused with
               // ErrExternalMod, so an external row is not offered here -
               // present-and-refused is what this frontend avoids everywhere
               // else it touches a Steam-owned item.
@@ -254,7 +254,7 @@ function mergedSummary(merged) {
  * (DeployPlanMod: class "external", Skipped, Redownload, or a plain link
  * list).
  *
- * #269: an external row is checked FIRST and by class, not by an empty link
+ * issue 269: an external row is checked FIRST and by class, not by an empty link
  * list - "no files to link" is true of it but says nothing, and the preview
  * must not read as though lmm merely found nothing to do. */
 function modDetail(mod) {

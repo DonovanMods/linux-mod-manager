@@ -21,7 +21,7 @@ import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 export function PurgePlanView({ plan, modal, actions }) {
   const mods = plan.mods ?? [];
   const hooks = plan.hooks ?? [];
-  // #269: the display names of the mods purge will NOT touch, so the shorter
+  // issue 269: the display names of the mods purge will NOT touch, so the shorter
   // mod count above has an explanation on the same screen.
   const external = plan.external ?? [];
 

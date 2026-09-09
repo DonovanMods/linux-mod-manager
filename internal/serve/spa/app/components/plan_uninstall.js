@@ -8,7 +8,7 @@ import { html } from "../render.js";
 import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 
 /** UNINSTALL_EXTERNAL_NOTE mirrors core.UninstallExternalNote verbatim
- * (internal/core/external.go). #269: an external mod's uninstall removes
+ * (internal/core/external.go). issue 269: an external mod's uninstall removes
  * lmm's TRACKING and nothing else, so the deployed-files and cache notes
  * below - both false of it - are replaced by this one, and the "Keep the
  * cached download" option is not offered at all, since there is no cache

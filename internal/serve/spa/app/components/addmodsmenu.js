@@ -7,7 +7,7 @@
 // EXISTING flows rather than a fourth: the omnibar's own fan-out, Setup →
 // Archive import, Setup → Adopt.
 //
-// #269 adds a fourth entry, on the same principle: `lmm import --workshop`
+// Issue 269 adds a fourth entry, on the same principle: `lmm import --workshop`
 // is a real flow with a real plan kind (workshop_adopt), and without an
 // entry here a web-only user could be shown a Steam badge and a "Managed by
 // Steam" block with no way to get an item tracked in the first place. It is
