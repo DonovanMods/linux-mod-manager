@@ -56,6 +56,8 @@
         "matched_source": "local",
         "already_tracked": false
       },
+      "score": 0.82,
+      "score_class": "probable",
       "error": "search failed: rate limited",
       "file_error": "listing source files: rate limited"
     }

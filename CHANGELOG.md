@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`lmm import` scan mode scores its source matches instead of taking the
+  first hit (#27).** An untracked archive used to be adopted as whatever the
+  first search-capable source returned first, so searching `skyui` could
+  attach the archive to _SkyUI Flashlite_ — a different mod, with a
+  different version history and a different update target, and nothing on
+  screen to say so. Candidates from **every** configured source are now
+  scored against the scanned name (and its parsed version, when the filename
+  carries one), the best one wins, and anything that does not clear the
+  confidence bar leaves the entry **untracked** — imported as local, which
+  is recoverable, rather than mis-attributed, which is not. Ties break
+  deterministically (version agreement, then source ID, then mod ID), and an
+  exact name match ends the lookup without searching the remaining sources.
+  `core.AdoptMatch` gains two additive fields, `score` and `score_class`
+  (`exact`/`strong`/`probable`), and the scan readout annotates any match
+  short of an exact name with its band.
+
 - **CurseForge update checks are one request per 50 mods, not one per mod
   (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
   posts the whole set to CurseForge's batch `POST /v1/mods` endpoint in

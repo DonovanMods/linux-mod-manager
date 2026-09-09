@@ -437,6 +437,9 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			// The matched shape: source hit, resolved file, no errors.
+			// Score/ScoreClass are #27's additive confidence pair, present
+			// exactly because a Mod is - a refused candidate carries
+			// neither.
 			"adopt_match",
 			core.AdoptMatch{
 				Untracked: core.ScanResult{
@@ -444,8 +447,10 @@ func TestJSONGoldens(t *testing.T) {
 					Mod: &jsonGoldenMod, MatchedSource: "nexusmods",
 					ResolvedFile: &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
 				},
-				Mod:  &jsonGoldenMod,
-				File: &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
+				Mod:        &jsonGoldenMod,
+				Score:      1,
+				ScoreClass: core.AdoptMatchExact,
+				File:       &domain.DownloadableFile{ID: "file-1", Name: "Main File", FileName: "sample-mod-1.2.3.zip", Version: "1.2.3", IsPrimary: true},
 			},
 		},
 		{
@@ -468,8 +473,10 @@ func TestJSONGoldens(t *testing.T) {
 						FilePath: "/games/skyrim/Data/sample-mod-1.2.3.zip", FileName: "sample-mod-1.2.3.zip",
 						Mod: &jsonGoldenMod, MatchedSource: "local",
 					},
-					Error:     "search failed: rate limited",
-					FileError: "listing source files: rate limited",
+					Score:      0.82,
+					ScoreClass: core.AdoptMatchProbable,
+					Error:      "search failed: rate limited",
+					FileError:  "listing source files: rate limited",
 				}},
 				Duplicates: []string{"already-installed-1.0.zip"},
 				SkipMatch:  false,

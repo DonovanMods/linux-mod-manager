@@ -793,3 +793,57 @@ func TestDoImport_DeployCompile_ConvertiblePak_PrintsFilesDeployedLine(t *testin
 	require.NoError(t, rErr, "the imported pak's content must end up in the merged pak SyncMergedPak deploys instead")
 	assert.Equal(t, "raw-pak-bytes", string(merged))
 }
+
+// TestRunImportScan_MatchConfidence_AnnotatesNonExactMatches covers #27's
+// CLI half: matching scores candidates now, so the scan readout says how
+// confident a non-exact match is before the user confirms an adopt. An
+// exact match stays unannotated - the common case must not grow noise.
+func TestRunImportScan_MatchConfidence_AnnotatesNonExactMatches(t *testing.T) {
+	// Extract mode (setupDoImportTest's default) scans DIRECTORIES, so the
+	// untracked entry is a mod folder, and its name is what matching scores.
+	run := func(t *testing.T, modDirName string, candidates []domain.Mod) string {
+		t.Helper()
+		svc, game := setupDoImportTest(t)
+		importSkipMatch = false
+		importDryRun = true
+
+		require.NoError(t, os.MkdirAll(filepath.Join(game.ModPath, modDirName), 0o755))
+
+		src := newFakeMatchSource("acme-source")
+		src.searchMods = candidates
+		svc.RegisterSource(src)
+		game.SourceIDs = map[string]string{"acme-source": "g1"}
+		require.NoError(t, svc.SaveGame(context.Background(), game))
+
+		cmd := &cobra.Command{}
+		cmd.SetContext(context.Background())
+		out, _, err := captureStdoutAndStderr(t, func() error {
+			return runImportScan(cmd, game, svc, "default")
+		})
+		require.NoError(t, err)
+		return out
+	}
+
+	t.Run("an exact match carries no annotation", func(t *testing.T) {
+		out := run(t, "SkyUI", []domain.Mod{
+			{ID: "1", SourceID: "acme-source", Name: "SkyUI"},
+		})
+		assert.Contains(t, out, "✓ SkyUI -> SkyUI (acme-source #1)")
+		assert.NotContains(t, out, "match]")
+	})
+
+	t.Run("a non-exact match names its confidence band", func(t *testing.T) {
+		out := run(t, "Bigger Backpack", []domain.Mod{
+			{ID: "2", SourceID: "acme-source", Name: "Bigger Backpacks"},
+		})
+		assert.Contains(t, out, "✓ Bigger Backpack -> Bigger Backpacks (acme-source #2) [strong match]")
+	})
+
+	t.Run("a candidate below the threshold stays local", func(t *testing.T) {
+		out := run(t, "SkyUI", []domain.Mod{
+			{ID: "3", SourceID: "acme-source", Name: "SkyUI Flashlite"},
+		})
+		assert.Contains(t, out, "○ SkyUI -> local (no match)")
+		assert.NotContains(t, out, "SkyUI Flashlite")
+	})
+}

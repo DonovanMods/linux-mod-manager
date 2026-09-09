@@ -45,6 +45,12 @@ source, or prompts interactively when it has several) to fetch and
 attach source metadata as part of the import. --dry-run previews it -
 the archive is listed, never extracted, so nothing is written.
 
+Scan mode scores every candidate the sources return against the scanned
+name (and version, when the filename carries one) and adopts the best
+one, annotating anything short of an exact name match with its
+confidence. A name that nothing matches confidently enough stays local
+rather than being adopted as a similarly-named mod.
+
 Either way, a mod that ends up unmatched to any remote source is
 imported as local - it deploys and installs normally, but 'lmm update'
 has nothing to check it against and will never notify about it.
@@ -434,7 +440,15 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 					fmt.Printf("  %s: lookup failed: %s\n", m.Untracked.FileName, m.Error)
 				}
 			case m.Mod != nil:
-				fmt.Printf("  ✓ %s -> %s (%s #%s)\n", m.Untracked.FileName, m.Mod.Name, m.Mod.SourceID, m.Mod.ID)
+				// #27: matching scores candidates now, so a match that is
+				// not an exact name says so before the user confirms an
+				// adopt. An exact one stays unannotated - the common case
+				// should not grow noise.
+				confidence := ""
+				if m.ScoreClass != "" && m.ScoreClass != core.AdoptMatchExact {
+					confidence = fmt.Sprintf(" [%s match]", m.ScoreClass)
+				}
+				fmt.Printf("  ✓ %s -> %s (%s #%s)%s\n", m.Untracked.FileName, m.Mod.Name, m.Mod.SourceID, m.Mod.ID, confidence)
 				// #139: a source-file resolution failure is non-fatal - the
 				// adoption just stays marker-less.
 				if m.FileError != "" && verbose {

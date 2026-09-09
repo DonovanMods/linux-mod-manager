@@ -14,11 +14,13 @@ import (
 
 // Tests for matchScannedMod - the source-matching half of PlanAdopt, lifted
 // verbatim from cmd/lmm/import.go's tryMatchSources by v2 Phase 2 Unit K
-// Task 18 (#291). These seven tests are cmd/lmm's own TestTryMatchSources_*
-// suite, moved here with the engine they pin; the acceptance rule ("first
-// searchable source with a hit wins", in SourcesForGame's ID-sorted order)
-// and the error semantics (an error only when EVERY searchable source
-// failed) are unchanged.
+// Task 18 (#291). These tests are cmd/lmm's own TestTryMatchSources_*
+// suite, moved here with the engine they pin. The ERROR semantics (an error
+// only when EVERY searchable source failed) are unchanged; the acceptance
+// rule is not - #27 replaced "first searchable source with a hit wins" with
+// scoring every candidate across every source (adopt_score.go), so these
+// fixtures now name candidates the scanned archive actually matches instead
+// of relying on whatever came back first.
 
 // matchTestSource is a minimal source.ModSource double for the matcher: it
 // returns searchMods verbatim from Search regardless of query, or searchErr,
@@ -103,12 +105,13 @@ func TestMatchScannedMod_NonBuiltinSourceMatches(t *testing.T) {
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"acme-source": "g1"}
 
-	matched, err := svc.matchScannedMod(context.Background(), game, "Acme")
+	matched, score, err := svc.matchScannedMod(context.Background(), game, "Acme Mod", "")
 
 	require.NoError(t, err)
 	require.NotNil(t, matched)
 	assert.Equal(t, "acme-source", matched.SourceID)
 	assert.Equal(t, "42", matched.ID)
+	assert.InDelta(t, 1.0, score, 1e-9, "the names are identical once normalised")
 }
 
 // TestMatchScannedMod_MultiSourceOrder_CurseforgeBeforeNexusmods pins the
@@ -120,18 +123,18 @@ func TestMatchScannedMod_NonBuiltinSourceMatches(t *testing.T) {
 func TestMatchScannedMod_MultiSourceOrder_CurseforgeBeforeNexusmods(t *testing.T) {
 	svc, game := newMatchTestService(t)
 	cf := newMatchTestSource("curseforge")
-	cf.searchMods = []domain.Mod{{ID: "1", SourceID: "curseforge", Name: "CF Match"}}
+	cf.searchMods = []domain.Mod{{ID: "1", SourceID: "curseforge", Name: "Shared Mod"}}
 	nx := newMatchTestSource("nexusmods")
-	nx.searchMods = []domain.Mod{{ID: "2", SourceID: "nexusmods", Name: "NX Match"}}
+	nx.searchMods = []domain.Mod{{ID: "2", SourceID: "nexusmods", Name: "Shared Mod"}}
 	svc.RegisterSource(nx)
 	svc.RegisterSource(cf)
 	game.SourceIDs = map[string]string{"curseforge": "g1", "nexusmods": "g1"}
 
-	matched, err := svc.matchScannedMod(context.Background(), game, "Match")
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Shared Mod", "")
 
 	require.NoError(t, err)
 	require.NotNil(t, matched)
-	assert.Equal(t, "curseforge", matched.SourceID, "curseforge sorts before nexusmods alphabetically and must win")
+	assert.Equal(t, "curseforge", matched.SourceID, "curseforge sorts before nexusmods alphabetically and must win an exact-score tie")
 }
 
 // TestMatchScannedMod_NoSearchableSources_CleanNoMatch guards the "no error"
@@ -145,7 +148,7 @@ func TestMatchScannedMod_NoSearchableSources_CleanNoMatch(t *testing.T) {
 	svc.RegisterSource(src)
 	game.SourceIDs = map[string]string{"no-search": "g1"}
 
-	matched, err := svc.matchScannedMod(context.Background(), game, "Anything")
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Anything", "")
 
 	require.NoError(t, err)
 	assert.Nil(t, matched)
@@ -156,7 +159,7 @@ func TestMatchScannedMod_NoSearchableSources_CleanNoMatch(t *testing.T) {
 func TestMatchScannedMod_NoConfiguredSources_CleanNoMatch(t *testing.T) {
 	svc, game := newMatchTestService(t)
 
-	matched, err := svc.matchScannedMod(context.Background(), game, "Anything")
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Anything", "")
 
 	require.NoError(t, err)
 	assert.Nil(t, matched)
@@ -175,7 +178,7 @@ func TestMatchScannedMod_FirstErrorsSecondEmpty_CleanNoMatchNotError(t *testing.
 	svc.RegisterSource(empty)
 	game.SourceIDs = map[string]string{"acme-fail": "g1", "beta-empty": "g1"}
 
-	matched, err := svc.matchScannedMod(context.Background(), game, "Anything")
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Anything", "")
 
 	require.NoError(t, err, "a later source's clean empty result must clear an earlier source's error")
 	assert.Nil(t, matched)
@@ -195,7 +198,7 @@ func TestMatchScannedMod_AllSourcesError_ReturnsError(t *testing.T) {
 	svc.RegisterSource(b)
 	game.SourceIDs = map[string]string{"source-a": "g1", "source-b": "g1"}
 
-	matched, err := svc.matchScannedMod(context.Background(), game, "Anything")
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Anything", "")
 
 	require.Error(t, err)
 	assert.Nil(t, matched)
@@ -213,9 +216,117 @@ func TestMatchScannedMod_FirstEmptySecondMatches_ReturnsMatch(t *testing.T) {
 	svc.RegisterSource(matchSrc)
 	game.SourceIDs = map[string]string{"acme-empty": "g1", "beta-match": "g1"}
 
-	matched, err := svc.matchScannedMod(context.Background(), game, "Anything")
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Found It", "")
 
 	require.NoError(t, err)
 	require.NotNil(t, matched)
 	assert.Equal(t, "beta-match", matched.SourceID)
+}
+
+// --- #27: the acceptance rule itself, driven through matchScannedMod.
+
+// TestMatchScannedMod_RefusesAWeakHit is the case the old first-hit rule
+// got wrong: a source's own relevance ranking puts a DIFFERENT mod first
+// for the query, and adopting it would track the archive as that mod.
+func TestMatchScannedMod_RefusesAWeakHit(t *testing.T) {
+	svc, game := newMatchTestService(t)
+	src := newMatchTestSource("nexusmods")
+	src.searchMods = []domain.Mod{
+		{ID: "1", SourceID: "nexusmods", Name: "SkyUI Flashlite"},
+		{ID: "2", SourceID: "nexusmods", Name: "SkyUI Weapons Pack"},
+	}
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"nexusmods": "g1"}
+
+	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
+
+	require.NoError(t, err, "no confident match is an ordinary outcome, not a failure")
+	assert.Nil(t, matched, "the archive stays untracked rather than adopted as the wrong mod")
+	assert.Less(t, score, adoptMatchThreshold, "the best near-miss is still reported")
+}
+
+// TestMatchScannedMod_PicksTheBestHitNotTheFirst: the right mod is in the
+// same source's result list, just not first. The old rule took mods[0].
+func TestMatchScannedMod_PicksTheBestHitNotTheFirst(t *testing.T) {
+	svc, game := newMatchTestService(t)
+	src := newMatchTestSource("nexusmods")
+	src.searchMods = []domain.Mod{
+		{ID: "1", SourceID: "nexusmods", Name: "SkyUI Flashlite"},
+		{ID: "2", SourceID: "nexusmods", Name: "SkyUI"},
+	}
+	svc.RegisterSource(src)
+	game.SourceIDs = map[string]string{"nexusmods": "g1"}
+
+	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, matched)
+	assert.Equal(t, "2", matched.ID)
+	assert.InDelta(t, 1.0, score, 1e-9)
+}
+
+// TestMatchScannedMod_ScoresAcrossSources: the best candidate is in the
+// SECOND source, while the first source answered with a plausible-looking
+// near-miss. Under the old first-source-with-a-hit rule the near-miss won.
+func TestMatchScannedMod_ScoresAcrossSources(t *testing.T) {
+	svc, game := newMatchTestService(t)
+	first := newMatchTestSource("alpha")
+	first.searchMods = []domain.Mod{{ID: "1", SourceID: "alpha", Name: "Bigger Backpacks Redux"}}
+	second := newMatchTestSource("beta")
+	second.searchMods = []domain.Mod{{ID: "2", SourceID: "beta", Name: "Bigger Backpacks"}}
+	svc.RegisterSource(first)
+	svc.RegisterSource(second)
+	game.SourceIDs = map[string]string{"alpha": "g1", "beta": "g1"}
+
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "Bigger Backpacks", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, matched)
+	assert.Equal(t, "beta", matched.SourceID, "the better-scoring candidate wins even in a later source")
+}
+
+// TestMatchScannedMod_ExactHitStopsEarly: an exact match in the first
+// source cannot be beaten, so the remaining sources are not searched at
+// all - the cost control on scoring across every source.
+func TestMatchScannedMod_ExactHitStopsEarly(t *testing.T) {
+	svc, game := newMatchTestService(t)
+	first := newMatchTestSource("alpha")
+	first.searchMods = []domain.Mod{{ID: "1", SourceID: "alpha", Name: "SkyUI"}}
+	second := newMatchTestSource("beta")
+	second.searchErr = errors.New("this source must never be reached")
+	svc.RegisterSource(first)
+	svc.RegisterSource(second)
+	game.SourceIDs = map[string]string{"alpha": "g1", "beta": "g1"}
+
+	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
+
+	require.NoError(t, err)
+	require.NotNil(t, matched)
+	assert.Equal(t, "alpha", matched.SourceID)
+	assert.InDelta(t, 1.0, score, 1e-9)
+}
+
+// TestMatchScannedMod_VersionLiftsANearMiss threads the parsed archive
+// version through: the same name pair is refused without it and accepted
+// with it.
+func TestMatchScannedMod_VersionLiftsANearMiss(t *testing.T) {
+	newSvc := func(t *testing.T) (*Service, *domain.Game) {
+		svc, game := newMatchTestService(t)
+		src := newMatchTestSource("nexusmods")
+		src.searchMods = []domain.Mod{{ID: "1", SourceID: "nexusmods", Name: "SkyUI SE", Version: "5.2"}}
+		svc.RegisterSource(src)
+		game.SourceIDs = map[string]string{"nexusmods": "g1"}
+		return svc, game
+	}
+
+	svc, game := newSvc(t)
+	matched, _, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "")
+	require.NoError(t, err)
+	assert.Nil(t, matched, "the name alone is not enough")
+
+	svc, game = newSvc(t)
+	matched, score, err := svc.matchScannedMod(context.Background(), game, "SkyUI", "5.2")
+	require.NoError(t, err)
+	require.NotNil(t, matched, "an agreeing version lifts the same pair over the bar")
+	assert.Equal(t, AdoptMatchProbable, adoptMatchClass(score))
 }
