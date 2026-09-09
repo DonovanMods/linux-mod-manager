@@ -33,12 +33,13 @@ Every prompt also has a flag, so the whole command runs non-interactively
 no flag supplied are prompted for, and under --json a missing value is an
 error naming the flag rather than a prompt.
 
-If the game is already installed via Steam, --from-detected <app-id>
-prefills nearly everything from the install itself (#206): the display
-name, the install path, the local game id, and either the curated mod
-path and source mapping (for a game in lmm's known-games list) or a
-default mod path of <install>/mods for one that is not. List the app ids
-with 'lmm game detect --include-unknown'. Every other flag still wins
+If the game is already installed via Steam, --from-detected with the
+Steam app id prefills nearly everything from the install itself (#206):
+the display name, the install path, the local game id, and either the
+curated mod path and source mapping (for a game in lmm's known-games
+list) or a default mod path of the install path plus "/mods" for one
+that is not. List the app ids with 'lmm game detect --include-unknown'.
+Every other flag still wins
 over the prefill, so --mod-path/--game-id/--name correct a guess; for a
 game with no curated sources, name one with --source, and either give
 --id or let the source's catalog be searched by the game's own name
