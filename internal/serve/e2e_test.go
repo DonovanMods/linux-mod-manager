@@ -5176,6 +5176,29 @@ func TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ShortcutsHelpNamesTheRunningVersion is N-5 of the epic re-review:
+// nothing in the browser said what version of lmm was running - the
+// shortcuts help is where TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus
+// already proves a user can reliably land, so it is where the version now
+// reads too, sourced from the shell's own <meta name="lmm-version">
+// (spa.go) rather than any /api/v1 document.
+func TestE2E_ShortcutsHelpNamesTheRunningVersion(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var versionText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="shortcuts"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="lmm-version"]`, chromedp.ByQuery),
+		chromedp.Text(`[data-testid="lmm-version"]`, &versionText, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, versionText, "lmm "+e2eLmmVersion,
+		"the shortcuts help must name the running server's own version")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_SlideOverFindingsReadAsProse is M1 of the unit-8 gate review: the
 // slide-over printed a finding's raw status slug ("version_mismatch") while
 // the Health card two inches to its left rendered the same finding, for the

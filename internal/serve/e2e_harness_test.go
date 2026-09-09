@@ -119,6 +119,11 @@ func TestE2EShutdownCleanupGuardExceedsGrace(t *testing.T) {
 // the ceiling only - no per-test sleeps.
 const e2eTimeout = 60 * time.Second
 
+// e2eLmmVersion is the fixed Options.Version every E2E-driven server
+// carries, so N-5's own scenario (the shortcuts help names the running
+// version) has something real to assert against.
+const e2eLmmVersion = "2.0.0 (e2e-test)"
+
 // chromeCandidates are the browser binaries the harness probes, in
 // preference order. Named here rather than left to chromedp's own search so
 // the skip message can say exactly what was looked for.
@@ -404,7 +409,7 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 	t.Helper()
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler),
-		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace})
+		serve.Options{Addr: "127.0.0.1:0", ShutdownGrace: e2eShutdownGrace, Version: e2eLmmVersion})
 	addr, err := srv.Listen()
 	require.NoError(t, err)
 

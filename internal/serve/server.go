@@ -51,6 +51,14 @@ type Options struct {
 	// upload store's OTHER two limits (#333 Important #2 - the constant
 	// itself had no seam a test could exercise the removal of).
 	MaxUploadBytes int64
+
+	// Version is the human-facing display version - `cmd/lmm/root.go`'s
+	// computeDisplayVersion(version, buildDescribe), the exact string `lmm
+	// --version` prints, not the bare version const - stamped into the SPA
+	// shell so a bug report filed from the browser can say what it is
+	// running (N-5, epic re-review). Empty renders no <meta> content, which
+	// only happens in a test that does not set it.
+	Version string
 }
 
 // Server is the lmm serve HTTP server: an *http.Server wired to a
@@ -111,6 +119,10 @@ type Server struct {
 	// behind them keep running to their own bounded grace (jobs.go).
 	draining     chan struct{}
 	drainingOnce sync.Once
+
+	// version is Options.Version, stamped into the SPA shell (spa.go's
+	// shellData) so the browser can say what it is running.
+	version string
 }
 
 // New builds a Server over svc. log receives request-level diagnostics at
@@ -153,6 +165,7 @@ func New(ctx context.Context, svc *core.Service, log *slog.Logger, opts Options)
 		jobs:           newJobRegistry(ctx, log, defaultJobRingSize, defaultJobRetention),
 		heartbeat:      realHeartbeatTicker,
 		draining:       make(chan struct{}),
+		version:        opts.Version,
 	}
 	s.httpServer = &http.Server{
 		Addr: opts.Addr,

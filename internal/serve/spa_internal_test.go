@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"path"
 	"regexp"
@@ -59,6 +60,29 @@ func TestSPAShell_CarriesTheCSRFTokenInAMetaTag(t *testing.T) {
 		FindStringSubmatch(rec.Body.String())
 	require.Len(t, match, 2, "the shell must carry the CSRF token in a meta tag")
 	assert.Equal(t, s.csrf.token, match[1])
+}
+
+// TestSPAShell_CarriesTheVersionInAMetaTag is N-5 of the epic re-review:
+// nothing in the browser said what version of lmm was running - no wire
+// document carried it, no chrome showed it - so a bug report filed from the
+// web UI could not say what it was even looking at. Options.Version (the
+// same string `lmm --version` prints) now rides in the shell exactly like
+// the CSRF token does, in its own <meta> rather than any /api/v1 document -
+// the wire itself is unchanged.
+func TestSPAShell_CarriesTheVersionInAMetaTag(t *testing.T) {
+	svc, _ := newDeployFixtureService(t)
+	s := New(t.Context(), svc, slog.New(slog.DiscardHandler), Options{
+		Addr:    internalTestAddr,
+		Version: "2.0.0 (dev: v2.0.0-42-gabc1234)",
+	})
+
+	rec := doAPI(s, http.MethodGet, "/", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	match := regexp.MustCompile(`<meta name="lmm-version" content="([^"]*)"`).
+		FindStringSubmatch(rec.Body.String())
+	require.Len(t, match, 2, "the shell must carry the version in a meta tag")
+	assert.Equal(t, "2.0.0 (dev: v2.0.0-42-gabc1234)", match[1])
 }
 
 // TestSPAShell_IsNeverCached is why the shell is not a plain static file:

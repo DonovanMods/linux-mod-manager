@@ -2404,6 +2404,14 @@ select {
   color: var(--text-primary);
 }
 
+/* N-5: the running server's own display version, in the one place a user
+ * looking for it is most likely to check. */
+.shortcuts__version {
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
 .setup-section__actions {
   display: flex;
   align-items: center;
