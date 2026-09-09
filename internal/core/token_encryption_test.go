@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -144,4 +145,15 @@ func corruptStoredToken(t *testing.T, dbPath, sourceID string) {
 	blob[len(blob)-1] ^= 0xff
 	_, err = raw.ExecContext(ctx, "UPDATE auth_tokens SET token_data = ? WHERE source_id = ?", blob, sourceID)
 	require.NoError(t, err)
+}
+
+// TestTokenKeyError_WithoutACauseDoesNotPanic: TokenKeyError is exported and
+// its Error method used to dereference Err unconditionally. Every production
+// value comes from asTokenKeyError, which always sets it, but a test or a
+// future frontend building one by hand would have panicked (review, Minor 7).
+func TestTokenKeyError_WithoutACauseDoesNotPanic(t *testing.T) {
+	err := &core.TokenKeyError{KeyPath: "/data/lmm/key", Reason: "missing"}
+	assert.Contains(t, err.Error(), "/data/lmm/key")
+	assert.Contains(t, err.Error(), "missing")
+	assert.Nil(t, errors.Unwrap(err))
 }

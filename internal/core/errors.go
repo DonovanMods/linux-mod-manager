@@ -184,7 +184,16 @@ type TokenKeyError struct {
 
 // Error returns the storage layer's own message, which already names the
 // file and the fix.
-func (e *TokenKeyError) Error() string { return e.Err.Error() }
+//
+// Err is set by asTokenKeyError on every production path, but the type is
+// exported and a hand-built value must not panic here (review, Minor 7);
+// one without a cause falls back to what its own fields say.
+func (e *TokenKeyError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("the token-encryption key %s could not be used (%s)", e.KeyPath, e.Reason)
+	}
+	return e.Err.Error()
+}
 
 // Unwrap exposes the underlying *db.KeyError.
 func (e *TokenKeyError) Unwrap() error { return e.Err }
