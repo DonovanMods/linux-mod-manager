@@ -23,8 +23,10 @@ not exist yet is (a) a way to say "this mod requires the framework, at this
 version, and the framework is not a mod you found on a source", (b) the
 Linux bootstrap, which is a **launch-options** problem lmm cannot solve for
 the user and should not pretend to, and (c) Thunderstore, whose only public
-listing endpoint returns **the entire community index in one uncacheable
-33 MB response** — a real design problem, not a plumbing detail.
+listing endpoint returns **the entire community index in one unpaginated
+response — 3.8 MB on the wire for a small community, 34.6 MB for a large
+one, decoding to 33 MB and 329 MB of JSON** — a real design problem, not a
+plumbing detail.
 
 Recommendation: **GO on Tiers 1–2** (deploy plugins into an
 already-installed BepInEx; framework as a first-class per-game
@@ -145,8 +147,24 @@ treats "install BepInEx" as one action will get this wrong.
 No authentication needed for anything below.
 
 - `GET https://thunderstore.io/c/<community>/api/v1/package/` — the whole
-  community index. Measured: `lethal-company` returned **329 MB**,
-  `repo` returned **33 MB / 6,349 packages**, in one unpaginated response.
+  community index, unpaginated. Re-measured 2026-09-09 during the Track D1
+  review, separating what crosses the wire from what it decodes to (an
+  earlier draft of this document reported the DECODED sizes as the response
+  sizes — 9x the real transfer — and called the endpoint uncacheable):
+
+  | Community | On the wire (gzip) | Decoded JSON | Packages |
+  | --- | --- | --- | --- |
+  | `repo` | **3,759,444 B (3.8 MB)** | 33,463,364 B (33.5 MB) | 6,350 |
+  | `lethal-company` | **34,602,147 B (34.6 MB)** | 329,007,636 B (329 MB) | 50,703 |
+
+  It is also **conditionally cacheable**: the response carries
+  `Last-Modified` (`Wed, 09 Sep 2026 20:01:32 GMT`) and
+  `Cache-Control: max-age=30` behind Cloudflare (`cf-cache-status: HIT`),
+  and a conditional `If-Modified-Since` request answers **304 with zero
+  bytes** when nothing has changed. So a refresh of an unchanged index is
+  free; the cost that remains is decoding and parsing the full document
+  when it HAS changed, plus its disk footprint.
+
   Each entry carries `full_name`, `owner`, `package_url`, `date_updated`,
   `categories`, `is_deprecated`, `uuid4`, and a `versions[]` array where
   each version has `version_number`, `description`, `icon`,
@@ -308,13 +326,20 @@ per-query search endpoint at all — the only public listing is the whole
 community index. That is `internal/source/thunderstore/` work, not YAML.
 
 The blocker to design around, in one line: **`/c/<community>/api/v1/package/`
-returned 329 MB for `lethal-company` and 33 MB for `repo`, unpaginated.**
-"Search Thunderstore" cannot mean "fetch that per keystroke". The workable
-shape is a **local index**: fetch once per community, cache it on disk with
-its `date_updated` watermark, search locally, refresh on a TTL or on
-demand. That is a genuinely new capability for lmm — every existing source
-searches remotely — and it is the reason Tier 3 is sized L and gated on an
-owner decision rather than folded into Tier 2.
+is unpaginated — 34.6 MB on the wire for `lethal-company`, 3.8 MB for
+`repo`, decoding to 329 MB and 33.5 MB of JSON.** "Search Thunderstore"
+cannot mean "fetch and parse that per keystroke". The workable shape is a
+**local index**: fetch once per community, cache it on disk, search
+locally, and refresh with `If-Modified-Since` — which is a 304 and zero
+bytes when nothing changed (see [§1.4](#14-thunderstores-public-api)).
+
+Size the decision on the real numbers, not on the earlier draft's. The
+transfer is ordinary and the refresh is nearly free; what is not ordinary
+is **decoding and parsing 329 MB of JSON** whenever a big community's index
+does change, holding the searchable form of it, and keeping it on disk.
+Tier 3 stays **L** and stays gated, but for that reason — a new
+locally-indexed capability in a tool whose sources all search remotely —
+rather than because the endpoint is huge and uncacheable, which it is not.
 
 The good news is everything else is easy: no auth, no key, no rate-limit
 signalling encountered, direct `download_url`s, stable
@@ -427,9 +452,13 @@ the owner before anything is filed (per #267's ruling).
 > `api` source — the model is community-scoped and dependencies need
 > parsing.
 > **Blocker to settle first:** the only public listing endpoint returns the
-> whole community index unpaginated (measured: 329 MB for `lethal-company`).
-> Search has to run against a locally cached index — a new capability for
-> lmm, whose sources all search remotely. **Size:** L.
+> whole community index unpaginated (measured: 34.6 MB gzipped for
+> `lethal-company`, decoding to 329 MB of JSON; 3.8 MB / 33.5 MB for
+> `repo`), and there is no per-query search endpoint. It IS conditionally
+> cacheable — `If-Modified-Since` answers 304 with zero bytes — so the cost
+> is the decode, the parse and the disk, not the transfer. Search has to
+> run against a locally cached index: a new capability for lmm, whose
+> sources all search remotely. **Size:** L.
 
 > **`feat(core): map Thunderstore dependency strings onto the resolver`**
 > `["BepInEx-BepInExPack-5.4.2100", "Ozone-Runtime_Netcode_Patcher-0.2.5"]`
@@ -457,7 +486,13 @@ the owner before anything is filed (per #267's ruling).
    *Recommended: yes, if Tier 3 is wanted at all.* There is no alternative:
    the public API offers no per-query search. It should be an explicit,
    documented design decision rather than something discovered during
-   implementation.
+   implementation. **Note if this was already answered:** it was asked on
+   the wrong figures. The endpoint is 3.8–34.6 MB on the wire (not 33–329
+   MB) and refreshes for free with `If-Modified-Since`; the real cost is
+   decoding and parsing up to 329 MB of JSON per refresh of a large
+   community and keeping the index on disk. The recommendation does not
+   change, but the answer was given against a worse picture than the true
+   one.
 3. **Confirm lmm never edits Steam launch options or a Proton prefix?** —
    *Recommended: confirm.* Print the exact string, verify the result. The
    downside of a bad `localconfig.vdf` write is losing every launch option
@@ -481,4 +516,5 @@ the owner before anything is filed (per #267's ruling).
 - UnityDoorstop — <https://github.com/NeighTools/UnityDoorstop> (issue #88, cited by `run_bepinex.sh` itself)
 - Thunderstore API — `thunderstore.io/c/<community>/api/v1/package/`, `thunderstore.io/api/experimental/package/…`, `thunderstore.io/api/experimental/community/` (all probed directly)
 - Thunderstore package format — <https://thunderstore.io/c/repo/create/docs/>
+- Thunderstore index sizes and cache headers in [§1.4](#14-thunderstores-public-api) — re-measured 2026-09-09 during the Track D1 review, one read-only GET per community (`repo`, `lethal-company`) plus one conditional `If-Modified-Since` repeat, recording transfer size, decoded size, package count and response headers only
 - Package archives listed: `BepInEx/BepInExPack` 5.4.2305, `denikson/BepInExPack_Valheim`, `RugbugRedfern/Skinwalkers` 5.0.0, `Evaisa/HookGenPatcher` 0.0.5, `Sligili/More_Emotes` 1.3.3
