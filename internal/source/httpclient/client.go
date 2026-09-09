@@ -188,7 +188,13 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 		if int64(len(payload)) > c.maxResponseBytes {
 			return fmt.Errorf("response exceeds %d bytes", c.maxResponseBytes)
 		}
-		if err := json.Unmarshal(payload, result); err != nil {
+		// Decoded through the SAME json.Decoder the uncapped path below
+		// uses, not json.Unmarshal: the two disagree on trailing data
+		// (Decode reads one document and ignores the rest, Unmarshal
+		// errors) and on the message an empty body produces, and only
+		// CurseForge sets a cap - a per-caller split in a shared client
+		// (Track C review, finding 9).
+		if err := json.NewDecoder(bytes.NewReader(payload)).Decode(result); err != nil {
 			return fmt.Errorf("decoding response: %w", err)
 		}
 		return nil
