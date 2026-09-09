@@ -456,7 +456,13 @@ func TestSelectDetectedGames_NumericSelectionWithNoKnownRows(t *testing.T) {
 	_, err := core.SelectDetectedGames(games, []string{"1"})
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "use 1-0")
-	assert.Contains(t, err.Error(), "no detected game is in the known-games list")
+	assert.ErrorIs(t, err, core.ErrUnknownDetectedGame)
+	// #206 review Minor 7: this error is only ever reached via `lmm serve`
+	// today (the CLI's own interactive flow never calls SelectDetectedGames),
+	// so a CLI command baked into the core message would be wrong for the
+	// browser user actually reading it.
+	assert.NotContains(t, err.Error(), "lmm game add",
+		"the core message must not name a specific CLI command")
 }
 
 // --- #206: prefilling an add from an installed game ---
@@ -656,6 +662,14 @@ func TestFindDetectedGame(t *testing.T) {
 	require.ErrorAs(t, err, &specErr)
 	assert.Equal(t, "from_steam_app_id", specErr.Field)
 	assert.Equal(t, "1", specErr.Value)
+	// #206 review Minor 7: the reason must stay frontend-neutral - both
+	// callers already scan with IncludeUnknown:true before reaching here,
+	// so telling either of them to rescan wider would not even help (the
+	// app id genuinely is not installed, or was uninstalled since the
+	// scan). The SPA's own stale-scan banner sits directly beside its own
+	// Rescan button, which said the same CLI-flavored thing redundantly.
+	assert.NotContains(t, specErr.Reason, "detect scan",
+		"the core message must not tell either frontend to run a specific command")
 }
 
 // TestExactGameCatalogMatch is the auto-pick rule: a catalog search by the

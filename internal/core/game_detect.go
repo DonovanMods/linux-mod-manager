@@ -116,6 +116,15 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 // from_steam_app_id. The miss is a GameSpecError naming that wire field,
 // so a web form marks the offending input and the CLI prints a sentence
 // that names the app id it could not find.
+//
+// The reason is deliberately frontend-neutral (#206 review Minor 7): both
+// callers already scan with IncludeUnknown:true before reaching this
+// point, so a miss here means the app id genuinely is not installed, or
+// was uninstalled between an earlier scan and this one - not merely that
+// the caller scanned too narrowly. A frontend that has something more
+// specific to offer (the SPA's stale-scan banner sits beside its own
+// Rescan button) says so itself, rather than getting a baked-in CLI-shaped
+// suggestion in every response.
 func FindDetectedGame(games []domain.DetectedGame, appID string) (domain.DetectedGame, error) {
 	appID = strings.TrimSpace(appID)
 	for _, g := range games {
@@ -124,7 +133,7 @@ func FindDetectedGame(games []domain.DetectedGame, appID string) (domain.Detecte
 		}
 	}
 	return domain.DetectedGame{}, newGameSpecError("from_steam_app_id", appID,
-		"no installed Steam game has that app id (run a detect scan that includes unknown games to list them)")
+		"no installed Steam game has that app id - it may have been uninstalled since the scan")
 }
 
 // GameDetectResult is ApplyGameDetect's outcome: which games were written
@@ -333,8 +342,14 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 			if len(byIndex) == 0 {
 				// "use 1-0" is not a range; the scan found installed games,
 				// just none of them in the known-games list, so a numbered
-				// selection has nothing to count.
-				return nil, errors.New("no detected game is in the known-games list; add one with `lmm game add --from-detected <app-id>`")
+				// selection has nothing to count. ErrUnknownDetectedGame
+				// (not a bare string) so the caller - only `lmm serve`
+				// reaches this today - can append its OWN next step
+				// (api_games.go already does, for the per-row case below);
+				// a CLI command baked into the message here would be wrong
+				// wherever a browser is what actually shows it (#206 review
+				// Minor 7).
+				return nil, fmt.Errorf("%w: nothing in this selection is in the known-games list", ErrUnknownDetectedGame)
 			}
 			if n < 1 || n > len(byIndex) {
 				return nil, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(byIndex))
