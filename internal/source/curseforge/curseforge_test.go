@@ -365,6 +365,46 @@ func TestCurseForge_CheckUpdatesReportsAnOmittedMod(t *testing.T) {
 	assert.Equal(t, "111", updates[0].InstalledMod.ID)
 }
 
+// TestCurseForge_CheckUpdatesReportsEachSkipReasonOnce is the Track C
+// review's finding 8: a mod whose id is not numeric was reported TWICE -
+// once by the id-collection loop and again by the compare loop, which could
+// not find it in the batch answer either - and every absent mod had the
+// WHOLE joined batch error stapled to it, so one failed chunk of 50
+// produced fifty copies of a fifty-id error string. Each skipped mod now
+// gets exactly one reason of its own, and the batch error is attached once
+// as its own entry.
+func TestCurseForge_CheckUpdatesReportsEachSkipReasonOnce(t *testing.T) {
+	requests := 0
+	server := batchModsServer(t, &requests, map[int]string{
+		111: `{"id":111,"name":"Mod A","latestFiles":[{"displayName":"mod-a-2.0.0"}],"dateModified":"2024-01-20T10:30:00Z"}`,
+	})
+	defer server.Close()
+
+	cf := New(server.Client(), "test-api-key")
+	cf.client.SetBaseURL(server.URL)
+
+	installed := []domain.InstalledMod{
+		{Mod: domain.Mod{ID: "111", Name: "Mod A", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "not-a-number", Name: "Hand Made", Version: "1.0.0", GameID: "432"}},
+		{Mod: domain.Mod{ID: "999", Name: "Gone Mod", Version: "1.0.0", GameID: "432"}},
+	}
+
+	updates, err := cf.CheckUpdates(context.Background(), installed)
+	require.Error(t, err)
+	require.Len(t, updates, 1, "the mod the API did answer for is still checked")
+
+	msg := err.Error()
+	assert.Contains(t, msg, "update check skipped 2 mod(s)")
+	assert.Equal(t, 1, strings.Count(msg, "Hand Made (id not-a-number)"),
+		"an unparseable id is reported once, not once per loop:\n%s", msg)
+	assert.Equal(t, 1, strings.Count(msg, "invalid mod ID"),
+		"and with one reason, not two:\n%s", msg)
+	assert.Equal(t, 1, strings.Count(msg, "Gone Mod (id 999)"),
+		"an omitted id is reported once:\n%s", msg)
+	assert.ErrorIs(t, err, domain.ErrModNotFound,
+		"an omitted mod stays errors.Is-able as not found")
+}
+
 func TestCurseForge_CheckUpdatesWithProgress_ReportsEachMod(t *testing.T) {
 	requests := 0
 	server := batchModsServer(t, &requests, map[int]string{

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -334,13 +335,18 @@ func (c *CurseForge) CheckUpdates(ctx context.Context, installed []domain.Instal
 // could make and names the ones it could not, as before.
 func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report source.UpdateProgressFunc) ([]domain.Update, error) {
 	var updates []domain.Update
-	var fetchErrs []error
+	// skipped holds ONE reason per mod that could not be checked - never
+	// two for the same mod, and never the whole batch error repeated per
+	// mod (Track C review, finding 8).
+	var skipped []error
 
 	ids := make([]int, 0, len(installed))
+	unparseable := make(map[string]bool)
 	for _, inst := range installed {
 		id, err := strconv.Atoi(inst.ID)
 		if err != nil {
-			fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): invalid mod ID: %w", inst.Name, inst.ID, err))
+			skipped = append(skipped, fmt.Errorf("%s (id %s): invalid mod ID: %w", inst.Name, inst.ID, err))
+			unparseable[inst.ID] = true
 			continue
 		}
 		ids = append(ids, id)
@@ -368,11 +374,17 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 			report(i+1, len(installed), inst.Name)
 		}
 
+		if unparseable[inst.ID] {
+			continue // already reported above; it was never in the batch
+		}
+
 		data, ok := byID[inst.ID]
 		if !ok {
-			if fetchErr != nil {
-				fetchErrs = append(fetchErrs, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, fetchErr))
-			}
+			// Its own reason, not the batch's: fetchErr names every id the
+			// whole call could not resolve, so stapling it here once per
+			// absent mod turned one failed chunk of 50 into 50 copies of a
+			// 50-id string. The batch error is attached once, below.
+			skipped = append(skipped, fmt.Errorf("%s (id %s): %w", inst.Name, inst.ID, domain.ErrModNotFound))
 			continue
 		}
 
@@ -388,8 +400,16 @@ func (c *CurseForge) CheckUpdatesWithProgress(ctx context.Context, installed []d
 		})
 	}
 
-	if len(fetchErrs) > 0 {
-		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(fetchErrs), errors.Join(fetchErrs...))
+	if len(skipped) > 0 {
+		errs := skipped
+		if fetchErr != nil {
+			// Why the ids are missing - a chunk whose REQUEST failed reads
+			// as "not found" per mod above, which is true but not the
+			// reason. Attached once, and outside the count, which counts
+			// mods.
+			errs = append(slices.Clone(skipped), fmt.Errorf("batch fetch: %w", fetchErr))
+		}
+		return updates, fmt.Errorf("update check skipped %d mod(s): %w", len(skipped), errors.Join(errs...))
 	}
 	return updates, nil
 }

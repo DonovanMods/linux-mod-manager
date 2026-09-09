@@ -42,9 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stay partial: a chunk whose request fails does not stop the other chunks,
   and an id CurseForge omits from its answer (an unknown, delisted or
   unavailable mod) is named in the error while every mod that did come back
-  is still checked. The per-mod progress ticks `lmm update` renders are
-  unchanged in count, order and arguments; they now fire as each mod's
-  result is compared rather than before its own request.
+  is still checked — each skipped mod named once, with its own reason, and
+  the batch error attached once rather than once per mod. The per-mod
+  progress ticks `lmm update` renders are unchanged in count, order and
+  arguments; they now fire as each mod's result is compared rather than
+  before its own request.
 
 - **`lmm search --limit N` now really returns N (#109).** The aggregate
   search asked every source for exactly one page and merged whatever came
