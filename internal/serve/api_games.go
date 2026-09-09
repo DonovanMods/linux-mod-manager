@@ -18,6 +18,7 @@ package serve
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/app"
@@ -103,13 +104,23 @@ func (s *Server) catalogErrorStatus(sourceID string, err error) int {
 // (GameCatalogMatch.GameID) - that is what keeps a CurseForge add keyed
 // "minecraft" rather than "432". Omitted, core derives it from the
 // identifier, which is the manual path's rule.
+//
+// FromSteamAppID is #206's prefill: the app id of an installed Steam game
+// (GET /api/v1/games/detect?all=1's steam_app_id). With it, core fills
+// every field the detection knows - name, install path, game id, mod path,
+// and a curated game's source map - and the members above become
+// OVERRIDES, each winning only where it is non-empty. The SPA therefore
+// never re-derives a slug, a mod path or a source map of its own: a known
+// game can be added with this member alone, and an unknown one needs only
+// the source pair on top.
 type gameAddRequest struct {
-	SourceID    string `json:"source_id"`
-	Identifier  string `json:"identifier"`
-	Name        string `json:"name"`
-	GameID      string `json:"game_id,omitempty"`
-	InstallPath string `json:"install_path"`
-	ModPath     string `json:"mod_path,omitempty"`
+	SourceID       string `json:"source_id"`
+	Identifier     string `json:"identifier"`
+	Name           string `json:"name"`
+	GameID         string `json:"game_id,omitempty"`
+	InstallPath    string `json:"install_path"`
+	ModPath        string `json:"mod_path,omitempty"`
+	FromSteamAppID string `json:"from_steam_app_id,omitempty"`
 }
 
 // spec converts the request into the core.GameSpec AddGame validates. No
@@ -144,7 +155,30 @@ func (s *Server) handleAPIGameAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, err := s.svc.AddGame(r.Context(), req.spec())
+	ctx := r.Context()
+	spec := req.spec()
+	if req.FromSteamAppID != "" {
+		// Re-scans rather than trusting a client-supplied row, for the same
+		// reason POST /api/v1/games/detect does: the request names an app
+		// id, and the install path and source map behind it must come from
+		// the machine. core.GameSpecFromDetected then applies exactly the
+		// prefill `lmm game add --from-detected` applies.
+		detected, _, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true})
+		if err != nil {
+			s.writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
+		candidate, err := core.FindDetectedGame(detected, req.FromSteamAppID)
+		if err != nil {
+			// A GameSpecError naming from_steam_app_id, so the form marks
+			// the offending input like any other rejected field.
+			s.writeAPIError(w, gameAddErrorStatus(err), err)
+			return
+		}
+		spec = core.GameSpecFromDetected(candidate, spec)
+	}
+
+	entry, err := s.svc.AddGame(ctx, spec)
 	if err != nil {
 		s.writeAPIError(w, gameAddErrorStatus(err), err)
 		return
@@ -240,24 +274,48 @@ func gameSourcesErrorStatus(err error) int {
 // found, its 1-based index, whether games.yaml already holds it, and the
 // scan's own warnings.
 //
+// ?all=1 widens it to EVERY installed Steam game (#206), adding the rows
+// no known-games entry covers - known:false, no sources, an empty mod
+// path and no index, since a detect selection cannot name them. The
+// document is the same one either way (the addition is additive, and the
+// known rows keep the same numbering), so the SPA can render both from one
+// decoder; an unknown row is added through POST /api/v1/games with
+// from_steam_app_id, not through this route's POST half.
+//
 // This half has no CLI equivalent under --json - `lmm game detect` printed
 // its listing to the terminal and emitted only the RESULT document, since
 // Ruling 15 allows nothing else on stdout beside it. A browser selection
 // happens between two requests, so the listing had to become a document
-// (core.GameDetectListing, goldened with the rest).
+// (core.GameDetectListing, goldened with the rest). #206 gave the CLI its
+// own way to that document: `lmm game detect --include-unknown --json`,
+// where the listing is likewise the whole answer.
 func (s *Server) handleAPIGamesDetect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{})
+	includeUnknown := queryFlag(r, "all")
+	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: includeUnknown})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
-	listing, err := s.svc.GameDetectListing(ctx, detected, warnings)
+	listing, err := s.svc.GameDetectListing(ctx, detected, warnings, core.GameDetectListingOptions{IncludeUnknown: includeUnknown})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, listing)
+}
+
+// queryFlag reads a boolean query parameter. Only "1" and "true" are true;
+// anything else - including an absent parameter and an empty value - is
+// false, so a mistyped flag reads as "not asked for" rather than silently
+// widening a scan.
+func queryFlag(r *http.Request, name string) bool {
+	switch r.URL.Query().Get(name) {
+	case "1", "true":
+		return true
+	default:
+		return false
+	}
 }
 
 // gameDetectSelectRequest is POST /api/v1/games/detect's body: which of
@@ -287,13 +345,24 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{})
+	// Scanned WIDE on purpose (#206): the selection's semantics are
+	// unchanged - only known rows can be applied here - but a selector
+	// naming an installed game lmm has no curated entry for must be told
+	// what it hit and where to go instead, and that is only possible if
+	// the scan saw the row at all. core.SelectDetectedGames enforces the
+	// rule; this handler only classifies it and names the other route.
+	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
 	}
 	selected, err := core.SelectDetectedGames(detected, req.Select)
 	if err != nil {
+		if errors.Is(err, core.ErrUnknownDetectedGame) {
+			s.writeAPIError(w, http.StatusBadRequest,
+				fmt.Errorf("%w; add it with POST /api/v1/games, passing its from_steam_app_id", err))
+			return
+		}
 		s.writeAPIError(w, http.StatusBadRequest, err)
 		return
 	}

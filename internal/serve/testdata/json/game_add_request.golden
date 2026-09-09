@@ -4,5 +4,6 @@
   "name": "Minecraft",
   "game_id": "minecraft",
   "install_path": "/games/minecraft",
-  "mod_path": "/games/minecraft/mods"
+  "mod_path": "/games/minecraft/mods",
+  "from_steam_app_id": "526870"
 }
