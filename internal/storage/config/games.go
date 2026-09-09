@@ -189,7 +189,19 @@ func SaveGame(configDir string, game *domain.Game) error {
 	return saveGamesLocked(configDir, games)
 }
 
-// saveGamesLocked writes games; caller must hold gamesMu
+// saveGamesLocked writes games; caller must hold gamesMu.
+//
+// It re-marshals the WHOLE file from the loaded map, whose paths have
+// already been ExpandPath-ed and (since #313) ResolveModPath-ed - so any
+// write, from any command, normalises every OTHER game's entry too: a
+// hand-written "~" becomes the expanded path and a relative mod_path
+// becomes the absolute one it already resolved to. Recorded here (review
+// M9) so it is a decision rather than a surprise. It is the intended
+// direction - what lmm writes is what every later run reads, with no
+// working directory in the answer - and it cannot fail an unrelated write,
+// since the values in the map are already absolute by the time SaveGame's
+// guard sees them. Preserving hand-written relative/tilde values verbatim
+// would be a separate change to this function.
 func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 	gamesFile := GamesFile{Games: make(map[string]GameConfig)}
 
