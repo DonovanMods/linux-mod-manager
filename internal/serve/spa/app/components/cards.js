@@ -23,6 +23,9 @@ const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
 // PROFILE_APPLY_ORIGIN is the Profile card's "Apply profile…" control.
 const PROFILE_APPLY_ORIGIN = "profile:apply";
 
+// PROFILE_SYNC_ORIGIN is the Profile card's "Sync…" control (C-3).
+const PROFILE_SYNC_ORIGIN = "profile:sync";
+
 /** notFixableReason names why a finding's own Repair is absent.
  *
  * Since issue 334 this is the ENGINE's own sentence, read straight off the
@@ -77,12 +80,14 @@ export function AttentionCards({
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
   const notInstalled = notInstalledCount(state, mods);
+  const notListed = notListedCount(state, mods);
 
   if (
     updateRows.length === 0 &&
     findings.length === 0 &&
     conflictRows.length === 0 &&
     notInstalled === 0 &&
+    notListed === 0 &&
     !hasError
   ) {
     return null;
@@ -112,10 +117,11 @@ export function AttentionCards({
         />`
       }
       ${
-        notInstalled > 0 &&
+        (notInstalled > 0 || notListed > 0) &&
         html`<${ProfileCard}
           state=${state}
           notInstalled=${notInstalled}
+          notListed=${notListed}
           actions=${actions}
         />`
       }
@@ -387,14 +393,35 @@ function notInstalledCount(state, mods) {
   return Math.max(0, summary.mod_count - (mods?.mods?.length ?? 0));
 }
 
-/** ProfileCard is the design's third attention state (issue 334): this
- * profile lists mods nobody has installed, and `lmm profile apply` is the
- * one command that converges them. */
-function ProfileCard({ state, notInstalled, actions }) {
+/** notListedCount is the OTHER direction of the same subtraction (C-3):
+ * how many installed rows this profile's load order does not list. It is
+ * what `lmm profile sync` brings to zero, where notInstalledCount is what
+ * `lmm profile apply` does - the two commands are mirror images, and so are
+ * the two numbers. Under-counts for exactly the reason its twin does, and
+ * in the same safe direction: a missing prompt, never a false one. */
+function notListedCount(state, mods) {
+  const summary = (state?.status?.profiles ?? []).find(
+    (p) => p.name === state?.route?.profile,
+  );
+  if (!summary) return 0;
+  return Math.max(0, (mods?.mods?.length ?? 0) - summary.mod_count);
+}
+
+/** ProfileCard is the design's third attention state (issue 334): the
+ * profile and the installed set have drifted apart, and there are exactly
+ * two commands that close the gap - `lmm profile apply` pulls the INSTALLS
+ * onto what the profile lists, `lmm profile sync` pulls the PROFILE onto
+ * what is installed. Which of the two is offered depends on which way the
+ * drift runs; Sync is offered either way, because it is the one that can
+ * answer both buckets at once. */
+function ProfileCard({ state, notInstalled, notListed, actions }) {
   // ONE string rather than three adjacent interpolations: htm collapses
   // JSX-style whitespace between them, which silently fuses "profile" and
   // "is" into "profileis" (the same trap conflictLabel below documents).
-  const sentence = `${notInstalled} mod${notInstalled === 1 ? "" : "s"} in this profile ${notInstalled === 1 ? "is" : "are"} not installed`;
+  const sentence =
+    notInstalled > 0
+      ? `${notInstalled} mod${notInstalled === 1 ? "" : "s"} in this profile ${notInstalled === 1 ? "is" : "are"} not installed`
+      : `${notListed} installed mod${notListed === 1 ? "" : "s"} ${notListed === 1 ? "is" : "are"} not in this profile's load order`;
 
   function apply() {
     actions.openPlan({
@@ -406,27 +433,54 @@ function ProfileCard({ state, notInstalled, actions }) {
     });
   }
 
+  function sync() {
+    actions.openPlan({
+      kind: "profile_sync",
+      origin: PROFILE_SYNC_ORIGIN,
+      title: `Sync ${state.route.profile}`,
+      confirmLabel: "Sync",
+      options: { profile: state.route.profile },
+    });
+  }
+
   return html`
     <div class="card card--profile">
-      <p class="card__title">${`◎ Profile (${notInstalled})`}</p>
+      <p class="card__title">${`◎ Profile (${notInstalled || notListed})`}</p>
       <ul class="card__list">
         <li class="card__row">
           <span class="card__row-name">${sentence}</span>
         </li>
       </ul>
       <div class="card__actions">
+        ${
+          notInstalled > 0 &&
+          html`<${InlineJob}
+            origin=${PROFILE_APPLY_ORIGIN}
+            state=${state}
+            actions=${actions}
+          >
+            <button
+              type="button"
+              class="button"
+              data-action="apply-profile"
+              onClick=${apply}
+            >
+              Apply profile…
+            </button>
+          <//>`
+        }
         <${InlineJob}
-          origin=${PROFILE_APPLY_ORIGIN}
+          origin=${PROFILE_SYNC_ORIGIN}
           state=${state}
           actions=${actions}
         >
           <button
             type="button"
             class="button"
-            data-action="apply-profile"
-            onClick=${apply}
+            data-action="sync-profile"
+            onClick=${sync}
           >
-            Apply profile…
+            Sync…
           </button>
         <//>
       </div>

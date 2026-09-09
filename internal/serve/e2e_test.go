@@ -5673,3 +5673,101 @@ func TestE2E_AdvancedOptionsReachTheFlow(t *testing.T) {
 		"--keep-cache must have kept the cached download the default would have deleted")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_PurgeFromTheProfilesModalEmptiesTheGameDirectory is C-3's purge
+// half.
+//
+// `lmm purge` had no plan kind, no route and no control at all - one of the
+// four whole commands the epic live review found web-unreachable in a UI
+// whose design Scope claims full bidirectional parity. It is also the most
+// destructive single click in the application, so it is the one that draws
+// a type-the-profile-name gate; the scenario proves the gate is real by
+// trying Confirm before typing.
+func TestE2E_PurgeFromTheProfilesModalEmptiesTheGameDirectory(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	deployed := filepath.Join(f.Game.ModPath, "alpha.pak")
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+	require.FileExists(t, deployed, "the scenario needs something deployed to purge")
+
+	var confirmDisabled, confirmEnabled bool
+	f.runInBrowser(t,
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="purge-profile"][data-profile="default"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="purge"] .plan`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &confirmDisabled),
+		chromedp.SendKeys(`input[name="purge-confirm"]`, "default", chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('.modal [data-action="confirm"]').disabled === false`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Evaluate(`document.querySelector('.modal [data-action="confirm"]').disabled`, &confirmEnabled),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.True(t, confirmDisabled,
+		"a purge must not be one click away - Confirm stays disabled until the profile is typed back")
+	assert.False(t, confirmEnabled, "and must become available once it is")
+
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(deployed)
+		return os.IsNotExist(err)
+	}, 10*time.Second, 100*time.Millisecond, "the purge must actually have emptied the game directory")
+
+	// Records preserved: the default (no --uninstall) is exactly what the
+	// plan's own sentence promised.
+	list, err := f.Svc.ListMods(t.Context(), f.Game, "default")
+	require.NoError(t, err)
+	assert.NotEmpty(t, list.Mods, "without --uninstall the mod records stay")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfileSyncFromTheCardAddsWhatIsInstalled is C-3's profile-sync
+// half - the other whole command with no web path at all.
+//
+// Sync is the mirror image of `profile apply`: apply converges the INSTALL
+// SET onto what the profile lists, sync converges the PROFILE onto what is
+// actually installed. The fixture is seeded on the sync side of that
+// mirror - a mod installed and enabled in the database that the profile's
+// own load order does not list - which is what makes the Profile card
+// render a Sync… at all.
+func TestE2E_ProfileSyncFromTheCardAddsWhatIsInstalled(t *testing.T) {
+	f := newE2EFixtureWithAnUnlistedInstall(t)
+
+	var card string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--profile`, chromedp.ByQuery),
+		textContent(`.card--profile`, &card),
+		chromedp.Click(`.card--profile [data-action="sync-profile"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_sync"] .plan`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="sync-to-add"]`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		waitGone(`.modal`),
+	)
+
+	assert.Contains(t, card, "not in this profile",
+		"the card must say which way the drift runs")
+
+	require.Eventually(t, func() bool {
+		profile, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
+		return err == nil && slices.ContainsFunc(profile.Mods, func(r domain.ModReference) bool {
+			return r.ModID == "b"
+		})
+	}, 10*time.Second, 100*time.Millisecond,
+		"the sync must have added the installed-but-unlisted mod to the profile's load order")
+	assert.Empty(t, f.BrowserErrors())
+}

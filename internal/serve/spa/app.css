@@ -1419,6 +1419,16 @@ select {
   font-size: 0.85em;
 }
 
+/* The type-the-name gate on a destructive plan (C-3: purge). */
+.plan__confirm-name {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
 .plan__heading--warn {
   color: var(--warn);
 }

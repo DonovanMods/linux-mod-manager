@@ -71,6 +71,21 @@ export function ConfirmPlanModal({ modal, actions }) {
     status === "ready" &&
     (plan?.updates?.length ?? 0) === 0;
 
+  // The type-the-name gate (C-3): a kind listed in typedNameFor keeps
+  // Confirm disabled until the user has typed back the thing they are about
+  // to destroy. `purge` is the one that earns it - it undeploys an entire
+  // profile, and with its own uninstall option set it deletes every mod
+  // record behind it, neither of which any other single click in this
+  // application can do.
+  //
+  // Enforced HERE rather than inside the renderer because Confirm lives
+  // here: a renderer that owned its own disabled state would be asking this
+  // modal to trust it, and the whole point of the gate is that the modal
+  // does not have to.
+  const requiredName = typedNameFor[kind]?.(plan);
+  const nameTyped =
+    !requiredName || (modal.confirmationText ?? "").trim() === requiredName;
+
   const footer =
     status === "error"
       ? html`
@@ -97,7 +112,7 @@ export function ConfirmPlanModal({ modal, actions }) {
             type="button"
             class="button button--primary"
             data-action="confirm"
-            disabled=${status !== "ready" || emptyUpdatesPlan}
+            disabled=${status !== "ready" || emptyUpdatesPlan || !nameTyped}
             onClick=${actions.confirmPlan}
           >
             ${busy ? "Starting…" : (confirmLabel ?? "Confirm")}
@@ -131,6 +146,14 @@ export function ConfirmPlanModal({ modal, actions }) {
     <//>
   `;
 }
+
+// typedNameFor maps a kind to the exact string its Confirm demands back
+// from the user, or undefined for the kinds (every other one) that ask for
+// nothing but a click. The renderer draws the input; this table is what
+// makes it load-bearing.
+const typedNameFor = {
+  purge: (plan) => plan?.profile,
+};
 
 // noop holds the modal open while a job start is in flight: Escape and the
 // scrim must not close a modal whose confirm has already been sent, or the

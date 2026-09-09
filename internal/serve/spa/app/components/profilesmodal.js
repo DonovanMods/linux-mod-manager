@@ -157,6 +157,40 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
     }
   }
 
+  // Purge and Sync are the C-3 pair, and the only two mutations in this
+  // modal that go through the confirm-plan framework other than Import.
+  // Both name THIS ROW's profile as the plan's own context rather than
+  // relying on the selected one: kind_purge.go reads ?profile= and the plan
+  // handle binds the profile at plan time, so a row for a profile you are
+  // not currently in has to say so BEFORE the plan is computed. Opening a
+  // plan replaces this modal in the shared slot ("modals stack at most one
+  // deep"), exactly as Import already does.
+  const rowContext = { game: context.game, profile: profile.name };
+
+  function purgeProfile() {
+    actions.openPlan({
+      kind: "purge",
+      origin: `profile:${profile.name}:purge`,
+      title: `Purge ${profile.name}`,
+      confirmLabel: "Purge",
+      options: {},
+      context: rowContext,
+      openerSelector: `[data-action="purge-profile"][data-profile="${profile.name}"]`,
+    });
+  }
+
+  function syncProfile() {
+    actions.openPlan({
+      kind: "profile_sync",
+      origin: `profile:${profile.name}:sync`,
+      title: `Sync ${profile.name}`,
+      confirmLabel: "Sync",
+      options: { profile: profile.name },
+      context: rowContext,
+      openerSelector: `[data-action="sync-profile"][data-profile="${profile.name}"]`,
+    });
+  }
+
   if (mode === "deleting") {
     return html`
       <li class="profiles-row profiles-row--confirm">
@@ -256,6 +290,26 @@ function ProfileRow({ profile, context, actions, afterMutation }) {
           onClick=${() => setMode("renaming")}
         >
           Rename
+        </button>
+        <button
+          type="button"
+          class="button button--small"
+          data-action="sync-profile"
+          data-profile=${profile.name}
+          disabled=${busy}
+          onClick=${syncProfile}
+        >
+          Sync…
+        </button>
+        <button
+          type="button"
+          class="button button--small button--danger"
+          data-action="purge-profile"
+          data-profile=${profile.name}
+          disabled=${busy}
+          onClick=${purgeProfile}
+        >
+          Purge…
         </button>
         <button
           type="button"

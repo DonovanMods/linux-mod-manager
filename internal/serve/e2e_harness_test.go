@@ -1986,3 +1986,27 @@ func newE2EFixtureWithASwitchTargetAndSlowStaleReads(t *testing.T, delay time.Du
 	f.BaseURL = startE2EProxyDelayingProfileReads(t, f.BaseURL, f.Profile, delay)
 	return f
 }
+
+// newE2EFixtureWithAnUnlistedInstall seeds the state `lmm profile sync`
+// exists for, which is the MIRROR of newE2EFixtureWithAnUnappliedProfile's:
+// a mod installed and enabled in the database that the profile's own load
+// order does not list.
+//
+// Alpha Mod is in both; Beta Mod is installed only. So the profile's own
+// mod count (1) runs BEHIND the installed rows (2), which is what Mission
+// Control's profile card reads to decide it has a sync to offer.
+func newE2EFixtureWithAnUnlistedInstall(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.pak": []byte("alpha content")})
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "b", SourceID: "fake", Name: "Beta Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"beta.pak": []byte("beta content")})
+
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+	return f
+}

@@ -639,10 +639,17 @@ async function openPlan({
   applyOptions,
   onConfirmed,
   openerSelector,
+  context: contextOverride,
 }) {
   modalSeq += 1;
   const seq = modalSeq;
-  const context = {
+  // The selected context, unless the caller names another (C-3). Every
+  // mutation started from a control that is ABOUT the current profile uses
+  // the default; the profiles modal's own per-row Purge…/Sync… are the
+  // exception, because the row names a profile that may not be the selected
+  // one and the plan handle binds the profile at PLAN time - so the scope
+  // has to be right before the plan is computed, not after.
+  const context = contextOverride ?? {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
@@ -677,6 +684,7 @@ async function openPlan({
     confirmLabel,
     seq,
     options,
+    context: contextOverride,
     // applyOptions is normally undefined at open time and filled in by the
     // renderer's own controls (setPlanOptions). It is carried HERE for
     // replanWith (below), which re-opens the same plan with a changed
@@ -733,6 +741,7 @@ async function replanWith(planPatch, applyPatch) {
     applyOptions: { ...(modal.applyOptions ?? {}), ...(applyPatch ?? {}) },
     onConfirmed: modal.onConfirmed,
     openerSelector: modal.openerSelector,
+    context: modal.context,
   });
 }
 
@@ -1262,6 +1271,22 @@ function describe(err) {
  * submits). A no-op when no modal is open, which happens only if a renderer
  * fires this after the user has already cancelled - nothing left to patch.
  */
+/**
+ * setPlanConfirmationText records what the user has typed into a
+ * destructive plan's own type-the-name gate (C-3: purge).
+ *
+ * Store state rather than the renderer's own useState, because the thing
+ * that READS it is the modal's Confirm button (confirmplan.js), which is a
+ * sibling of the renderer and not its child. Written from onInput - an
+ * event handler, outside Preact's render/effect cycle - for the same reason
+ * setPlanOptions is (plan_install.js's header comment).
+ */
+function setPlanConfirmationText(text) {
+  const modal = store.get().modal;
+  if (!modal) return;
+  store.set({ modal: { ...modal, confirmationText: text } });
+}
+
 function setPlanOptions(patch) {
   const modal = store.get().modal;
   if (!modal) return;
@@ -1479,6 +1504,7 @@ const actions = {
   closePlan: closeModal,
   confirmPlan,
   setPlanOptions,
+  setPlanConfirmationText,
   replanWith,
   searchSources,
   searchPageGoTo,
