@@ -447,6 +447,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A refused import reports a cleanup it could not finish (#310).** The
+  conflict refusal removes the cache entry it created, and a failed removal
+  used to disappear into a debug log — leaving an orphaned copy of the whole
+  archive with no signal at all. It now logs at warn level and rides the
+  refusal itself: `*core.ConflictError` gains `CleanupWarnings`, surfaced on
+  the `--json` error envelope as an additive `details.cleanup_warnings`
+  (omitted entirely by every ordinary refusal, including every install one).
+  The hard-error return between the cache write and the conflict gate — a
+  profile whose `link_method` is unrecognised — also discards the entry it
+  created, instead of leaking it.
+
+- **`lmm profile apply`/`sync`/`switch`'s lock-refusal warning reads like
+  every other lock refusal (#311).** `UpsertMod`'s refusal was a fifth
+  hand-worded sentence, and became user-visible when that warning stopped
+  being `--verbose`-only; it quoted the profile name where the canonical
+  wording does not. It now goes through `core.LockedRefRefusalError` — the
+  same sentence, the same remedies — keeping its own "(refusing to record
+  vX)" datum for the version the write was asking for.
+
 - **A failed profile write is no longer invisible on `lmm install`'s plain
   output (#312).** When the mod installed but its profile ref could not be
   written (an unloadable profile YAML, EACCES, a cancelled create), core

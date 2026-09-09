@@ -816,7 +816,8 @@ type InstallResult struct {
 	// FLAG rather than something a frontend recovers by reading the
 	// matching Notes entry: the note is an English sentence, this is the
 	// datum. True in the BATCH path when ANY mod's profile write failed.
-	ProfileWriteFailed bool `json:"profile_write_failed,omitempty"`
+	// omitzero, so an ordinary install's document is unchanged (#312).
+	ProfileWriteFailed bool `json:"profile_write_failed,omitzero"`
 
 	Warnings []string `json:"warnings,omitempty"`
 	Notes    []string `json:"notes,omitempty"`

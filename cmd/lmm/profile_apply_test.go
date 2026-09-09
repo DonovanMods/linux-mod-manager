@@ -302,7 +302,7 @@ func applyLockRefusalFixture(t *testing.T) (*core.Service, *domain.Game) {
 // ProfileManager.UpsertMod's own refusal sentence as "could not update
 // profile: <err>", with no "Warning: " prefix baked in.
 // applyLockRefusalWarning is the stderr line the CLI renders from it.
-const applyLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile \"default\" - refusing to record v1.1; move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1'"
+const applyLockRefusalDetail = "could not update profile: mod is locked: test-src:mod1 is locked at v in profile default - move the lock with 'lmm mod lock -s test-src -p default mod1 <version>' or unlock with 'lmm mod unlock -s test-src -p default mod1' (refusing to record v1.1)"
 
 const applyLockRefusalWarning = "Warning: " + applyLockRefusalDetail + "\n"
 
