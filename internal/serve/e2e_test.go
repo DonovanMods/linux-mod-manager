@@ -5122,3 +5122,82 @@ func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
 		"both halves must carry their own full text as a title, so nothing cut is unrecoverable")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo is C-1 of the
+// epic live review, made deterministic.
+//
+// A confirmed profile switch leaves TWO hydrations in flight at once:
+// onJobDone reads the route at the instant the job lands (main.js) - still
+// the OLD profile, because the picker's own navigate is deferred to a
+// microtask - and the route change that follows hydrates the new one. Both
+// write Mission Control's four documents into the same store slots, so the
+// screen belongs to whichever settles last. When that is the stale one, the
+// application renders the previous profile's mods, updates, health and
+// conflicts under the new profile's URL: exactly the wrong-context bug class
+// path-based routing was introduced to make impossible, re-entering through
+// the store instead of the URL.
+//
+// TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile catches this, but
+// only when the scheduler happens to lose the race (~10% of runs). Here the
+// fixture delays every GET scoped to the profile being LEFT, which
+// guarantees the stale hydration lands last - so this scenario fails on
+// every single run without the fence, and passes on every single run with
+// it.
+func TestE2E_ASlowStaleHydrationCannotRepaintTheProfileSwitchedTo(t *testing.T) {
+	const staleReadDelay = 400 * time.Millisecond
+	f := newE2EFixtureWithASwitchTargetAndSlowStaleReads(t, staleReadDelay)
+
+	var location, indicator, library string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		// The profile being left is fully on screen before anything moves:
+		// without this the scenario could switch away before the FIRST
+		// (equally delayed) hydration had landed, and prove nothing.
+		chromedp.Poll(
+			`document.querySelector(".library")?.textContent.includes("Alpha Mod")`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__trigger[data-profile="hardcore"]`, chromedp.ByQuery),
+		// The precondition: wait until the stale hydration has reached its
+		// first write. That write is the scoped status pair, and a resource
+		// timing entry is recorded when a response completes - so a second
+		// `profile=default` status request (the first was the initial
+		// hydration) means the response that would repaint the deploy
+		// indicator with the other profile's state is in the page's hands.
+		chromedp.Poll(
+			`window.performance.getEntriesByType("resource").filter(`+
+				`(e) => e.name.includes("/api/v1/status") && e.name.includes("profile=default")).length >= 2`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+		// Then a settle window - deliberately a sleep, and the one place in
+		// this suite where that is the right instrument. The assertion here
+		// is an ABSENCE (no stale document lands), and an absence can only
+		// be proved by giving the write that must not happen the time it
+		// would have needed. Unfenced, the status commit above is followed
+		// immediately by the four Mission Control reads, each of which pays
+		// the fixture's delay once more before repainting the library; this
+		// window is comfortably longer than that whole sequence. Fenced,
+		// the hydration stops at the status pair and never issues them at
+		// all, so there is no later request left to wait for instead.
+		chromedp.Sleep(3*staleReadDelay),
+		chromedp.Location(&location),
+		textContent(`.deploy-indicator`, &indicator),
+		chromedp.Text(`.library`, &library, chromedp.ByQuery),
+	)
+
+	assert.True(t, strings.HasSuffix(location, "/g/g1/hardcore"),
+		"the switch must take the URL with it")
+	assert.Contains(t, library, "Beta Mod",
+		"the library must hold the profile now in the URL, not the one the stale hydration answered for")
+	assert.NotContains(t, library, "Alpha Mod",
+		"a hydration started under the profile the user left must not repaint the profile they moved to")
+	assert.Equal(t, "Deployed", strings.TrimSpace(indicator),
+		"the deploy indicator must describe the profile on screen")
+	assert.Empty(t, f.BrowserErrors())
+}

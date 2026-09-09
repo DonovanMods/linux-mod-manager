@@ -89,6 +89,52 @@ async function maybeRedirectFromChooser(games) {
   if (path) navigate(path, { replace: true });
 }
 
+// hydrateSeq is the fence every route-scoped write in this module passes
+// before it lands (C-1, epic live review).
+//
+// hydrate() is not the only thing that starts one: onJobDone re-hydrates on
+// every completed job, reading the route at THAT instant, while the profile
+// picker's own navigate is deferred to a microtask - so a confirmed switch
+// leaves two hydrations racing, one under the profile being left and one
+// under the profile moved to, both writing the same four store slots. The
+// store belonged to whichever settled last, which meant Mission Control
+// could render the previous profile's mods, updates, health and conflicts
+// under the new profile's URL: the wrong-context bug class path-based
+// routing exists to prevent, re-entering through the store instead of the
+// URL.
+//
+// A monotonic counter rather than a route-key comparison, for the case a
+// route key cannot see: TWO hydrations of the SAME route (a job completing
+// while a slice retry is in flight) are equally capable of landing out of
+// order, and only the newest one's answer is current. Claiming a number
+// invalidates every claim before it, whatever route it was made for.
+let hydrateSeq = 0;
+
+/** beginHydration claims the next fence number, invalidating every write
+ * still in flight behind an older one. */
+function beginHydration() {
+  hydrateSeq += 1;
+  return hydrateSeq;
+}
+
+/** isCurrentHydration reports whether seq is still the newest claim - the
+ * check a slice reload (which claims no number of its own) makes so a route
+ * change during its fetch drops its answer rather than writing another
+ * context's document into the store. */
+function isCurrentHydration(seq) {
+  return seq === hydrateSeq;
+}
+
+/** commitHydration writes patch into the store only while seq is still the
+ * newest claim, and reports whether it did - so a caller with more work to
+ * do after the write can stop instead of continuing to fetch for a route
+ * nobody is looking at. */
+function commitHydration(seq, patch) {
+  if (!isCurrentHydration(seq)) return false;
+  store.set(patch);
+  return true;
+}
+
 /**
  * Loads the documents the current route needs.
  *
@@ -101,13 +147,16 @@ async function maybeRedirectFromChooser(games) {
  * questions.
  */
 async function hydrate(route) {
+  const seq = beginHydration();
+
   if (route.view === "chooser") {
     try {
       const status = await get("/api/v1/status");
-      store.set({ status, games: status.games, error: null });
+      if (!commitHydration(seq, { status, games: status.games, error: null }))
+        return;
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      store.set({ status: null, games: null, error: message });
+      commitHydration(seq, { status: null, games: null, error: message });
       return;
     }
     await maybeRedirectFromChooser(store.get().games);
@@ -120,12 +169,13 @@ async function hydrate(route) {
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    store.set({
+    const committed = commitHydration(seq, {
       status,
       games: allStatus.games,
       error: null,
       fetchErrors: { ...store.get().fetchErrors, status: null },
     });
+    if (!committed) return;
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
     // A RE-hydrate (main.js's onJobDone runs this on every job completion,
@@ -135,12 +185,12 @@ async function hydrate(route) {
     // The fatal `error` slice is reserved for the FIRST load, where there
     // is nothing on screen yet to protect (the I3 rule, applied here).
     if (store.get().status) {
-      store.set({
+      commitHydration(seq, {
         fetchErrors: { ...store.get().fetchErrors, status: message },
       });
       return;
     }
-    store.set({ status: null, games: null, error: message });
+    commitHydration(seq, { status: null, games: null, error: message });
     return;
   }
 
@@ -164,7 +214,7 @@ async function hydrate(route) {
     get(scoped("/api/v1/health", context)),
     get(scoped("/api/v1/conflicts", context)),
   ]);
-  store.set({
+  commitHydration(seq, {
     mods: settled(mods),
     updates: settled(updates),
     health: settled(health),
@@ -269,19 +319,26 @@ async function hydrateModPage(route, context) {
  * stale document into the new context.
  */
 async function reload(key, path) {
+  // Reads the CURRENT fence number without claiming one (C-1): a slice
+  // retry is not a hydration and must not invalidate one, but its own
+  // answer is just as capable of landing after a route change as
+  // hydrate()'s was - scoping the REQUEST to the route at call time only
+  // decides which document is fetched, never which route is on screen when
+  // it comes back.
+  const seq = hydrateSeq;
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
   try {
     const value = await get(scoped(path, context));
-    store.set({
+    commitHydration(seq, {
       [key]: value,
       fetchErrors: { ...store.get().fetchErrors, [key]: null },
     });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({
+    commitHydration(seq, {
       fetchErrors: { ...store.get().fetchErrors, [key]: message },
     });
   }
@@ -299,6 +356,7 @@ async function reload(key, path) {
  * that could not be open unless Mission Control had already loaded once.
  */
 async function reloadStatus() {
+  const seq = hydrateSeq;
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
@@ -308,14 +366,16 @@ async function reloadStatus() {
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    store.set({
+    commitHydration(seq, {
       status,
       games: allStatus.games,
       fetchErrors: { ...store.get().fetchErrors, status: null },
     });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({ fetchErrors: { ...store.get().fetchErrors, status: message } });
+    commitHydration(seq, {
+      fetchErrors: { ...store.get().fetchErrors, status: message },
+    });
   }
 }
 

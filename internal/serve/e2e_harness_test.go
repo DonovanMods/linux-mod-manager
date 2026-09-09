@@ -1913,3 +1913,76 @@ func newE2EFixtureWithALockedAndAnUnlockedUpdate(t *testing.T) e2eFixture {
 		BrowserErrors: browserErrors,
 	}
 }
+
+// startE2EProxyDelayingProfileReads fronts an already-running backend with a
+// reverse proxy that sleeps for delay before forwarding any GET whose
+// `profile` query parameter names profile, and forwards everything else
+// untouched.
+//
+// It exists for exactly one thing: making C-1's hydrate() race
+// DETERMINISTIC. A profile switch leaves two hydrations in flight at once -
+// onJobDone's (read under the OLD profile, main.js) and the route change's
+// (the new one) - and the store belongs to whichever settles last. On a
+// loopback server both settle in microseconds, so which one wins is decided
+// by the scheduler; the epic live review measured the stale one winning
+// ~10% of the time. Slowing only the OLD profile's reads inverts that into
+// a certainty: the stale hydration is now guaranteed to land last, so a
+// scenario that asserts the NEW profile's documents are on screen fails
+// every single run without the fence and passes every single run with it.
+//
+// GET only. The switch's own plan/apply are POSTs and must not be delayed:
+// the scenario needs the JOB to finish promptly and the READS to lag.
+func startE2EProxyDelayingProfileReads(t *testing.T, backend, profile string, delay time.Duration) string {
+	t.Helper()
+
+	backendURL, err := url.Parse(backend)
+	require.NoError(t, err)
+
+	proxy := &httputil.ReverseProxy{
+		Transport: e2eProxyTransport(t),
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.SetURL(backendURL)
+			r.Out.Host = backendURL.Host
+			// Same reason startE2EServerWithDelayedJobStart rewrites it:
+			// originCheck (middleware.go) compares Origin against r.Host,
+			// which is the BACKEND's address once this proxy has rewritten
+			// it, so the browser's own Origin (this proxy) has to move too
+			// or every mutation through here is refused as cross-origin.
+			if r.Out.Header.Get("Origin") != "" {
+				r.Out.Header.Set("Origin", "http://"+backendURL.Host)
+			}
+		},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Query().Get("profile") == profile {
+			time.Sleep(delay)
+		}
+		proxy.ServeHTTP(w, r)
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	proxyServer := &http.Server{Handler: mux}
+	served := make(chan error, 1)
+	go func() { served <- proxyServer.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = proxyServer.Close()
+		if err := <-served; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("proxy server: %v", err)
+		}
+	})
+
+	return "http://" + ln.Addr().String()
+}
+
+// newE2EFixtureWithASwitchTargetAndSlowStaleReads is
+// newE2EFixtureWithASwitchTarget served through the profile-read-delaying
+// proxy above, pointed at the profile the scenario switches AWAY from.
+func newE2EFixtureWithASwitchTargetAndSlowStaleReads(t *testing.T, delay time.Duration) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithASwitchTarget(t)
+	f.BaseURL = startE2EProxyDelayingProfileReads(t, f.BaseURL, f.Profile, delay)
+	return f
+}
