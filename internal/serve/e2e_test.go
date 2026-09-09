@@ -957,6 +957,20 @@ func TestE2E_PostJobRehydrateFailureLeavesMissionControlOnScreen(t *testing.T) {
 // control to the thing it was, ready to be used again. A progress readout
 // that never goes away would leave the top bar with no Deploy button after
 // the first deploy of the session.
+//
+// I-1 of the epic live review: this scenario timed out once in three suite
+// runs (30.5 s, a timeout rather than an assertion) while passing 10/10 in
+// isolation - a contention-sensitive wait, not a defect. chromedp.WaitVisible
+// depends on the browser's node tracking noticing a mutation, which the
+// harness has documented failing to do for a later removal (waitGone); asked
+// of the PAGE with an explicit polling interval instead, the same question
+// is answered by the page's own DOM every 50 ms and cannot be missed.
+//
+// The wait and the dismissing click are ONE in-page expression rather than
+// two round trips. A succeeded job now releases its own control after a few
+// seconds (I-2), so a separate Poll-then-Click would be racing that timer to
+// prove the manual dismiss works; clicking inside the poll closes the window
+// entirely.
 func TestE2E_DeployDismissesBackToTheButton(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
@@ -966,9 +980,14 @@ func TestE2E_DeployDismissesBackToTheButton(t *testing.T) {
 		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
-		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
-		chromedp.Click(`.job-progress__dismiss`, chromedp.ByQuery),
-		chromedp.WaitVisible(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.Poll(`(() => {
+			const el = document.querySelector('.job-progress[data-state="succeeded"] .job-progress__dismiss');
+			if (!el) return false;
+			el.click();
+			return true;
+		})()`, nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		chromedp.Poll(`document.querySelector('[data-action="deploy"]') !== null`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
 	)
 
 	assert.Empty(t, f.BrowserErrors())
