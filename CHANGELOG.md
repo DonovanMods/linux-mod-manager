@@ -88,6 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Custom `api` sources can resolve dependencies (#122).** They reported no
+  dependency capability unconditionally, because the definition had no way
+  to express "ask the API what this mod needs". Declaring
+  `endpoints.dependencies` (a `path` plus the `list` dot-path) and
+  `mappings.dependency` (`mod_id`, plus optional `source_id` and `version`)
+  turns it on, and core's existing dependency resolver reads it like any
+  other source's. An entry with no mapped `source_id` refers to a mod in the
+  same source, which is what a self-contained catalogue wants. A definition
+  that declares neither is unchanged — still an honest capability gap.
+
 - **Custom `api` sources can validate their API key live (#121).** Their
   keys were stored unvalidated — "validated on first use" — because a YAML
   definition had no way to say what a valid key looks like. It does now: an

@@ -152,3 +152,73 @@ func TestAPISourceKeyNeverInErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "SUPERSECRET")
 }
+
+// TestAPISourceDependenciesReachTheResolver is #122's core-side claim: a
+// custom api source that declares endpoints.dependencies is no longer a
+// hard capability gap - core's own dependency resolution reads it like any
+// other source's.
+func TestAPISourceDependenciesReachTheResolver(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	mux.HandleFunc("/mods/77", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id": 77, "name": "Cool Mod", "latest_version": "1.2.0"}`)
+	})
+	mux.HandleFunc("/mods/88", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id": 88, "name": "Required Lib", "latest_version": "3.0.0"}`)
+	})
+	mux.HandleFunc("/mods/77/deps", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"requires": [{"id": 88, "min_version": "3.0.0"}]}`)
+	})
+	mux.HandleFunc("/mods/88/deps", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"requires": []}`)
+	})
+	// PlanInstall lists each mod's files as part of building the plan.
+	mux.HandleFunc("/mods/77/files", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"files": [{"id": 900, "file_name": "cool-1.2.0.zip", "version": "1.2.0", "size_bytes": 11}]}`)
+	})
+	mux.HandleFunc("/mods/88/files", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"files": [{"id": 901, "file_name": "lib-3.0.0.zip", "version": "3.0.0", "size_bytes": 11}]}`)
+	})
+
+	def := apiSourceDef(srv.URL, false)
+	def.API.Auth = nil
+	def.API.Endpoints.Dependencies = &custom.EndpointConfig{Path: "/mods/{mod_id}/deps", List: "requires"}
+	def.API.Mappings.Dependency = map[string]string{"mod_id": "id", "version": "min_version"}
+
+	src, err := custom.New(def)
+	require.NoError(t, err)
+	assert.True(t, source.CapabilitiesOf(src).Dependencies,
+		"declaring the endpoint is what turns the capability on")
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src)
+
+	game := &domain.Game{ID: "testgame", Name: "Test Game", ModPath: t.TempDir(),
+		DeployMode: domain.DeployCopy, SourceIDs: map[string]string{"e2e-api": "testgame"}}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	mod, err := svc.GetMod(context.Background(), "e2e-api", game.ID, "77")
+	require.NoError(t, err)
+
+	refs, err := svc.GetDependencies(context.Background(), "e2e-api", mod)
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	assert.Equal(t, domain.ModReference{SourceID: "e2e-api", ModID: "88", Version: "3.0.0"}, refs[0])
+
+	// The plan the resolver produces carries the dependency as a mod to
+	// install alongside the target, with no warnings.
+	plan, err := svc.PlanInstall(context.Background(), game, "default", "e2e-api", "77", false)
+	require.NoError(t, err)
+	assert.Empty(t, plan.DependencyWarnings)
+	names := make([]string, 0, len(plan.Dependencies))
+	for _, d := range plan.Dependencies {
+		names = append(names, d.ID)
+	}
+	assert.Equal(t, []string{"88"}, names, "core resolved the declared dependency")
+}

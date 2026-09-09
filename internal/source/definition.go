@@ -106,6 +106,13 @@ type APIEndpoints struct {
 	GetMod      *EndpointConfig `yaml:"get_mod"`
 	ModFiles    *EndpointConfig `yaml:"mod_files"`
 	DownloadURL *EndpointConfig `yaml:"download_url"`
+	// Dependencies lists a mod's required mods (#122). Declaring it is what
+	// turns Capabilities().Dependencies on for an api source - it was
+	// hard-false before, because there was no endpoint concept to express
+	// "ask the API what this mod needs". Path takes {mod_id}/{game_id};
+	// List is the dot-path to the array, mapped through
+	// APIMappings.Dependency.
+	Dependencies *EndpointConfig `yaml:"dependencies"`
 }
 
 // EndpointConfig configures a single API endpoint.
@@ -120,6 +127,12 @@ type EndpointConfig struct {
 type APIMappings struct {
 	Mod  map[string]string `yaml:"mod"` // domain field key -> JSON dot-path
 	File map[string]string `yaml:"file"`
+	// Dependency maps one entry of the dependencies endpoint's list onto a
+	// domain.ModReference (#122). "mod_id" is required whenever
+	// Endpoints.Dependencies is defined; "source_id" is optional and
+	// defaults to this source's own ID, which is what a self-contained
+	// catalogue wants; "version" is optional.
+	Dependency map[string]string `yaml:"dependency"`
 }
 
 var idPattern = regexp.MustCompile(`^[a-z0-9-]+$`)
@@ -136,6 +149,12 @@ var knownFileMappingKeys = map[string]bool{
 	"id": true, "name": true, "filename": true, "version": true, "size": true,
 }
 
+// knownDependencyMappingKeys are the domain.ModReference fields a
+// dependency mapping may target (#122).
+var knownDependencyMappingKeys = map[string]bool{
+	"mod_id": true, "source_id": true, "version": true,
+}
+
 // validateEndpointsAndMappings checks the api block's endpoint/mapping rules
 // (design §4): at least one endpoint, per-endpoint required fields, required
 // mapping keys, and no unknown mapping keys.
@@ -148,6 +167,7 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 		{"get_mod", c.Endpoints.GetMod},
 		{"mod_files", c.Endpoints.ModFiles},
 		{"download_url", c.Endpoints.DownloadURL},
+		{"dependencies", c.Endpoints.Dependencies},
 	}
 
 	defined := false
@@ -172,6 +192,9 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 	if c.Endpoints.DownloadURL != nil && c.Endpoints.DownloadURL.Field == "" {
 		return errors.New("endpoints.download_url: field is required")
 	}
+	if c.Endpoints.Dependencies != nil && c.Endpoints.Dependencies.List == "" {
+		return errors.New("endpoints.dependencies: list is required")
+	}
 
 	if c.Mappings.Mod["id"] == "" {
 		return errors.New(`mappings.mod: "id" is required`)
@@ -182,6 +205,9 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 	if c.Endpoints.ModFiles != nil && c.Mappings.File["id"] == "" {
 		return errors.New(`mappings.file: "id" is required when mod_files is defined`)
 	}
+	if c.Endpoints.Dependencies != nil && c.Mappings.Dependency["mod_id"] == "" {
+		return errors.New(`mappings.dependency: "mod_id" is required when dependencies is defined`)
+	}
 	for k := range c.Mappings.Mod {
 		if !knownModMappingKeys[k] {
 			return fmt.Errorf("mappings.mod: unknown key %q", k)
@@ -190,6 +216,11 @@ func (c *APIConfig) validateEndpointsAndMappings() error {
 	for k := range c.Mappings.File {
 		if !knownFileMappingKeys[k] {
 			return fmt.Errorf("mappings.file: unknown key %q", k)
+		}
+	}
+	for k := range c.Mappings.Dependency {
+		if !knownDependencyMappingKeys[k] {
+			return fmt.Errorf("mappings.dependency: unknown key %q", k)
 		}
 	}
 	return nil

@@ -127,6 +127,36 @@ func TestSourceDefinitionValidate(t *testing.T) {
 			*d = validAPIDef()
 			d.API.Mappings.Mod["fancyness"] = "x"
 		}, `mappings.mod: unknown key "fancyness"`},
+		// #122: the declarative dependencies endpoint.
+		{"valid dependencies endpoint", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps", List: "dependencies"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id", "source_id": "source", "version": "min_version"}
+		}, ""},
+		{"dependencies endpoint missing path", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{List: "dependencies"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id"}
+		}, "dependencies: path is required"},
+		{"dependencies endpoint missing list", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id"}
+		}, "dependencies: list is required"},
+		{"dependencies without a mod_id mapping", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps", List: "dependencies"}
+		}, `mappings.dependency: "mod_id" is required`},
+		{"unknown dependency mapping key", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Endpoints.Dependencies = &EndpointConfig{Path: "/mods/{mod_id}/deps", List: "dependencies"}
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id", "optional": "is_optional"}
+		}, `mappings.dependency: unknown key "optional"`},
+		{"dependency mappings without the endpoint are pointless but harmless", func(d *SourceDefinition) {
+			*d = validAPIDef()
+			d.API.Mappings.Dependency = map[string]string{"mod_id": "id"}
+		}, ""},
+
 		// #121: the declarative auth.validate probe.
 		{"valid auth validate probe", func(d *SourceDefinition) {
 			*d = validAPIDef()
