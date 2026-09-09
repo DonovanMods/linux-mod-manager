@@ -31,6 +31,8 @@ import { VerifyFixPlanView } from "./plan_verify_fix.js";
 import { ProfileImportPlanView } from "./plan_profile_import.js";
 import { ImportArchivePlanView } from "./plan_import_archive.js";
 import { AdoptPlanView } from "./plan_adopt.js";
+import { SwitchPlanView } from "./plan_switch.js";
+import { ProfileApplyPlanView } from "./plan_profile_apply.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
 // "profile_import" each get their real renderer here, replacing the
@@ -45,11 +47,14 @@ const renderers = {
   updates: UpdatesBatchPlanView,
   verify_fix: VerifyFixPlanView,
   profile_import: ProfileImportPlanView,
-  // issue 333's two Setup-surface kinds - GenericPlanView's own fallback
-  // list (docs/plans/unit7-carry.md m8) narrows to "switch"/"profile_apply"
-  // now that both of these have a real renderer.
+  // issue 333's two Setup-surface kinds.
   import_archive: ImportArchivePlanView,
   adopt: AdoptPlanView,
+  // issue 334: the m8 carry's two remaining kinds. GenericPlanView stays
+  // the honest fallback for the NEXT kind wired before its renderer
+  // exists - it is not dead code once this table is complete.
+  switch: SwitchPlanView,
+  profile_apply: ProfileApplyPlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */

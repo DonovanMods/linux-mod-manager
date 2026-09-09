@@ -10,8 +10,10 @@ package serve
 // sends, and the end-state assertions are unchanged.
 
 import (
+	"encoding/json/v2"
 	"testing"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,8 +110,31 @@ func TestFlowUpdates_LockedSelection_IsRefusedWithoutStoppingTheBatch(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, updateFromVersion, locked.Version, "the locked mod is left where the lock put it")
 
-	result, ok := j.status().Result.(*updatesBatchResult)
-	require.True(t, ok, "the stored result must be the batch document")
-	require.Len(t, result.Failed, 1, "the refusal must be reported, not swallowed")
-	assert.Contains(t, result.Failed[0].Mod, "u3")
+	result, ok := j.status().Result.(*core.UpdateBatchResult)
+	require.True(t, ok, "the stored result must be core's batch document (#324)")
+	assert.Empty(t, result.Failed, "a lock is a refusal, not a failure (#97)")
+	require.Len(t, result.Skipped, 1, "the refusal must be reported, not swallowed")
+	assert.Equal(t, "u3", result.Skipped[0].Mod.ModID)
+	assert.Equal(t, core.UpdateSkipped, result.Skipped[0].Status)
+	assert.Contains(t, result.Skipped[0].Reason, "is locked at v")
+	require.Len(t, result.Applied, 1)
+	assert.Equal(t, "u1", result.Applied[0].Mod.ModID)
+}
+
+// TestFlowUpdates_PlanNamesASelectedModWithNoUpdate pins UpdateBatchPlan's
+// NotFound half over the wire: a ticked key the check reports nothing for
+// is named in the plan rather than silently dropped from the count.
+func TestFlowUpdates_PlanNamesASelectedModWithNoUpdate(t *testing.T) {
+	s, _, game := newUpdatesFixtureServer(t)
+
+	_, raw := planFlow(t, s, game, "updates",
+		`{"mods":["`+fixtureSourceID+`:u1","`+fixtureSourceID+`:ghost"]}`)
+
+	var resp struct {
+		Plan core.UpdateBatchPlan `json:"plan"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &resp))
+	require.Len(t, resp.Plan.Updates, 1)
+	assert.Equal(t, "u1", resp.Plan.Updates[0].InstalledMod.ID)
+	assert.Equal(t, []string{fixtureSourceID + ":ghost"}, resp.Plan.NotFound)
 }

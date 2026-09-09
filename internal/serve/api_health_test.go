@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -39,6 +40,19 @@ func twinConflictFixture(t *testing.T) (*core.Service, *domain.Game) {
 	return svc, game
 }
 
+// requireVerifyReportEncodesLike is requireEncodesLike for a VerifyReport:
+// it first asserts the response's own checked_at is a real, recent stamp
+// (#334) and then copies it onto want, because the two documents come from
+// two separate live verify runs milliseconds apart and would otherwise
+// differ on that field alone. Every other field still has to byte-match.
+func requireVerifyReportEncodesLike(t *testing.T, got []byte, report core.VerifyReport, want *core.VerifyReport, since time.Time) {
+	t.Helper()
+	require.False(t, report.Result.CheckedAt.IsZero(), "the report must say when it was checked")
+	require.False(t, report.Result.CheckedAt.Before(since))
+	want.Result.CheckedAt = report.Result.CheckedAt
+	requireEncodesLike(t, got, want)
+}
+
 // TestServer_APIHealth_ReturnsExactVerifyReport is /api/v1/health's
 // headline RED test (docs/plans/2026-08-30-serve-impl.md Task 5, per the
 // coordinator's ruling on the design doc's route list): the body must
@@ -53,6 +67,7 @@ func twinConflictFixture(t *testing.T) (*core.Service, *domain.Game) {
 // below is the one that does.
 func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 	svc, game := twinConflictFixture(t)
+	since := time.Now().UTC()
 
 	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
 	req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/health", nil)
@@ -67,7 +82,7 @@ func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 
 	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
-	requireEncodesLike(t, rec.Body.Bytes(), want)
+	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
 
 // TestServer_APIHealth_MatchesCLIVerifyTier is the task-5 gate review's
@@ -86,6 +101,7 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 		Files: []domain.DownloadableFile{{ID: "f1", Version: "2.0", IsPrimary: true}},
 	})
 	svc, game := newFixtureServiceWithSource(t, src)
+	since := time.Now().UTC()
 
 	gameCache := svc.GetGameCache(game)
 	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
@@ -122,7 +138,7 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 
 	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
 	require.NoError(t, err)
-	requireEncodesLike(t, rec.Body.Bytes(), want)
+	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
 
 // TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts is Important 2 (epic live

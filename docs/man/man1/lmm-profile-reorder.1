@@ -19,6 +19,12 @@ Mods not listed are appended at the end. A mod ID shared by mods from
 different sources is ambiguous; qualify it as "source:modid" instead.
 
 .PP
+With -i/--interactive, the load order is printed as a numbered list and you
+type the positions in the order you want them - no mod IDs needed. Ranges
+are accepted ("2-5,1"), positions you leave out keep their current relative
+order at the end, Enter keeps the order as it is, and q cancels.
+
+.PP
 Use -p/--profile to target a profile other than the active one - this
 flag belongs to 'reorder' itself, distinct from the game's active profile
 used by other 'profile' subcommands.
@@ -27,12 +33,17 @@ used by other 'profile' subcommands.
 Examples:
   lmm profile reorder --game skyrim-se
   lmm profile reorder --game skyrim-se --profile survival
+  lmm profile reorder -i --game skyrim-se
   lmm profile reorder 12345 67890 11111 --game skyrim-se
 
 
 .SH OPTIONS
 \fB-h\fP, \fB--help\fP[=false]
 	help for reorder
+
+.PP
+\fB-i\fP, \fB--interactive\fP[=false]
+	pick the new load order from a numbered list
 
 .PP
 \fB-p\fP, \fB--profile\fP=""

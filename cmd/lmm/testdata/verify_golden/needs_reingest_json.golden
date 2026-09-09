@@ -13,7 +13,8 @@
       {
         "mod_id": "bear-mount",
         "mod_name": "Bear Mount",
-        "status": "version_unverifiable"
+        "status": "version_unverifiable",
+        "fixable_reason": "there is nothing to check the recorded version against"
       },
       {
         "mod_id": "bear-mount",
@@ -34,6 +35,7 @@
     "issues": 0,
     "warnings": 4,
     "checked": 4,
-    "has_files": true
+    "has_files": true,
+    "checked_at": "<TIME>"
   }
 }

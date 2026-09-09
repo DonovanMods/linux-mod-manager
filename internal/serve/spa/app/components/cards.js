@@ -8,7 +8,8 @@
 import { html, useState } from "../render.js";
 import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
-import { modKey } from "../modrows.js";
+import { lockedNote, modKey } from "../modrows.js";
+import { relativeTime } from "../relativetime.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
 // distinct from a single-mod update's own "mod:{source}/{id}:update"
@@ -18,36 +19,25 @@ const UPDATES_BATCH_ORIGIN = "updates:batch";
 // HEALTH_REPAIR_ALL_ORIGIN is the Health card's "Repair all" control.
 const HEALTH_REPAIR_ALL_ORIGIN = "health:repair-all";
 
-// NOT_FIXABLE_REASONS maps a not-fixable finding's own Status to the stock
-// reason a person would need to hear (m3, unit 6 fix wave: core.
-// VerifyFinding's Fixable field says only THAT a row won't be repaired, not
-// WHY - the doc comment on it names the closed table this mirrors). Every
-// status not in this table (a version_mismatch from a LOCAL source, say -
-// notFixableReason below handles the locked/unlocked split separately) or
-// with an entry that has nothing useful to add falls back to the plain
-// sentence this used to always show.
-const NOT_FIXABLE_REASONS = {
-  version_unverifiable: "Nothing to check it against",
-  file_count_mismatch: "Nothing to repair it with",
-  conversion_failed: "Reinstall to retry the conversion",
-};
+// PROFILE_APPLY_ORIGIN is the Profile card's "Apply profile…" control.
+const PROFILE_APPLY_ORIGIN = "profile:apply";
 
 /** notFixableReason names why a finding's own Repair is absent.
- * version_mismatch is split on whether the mod is LOCKED, read off the
- * already-fetched library rows (mods) rather than the finding itself:
- * VerifyFinding.Note only ever carries "locked" on a --fix RUN's own
- * output (verify.go's resolveLast), never on the plain read this card
- * shows (task-A's own review note) - a version_mismatch can just as well
- * be not-fixable because its source is local, which this table has no
- * honest word for, so that case (and anything else this table doesn't
- * name) keeps the generic sentence rather than guessing. */
-function notFixableReason(f, mods) {
-  if (f.status === "version_mismatch") {
-    const mod = (mods ?? []).find((m) => m.id === f.mod_id);
-    if (mod?.locked) return "Locked to a version - unlock it first";
-  }
+ *
+ * Since issue 334 this is the ENGINE's own sentence, read straight off the
+ * finding (core.VerifyFinding.FixableReason), which replaced the
+ * hand-maintained status->sentence table and the locked/unlocked guess that
+ * used to live here. That guess read the lock off a separate library fetch
+ * and could not see the local-source case at all, so a version_mismatch on
+ * a locally imported mod got the generic sentence; the engine knows which
+ * of its own decision points refused the repair and says so.
+ *
+ * The generic fallback survives for a row the engine had nothing to add
+ * about - and for a finding decoded from an older document that carries no
+ * such key. */
+function notFixableReason(f) {
   return (
-    NOT_FIXABLE_REASONS[f.status] ??
+    f.fixable_reason ||
     "A verify --fix run would not attempt a repair for this finding"
   );
 }
@@ -75,6 +65,7 @@ export function AttentionCards({
   updates,
   health,
   conflicts,
+  mods,
   errors = {},
   actions,
 }) {
@@ -84,11 +75,13 @@ export function AttentionCards({
   );
   const conflictRows = conflicts?.conflicts ?? [];
   const hasError = Boolean(errors.updates || errors.health || errors.conflicts);
+  const notInstalled = notInstalledCount(state, mods);
 
   if (
     updateRows.length === 0 &&
     findings.length === 0 &&
     conflictRows.length === 0 &&
+    notInstalled === 0 &&
     !hasError
   ) {
     return null;
@@ -114,6 +107,14 @@ export function AttentionCards({
           result=${health?.result}
           error=${errors.health}
           onReverify=${actions.reloadHealth}
+          actions=${actions}
+        />`
+      }
+      ${
+        notInstalled > 0 &&
+        html`<${ProfileCard}
+          state=${state}
+          notInstalled=${notInstalled}
           actions=${actions}
         />`
       }
@@ -176,44 +177,69 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                         checked=${selected.has(key)}
                         onChange=${() => toggle(key)}
                       />
-                      <span class="card__row-name"
+                      <span class="card__row-name" title=${u.installed_mod.name}
                         >${u.installed_mod.name}</span
                       >
-                      <span class="mono card__row-detail"
+                      <span
+                        class="mono card__row-detail"
+                        title=${`${u.installed_mod.version} → ${u.new_version}`}
                         >${u.installed_mod.version} → ${u.new_version}</span
                       >
+                      ${
+                        // Owner item 3, unit 8 gate review: a locked row was
+                        // rendered as a plain checkbox like any other, so
+                        // ticking it promised an update the engine will
+                        // refuse. The mark is here, on the control the user
+                        // actually ticks, and again on the confirm modal.
+                        u.locked &&
+                        html`<span
+                          class="card__row-lock"
+                          data-testid="update-lock"
+                          title=${`This update will be skipped: ${lockedNote(u)}`}
+                          >${`🔒 ${lockedNote(u)}`}</span
+                        >`
+                      }
                     </li>
                   `;
                 })}
               </ul>
-              <${InlineJob}
-                origin=${UPDATES_BATCH_ORIGIN}
-                state=${state}
-                actions=${actions}
-              >
-                <button
-                  type="button"
-                  class="button"
-                  data-action="update-selected"
-                  disabled=${selected.size === 0}
-                  onClick=${updateSelected}
+              <div class="card__actions">
+                <${InlineJob}
+                  origin=${UPDATES_BATCH_ORIGIN}
+                  state=${state}
+                  actions=${actions}
                 >
-                  Update selected
-                </button>
-              <//>
+                  <button
+                    type="button"
+                    class="button"
+                    data-action="update-selected"
+                    disabled=${selected.size === 0}
+                    onClick=${updateSelected}
+                  >
+                    Update selected
+                  </button>
+                <//>
+              </div>
             `
       }
     </div>
   `;
 }
 
-// HealthCard carries the design doc's "re-run" (onReverify, a plain
-// re-fetch of /api/v1/health - it also doubles as the I3 CardError retry
-// above). Its sibling "last-verify timestamp" is NOT implemented:
-// core.VerifyResult carries no timestamp field, and adding one is a wire
-// change (core/testdata JSON goldens, the serve JSON-contract ratchet) this
-// unit's gate explicitly keeps frozen - filed as a follow-up core change
-// rather than silently dropped.
+// HealthCard carries both halves of the design doc's "last-verify
+// timestamp + re-run" (§Mission Control): onReverify is a plain re-fetch of
+// /api/v1/health (it also doubles as the I3 CardError retry above), and the
+// timestamp is core.VerifyResult.checked_at, the field issue 334 added for
+// exactly this line after issue 332 had to carry it.
+//
+// It renders as an AGE, not a clock time: what a reader needs from it is
+// whether the findings below are minutes or days old. checked_at is stamped
+// at the START of a verify run (internal/core/verify.go), which is the
+// honest anchor - a run that stopped halfway still checked what it checked,
+// at that moment.
+//
+// omitzero on the wire means a hand-built VerifyResult carries no such key
+// at all, so the line is omitted rather than rendered as an invalid date.
 function HealthCard({ state, findings, result, error, onReverify, actions }) {
   function repair(modID, name) {
     actions.openPlan({
@@ -235,11 +261,22 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
     });
   }
 
+  // ONE string, not adjacent interpolations - htm's whitespace collapsing
+  // (see conflictLabel below) would fuse "verified" to the age.
+  const checked = relativeTime(result?.checked_at);
+  const lastVerified = checked ? `Last verified ${checked}` : "";
+
   return html`
     <div class="card card--health">
       <p class="card__title">
         ⚠ Health${result ? ` (${result.issues + result.warnings})` : ""}
       </p>
+      ${
+        lastVerified &&
+        html`<p class="card__meta" data-testid="health-last-verified">
+          ${lastVerified}
+        </p>`
+      }
       ${
         error
           ? html`<${CardError}
@@ -255,10 +292,14 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                       key=${f.mod_id + "/" + (f.file_id || i)}
                       class="card__row"
                     >
-                      <span class="card__row-name"
+                      <span
+                        class="card__row-name"
+                        title=${f.mod_name || f.mod_id}
                         >${f.mod_name || f.mod_id}</span
                       >
-                      <span class="card__row-detail">${findingLabel(f)}</span>
+                      <span class="card__row-detail" title=${findingLabel(f)}
+                        >${findingLabel(f)}</span
+                      >
                       ${
                         f.fixable
                           ? html`<${InlineJob}
@@ -277,9 +318,8 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
                             <//>`
                           : html`<span
                               class="card__row-detail"
-                              title=${notFixableReason(f, state.mods?.mods)}
-                              >Not fixable:
-                              ${notFixableReason(f, state.mods?.mods)}</span
+                              title=${notFixableReason(f)}
+                              >Not fixable: ${notFixableReason(f)}</span
                             >`
                       }
                     </li>
@@ -312,6 +352,83 @@ function HealthCard({ state, findings, result, error, onReverify, actions }) {
               </div>
             `
       }
+    </div>
+  `;
+}
+
+/** notInstalledCount is how many of the current profile's listed mods have
+ * no install behind them - the number `lmm profile apply` exists to bring
+ * to zero, and the only thing the Profile card renders on.
+ *
+ * It is a SUBTRACTION of two documents this route already has, not a third
+ * fetch: core.ProfileSummary.mod_count is the profile YAML's own load order
+ * (GET /api/v1/status, scoped), and core.ModList carries one row per
+ * INSTALLED mod (GET /api/v1/mods). Planning the mutation would answer it
+ * exactly, but a plan is a mutation-shaped round trip with a server-side
+ * handle and a TTL, and Mission Control renders on every hydrate - so the
+ * card is derived, and the PLAN behind "Apply profile…" is what tells the
+ * precise truth.
+ *
+ * The one case the subtraction understates: core.ListMods also lists a mod
+ * that is installed but ABSENT from the load order (never silently
+ * dropped - internal/core/queries.go), so a profile with one such row AND
+ * one uninstalled entry cancels to zero and the card stays away. That is a
+ * missing prompt, never a false one, which is the right direction for a
+ * surface whose whole contract is "renders only when it has something to
+ * say".
+ */
+function notInstalledCount(state, mods) {
+  const profileName = state?.route?.profile;
+  const summary = (state?.status?.profiles ?? []).find(
+    (p) => p.name === profileName,
+  );
+  if (!summary) return 0;
+  return Math.max(0, summary.mod_count - (mods?.mods?.length ?? 0));
+}
+
+/** ProfileCard is the design's third attention state (issue 334): this
+ * profile lists mods nobody has installed, and `lmm profile apply` is the
+ * one command that converges them. */
+function ProfileCard({ state, notInstalled, actions }) {
+  // ONE string rather than three adjacent interpolations: htm collapses
+  // JSX-style whitespace between them, which silently fuses "profile" and
+  // "is" into "profileis" (the same trap conflictLabel below documents).
+  const sentence = `${notInstalled} mod${notInstalled === 1 ? "" : "s"} in this profile ${notInstalled === 1 ? "is" : "are"} not installed`;
+
+  function apply() {
+    actions.openPlan({
+      kind: "profile_apply",
+      origin: PROFILE_APPLY_ORIGIN,
+      title: `Apply ${state.route.profile}`,
+      confirmLabel: "Apply profile",
+      options: { profile: state.route.profile },
+    });
+  }
+
+  return html`
+    <div class="card card--profile">
+      <p class="card__title">${`◎ Profile (${notInstalled})`}</p>
+      <ul class="card__list">
+        <li class="card__row">
+          <span class="card__row-name">${sentence}</span>
+        </li>
+      </ul>
+      <div class="card__actions">
+        <${InlineJob}
+          origin=${PROFILE_APPLY_ORIGIN}
+          state=${state}
+          actions=${actions}
+        >
+          <button
+            type="button"
+            class="button"
+            data-action="apply-profile"
+            onClick=${apply}
+          >
+            Apply profile…
+          </button>
+        <//>
+      </div>
     </div>
   `;
 }
@@ -375,10 +492,16 @@ function ConflictsCard({ state, rows, error, onRetry, actions }) {
                     <li key=${c.path} class="card__row">
                       <span
                         class="card__row-name"
-                        title=${c.stale ? "A redeploy would change which file wins" : undefined}
+                        title=${
+                          c.stale
+                            ? `A redeploy would change which file wins — ${conflictLabel(c)}`
+                            : conflictLabel(c)
+                        }
                         >${conflictLabel(c)}</span
                       >
-                      <span class="mono card__row-detail">${c.path}</span>
+                      <span class="mono card__row-detail" title=${c.path}
+                        >${c.path}</span
+                      >
                       <button
                         type="button"
                         class="button button--small"

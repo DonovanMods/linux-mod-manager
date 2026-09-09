@@ -20,7 +20,7 @@ import { GameDetectSection, GameAddForm } from "./gameadd.js";
 
 export function GameChooser({ games }) {
   if (games === null) {
-    return html`<p class="app-booting">Loading…</p>`;
+    return html`<p class="app-booting">Loading your games…</p>`;
   }
 
   if (games.length === 0) {

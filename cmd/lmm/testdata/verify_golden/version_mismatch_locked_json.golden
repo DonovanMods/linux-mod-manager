@@ -8,7 +8,8 @@
         "mod_name": "Mod One",
         "status": "version_mismatch",
         "recorded": "1.5",
-        "effective": "1.0"
+        "effective": "1.0",
+        "fixable_reason": "the ref is locked at v1.5, and --fix will not rewrite what a lock means - unlock it first"
       },
       {
         "mod_id": "mod1",
@@ -20,6 +21,7 @@
     "issues": 1,
     "warnings": 0,
     "checked": 1,
-    "has_files": true
+    "has_files": true,
+    "checked_at": "<TIME>"
   }
 }

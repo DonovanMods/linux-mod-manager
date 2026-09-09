@@ -503,7 +503,7 @@ func TestJSONGolden_ProfileManagement(t *testing.T) {
 		seedDeployableMod(t, svc, game, "a", "Mod A", "a.esp")
 
 		out := runJSONCommand(t, func() error {
-			return doProfileReorder(context.Background(), svc, game, nil)
+			return doProfileReorder(context.Background(), svc, game, nil, nil)
 		})
 		assertJSONCLIGolden(t, "profile_reorder_listing", out)
 	})
@@ -514,7 +514,7 @@ func TestJSONGolden_ProfileManagement(t *testing.T) {
 		seedDeployableMod(t, svc, game, "b", "Mod B", "b.esp")
 
 		out := runJSONCommand(t, func() error {
-			return doProfileReorder(context.Background(), svc, game, []string{"b", "a"})
+			return doProfileReorder(context.Background(), svc, game, []string{"b", "a"}, nil)
 		})
 		assertJSONCLIGolden(t, "profile_reorder_result", out)
 	})

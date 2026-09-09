@@ -52,9 +52,15 @@ export function VerifyFixPlanView({ plan, modal }) {
                       <span class="plan__mod-detail">${findingLabel(f)}</span>
                       ${
                         // htm-ws-ok: "(not fixable)" already opens with its
-                        // own leading space when this renders.
+                        // own leading space when this renders. The engine's
+                        // own reason (issue 334) rides along as the title,
+                        // so hovering says WHY without lengthening a row
+                        // that is already one of many in this list.
                         !f.fixable &&
-                        html`<span class="plan__mod-detail plan__note--warn">
+                        html`<span
+                          class="plan__mod-detail plan__note--warn"
+                          title=${f.fixable_reason || ""}
+                        >
                           (not fixable)</span
                         >`
                       }

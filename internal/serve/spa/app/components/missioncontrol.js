@@ -89,7 +89,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
       <header class="app-bar app-bar--minimal">
         <span class="app-bar__brand">LMM</span>
       </header>
-      <main class="app-main">
+      <main id="main" class="app-main">
         <p class="app-error">${error}</p>
         <p><a href="/" onClick=${goToChooser}>Choose a different game</a></p>
       </main>
@@ -97,7 +97,7 @@ export function MissionControl({ state, onThemeChange, actions }) {
   }
 
   if (status === null) {
-    return html`<p class="app-booting">Loading…</p>`;
+    return html`<p class="app-booting">Loading this profile…</p>`;
   }
 
   // The live line the library's own header carries while a job is running
@@ -146,12 +146,13 @@ export function MissionControl({ state, onThemeChange, actions }) {
           ${fetchErrors.status} — showing the last loaded data.
         </p>`
       }
-      <main class="mission-control__body">
+      <main id="main" class="mission-control__body">
         <${AttentionCards}
           state=${state}
           updates=${updates}
           health=${health}
           conflicts=${conflicts}
+          mods=${mods}
           errors=${fetchErrors}
           actions=${actions}
         />

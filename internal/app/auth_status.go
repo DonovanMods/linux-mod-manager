@@ -69,6 +69,26 @@ type OrphanedToken struct {
 type AuthStatusReport struct {
 	Sources  []AuthSourceStatus `json:"sources"`
 	Orphaned []OrphanedToken    `json:"orphaned"`
+
+	// RestartRequired reports that the credential write this report answers
+	// DID happen, but the running process is still using the old one
+	// (#334, carried from the Unit 7 review). It is never set by AuthStatus
+	// itself - a plain status read has no such event to report - only by a
+	// caller that attempted a live re-key and could not complete it:
+	// today `lmm serve`'s login/logout routes, whose RekeySource swap can
+	// fail outright or fail to get the mutation gate within its grace.
+	//
+	// Before this field, that case answered "authenticated" and said
+	// nothing: the response was true about the stored key and silent about
+	// the fact that nothing would use it until a restart, with only a
+	// server-side WARN to show for it. A frontend renders this as exactly
+	// that - the key is saved, restart to pick it up - rather than the
+	// wire simply carrying no such signal.
+	//
+	// omitzero: a report from a surface that never attempts a live swap
+	// (`lmm auth status --json`, `lmm auth login --json`) carries no key at
+	// all rather than a bare false.
+	RestartRequired bool `json:"restart_required,omitzero"`
 }
 
 // AuthStatus assembles the `lmm auth status` report: one row per registered

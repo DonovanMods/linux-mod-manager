@@ -8,27 +8,31 @@
 // of a path segment. Everything else - the plan store, the job, the CSRF
 // gate - is the same machinery every other flow uses.
 //
-// The one thing it must NOT do is compute a single core plan up front and
-// apply it N times. Ruling 5 makes a plan a contract about a world that has
-// not moved, and the first mod's apply moves it for every mod after it -
-// which is why cmd/lmm's own bulk loop re-plans each row immediately before
-// its apply (applyBulkUpdate). So does this: the batch plan is the SELECTION
-// (the updates the check found, filtered to what the user ticked), and the
-// job turns each one into a fresh core.UpdatePlan via PlanUpdateFrom - the
-// local-only re-plan that costs no second source query - and applies that.
+// #324 (Unit 8): the batch itself is now core's. This file used to own the
+// loop AND the two documents it answered with, because there was no core
+// batch flow to defer to - which meant the batch's real decisions (ordering,
+// what a per-item failure does to the rest, how a locked ref is refused)
+// lived here, in a shape that disagreed with `lmm update --all`'s own loop
+// about the last of those. Both loops are gone; this kind is now the thin
+// adapter the Phase-3 rule asks for - decode the selection, call
+// Service.PlanUpdateBatch, hand the plan back on confirm to
+// Service.ApplyUpdateBatch - and the documents on the wire are core's
+// UpdateBatchPlan and UpdateBatchResult verbatim.
 //
-// A per-item failure does not abort the batch, matching the CLI loop
-// exactly: a locked mod refuses, a source hiccups, and the remaining rows
-// still get their update. The failures are named in the result document (and
-// on the job page) rather than thrown away, so "3 updated, 1 refused" is
-// something a user can actually read.
+// What the SPA sees is a superset of what it saw before: UpdateBatchPlan
+// carries updates/not_found/game_id/profile exactly as the retired
+// updatesBatchPlan did, and UpdateBatchResult adds game_id/profile plus a
+// `skipped` list to the applied/failed pair the retired updatesBatchResult
+// had (verified key-for-key against both sets of goldens). The one BEHAVIOUR
+// change: a locked ref now lands in `skipped` with the engine's own refusal
+// sentence instead of in `failed` with the wrapped error - the #97 rule the
+// CLI already followed.
 package serve
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -79,118 +83,53 @@ func splitModKey(key string) (sourceID, modID string, ok bool) {
 
 // updatesApplyRequest is the "options" member POST /api/v1/jobs accepts for
 // an updates plan. Both members mirror `lmm update --force/--no-hooks` and
-// are apply-time because ApplyUpdate reads them from opts.
+// are apply-time because ApplyUpdateBatch reads them from opts.
 type updatesApplyRequest struct {
 	Force     bool `json:"force,omitzero"`
 	SkipHooks bool `json:"skip_hooks,omitzero"`
 }
 
-// updateOptions renders the request as the core options struct.
-func (r updatesApplyRequest) updateOptions() core.UpdateOptions {
-	return core.UpdateOptions{Force: r.Force, SkipHooks: r.SkipHooks}
+// batchOptions renders the request as the core options struct. StopOnError
+// is deliberately not exposed: the web UI's batch is a set of independent
+// rows a user ticked, and abandoning the untried ones because an early one
+// failed is not what that gesture means (core's default, and both the
+// pre-#324 loops', is to carry on and name the failures).
+func (r updatesApplyRequest) batchOptions() core.UpdateBatchOptions {
+	return core.UpdateBatchOptions{Force: r.Force, SkipHooks: r.SkipHooks}
 }
 
-// updatesBatchPlan is the batch's wire document - what POST
-// /api/v1/plans/updates answers with, and what the confirm page renders.
-// There is no core type for it because there is no core batch flow: `lmm
-// update` loops over one-mod plans, and so does this kind's Apply. What the
-// batch itself owns is the SELECTION, which is what this document carries.
-type updatesBatchPlan struct {
-	GameID  string `json:"game_id"`
-	Profile string `json:"profile"`
-	// Updates are the selected rows the update check actually found, in the
-	// order it reported them.
-	Updates []domain.Update `json:"updates"`
-	// NotFound are selected keys the check reported no update for - a mod
-	// updated by someone else since the page was rendered, or a stale
-	// bookmark. They are named rather than silently dropped, because a user
-	// who ticked five boxes and sees four in the plan deserves to know which
-	// one went missing.
-	NotFound []string `json:"not_found,omitzero"`
-}
-
-// pendingUpdates is what the plan store holds between Plan and Apply. It
-// carries the domain.Updates themselves rather than core plans, because
-// each one is re-planned immediately before its own apply (see this file's
-// doc comment).
+// pendingUpdates is what the plan store holds between Plan and Apply: the
+// core plan itself (pointer identity preserved, so its unexported freshness
+// snapshot survives to ApplyUpdateBatch's staleness check) and the game it
+// was computed for - the same shape pendingSwitch and every other Plan/Apply
+// kind uses.
 type pendingUpdates struct {
-	Game    *domain.Game
-	Profile string
-	Updates []domain.Update
+	Game *domain.Game
+	Plan *core.UpdateBatchPlan
 }
 
-// planUpdatesKind implements planKind.Plan for "updates": run the same
-// update check the /updates page ran, then keep the rows the user ticked.
-// The check is re-run rather than trusted from the page because the page
-// may be minutes old, and applying an update the source no longer offers is
-// worse than telling the user it went away.
+// planUpdatesKind implements planKind.Plan for "updates": PlanUpdateBatch
+// runs the same update check the /updates surface ran, then keeps the rows
+// the user ticked. The check is re-run rather than trusted from the page
+// because the page may be minutes old, and applying an update the source no
+// longer offers is worse than telling the user it went away - which the
+// plan's own NotFound does.
 func planUpdatesKind(ctx context.Context, s *Server, sel selection, opts any) (any, any, error) {
 	req, ok := opts.(updatesPlanRequest)
 	if !ok {
 		return nil, nil, fmt.Errorf("updates plan: unexpected options type %T", opts)
 	}
 
-	installed, err := s.svc.GetInstalledMods(ctx, sel.Game.ID, sel.Profile)
+	plan, err := s.svc.PlanUpdateBatch(ctx, sel.Game, sel.Profile, req.Mods)
 	if err != nil {
 		return nil, nil, err
 	}
-	updates, err := s.svc.CheckGameUpdates(ctx, sel.Game, sel.Profile, installed, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	wanted := make(map[string]bool, len(req.Mods))
-	for _, key := range req.Mods {
-		wanted[key] = true
-	}
-	picked := make([]domain.Update, 0, len(req.Mods))
-	for _, upd := range updates {
-		key := domain.ModKey(upd.InstalledMod.SourceID, upd.InstalledMod.ID)
-		if wanted[key] {
-			picked = append(picked, upd)
-			delete(wanted, key)
-		}
-	}
-	missing := make([]string, 0, len(wanted))
-	for key := range wanted {
-		missing = append(missing, key)
-	}
-	sort.Strings(missing)
-
-	document := &updatesBatchPlan{
-		GameID:   sel.Game.ID,
-		Profile:  sel.Profile,
-		Updates:  picked,
-		NotFound: missing,
-	}
-	pending := &pendingUpdates{
-		Game:    sel.Game,
-		Profile: sel.Profile,
-		Updates: picked,
-	}
-	return document, pending, nil
-}
-
-// updatesBatchResult is the batch's result document: one entry per mod the
-// job actually got through, and one per mod it could not. The per-mod
-// entries are the frozen core.UpdateApplyResult verbatim - a batch is a
-// sequence of single updates, and its report should read as one.
-type updatesBatchResult struct {
-	Applied []core.UpdateApplyResult `json:"applied"`
-	Failed  []updateBatchFailure     `json:"failed,omitzero"`
-}
-
-// updateBatchFailure is one mod the batch could not update, with the reason
-// as text - a locked ref's refusal, a source failure, a stale plan.
-type updateBatchFailure struct {
-	Mod   string `json:"mod"`
-	Name  string `json:"name,omitzero"`
-	Error string `json:"error"`
+	return plan, &pendingUpdates{Game: sel.Game, Plan: plan}, nil
 }
 
 // applyUpdatesKind implements planKind.Apply for "updates". ctx is the
-// job's own context (jobs.go), and it is checked between mods - the same
-// place every core batch loop checks it, never mid-file-operation.
+// job's own context (jobs.go); core checks it between items, never
+// mid-file-operation (Ruling 16).
 func applyUpdatesKind(ctx context.Context, s *Server, pending, opts any, sink core.EventSink) (any, error) {
 	p, ok := pending.(*pendingUpdates)
 	if !ok {
@@ -200,29 +139,5 @@ func applyUpdatesKind(ctx context.Context, s *Server, pending, opts any, sink co
 	if !ok {
 		return nil, fmt.Errorf("updates apply: unexpected options type %T", opts)
 	}
-
-	result := &updatesBatchResult{}
-	for _, upd := range p.Updates {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-
-		key := domain.ModKey(upd.InstalledMod.SourceID, upd.InstalledMod.ID)
-		// Ruling 5: re-plan immediately before this mod's own apply. A plan
-		// computed for the whole batch up front would be stale the moment
-		// the first mod landed. PlanUpdateFrom reuses the update already
-		// found, so this costs no second source query.
-		plan, err := s.svc.PlanUpdateFrom(ctx, p.Game, p.Profile, upd)
-		if err != nil {
-			result.Failed = append(result.Failed, updateBatchFailure{Mod: key, Name: upd.InstalledMod.Name, Error: err.Error()})
-			continue
-		}
-		applied, err := s.svc.ApplyUpdate(ctx, p.Game, plan, req.updateOptions(), sink)
-		if err != nil {
-			result.Failed = append(result.Failed, updateBatchFailure{Mod: key, Name: upd.InstalledMod.Name, Error: err.Error()})
-			continue
-		}
-		result.Applied = append(result.Applied, *applied)
-	}
-	return result, nil
+	return s.svc.ApplyUpdateBatch(ctx, p.Game, p.Plan, req.batchOptions(), sink)
 }

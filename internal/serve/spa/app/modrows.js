@@ -15,6 +15,26 @@ export function modKey(mod) {
   return `${mod.source_id}:${mod.id}`;
 }
 
+/** lockedNote is how a row that will be REFUSED says so, in the two places
+ * a user meets it before the outcome does: the Updates card's own list and
+ * the confirm modal's (plan_updates.js reads the same field off the same
+ * domain.Update).
+ *
+ * The refusal is core's, decided by ApplyUpdateBatch's own lock gate (#97);
+ * domain.Update.Locked/LockedVersion are stamped by CheckGameUpdates from a
+ * single profile read, so both surfaces know the fact without a second
+ * fetch. Built as ONE string rather than adjacent interpolations - htm
+ * collapses the whitespace between those (the trap cards.js#conflictLabel
+ * documents) - and it names the LOCKED version rather than the installed
+ * one, since a lock can name a version the install has already moved off.
+ * It lives here rather than in either component for the same reason
+ * verify.js#findingLabel does: two surfaces saying the same thing in two
+ * places is two chances to drift. */
+export function lockedNote(update) {
+  const version = update.locked_version || update.installed_mod?.version;
+  return version ? `locked at v${version}` : "locked";
+}
+
 /**
  * Builds one library row per installed mod (mods: core.ModList's own "mods"
  * array, already in the profile's load order): the ModListing fields

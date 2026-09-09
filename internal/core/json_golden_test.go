@@ -589,18 +589,22 @@ func TestJSONGoldens(t *testing.T) {
 			// on, so this golden pins the field PRESENT. verify_report's
 			// own "ok" finding below pins the other half - omitzero, so a
 			// non-fixable row carries no key at all.
+			// Fixable and FixableReason are populated together here so both
+			// keys pin their wire shape; a real finding carries a reason
+			// only when Fixable is false (#334).
 			"verify_finding",
 			core.VerifyFinding{
 				ModID: "42", ModName: "Sample Mod", FileID: "file-1", Status: "version_mismatch",
 				Note: "recorded version does not match effective", Recorded: "1.2.2", Effective: "1.2.3", Version: "1.2.3",
-				Fixable: true,
+				Fixable:       true,
+				FixableReason: "the mod was imported locally, so there is no source to re-download from",
 			},
 		},
 		{
 			// Findings is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null" - a clean verify run reports it.
 			"verify_result",
-			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true},
+			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime},
 		},
 		{
 			"converged_file",
@@ -962,6 +966,66 @@ func TestJSONGoldens(t *testing.T) {
 				Reason:      "locked",
 				Warnings:    []string{"could not sync merged pak"},
 				Notes:       []string{"applied update for Sample Mod"},
+			},
+		},
+		{
+			// #324. Every optional key populated at once (a real plan whose
+			// selection matched everything carries no NotFound) - the
+			// golden's job is to pin each key's wire shape. The unexported
+			// snapshot field must not appear at all, same as update_plan.
+			"update_batch_plan",
+			core.UpdateBatchPlan{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Updates: []domain.Update{{
+					InstalledMod: domain.InstalledMod{
+						Mod:         domain.Mod{ID: "42", SourceID: "nexusmods", Name: "Sample Mod", Version: "1.2.3", GameID: "skyrim-se", UpdatedAt: fixedTime},
+						ProfileName: "default", InstalledAt: fixedTime, UpdatePolicy: domain.UpdateNotify,
+					},
+					NewVersion: "1.2.4",
+					Changelog:  "Fixed a crash on load.",
+				}},
+				NotFound: []string{"curseforge:7"},
+			},
+		},
+		{
+			// #324. Applied is non-omitzero, so a batch that applied
+			// nothing still pins as "[]" rather than "null"; Failed and
+			// Skipped each carry one entry. The skip is a locked ref (#97) -
+			// an UpdateApplyResult with UpdateSkipped and the engine's own
+			// refusal sentence as its Reason.
+			"update_batch_result",
+			core.UpdateBatchResult{
+				GameID:  "skyrim-se",
+				Profile: "default",
+				Applied: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.4", FileIDs: []string{"file-1"}},
+					Name:        "Sample Mod",
+					FromVersion: "1.2.3",
+					ToVersion:   "1.2.4",
+					Status:      core.UpdateUpdated,
+				}},
+				Failed: []core.UpdateBatchFailure{{
+					Mod:   "curseforge:7",
+					Name:  "Broken Mod",
+					Error: "fetching mod: source unavailable",
+				}},
+				Skipped: []core.UpdateApplyResult{{
+					Mod:         domain.ModReference{SourceID: "nexusmods", ModID: "9", Version: "1.0", Locked: true},
+					Name:        "Locked Mod",
+					FromVersion: "1.0",
+					ToVersion:   "2.0",
+					Status:      core.UpdateSkipped,
+					Reason:      "Locked Mod is locked at v1.0 in profile default - unlock with 'lmm mod unlock -s nexusmods -p default 9' first",
+				}},
+			},
+		},
+		{
+			"update_batch_failure",
+			core.UpdateBatchFailure{
+				Mod:   "curseforge:7",
+				Name:  "Broken Mod",
+				Error: "fetching mod: source unavailable",
 			},
 		},
 		{

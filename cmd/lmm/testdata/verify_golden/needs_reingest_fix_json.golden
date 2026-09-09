@@ -7,12 +7,14 @@
         "mod_id": "merged-pak",
         "mod_name": "Icarus Merged Pak",
         "status": "stale_compile",
-        "note": "base pak updated"
+        "note": "base pak updated",
+        "fixable_reason": "this --fix run already resynced the merged artifact"
       },
       {
         "mod_id": "bear-mount",
         "mod_name": "Bear Mount",
-        "status": "version_unverifiable"
+        "status": "version_unverifiable",
+        "fixable_reason": "there is nothing to check the recorded version against"
       },
       {
         "mod_id": "bear-mount",
@@ -32,6 +34,7 @@
     "issues": 0,
     "warnings": 3,
     "checked": 4,
-    "has_files": true
+    "has_files": true,
+    "checked_at": "<TIME>"
   }
 }

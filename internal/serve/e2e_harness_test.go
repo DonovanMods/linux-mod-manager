@@ -53,6 +53,8 @@ import (
 	"github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -141,11 +143,16 @@ func chromeBinary(t *testing.T) string {
 	return ""
 }
 
-// sandboxE2EEnv points HOME and every XDG_* path at throwaway directories,
-// so nothing a test drives - the Service, or the browser the harness
-// launches - can reach the developer's real config, data or cache. The
-// package-internal tests have their own copy (jobs_internal_test.go's
-// sandboxEnv); package serve_test cannot see it.
+// sandboxE2EEnv points HOME and the three XDG_* paths lmm reads at
+// throwaway directories, so nothing a test drives - the Service, or the
+// browser the harness launches - can reach the developer's real config,
+// data or cache. The package-internal tests have their own copy
+// (jobs_internal_test.go's sandboxEnv); package serve_test cannot see it.
+//
+// THREE, not "every XDG_*" (M7, unit 8 gate review): lmm's non-test code
+// reads no XDG_STATE_HOME and no XDG_RUNTIME_DIR, so this list is the
+// complete set that could leak - the sandbox was never short, only the
+// comment (and one report's wording) was.
 func sandboxE2EEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
@@ -422,6 +429,40 @@ func startE2EServer(t *testing.T, svc *core.Service) string {
 	return "http://" + addr.String()
 }
 
+// e2eProxyTransport returns a private http.Transport for one fixture's
+// reverse proxy, whose idle connections are closed by a cleanup registered
+// HERE - which is to say after startE2EServer's own shutdown cleanup and
+// therefore, cleanups being LIFO, before it.
+//
+// This is the fix for the Unit 5 flake
+// (TestE2E_OverlappingInstallAndToggleBothTrackCorrectly failing ~1 in 10
+// under -race with "shutting down: context deadline exceeded"). The cause,
+// found from a goroutine dump at the moment of failure: a reverse proxy
+// with no Transport of its own uses http.DefaultTransport, a process-wide
+// pool that outlives the proxy server closing. When two requests are
+// genuinely in flight at once - which is the entire point of the
+// overlapping-jobs fixture - the Transport dials a second connection to the
+// backend, and the loser of that race is parked in the idle pool having
+// never written a request. On the BACKEND that connection is StateNew, and
+// net/http's Shutdown deliberately refuses to treat a StateNew connection
+// as idle until it has sat there for five seconds (go issue 22682). The
+// fixture's ShutdownGrace is five seconds, so Shutdown spun out its whole
+// grace waiting for a connection nothing was ever going to send a request
+// on, and Serve returned the deadline error.
+//
+// Closing the fixture's OWN idle connections at teardown removes that
+// connection before the backend is asked to shut down, which makes the
+// teardown deterministic rather than a race against that five-second
+// timer. A private Transport (rather than DefaultTransport.CloseIdle
+// Connections()) keeps one fixture's teardown from disturbing another's
+// in-flight connections when tests run in parallel.
+func e2eProxyTransport(t *testing.T) *http.Transport {
+	t.Helper()
+	tr := &http.Transport{}
+	t.Cleanup(tr.CloseIdleConnections)
+	return tr
+}
+
 // startE2EServerWithFailingPath is startE2EServer plus a reverse proxy in
 // front of the real server that can answer one exact request path with a
 // 500 JSON error envelope instead of forwarding it - simulating an upstream
@@ -443,6 +484,7 @@ func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath str
 	require.NoError(t, err)
 
 	proxy := &httputil.ReverseProxy{
+		Transport: e2eProxyTransport(t),
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(backendURL)
 			r.Out.Host = backendURL.Host
@@ -513,8 +555,18 @@ func newE2EBrowser(t *testing.T) (context.Context, func() []string) {
 	t.Helper()
 	binary := chromeBinary(t)
 
+	// A window the product actually supports (issue 334). Headless Chrome
+	// defaults to 800x600, which is BELOW this UI's own declared baseline -
+	// "desktop only, >= 1080p" (docs/plans/2026-08-31-serve-spa-design.md
+	// §Settled decisions) - so the suite was judging a layout the design
+	// explicitly does not cover: at 800px the top bar cannot fit its nine
+	// controls on one row, and the wrap that keeps them on screen puts the
+	// activity bell at the left, where its right-anchored tray hangs off
+	// the side. 1280 is comfortably inside the supported range and still
+	// below the 1440px step at which the library reveals its extra
+	// columns, so every existing column assertion is unchanged.
 	opts := append(slices.Clone(chromedp.DefaultExecAllocatorOptions[:]),
-		chromedp.ExecPath(binary))
+		chromedp.ExecPath(binary), chromedp.WindowSize(1280, 900))
 	// WithoutCancel, same reasoning as startE2EServer:331. t.Context() is
 	// cancelled when the test FUNCTION returns, which is BEFORE t.Cleanup
 	// runs - so deriving the allocator from it directly cancels ctx (below)
@@ -986,9 +1038,15 @@ type e2eSearchSourceMod struct {
 // mods through the omnibar/search page - unlike installSource's ID-only
 // fixture, which never needed to be found by a query.
 type e2eSearchSource struct {
-	id          string
-	server      *httptest.Server
-	mods        map[string]*e2eSearchSourceMod
+	id     string
+	server *httptest.Server
+	mods   map[string]*e2eSearchSourceMod
+	// updatable turns CheckUpdates from a no-op into the catalog-versus-
+	// installed comparison every real source makes (I1, unit 8 gate review's
+	// locked-skip scenario). Off by default: every scenario written before
+	// it asserts on a Mission Control with NO Updates card, and a source
+	// that suddenly reported updates would change what those screens show.
+	updatable   bool
 	urlRequests atomic.Int64
 }
 
@@ -1083,8 +1141,22 @@ func (s *e2eSearchSource) GetDownloadURL(_ context.Context, mod *domain.Mod, fil
 	return s.server.URL + "/" + mod.ID + "/" + fileID, nil
 }
 
-func (s *e2eSearchSource) CheckUpdates(context.Context, []domain.InstalledMod) ([]domain.Update, error) {
-	return nil, nil
+func (s *e2eSearchSource) CheckUpdates(_ context.Context, installed []domain.InstalledMod) ([]domain.Update, error) {
+	if !s.updatable {
+		return nil, nil
+	}
+	var updates []domain.Update
+	for _, im := range installed {
+		entry, ok := s.mods[im.ID]
+		if !ok || entry.mod.Version == im.Version {
+			continue
+		}
+		updates = append(updates, domain.Update{InstalledMod: im, NewVersion: entry.mod.Version})
+	}
+	sort.Slice(updates, func(i, j int) bool {
+		return updates[i].InstalledMod.ID < updates[j].InstalledMod.ID
+	})
+	return updates, nil
 }
 
 func (s *e2eSearchSource) downloadCount() int { return int(s.urlRequests.Load()) }
@@ -1268,6 +1340,7 @@ func startE2EServerWithDelayedJobStart(t *testing.T, svc *core.Service, delay, t
 	require.NoError(t, err)
 
 	proxy := &httputil.ReverseProxy{
+		Transport: e2eProxyTransport(t),
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(backendURL)
 			r.Out.Host = backendURL.Host
@@ -1537,4 +1610,306 @@ func dragRowTo(fromText, toText string) chromedp.Action {
 		}
 		return input.DispatchMouseEvent(input.MouseReleased, tx, ty).WithButton(input.Left).WithClickCount(1).Do(ctx)
 	})
+}
+
+// newE2EFixtureWithASwitchTarget seeds the world a profile SWITCH acts on:
+// two profiles whose mod sets differ, with everything the switch needs
+// already local so applying it makes no source call at all.
+//
+//	default (active)  Alpha Mod - enabled, cached, deployed
+//	hardcore          Beta Mod  - installed, cached, DISABLED under default
+//
+// Switching default -> hardcore therefore plans exactly one disable (Alpha,
+// enabled under default and absent from hardcore) and exactly one enable
+// (Beta, installed and cached but disabled), and no install - which is what
+// keeps the scenario a pure disk round trip: alpha.pak leaves the game
+// directory, beta.pak arrives in it, and the game's default profile moves.
+func newE2EFixtureWithASwitchTarget(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+	pm := f.Svc.NewProfileManager()
+
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "alpha", SourceID: "fake", Name: "Alpha Mod", Version: "1.0", GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.pak": []byte("alpha content")})
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "alpha", Version: "1.0"}))
+
+	// Disabled, so the switch's own enable pass is what deploys it - not a
+	// deploy that already happened before the browser was ever opened.
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "beta", SourceID: "fake", Name: "Beta Mod", Version: "1.0", GameID: f.Game.ID},
+		false, map[string][]byte{"beta.pak": []byte("beta content")})
+
+	_, err := pm.Create(t.Context(), f.Game.ID, "hardcore")
+	require.NoError(t, err)
+	require.NoError(t, pm.AddMod(t.Context(), f.Game.ID, "hardcore",
+		domain.ModReference{SourceID: "fake", ModID: "beta", Version: "1.0"}))
+	// Marked explicitly, as `lmm game add` leaves a real game: without it
+	// NO profile is the default, GameStatus reports is_default false for
+	// both, and the picker would offer to switch to the profile core would
+	// have switched FROM.
+	require.NoError(t, pm.SetDefault(t.Context(), f.Game.ID, "default"))
+
+	_, err = f.Svc.DeployProfile(t.Context(), f.Game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	return f
+}
+
+// newE2EFixtureWithAnUnappliedProfile seeds the state `lmm profile apply`
+// exists for: the profile LISTS a mod that is not installed at all.
+//
+// "Better Boots" is added to default's load order without ever being
+// installed, so the profile's own mod count (2) runs ahead of the installed
+// rows (1) - which is exactly what Mission Control's profile card reads to
+// decide it has something to say. The mod comes from the search fixture's
+// real downloading source, so applying the profile is a genuine
+// download/extract/deploy rather than a plan that could never converge.
+func newE2EFixtureWithAnUnappliedProfile(t *testing.T) e2eSearchFixture {
+	t.Helper()
+	f := newE2EFixtureWithSearchableMods(t)
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: e2eSearchInstallModID}))
+	return f
+}
+
+// waitGone waits until sel matches nothing, asked of the PAGE rather than
+// of chromedp's own node tracking.
+//
+// chromedp.WaitNotPresent is the natural spelling and works for an element
+// removed synchronously by the action that preceded it. It does NOT
+// reliably notice a removal that happens LATER - the slide-over's, which
+// issue 334 deliberately delays by one animation so its exit has somewhere
+// to play (spa/app/motion.js). Reproduced: the panel is provably gone from
+// the document (its own querySelector says so, and the URL has changed),
+// while WaitNotPresent sits there until the harness's whole 30-second
+// timeout expires.
+//
+// The polling INTERVAL is explicit for a second, independent reason:
+// chromedp.Poll's default mode is requestAnimationFrame, and a headless
+// page that has finished animating stops scheduling frames - so a poll
+// armed while the panel was still playing its exit would evaluate a few
+// times, see it still present, and then never run again once the page went
+// idle, which is the very moment the answer changed. A timer keeps asking.
+func waitGone(sel string) chromedp.Action {
+	return chromedp.Poll(
+		fmt.Sprintf("document.querySelector(%q) === null", sel), nil,
+		chromedp.WithPollingInterval(50*time.Millisecond),
+	)
+}
+
+// settleEffects gives Preact's hook effects time to run before the next
+// action depends on one having been attached.
+//
+// Preact flushes effects after paint - requestAnimationFrame, with a
+// ~100ms setTimeout fallback for a browser that is not painting, which is
+// exactly what a headless one often is not. chromedp's own round trips are
+// single-digit milliseconds, so an action issued straight after a
+// WaitVisible routinely lands BEFORE the effect that installs the listener
+// it depends on. That is not a hypothetical: the picker's Escape handler
+// lives in such an effect, and without this the menu simply stayed open and
+// the wait for it to close ran out the harness's whole 30-second timeout -
+// deterministically under -race, intermittently without it.
+//
+// The same shape (and the same reasoning) as the `settle` closures the
+// profiles-modal scenarios already declare inline; this is that pattern
+// with one name and one explanation.
+func settleEffects() chromedp.Action {
+	return chromedp.Sleep(300 * time.Millisecond)
+}
+
+// focusableSelectorJS mirrors spa/app/focustrap.js's own FOCUSABLE list -
+// the elements a browser hands focus to on Tab. Kept in sync by intent
+// rather than by a ratchet: it is a browser fact, not an application one,
+// and the two would only drift if the browser's own rules changed.
+const focusableSelectorJS = "'" +
+	`a[href]:not([tabindex="-1"]), ` +
+	`button:not([disabled]):not([tabindex="-1"]), ` +
+	`input:not([disabled]):not([tabindex="-1"]), ` +
+	`select:not([disabled]):not([tabindex="-1"]), ` +
+	`textarea:not([disabled]):not([tabindex="-1"]), ` +
+	`[tabindex]:not([tabindex="-1"])` + "'"
+
+// countFocusableJS counts the RENDERED focusable elements one Tab pass can
+// reach - how many presses a full pass takes.
+//
+// Scoped to the OVERLAY when one is open, because that is what a focus trap
+// makes true: with a modal or a slide-over on screen the reachable set is
+// that panel's, and the page behind the scrim is deliberately out of reach
+// (spa/app/focustrap.js). Counting the whole document there would assert
+// the exact bug the trap exists to prevent.
+const countFocusableJS = `(() => {
+	const root = document.querySelector(".modal, .slide-over__panel") ?? document;
+	return [...root.querySelectorAll(` + focusableSelectorJS + `)]
+		.filter((el) => el.getClientRects().length > 0).length;
+})()`
+
+// activeElementJS describes whatever holds focus, or "" when nothing in the
+// page does. The empty string is the whole point: focus landing on <body>
+// is focus LOST - the keyboard user's cursor has fallen off the screen and
+// their next Tab restarts from the top.
+const activeElementJS = `(() => {
+	const el = document.activeElement;
+	if (!el || el === document.body || el === document.documentElement) return "";
+	const label = (el.getAttribute("aria-label") || el.textContent || "").trim();
+	return el.tagName.toLowerCase() + "|" + (el.className || "") + "|" + label.slice(0, 40);
+})()`
+
+// tabThrough presses Tab n times, recording what holds focus after each
+// press. An entry is "" for a press that lost focus to the document.
+func tabThrough(n int, out *[]string) chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		for range n {
+			if err := chromedp.KeyEvent(kb.Tab).Do(ctx); err != nil {
+				return err
+			}
+			var seen string
+			if err := chromedp.Evaluate(activeElementJS, &seen).Do(ctx); err != nil {
+				return err
+			}
+			*out = append(*out, seen)
+		}
+		return nil
+	})
+}
+
+// assertKeyboardTraversal walks every focusable control on the page
+// currently loaded in f's browser and fails if focus is ever lost.
+//
+// One full pass, sized from the page itself: pressing Tab exactly as many
+// times as there are focusable elements should visit each of them and come
+// back round. A screen with an unreachable region fails by visiting fewer
+// distinct elements than it has; a screen that drops focus fails on the ""
+// entry.
+func assertKeyboardTraversal(t *testing.T, f e2eFixture, screen string) {
+	t.Helper()
+
+	// The screen has to be SETTLED, not merely visible: a panel whose
+	// content is still arriving (the slide-over fetches its changelog after
+	// mounting) has fewer controls than the screen it is about to be, and
+	// counting then would size the walk to a half-drawn page.
+	var count int
+	f.runInBrowser(t, settleEffects(), chromedp.Evaluate(countFocusableJS, &count))
+	require.Greater(t, count, 3, "%s: too few focusable controls to be a real screen", screen)
+
+	var visited []string
+	f.runInBrowser(t, tabThrough(count, &visited))
+
+	distinct := map[string]bool{}
+	for i, seen := range visited {
+		require.NotEmptyf(t, seen,
+			"%s: focus was lost to the document on Tab press %d of %d - the previous stop was %q",
+			screen, i+1, count, previousStop(visited, i))
+		distinct[seen] = true
+	}
+	assert.GreaterOrEqualf(t, len(distinct), count-1,
+		"%s: one pass visited only %d distinct controls out of %d focusable ones",
+		screen, len(distinct), count)
+}
+
+func previousStop(visited []string, i int) string {
+	if i == 0 {
+		return "(the page's own starting focus)"
+	}
+	return visited[i-1]
+}
+
+// e2eLockedUpdateModID/e2eOpenUpdateModID name the two mods the locked-batch
+// fixture below installs at 1.0 against a catalog sitting at 2.0. The ids
+// are chosen so that "boots" sorts before "gloves": CheckUpdates reports in
+// id order, PlanUpdateBatch keeps that order, and ApplyUpdateBatch applies
+// in it - so the LOCKED row is the one the batch reaches first, and a tally
+// that only ever noticed the last item would still be wrong.
+const (
+	e2eLockedUpdateModID = "boots"
+	e2eOpenUpdateModID   = "gloves"
+)
+
+// newE2EFixtureWithALockedAndAnUnlockedUpdate seeds the exact batch the
+// unit-8 gate review drove by hand: two installed mods with a real update
+// waiting, one of them LOCKED in the profile (#97).
+//
+// Applying both is therefore one genuine update and one refusal, which is
+// the outcome the whole #324 batch flow exists to report honestly - and the
+// outcome the web UI used to render as a bare "Done". The updates are real:
+// the source downloads over its own httptest server, so the applied row
+// actually moves the deployed file to 2.0 and the locked row actually does
+// not.
+func newE2EFixtureWithALockedAndAnUnlockedUpdate(t *testing.T) e2eFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	src := newE2ESearchSource(t, "fake")
+	src.updatable = true
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: e2eLockedUpdateModID, SourceID: "fake", Name: "Better Boots", Version: "2.0"},
+		files: []domain.DownloadableFile{
+			{ID: "boots-2.0", Name: "Main 2.0", FileName: "boots-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128},
+			{ID: "boots-1.0", Name: "Main 1.0", FileName: "boots-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
+		},
+		members: map[string]string{"boots-1.0": "Mods/boots.pak", "boots-2.0": "Mods/boots.pak"},
+	})
+	src.addMod(e2eSearchSourceMod{
+		mod: domain.Mod{ID: e2eOpenUpdateModID, SourceID: "fake", Name: "Great Gloves", Version: "2.0"},
+		files: []domain.DownloadableFile{
+			{ID: "gloves-2.0", Name: "Main 2.0", FileName: "gloves-2.0.zip", Version: "2.0", Category: "MAIN", IsPrimary: true, Size: 128},
+			{ID: "gloves-1.0", Name: "Main 1.0", FileName: "gloves-1.0.zip", Version: "1.0", Category: "MAIN", Size: 96},
+		},
+		members: map[string]string{"gloves-1.0": "Mods/gloves.pak", "gloves-2.0": "Mods/gloves.pak"},
+	})
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{src.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+
+	pm := svc.NewProfileManager()
+	for _, seed := range []struct {
+		id, name string
+		locked   bool
+	}{
+		{e2eLockedUpdateModID, "Better Boots", true},
+		{e2eOpenUpdateModID, "Great Gloves", false},
+	} {
+		fileID := seed.id + "-1.0"
+		member := "Mods/" + seed.id + ".pak"
+		require.NoError(t, svc.GetGameCache(game).Store(game.ID, "fake", seed.id, "1.0",
+			member, []byte("payload for "+seed.id+"/"+fileID)))
+		require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+			Mod: domain.Mod{
+				ID: seed.id, SourceID: "fake", Name: seed.name,
+				Version: "1.0", GameID: game.ID,
+			},
+			ProfileName:  "default",
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+			FileIDs:      []string{fileID},
+		}))
+		require.NoError(t, pm.AddMod(t.Context(), game.ID, "default", domain.ModReference{
+			SourceID: "fake", ModID: seed.id, Version: "1.0",
+			FileIDs: []string{fileID}, Locked: seed.locked,
+		}))
+	}
+	_, err = svc.DeployProfile(t.Context(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eFixture{
+		Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+		BrowserErrors: browserErrors,
+	}
 }

@@ -83,7 +83,10 @@ export function ActivityBell({
       <button
         type="button"
         class="picker__trigger activity-bell__trigger"
+        data-picker="activity"
         aria-label=${`Activity (${count})`}
+        aria-haspopup="true"
+        aria-expanded=${open ? "true" : "false"}
         onClick=${toggle}
       >
         🔔${
@@ -228,6 +231,22 @@ function TrayRow({ job, frame, expanded, onToggle, actions }) {
         `
       }
       ${job.state === "failed" && html`<${FailureNextStep} job=${job} actions=${actions} />`}
+      ${
+        // I1, unit 8 gate review: a count alone ("1 skipped") leaves the
+        // reader to guess, and a lock refusal is not a guessable outcome.
+        // The engine's own refusal sentence is rendered here, unexpanded,
+        // beside the tally that counts it - the CLI prints the same fact as
+        // "1 locked mod(s) not applied: Mod A - unlock to update", and the
+        // web UI said nothing at all before this.
+        (tally?.skippedNotes ?? []).length > 0 &&
+        html`
+          <ul class="tray__skips" data-job=${job.id}>
+            ${tally.skippedNotes.map(
+              (note) => html`<li key=${note} class="tray__skip">${note}</li>`,
+            )}
+          </ul>
+        `
+      }
       ${expanded && html`<${JobEventStream} jobID=${job.id} />`}
     </li>
   `;

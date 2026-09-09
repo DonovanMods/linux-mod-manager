@@ -552,6 +552,7 @@ async function openPlan({
   confirmLabel,
   options,
   onConfirmed,
+  openerSelector,
 }) {
   modalSeq += 1;
   const seq = modalSeq;
@@ -575,6 +576,13 @@ async function openPlan({
   // mutation is truly underway, never at open time, which used to tear the
   // very control the user just clicked out of the DOM before the modal
   // even finished mounting (the same removal that broke focus-return, I2).
+  //
+  // openerSelector (issue 334) is modal.js's own focus-return escape hatch,
+  // carried on the modal rather than passed at the Modal call site: a plan
+  // opened from a DROPDOWN (the profile picker's "Switch and deploy…") has
+  // no opener left to focus by the time the modal unmounts, because the
+  // menu closed to let the modal open. Every other caller omits it and gets
+  // the captured activeElement, which is still on screen for them.
   const base = {
     type: "plan",
     kind,
@@ -584,6 +592,7 @@ async function openPlan({
     seq,
     options,
     onConfirmed,
+    openerSelector,
   };
 
   store.set({ modal: { ...base, status: "planning" } });
@@ -633,6 +642,20 @@ function openProfilesModal() {
   store.set({ modal: { type: "profiles" } });
 }
 
+/** openShortcutsModal opens the keyboard-shortcuts help (design doc §Modals,
+ * issue 334's gate review Important 3) - reachable from the top bar's own
+ * "?" control and from the `?` key on any screen. Read-only: it renders
+ * shortcuts.js's rows and has nothing to fetch or precompute.
+ *
+ * openerSelector names the top-bar control rather than trusting the captured
+ * activeElement, because the `?` key can open this from anywhere - including
+ * with focus on an element the modal's own confirm may have removed. */
+function openShortcutsModal() {
+  store.set({
+    modal: { type: "shortcuts", openerSelector: '[data-action="shortcuts"]' },
+  });
+}
+
 /** openUninstallBatchModal opens the library batch bar's "Uninstall
  * selected" (issue 332): ONE confirm modal over N selected mods' own uninstall
  * plans, never a second modal per mod ("modals stack at most one deep",
@@ -680,6 +703,17 @@ const bindingJobs = new Map();
 // exposes on its own.
 if (typeof window !== "undefined") {
   window.__lmmBindingJobsSize = () => bindingJobs.size;
+
+  // Exposed for the GenericPlanView scenario only (issue 334, the m8
+  // carry): the fallback renderer's whole contract is about a kind wired
+  // BEFORE its renderer exists, so by construction no control in this
+  // application ever opens one - every registered kind has a renderer
+  // (planrenderers.js). Handing a test the same entry point every control
+  // uses is the only way to drive the fallback through the real modal, the
+  // real Confirm and a real job rather than asserting about a component in
+  // isolation. It adds no capability: openPlan only computes a plan, which
+  // is exactly what a POST from the console could already do.
+  window.__lmmOpenPlan = (spec) => actions.openPlan(spec);
 }
 
 /** startBinding runs work (an async fn returning nothing) as origin's
@@ -1204,13 +1238,40 @@ async function onJobDone(summary) {
           title: `${summary.kind} failed`,
           detail: summary.error?.error ?? "",
           jobID: summary.id,
+          ...toastAffordance(summary),
         }
       : {
           tone: "success",
           title: `${summary.kind} finished`,
           jobID: summary.id,
+          ...toastAffordance(summary),
         },
   );
+}
+
+// jobToastAffordances maps a job KIND to the one place its outcome
+// actually lives, for the kinds whose own surface is gone by the time they
+// finish (issue 334, the N7 carry).
+//
+// profile_import is the case: it is started from inside the profiles modal,
+// and the confirm-plan modal REPLACES that modal in the shared slot ("modals
+// stack at most one deep", design doc §Modals). So the import's own result -
+// a profile that now exists, or does not - lands with nothing on screen that
+// shows profiles, and the user has to know to go and re-open "Manage
+// profiles…" to find out what they just did. Re-opening the modal FOR them
+// was the other option the carry named and is the wrong one: it would seize
+// the screen from whatever they moved on to, minutes later, for a job they
+// may already have forgotten. An offer they can decline is the honest shape.
+//
+// Keyed by action NAME rather than by function because a toast is store
+// state, and the store holds plain data.
+const jobToastAffordances = {
+  profile_import: { action: "openProfilesModal", actionLabel: "Open profiles" },
+};
+
+/** toastAffordance is summary's own extra offer, or nothing. */
+function toastAffordance(summary) {
+  return jobToastAffordances[summary.kind] ?? {};
 }
 
 /** originOf finds which control (if any) started jobID. */
@@ -1265,6 +1326,7 @@ const actions = {
   canRetryInstallOverwrite,
   openReorderModal,
   openProfilesModal,
+  openShortcutsModal,
   openUninstallBatchModal,
   startBatchToggle,
   startUninstallBatch,

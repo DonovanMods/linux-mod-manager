@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
@@ -488,7 +489,7 @@ func TestE2E_OpeningSlideOverDoesNotRehydrateMissionControl(t *testing.T) {
 	var afterClose []string
 	f.runInBrowser(t,
 		chromedp.Click(`.slide-over__close`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 		chromedp.Evaluate(`window.__fetchedPaths`, &afterClose),
 	)
 	assert.Equal(t, afterOpen, afterClose, "closing the slide-over must not trigger any further /api/v1 fetch")
@@ -1065,6 +1066,64 @@ func TestE2E_ProgressVocabularyIsHumanized(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_ResultTallyReadsAnOmittedFailedList pins progress.js#resultTally
+// against the wire shape core actually emits, in the browser (the only
+// runner this application has).
+//
+// The bug this exists for: resultTally discriminated a batch result on
+// `applied` AND `failed` both being arrays, while
+// core.UpdateBatchResult.Failed is `json:"failed,omitzero"` - so the exact
+// document a locked-skip batch produces (applied rows, skipped rows, NO
+// `failed` key at all) fell through to null, and the control that started
+// the batch said a bare "Done" over a mod the engine had refused. The
+// discriminator is `applied` alone: `json:"applied"` exists on no other
+// core or serve type, and both omitzero lists default to 0.
+func TestE2E_ResultTallyReadsAnOmittedFailedList(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var got []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { resultTally, resultTallyLabel, resultTallyTone } =
+				await import("/static/app/progress.js");
+			// The shape cmd/lmm/testdata/json_golden/update_bulk_all.golden
+			// carries: one applied row, one locked skip, and no "failed" key.
+			const lockedSkip = {
+				applied: [{ name: "Mod B", status: "updated" }],
+				skipped: [{ name: "Mod A", status: "skipped", reason: "Mod A is locked at v1.0" }],
+			};
+			const allApplied = { applied: [{ name: "Mod B", status: "updated" }] };
+			const oneFailed = {
+				applied: [],
+				failed: [{ mod: "test-src:modA", name: "Mod A", error: "boom" }],
+			};
+			const notABatch = { deployed: 3 };
+			const describe = (r) => {
+				const tally = resultTally(r);
+				if (!tally) return "null";
+				const notes = (tally.skippedNotes ?? []).join("; ");
+				return resultTallyLabel(tally) + " [" + resultTallyTone(tally) + "] {" + notes + "}";
+			};
+			return [describe(lockedSkip), describe(allApplied), describe(oneFailed), describe(notABatch)];
+		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, got, 4)
+	assert.Equal(t, "1 applied / 1 skipped [succeeded] {Mod A — Mod A is locked at v1.0}", got[0],
+		"a batch with no `failed` key must still tally, must call a lock a SKIP rather than a failure, and must carry the engine's own refusal sentence")
+	assert.Equal(t, "1 applied / 0 failed [succeeded] {}", got[1],
+		"an all-success batch reads exactly as it did before this fix")
+	assert.Equal(t, "0 applied / 1 failed [failed] {}", got[2],
+		"a real failure is still a failure, and a batch that applied nothing is not `mixed`")
+	assert.Equal(t, "null", got[3],
+		"a result that is not a batch at all still says Done rather than inventing a tally")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_TrayShowsARunningJobWithProgress opens the activity tray DURING a
 // job, which is the state it exists for: the bell badge counts what is
 // happening, the tray groups it under Running, and the row carries the same
@@ -1470,7 +1529,7 @@ func TestE2E_SlideOver_EscapeClosesAndOutsideClickCloses(t *testing.T) {
 		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
 		waitForPanelFocus(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 	)
 
 	f.runInBrowser(t,
@@ -1482,7 +1541,7 @@ func TestE2E_SlideOver_EscapeClosesAndOutsideClickCloses(t *testing.T) {
 		// itself, whose node-center click could land inside the panel on
 		// a narrow viewport.
 		chromedp.MouseClickXY(20, 20),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 	)
 	assert.Empty(t, f.BrowserErrors())
 }
@@ -2058,7 +2117,7 @@ func TestE2E_SlideOver_ClosingMidJobLeavesTheRowsLiveLine(t *testing.T) {
 		// origin is bound (the control has morphed) while it sits queued.
 		chromedp.WaitVisible(`.job-progress`, chromedp.ByQuery),
 		chromedp.Click(`.slide-over__close`, chromedp.ByQuery),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 	)
 
 	var rowLive string
@@ -2657,7 +2716,7 @@ func TestE2E_SearchPageRowClickOpensSlideOverAndCloseReturnsToResults(t *testing
 		// effect has actually run reaches no listener at all.
 		waitForPanelFocus(),
 		chromedp.KeyEvent(kb.Escape),
-		chromedp.WaitNotPresent(`.slide-over`, chromedp.ByQuery),
+		waitGone(`.slide-over`),
 		chromedp.WaitVisible(`.search-results`, chromedp.ByQuery),
 		chromedp.Location(&url),
 	)
@@ -3472,11 +3531,14 @@ func TestE2E_LibraryBatchBar_UninstallSequencesOneJobAtATime(t *testing.T) {
 // 6 gate review): "Not fixable" used to say only that, with a tooltip that
 // restated the same bare sentence. A LOCKED ref's version_mismatch is the
 // most common not-fixable case in practice (verify.go's own Fixable table:
-// "a non-local source AND an UNLOCKED ref"), and it is exactly the one the
-// read path (GET /api/v1/health) can decide FOR ITSELF - unlike the
-// "locked" note, which is only ever written by a --fix RUN - by cross-
-// referencing the finding's own mod_id against the already-fetched library
-// rows' own `locked` flag.
+// "a non-local source AND an UNLOCKED ref").
+//
+// Issue 334 moved the sentence to where the decision is made: the card
+// renders core.VerifyFinding.FixableReason verbatim, instead of the
+// hand-maintained table plus a lock guess cross-referenced from the
+// already-fetched library rows. So this asserts the ENGINE's wording now -
+// which names the locked version, something the client-side guess never
+// could.
 func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 	src := newFakeSource("fake")
 	src.addMod(fakeSourceMod{
@@ -3508,7 +3570,8 @@ func TestE2E_HealthCard_NotFixableRowNamesTheReason(t *testing.T) {
 	var rowText string
 	f.runInBrowser(t, textContent(`.card--health .card__row`, &rowText))
 	assert.Contains(t, rowText, "Not fixable", "a locked ref's version_mismatch must still say it is not fixable")
-	assert.Contains(t, rowText, "Locked to a version", "and now say WHY - the finding IS a locked version_mismatch")
+	assert.Contains(t, rowText, "locked at v1.0", "and now say WHY, in the engine's own words - the finding IS a locked version_mismatch")
+	assert.Contains(t, rowText, "unlock it first")
 	assert.NotContains(t, rowText, "Repair", "no Repair control may render for a not-fixable row")
 
 	assert.Empty(t, f.BrowserErrors())
@@ -4239,5 +4302,823 @@ func TestE2E_ProfilesModal_ReopenDoesNotResumeAHalfTypedRename(t *testing.T) {
 
 	_, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
 	require.NoError(t, err, "Escape must not have renamed the profile")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilePicker_SwitchAndDeployRoundTrip drives `lmm profile
+// switch` from the browser: the profile picker offers "Switch and deploy…"
+// beside every profile that is not already the active one, that opens the
+// confirm modal over the SwitchPlan, and confirming runs the real job.
+//
+// The end state is asserted on DISK and in the service, not just on screen:
+// Alpha's link leaves the game directory, Beta's arrives, and the game's
+// default profile has actually moved. A green bar over an unchanged game
+// directory would be the worst possible pass.
+func TestE2E_ProfilePicker_SwitchAndDeployRoundTrip(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var plan, outcome string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="switch"]`, &plan),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		textContent(`.job-progress__text`, &outcome),
+	)
+
+	assert.Contains(t, plan, "default")
+	assert.Contains(t, plan, "hardcore")
+	assert.Contains(t, plan, "Alpha Mod", "the plan names what it would disable")
+	assert.Contains(t, plan, "Beta Mod", "the plan names what it would enable")
+	assert.NotEmpty(t, outcome)
+
+	_, err := os.Lstat(filepath.Join(f.Game.ModPath, "alpha.pak"))
+	assert.Error(t, err, "the switch must have undeployed the profile it left")
+	_, err = os.Lstat(filepath.Join(f.Game.ModPath, "beta.pak"))
+	assert.NoError(t, err, "the switch must have deployed the profile it moved to")
+
+	active, err := f.Svc.NewProfileManager().GetDefault(t.Context(), f.Game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "hardcore", active.Name, "the switch must have moved the active profile")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilePicker_PlainNavigationSurvivesTheSwitchAffordance is the
+// other half of the picker's contract (issue 334): clicking a profile's
+// NAME still only changes what this browser is looking at - no plan, no
+// modal, nothing on disk - and the profile that is already active offers no
+// "Switch and deploy…" at all, because switching to it is the plan's own
+// AlreadyActive no-op.
+func TestE2E_ProfilePicker_PlainNavigationSurvivesTheSwitchAffordance(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var switchActions, activeSwitchActions, modals int
+	var path string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('[data-action="switch"]').length`, &switchActions),
+		chromedp.Evaluate(`document.querySelectorAll('[data-action="switch"][data-profile="default"]').length`, &activeSwitchActions),
+		// The NAME, not the action beside it.
+		chromedp.Click(`.profile-picker__menu .picker__row[data-profile="hardcore"] .picker__item`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".modal").length`, &modals),
+		chromedp.Location(&path),
+	)
+
+	assert.Equal(t, 1, switchActions, "only the non-active profile offers a switch")
+	assert.Zero(t, activeSwitchActions, "the active profile has nothing to switch to")
+	assert.Zero(t, modals, "browsing to a profile must not open a confirm modal")
+	assert.Contains(t, path, "/hardcore", "the name is still a plain route change")
+
+	_, err := os.Lstat(filepath.Join(f.Game.ModPath, "alpha.pak"))
+	assert.NoError(t, err, "looking at another profile must not undeploy anything")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists drives `lmm
+// profile apply` from the browser (issue 334): Mission Control notices that
+// the profile lists more mods than are installed, says so as an attention
+// card, and the card's own "Apply profile…" runs the real convergence
+// through the confirm-plan framework.
+//
+// The end state is asserted on disk: the mod the profile listed but nobody
+// had installed is downloaded, extracted and deployed into the game
+// directory. A card that merely renders would prove nothing.
+func TestE2E_ProfileCard_ApplyProfileInstallsWhatTheProfileLists(t *testing.T) {
+	f := newE2EFixtureWithAnUnappliedProfile(t)
+
+	var card, plan string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.card--profile`, chromedp.ByQuery),
+		textContent(`.card--profile`, &card),
+		chromedp.Click(`[data-action="apply-profile"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_apply"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="profile_apply"]`, &plan),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, card, "1 mod in this profile is not installed")
+	// M6, unit 8 gate review: the Profile card's title carried no count
+	// where its three siblings read "⬆ Updates (1)" / "⚠ Health (2)" /
+	// "⇄ Conflicts (1)".
+	assert.Contains(t, card, "Profile (1)",
+		"the card's title must carry its count, like every other attention card's")
+	assert.Contains(t, plan, "Better Boots", "the plan names what it would install")
+
+	deployed, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "boots.pak"))
+	require.NoError(t, err, "apply must have installed and deployed the listed mod")
+	assert.Contains(t, string(deployed), "payload for boots")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfileCard_AbsentWhenTheProfileIsAlreadyApplied is the card's
+// own silence rule: an attention card that renders when nothing needs
+// attention is noise, and noise is what makes people stop reading them.
+func TestE2E_ProfileCard_AbsentWhenTheProfileIsAlreadyApplied(t *testing.T) {
+	f := newE2EFixtureWithSearchableMods(t)
+
+	var cards int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.library`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".card--profile").length`, &cards),
+	)
+
+	assert.Zero(t, cards, "every listed mod is installed - there is nothing to apply")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_GenericPlanView_RendersAnUnknownKindsPlanAsData keeps the
+// confirm-plan framework's FALLBACK renderer honest (the m8 carry from
+// issue 332's review, closed here).
+//
+// Every kind plankinds.go registers now has a renderer of its own, so the
+// fallback is by construction unreachable from any control in the
+// application - which is exactly why it needs a driver: it exists for the
+// NEXT kind, wired before its renderer is written, and a mutation in that
+// state must still preview honestly rather than show an empty modal with a
+// live Confirm button under it.
+//
+// plankind_fallback_test.go registers such a kind (test-only, mutating
+// nothing), and this drives it through the real modal, the real Confirm and
+// a real job: the plan document's own content renders, the "no dedicated
+// preview yet" note says so plainly, and the outcome resurfaces.
+func TestE2E_GenericPlanView_RendersAnUnknownKindsPlanAsData(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		// The top bar's own Deploy origin, so this job has a control on
+		// screen to morph into - the fallback kind has no control of its
+		// own by definition, and an origin nobody has mounted would
+		// resurface as a toast instead, which is a different rule's test.
+		chromedp.Evaluate(`window.__lmmOpenPlan({
+			kind: "e2e_no_renderer",
+			origin: "deploy",
+			title: "A kind with no renderer",
+			confirmLabel: "Run it",
+			options: {},
+		})`, nil),
+		chromedp.WaitVisible(`.modal[data-kind="e2e_no_renderer"] .plan--generic`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="e2e_no_renderer"]`, &body),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, body, "no dedicated preview yet",
+		"the fallback must say what it is, not pretend to be a designed preview")
+	assert.Contains(t, body, "first unrendered step",
+		"the plan document's own content must reach the screen")
+	assert.Contains(t, body, f.Profile)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_HealthCard_SaysWhenItLastVerified renders the other half of the
+// design's "last-verify timestamp + re-run" (§Mission Control), which issue
+// 332 had to carry because core.VerifyResult had no such field: issue 334
+// added checked_at, and the card now says how OLD the health it is showing
+// is, which is the only thing a reader actually wants from that timestamp.
+//
+// The verify runs when the page loads, so the honest assertion is "just
+// now" - the phrase relativetime.js produces for anything under a minute.
+func TestE2E_HealthCard_SaysWhenItLastVerified(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var line string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="health-last-verified"]`, chromedp.ByQuery),
+		textContent(`[data-testid="health-last-verified"]`, &line),
+	)
+
+	assert.Equal(t, "Last verified just now", line)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfilesModal_ImportOffersAWayBackToProfiles closes the N7 carry
+// (unit 6 re-review): importing from the profiles modal REPLACES it with
+// the confirm-plan modal in the shared slot ("modals stack at most one
+// deep"), so when the import finishes there is nothing on screen that shows
+// profiles - and the profile the user just created is only findable by
+// knowing to re-open "Manage profiles…".
+//
+// The completion toast now carries that door. The scenario clicks it and
+// asserts the profiles modal really opens on the imported profile - not
+// that a button merely rendered.
+func TestE2E_ProfilesModal_ImportOffersAWayBackToProfiles(t *testing.T) {
+	f := newE2EFixture(t)
+
+	doc := fmt.Sprintf(`name: imported
+game_id: %s
+mods: []
+`, f.Game.ID)
+	importPath := filepath.Join(t.TempDir(), "imported.yaml")
+	require.NoError(t, os.WriteFile(importPath, []byte(doc), 0o644))
+
+	settle := func() { time.Sleep(300 * time.Millisecond) }
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+	)
+	settle()
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+	)
+	settle()
+	f.runInBrowser(t, chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery))
+	settle()
+
+	f.runInBrowser(t,
+		chromedp.SetUploadFiles(`.profiles-import input[type="file"]`, []string{importPath}, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_import"] .plan--profile-import`, chromedp.ByQuery),
+		chromedp.Click(`.modal[data-kind="profile_import"] [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		// The import's own origin has no control left on screen, so its
+		// completion becomes a toast - which is exactly the state N7 is
+		// about.
+		chromedp.WaitVisible(`.toast [data-action="toast-action"]`, chromedp.ByQuery),
+	)
+
+	var label string
+	f.runInBrowser(t, textContent(`.toast [data-action="toast-action"]`, &label))
+	assert.Equal(t, "Open profiles", label)
+
+	f.runInBrowser(t,
+		chromedp.Click(`.toast [data-action="toast-action"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="profiles-list"]`, chromedp.ByQuery),
+		chromedp.Poll(`document.querySelector('[data-testid="profiles-list"]')?.textContent.includes("imported") ?? false`, nil,
+			chromedp.WithPollingInterval(50*time.Millisecond)),
+	)
+
+	var listText string
+	f.runInBrowser(t, textContent(`[data-testid="profiles-list"]`, &listText))
+	assert.Contains(t, listText, "imported",
+		"the offer must land on the profiles list showing what the import created")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Keyboard_EveryScreenIsTraversable is issue 334's keyboard pass,
+// asserted rather than eyeballed: on every screen this application has, one
+// full Tab pass reaches every control and never drops focus to the
+// document.
+//
+// Dropping focus is the failure that matters and the one that is invisible
+// in a screenshot: a control that removes itself from the DOM while it has
+// focus (a menu item, a row that a mutation just replaced) leaves the
+// keyboard cursor nowhere, and the user's next Tab restarts at the top of
+// the page. Its own subtests are the screens, so a failure names which one.
+func TestE2E_Keyboard_EveryScreenIsTraversable(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	screens := []struct {
+		name  string
+		path  string
+		ready string
+	}{
+		{"mission-control", f.HomePath(), `.mission-control[data-hydrated="true"]`},
+		{"slide-over", f.SlideOverPath("fake", "boots"), `.slide-over__panel`},
+		{"mod-page", f.ModPagePath("fake", "boots"), `.mod-page`},
+		{"search-page", f.HomePath() + "/search?q=boots", `.search-page[data-hydrated="true"]`},
+		// The setup page's own panel loads its section asynchronously, so
+		// the readiness selector is a control INSIDE the panel - waiting on
+		// the page frame alone would walk a half-rendered screen.
+		{"setup", f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile + "/setup", `.setup-page__body button`},
+	}
+
+	for _, screen := range screens {
+		t.Run(screen.name, func(t *testing.T) {
+			f.runInBrowser(t,
+				chromedp.Navigate(screen.path),
+				chromedp.WaitVisible(screen.ready, chromedp.ByQuery),
+			)
+			assertKeyboardTraversal(t, f, screen.name)
+		})
+	}
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Keyboard_ModalContainsFocusAndGivesItBack covers the containment
+// modal.js's own comment promised and issue 332 deferred: a dialog over a
+// scrim must not let Tab walk the page behind it, and closing it must put
+// the cursor back where it came from.
+//
+// Both halves matter to the same person. Without the trap a keyboard user
+// tabs out of the dialog into a library they cannot see and starts pressing
+// Enter on rows behind a scrim; without the return they land back at the
+// top of the document after every confirmation.
+func TestE2E_Keyboard_ModalContainsFocusAndGivesItBack(t *testing.T) {
+	f := newE2EFixtureWithDeployableMods(t)
+
+	var inside []bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Focus(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
+		// The trap, like the picker's Escape handler, is installed by an
+		// effect that runs after the dialog is already on screen.
+		settleEffects(),
+		// Comfortably more presses than the dialog has controls, so the
+		// walk goes round its end at least twice.
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			for range 12 {
+				if err := chromedp.KeyEvent(kb.Tab).Do(ctx); err != nil {
+					return err
+				}
+				var in bool
+				if err := chromedp.Evaluate(
+					`Boolean(document.querySelector(".modal")?.contains(document.activeElement))`,
+					&in).Do(ctx); err != nil {
+					return err
+				}
+				inside = append(inside, in)
+			}
+			return nil
+		}),
+	)
+	for i, in := range inside {
+		assert.Truef(t, in, "Tab press %d walked out of the dialog", i+1)
+	}
+
+	var focused string
+	f.runInBrowser(t,
+		chromedp.KeyEvent(kb.Escape),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.activeElement?.getAttribute("data-action") ?? ""`, &focused),
+	)
+	assert.Equal(t, "deploy", focused,
+		"closing must return focus to the control that opened it")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Keyboard_EscapeFromAPickerReturnsFocusToItsTrigger is the same
+// rule for the top bar's three dropdowns (issue 334): Escape closes the
+// menu, and because the focused menu item is removed from the document by
+// that very close, something has to put the cursor back - or the next Tab
+// starts over at the top of the page.
+func TestE2E_Keyboard_EscapeFromAPickerReturnsFocusToItsTrigger(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var expandedWhileOpen, focusedAfter, expandedAfter string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".profile-picker__trigger").getAttribute("aria-expanded")`, &expandedWhileOpen),
+		// Focus a control INSIDE the menu, which is what a keyboard user
+		// would be on when they press Escape - and what the close removes.
+		// The page's own .focus() rather than chromedp.Focus, which scrolls
+		// and re-queries for a result this scenario does not need.
+		chromedp.Evaluate(`document.querySelector('.picker__row[data-profile="hardcore"] .picker__item').focus()`, nil),
+		// The picker's Escape handler is installed by an effect that runs
+		// after the menu is already on screen (settleEffects).
+		settleEffects(),
+		chromedp.KeyEvent(kb.Escape),
+		waitGone(`.profile-picker__menu`),
+		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &focusedAfter),
+		chromedp.Evaluate(`document.querySelector(".profile-picker__trigger").getAttribute("aria-expanded")`, &expandedAfter),
+	)
+
+	assert.Equal(t, "true", expandedWhileOpen, "an open dropdown must say so")
+	assert.Equal(t, "false", expandedAfter)
+	assert.Contains(t, focusedAfter, "profile-picker__trigger",
+		"Escape must hand the cursor back to the trigger it came from")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Keyboard_SkipLinkJumpsPastTheTopBar covers the shell's own skip
+// link (issue 334): the first Tab on any screen offers a way past the top
+// bar's seven-odd controls, which a keyboard user would otherwise walk
+// through on every single route.
+func TestE2E_Keyboard_SkipLinkJumpsPastTheTopBar(t *testing.T) {
+	f := newE2EFixtureWithLibrarySample(t)
+
+	var firstStop, hash string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Tab),
+		chromedp.Evaluate(`document.activeElement?.className ?? ""`, &firstStop),
+		chromedp.KeyEvent(kb.Enter),
+		chromedp.Evaluate(`location.hash`, &hash),
+	)
+
+	assert.Equal(t, "skip-link", firstStop, "the skip link must be the first tab stop")
+	assert.Equal(t, "#main", hash)
+
+	var mainExists bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.getElementById("main") !== null`, &mainExists))
+	assert.True(t, mainExists, "the skip link must point at a target that exists")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ReducedMotion_AnimatesNothing is the other half of issue 334's
+// motion pass: a user who has asked their system for less motion gets
+// none of it.
+//
+// It emulates the media feature rather than trusting the stylesheet by
+// reading, because "prefers-reduced-motion is honoured" is a claim about
+// what the BROWSER computes, and the mechanism has two halves that can
+// fail independently - the CSS tokens collapsing to zero, and motion.js's
+// exit timer collapsing with them. A panel held on screen for a fifth of a
+// second waiting for an animation that was disabled is exactly the sluggish
+// UI the preference exists to avoid.
+func TestE2E_ReducedMotion_AnimatesNothing(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var panelDuration, scrimDuration string
+	var closedWithin time.Duration
+	f.runInBrowser(t,
+		emulation.SetEmulatedMedia().WithFeatures([]*emulation.MediaFeature{
+			{Name: "prefers-reduced-motion", Value: "reduce"},
+		}),
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`getComputedStyle(document.querySelector(".slide-over__panel")).animationDuration`, &panelDuration),
+		chromedp.Evaluate(`getComputedStyle(document.querySelector(".slide-over")).animationDuration`, &scrimDuration),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			started := time.Now()
+			if err := chromedp.KeyEvent(kb.Escape).Do(ctx); err != nil {
+				return err
+			}
+			if err := waitGone(`.slide-over`).Do(ctx); err != nil {
+				return err
+			}
+			closedWithin = time.Since(started)
+			return nil
+		}),
+	)
+
+	assert.Equal(t, "0s", panelDuration, "the panel must not animate in")
+	assert.Equal(t, "0s", scrimDuration, "nor must its scrim")
+	assert.Lessf(t, closedWithin, 500*time.Millisecond,
+		"the exit must not wait out an animation that was disabled (took %s)", closedWithin)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Motion_TheSlideOverPlaysItsExitBeforeItGoes is the default-motion
+// half: with no reduced-motion preference the panel stays mounted, wearing
+// the closing class, for long enough for its exit keyframes to run - which
+// is the whole reason modpanel.js holds the route change back at all.
+func TestE2E_Motion_TheSlideOverPlaysItsExitBeforeItGoes(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var sawClosing bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SlideOverPath("fake", "a")),
+		chromedp.WaitVisible(`.slide-over__panel`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.KeyEvent(kb.Escape),
+		// The panel is still there, now playing its exit - which is exactly
+		// what would be impossible if the route change had gone straight
+		// through and Preact had unmounted the subtree.
+		chromedp.Poll(`document.querySelector(".slide-over--closing") !== null`, &sawClosing,
+			chromedp.WithPollingInterval(20*time.Millisecond)),
+		waitGone(`.slide-over`),
+	)
+
+	assert.True(t, sawClosing, "the panel must wear its closing state before it goes")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_LockedUpdateIsReportedAsASkipNotAsDone is I1's own end-to-end
+// reproduction: tick a LOCKED mod's update alongside an unlocked one, apply
+// the batch, and read what the screen says about it.
+//
+// Before the fix the control that started the batch read a bare "Done" and
+// the tray read "updates succeeded", with the lock refusal named nowhere at
+// all - while the CLI, for the same batch, withheld the row's tick and
+// ended with "1 locked mod(s) not applied". That is the parity gap #324
+// closed in core and this surface lost on the way to the screen.
+//
+// The disk assertions are what stop this from being a test of wording: the
+// unlocked mod really moves to 2.0 and the locked one really does not, so
+// the tally is checked against what actually happened.
+func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
+	f := newE2EFixtureWithALockedAndAnUnlockedUpdate(t)
+
+	var inline, trayState, traySkips string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Better Boots for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Great Gloves for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.card--updates .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		textContent(`.card--updates .job-progress__text`, &inline),
+		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.tray__row .tray__skips`, chromedp.ByQuery),
+		textContent(`.tray__row .tray__state`, &trayState),
+		textContent(`.tray__row .tray__skips`, &traySkips),
+	)
+
+	assert.Equal(t, "1 applied / 1 skipped", strings.TrimSpace(inline),
+		"the control that started the batch must count the refusal as a SKIP, never say a bare Done")
+	assert.Equal(t, "1 applied / 1 skipped", strings.TrimSpace(trayState),
+		"the tray must say the same thing the control does")
+	assert.Contains(t, traySkips, "Better Boots",
+		"the skipped row must be NAMED, not merely counted")
+	assert.Contains(t, traySkips, "locked",
+		"and the engine's own reason must be on screen - a bare count is a guessing game")
+
+	boots, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "boots.pak"))
+	require.NoError(t, err)
+	assert.Contains(t, string(boots), "boots-1.0",
+		"the locked mod must still be deployed at the version its lock names")
+	gloves, err := os.ReadFile(filepath.Join(f.Game.ModPath, "Mods", "gloves.pak"))
+	require.NoError(t, err)
+	assert.Contains(t, string(gloves), "gloves-2.0",
+		"the unlocked mod must really have been updated - otherwise the tally counts nothing")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_UpdatesCardAndConfirmMarkALockedRow is Owner item 3 of the unit-8
+// gate review: the two controls a user meets BEFORE the outcome does.
+//
+// The Updates card rendered a locked row as a plain checkbox like any
+// other, and the confirm modal listed it as "Better Boots 1.0 → 2.0" - so
+// the step whose entire job is to say what will happen promised an update
+// ApplyUpdateBatch was always going to refuse (#97). Both now say so, in
+// the engine's own terms, naming the version the LOCK holds rather than the
+// one the install is on.
+func TestE2E_UpdatesCardAndConfirmMarkALockedRow(t *testing.T) {
+	f := newE2EFixtureWithALockedAndAnUnlockedUpdate(t)
+
+	var lockedRow, openRow, modal string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--updates`, chromedp.ByQuery),
+		chromedp.Text(`.card--updates .card__row:has([aria-label="Select Better Boots for update"])`, &lockedRow, chromedp.ByQuery),
+		chromedp.Text(`.card--updates .card__row:has([aria-label="Select Great Gloves for update"])`, &openRow, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Better Boots for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates input[aria-label="Select Great Gloves for update"]`, chromedp.ByQuery),
+		chromedp.Click(`.card--updates [data-action="update-selected"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="updates"] .plan`, chromedp.ByQuery),
+		chromedp.Text(`.modal[data-kind="updates"] .plan`, &modal, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, lockedRow, "🔒", "a locked row must be marked on the control the user actually ticks")
+	assert.Contains(t, lockedRow, "locked at v1.0", "and must name the version the lock holds")
+	assert.NotContains(t, openRow, "🔒", "an unlocked row must carry no such mark")
+
+	assert.Contains(t, modal, "will be skipped — locked at v1.0",
+		"the confirm step must not promise an update that will not happen")
+	// Case-folded: .plan__heading is rendered in small caps by app.css, and
+	// this assertion is about the sentence, not about the CSS.
+	assert.Contains(t, strings.ToLower(modal), "1 of them will be skipped — locked.",
+		"and must say up front how much of the selection it will not touch")
+	assert.Contains(t, modal, "1.0 → 2.0",
+		"the row that WILL be updated still shows what it will move to")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile is I2 of the
+// unit-8 gate review.
+//
+// <ProfilePicker> was wrapped whole in <InlineJob>, so a finished switch
+// morphed the PICKER: the application's primary context control became a
+// "Done ✕" that did not time out, and the route, the library and the deploy
+// indicator all went on describing the profile the user had just switched
+// AWAY from - the indicator reading "1 change undeployed" for a profile
+// whose Deploy plan says there is nothing to deploy.
+//
+// A button that becomes its own job's progress is the design (Deploy does
+// exactly that); a NAVIGATION control that does is a control the user has
+// lost. So the switch morphs a slot of its own, and the screen follows the
+// machine when the job lands.
+func TestE2E_ProfileSwitchKeepsThePickerAndFollowsTheProfile(t *testing.T) {
+	f := newE2EFixtureWithASwitchTarget(t)
+
+	var location, indicator, library string
+	var pickerInsideJob bool
+	var missionControls, appBars, libraries int
+	var missionControlsAfterNav, appBarsAfterNav int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="switch"][data-profile="hardcore"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="switch"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		// The route follows the machine: this is the assertion, not a
+		// convenience wait - it never arrives without the fix.
+		chromedp.WaitVisible(`.profile-picker__trigger[data-profile="hardcore"]`, chromedp.ByQuery),
+		// The indicator is derived from the mod list, which the route change
+		// re-fetches - so this waits for the screen to have finished
+		// following the machine rather than catching it mid-move. It is
+		// itself an assertion: before the fix the indicator sat on
+		// "1 change undeployed" forever, describing the profile the user had
+		// left, for a profile whose Deploy plan says there is nothing to do.
+		chromedp.Poll(
+			`document.querySelector(".deploy-indicator")?.textContent.trim() === "Deployed"`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond),
+		),
+		// The count is the assertion the unit-8 gate re-review's R1 asked
+		// for: the earlier selector-based assertions below each resolve
+		// against whichever copy comes first in document order, which is
+		// the STALE one when the navigate-during-commit bug reintroduces a
+		// second, orphaned Mission Control - so they kept passing on the
+		// doubled screen. A count does not have that blind spot.
+		chromedp.Evaluate(`document.querySelectorAll(".mission-control").length`, &missionControls),
+		chromedp.Evaluate(`document.querySelectorAll(".app-bar").length`, &appBars),
+		chromedp.Evaluate(`document.querySelectorAll(".library").length`, &libraries),
+		chromedp.Location(&location),
+		chromedp.Evaluate(`Boolean(document.querySelector(".job-progress .profile-picker"))`, &pickerInsideJob),
+		textContent(`.deploy-indicator`, &indicator),
+		chromedp.Text(`.library`, &library, chromedp.ByQuery),
+
+		// The orphan does not just sit on this screen - it survives further
+		// SPA navigation (the re-review's own drive: it followed onto
+		// Setup, and coming back made two AGAIN). A round trip to Setup and
+		// back is what proves it is gone for good, not just absent from
+		// the one screen the earlier assertions happened to check.
+		chromedp.Click(`[data-action="setup"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.setup-page`, chromedp.ByQuery),
+		chromedp.Click(`.mod-page__back`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll(".mission-control").length`, &missionControlsAfterNav),
+		chromedp.Evaluate(`document.querySelectorAll(".app-bar").length`, &appBarsAfterNav),
+	)
+
+	assert.True(t, strings.HasSuffix(location, "/g/g1/hardcore"),
+		"a confirmed switch must take the screen with it, not leave the URL on the profile it left")
+	assert.False(t, pickerInsideJob,
+		"the profile picker must never be the control a switch job morphs - it is how you navigate")
+	assert.Equal(t, "Deployed", strings.TrimSpace(indicator),
+		"the indicator must describe the profile now on screen, whose deploy is a no-op after the switch")
+	assert.Contains(t, library, "Beta Mod", "the library must list what the profile it moved to holds")
+	assert.Equal(t, 1, missionControls,
+		"a confirmed switch must leave exactly one Mission Control on screen, not a stale copy and a live one")
+	assert.Equal(t, 1, appBars,
+		"a confirmed switch must leave exactly one top bar, not the profile left behind stacked above the one moved to")
+	assert.Equal(t, 1, libraries,
+		"a confirmed switch must leave exactly one library, not the old profile's stacked above the new one")
+	assert.Equal(t, 1, missionControlsAfterNav,
+		"the orphan must not survive a further SPA navigation away and back")
+	assert.Equal(t, 1, appBarsAfterNav,
+		"the orphan top bar must not survive a further SPA navigation away and back")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus is Important 3 of the
+// unit-8 gate review: the last entry in the design's own modal inventory
+// (§Modals: "keyboard-shortcuts help") with nothing behind it, in an
+// application that is now fully keyboard-driven and whose README documents
+// every binding.
+//
+// Both routes in are driven - the `?` key from anywhere and the top bar's
+// own control - along with the two things every modal in this application
+// owes its user: Escape closes it, and focus comes back to what opened it.
+// The rows themselves are shortcuts.js's, pinned to the README by
+// TestSPAKeyboardShortcutsMatchTheREADME.
+func TestE2E_KeyboardShortcutsHelpOpensAndReturnsFocus(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var byKey, byButton, focused string
+	var reopenedFromOmnibar bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+
+		// The `?` key, from the page rather than from any control.
+		chromedp.KeyEvent("?"),
+		chromedp.WaitVisible(`.modal[data-kind="shortcuts"]`, chromedp.ByQuery),
+		// The shell's Escape handler lives in an effect, and this modal opens
+		// from a keystroke rather than a click - so the next key would
+		// otherwise land before the listener that answers it exists.
+		settleEffects(),
+		chromedp.Text(`.modal[data-kind="shortcuts"] .shortcuts`, &byKey, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		waitGone(`.modal`),
+
+		// A "?" typed into a text field is a character, not a command.
+		chromedp.Focus(`.omnibar`, chromedp.ByQuery),
+		chromedp.KeyEvent("?"),
+		settleEffects(),
+		chromedp.Evaluate(`Boolean(document.querySelector('.modal[data-kind="shortcuts"]'))`, &reopenedFromOmnibar),
+		chromedp.Blur(`.omnibar`, chromedp.ByQuery),
+
+		// The top bar's own control, and the focus it must get back.
+		chromedp.Click(`[data-action="shortcuts"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="shortcuts"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Text(`.modal[data-kind="shortcuts"] .shortcuts`, &byButton, chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+		waitGone(`.modal`),
+		chromedp.Evaluate(`document.activeElement?.dataset?.action ?? ""`, &focused),
+	)
+
+	assert.Contains(t, byKey, "Tab", "the help must list the traversal binding")
+	assert.Contains(t, byKey, "Esc", "and the one every overlay answers to")
+	assert.Contains(t, byKey, "step to the previous/next mod",
+		"the rows are the README's own words, not a second wording of them")
+	assert.Equal(t, byKey, byButton, "both ways in must open the same help")
+	assert.False(t, reopenedFromOmnibar,
+		"`?` typed into the omnibar is a character someone meant to search for")
+	assert.Equal(t, "shortcuts", focused,
+		"Escape must give focus back to the control that opened the modal")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SlideOverFindingsReadAsProse is M1 of the unit-8 gate review: the
+// slide-over printed a finding's raw status slug ("version_mismatch") while
+// the Health card two inches to its left rendered the same finding, for the
+// same mod, as "version mismatch (recorded 1.0, source reports 2.0)" -
+// verify.js#findingLabel, whose own doc comment says it was extracted "so
+// the two surfaces can never drift". The slide-over was a third surface
+// that never adopted it.
+//
+// Both surfaces are read in one pass, so the assertion is that they AGREE
+// rather than that each matches a string typed twice into this test.
+func TestE2E_SlideOverFindingsReadAsProse(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var card, panel string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health`, chromedp.ByQuery),
+		textContent(`.card--health .card__row-detail`, &card),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		clickModRow("Better Boots"),
+		chromedp.WaitVisible(`.slide-over`, chromedp.ByQuery),
+		chromedp.Text(`.slide-over__panel`, &panel, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, panel, "version mismatch (recorded 1.0, source reports 2.0)",
+		"the slide-over must speak the same language as the card beside it")
+	assert.NotContains(t, panel, "version_mismatch",
+		"no raw status slug may reach a user")
+	assert.Contains(t, panel, strings.TrimSpace(card),
+		"the two surfaces render one finding through one helper, so their words must be identical")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_HealthCardTruncatesTheDetailBeforeTheName is M3 of the unit-8
+// gate review. Both halves of a card row shrank at the same rate, so at
+// 1280px a Health row read "Better …  version mismatch (recorded 1.0, so…"
+// - both cut. The name is the identifier: a truncated detail still explains
+// a mod you can name, while a truncated name explains nothing at all. Only
+// the not-fixable branch carried a title, so a fixable row's cut text was
+// unrecoverable without resizing the window.
+//
+// Measured in the browser rather than asserted against the stylesheet: a
+// truncation is what a layout engine DOES with a rule, and scrollWidth
+// versus clientWidth is the only place that fact exists.
+func TestE2E_HealthCardTruncatesTheDetailBeforeTheName(t *testing.T) {
+	f := newE2EFixtureWithAttention(t)
+
+	var nameCut, detailPresent, titled bool
+	f.runInBrowser(t,
+		chromedp.EmulateViewport(1280, 900),
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.card--health .card__row-name`, chromedp.ByQuery),
+		chromedp.Evaluate(`(() => {
+			const n = document.querySelector(".card--health .card__row-name");
+			return n.scrollWidth > n.clientWidth;
+		})()`, &nameCut),
+		chromedp.Evaluate(`Boolean(document.querySelector(".card--health .card__row-detail"))`, &detailPresent),
+		chromedp.Evaluate(`(() => {
+			const row = document.querySelector(".card--health .card__row");
+			return Array.from(row.querySelectorAll(".card__row-name, .card__row-detail"))
+				.every((el) => (el.title ?? "") !== "");
+		})()`, &titled),
+	)
+
+	assert.True(t, detailPresent, "the row must actually carry both halves, or this proves nothing")
+	assert.False(t, nameCut,
+		"at 1280px the mod name must not be truncated - the detail gives up the room first")
+	assert.True(t, titled,
+		"both halves must carry their own full text as a title, so nothing cut is unrecoverable")
 	assert.Empty(t, f.BrowserErrors())
 }

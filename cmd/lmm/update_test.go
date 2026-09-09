@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -366,10 +367,16 @@ func TestApplySingleUpdate_UpToDate_PrintsExpectedText(t *testing.T) {
 	assert.Equal(t, "Mod One is already up to date (v1.0).\n", out)
 }
 
-// TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues guards doUpdate's own
-// loop: auto-policy updates apply automatically, a failure mid-batch prints
-// "✗ %s: %v" and CONTINUES to the next update (never aborts), and --all
-// applies the remaining notify-policy updates afterward.
+// TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues guards doUpdate's
+// bulk apply: auto-policy updates apply automatically, a failure mid-batch
+// prints "✗ %s: %v" and CONTINUES to the next update (never aborts), and
+// --all applies the remaining notify-policy updates too.
+//
+// #324 replaced the two hand-written loops (an auto-policy pass, then
+// --all's remaining pass) with ONE core.ApplyUpdateBatch call, so the two
+// section headers became a single "Applying N update(s)..." - the only
+// output delta. Everything the test actually guards - the ✗ line, the
+// continuation past it, and all three end states - is unchanged.
 func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 	svc, game, src := setupDoUpdateTest(t)
 	updateAll = true
@@ -399,10 +406,9 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, "\nApplying 2 auto-update(s)...\n")
+	assert.Contains(t, out, "\nApplying 3 update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod One 1.0 → 2.0\n")
 	assert.Contains(t, out, "  ✗ Mod Two: ")
-	assert.Contains(t, out, "\nApplying 1 remaining update(s)...\n")
 	assert.Contains(t, out, "  ✓ Mod Three 1.0 → 2.0\n")
 
 	updated1, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
@@ -418,11 +424,63 @@ func TestDoUpdate_BatchAutoAndAll_MidBatchFailureContinues(t *testing.T) {
 	assert.Equal(t, "2.0", updated3.Version, "mod3 (--all, notify-policy) must have applied")
 }
 
+// TestDoUpdate_AllJSON_PartialCheckFailure_SurfacesOnDocument is the #324
+// review's Important 3: a partial update-CHECK failure (one source down,
+// another fine) must reach the caller under `--all --json`. Before this fix
+// the stderr warning was suppressed by Ruling 15's `!jsonOutput` guard and
+// the emitted core.UpdateBatchResult carried no error field, so the failure
+// reached neither stream - a caller got a result document plus a bare
+// non-zero exit with nothing to explain it. mod2 lives under a source the
+// service never registered, so CheckGameUpdates reports mod1's update
+// normally but returns a non-nil checkErr for mod2's source - the same
+// partial-failure shape TestDoUpdate_CheckFailed_JSONCarriesError pins for
+// the check-only (non---all) path.
+func TestDoUpdate_AllJSON_PartialCheckFailure_SurfacesOnDocument(t *testing.T) {
+	withJSONOutput(t)
+	svc, game, src := setupDoUpdateTest(t)
+	updateAll = true
+
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"m1-old"}, map[string][]byte{"mod1-old.esp": []byte("old1")})
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "2.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "m1-new", FileName: "mod1-new.esp", IsPrimary: true}})
+	src.AddDownload("m1-new", []byte("new1"))
+
+	// missing-src is never registered with the service - CheckGameUpdates'
+	// per-source loop fails this mod's registry lookup and returns a
+	// non-nil error alongside mod1's perfectly good update.
+	seedInstalledForUpdate(t, svc, game, "missing-src", "mod2", "Mod Two", "1.0", []string{"m2-old"}, map[string][]byte{"mod2-old.esp": []byte("old2")})
+
+	var doUpdateErr error
+	out := captureStdout(t, func() error {
+		doUpdateErr = doUpdate(context.Background(), svc, game, nil)
+		return nil
+	})
+
+	require.Error(t, doUpdateErr, "a partial check failure must still fail the command")
+	assert.ErrorIs(t, doUpdateErr, ErrReported)
+
+	var doc core.UpdateBatchResult
+	dec := json.NewDecoder(strings.NewReader(out))
+	require.NoError(t, dec.Decode(&doc))
+	trailing := strings.TrimSpace(out[dec.InputOffset():])
+	assert.Empty(t, trailing, "stdout must hold exactly one JSON document")
+
+	require.Len(t, doc.Applied, 1)
+	assert.Equal(t, "mod1", doc.Applied[0].Mod.ModID, "the source that DID answer must still apply")
+	assert.NotEmpty(t, doc.ErrorMessage, "the partial check failure must be visible in the document")
+	assert.Contains(t, doc.ErrorMessage, "missing-src")
+
+	updated1, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", updated1.Version)
+}
+
 // TestDoUpdate_BulkApply_ChecksSourceExactlyOnce guards #289 review's
-// Important 1 fix: applyBulkUpdate must build its plan from the
-// domain.Update the batch listing already found (Service.PlanUpdateFrom),
-// never by re-invoking CheckGameUpdates (and therefore the source's
-// CheckUpdates) a second time per applied mod. Before the fix, applying 3
+// Important 1 fix, now one level up: the bulk apply must build its plan
+// from the domain.Updates the batch listing already found
+// (Service.PlanUpdateBatchFrom, #324 - previously applyBulkUpdate's
+// per-mod Service.PlanUpdateFrom), never by re-invoking CheckGameUpdates
+// (and therefore the source's CheckUpdates) a second time. Before the fix, applying 3
 // auto-policy mods cost 1 (the listing) + 3 (one re-check per apply) = 4
 // CheckUpdates calls; after the fix it must cost exactly 1, however many
 // mods are applied.
@@ -444,7 +502,7 @@ func TestDoUpdate_BulkApply_ChecksSourceExactlyOnce(t *testing.T) {
 		return doUpdate(context.Background(), svc, game, nil)
 	})
 
-	assert.Contains(t, out, fmt.Sprintf("\nApplying %d auto-update(s)...\n", modCount))
+	assert.Contains(t, out, fmt.Sprintf("\nApplying %d update(s)...\n", modCount))
 	assert.Equal(t, 1, src.checkUpdatesCalls, "bulk apply of N mods must perform exactly one CheckUpdates call (the listing), not N+1")
 
 	for i := 1; i <= modCount; i++ {

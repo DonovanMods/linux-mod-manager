@@ -15,8 +15,11 @@
 // the one section that fetches, lazily, once the panel is open.
 
 import { html, useEffect, useMemo, useRef, useState } from "../render.js";
+import { trapFocus } from "../focustrap.js";
+import { exitMillis } from "../motion.js";
 import { navigate } from "../router.js";
 import { getModDetail, ApiError } from "../api.js";
+import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
 
 /** modUrl builds the ?mod= URL for row, on the given base path - the same
@@ -86,8 +89,27 @@ export function ModPanel({
       ? visible[index + 1]
       : null;
 
+  // The exit animation (issue 334, owner demo 1: "mild UI animations for the
+  // slide-over"). Preact would unmount this whole subtree the instant the
+  // route lost its ?mod=, so there would be nothing left on screen to
+  // animate - the panel would simply vanish. Holding the ROUTE CHANGE back
+  // for one --motion-base, with a class on the scrim that plays the closing
+  // keyframes, is what gives the exit somewhere to happen.
+  //
+  // Every one of this panel's four exits (Escape, the scrim, the ✕, the
+  // ←/→ that leave it) runs through close(), so one deferral covers them
+  // all. `closing` also latches: a second Escape during the animation must
+  // not queue a second navigate.
+  const [closing, setClosing] = useState(false);
+
   function close() {
-    navigate(contextPath);
+    if (closing) return;
+    if (exitMillis() === 0) {
+      navigate(contextPath);
+      return;
+    }
+    setClosing(true);
+    setTimeout(() => navigate(contextPath), exitMillis());
   }
 
   const panelRef = useRef(null);
@@ -132,7 +154,14 @@ export function ModPanel({
     // reliably reach a bare document-level listener the way a real
     // keypress does once something holds focus.
     panelRef.current?.focus();
-    return () => document.removeEventListener("keydown", handleKeyDown);
+    // Keyboard containment, matching the modal's (issue 334's a11y pass):
+    // this panel has a scrim over the page too, and nothing but this told
+    // the Tab key so.
+    const releaseTrap = trapFocus(() => panelRef.current);
+    return () => {
+      releaseTrap();
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [contextPath]);
 
   /** closeOnScrim closes only when the click landed on the scrim ITSELF,
@@ -180,8 +209,9 @@ export function ModPanel({
     const origin = `install:${catalogMod.source_id}/${catalogMod.id}`;
     return html`
       <div
-        class="slide-over"
+        class="slide-over ${closing ? "slide-over--closing" : ""}"
         role="dialog"
+        aria-modal="true"
         aria-label="${catalogMod.name} details"
         onClick=${closeOnScrim}
       >
@@ -262,8 +292,9 @@ export function ModPanel({
   if (!row) {
     return html`
       <div
-        class="slide-over"
+        class="slide-over ${closing ? "slide-over--closing" : ""}"
         role="dialog"
+        aria-modal="true"
         aria-label="Mod details"
         onClick=${closeOnScrim}
       >
@@ -292,8 +323,9 @@ export function ModPanel({
 
   return html`
     <div
-      class="slide-over"
+      class="slide-over ${closing ? "slide-over--closing" : ""}"
       role="dialog"
+      aria-modal="true"
       aria-label="${row.name} details"
       onClick=${closeOnScrim}
     >
@@ -416,12 +448,21 @@ export function ModPanel({
             <section class="slide-over__section">
               <p class="plan__heading">Findings (${findings.length})</p>
               <ul class="plan__paths">
-                ${findings.map(
-                  (f) =>
-                    html`<li key=${f.file_id ?? f.status}>
-                      ${f.status}${f.note ? html` — ${f.note}` : ""}
-                    </li>`,
-                )}
+                ${
+                  // M1, unit 8 gate review: this printed the raw status slug
+                  // ("version_mismatch", "no_checksum") while the Health card
+                  // two inches to its left rendered the same finding as
+                  // prose. findingLabel is the shared answer verify.js's own
+                  // doc comment says exists "so the two surfaces can never
+                  // drift" - the slide-over is the third surface that never
+                  // adopted it.
+                  findings.map(
+                    (f) =>
+                      html`<li key=${f.file_id ?? f.status}>
+                        ${findingLabel(f)}
+                      </li>`,
+                  )
+                }
               </ul>
             </section>
           `

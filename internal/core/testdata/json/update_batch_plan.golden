@@ -1,38 +1,40 @@
 {
-  "game_id": "g1",
+  "game_id": "skyrim-se",
   "profile": "default",
   "updates": [
     {
       "installed_mod": {
-        "id": "m1",
-        "source_id": "fake",
-        "name": "Mod One",
-        "version": "1.0",
+        "id": "42",
+        "source_id": "nexusmods",
+        "name": "Sample Mod",
+        "version": "1.2.3",
         "author": "",
         "summary": "",
         "description": "",
-        "game_id": "g1",
+        "game_id": "skyrim-se",
         "category": "",
         "downloads": 0,
         "picture_url": "",
         "source_url": "",
         "files": [],
         "dependencies": [],
+        "updated_at": "2026-08-27T12:00:00Z",
         "profile_name": "default",
         "update_policy": "notify",
-        "installed_at": "0001-01-01T00:00:00Z",
-        "enabled": true,
+        "installed_at": "2026-08-27T12:00:00Z",
+        "enabled": false,
         "deployed": false,
         "link_method": "symlink",
         "manual_download": false,
         "convert_paks": false
       },
-      "new_version": "2.0",
+      "new_version": "1.2.4",
+      "changelog": "Fixed a crash on load.",
       "recompile_needed": false,
       "locked": false
     }
   ],
   "not_found": [
-    "fake:m9"
+    "curseforge:7"
   ]
 }
