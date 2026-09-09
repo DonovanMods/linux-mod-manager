@@ -1600,3 +1600,34 @@ func TestE2E_SetupGamesEditSourcesMapsAnExistingGame(t *testing.T) {
 		"and a replacement-shaped PUT must not have dropped the source it already had")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
+
+// TestE2E_Auth_ShadowedStoredKeyIsNamedOnTheRow is #356's web half: with
+// both a stored token and the source's environment variable set, the
+// environment key is what lmm sends, so the row must name it AND say the
+// stored key is present but not in use. The whole point of the Auth card is
+// answering "which key is lmm using?", and it used to answer "stored".
+func TestE2E_Auth_ShadowedStoredKeyIsNamedOnTheRow(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+	f.Svc.RegisterSource(newE2EAuthSource("authy", "good-key-xyz"))
+	require.NoError(t, f.Svc.SaveSourceToken(context.Background(), "authy", "storedkey1234567890"))
+	t.Setenv("LMM_AUTHY_API_KEY", "envkey1234567890")
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("auth")),
+		chromedp.WaitVisible(`[data-source="authy"] .badge--good`, chromedp.ByQuery),
+	)
+
+	var status string
+	f.runInBrowser(t, textContent(`[data-source="authy"] .setup-auth__status`, &status))
+	assert.Contains(t, status, "via env", "the row must name the credential actually in use")
+	assert.Contains(t, status, "stored key present, shadowed by")
+	assert.Contains(t, status, "LMM_AUTHY_API_KEY")
+
+	var html string
+	f.runInBrowser(t, chromedp.OuterHTML("html", &html, chromedp.ByQuery))
+	assert.NotContains(t, html, "storedkey1234567890", "neither key may render unmasked")
+	assert.NotContains(t, html, "envkey1234567890")
+	assert.NotContains(t, html, "sto...890",
+		"#79: a stored credential is not decrypted for a status surface, so not even its masked form can appear")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}

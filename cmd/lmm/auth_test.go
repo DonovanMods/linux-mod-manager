@@ -545,13 +545,17 @@ func TestDoAuthLogin_KeyFromEnv_StoresAndEmitsTheStatusReport(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &report, json.RejectUnknownMembers(true)))
 	require.Len(t, report.Sources, 1)
 	assert.True(t, report.Sources[0].Authenticated)
-	assert.Equal(t, "stored", report.Sources[0].Via)
-	// The key was read from the environment but is reported as a STORED
-	// credential, because storing it is what this command just did - and a
-	// stored credential is encrypted at rest and identified by fingerprint
-	// alone (#79).
-	assert.Empty(t, report.Sources[0].KeyMasked)
+	// The key was stored, which is what this command does - but the
+	// variable it came from is still set, so the environment is what lmm
+	// will send from here on and the report says so (#356). The stored row
+	// it just wrote is reported as present and shadowed, by fingerprint
+	// alone, because a stored credential is encrypted at rest (#79).
+	assert.Equal(t, "env", report.Sources[0].Via)
+	assert.Equal(t, "fak...890", report.Sources[0].KeyMasked, "an environment key is one lmm holds in the clear anyway")
 	assert.NotEmpty(t, report.Sources[0].KeyFingerprint)
+	assert.True(t, report.Sources[0].StoredKeyShadowed)
+	assert.Equal(t, report.Sources[0].KeyFingerprint, report.Sources[0].StoredKeyFingerprint,
+		"both fingerprints are over the same key here - which is exactly what the two of them let a user check")
 	assert.NotContains(t, out, "fake-env-key-1234567890", "the document must never carry the key itself")
 
 	token, err := svc.GetSourceToken(context.Background(), "acme-mods")

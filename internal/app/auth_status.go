@@ -41,14 +41,25 @@ func AuthCapableSources(svc *core.Service) []source.ModSource {
 // Authenticated is false and Via is empty for a source with no usable key
 // from either place.
 //
+// WHICH ONE IS ACTIVE (#356). Via is credentialVia's verdict - the same
+// precedence app.ResolveAPIKey applies when it hands a key to the source
+// clients - so this row always names the key lmm is really sending. With
+// both an environment variable and a stored token present the environment
+// wins, and the stored one is reported as StoredKeyShadowed with its
+// StoredKeyFingerprint: present, identifiable, and not in use. Before
+// #356 this row said "stored" whenever a token existed, in the one place a
+// user goes to ask which key is being sent.
+//
 // WHAT THIS SAYS ABOUT THE KEY ITSELF (#79). A STORED credential is
 // encrypted at rest and never appears in this report: the row carries
 // KeyFingerprint - the first 8 hex of the key's SHA-256, enough to answer
-// "is this still the one I pasted?" - and no KeyMasked at all. A key from
-// the ENVIRONMENT is one lmm already holds in the clear (it is in the
-// process environment either way), so that row keeps the masked form, which
-// a user can recognise at a glance, AND gains the fingerprint, so the two
-// kinds of row can be compared.
+// "is this still the one I pasted?" - and no KeyMasked at all. That holds
+// for a shadowed stored key too, which is why StoredKeyFingerprint is a
+// fingerprint and there is no masked sibling for it. A key from the
+// ENVIRONMENT is one lmm already holds in the clear (it is in the process
+// environment either way), so that row keeps the masked form, which a user
+// can recognise at a glance, AND gains the fingerprint, so the two kinds of
+// row can be compared.
 //
 // Precisely, since it is a security claim (review 2): db.ListTokens DOES
 // decrypt each row, because the fingerprint is over the KEY - it has to be,
@@ -58,15 +69,17 @@ func AuthCapableSources(svc *core.Service) []source.ModSource {
 // into this report could not compile.
 //
 // CreatedAt/UpdatedAt are the stored credential's timestamps - when it was
-// first stored and when it was last replaced - and are zero for an
-// environment key, which has no such history.
+// first stored and when it was last replaced. They are zero for a row whose
+// only credential is an environment key, which has no such history, and
+// filled on a shadowed row, where a stored credential does exist.
 //
 // Unreadable marks a stored row that exists but did not decrypt (the key
 // file was replaced, or the row is damaged). Such a row is NOT
 // authenticated - nothing can be sent with it - and the environment
 // variable, if set, takes over as it would for a source with no row at all;
 // the flag stays set either way, because "there is a dead credential here,
-// log in again" is the actionable part.
+// log in again" is the actionable part. It is never reported as shadowed:
+// a credential that cannot authenticate anything is not being outranked.
 type AuthSourceStatus struct {
 	ID             string    `json:"id"`
 	Name           string    `json:"name"`
@@ -78,6 +91,19 @@ type AuthSourceStatus struct {
 	Unreadable     bool      `json:"unreadable,omitzero"`
 	CreatedAt      time.Time `json:"created_at,omitzero"`
 	UpdatedAt      time.Time `json:"updated_at,omitzero"`
+
+	// StoredKeyShadowed reports a usable stored token that is NOT the
+	// credential in use - Via is "env" and `lmm auth login` has also been
+	// run for this source (#356). StoredKeyFingerprint identifies it the
+	// only way a status surface may (#79): by fingerprint, never by the key
+	// itself, not even masked. Both are empty when the stored key IS the
+	// active one, where KeyFingerprint already carries it.
+	//
+	// A frontend renders this as "stored key present, shadowed by
+	// $ENV_VAR", so a user debugging "which key is lmm sending?" sees both
+	// facts at once instead of only the one that lost.
+	StoredKeyShadowed    bool   `json:"stored_key_shadowed,omitzero"`
+	StoredKeyFingerprint string `json:"stored_key_fingerprint,omitempty"`
 }
 
 // OrphanedToken is a stored API key AuthStatus found with no auth-capable
@@ -167,20 +193,29 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 		tok, hasRow := stored[id]
 		row.Unreadable = hasRow && !tok.Readable
 
-		switch apiKey := os.Getenv(envKey); {
-		case hasRow && tok.Readable:
+		// credentialVia (sources.go) is the same precedence ResolveAPIKey
+		// applies for the source clients, so this row names the key lmm
+		// really sends (#356). The stored half is answered from the
+		// listing above - a row that will not decrypt is not usable, so it
+		// neither authenticates nor shadows anything.
+		apiKey := os.Getenv(envKey)
+		via, shadowed := credentialVia(apiKey != "", hasRow && tok.Readable)
+		switch via {
+		case "stored":
 			row.Authenticated = true
 			row.Via = "stored"
 			row.KeyFingerprint = tok.Fingerprint
 			row.CreatedAt, row.UpdatedAt = tok.CreatedAt, tok.UpdatedAt
-		case apiKey != "":
-			// Also the fallback for a row that will not decrypt: that
-			// credential cannot authenticate anything, so it must not
-			// shadow one that can.
+		case "env":
 			row.Authenticated = true
 			row.Via = "env"
 			row.KeyMasked = MaskAPIKey(apiKey)
 			row.KeyFingerprint = db.TokenFingerprint(apiKey)
+			if shadowed {
+				row.StoredKeyShadowed = true
+				row.StoredKeyFingerprint = tok.Fingerprint
+				row.CreatedAt, row.UpdatedAt = tok.CreatedAt, tok.UpdatedAt
+			}
 		}
 		report.Sources = append(report.Sources, row)
 	}

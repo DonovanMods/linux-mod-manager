@@ -170,7 +170,20 @@ function AuthSourceRow({ source, onChanged }) {
           source.authenticated
             ? html`<span class="badge badge--good">authenticated</span>${" "}
                 <span class="mono">${keyLabel(source)}</span>${" "}
-                ${source.via && html`<span class="empty-state__hint">via ${source.via}</span>`}`
+                ${source.via && html`<span class="empty-state__hint">via ${source.via}</span>`}${" "}
+                ${
+                  // issue 356: with both a stored token and the environment
+                  // variable set, the environment is what lmm sends. Naming
+                  // the shadowed key here is the whole point of this row -
+                  // it is where a user comes to ask which key is in use. The
+                  // key itself is never on the wire (issue 79), so this says
+                  // that one exists, not what it is.
+                  source.stored_key_shadowed &&
+                  html`<span class="empty-state__hint"
+                    >(stored key present, shadowed by
+                    <span class="mono">$${source.env_var}</span>)</span
+                  >`
+                }`
             : html`<span class="badge">not authenticated</span>`
         }
         ${

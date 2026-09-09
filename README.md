@@ -679,6 +679,9 @@ manifest:
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
   2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store. An `api` source that also declares `auth.validate` has its key checked live before it is stored (see [API Sources](#api-sources)); every other custom source stores it unvalidated and exercises it on first use.
+
+  When both exist the environment variable wins, and `lmm auth status` (and the web UI's Auth card) say so: the row names the variable and adds `(stored key present, shadowed by $VAR)`, so the answer to "which key is lmm sending?" is always the key it is really sending (#356). The stored key is left alone — unset the variable, or `lmm auth logout <id>` to drop the stored one.
+
 - The resolved key is always attached to the manifest fetch itself (the request for the mod list document); for `api` sources, it's attached to every request built from an `endpoints.*.path` template (search, get_mod, mod_files, download_url).
 - File downloads follow the same same-origin rule regardless of whether the key is `in: header` or `in: query`:
   - **Remote manifests** (`https://` URL): the key (as a header, or appended to the URL) is only sent to file downloads whose scheme and host match the manifest URL's — a manifest pointing files at a third-party CDN never receives the source's key, in either form.

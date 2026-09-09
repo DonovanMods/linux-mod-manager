@@ -9,12 +9,14 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/custom"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,6 +73,9 @@ func TestAuthStatus_StoredVsEnvVsUnauthenticated(t *testing.T) {
 	require.NoError(t, err)
 	svc.RegisterSource(dir)
 
+	// The dev shell exports a real NEXUSMODS_API_KEY; blank it so this row
+	// is the STORED case it means to be (the env outranks it, #356).
+	t.Setenv("NEXUSMODS_API_KEY", "")
 	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "storedbuiltinkey12345"))
 	t.Setenv("LMM_MY_REPO_API_KEY", "supersecretkey123456")
 
@@ -192,4 +197,81 @@ func TestAuthStatus_OrphanedTokenReasons(t *testing.T) {
 	assert.NotEmpty(t, byID["local-mods"].KeyFingerprint)
 	assert.Equal(t, "not_registered", byID["ghost-repo"].Reason)
 	assert.NotEmpty(t, byID["ghost-repo"].KeyFingerprint)
+}
+
+// TestCredentialPrecedence covers the four states the one shared
+// precedence function has to answer for (#356): env only, stored only,
+// both, neither. credentialVia is read by ResolveAPIKey (what the source
+// clients are handed) and by AuthStatus (what every "which key am I
+// using?" surface reports), which is what keeps `lmm auth status` from
+// naming a credential the HTTP clients are not sending.
+//
+// The both-set case is also the #79 shape check: a shadowed stored key is
+// reported as present, by fingerprint, and the key itself - raw or masked -
+// appears nowhere in the marshalled report.
+func TestCredentialPrecedence(t *testing.T) {
+	src := nexusmods.New(nil, "")
+
+	tests := []struct {
+		name         string
+		env, stored  string
+		wantVia      string
+		wantKey      string
+		wantShadowed bool
+	}{
+		{name: "neither"},
+		{name: "stored only", stored: "storedkey1234567890", wantVia: "stored", wantKey: "storedkey1234567890"},
+		{name: "env only", env: "envkey1234567890", wantVia: "env", wantKey: "envkey1234567890"},
+		{
+			name: "both - the environment wins and the stored key is shadowed",
+			env:  "envkey1234567890", stored: "storedkey1234567890",
+			wantVia: "env", wantKey: "envkey1234567890", wantShadowed: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newAuthStatusTestService(t)
+			svc.RegisterSource(src)
+			t.Setenv("NEXUSMODS_API_KEY", tc.env)
+			if tc.stored != "" {
+				require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", tc.stored))
+			}
+
+			// The precedence itself, before either caller applies it.
+			via, shadowed := credentialVia(tc.env != "", tc.stored != "")
+			assert.Equal(t, tc.wantVia, via)
+			assert.Equal(t, tc.wantShadowed, shadowed)
+
+			// What the source clients are actually given.
+			key, err := ResolveAPIKey(context.Background(), svc, src)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantKey, key)
+
+			// What `lmm auth status` / GET /api/v1/auth report.
+			report, err := AuthStatus(context.Background(), svc)
+			require.NoError(t, err)
+			require.Len(t, report.Sources, 1)
+			row := report.Sources[0]
+			assert.Equal(t, tc.wantVia != "", row.Authenticated)
+			assert.Equal(t, tc.wantVia, row.Via, "via must name the credential lmm actually sends")
+			assert.Equal(t, tc.wantShadowed, row.StoredKeyShadowed,
+				"a stored key that exists but is not in use must still be reported")
+			if tc.wantShadowed {
+				assert.Equal(t, db.TokenFingerprint(tc.stored), row.StoredKeyFingerprint,
+					"the shadowed stored key is identified by fingerprint, never by the key")
+				assert.Equal(t, MaskAPIKey(tc.env), row.KeyMasked)
+				assert.False(t, row.CreatedAt.IsZero(), "a shadowed row has a real stored credential behind it")
+			} else {
+				assert.Empty(t, row.StoredKeyFingerprint,
+					"stored_key_fingerprint is only for a stored key that is NOT the active one")
+			}
+
+			if tc.stored != "" {
+				blob, err := json.Marshal(report)
+				require.NoError(t, err)
+				assert.NotContains(t, string(blob), tc.stored, "#79: a stored key never reaches the wire")
+				assert.NotContains(t, string(blob), MaskAPIKey(tc.stored), "#79: not even masked")
+			}
+		})
+	}
 }

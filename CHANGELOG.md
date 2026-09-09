@@ -86,9 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the common catalogue shape still adopts: _Ordinator_ matches _Ordinator -
   Perks of Skyrim_, always as a `[probable match]` so the elided subtitle is
   visible before you confirm — unless two catalogue rows hang subtitles off
-  the SAME name (_Alternate Start - Live Another Life_ and _Alternate Start
-  - Realm of Lorkhan_), in which case the tie is refused and the entry stays
-    untracked rather than being attached to whichever mod sorts first.
+  the SAME name (_Alternate Start - Live Another Life_ and
+  _Alternate Start - Realm of Lorkhan_), in which case the tie is refused
+  and the entry stays untracked rather than being attached to whichever mod
+  sorts first.
 
 - **An absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME` now always wins over the
   legacy directory (#297).** lmm used to prefer an existing
@@ -651,6 +652,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **`lmm auth status` named the credential lmm was NOT using (#356).** With
+  both a stored token and the source's environment variable set, every
+  status surface — `lmm auth status`, `GET /api/v1/auth`, the web UI's Auth
+  card — reported `via: stored`, while the source clients send the
+  environment key: the one place a user goes to debug "which key is lmm
+  actually sending?" gave the wrong answer. Both now derive it from one
+  shared precedence function, the same one `ResolveAPIKey` applies when it
+  hands a key to the source clients. The shadowed stored key is still
+  reported as present but not in use — new additive `stored_key_shadowed`
+  and `stored_key_fingerprint` fields on each source row (a fingerprint,
+  never the key, not even masked: a stored credential is encrypted at rest
+  and stays that way, #79), rendered as "(stored key present, shadowed by
+  $VAR)" by the CLI and by the web card. `lmm auth login --key-from-env`'s
+  own report says `via: env` for the same reason: that IS the key it will
+  send.
 
 - **NexusMods `--tag` and `--category` work again (#337, #343).** The
   GraphQL client still sent `tagNames` and `categoryId`, neither of which

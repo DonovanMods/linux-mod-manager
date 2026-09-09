@@ -467,7 +467,13 @@ func doAuthStatus(ctx context.Context, service *core.Service) error {
 			// where it used to show a masked prefix and suffix.
 			fmt.Printf("%s (%s): authenticated (key %s)\n", s.Name, s.ID, s.KeyFingerprint)
 		case "env":
-			fmt.Printf("%s (%s): authenticated via %s (key: %s)\n", s.Name, s.ID, s.EnvVar, s.KeyMasked)
+			// #356: a stored token that the environment outranks is named
+			// here, so "which key is lmm sending?" has one honest answer.
+			shadowed := ""
+			if s.StoredKeyShadowed {
+				shadowed = fmt.Sprintf(" (stored key present, shadowed by $%s)", s.EnvVar)
+			}
+			fmt.Printf("%s (%s): authenticated via %s (key: %s)%s\n", s.Name, s.ID, s.EnvVar, s.KeyMasked, shadowed)
 		default:
 			fmt.Printf("%s (%s): not authenticated (run: lmm auth login %s)\n", s.Name, s.ID, s.ID)
 		}
