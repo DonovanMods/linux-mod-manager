@@ -653,7 +653,7 @@ export function GameAddForm({
         detectedRow &&
         html`
           <div class="plan__note" data-testid="setup-add-detected">
-            Prefilled from <strong>${detectedRow.name}</strong> (Steam app
+            Prefilled from <strong>${detectedRow.name}</strong> (Steam app${" "}
             ${detectedRow.steam_app_id}).${" "}
             <button
               type="button"

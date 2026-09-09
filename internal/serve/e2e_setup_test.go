@@ -401,6 +401,31 @@ func TestE2E_FirstRunUncuratedGame_AddWithDetailsCatalogPick(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_FirstRunUncuratedGame_PrefillBannerHasASpaceBeforeTheAppID pins
+// Important 2 of the unit9 review: htm drops a text-only chunk containing a
+// bare newline entirely rather than collapsing it to one space, so the
+// prefill banner's own line wrap between "Steam app" and the interpolated
+// id rendered "(Steam app526870)" with no space at all on every prefill.
+// TestNoAdjacentHTMWhitespaceDrops (no_htm_whitespace_test.go) is the
+// static ratchet for the source shape; this checks the actual rendered DOM
+// text a user reads, the way the review itself verified it live.
+func TestE2E_FirstRunUncuratedGame_PrefillBannerHasASpaceBeforeTheAppID(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-detected"]`, chromedp.ByQuery),
+	)
+
+	var bannerText string
+	f.runInBrowser(t, chromedp.Text(`[data-testid="setup-add-detected"]`, &bannerText, chromedp.ByQuery))
+	assert.Contains(t, bannerText, "Steam app "+fixture.UnknownAppID,
+		`htm must not drop the space between "Steam app" and the interpolated id`)
+}
+
 // TestE2E_FirstRunUncuratedGame_ClearThenReclickSameRowReprefills pins
 // Important 1 of the unit9 review: GameAddForm's `detected` prop applied
 // through useEffect(…, [detected]) by object IDENTITY, so clearDetected()
