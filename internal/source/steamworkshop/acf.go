@@ -212,6 +212,16 @@ func ScanLibraries(libraries []string, appID string) (Scan, error) {
 		}
 		scan.Libraries = append(scan.Libraries, lib)
 		for _, it := range aw.Items {
+			// A file id comes from the ACF's own map keys and is joined into
+			// ContentPath (which becomes ExternalPath) and used as the DB mod
+			// id, so it gets the same decimal check the app id gets. Only
+			// reads ever happen against that path, but the asymmetry is not
+			// worth keeping: skip the item and say so.
+			if !isDecimal(it.FileID) {
+				scan.Warnings = append(scan.Warnings,
+					fmt.Sprintf("%s: skipping item %q: file id must be decimal digits", path, it.FileID))
+				continue
+			}
 			if seen[it.FileID] {
 				// The same item claimed by two libraries: keep the first,
 				// which is the first library in the caller's search order.
@@ -239,10 +249,23 @@ func validateAppID(appID string) error {
 	if appID == "" {
 		return fmt.Errorf("steam app id is required")
 	}
-	for _, r := range appID {
-		if r < '0' || r > '9' {
-			return fmt.Errorf("invalid steam app id %q: must be decimal digits", appID)
-		}
+	if !isDecimal(appID) {
+		return fmt.Errorf("invalid steam app id %q: must be decimal digits", appID)
 	}
 	return nil
+}
+
+// isDecimal reports whether s is a non-empty run of decimal digits - the
+// shape both a Steam app id and a published-file id always have, and the
+// only shape either is allowed to have before it is joined into a path.
+func isDecimal(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

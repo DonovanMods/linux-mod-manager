@@ -3,6 +3,7 @@ package steamworkshop_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steamworkshop"
@@ -151,6 +152,26 @@ func TestScanLibraries(t *testing.T) {
 		assert.Empty(t, got.Items)
 		assert.Empty(t, got.Libraries)
 		assert.Empty(t, got.Warnings)
+	})
+
+	// The app id is validated before any path join; a file id comes from the
+	// ACF's own map keys and is joined into ContentPath (which becomes
+	// ExternalPath) and used as the DB mod id, so it gets the same check.
+	t.Run("a non-numeric file id is skipped with a warning, not path-joined", func(t *testing.T) {
+		lib := writeLibrary(t, t.TempDir(), "appworkshop_620980.acf", map[string][]string{
+			"3617086610": {"mod.pak"},
+		})
+
+		got, err := steamworkshop.ScanLibraries([]string{lib}, "620980")
+		require.NoError(t, err, "one bad key does not fail the scan")
+		require.Len(t, got.Items, 1)
+		assert.Equal(t, "3617086610", got.Items[0].FileID)
+		require.Len(t, got.Warnings, 1)
+		assert.Contains(t, got.Warnings[0], "file id must be decimal digits")
+		for _, it := range got.Items {
+			assert.True(t, strings.HasPrefix(it.Path, lib),
+				"no item path may escape the library root")
+		}
 	})
 
 	t.Run("a non-numeric app id is refused before any filesystem read", func(t *testing.T) {
