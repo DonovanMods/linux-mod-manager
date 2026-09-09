@@ -28,25 +28,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-document-on-stdout invariant every other `--json` command holds to.
   Plain-text output is unchanged.
 
-- **`lmm serve` is now a single-page application.** The page-per-command web
-  UI described by the unreleased entries below never shipped: it converted
-  the TUI too literally — six pages mapped to CLI verbs, context
-  re-established on every one of them, actions far from the data they act
-  on. It is replaced by the SPA in
-  `docs/plans/2026-08-31-serve-spa-design.md`: vendored Preact + htm (no
-  Node, no npm, no bundler — `go build` is still the entire build and users
-  install nothing), the game and profile in the URL path
-  (`/g/{game}/{profile}`), a light/dark theme following the system with a
-  persisted override, and the same `/api/v1` + jobs + SSE backend
-  underneath, unchanged. The old page URLs permanently redirect into the new
-  scheme. The `?sync=1` no-JavaScript form fallback is gone with the forms;
-  the CLI is the fallback. Enable/disable gain their own endpoints
-  (`POST /api/v1/mods/{source}/{id}/enable`, `.../disable`), which is where
-  the deleted form routes' one non-plan job path went (#327, epic #326).
-  The `lmm serve` entries below will be consolidated into a single accurate
-  entry before the first release that ships any of it.
-
 ### Added
+
+- **`lmm serve` — a local web UI that can do everything the CLI can
+  (epic #326).** `lmm serve` starts a single-page application on
+  `127.0.0.1:7420` (`--addr` to change it, `--no-open` to skip opening a
+  browser). There is nothing to install: the whole UI is vendored
+  Preact + htm served from the binary itself, so `go build` remains the
+  entire build — no Node, no npm, no bundler, and no CDN a browser has to
+  reach.
+
+  The game and profile live in the URL (`/g/{game}/{profile}`), so the
+  screen can never be acting on a different game than the one it is
+  showing. **Mission Control** is home: attention cards that act in place —
+  Updates (tick rows, drop any at the confirm step, apply the rest as one
+  batch), Health (per-finding Repair, "Repair all", when it last verified,
+  and the engine's own sentence when a finding is not fixable), Conflicts
+  (each naming the contenders and the winning rule, with "Resolve…"
+  opening the reorder modal scrolled to that file), and Profile ("n mods in
+  this profile are not installed" → `lmm profile apply`) — over the library
+  table: enabled toggle, versions with their update target, badges, load
+  order, per-row actions, filter/sort, and a multi-select batch bar. The
+  columns widen with the display (author and install date at 1440px, source
+  and link method at 1920px).
+
+  Clicking a row opens a **slide-over** — lock and update policy editable in
+  place, the mod's own findings and conflicts, a changelog preview,
+  Update/Enable/Disable/Uninstall, and ←/→ to step through the list —
+  and "More info →" opens the **full mod page**: description, complete
+  changelog, files table, versions table with per-version install/rollback,
+  dependencies, and that mod's own job history. The **omnibar** narrows the
+  library as you type and fans the same text out to the game's sources on
+  Enter, appending installable results in place; a **search page** is the
+  escape hatch, with badges, download counts, summaries, filters, sort and
+  server-side pagination.
+
+  Every mutation goes the same way, and it is the CLI's own way: the plan is
+  computed and shown first — the exact mods, files, hooks and paths
+  `--dry-run` would print — and confirming runs it as a background job, at
+  which point **the control you clicked becomes that job's progress** and
+  its outcome resurfaces in the same place. A top-bar activity tray collects
+  every job of the session (running with live phase text, queued, failed
+  with its next step inline, recently finished), each expanding to its own
+  phase-by-phase event stream; a completion whose control is no longer on
+  screen arrives as a toast instead. Jobs run under the server's own
+  context, so closing the tab never interrupts one. Every plan kind the CLI
+  has is wired: deploy, install, uninstall, update batches, rollback,
+  profile switch, profile apply, profile import, archive import, adopt and
+  verify repair — plus enable/disable, the two single-step toggles with
+  nothing to preview.
+  **Modals**: confirm-plan (one framework, one renderer per kind), reorder
+  (drag or keyboard, with a live "current vs proposed winner" preview per
+  contested path), profiles (create/rename/delete/set-default/export/import),
+  and a batch uninstall.
+
+  **The admin surface is in the UI too** — the reason this is full
+  bidirectional parity rather than a read-mostly dashboard. A `/setup` page
+  carries Games (the configured table, Steam detection, manual add,
+  set/clear default), Authentication (per-source status, log in/out, an
+  environment-variable hint, orphaned-token removal, and an honest
+  "restart required" when a live re-key could not take effect),
+  Custom sources (a line-numbered YAML editor with validate-then-save, an
+  optional live probe, delete, download), Archive import (upload, optional
+  source/mod-id link, confirm, conflict/Overwrite) and Adopt (scan, preview,
+  confirm). With no games configured yet, `/` is the first-run flow, sharing
+  its detect/add components with the Games section so the two cannot drift.
+
+  It is built on `/api/v1`, whose responses are the same documents
+  `lmm <cmd> --json` prints, with the CLI's own `{"error", "details"}`
+  envelope on failure. Reads:
+  `/api/v1/{status,mods,mods/{source}/{id},mods/{source}/{id}/{files,versions},search,updates,profiles,profiles/{name}/export,health,conflicts,games,sources,auth}`.
+  Mutations: `POST /api/v1/plans/{kind}` computes a plan and returns a
+  single-use `plan_id`, `POST /api/v1/jobs` redeems it and runs the Apply as
+  a job, `GET /api/v1/jobs/{id}` reports its state and result, and two SSE
+  streams carry progress — `GET /api/v1/jobs/{id}/events` for one job
+  (replaying what it has already emitted, so a page opened mid-operation
+  sees the whole run) and `GET /api/v1/events` multiplexing every job's
+  lifecycle for the session. The single-step writes answer synchronously
+  with the document their CLI twin prints: enable/disable, mod lock/unlock/
+  update-policy, profile create/delete/rename/set-default/reorder, game
+  add/detect/set-default, source save/delete/validate, and auth login/logout.
+  Several core documents gained additive fields for it, all of which
+  `--json` now carries too: `core.SearchReport`'s `page`/`page_size`/
+  `has_more`, `core.InstallPlan`'s `file_pool`, `core.VerifyFinding`'s
+  `fixable`, and `core.DeployPlanMod`'s per-mod version; and one new
+  read-only core query, `GetProfileConflictsForOrder`, answers "which mod
+  wins each contested path under THIS order" so the reorder preview and the
+  commit share one winner rule.
+
+  The UI follows the system's light/dark preference with a persisted
+  override, both palettes meeting WCAG AA contrast; every control is
+  reachable and operable by keyboard, dialogs contain focus and give it
+  back, and `prefers-reduced-motion` disables every animation. Desktop only
+  (1080p and up) and localhost only, by design — there is no remote access,
+  no authentication, and no mobile layout.
+
+  This replaces the page-per-command web UI of epic #276 (#319/#320/#321/
+  #322/#323), which converted the TUI too literally — six pages mapped to
+  CLI verbs, context re-established on every one of them, actions far from
+  the data they act on — and which never shipped in a release. The six old
+  page URLs permanently redirect into the new scheme, and the `?sync=1`
+  no-JavaScript form fallback is gone with the forms: the CLI is the
+  fallback. It also closes epic #276's carried TUI intents — per-item update
+  selection (#74), install version/file selection (#225), uninstall options
+  (#226), full mod-detail prose (#232, #86), live deploy progress (#257) and
+  mod changelog (#87) — and, unlike that epic, leaves nothing CLI-only.
+  (#327, #328, #329, #330, #331, #332, #333, #334, epic #326)
 
 - **`lmm profile reorder -i` — an interactive load-order picker (#254).**
   Setting a load order used to mean naming every mod ID positionally, which
@@ -93,23 +180,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stored and the process keeps using the old one until restarted. The
   response now says so, instead of reporting "authenticated" and leaving
   the miss to a server-side log line.
-
-- **The `lmm serve` Setup page (#333).** A whole page at
-  `/g/{game}/{profile}/setup` rather than a modal, reached from the top
-  bar's **⚙** button or the empty-library state's links, with five
-  sections: **Games** (the configured games table, detect/manual-add, and
-  default set/clear via two new routes,
-  `POST /api/v1/games/{id}/set-default` and `DELETE /api/v1/games/default`,
-  both answering `core.SettingsResult`), **Authentication** (per-source
-  status, log in/out, an environment-variable hint, orphaned-token
-  removal), **Custom sources** (list, a line-numbered YAML editor with
-  validate-then-save and an optional live probe, delete with an inline
-  confirm, download), **Archive import** (upload, optional source/mod-id
-  link, the confirm-plan framework, conflict/Overwrite), and **Adopt**
-  (scan, preview, confirm). The first-run flow at `/` (no games configured
-  yet) shares its detect/manual-add components with the Games section, so
-  first-run and "add another game later" cannot drift into two different
-  forms. (#333, epic #326)
 
 - **Non-interactive `lmm game add` and `lmm auth login` (#307), and the
   `lmm serve` Setup surface's backend (#333).** Every prompt those two
@@ -207,30 +277,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was supplied by neither a flag nor a prompt", and names the flag that
   answers it. (#307, #333, epic #326)
 
-- The `lmm serve` SPA's modal surfaces get their backend: reorder, profile
-  management, health repair. `POST /api/v1/profiles/{name}/reorder` commits
-  a load order (the same `ResolveReorder` identifiers `lmm profile reorder`
-  takes) and `GET /api/v1/conflicts?order=` previews one - a new read-only
-  core query, `GetProfileConflictsForOrder`, answering "which mod wins each
-  contested path under THIS order" with the same `ConflictReport` document a
-  real reorder produces, so the drag-and-drop preview and the commit share
-  one winner rule instead of the browser re-deriving it. Profile management
-  lands as four more synchronous mutations returning the `core.ProfileResult`
-  document their CLI twins print - `POST /api/v1/profiles` (create),
-  `DELETE /api/v1/profiles/{name}`, `POST .../rename` and
-  `POST .../set-default` - plus `GET /api/v1/profiles/{name}/export`
-  (`domain.ExportedProfile`, served as an attachment) and a new
-  `profile_import` plan kind over the existing `PlanImport`/`ApplyImport`
-  pair. Health repair gains an additive `mod_filter` on the `verify_fix`
-  plan request (`lmm verify --mod`'s own option, set on both halves from the
-  one request) so a single finding can be repaired on its own, and
-  `core.VerifyFinding` gains an additive `fixable` field saying whether
-  `verify --fix` would attempt a repair for that row at all - computed from
-  the same decision points the repairs are gated on (a locked ref's
-  `version_mismatch` and every `version_unverifiable` are never fixable),
-  so no frontend has to reimplement the rule. `lmm verify --json` reports it
-  too. (#332, epic #326)
-
 - **`lmm profile rename <old> <new>`.** Renames a profile and everything
   that names it: the profile file, its mods and load order, its hooks and
   config overrides, its default-profile status, and every database row keyed
@@ -241,235 +287,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another profile holds is refused. `--json` prints `core.ProfileResult`.
   (#332)
 
-- The `lmm serve` SPA gets its modal/batch surfaces (Unit 6B), consuming the
-  backend above. A **reorder modal**, reachable from the library's own
-  "Reorder…" and from any Conflicts-card row's "Resolve…" (which now opens
-  it scrolled to that row's own contested file), moves the load order by
-  drag or by keyboard (move up/down, first/last - never pointer-only) with a
-  live "current vs proposed winner" preview per contested path, debounced
-  and sequence-fenced against `GET /api/v1/conflicts?order=` so a slow
-  response for an order the user has since moved past is dropped rather
-  than landing late; the winner itself is never recomputed in JS. A
-  **profiles modal** ("Manage profiles…") lists every profile (default
-  marked, mod counts), with create/rename/delete/set-default confirmed
-  inline (no nested modal) and export as a real `<a download>` to the
-  export route; import reads the picked file as text and hands it to the
-  confirm-plan framework's own `profile_import` renderer, showing which
-  mods would install, need re-downloading, or are missing before anything
-  runs. The **Health card** gains per-finding Repair (shown only when a
-  finding is `fixable`, with the row otherwise saying why it is not -
-  nothing to check it against, nothing to repair it with, locked to a
-  version, or a conversion only a reinstall retries) alongside "Repair all".
-  The **Updates card** gains its own batch: tick rows, drop any before
-  confirming, and apply the rest through `plan_updates.js` - a renderer
-  built for a batch (per-row drop, a tally, `NotFound` rows named) that
-  replaces the framework's generic fallback for this one kind. The
-  **library** gains a batch bar (multi-select → Enable/Disable/Uninstall/
-  Update, each batch sequenced one job at a time so core's own
-  serialisation is never raced) and, per row, a live enabled toggle and a
-  ⋯ menu (Update/Uninstall/Lock-Unlock/Reorder-here). A finished batch job
-  is read honestly rather than through its own bare `state`: a job that
-  downloaded nothing still reports `state: "succeeded"` (its Apply returned
-  without an error - only its own result says every item failed), so the
-  UI now reads that result and renders "n applied / m failed" wherever it
-  used to print an unconditional "Done". (#332, epic #326)
-
-- The `lmm serve` backend's profile management (above) is now fully gated
-  and honest about failure. `POST /api/v1/profiles`,
-  `DELETE /api/v1/profiles/{name}` and `POST .../set-default` now run
-  behind the same mutation-serialising gate every other write in the
-  service already does, instead of racing an in-flight deploy or install.
-  A profile name already in use - on disk, or still claimed by database
-  rows a prior Delete only ever removed the file for - answers `409` from
-  a typed `core.ErrProfileExists` detected inside that gate, and a rename
-  that fails partway through now compensates instead of leaving two
-  profile files behind: a database-write failure removes the file the
-  rename had already written, and an old-file-removal failure strips the
-  orphan's default flag so it can never read as a second default. A
-  `profile_import` document with no profile name is refused as bad input
-  (`400`) rather than planned and only failing once applied. (#332)
-
-- The `lmm serve` SPA's omnibar now searches, and installing works.
-  Typing narrows the library in place ("In your library (n)", unchanged
-  from Mission Control's first cut); pressing Enter (or the "search
-  sources ↵" button) fans the same text out to the game's configured
-  sources and appends the results below the library ("From sources (n)")
-  without ever leaving home - each one installable inline, with a version
-  picker where the source offers more than one, and a click opens the same
-  slide-over an installed row does. A source that fails to answer renders a
-  warning row beside whatever did, never in its place. The dedicated search
-  page (`/g/{game}/{profile}/search?q=…`, reachable by deep link or the
-  fan-out) is the escape hatch for heavier browsing: source badges,
-  download counts, summaries, category/source filters, sort, and real
-  server-side pagination (`GET /api/v1/search` gains additive `page`/
-  `page_size` params; `core.SearchReport` gains additive `page`/
-  `page_size`/`has_more` fields, present only when a caller actually
-  pages - the CLI's own single-page call still emits neither). Install goes
-  through the confirm-plan framework's own renderer, the first with
-  something to _choose_ rather than only read: `core.InstallPlan` gains an
-  additive `file_pool` field - the full candidate list `Files`' single
-  default pick was chosen from, computed at plan time from the same fetch
-  so there is no second network round trip - which the picker groups by
-  version (and, where a version itself resolves to more than one file, by
-  file). Installing over a file another mod already owns fails inline with
-  the typed `*core.ConflictError` the CLI's own confirm prompt answers,
-  and the tray's failed entry now offers a live "Overwrite?" that re-plans
-  and re-applies with `accept_conflicts` set - the refused attempt already
-  downloaded the file, so the retry re-uses the cache rather than
-  downloading it again. (Unit 3's single in-flight `bindingJob` slot
-  correctly assumed one modal implied one in-flight start; it is now a map
-  keyed by origin, since an inline install and an independent slide-over
-  mutation can now genuinely overlap.) (#331, epic #326)
-
-- The `lmm serve` SPA's drill-in surfaces are wired. Clicking a library row
-  opens the slide-over for real: name, author, installed → available
-  version, an editable lock toggle and update-policy select (thin
-  `POST /api/v1/mods/{source}/{id}/{lock,unlock,update-policy}` routes over
-  `Service.SetModLock`/`ClearModLock`/`SetModUpdatePolicy`, no plan or job -
-  a single DB write with nothing to preview), the mod's own summary,
-  findings and conflicts, a changelog preview, and Update/Enable-or-Disable/
-  Uninstall actions - Enable/Disable through the existing plan-free toggle
-  endpoints, Uninstall and Update through the confirm-plan framework's
-  second and third registered kinds (`UninstallPlanView`, and `updates`
-  deliberately left on the framework's generic fallback view - its own
-  batch UI is a later unit's). Esc, an outside click, or ←/→ (stepping
-  through the library's current filtered/sorted order) all work. "More
-  info →" opens the full mod page at
-  `/g/{game}/{profile}/mod/{source}/{id}`: full description, complete
-  changelog, a files table, a versions table (`GET
-.../versions` - `AvailableModVersions`' first real consumer), a new
-  **rollback** plan kind wired from it (`core.PlanRollback`/`ApplyRollback`,
-  honoring lock rules), dependency info, and a per-mod job history built
-  from the finished jobs whose own result document names the mod (`updates`
-  and `rollback` today - `enable`/`disable`/`uninstall` report no mod
-  identity in their result, a gap left for a later unit rather than another
-  wire change here). A deploy plan's mod rows now carry the version each
-  mod would deploy (`DeployPlanMod.Ref.Version`, previously always empty),
-  which the confirm modal already had a conditional slot ready to show
-  (#330, epic #326)
-
-- The `lmm serve` SPA can now run a mutation, and every mutation it will
-  ever run goes the same way: clicking a control computes the plan and
-  shows it - the exact mods, files, hooks and purge paths the CLI's
-  `--dry-run` would print - and confirming starts it as a background job,
-  at which point the control you clicked becomes that job's live progress
-  (phase text, batch position, byte counters), and its outcome resurfaces
-  in the same place. **Deploy** is the first control wired to it; the
-  others follow unit by unit. A top-bar activity tray collects every job
-  the session has run - running with progress, queued, failed with the
-  reason and its next step, recently finished - and each entry expands to
-  that job's own phase-by-phase event stream. Completions whose control is
-  no longer on screen arrive as a toast instead, and the old `/jobs/{id}`
-  URL now deep-links into the tray entry for that job (#329, epic #326)
-
-- The `lmm serve` library table uses a wide display: author and install
-  date appear at 1440px and up, source and link method at 1920px and up.
-  Its two leading checkbox columns are labelled at last - "Select" (for
-  batch actions) and "Enabled" (the mod's own state) - which were
-  previously two unlabelled columns of identical checkboxes (#329)
-
-- `lmm serve` gains the two endpoints its activity tray is built on:
-  `GET /api/v1/jobs` lists every job the registry still retains, newest
-  first, each summarised without its (potentially large) result document —
-  a failed job carries its `{"error", "details"}` envelope inline so a
-  client can offer the next step without a second request — and
-  `GET /api/v1/events` is a single Server-Sent Events stream multiplexing
-  every job's lifecycle for the whole session. It opens with an
-  `event: snapshot` frame carrying the job index, so a client connecting
-  mid-deploy is caught up before it is told anything new, then sends
-  `job_started` / `job_progress` / `job_done` frames naming the job each
-  belongs to. Progress frames are summaries (phase, mod, position,
-  percent), and a download's per-read ticks are coalesced to whole
-  percents; the per-job stream (`GET /api/v1/jobs/{id}/events`) is
-  unchanged and remains the full-detail view (#327, epic #326)
-
-- `lmm serve` starts a local web UI (127.0.0.1:7420 by default, `--addr`
-  to change it, `--no-open` to skip auto-opening a browser): a
-  server-rendered status dashboard, plus `/mods`, `/mods/{source}/{id}`
-  (full prose, changelog, files, versions - #232/#87), `/search`,
-  `/updates` (#74), `/profiles`, and `/health` (verify findings + file
-  conflicts) read pages, each with a game/profile switcher and disabled
-  mutation form shells previewing the routes a later unit wires (#319). A
-  read-only `GET /api/v1` JSON API mirrors the same reads -
-  `/api/v1/{status,mods,mods/{source}/{id},search,updates,profiles,health,conflicts}`
-  each answering exactly the document `lmm <cmd> --json` emits for the
-  identical call, with the CLI's `{"error","details"}` envelope on failure
-  (#320). Mutations and background jobs land in follow-up units of this
-  epic (#321/#322, epic #276).
-- `lmm serve` gains its jobs API: `POST /api/v1/plans/{kind}` computes a
-  mutation's plan and returns it with a single-use `plan_id`,
-  `POST /api/v1/jobs` redeems that id and runs the Apply as a background job
-  (returning `{"job_id"}`), `GET /api/v1/jobs/{id}` reports its state and
-  result-or-error, and `GET /api/v1/jobs/{id}/events` streams the typed
-  core progress events as Server-Sent Events - replaying what the job has
-  already emitted before going live, so a page opened mid-operation sees
-  the whole run. A `/jobs/{id}` page renders the same state, progress and
-  result with no JavaScript. A job's Apply runs under the server's own
-  context, never the request's, so closing the tab that started an
-  operation never interrupts it. `deploy` is the first plan kind wired
-  end-to-end; the remaining mutations follow in #322 (epic #276).
-- `lmm serve` wires its single-mod mutations. Every `/mods` row's
-  Enable/Disable/Uninstall buttons and the Install button on a mod's detail
-  page and on `/search` now work. Uninstall and install first show a
-  confirmation page rendered from the real plan - the exact files that
-  would be removed, the hooks that would run, what would be downloaded -
-  and confirming runs the operation as a background job with live progress
-  at `/jobs/{id}`. Install's confirmation page offers a version picker
-  (from the versions the source reports) and a file picker whenever the
-  mod actually has more than one candidate file (#225); uninstall's offers
-  keep-the-download, skip-hooks and force (#226). Changing an option and
-  pressing "Update plan" shows what it would do before anything runs. When installing would
-  overwrite files another installed mod owns, nothing is changed: the job
-  reports the conflicting files and offers Overwrite, which installs
-  anyway without downloading a second time. If the profile changes while a
-  confirmation page is open, the operation is refused and a freshly
-  computed plan is shown instead of applying a stale one. Every action
-  works with JavaScript disabled, and a `?sync=1` form target runs the
-  operation inline and returns its result for callers that would rather
-  wait than watch (#322, epic #276).
-- `lmm serve` wires the rest of its mutations, so no form shell is left
-  disabled. `/updates`' checkboxes now apply as one batch: tick the mods
-  you want, review a single confirmation page naming every version move
-  (and anything a lock would refuse), and confirm to run them all as one
-  job - the mods you did not tick are not touched, and submitting with
-  nothing ticked simply says so. `/profiles` gains working Switch, Apply
-  and Deploy: each shows its full plan first - which mods would be
-  enabled, disabled, downloaded or removed, which files a deploy would
-  link, what a purge pass would clear - and switch and apply call out the
-  problems they already know about, a locked profile entry whose record
-  cannot be updated or an entry no source can resolve, both before you
-  commit and again in the finished job's report. A deploy's progress
-  streams live at `/jobs/{id}` (#257). `/health` gains a repair action that
-  appears only when the report actually holds something `lmm verify --fix`
-  can act on, and its confirmation page shows exactly which findings would
-  be repaired and which would only be reported again. As with every other
-  mutation, all of it works with JavaScript disabled and each action has a
-  `?sync=1` run-and-wait form target (#74/#257/#226, #322, epic #276).
-- `lmm serve`'s pages gain their JavaScript enhancement and an
-  accessibility pass, with every page still fully functional with
-  JavaScript disabled. A running job's page and every mutation's confirm
-  page now subscribe to the SSE stream and show live progress in place,
-  swapping to the finished result the moment the job's terminal
-  `event: done` frame arrives - no manual reload needed (a dropped
-  connection still leaves the always-present Refresh link and, with
-  JavaScript off entirely, an automatic page refresh). Every template also
-  gets an accessibility pass: form labels, a sensible focus order, `aria`
-  attributes only where semantics fall short, full keyboard navigation, and
-  screen-reader-only captions on the four data tables that were missing one
-  (#323, epic #276).
 - `mod show` displays a mod's changelog when its source can supply one
   (`--json`: `changelog`, additive) - NexusMods now implements the new
   `source.ChangelogProvider` optional capability via its files endpoint's
   changelog field; a source without it, or a failed live fetch, simply
   omits the section rather than failing the command (#87).
-- `lmm serve` closes out epic #276's carried TUI intents for v2.1.0:
-  per-item update selection (#74), install version/file selection (#225),
-  uninstall options - keep-cache/skip-hooks/force (#226), full mod-detail
-  prose (#232), live deploy progress (#257), and mod changelog (#87). The
-  admin-only surface staying CLI-only for this release - game add/detect,
-  auth login, custom-source management, archive import/adopt, hooks
-  editing, profile export/import, settings mutation - is documented in the
-  README's Web UI section (epic #276).
 
 ## [2.0.0] - 2026-08-30
 
