@@ -653,6 +653,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`lmm profile import --json` and `lmm import --json` name the mods that
+  failed, not just how many (#308).** `core.ProfileImportResult` and
+  `core.AdoptResult` carried a bare `failed: N`, while the per-item reason
+  existed only on the event stream the plain renderers print from — and
+  `--json` suppresses events by design, so the detail never reached the
+  wire. Both documents now carry an additive `failures[]` (`source_id`,
+  `mod_id`, `name`, `reason`), appended at exactly the point the counter is
+  bumped, with each `reason` equal to that item's event detail verbatim.
+  Plain-text output is unchanged: the failure lines stay interleaved,
+  printed live at the point of occurrence, and a test pins them
+  byte-for-byte.
+
 - **Mod descriptions rendered as literal HTML tags in the web UI (#342).**
   `domain.Mod.Description` carries a source's raw markup all the way to the
   wire by design (#86), and the SPA rendered it as the text it is: a

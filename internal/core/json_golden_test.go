@@ -552,6 +552,11 @@ func TestJSONGoldens(t *testing.T) {
 			core.AdoptResult{
 				Adopted: 2, Skipped: 1, Failed: 1, Backfilled: 3,
 				Warnings: []string{"merge sync produced 1 raw fallback"},
+				// #308: the per-item detail behind the Failed counter, so
+				// --json (which suppresses the event stream by design) says
+				// WHICH entry failed and why. Named by file, the way the
+				// plain "✗ <file>: <reason>" line names it.
+				Failures: []core.ItemFailure{{Name: "GoneMod-1.0.zip", Reason: "copying to cache: no such file or directory"}},
 			},
 		},
 		{
@@ -956,6 +961,12 @@ func TestJSONGoldens(t *testing.T) {
 				ProfileName: "default", Installed: 3, Failed: 1, Skipped: 1,
 				Warnings: []string{"could not install nexusmods:99"},
 				Notes:    []string{"created profile default"},
+				// #308: the structured half of Warnings above - same
+				// information, without a consumer having to parse
+				// "source:mod: reason" back apart.
+				Failures: []core.ItemFailure{
+					{SourceID: "nexusmods", ModID: "99", Name: "Sample Mod", Reason: "failed to fetch mod: upstream timeout"},
+				},
 			},
 		},
 		{

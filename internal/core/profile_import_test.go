@@ -342,6 +342,16 @@ func TestApplyImportPartialFailure(t *testing.T) {
 	assert.Contains(t, result.Warnings[0], "src:bad-mod")
 	assert.Contains(t, result.Warnings[0], "failed to fetch mod")
 
+	// #308: the per-item detail the plain renderer prints from the event
+	// stream must ALSO exist on the wire, since --json suppresses events by
+	// design. One entry per failed mod, appended where Failed is bumped,
+	// with Reason equal to the event's Detail VERBATIM - the document and
+	// the stream can never disagree about why a mod failed.
+	require.Len(t, result.Failures, 1)
+	assert.Equal(t, "src", result.Failures[0].SourceID)
+	assert.Equal(t, "bad-mod", result.Failures[0].ModID)
+	assert.Equal(t, failedEvt.Detail, result.Failures[0].Reason)
+
 	_, err = svc.GetInstalledMod(context.Background(), "src", "good-mod", "g1", "target")
 	assert.NoError(t, err, "the loop must continue past the bad ref and still install the good one")
 	_, err = svc.GetInstalledMod(context.Background(), "src", "bad-mod", "g1", "target")

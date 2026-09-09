@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -412,6 +413,48 @@ func TestApplyAdoptBackfill_UnmappedSource_SilentlySkipped(t *testing.T) {
 }
 
 // --- ApplyAdopt ---
+
+// TestApplyAdopt_PerItemFailureLandsInTheResult is #308's adopt half: a
+// scanned entry whose file has gone away between the plan and the apply
+// fails that one entry (Failed++, never fatal), and the reason the plain
+// renderer prints from the event stream must ALSO reach the wire, where
+// --json suppresses events by design. Two loose mods so the loop is proven
+// to continue past the failure.
+func TestApplyAdopt_PerItemFailureLandsInTheResult(t *testing.T) {
+	svc, game := newAdoptTestService(t)
+	gonePath := writeLooseMod(t, game, "GoneMod-1.0.zip", "gone-payload")
+	writeLooseMod(t, game, "KeptMod-1.0.zip", "kept-payload")
+
+	plan, err := svc.PlanAdopt(context.Background(), game, "default", core.AdoptOptions{SkipMatch: true})
+	require.NoError(t, err)
+	require.Len(t, plan.Scan.Untracked, 2)
+
+	// The archive is gone by the time the copy-mode cache write reaches it -
+	// a real race (a user tidying the mod dir mid-run), and the cheapest
+	// deterministic per-entry failure there is.
+	require.NoError(t, os.Remove(gonePath))
+
+	sink, events := core.RecordEvents()
+	result, err := svc.ApplyAdopt(context.Background(), game, plan, sink)
+	require.NoError(t, err, "one bad entry must not fail the whole adopt")
+	assert.Equal(t, 1, result.Adopted)
+	assert.Equal(t, 1, result.Failed)
+
+	require.Len(t, result.Failures, 1)
+	assert.Equal(t, "GoneMod-1.0.zip", result.Failures[0].Name,
+		"the entry is named the way the plain line names it - by file")
+	assert.Contains(t, result.Failures[0].Reason, "copying to cache")
+
+	// The rendered line and the wire entry must never disagree: the plain
+	// "✗ <file>: <reason>" is exactly the two fields joined.
+	var failedLine string
+	for _, d := range stepDetails(*events) {
+		if strings.HasPrefix(d, "✗ ") {
+			failedLine = d
+		}
+	}
+	assert.Equal(t, "✗ "+result.Failures[0].Name+": "+result.Failures[0].Reason, failedLine)
+}
 
 // TestApplyAdopt_CopyMode_WritesCacheSavesRowAndProfile pins the whole
 // adoption of one unmatched local mod: the cache entry holds the source

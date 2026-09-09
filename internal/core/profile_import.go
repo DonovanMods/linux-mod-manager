@@ -212,6 +212,11 @@ type ProfileImportOptions struct {
 //     caller keeps the reason and any remediation hint it carries
 //     (e.g. #95's stored-files-gone message) after the live progress
 //     line is gone.
+//   - Failures is the same information STRUCTURED (#308): one ItemFailure
+//     per failed mod, appended at that same point, so a `--json` consumer
+//     does not have to parse the "source:mod: reason" string back apart.
+//     Warnings stays for compatibility and for callers that just want a
+//     line to print.
 //
 // Every Notes entry is ALSO reported via the event stream at the exact
 // point it is appended (ImportNote - see its DeployPhase doc comment), with
@@ -230,6 +235,10 @@ type ProfileImportResult struct {
 	Skipped     int      `json:"skipped"`
 	Warnings    []string `json:"warnings,omitempty"`
 	Notes       []string `json:"notes,omitempty"`
+	// Failures carries one entry per failed mod, in the order they failed,
+	// with Reason equal to that mod's ImportModFailed event Detail verbatim
+	// (#308). omitempty: a clean import carries no key.
+	Failures []ItemFailure `json:"failures,omitempty"`
 }
 
 // ApplyImport executes a plan produced by PlanImport: saves the profile
@@ -314,6 +323,9 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		fail := func(reason string) {
 			result.Failed++
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s:%s: %s", ref.SourceID, ref.ModID, reason))
+			result.Failures = append(result.Failures, ItemFailure{
+				SourceID: ref.SourceID, ModID: ref.ModID, Name: scope.ModName, Reason: reason,
+			})
 			emit(ModEvent{Scope: scope, Phase: ImportModFailed, Detail: reason})
 		}
 

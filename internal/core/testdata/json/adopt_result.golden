@@ -5,5 +5,11 @@
   "backfilled": 3,
   "warnings": [
     "merge sync produced 1 raw fallback"
+  ],
+  "failures": [
+    {
+      "name": "GoneMod-1.0.zip",
+      "reason": "copying to cache: no such file or directory"
+    }
   ]
 }
