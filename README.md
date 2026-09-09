@@ -916,7 +916,12 @@ an installed game…** control — the identical picker and prefill, reachable
 without going through the detect list first, for when you already know you
 want the manual form. Either path submits with `from_steam_app_id` plus
 only the fields you actually changed; the browser never invents a slug, a
-mod path or a source map of its own. If the scan that offered a game goes
+mod path or a source map of its own. On a **curated** (Known) row that is
+the whole form: Submit is live on the app id alone, the form names the
+source map the known-games list will supply, and the source fields become
+an optional override you can layer on top — the same thing `lmm game add
+--from-detected 489830` does with no further arguments. An uncurated row
+still needs a source and identifier, because nothing on disk supplies them. If the scan that offered a game goes
 stale (it was uninstalled between the scan and the submit), the form says
 so by name and offers a **Rescan** rather than a dead end.
 

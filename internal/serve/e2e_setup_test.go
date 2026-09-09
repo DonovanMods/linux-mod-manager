@@ -584,13 +584,14 @@ func TestE2E_ManualAdd_PickInstalledGamePrefillsForm(t *testing.T) {
 	assert.Equal(t, fixture.Name, nameValue)
 	assert.Contains(t, installPathText, "E2EDetectGame")
 
-	// The curated row's own source map is prefilled server-side, not shown
-	// here - the manual form still requires a source to be CHOSEN before it
-	// will submit, same as any other row: picking a detected row prefills
-	// display fields, it does not silently pick a source for the user.
+	// issue 341: a CURATED row carries its own source map, so Submit is
+	// live on the app id alone - the source fields below are an optional
+	// override, and this test exercises that override path (the
+	// nothing-touched path is
+	// TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone).
 	var submitDisabled bool
 	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-action="add-game"]').disabled`, &submitDisabled))
-	assert.True(t, submitDisabled, "a source must still be chosen before submit is enabled")
+	assert.False(t, submitDisabled, "a curated row needs nothing but its app id")
 
 	f.runInBrowser(t,
 		retrySetValue(`select[name="add-source"]`, "plain"),
@@ -602,7 +603,8 @@ func TestE2E_ManualAdd_PickInstalledGamePrefillsForm(t *testing.T) {
 	got, err := f.Svc.GetGame(fixture.Slug)
 	require.NoError(t, err)
 	assert.Equal(t, fixture.Name, got.Name)
-	assert.Equal(t, "manual-id", got.SourceIDs["plain"])
+	assert.Equal(t, "manual-id", got.SourceIDs["plain"], "the override is layered on")
+	assert.Equal(t, fixture.Slug, got.SourceIDs["nexusmods"], "and the curated mapping survives it")
 	// "plain" has no GameCatalog, so choosing it while a detected row is
 	// active auto-runs (and gracefully swallows) a catalog search that 400s
 	// - Chrome logs that network response as an error entry independently
@@ -1629,5 +1631,54 @@ func TestE2E_Auth_ShadowedStoredKeyIsNamedOnTheRow(t *testing.T) {
 	assert.NotContains(t, html, "envkey1234567890")
 	assert.NotContains(t, html, "sto...890",
 		"#79: a stored credential is not decrypted for a status surface, so not even its masked form can appear")
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone is issue 341: picking a
+// curated ("known") row in "Pick an installed game…" enables Submit with
+// nothing else filled in, the way `lmm game add --from-detected <id>` and
+// POST /api/v1/games {"from_steam_app_id": …} already work. The form used
+// to keep Submit disabled until a source and identifier were supplied, and
+// then layered whatever the user picked ON TOP of the curated map - extra
+// work, ending in a mapping they never asked for.
+func TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2ESteamDetectFixture(t, f.Svc.ConfigDir())
+	// The curated entry's nexus_id becomes the whole source map, and
+	// AddGame validates every id in it is registered.
+	f.Svc.RegisterSource(newFakeSource("nexusmods"))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="setup-add-game"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="pick-installed"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-action="pick-installed-row"]`, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(
+			`Array.from(document.querySelectorAll('[data-action="pick-installed-row"]')).find(b => b.textContent.includes(%q)).click()`,
+			fixture.Name), nil),
+		chromedp.WaitVisible(`[data-testid="setup-add-curated-sources"]`, chromedp.ByQuery),
+	)
+
+	// The form SAYS where the sources come from, and names them, rather
+	// than leaving the user to guess why no source is required.
+	var curatedNote string
+	f.runInBrowser(t, textContent(`[data-testid="setup-add-curated-sources"]`, &curatedNote))
+	assert.Contains(t, curatedNote, "known-games list")
+	assert.Contains(t, curatedNote, "nexusmods: "+fixture.Slug)
+
+	var submitDisabled bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-action="add-game"]').disabled`, &submitDisabled))
+	require.False(t, submitDisabled, "a curated row must be submittable on its app id alone")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
+	)
+
+	got, err := f.Svc.GetGame(fixture.Slug)
+	require.NoError(t, err)
+	assert.Equal(t, fixture.Name, got.Name)
+	assert.Equal(t, map[string]string{"nexusmods": fixture.Slug}, got.SourceIDs,
+		"the curated map only - nothing the user was made to invent")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }

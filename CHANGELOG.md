@@ -653,6 +653,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI's "Pick an installed game…" adds a curated game by app id
+  alone (#341).** `lmm game add --from-detected 489830` needs nothing else
+  for a game in lmm's known-games list — core prefills the name, paths, id
+  and the curated source map — and `POST /api/v1/games
+{"from_steam_app_id": …}` already accepted the same. The web form,
+  though, kept Submit disabled until a source and identifier were supplied,
+  and then layered whatever was picked ON TOP of the curated map: extra
+  work, ending in a source mapping the user never asked for. Picking a row
+  badged **Known** now enables Submit immediately, names the curated map on
+  screen, and treats the source fields as an optional override. An
+  uncurated row is unchanged — nothing on disk supplies its source.
+
 - **`lmm profile import --json` and `lmm import --json` name the mods that
   failed, not just how many (#308).** `core.ProfileImportResult` and
   `core.AdoptResult` carried a bare `failed: N`, while the per-item reason
