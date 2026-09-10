@@ -219,6 +219,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-document-on-stdout invariant every other `--json` command holds to.
   Plain-text output is unchanged.
 
+- **The README says what lmm actually is, and is not (#405).** The
+  repositioned README (#349) contradicted itself and the code in three
+  places, all corrected: it sent Bethesda users elsewhere while using
+  `skyrim-se` as its running example (the examples now use Baldur's Gate 3
+  throughout, and the Skyrim guidance names the two things that are really
+  missing — a FOMOD option-tree installer and LOOT integration — rather
+  than implying lmm cannot deploy those games); it claimed "no LOOT-style
+  plugin / load-order management" when load ordering has shipped since v1
+  (`lmm profile reorder`, merge and deploy precedence, the web UI's reorder
+  modal), so the non-goal is now stated as **automated** plugin sorting —
+  masterlists and a generated `plugins.txt`; and it described `lmm serve`
+  as "a thin frontend … not a second product", which read as a disclaimer
+  for what is a full second frontend — the CLI for scripting, automation
+  and SSH, the web UI for daily use, one engine underneath. BepInEx
+  (#357) also moves off the non-goals list and onto the roadmap as in
+  progress for 2.0.
+
 ### Added
 
 - **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
