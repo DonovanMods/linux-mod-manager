@@ -23,11 +23,11 @@ func setupDoModEditTest(t *testing.T) (*core.Service, *domain.Game, *fakeInstall
 	svc, game, src := setupDoModLockTest(t)
 
 	oldName, oldVersion, oldAuthor := editName, editVersion, editAuthor
-	oldSource, oldID, oldProfile := editSource, editID, editProfile
-	editName, editVersion, editAuthor, editSource, editID, editProfile = "", "", "", "", "", ""
+	oldSource, oldID, oldProfile := editToSource, editToID, editProfile
+	editName, editVersion, editAuthor, editToSource, editToID, editProfile = "", "", "", "", "", ""
 	t.Cleanup(func() {
 		editName, editVersion, editAuthor = oldName, oldVersion, oldAuthor
-		editSource, editID, editProfile = oldSource, oldID, oldProfile
+		editToSource, editToID, editProfile = oldSource, oldID, oldProfile
 	})
 
 	return svc, game, src
@@ -47,7 +47,7 @@ func TestDoModEdit_ReLink_LockedRef_Refuses(t *testing.T) {
 	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 	src.AddMod(&domain.Mod{ID: "b", SourceID: "src", Name: "Mod B", Version: "2.0", GameID: game.ID}, nil)
 
-	editID = "b"
+	editToID = "b"
 	err := doModEdit(context.Background(), svc, game, "a")
 
 	require.Error(t, err)
@@ -165,4 +165,91 @@ func TestDoModEdit_MetadataOnly_LockedRef_Allowed(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.True(t, profile.Mods[0].Locked)
 	assert.Equal(t, "1.0", profile.Mods[0].Version)
+}
+
+// TestModEditCmd_DoesNotShadowTheGroupsSourceShorthand is #396: `lmm mod`'s
+// persistent -s/--source means "which source this mod is in", but
+// `mod edit` declared a LOCAL --source meaning "re-link it to this source".
+// The local flag replaced the persistent one outright, so
+// `lmm mod edit alpha -s repo` failed with "unknown shorthand flag: 's'"
+// and there was no way at all to say which of two same-ID mods to edit.
+// The re-link target is --to-source/--to-source-id; -s belongs to the group.
+func TestModEditCmd_DoesNotShadowTheGroupsSourceShorthand(t *testing.T) {
+	// LocalFlags, not Flags: cobra merges the inherited persistent flags
+	// into Flags() once anything has parsed, so Flags() legitimately holds
+	// a "source" - the GROUP's. What must not exist is a local one.
+	assert.Nil(t, modEditCmd.LocalFlags().Lookup("source"),
+		"a local --source shadows the mod group's persistent -s/--source")
+	assert.Nil(t, modEditCmd.LocalFlags().Lookup("source-id"),
+		"renamed alongside --source so the pair stays consistent")
+	require.NotNil(t, modEditCmd.LocalFlags().Lookup("to-source"))
+	require.NotNil(t, modEditCmd.LocalFlags().Lookup("to-source-id"))
+
+	// And the group's own flag, shorthand intact, is what `mod edit` now
+	// resolves -s against.
+	resolved := modEditCmd.Flags().Lookup("source")
+	require.NotNil(t, resolved, "the mod group's --source must still reach mod edit")
+	assert.Equal(t, "s", resolved.Shorthand)
+}
+
+// TestDoModEdit_AmbiguousModIDNamesTheSourceFlag is #396's other half
+// (final review finding 3): two profiles entries can share a mod id across
+// sources, and mod edit took whichever the scan hit first. It now says so
+// and names the flag that decides it.
+func TestDoModEdit_AmbiguousModIDNamesTheSourceFlag(t *testing.T) {
+	svc, game, _ := setupDoModEditTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	seedSameIDModFromOtherSource(t, svc, game, "a", "Other Mod A", "9.9")
+	modSource = "" // no -s: the ambiguity is the point
+
+	editName = "Renamed"
+	err := doModEdit(context.Background(), svc, game, "a")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-s/--source")
+	assert.Contains(t, err.Error(), "src")
+	assert.Contains(t, err.Error(), "other")
+}
+
+// TestDoModEdit_SourceFlagPicksAmongSameIDMods is the resolution: with -s
+// given, the right one is edited and the other is untouched.
+func TestDoModEdit_SourceFlagPicksAmongSameIDMods(t *testing.T) {
+	svc, game, _ := setupDoModEditTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	seedSameIDModFromOtherSource(t, svc, game, "a", "Other Mod A", "9.9")
+	modSource = "other"
+
+	editName = "Renamed"
+	require.NoError(t, doModEdit(context.Background(), svc, game, "a"))
+
+	edited, err := svc.GetInstalledMod(context.Background(), "other", "a", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed", edited.Name)
+
+	untouched, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "Mod A", untouched.Name)
+}
+
+// seedSameIDModFromOtherSource is seedLockableMod for a SECOND registered
+// source mapped to the same game, so a profile can hold two entries with
+// the same mod id - the shape #396's disambiguation is about. (Distinct
+// from uninstall_purge_dry_run_golden_test.go's seedSecondSourceMod, which
+// seeds a cache entry and registers nothing.)
+func seedSameIDModFromOtherSource(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string) {
+	t.Helper()
+	other := newFakeInstallSource("other")
+	t.Cleanup(other.Close)
+	svc.RegisterSource(other)
+	game.SourceIDs["other"] = game.ID
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: "other", Name: name, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default",
+		domain.ModReference{SourceID: "other", ModID: modID, Version: version}))
 }

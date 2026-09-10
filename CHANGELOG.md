@@ -1478,6 +1478,18 @@ source list --all` when there is more to show. `lmm game edit --help`
   pointed at `lmm source list` for "every one, built-in or custom", which
   is true only of `--all`; it now says so.
 
+- **`lmm mod edit`'s re-link flags are `--to-source`/`--to-source-id`, and
+  `-s` works again (#396).** `lmm mod`'s persistent `-s/--source` means
+  "which source this mod is in"; `mod edit` declared a local `--source`
+  meaning "re-link it to this source", which replaced the group's flag
+  outright — so `lmm mod edit alpha -s repo` failed with
+  `unknown shorthand flag: 's'`, and there was no way at all to say which
+  of two same-id mods to edit. The re-link target is renamed (there is no
+  `--source` alias: keeping one would re-create the shadowing), and
+  `mod edit` now uses `-s` to pick among same-id mods, refusing with the
+  candidate sources named when it is ambiguous instead of silently editing
+  whichever it found first.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
