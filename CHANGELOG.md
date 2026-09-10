@@ -957,6 +957,16 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **A deploy preview reports a locked mod as locked (#380).** `PlanDeploy`
+  built its mod references from the installed database row, which carries no
+  lock — the lock lives on the profile reference — so
+  `lmm deploy --dry-run --json` and the web UI's deploy confirm-plan said
+  `locked: false` for every locked mod, while `GET /api/v1/mods` said
+  `locked: true` about the same one. Deploy is where a lock has teeth, which
+  makes its preview the worst place for that field to be wrong. The plan now
+  reads the profile reference. (The version it shows stays the installed
+  one — that is what the deploy will actually link.)
+
 - **A bulk `lmm update` no longer asks which source to use (#375).** The
   source was resolved at the top of the command, so a game with more than one
   configured source prompted — and under `--json` refused outright with

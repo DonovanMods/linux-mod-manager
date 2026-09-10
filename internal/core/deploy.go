@@ -313,6 +313,29 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	plan := &DeployPlan{Profile: profileName, snapshot: snapshotOf(installedMods)}
 	gameCache := s.GetGameCache(game)
 
+	// #380: a plan's refs are built from the installed ROW, which carries no
+	// lock - the lock lives on the PROFILE ref. Without this the deploy
+	// preview reported locked:false for every locked mod while
+	// GET /api/v1/mods reported the same mod as locked. Read once here; a
+	// profile that will not load simply stamps nothing, exactly as the purge
+	// pass below treats one.
+	profileRefs := map[string]domain.ModReference{}
+	if profile, perr := config.LoadProfile(s.configDir, game.ID, profileName); perr == nil {
+		for _, ref := range profile.Mods {
+			profileRefs[domain.ModKey(ref.SourceID, ref.ModID)] = ref
+		}
+	}
+	// stampLock marks ref locked when the profile says so. Version is
+	// deliberately left as the installed row's: it is what this deploy will
+	// actually link, and a preview must say that rather than the lock's
+	// target when the two have drifted apart.
+	stampLock := func(ref domain.ModReference) domain.ModReference {
+		if profileRef, ok := profileRefs[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+			ref.Locked = profileRef.Locked
+		}
+		return ref
+	}
+
 	// --purge pass, mirroring deployProfile's own ordering (and its nil-safe
 	// profile fallback) so the listed paths come out in purge order. Reuses
 	// the read above instead of re-querying the same rows.
@@ -347,13 +370,13 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 		switch {
 		case err != nil:
 			plan.Mods = append(plan.Mods, DeployPlanMod{
-				Ref:     domain.ModReference{SourceID: opts.SourceID, ModID: opts.ModID},
+				Ref:     stampLock(domain.ModReference{SourceID: opts.SourceID, ModID: opts.ModID}),
 				Name:    opts.ModID,
 				Skipped: "mod not found",
 			})
 		case !mod.Enabled && !opts.All:
 			plan.Mods = append(plan.Mods, DeployPlanMod{
-				Ref:     domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version},
+				Ref:     stampLock(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}),
 				Name:    mod.Name,
 				Skipped: fmt.Sprintf("mod %s is disabled - use --all to deploy disabled mods, or enable it with 'lmm mod enable %s'", mod.Name, opts.ModID),
 			})
@@ -375,7 +398,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	classes := s.classifyCompileDeployMods(ctx, game, profileName, modsToDeploy)
 	for _, mod := range modsToDeploy {
 		entry := DeployPlanMod{
-			Ref:   domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version},
+			Ref:   stampLock(domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version}),
 			Name:  mod.Name,
 			Class: classes[domain.ModKey(mod.SourceID, mod.ID)],
 		}

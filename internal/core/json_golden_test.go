@@ -154,9 +154,15 @@ func TestJSONGoldens(t *testing.T) {
 			// Remove is deliberately left nil (no `omitempty` on the tag) to
 			// pin that a nil slice marshals as "[]", not "null"; Skipped is
 			// left empty to pin that its `omitempty` drops the key.
+			// #380: the ref is LOCKED here. PlanDeploy built its refs from
+			// the installed row, which carries no lock, so this golden's
+			// hand-built literal (locked: false) matched a plan that could
+			// never say otherwise - and every locked mod's deploy preview
+			// disagreed with GET /api/v1/mods about the same mod.
+			// TestPlanDeploy_StampsTheProfileRefsLock is the behaviour half.
 			"deploy_plan_mod",
 			core.DeployPlanMod{
-				Ref:    domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"},
+				Ref:    domain.ModReference{SourceID: "nexusmods", ModID: "42", Version: "1.2.3", Locked: true},
 				Name:   "Sample Mod",
 				Class:  core.DeployModMerged,
 				Link:   []string{"Data/Sample.esp"},
