@@ -5,7 +5,7 @@ A mod manager for Linux for searching, installing, updating, and managing game m
 ## Features
 
 - **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
-- **Steam Workshop**: track the Workshop items you are already subscribed to and get told when Steam publishes an update, or download an item so lmm manages its own copy — see [Steam Workshop](#steam-workshop)
+- **Steam Workshop**: track the Workshop items you are already subscribed to, get told when Steam publishes an update, search the Workshop with your own free API key, import a collection as a profile, or download an item so lmm manages its own copy — see [Steam Workshop](#steam-workshop)
 - **Profile System**: Manage multiple mod configurations per game
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
 - **Version Locking**: Lock a mod's profile entry to an exact version, independent of update policy — see [Locking mods to a version](#locking-mods-to-a-version)
@@ -1782,6 +1782,8 @@ The third mode, `lmm import --workshop`, is described under [Steam Workshop](#st
 
 lmm can **track** the Steam Workshop items you are already subscribed to, and **download** an item so it manages its own copy. Tracking reads Steam's own bookkeeping (`steamapps/workshop/appworkshop_<appid>.acf`) across every Steam library on the machine, records each installed item, and checks it for updates through Valve's keyless metadata API.
 
+**Tracking, updates and collections need no credentials at all.** Only _searching_ the Workshop needs a Steam Web API key, and it is yours, not lmm's — see [Searching the Workshop](#searching-the-workshop-your-own-api-key) below.
+
 **Tracking what Steam already installed:**
 
 - `lmm game detect` maps a game whose Workshop manifest shows installed items to the `steamworkshop` source automatically (the per-source game id is the Steam **app id**). Suppress it with `--no-workshop`, or add the mapping later with `lmm game edit --source steamworkshop=<appid>`. Such a game is **listed by default** even when lmm has no curated entry for it — the downloaded items are what say it is moddable — with `Steam Workshop: N items` beside the row, and picking it (by row number or by app id) configures it straight from the detection. The same rows appear in the web UI's detect list.
@@ -1798,8 +1800,6 @@ lmm can **track** the Steam Workshop items you are already subscribed to, and **
 - **Conflict detection cannot see them.** `lmm conflicts` compares files deployed under the game's `mod_path`, and a Workshop item has none there. lmm cannot see inside a game's own Workshop loader.
 - **`lmm profile reorder` omits them.** Load order decides deploy precedence, and a tracked-only item deploys nothing, so any position it held would be inert.
 - **A snapshot records them; a restore leaves them alone.** lmm never captures a Workshop item into the [originals store](#snapshots) and holds no copy to put back, so `lmm snapshot restore` undeploys nothing for it and downloads nothing for it. An item Steam no longer has on disk is reported as a finding — the same judgement `lmm verify` makes — not a refusal.
-- **Search is not in this tier.** Searching the Workshop needs a personal Steam Web API key; it lands in its own unit.
-
 **Downloading an item lmm manages itself.** `lmm install steamworkshop:<file id>` (and the same Install action in `lmm serve`) downloads a Workshop item into lmm's own cache and deploys it like any other mod. Nothing about it is special once the bytes are on disk: it appears in `lmm list` without the `EXTERNAL` marker, deploys, disables, updates and uninstalls normally, and takes part in conflict detection and load order.
 
 lmm gets the bytes one of two ways, and neither needs your Steam password:
@@ -1810,6 +1810,35 @@ lmm gets the bytes one of two ways, and neither needs your Steam password:
 **Not every game allows this.** Anonymous Workshop downloads are a per-app opt-in, and there is no way to know before trying — an item whose download is refused still describes itself perfectly. When a publisher has not opted in, lmm says so and points you at the route that does work: subscribe to the item in the Steam client, then run `lmm import --workshop` and lmm will track it in place.
 
 **What downloading deliberately does NOT do.** lmm never signs in to your Steam account, never stores a Steam password or session, never manages your subscriptions, and never rehosts or proxies Workshop content. If anonymous download is refused, tracking a subscription is the answer — there is no fallback that logs in as you.
+
+#### Searching the Workshop (your own API key)
+
+Valve's search endpoint refuses an unauthenticated request, so searching the Workshop needs a **Steam Web API key**. Get one free at <https://steamcommunity.com/dev/apikey>.
+
+**The key is personal and confidential.** It is tied to your own Steam account. Never share it, never publish it, and never paste somebody else's — lmm ships no key of its own and never will, because embedding a shared key in a distributed application violates the Web API Terms of Use, and a leaked key is your account's problem, not the tool's.
+
+```bash
+lmm auth login steamworkshop         # store your key (validated live before it is saved)
+export STEAM_WEB_API_KEY=...         # or just export it; lmm reads this name
+lmm search "cargo ship" --game space-engineers-2 --source steamworkshop
+```
+
+Stored keys are encrypted at rest, like every other source's. Without a key, a Workshop search reports that authentication is required rather than silently returning nothing; every other Workshop feature keeps working.
+
+Two Workshop-specific search notes: `--category` and `--tag` are both sent as **required tags** (the Workshop has no category concept distinct from tags), and results are cached for five minutes so pressing the same search twice costs one round trip, not two.
+
+#### Importing a collection
+
+A Workshop **collection** is a mod list, which is what an lmm profile is — so lmm imports one as a profile:
+
+```bash
+lmm profile import --workshop-collection 2500900001 --game space-engineers-2
+lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships
+```
+
+It takes the collection's id or the URL of its page, needs **no API key**, and names the profile after the collection unless you name it with `--as`. Items you are already subscribed to and tracking are recorded as installed; every other item is listed with what to do about it — subscribe to it in Steam, then run `lmm import --workshop`. Nothing is downloaded, because lmm cannot yet fetch a Workshop item you are not subscribed to.
+
+In `lmm serve` the same input is in the **Profiles** modal, and pasting a collection link into the search box offers the import directly.
 
 Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop/meta/` — six hours for an item Valve describes, one hour for one it refuses. The directory is safe to delete at any time; `--refresh` bypasses it for one run.
 

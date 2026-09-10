@@ -550,6 +550,33 @@ Goldens: `workshop_collection`, `profile_import_workshop_*`.
 **Size ≈ 900–1300 lines.** Depends on W1 (package, client, cache).
 Gate: as W1, plus a keyed live smoke **the owner runs** — an agent never handles the key.
 
+**Shipped 2026-09-09** on `dyoung522/v2-workshop-w2`, as designed, with three
+additions the build surfaced and one deviation:
+
+- `source.CollectionResolver` / `source.Collection` (the seam core consumes, so
+  `internal/core` still imports no concrete source package) and
+  `source.ErrInvalidReference` (so `internal/serve`, which may not import
+  `internal/source`, can be told by `core.IsBadCollectionRef` that a 400 is
+  right).
+- `core.SearchHit` gains an additive `external`: a CATALOG document has no
+  installed row to read the version-display rule from, so without it `lmm
+  search --source steamworkshop` and the SPA's result rows would have printed
+  the 19-digit content id — the very rule the approval note added.
+- `GET /api/v1/search` answers **401**, not 500, when the only source needs a
+  key. That is the ordinary state of a Workshop-only game before `lmm auth
+  login steamworkshop`.
+- **Deviation:** a collection import forces `NoInstall` (in core, so both
+  frontends inherit it) rather than letting the ordinary install loop try. Tier
+  3 owns the download path; until it lands, attempting it would spend a round
+  trip per item to produce a stack of `ErrNotSupported` failures the plan
+  already answers per item ("subscribe in Steam and re-run `lmm import
+  --workshop`"). W3 removes the force.
+
+#365's two Tier-1 follow-ups landed here: `domain.ModReference` gained additive
+`external`/`updated_at` (`yaml:"-"`, so no profile file changes), which core
+stamps on `ImportPlan`'s and `ProfileSyncPlan`'s buckets; and the library row
+menu stopped offering "Re-link…" for an external row.
+
 ### W3 — "Steam Workshop Tier 3: download items via file_url or anonymous steamcmd (#269)"
 
 Files: **new** `internal/source/steamworkshop/{download,steamcmd}.go` +
