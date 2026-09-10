@@ -211,6 +211,56 @@ Format: Steam App ID (string) as key, then `slug`, `name`, `mod_path` (relative 
 
 Entries here are merged with the built-in list (overrides win). No rebuild needed to support more games.
 
+### Fields
+
+| Field         | Required | Meaning                                                                                                                                                        |
+| ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(the key)_   | yes      | The Steam App ID, **quoted** so it stays a string. It is on the store page URL (`store.steampowered.com/app/<id>/`).                                            |
+| `slug`        | yes      | The lmm game id the entry creates. Lowercase alphanumerics in dash-separated runs, and unique across the whole list.                                            |
+| `name`        | yes      | Display name. Use the title exactly as the Steam store page writes it.                                                                                         |
+| `mod_path`    | yes      | The mod folder, **relative to the game's install directory** — `""` means the install root. Detection joins it to the install path it found.                    |
+| `nexus_id`    | no       | The game's NexusMods domain: the path segment in `nexusmods.com/<domain>`. Omit it for a game with no NexusMods page.                                           |
+| `deploy_mode` | no       | `extract` (the default), `copy` or `compile`.                                                                                                                    |
+| `sources`     | no       | A full source id → per-source game id map, for a game whose sources are not just NexusMods. Omitting it means `{nexusmods: <nexus_id>}`.                        |
+
+An entry must name at least one source — `nexus_id`, a `sources` map, or
+both. One that names neither produces a game lmm can add and then cannot
+install anything for.
+
+### Contributing an entry to the built-in list
+
+The shipped list is `internal/source/steam/data/steam-games.yaml`. It is
+curated from public documentation, one game at a time, and the bar is that
+the facts are **verifiable**, not that the game is popular:
+
+1. **Find the app id** on the game's Steam store page URL.
+2. **Find the mod folder the community documents**, and check it is inside
+   the game's install directory. A game whose mods live in your home
+   directory — `%APPDATA%`, `~/Documents`, a Proton prefix — cannot be
+   curated, because `mod_path` is install-relative. Leave it detect-only
+   rather than inventing a path.
+3. **Find the source ids.** The NexusMods domain is in the URL of the
+   game's Nexus page. `steamworkshop` takes the Steam app id as its game
+   id. Only source ids lmm registers are accepted.
+4. **Write the entry with a comment above it** carrying the URL each fact
+   came from — the game's Nexus page, its modding wiki, the mod loader's
+   own install instructions. Every existing entry has one; it is what makes
+   a wrong path fixable by the next person instead of re-researched.
+5. **Add a row to the story test** in
+   `internal/source/steam/curated_games_test.go`, which pins the entry
+   field by field.
+
+`TestKnownGamesListIsWellFormed` (in `internal/app`) then checks the whole
+list on every build: quoted numeric app id, well-formed unique slug,
+relative `mod_path`, a `deploy_mode` the domain parses, and every source id
+one that lmm actually registers.
+
+A game with no real modding ecosystem — or one whose mods do not live under
+the install directory — stays **detect-only**: `lmm game detect
+--include-unknown` still lists it with its app id, and `lmm game add` can
+still configure it by hand. That is the honest answer, and it is preferred
+over a guessed path.
+
 ## File locations
 
 `<config>` is `$XDG_CONFIG_HOME/lmm` (default `~/.config/lmm`); `<data>` is `$XDG_DATA_HOME/lmm` (default `~/.local/share/lmm`).

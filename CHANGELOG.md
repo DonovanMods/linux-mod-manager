@@ -375,6 +375,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index and search; package, version and dependency reads follow in the same
   issue.
 
+- **The known-games list is documented and checked (#406).**
+  [docs/configuration.md](docs/configuration.md#steam-gamesyaml-optional)
+  now spells out every field of a `steam-games.yaml` entry and how to
+  contribute one to the built-in list — including the rule that a game
+  whose mods live outside the install directory stays detect-only rather
+  than getting a guessed path. A new build-time check reads the whole
+  shipped list and fails on a malformed app id, a bad or duplicated slug, a
+  `mod_path` that is absolute or climbs out of the install directory, a
+  `deploy_mode` lmm cannot parse, or a source id nothing registers.
+
 - **`lmm game detect` recognises seven more games (#406).** StarRupture,
   Windrose, Cubic Odyssey, The Blood of Dawnwalker, Halo: Campaign Evolved,
   For The King and LEGO Batman: Legacy of the Dark Knight complete the
