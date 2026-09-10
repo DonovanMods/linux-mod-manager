@@ -151,6 +151,20 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			wantPaths: map[string]string{"SomePack/BEPINEX/plugins/Thing.dll": "BepInEx/plugins/Thing.dll"},
 		},
 		{
+			// The four exact names were the .md/.json/.png spellings only,
+			// so the equally common README.txt / LICENSE / CHANGELOG.txt
+			// rode into the game root - which for a BepInEx game is the
+			// Steam install directory (review F5). Matched on the STEM
+			// instead, so the spelling of the extension stops mattering.
+			name: "package metadata is recognised by its stem, whatever the extension",
+			members: []string{
+				"BepInEx/plugins/Thing.dll",
+				"README.txt", "LICENSE", "CHANGELOG.txt", "icon.jpg", "Manifest.JSON",
+			},
+			wantShape: bepinexShapeRooted,
+			wantPaths: map[string]string{"BepInEx/plugins/Thing.dll": "BepInEx/plugins/Thing.dll"},
+		},
+		{
 			name:      "a loose root .dll becomes a plugin under its own directory",
 			members:   []string{"CoolMod.dll", "manifest.json", "README.md"},
 			wantShape: bepinexShapePlugin,

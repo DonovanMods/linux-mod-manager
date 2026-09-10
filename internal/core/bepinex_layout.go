@@ -101,14 +101,18 @@ const bepinexDirName = "BepInEx"
 // configuration (see isBepInExConfigMember).
 var bepinexRootDirs = []string{"plugins", "patchers", "monomod", "config"}
 
-// bepinexMetadataFiles are the root FILES a Thunderstore package always
-// carries and lmm must never deploy: they describe the package to the
-// website, and deploying them scatters a manifest.json and an icon.png into
-// the game root of every game a plugin is installed into (spike §1.3).
-// Matched case-insensitively on the base name - the shapes were observed
-// from Windows-authored archives, and README.md/Readme.md are the same
-// file to their authors.
-var bepinexMetadataFiles = []string{"manifest.json", "icon.png", "readme.md", "changelog.md"}
+// bepinexMetadataStems are the root FILES a Thunderstore package carries and
+// lmm must never deploy: they describe the package to the website, and
+// deploying them scatters a manifest.json and an icon.png into the game root
+// of every game a plugin is installed into (spike §1.3).
+//
+// Matched on the STEM, case-insensitively, rather than on a fixed set of
+// full names: README.txt, LICENSE and CHANGELOG.txt are as common on
+// Thunderstore as their .md spellings, and an extension-exact list quietly
+// deployed those into the Steam install directory. The shapes were also
+// observed from Windows-authored archives, where README.md and Readme.md
+// are the same file to their authors.
+var bepinexMetadataStems = []string{"manifest", "icon", "readme", "changelog", "license"}
 
 // bepinexLayout is the normaliser's answer about one archive: the shape it
 // recognised, the rewrite each member takes, and any warning worth showing
@@ -306,9 +310,9 @@ func isBepInExMetadata(member string) bool {
 	if strings.ContainsAny(member, `/\`) {
 		return false
 	}
-	name := strings.ToLower(member)
-	for _, f := range bepinexMetadataFiles {
-		if name == f {
+	stem := strings.ToLower(strings.TrimSuffix(member, path.Ext(member)))
+	for _, f := range bepinexMetadataStems {
+		if stem == f {
 			return true
 		}
 	}
