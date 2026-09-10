@@ -862,3 +862,29 @@ func TestConfiguredGameFor_FallsBackToCleanWhenAPathIsGone(t *testing.T) {
 	require.NotNil(t, match, "a path neither side can resolve still compares lexically")
 	assert.Equal(t, "cyberpunk-2077", match.ID)
 }
+
+// TestConfiguredGameFor_TieBreaksOnTheLowestID pins what the doc comment
+// promises for a shape only hand-editing can produce: two games.yaml
+// entries at one install path. The answer must not depend on map iteration
+// order, so it is the lowest id (re-review nit 1). config.loadGamesLocked
+// sets games[id].ID = id, so comparing the key against the stored id is
+// comparing like with like - which is why a table row can stand for the
+// rule at all.
+func TestConfiguredGameFor_TieBreaksOnTheLowestID(t *testing.T) {
+	install := t.TempDir()
+	existing := map[string]*domain.Game{
+		"zeta-game":     {ID: "zeta-game", InstallPath: install},
+		"alpha-game":    {ID: "alpha-game", InstallPath: install},
+		"midway-game":   {ID: "midway-game", InstallPath: install},
+		"somewhereelse": {ID: "somewhereelse", InstallPath: t.TempDir()},
+	}
+
+	// Run it repeatedly: one pass could agree with map order by luck.
+	for range 20 {
+		match := core.ConfiguredGameFor(existing, domain.DetectedGame{
+			Slug: "curated-slug", InstallPath: install,
+		})
+		require.NotNil(t, match)
+		require.Equal(t, "alpha-game", match.ID)
+	}
+}
