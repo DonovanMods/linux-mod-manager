@@ -463,6 +463,18 @@ func fakeSteamApp(t *testing.T, appID, name, installDir string) string {
 	return install
 }
 
+// The uncurated-game stand-in for every test below that needs an installed
+// app with no known-games entry. Fictional on purpose: these tests used to
+// borrow a real uncurated game (Satisfactory), so curating it (#406) turned
+// "an app lmm has never heard of" into "an app it has" and failed three
+// tests for a reason unrelated to what they assert.
+const (
+	uncuratedAppID = "9999990"
+	uncuratedName  = "Uncurated Example Game"
+	uncuratedDir   = "UncuratedExampleGame"
+	uncuratedSlug  = "uncurated-example-game"
+)
+
 // TestAPIGamesDetect_AllIncludesUnknownRows pins ?all=1: the same document,
 // widened with the rows no known-games entry covers. Those carry no
 // `known` member at all (never a literal false) and index 0 - they are
@@ -471,7 +483,7 @@ func fakeSteamApp(t *testing.T, appID, name, installDir string) string {
 func TestAPIGamesDetect_AllIncludesUnknownRows(t *testing.T) {
 	s := newGamesServer(t)
 	fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
-	unknownInstall := fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+	unknownInstall := fakeSteamApp(t, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	narrow := decodeDetectListing(t, s, "/api/v1/games/detect")
 	require.Len(t, narrow.Games, 1)
@@ -486,10 +498,10 @@ func TestAPIGamesDetect_AllIncludesUnknownRows(t *testing.T) {
 		byID[row.SteamAppID] = row
 	}
 	assert.Equal(t, 1, byID["489830"].Index, "known numbering must not shift when unknown rows join")
-	unknown := byID["526870"]
+	unknown := byID[uncuratedAppID]
 	assert.False(t, unknown.Known)
 	assert.Equal(t, 0, unknown.Index, "an unknown row is listed, not selectable")
-	assert.Equal(t, "satisfactory", unknown.Slug)
+	assert.Equal(t, uncuratedSlug, unknown.Slug)
 	assert.Equal(t, unknownInstall, unknown.InstallPath)
 	assert.Empty(t, unknown.ModPath)
 	assert.Empty(t, unknown.Sources)
@@ -500,7 +512,7 @@ func TestAPIGamesDetect_AllIncludesUnknownRows(t *testing.T) {
 // silently publishing rows the caller never requested.
 func TestAPIGamesDetect_AllRejectsAMistypedFlag(t *testing.T) {
 	s := newGamesServer(t)
-	fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+	fakeSteamApp(t, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	for _, query := range []string{"", "?all=", "?all=0", "?all=yes"} {
 		listing := decodeDetectListing(t, s, "/api/v1/games/detect"+query)
@@ -524,12 +536,12 @@ func decodeDetectListing(t *testing.T, s *Server, path string) core.GameDetectLi
 // row, and points at the route that CAN add it.
 func TestAPIGameDetectApply_RefusesAnUnknownRow(t *testing.T) {
 	s := newGamesServer(t)
-	fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+	fakeSteamApp(t, uncuratedAppID, uncuratedName, uncuratedDir)
 
-	rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["satisfactory"]}`)
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["uncurated-example-game"]}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 	body := rec.Body.String()
-	assert.Contains(t, body, "526870")
+	assert.Contains(t, body, uncuratedAppID)
 	assert.Contains(t, body, "from_steam_app_id")
 }
 
@@ -558,22 +570,22 @@ func TestAPIGameAdd_FromSteamAppIDPrefillsAKnownGame(t *testing.T) {
 // path defaults to <install>/mods unless the form corrects it.
 func TestAPIGameAdd_FromSteamAppIDUnknownGameTakesTheSourcePair(t *testing.T) {
 	s := newGamesServer(t)
-	install := fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+	install := fakeSteamApp(t, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	rec := doAPI(s, http.MethodPost, "/api/v1/games",
-		`{"from_steam_app_id":"526870","source_id":"nexusmods","identifier":"satisfactory"}`)
+		`{"from_steam_app_id":"9999990","source_id":"nexusmods","identifier":"uncurated-example-game"}`)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	var entry core.GameListEntry
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &entry, json.RejectUnknownMembers(true)))
-	assert.Equal(t, "satisfactory", entry.ID)
+	assert.Equal(t, uncuratedSlug, entry.ID)
 	assert.Equal(t, filepath.Join(install, "mods"), entry.ModPath)
-	assert.Equal(t, map[string]string{"nexusmods": "satisfactory"}, entry.SourceIDs)
+	assert.Equal(t, map[string]string{"nexusmods": uncuratedSlug}, entry.SourceIDs)
 
 	// An override wins, field by field.
 	other := t.TempDir()
 	rec = doAPI(s, http.MethodPost, "/api/v1/games",
-		`{"from_steam_app_id":"526870","source_id":"nexusmods","identifier":"satisfactory",`+
+		`{"from_steam_app_id":"9999990","source_id":"nexusmods","identifier":"uncurated-example-game",`+
 			`"game_id":"sf-modded","name":"My SF","mod_path":`+jsonString(other)+`}`)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &entry, json.RejectUnknownMembers(true)))
@@ -586,7 +598,7 @@ func TestAPIGameAdd_FromSteamAppIDUnknownGameTakesTheSourcePair(t *testing.T) {
 // carrying the field a form marks.
 func TestAPIGameAdd_FromSteamAppIDUnknownAppID(t *testing.T) {
 	s := newGamesServer(t)
-	fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+	fakeSteamApp(t, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	rec := doAPI(s, http.MethodPost, "/api/v1/games", `{"from_steam_app_id":"999999"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
@@ -620,7 +632,7 @@ func TestAPIGamesDetect_ListsWorkshopBearingUncuratedGamesWithoutAll(t *testing.
 	s := newGamesServer(t)
 	fakeSteamApp(t, "1133870", "Space Engineers 2", "SpaceEngineers2")
 	fakeSteamWorkshopManifest(t, "1133870", "3617086610", "3512001122")
-	fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+	fakeSteamApp(t, uncuratedAppID, uncuratedName, uncuratedDir)
 
 	narrow := decodeDetectListing(t, s, "/api/v1/games/detect")
 	require.Len(t, narrow.Games, 1, "the Workshop-bearing row is listed by default; the plain uncurated one is not")
