@@ -834,6 +834,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two overlapping reloads of the same web UI slice no longer commit out of
+  order (#370).** The SPA already dropped an answer fetched for a route the
+  user had left, but nothing fenced one load of a slice against another load
+  of that SAME slice. Clicking a row's Enabled checkbox and then another
+  row's Lock left two `/api/v1/mods` reads in flight at once, and if the
+  first came back last the store took the older library: the lock badge
+  never appeared and nothing re-fetched, so the page stayed stale until some
+  unrelated refresh. Every load now claims a per-slice sequence number when
+  it issues its requests and commits only the slices it is still the newest
+  claim on, so a late answer is dropped rather than applied.
+
 - **A verify result handed to a caller is no longer the memo's own copy
   (#366).** #336's memo cloned the result it served from a cache HIT, but
   the MISS path filed the very `*VerifyResult` it returned — so the caller
