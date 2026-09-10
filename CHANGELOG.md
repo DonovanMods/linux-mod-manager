@@ -1021,9 +1021,12 @@ bepinex` before its first plugin will install. `runtime` and `bootstrap`
   nothing to do with a mod loader (#359).** Every game printed a "Mod
   loader" section — `Declared: none`, `Runtime: unknown`, `Bootstrap:
 unknown` — followed by a warning telling you to set
-  `--loader-bootstrap`. The section is now shown only for a game that
-  declares a loader or whose install directory carries a marker lmm
-  recognises, and `GET /api/v1/games/{id}` gates its warning the same way.
+  `--loader-bootstrap`. The section is now shown only for a game something
+  says is loader-relevant — it declares a loader, BepInEx is actually in its
+  install directory, or that directory carries a marker lmm recognises — and
+  `GET /api/v1/games/{id}` gates its warning the same way. A game with
+  BepInEx installed but undeclared is told exactly that, with the command to
+  declare it.
 
 - **Importing a profile no longer leaves two versions of one mod deployed
   (#404).** When a mod is installed under several profiles, the import picks
