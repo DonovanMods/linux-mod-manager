@@ -191,3 +191,46 @@ func TestRewriteExtractedTreeAllowsAnInTreeSymlinkedDirectory(t *testing.T) {
 	assert.Equal(t, []string{"link/a.dll"}, got)
 	assert.FileExists(t, filepath.Join(root, "real", "a.dll"))
 }
+
+// TestCopyOnceNeverLeavesAPartialFile is M1's regression test: copyOnce
+// used to O_TRUNC the destination and stream into it, so a kill, a full
+// disk or an I/O error mid-copy left a truncated file that copy-once's own
+// contract - never overwrite - then refused to repair on every subsequent
+// deploy. The destination must only ever appear complete.
+func TestCopyOnceNeverLeavesAPartialFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.cfg")
+	dst := filepath.Join(dir, "nested", "dst.cfg")
+	require.NoError(t, os.WriteFile(src, []byte("shipped"), 0o644))
+
+	// A source that cannot be read part-way through is the observable
+	// stand-in for a mid-copy failure: whatever copyOnce does, dst must not
+	// be left behind holding a prefix.
+	require.NoError(t, os.Remove(src))
+	require.NoError(t, os.Mkdir(src, 0o755)) // a directory: open succeeds, read fails
+
+	err := copyOnce(src, dst)
+	require.Error(t, err)
+	assert.NoFileExists(t, dst, "a failed copy must leave no file at the destination")
+
+	entries, err := os.ReadDir(filepath.Dir(dst))
+	require.NoError(t, err)
+	assert.Empty(t, entries, "and no temporary file either")
+}
+
+// TestApplyAdapterCopyOnceRefusesAnEscapingMember is M2's regression test:
+// the copy-once write joined a cache-relative member onto game.ModPath
+// unchecked, while applyProfileOverrides fifteen lines above explicitly
+// refuses a traversing override path. Cache members are sanitised at
+// extraction, but I3 showed the rewriter can put a path into a cache entry
+// the extractor never saw - so the guard belongs beside the write.
+func TestApplyAdapterCopyOnceRefusesAnEscapingMember(t *testing.T) {
+	outside := t.TempDir()
+	_, err := copyOnceDest(filepath.Join(outside, "game"), "../escaped.cfg")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "escap")
+
+	within, err := copyOnceDest(filepath.Join(outside, "game"), "BepInEx/config/mod.cfg")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(outside, "game", "BepInEx", "config", "mod.cfg"), within)
+}
