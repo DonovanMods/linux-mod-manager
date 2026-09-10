@@ -73,7 +73,7 @@ func TestRunImportScan_ExtractModeWarning_ExactOutput(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	expected := "Note: Scan import for extract-mode games tracks mods in-place without caching.\n" +
+	expected := "Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.\n" +
 		"      Uninstall will only remove the database entry, not the files.\n" +
 		"\n" +
 		"Scanning " + game.ModPath + " for untracked mods...\n" +
@@ -117,7 +117,7 @@ func TestRunImportScan_BackfillLoop_UpdatesMissingMetadataAndSavesToDB(t *testin
 	})
 
 	require.NoError(t, err)
-	expected := "Note: Scan import for extract-mode games tracks mods in-place without caching.\n" +
+	expected := "Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.\n" +
 		"      Uninstall will only remove the database entry, not the files.\n" +
 		"\n" +
 		"Scanning " + game.ModPath + " for untracked mods...\n" +
@@ -165,7 +165,7 @@ func TestRunImportScan_BackfillLoop_SkipMatchHonored_NoBackfillAttempted(t *test
 	})
 
 	require.NoError(t, err)
-	expected := "Note: Scan import for extract-mode games tracks mods in-place without caching.\n" +
+	expected := "Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.\n" +
 		"      Uninstall will only remove the database entry, not the files.\n" +
 		"\n" +
 		"Scanning " + game.ModPath + " for untracked mods...\n" +
@@ -846,4 +846,23 @@ func TestRunImportScan_MatchConfidence_AnnotatesNonExactMatches(t *testing.T) {
 		assert.Contains(t, out, "○ SkyUI -> local (no match)")
 		assert.NotContains(t, out, "SkyUI Flashlite")
 	})
+}
+
+// TestRunImportScan_CompileModeGame_NoteNamesCompileMode is #388: the note's
+// guard is `DeployMode != DeployCopy`, so it fires for compile-mode games
+// (Icarus) too - but the sentence said "extract-mode games", naming a mode
+// the user's games.yaml does not say. It now names both modes it covers.
+func TestRunImportScan_CompileModeGame_NoteNamesCompileMode(t *testing.T) {
+	svc, game := setupDoImportTest(t)
+	game.DeployMode = domain.DeployCompile
+	importSkipMatch = true
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	out, _, err := captureStdoutAndStderr(t, func() error {
+		return runImportScan(cmd, game, svc, "default")
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.\n")
 }

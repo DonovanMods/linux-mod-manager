@@ -171,7 +171,7 @@ func TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mod_path does not exist")
-	expected := "Note: Scan import for extract-mode games tracks mods in-place without caching.\n" +
+	expected := "Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.\n" +
 		"      Uninstall will only remove the database entry, not the files.\n" +
 		"\n" +
 		"Scanning " + game.ModPath + " for untracked mods...\n"

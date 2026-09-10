@@ -1404,6 +1404,13 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   dependency tree, and `lmm import`'s scan summary (`(local, v)` →
   `(local)`).
 
+- **The scan-import caveat names both of the modes it applies to (#388).**
+  `lmm import`'s note read "Scan import for extract-mode games tracks mods
+  in-place without caching", but its guard is "not copy mode" — so a
+  `compile`-mode game (Icarus) got a sentence naming a mode its
+  `games.yaml` does not say. It now reads "extract- and compile-mode
+  games".
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

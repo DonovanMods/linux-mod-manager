@@ -390,7 +390,7 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 	// caller rendering the plan instead.
 	if !jsonOutput {
 		if game.DeployMode != domain.DeployCopy {
-			fmt.Println("Note: Scan import for extract-mode games tracks mods in-place without caching.")
+			fmt.Println("Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.")
 			fmt.Println("      Uninstall will only remove the database entry, not the files.")
 			fmt.Println()
 		}
