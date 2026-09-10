@@ -112,8 +112,8 @@ function CollectionHeader({ collection }) {
       </h3>
       <p class="plan__note">
         ${collection.tracked} of ${collection.items?.length ?? 0} item(s) are
-        already tracked. Nothing is downloaded: lmm cannot yet fetch a Workshop
-        item you are not subscribed to.
+        already tracked. Nothing is downloaded: this import records the
+        collection's list.
       </p>
     </section>
   `;

@@ -11,12 +11,12 @@
 // already had.
 //
 // What it does NOT do is download anything. Items the user is already
-// subscribed to were adopted by Tier 1 and are simply present; the rest
-// need Tier 3's download path, which lands in its own unit (#347). Until
-// then a collection import saves the profile and says, per item, what the
-// user has to do in Steam - which is the honest answer, and a good deal
-// more useful than a stack of "operation not supported by this source"
-// failures.
+// subscribed to were adopted by Tier 1 and are simply present; for the
+// rest, a collection import saves the profile and says, per item, what the
+// user has to do in Steam. Tier 3 (#347) can now fetch such an item on
+// request, so this is a deferral rather than a limit - see
+// ApplyWorkshopCollectionImport for the open question and why this unit
+// does not answer it.
 package core
 
 import (
@@ -238,12 +238,17 @@ func (s *Service) describeCollectionItems(ctx context.Context, game *domain.Game
 // profile and installs NOTHING.
 //
 // The forced NoInstall is the rule this unit is built around, and it lives
-// here rather than in either frontend so both inherit it. Until Tier 3
-// (#347) lands the download path, lmm cannot fetch a Workshop item it is
-// not already subscribed to - so letting the ordinary install loop try
-// would spend a round trip per item to produce a stack of "operation not
-// supported by this source" failures, when the plan already knows the
-// answer and has a sentence for it (WorkshopCollectionItem.Note).
+// here rather than in either frontend so both inherit it: importing a
+// collection RECORDS its list, it does not acquire it.
+//
+// Tier 3 (#347) has since landed a download path, so the rule is now a
+// deliberate DEFERRAL rather than an impossibility - whether importing a
+// collection should also offer to download its un-subscribed items (a
+// per-app opt-in that can be refused item by item, and a potentially very
+// large batch behind one flag) is an owner decision this unit does not
+// take. Until it is taken, the plan already knows the answer per item and
+// has a sentence for it (WorkshopCollectionItem.Note), which beats a stack
+// of failures from an install loop run on spec.
 //
 // opts is otherwise honoured verbatim - Force in particular, which is what
 // re-importing an updated collection over its own profile needs.

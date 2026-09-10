@@ -253,8 +253,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--as` to name the result. It needs no API key. The profile RECORDS the
   collection's list: items you already track are marked as such, every
   other item is listed with what to do about it — subscribe in Steam, then
-  run `lmm import --workshop` — and nothing is downloaded, since lmm cannot
-  yet fetch an item you are not subscribed to. A Workshop item is
+  run `lmm import --workshop` — and nothing is downloaded: the import
+  records the list. A Workshop item is
   game-global, so such a profile is a record of what the collection
   contains rather than a set you switch on and off; a switch to it deploys
   nothing. `--json` emits one document carrying both halves,

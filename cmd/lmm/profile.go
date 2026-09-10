@@ -681,9 +681,9 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 // the result.
 //
 // There is no "download and install?" prompt, because there is nothing to
-// answer: core forces NoInstall for a collection import until Tier 3 lands
-// the download path, and every un-subscribed item already carries the one
-// sentence that resolves it.
+// answer: core forces NoInstall for a collection import (see
+// ApplyWorkshopCollectionImport), and every un-subscribed item already
+// carries the one sentence that resolves it.
 func doProfileImportCollection(ctx context.Context, service *core.Service, game *domain.Game) error {
 	plan, err := service.PlanWorkshopCollectionImport(ctx, game, profileImportAs, profileImportCollection)
 	if err != nil {
