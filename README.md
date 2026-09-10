@@ -321,7 +321,7 @@ wherever they'd conflict, the lock wins and the output names it:
   and keeps the lock.
 - **`lmm mod edit` of a locked mod**: refused before anything is written —
   `--version` (other than the locked version itself) with the same
-  move-the-lock/unlock remedies, and `--source`/`--source-id` re-linking
+  move-the-lock/unlock remedies, and `--to-source`/`--to-source-id` re-linking
   with the unlock remedy alone, since a re-link would replace the locked
   profile entry with a fresh, unlocked one and moving the lock can't help.
   Metadata-only edits (`--name`/`--author`) still work.

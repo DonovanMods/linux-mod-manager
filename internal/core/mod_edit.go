@@ -1,8 +1,8 @@
 // Package core: this file holds `mod edit`'s core flow - PlanRelinkMod/
 // ApplyRelinkMod - a behavior-preserving extraction of cmd/lmm/mod_edit.go's
 // pre-Task-10 doModEdit (v2 Phase 3 Task 10, #303). "Edit" covers two
-// distinct shapes cmd's --name/--version/--author/--source/--source-id
-// flags select between: a metadata-only edit (no --source/--source-id) that
+// distinct shapes cmd's --name/--version/--author/--to-source/--to-source-id
+// flags select between: a metadata-only edit (no --to-source/--to-source-id) that
 // updates the DB row in place, and a re-link (either flag given) that moves
 // the mod to a new source_id/mod_id identity - deleting the old DB row and
 // profile ref, optionally refreshing metadata from the new source, and
@@ -80,7 +80,7 @@ type RelinkPlan struct {
 // PlanRelinkMod computes what "lmm mod edit" would do to sourceID/modID in
 // profileName, re-linking it to newSourceID/newModID - pass empty strings
 // for both to plan a metadata-only edit (--name/--version/--author with no
-// --source/--source-id). Pure and read-only: the only reads are
+// --to-source/--to-source-id). Pure and read-only: the only reads are
 // GetInstalledMod, the installed set (TargetInstalled and Ruling 5's
 // staleness snapshot), and the profile's lock state - no source is ever
 // contacted (a re-link's metadata refresh happens in ApplyRelinkMod,
@@ -388,7 +388,7 @@ func (s *Service) applyRelinkMod(ctx context.Context, game *domain.Game, plan *R
 	}
 
 	// #197 postsmoke seam-audit fix: a --version edit is a direct
-	// regeneration trigger; a --source/--source-id relink changes the
+	// regeneration trigger; a --to-source/--to-source-id relink changes the
 	// identity enabledMergeSources keys off (mod.SourceID + ":" + mod.ID).
 	// Sync unconditionally now that changes is non-empty - cheap no-op if
 	// nothing merge-relevant actually moved (MergedPakAffected reports

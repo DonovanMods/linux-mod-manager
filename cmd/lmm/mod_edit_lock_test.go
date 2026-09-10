@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -34,7 +36,7 @@ func setupDoModEditTest(t *testing.T) (*core.Service, *domain.Game, *fakeInstall
 }
 
 // TestDoModEdit_ReLink_LockedRef_Refuses guards #146 shape 1: re-linking a
-// LOCKED ref (--source/--source-id) must refuse up front - the pre-fix code
+// LOCKED ref (--to-source/--to-source-id) must refuse up front - the pre-fix code
 // did RemoveMod (deleting the locked ref) then UpsertMod of a fresh ref with
 // zero-value Locked, silently dropping the lock. Lock-wins (#97/#143): only
 // explicit unlock releases the ref, so the edit must fail with ErrModLocked,
@@ -252,4 +254,24 @@ func seedSameIDModFromOtherSource(t *testing.T, svc *core.Service, game *domain.
 	pm := svc.NewProfileManager()
 	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default",
 		domain.ModReference{SourceID: "other", ModID: modID, Version: version}))
+}
+
+// TestREADMEDoesNotNameTheRenamedRelinkFlags is P1b review F3: #396 renamed
+// `mod edit`'s re-link pair to --to-source/--to-source-id, and the wave
+// updated the man page and the README's import-scan mentions but missed the
+// lock caveat, which still told readers to re-link with --source/--source-id.
+// The README is prose nobody executes, so nothing else notices it going
+// stale (the shortcuts ratchet's own reasoning) - and --source-id in
+// particular now names no flag of any lmm command at all.
+func TestREADMEDoesNotNameTheRenamedRelinkFlags(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	require.NoError(t, err)
+	text := string(readme)
+
+	assert.NotContains(t, text, "--source-id",
+		"no lmm command has a --source-id flag since #396; the re-link flag is --to-source-id")
+	assert.NotContains(t, text, "`--source`/",
+		"the re-link pair is --to-source/--to-source-id; the mod group's -s/--source means the opposite thing")
+	assert.Contains(t, text, "`--to-source`/`--to-source-id` re-linking",
+		"the lock caveat must name the flags that actually re-link")
 }

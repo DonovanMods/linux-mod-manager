@@ -67,7 +67,7 @@ func TestService_PlanRelinkMod_Relink_DefaultsOmittedHalf(t *testing.T) {
 
 	plan, err := svc.PlanRelinkMod(context.Background(), game, "default", "src", "a", "", "99")
 	require.NoError(t, err)
-	require.True(t, plan.Relink, "specifying only --source-id is still a re-link request")
+	require.True(t, plan.Relink, "specifying only --to-source-id is still a re-link request")
 	assert.Equal(t, "src", plan.To.SourceID)
 	assert.Equal(t, "99", plan.To.ModID)
 }
