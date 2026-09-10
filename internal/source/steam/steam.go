@@ -428,6 +428,7 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 					NexusID:     info.NexusID,
 					DeployMode:  info.DeployMode,
 					Sources:     info.Sources,
+					Loader:      detectedLoader(info.Loader),
 					Known:       true,
 				}, libPath, opts.NoWorkshop))
 			}
@@ -435,4 +436,21 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 	}
 
 	return found, warnings, nil
+}
+
+// detectedLoader converts a known-games entry's loader block into the domain
+// declaration a candidate carries (#416), or nil when the entry declares
+// none. A fresh value each time: the candidate's declaration travels into
+// domain.Game and then into games.yaml, and a pointer shared with the
+// process-wide known-games map would make an edit to one game's loader an
+// edit to every game curated from the same entry.
+//
+// Runtime and Bootstrap stay at their zero values ("not answered yet") -
+// LoaderInfo deliberately carries neither, because a catalog cannot know
+// them and `lmm game show` answers them from disk.
+func detectedLoader(info *LoaderInfo) *domain.GameLoader {
+	if info == nil {
+		return nil
+	}
+	return &domain.GameLoader{Kind: info.Kind, Version: info.Version}
 }

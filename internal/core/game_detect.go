@@ -49,7 +49,19 @@ func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
 		SourceIDs:   sources,
 		LinkMethod:  domain.LinkSymlink,
 		DeployMode:  deployMode,
+		Loader:      cloneDetectedLoader(g.Loader),
 	}, nil
+}
+
+// cloneDetectedLoader copies a candidate's loader declaration (#416) so the
+// saved game owns its own, rather than aliasing whatever the scan handed
+// over - the same reason Sources is cloned at the spec seam below.
+func cloneDetectedLoader(loader *domain.GameLoader) *domain.GameLoader {
+	if loader == nil {
+		return nil
+	}
+	clone := *loader
+	return &clone
 }
 
 // GameSpecFromDetected prefills a GameSpec from one detected candidate,
@@ -78,6 +90,11 @@ func GameFromDetected(g domain.DetectedGame) (*domain.Game, error) {
 //     curated map by AddGame rather than replacing it, so naming a source
 //     for an already-curated game ADDS it instead of silently dropping
 //     what detection knew.
+//   - Loader comes from the candidate's curated declaration (#416) when the
+//     caller supplied none, so `game add --from-detected` on a curated
+//     BepInEx game writes the same `loader:` block `game detect` does and
+//     the first plugin install is not refused. An explicit LoaderSpec wins,
+//     the way every other field here does.
 //   - LinkMethod is passed through untouched; its zero value already means
 //     symlink.
 func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
@@ -106,6 +123,14 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 			spec.Sources = maps.Clone(d.Sources)
 		case d.NexusID != "":
 			spec.Sources = map[string]string{"nexusmods": d.NexusID}
+		}
+	}
+	if spec.Loader == nil && d.Loader != nil {
+		spec.Loader = &LoaderSpec{
+			Kind:      d.Loader.Kind,
+			Version:   d.Loader.Version,
+			Runtime:   d.Loader.Runtime.String(),
+			Bootstrap: d.Loader.Bootstrap.String(),
 		}
 	}
 	return spec

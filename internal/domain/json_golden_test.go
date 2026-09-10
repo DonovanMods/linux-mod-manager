@@ -283,6 +283,27 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #416: a curated entry that declares the game's mod loader.
+			// The catalog answers kind and version only - runtime and
+			// bootstrap are facts about a particular installation, which
+			// `lmm game show` reads off the game directory - so those two
+			// members are absent, and so is `loader` itself on every other
+			// detect document (omitempty), which is what keeps the three
+			// goldens above byte-identical.
+			"detected_game_loader",
+			domain.DetectedGame{
+				SteamAppID:  "892970",
+				Slug:        "valheim",
+				Name:        "Valheim",
+				InstallPath: "/home/user/.steam/steam/steamapps/common/Valheim",
+				ModPath:     "/home/user/.steam/steam/steamapps/common/Valheim",
+				NexusID:     "valheim",
+				Sources:     map[string]string{"nexusmods": "valheim"},
+				Known:       true,
+				Loader:      &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
+			},
+		},
+		{
 			// #269's detection prefill: an app whose appworkshop manifest
 			// declares installed items gets `steamworkshop: <appid>` added
 			// to its sources map, and the item count that justified it.
