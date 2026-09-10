@@ -44,8 +44,15 @@ type ImportPlan struct {
 	// preserve profile.Mods' own order.
 	//
 	// Independently of which of those four a ref lands in, a row deployed at
-	// another version - this profile's own, or any other profile's - is
-	// recorded in priorVersions so the apply Replaces it (see below).
+	// another version is recorded in priorVersions so the apply Replaces it
+	// (see below). Which rows are consulted depends on whether this profile
+	// already has the mod: for a ref this profile has a row of its own for,
+	// that row - and only that row; for a ref it does not, EVERY other
+	// profile's row (liveOtherVersion). The gap between those two, named
+	// rather than papered over (P1a re-review F3): a re-import into an
+	// existing profile whose own row is not deployed does not consult the
+	// other profiles, so a live deployment of another version elsewhere is
+	// installed alongside rather than Replaced.
 	//
 	// The rule for a cross-profile drift entry, settled and implemented
 	// (P1a review F7 - this doc comment used to claim the opposite of the

@@ -134,13 +134,32 @@ func (i *Installer) restoreReplacedOriginal(relPath, dstPath string) {
 }
 
 // foreignFile reports whether dstPath holds content lmm did not put there:
-// a REGULAR file (a symlink is a deployment, lmm's or another tool's) with
-// no deployed_files row for this game and profile.
+// a REGULAR file (a symlink is a deployment, lmm's or another tool's) that
+// no profile of this GAME has a deployed_files row for.
 //
 // It is the same judgement captureOriginal makes before storing an
 // original, and it is deliberately conservative in the same direction: an
 // Installer with no database cannot tell, and answers false, so a
 // db-less Installer behaves exactly as it always has.
+//
+// The ownership question is asked twice, profile first and then game-wide
+// (#404): the deployed tree is GAME-GLOBAL, one directory every profile
+// shares, so a file ANOTHER profile deployed is lmm's own file - not stock
+// content - and a cross-profile Replace must be free to remove it. Asking
+// only the profile-scoped question made "exactly one version of a mod on
+// disk" true for symlink deployments and false for copy and hardlink ones:
+// under those the deployed file IS regular, the acting profile has no row
+// of its own for it, and the obsolete-file loop skipped the very file it
+// exists to remove - leaving both versions live after a `lmm profile
+// import` or a `lmm profile switch` that converges across profiles. It is
+// the same "did lmm put this here at all" question #350 review minor 7
+// added AnyProfileOwnsFile for and wired into captureOriginal.
+//
+// The widening is deliberate and bounded by the callers: each loop iterates
+// ONE mod's own cache listing, so the paths reached are that mod's, and
+// game-global "last writer wins" is the semantics the deployed tree already
+// has. A file no profile ever deployed - the game's own content - is still
+// foreign, so it is still captured rather than destroyed.
 func (i *Installer) foreignFile(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string) bool {
 	if i.db == nil {
 		return false
@@ -150,7 +169,11 @@ func (i *Installer) foreignFile(ctx context.Context, game *domain.Game, profileN
 		return false
 	}
 	owner, err := i.db.GetFileOwner(ctx, game.ID, profileName, relPath)
-	return err == nil && owner == nil
+	if err != nil || owner != nil {
+		return false
+	}
+	owned, err := i.db.AnyProfileOwnsFile(ctx, game.ID, filepath.ToSlash(relPath))
+	return err == nil && !owned
 }
 
 // Install deploys a mod to the game directory. If DB tracking is enabled and a
@@ -672,7 +695,9 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 		//
 		// lmm's own deployments are unaffected: a symlink is not a regular
 		// file, and a copy/hardlink deployment carries a deployed_files
-		// row written by the same loop that created it.
+		// row written by the same loop that created it - under the
+		// DEPLOYING profile, which is why foreignFile asks the game-wide
+		// question too (#404).
 		if i.foreignFile(ctx, game, profileName, file, dstPath) {
 			i.log.Debug("leaving a file this mod does not own where it is", "path", dstPath)
 			continue

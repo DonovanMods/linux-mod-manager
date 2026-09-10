@@ -909,6 +909,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed straight from the cache too, not only for one that has to be
   re-fetched.
 
+  A second, older half of the same fault is closed with it, and it affected
+  **`lmm profile switch` as well**: on a game deployed with `copy` or
+  `hardlink`, removing the obsolete version's files was skipped outright
+  whenever the live deployment belonged to a _different_ profile, because lmm
+  asked "is this file mine?" of the profile it was acting as rather than of
+  the game. A copied or hardlinked file is a real file, so it looked like
+  content lmm had never put there and was left alone — leaving both versions
+  live even when the replacement was correctly planned. (Under the default
+  `symlink` method the question was never reached, which is why this went
+  unnoticed.) That question is now asked of the whole game: a file **any** of
+  its profiles deployed is lmm's own to replace, while a file none of them
+  deployed — the game's own content — is still preserved and never deleted,
+  exactly as before.
+
 - **The web UI sets a quoted command as code instead of showing raw
   backticks (#402).** core writes one error message for both frontends, and
   it is written for a terminal — "Steam Web API key required (run \`lmm auth

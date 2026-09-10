@@ -1260,6 +1260,16 @@ func TestApplyImport_CrossProfilePick_ReplacesTheLiveOlderDeployment(t *testing.
 // directory holds exactly ONE version of the mod when the import is done -
 // which of the rows the pick happened to reuse for its bytes must not be
 // able to change that.
+//
+// Crossed with all THREE link methods (the re-review's F1): the invariant is
+// about the game-global tree, not about symlinks, and the nine cells all
+// hardcoded LinkSymlink - the one method under which the obsolete-file loop
+// happens to work regardless of who owns the file, because a symlink is not
+// a regular file and never reaches Installer.foreignFile's ownership
+// question at all. Under copy and hardlink the deployed file IS regular and
+// the row belongs to the OTHER profile, so all 18 of those cells left both
+// versions on disk until foreignFile learned to ask the game-wide question
+// (#404).
 func TestApplyImport_CrossProfile_OneVersionOnDisk(t *testing.T) {
 	const (
 		wanted    = "1.0" // the version the imported document names
@@ -1299,71 +1309,154 @@ func TestApplyImport_CrossProfile_OneVersionOnDisk(t *testing.T) {
 
 	fileIDs := map[string][]string{wanted: {"9"}, live: {"10"}, bystander: {"11"}}
 
-	for _, ordering := range orderings {
-		for _, cs := range cacheStates {
-			t.Run(ordering.name+", "+cs.name, func(t *testing.T) {
-				svc := newFlowsTestService(t)
-				game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	linkMethods := []domain.LinkMethod{domain.LinkSymlink, domain.LinkCopy, domain.LinkHardlink}
 
-				pm := svc.NewProfileManager()
-				mock := newTwoVersionSource(t)
-				svc.RegisterSource(mock)
-
-				gameCache := svc.GetGameCache(game)
-				// The live deployment's own cache entry: Install reads it
-				// now, and Replace reads it again to know what to remove.
-				require.NoError(t, gameCache.Store(game.ID, "src", "mod1", live, "mod1.esp", []byte("new-payload")))
-				cs.store(t, svc, game)
-
-				for _, p := range others {
-					_, err := pm.Create(context.Background(), game.ID, p)
-					require.NoError(t, err)
-					version := ordering.holders[p]
-					require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
-						Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: version, GameID: game.ID},
-						ProfileName:  p,
-						UpdatePolicy: domain.UpdateNotify,
-						Enabled:      true,
-						Deployed:     version == live,
-						FileIDs:      fileIDs[version],
-					}))
-					require.NoError(t, pm.AddMod(context.Background(), game.ID, p,
-						domain.ModReference{SourceID: "src", ModID: "mod1", Version: version}))
-					if version != live {
-						continue
+	for _, lm := range linkMethods {
+		for _, ordering := range orderings {
+			for _, cs := range cacheStates {
+				t.Run(lm.String()+", "+ordering.name+", "+cs.name, func(t *testing.T) {
+					svc := newFlowsTestService(t)
+					game := &domain.Game{
+						ID: "g1", Name: "Game", ModPath: t.TempDir(),
+						LinkMethod: lm, LinkMethodExplicit: true,
 					}
-					installer := svc.GetInstallerForTest(game)
-					require.NoError(t, installer.Install(context.Background(), game,
-						&domain.Mod{ID: "mod1", SourceID: "src", Version: live, GameID: game.ID}, p))
-				}
-				_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
-				require.NoError(t, err, "precondition: the older version must be live on disk")
 
-				profile := &domain.Profile{
-					Name: "imported", GameID: game.ID,
-					Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: wanted}},
-				}
-				data, err := config.ExportProfile(profile)
-				require.NoError(t, err)
+					pm := svc.NewProfileManager()
+					mock := newTwoVersionSource(t)
+					svc.RegisterSource(mock)
 
-				plan, err := svc.PlanImport(context.Background(), game, data)
-				require.NoError(t, err)
+					gameCache := svc.GetGameCache(game)
+					// The live deployment's own cache entry: Install reads it
+					// now, and Replace reads it again to know what to remove.
+					require.NoError(t, gameCache.Store(game.ID, "src", "mod1", live, "mod1.esp", []byte("new-payload")))
+					cs.store(t, svc, game)
 
-				result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
-				require.NoError(t, err)
-				require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
-				assert.Equal(t, 0, result.Failed)
+					for _, p := range others {
+						_, err := pm.Create(context.Background(), game.ID, p)
+						require.NoError(t, err)
+						version := ordering.holders[p]
+						require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+							Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: version, GameID: game.ID},
+							ProfileName:  p,
+							UpdatePolicy: domain.UpdateNotify,
+							Enabled:      true,
+							Deployed:     version == live,
+							FileIDs:      fileIDs[version],
+						}))
+						require.NoError(t, pm.AddMod(context.Background(), game.ID, p,
+							domain.ModReference{SourceID: "src", ModID: "mod1", Version: version}))
+						if version != live {
+							continue
+						}
+						installer := svc.GetInstallerForTest(game)
+						require.NoError(t, installer.Install(context.Background(), game,
+							&domain.Mod{ID: "mod1", SourceID: "src", Version: live, GameID: game.ID}, p))
+					}
+					_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+					require.NoError(t, err, "precondition: the older version must be live on disk")
 
-				row, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "imported")
-				require.NoError(t, err)
-				assert.Equal(t, wanted, row.Version, "the imported profile's row records the version its document named")
+					profile := &domain.Profile{
+						Name: "imported", GameID: game.ID,
+						Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: wanted}},
+					}
+					data, err := config.ExportProfile(profile)
+					require.NoError(t, err)
 
-				_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
-				assert.NoError(t, err, "the version the document named must be deployed")
-				_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
-				assert.True(t, os.IsNotExist(err),
-					"exactly one version of a mod may be live in the game-global tree - the obsolete one must be replaced, whichever row the pick reused")
-			})
+					plan, err := svc.PlanImport(context.Background(), game, data)
+					require.NoError(t, err)
+
+					result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+					require.NoError(t, err)
+					require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
+					assert.Equal(t, 0, result.Failed)
+
+					row, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "imported")
+					require.NoError(t, err)
+					assert.Equal(t, wanted, row.Version, "the imported profile's row records the version its document named")
+
+					_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+					assert.NoError(t, err, "the version the document named must be deployed")
+					_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+					assert.True(t, os.IsNotExist(err),
+						"exactly one version of a mod may be live in the game-global tree - the obsolete one must be replaced, whichever row the pick reused")
+				})
+			}
 		}
 	}
+}
+
+// TestApplyImport_TwoLiveOtherVersions_ConvergesTheFirstOnly pins
+// liveOtherVersion's stated limit (P1a re-review F2) rather than leaving it
+// as prose only: two OTHER profiles deployed at two DIFFERENT versions is
+// already the mixed state Replace exists to resolve, and first-match-wins
+// resolves ONE of them.
+//
+// Characterization, deliberately: the doc comment argues that resolving one
+// is strictly better than resolving neither, and the argument is sound, but
+// nothing executed it. This does. It is green before and after #404's
+// foreignFile widening - both leftovers are lmm's own files either way -
+// and it FAILS the day the behaviour changes in either direction, which is
+// what the limit needs: either the second version stops being left behind
+// (make it a loop, and say so here) or it starts being left behind
+// differently.
+//
+// Scanning order is config.ListProfiles' filename order, so "aaa" is met
+// before "mmm": the mod's own load order in the document decides nothing
+// here.
+func TestApplyImport_TwoLiveOtherVersions_ConvergesTheFirstOnly(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	gameCache := svc.GetGameCache(game)
+	// Two live deployments of one mod, at two versions, under two profiles.
+	// Each needs its own cache entry: Install reads it to deploy, and
+	// Replace reads it again to know what to remove.
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "2.0", "mod1-two.esp", []byte("two-payload")))
+
+	live := map[string]string{"aaa": "1.5", "mmm": "2.0"}
+	fileIDs := map[string][]string{"1.5": {"10"}, "2.0": {"11"}}
+	for _, p := range []string{"aaa", "mmm"} {
+		_, err := pm.Create(context.Background(), game.ID, p)
+		require.NoError(t, err)
+		require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+			Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: live[p], GameID: game.ID},
+			ProfileName:  p,
+			UpdatePolicy: domain.UpdateNotify,
+			Enabled:      true,
+			Deployed:     true,
+			FileIDs:      fileIDs[live[p]],
+		}))
+		require.NoError(t, pm.AddMod(context.Background(), game.ID, p,
+			domain.ModReference{SourceID: "src", ModID: "mod1", Version: live[p]}))
+		installer := svc.GetInstallerForTest(game)
+		require.NoError(t, installer.Install(context.Background(), game,
+			&domain.Mod{ID: "mod1", SourceID: "src", Version: live[p], GameID: game.ID}, p))
+	}
+
+	profile := &domain.Profile{
+		Name: "imported", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the version the document named must be deployed")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, os.IsNotExist(err), "the FIRST live other version - aaa's 1.5 - is the one Replace converges away")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-two.esp"))
+	assert.NoError(t, err,
+		"and the second, mmm's 2.0, is knowingly left behind: liveOtherVersion is first-match-wins, and resolving one of a mixed pair is better than resolving neither")
 }

@@ -1460,9 +1460,30 @@ func TestPlanProfileSwitch_MatchingVersion_RemainsNoop(t *testing.T) {
 // still-live deployment holds that the new version doesn't serve, leaving
 // mod1.esp (1.5) orphaned on disk forever (invisible to later uninstalls,
 // which only ever undeploy the CURRENTLY RECORDED version's files).
+//
+// Run over all THREE link methods (#404, the import re-review's F1 reaching
+// the flow that shares the hole): this convergence is CROSS-PROFILE - the
+// live 1.5 row belongs to "default" and the Replace runs as "stable" - so
+// the obsolete-file loop's ownership check has to be a question about the
+// GAME, not about the acting profile. Asked profile-scoped it left 1.5 live
+// under copy and hardlink and passed only under symlink, where the deployed
+// file is not regular and the check never fires.
 func TestApplyProfileSwitch_Downgrade_EndToEnd(t *testing.T) {
+	for _, lm := range []domain.LinkMethod{domain.LinkSymlink, domain.LinkCopy, domain.LinkHardlink} {
+		t.Run(lm.String(), func(t *testing.T) {
+			applyProfileSwitchDowngradeEndToEnd(t, lm)
+		})
+	}
+}
+
+func applyProfileSwitchDowngradeEndToEnd(t *testing.T, lm domain.LinkMethod) {
+	t.Helper()
+
 	svc := newFlowsTestService(t)
-	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: t.TempDir(),
+		LinkMethod: lm, LinkMethodExplicit: true,
+	}
 
 	pm := svc.NewProfileManager()
 	_, err := pm.Create(context.Background(), game.ID, "default")
