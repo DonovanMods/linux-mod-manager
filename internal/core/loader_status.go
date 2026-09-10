@@ -108,7 +108,10 @@ func BepInExLaunchOption(bootstrap domain.LoaderBootstrap) string {
 //  1. UnityPlayer.so / UnityPlayer.dll win. They ARE Unity's runtime, so
 //     their presence is a statement about the build; .x86_64 and .exe are
 //     ordinary extensions that anything may carry.
-//  2. Otherwise the launcher extensions decide.
+//  2. Otherwise the launcher extensions decide. Every marker here is
+//     matched case-insensitively, .x86_64 as much as .exe: these are
+//     filenames out of a depot, and a rule that turns on one character is
+//     not a rule.
 //  3. NATIVE wins a genuine tie at either level. A depot shipping both
 //     builds is one whose Linux build is what actually runs on Linux, and
 //     run_bepinex.sh is also the recoverable mistake of the two: it fails
@@ -143,7 +146,7 @@ func DetectLoaderTarget(installPath string) (domain.LoaderRuntime, domain.Loader
 			unityNative = true
 		case strings.EqualFold(name, "UnityPlayer.dll"):
 			unityWindows = true
-		case strings.HasSuffix(name, ".x86_64"), strings.HasSuffix(name, ".x86"):
+		case strings.EqualFold(filepath.Ext(name), ".x86_64"), strings.EqualFold(filepath.Ext(name), ".x86"):
 			launcherNative = true
 		case strings.EqualFold(filepath.Ext(name), ".exe"):
 			launcherWindows = true

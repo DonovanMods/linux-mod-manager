@@ -88,6 +88,28 @@ func TestDetectLoaderTarget(t *testing.T) {
 		}
 	})
 
+	// Re-review N1: the two launcher heuristics disagreed about case -
+	// .exe folded, .x86_64/.x86 did not - so `Game.EXE` read as proton
+	// while `Game.X86_64` read as nothing at all. Both are filenames from
+	// a depot, which is not a place a fixed spelling can be assumed.
+	t.Run("both launcher heuristics fold case", func(t *testing.T) {
+		for _, tc := range []struct {
+			file string
+			want domain.LoaderBootstrap
+		}{
+			{"Game.EXE", domain.LoaderBootstrapProton},
+			{"Game.X86_64", domain.LoaderBootstrapNative},
+			{"Game.X86", domain.LoaderBootstrapNative},
+		} {
+			t.Run(tc.file, func(t *testing.T) {
+				root := t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(root, tc.file), []byte("x"), 0o644))
+				_, gotBootstrap := core.DetectLoaderTarget(root)
+				assert.Equal(t, tc.want, gotBootstrap)
+			})
+		}
+	})
+
 	t.Run("no markers is unknown, never a guess", func(t *testing.T) {
 		gotRuntime, gotBootstrap := core.DetectLoaderTarget(t.TempDir())
 		assert.Equal(t, domain.LoaderRuntimeUnknown, gotRuntime)
