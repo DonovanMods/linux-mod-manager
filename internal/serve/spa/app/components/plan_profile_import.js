@@ -66,8 +66,8 @@ function CollectionItemList({ items }) {
               class=${`plan__mod${item.tracked ? "" : " plan__mod--warn"}`}
             >
               <span class="plan__mod-name">
-                ${item.name || `Workshop item ${item.file_id}`}
-              </span>
+                ${item.name || `Workshop item ${item.file_id}`} </span
+              >${" "}
               ${
                 item.url &&
                 html`<a
@@ -77,7 +77,7 @@ function CollectionItemList({ items }) {
                   rel="noopener noreferrer"
                   >Workshop page</a
                 >`
-              }
+              }${" "}
               <span
                 class=${`plan__mod-detail${item.tracked ? "" : " plan__mod-detail--warn"}`}
               >
