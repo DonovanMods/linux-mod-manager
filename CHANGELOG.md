@@ -957,6 +957,20 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **`lmm source list` can no longer claim a source `install` cannot find
+  (#381).** A built-in source that failed to register was invisible: the one
+  skip path in the registration pipeline reports through a writer
+  `lmm source list` sets to `io.Discard`, so a process whose registry lacked
+  (say) `steamworkshop` still listed it as configured and in use, while
+  `install`, `mod show` and `search` in that same process answered
+  "source not found: steamworkshop". Three guards close that gap: a built-in
+  that does not register now says so on **stderr** whatever writer the caller
+  chose; `source list` renders an **ERROR row** for a built-in a game is
+  configured to use but the registry does not hold; and a test asserts every
+  built-in is retrievable once registration returns. The underlying trigger
+  was not reproducible and is not claimed to be fixed — what is fixed is that
+  the two surfaces can no longer disagree in silence.
+
 - **A deploy preview reports a locked mod as locked (#380).** `PlanDeploy`
   built its mod references from the installed database row, which carries no
   lock — the lock lives on the profile reference — so

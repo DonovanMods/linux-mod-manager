@@ -574,3 +574,68 @@ func TestAuthState_UnmarshalTextRejectsUnknown(t *testing.T) {
 	err := a.UnmarshalText([]byte("bogus"))
 	require.Error(t, err)
 }
+
+// --- #381: a built-in that did not register must never look registered ---
+
+// TestBuiltinSourceIDsMatchTheFactories keeps the written-down catalogue in
+// step with the factories it describes - the check below is only as good as
+// that list.
+func TestBuiltinSourceIDsMatchTheFactories(t *testing.T) {
+	p := Paths{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	var ids []string
+	for _, factory := range builtinSourceFactories {
+		ids = append(ids, factory(p).ID())
+	}
+	assert.ElementsMatch(t, builtinSourceIDs, ids)
+}
+
+// TestRegisterSources_EveryBuiltinIsRetrievable is #381's startup assertion:
+// registerSources must leave every built-in retrievable from the registry.
+// The reported failure had `lmm source list` calling steamworkshop
+// registered and in use while `install`/`mod show`/`search` in another
+// process answered "source not found: steamworkshop" - and registerSource's
+// one skip path writes to a warn writer `lmm source list` sets to
+// io.Discard, so nothing said a word.
+func TestRegisterSources_EveryBuiltinIsRetrievable(t *testing.T) {
+	svc := newTestService(t)
+	p := Paths{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+
+	var warn bytes.Buffer
+	registerSources(t.Context(), svc, p, &warn)
+
+	for _, id := range builtinSourceIDs {
+		_, err := svc.GetSource(id)
+		assert.NoError(t, err, "built-in %q must be retrievable after registerSources", id)
+	}
+	assert.Empty(t, warn.String())
+}
+
+// TestSourceInfos_UnregisteredBuiltinInUse_RendersAnErrorRow: a game mapping
+// a built-in that is NOT in the registry used to produce no row at all in
+// the scoped view and an "IN USE" row in no view - either way `source list`
+// and `install --source <id>` disagreed about whether the source exists.
+// It is now an ERROR row, in both views.
+func TestSourceInfos_UnregisteredBuiltinInUse_RendersAnErrorRow(t *testing.T) {
+	svc := newTestService(t)
+	svc.RegisterSource(newDirectorySource(t, "mapped"))
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: t.TempDir(),
+		SourceIDs: map[string]string{"mapped": "", "steamworkshop": "1133870"},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+
+	for _, all := range []bool{false, true} {
+		rows, err := SourceInfos(t.Context(), svc, game, all)
+		require.NoError(t, err)
+
+		var errRow *SourceInfo
+		for i := range rows {
+			if rows[i].ID == "steamworkshop" {
+				errRow = &rows[i]
+			}
+		}
+		require.NotNil(t, errRow, "all=%v: the mapped-but-missing built-in must appear", all)
+		assert.Equal(t, "error", errRow.Type)
+		assert.Contains(t, errRow.ErrorMessage, "not registered")
+	}
+}
