@@ -1,6 +1,7 @@
 package thunderstore_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -224,6 +225,33 @@ func TestPaginationIsExactAndDeep(t *testing.T) {
 	assert.Empty(t, past.Mods, "a page past the end is empty...")
 	assert.Equal(t, 12, past.TotalCount, "...with the same total")
 	assert.Equal(t, 99, past.Page)
+}
+
+// TestPagingCannotOverflowIntoANegativeSlice is T1 review #1: `start :=
+// (page - 1) * pageSize` overflows int for a large enough page, and a
+// NEGATIVE start walks straight past the `start > total` clamp into
+// matches[start:end]. A page number is a QUERY PARAMETER - `lmm serve`
+// forwards ?page= verbatim - so no value of it may panic a source.
+func TestPagingCannotOverflowIntoANegativeSlice(t *testing.T) {
+	s := searchable(t)
+
+	pages := []int{math.MaxInt, math.MaxInt - 1, 1 << 62, 1<<62 - 1, 1 << 31}
+	sizes := []int{0, 1, 5, 20, 100, 500, -1}
+	for _, page := range pages {
+		for _, size := range sizes {
+			result := s.search(source.SearchQuery{Page: page, PageSize: size})
+			assert.Empty(t, result.Mods, "page %d (size %d) is past the end", page, size)
+			assert.Equal(t, 12, result.TotalCount, "...and still knows the total")
+		}
+	}
+
+	// A negative page stays what it always was - page 1, a page of results
+	// - rather than becoming another way to reach an empty one.
+	for _, page := range []int{-1, math.MinInt, math.MinInt + 1} {
+		first := s.search(source.SearchQuery{Page: page, PageSize: 5})
+		assert.Equal(t, 1, first.Page, "page %d clamps to the first page", page)
+		assert.Len(t, first.Mods, 5)
+	}
 }
 
 // TestPageSizeClamping pins the defaults a caller gets for asking for

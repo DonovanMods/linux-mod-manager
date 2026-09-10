@@ -438,3 +438,44 @@ func TestServer_APISearch_NoTagParam_IsUnfiltered(t *testing.T) {
 	decodeStrict(t, rec.Body.Bytes(), &report)
 	assert.Len(t, report.Mods, 2)
 }
+
+// TestServer_APISearch_OutOfRangePagingParams_Renders400 is T1 review #1's
+// other half: a paging parameter arrives from the network, and forwarding
+// it verbatim made `?page=9223372036854775807` overflow a source's own
+// `(page-1)*pageSize` into a negative slice index and panic the handler
+// (thunderstore, search.go). The source clamps it now, but the RULE lives
+// here: this endpoint must never hand core a page, page size or limit that
+// is not a plausible one, whichever source ends up receiving it. Bad input
+// is a 400 with the parameter named, exactly like ?limit=nope.
+func TestServer_APISearch_OutOfRangePagingParams_Renders400(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{Mod: domain.Mod{ID: "1", SourceID: "fake", Name: "Better Boots", Version: "1.0"}})
+	svc, _ := newFixtureServiceWithSource(t, src)
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+
+	tests := []struct {
+		name  string
+		query string
+		param string
+	}{
+		{"page overflows int", "page=9223372036854775807", "page"},
+		{"page just under the overflow", "page=4611686018427387903", "page"},
+		{"page is negative", "page=-1", "page"},
+		{"page size is negative", "page_size=-1", "page_size"},
+		{"page size is absurd", "page_size=9223372036854775807", "page_size"},
+		{"limit is negative", "limit=-1", "limit"},
+		{"limit is absurd", "limit=9223372036854775807", "limit"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+"/api/v1/search?q=boots&"+tt.query, nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+			var envelope apiErrorEnvelope
+			decodeStrict(t, rec.Body.Bytes(), &envelope)
+			assert.Contains(t, envelope.Error, tt.param)
+		})
+	}
+}

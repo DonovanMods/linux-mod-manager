@@ -23,6 +23,12 @@ const (
 	defaultPageSize = 20
 	// maxPageSize caps what one request can ask for.
 	maxPageSize = 100
+	// maxPage caps the page NUMBER, so that (page-1)*pageSize cannot
+	// overflow int for any accepted pageSize. A billion pages of the
+	// smallest page size is 10^9 results, four orders of magnitude past
+	// the largest community on the site; every page above it is empty
+	// anyway, and now says so instead of panicking (T1 review #1).
+	maxPage = 1_000_000_000
 )
 
 // Scoring weights, summed PER TERM. The shape of the list is the ranking
@@ -94,10 +100,7 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 	page, pageSize := clampPaging(query.Page, query.PageSize)
 	total := len(matches)
 
-	start := (page - 1) * pageSize
-	if start > total {
-		start = total
-	}
+	start := pageStart(page, pageSize, total)
 	end := min(start+pageSize, total)
 
 	mods := make([]domain.Mod, 0, end-start)
@@ -110,9 +113,21 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 // clampPaging applies the page defaults. A page past the end is not an
 // error - it is an empty page with the same TotalCount, which is what a
 // paginated frontend expects when the index shrank under it.
+//
+// BOTH bounds are real bounds, not just defaults (T1 review #1). A page
+// number reaches this source straight off the wire - `lmm serve` forwards
+// ?page= verbatim - and this is the first source that does its own
+// arithmetic with one instead of handing it to a remote API, so a value
+// large enough to overflow `(page-1)*pageSize` used to slice a negative
+// index and panic the request. maxPage is what keeps that arithmetic
+// inside int; anything above it is a page past the end, which is already
+// an empty page rather than an error.
 func clampPaging(page, pageSize int) (int, int) {
 	if page < 1 {
 		page = 1
+	}
+	if page > maxPage {
+		page = maxPage
 	}
 	switch {
 	case pageSize <= 0:
@@ -121,6 +136,17 @@ func clampPaging(page, pageSize int) (int, int) {
 		pageSize = maxPageSize
 	}
 	return page, pageSize
+}
+
+// pageStart is the first index of page, or total when the page lies past
+// the end. Written as a division rather than as a multiplication and a
+// clamp: (page-1)*pageSize is the product that overflows, and no clamp
+// applied AFTER it can tell an overflowed product from a real one.
+func pageStart(page, pageSize, total int) int {
+	if page-1 > total/pageSize {
+		return total
+	}
+	return min((page-1)*pageSize, total)
 }
 
 // scored is one matching row and what it scored.
