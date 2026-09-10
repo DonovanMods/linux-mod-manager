@@ -178,7 +178,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	downloader := NewDownloader(nil)
 	downloader.SetLogger(log)
 
-	return &Service{
+	svc := &Service{
 		config:     appConfig,
 		db:         database,
 		cache:      modCache,
@@ -194,7 +194,17 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		cacheDir:   cfg.CacheDir,
 		warnWriter: cfg.WarnWriter,
 		opLockPath: cfg.OpLockPath,
-	}, nil
+	}
+
+	// Expire the archives a refused ingest kept (retained_download.go).
+	// Here rather than only on the way in to a NEW retention: an entry
+	// swept only by a LATER refusal is an entry a user who abandons ONE
+	// install keeps forever, which is the leak the TTL exists to close. A
+	// ReadDir of a directory that is usually absent, so it costs an open
+	// nothing measurable.
+	svc.sweepRetainedDownloads()
+
+	return svc, nil
 }
 
 // Close releases resources held by the service
@@ -1062,6 +1072,17 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	// precondition), in which case the bytes were kept and there is nothing
 	// to fetch (retained_download.go). Everything below is unchanged either
 	// way, integrity checks included.
+	// Whichever branch below reaches the cache, the retained copy is dead
+	// weight once it does - so the drop is deferred on success rather than
+	// written after one of the three commits. Written after the extract
+	// commit alone, it left a retention behind whenever the same file was
+	// later ingested through the compile or copy branch.
+	defer func() {
+		if err == nil {
+			s.dropRetainedDownload(sourceID, mod.ID, file.ID)
+		}
+	}()
+
 	retainedPath, downloadResult, reused := s.reuseRetainedDownload(sourceID, mod.ID, file.ID)
 	if !reused {
 		var headers map[string]string
@@ -1175,9 +1196,6 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, members); err != nil {
 		return nil, err
 	}
-	// The bytes are in the cache now, so any copy kept for a retry is dead
-	// weight.
-	s.dropRetainedDownload(sourceID, mod.ID, file.ID)
 
 	// Count extracted files
 	files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)

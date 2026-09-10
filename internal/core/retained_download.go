@@ -159,8 +159,9 @@ func (s *Service) storeRetainedDownload(dir, archivePath string, result *Downloa
 }
 
 // dropRetainedDownload removes the entry for one (source, mod, file). Called
-// once the ingest it was kept for has succeeded, so the archive is in the
-// cache and the copy here is dead weight.
+// on EVERY successful ingest of that file, whichever branch reached the
+// cache (service.go defers it for exactly that reason), because the archive
+// is in the cache afterwards and the copy here is dead weight.
 func (s *Service) dropRetainedDownload(sourceID, modID, fileID string) {
 	dir := s.retainedDownloadDir(sourceID, modID, fileID)
 	if dir == "" {
@@ -171,10 +172,14 @@ func (s *Service) dropRetainedDownload(sourceID, modID, fileID string) {
 	}
 }
 
-// sweepRetainedDownloads removes entries older than retainedDownloadTTL. Run
-// on the way IN to a retention rather than on a timer: the only thing that
-// creates entries is a refused ingest, so that is also the only moment the
-// set can grow.
+// sweepRetainedDownloads removes entries older than retainedDownloadTTL.
+//
+// Run on the way IN to a retention - the only thing that creates entries is
+// a refused ingest, so that is the only moment the set can GROW - and once
+// more when a Service opens. The second caller is what makes the TTL real:
+// a user who abandons one install and never has another ingest refused
+// would otherwise keep that archive forever, since a retention would only
+// ever be swept by a later retention.
 func (s *Service) sweepRetainedDownloads() {
 	root := s.stagingRoot()
 	if root == "" {

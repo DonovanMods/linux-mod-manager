@@ -14,6 +14,7 @@ import (
 	"sort"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -248,4 +249,79 @@ func TestDownloadIngest_BepInEx_ASuccessfulIngestRetainsNothing(t *testing.T) {
 	} else {
 		assert.True(t, os.IsNotExist(err), "unexpected error reading %s: %v", retained, err)
 	}
+}
+
+// TestRetainedDownloads_AnAbandonedArchiveIsSweptOnTheNextServiceOpen is
+// re-review R4. sweepRetainedDownloads had exactly one caller - the way IN
+// to a NEW retention - so an entry was only ever swept by a LATER refusal.
+// A user who abandons one install and never has another ingest refused kept
+// the archive indefinitely, which is the opposite of what the TTL is for and
+// of what the file's own comment promised.
+func TestRetainedDownloads_AnAbandonedArchiveIsSweptOnTheNextServiceOpen(t *testing.T) {
+	cfg := core.ServiceConfig{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	svc, err := core.NewService(cfg)
+	require.NoError(t, err)
+	require.NoError(t, svc.Close())
+
+	// One retention the user walked away from a month ago, one from a
+	// refusal they are still in the middle of answering.
+	base := filepath.Join(cfg.DataDir, "downloads", "retained")
+	abandoned := filepath.Join(base, "00000000000000000000000000000000")
+	current := filepath.Join(base, "ffffffffffffffffffffffffffffffff")
+	for _, dir := range []string{abandoned, current} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "Thing-1.0.0.zip"), []byte("bytes"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "download.json"),
+			[]byte(`{"file_name":"Thing-1.0.0.zip","size":5}`), 0o600))
+	}
+	// Backdated LAST: writing the files above bumps the directory's mtime.
+	long := time.Now().Add(-30 * 24 * time.Hour)
+	require.NoError(t, os.Chtimes(abandoned, long, long))
+
+	reopened, err := core.NewService(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+
+	_, err = os.Stat(abandoned)
+	assert.True(t, os.IsNotExist(err),
+		"an archive past the TTL is swept when the service opens, not left until another refusal happens to sweep it")
+	_, err = os.Stat(current)
+	assert.NoError(t, err, "and one still inside the TTL is exactly what the user is coming back for")
+}
+
+// TestDownloadIngest_BepInEx_ACopyModeSuccessDropsTheRetainedArchive is the
+// second half of R4: dropRetainedDownload was called only on the EXTRACT
+// path's success, while the DeployCompile and DeployCopy branches return
+// earlier. A retention therefore survived a later successful ingest of the
+// same file that took one of those branches - dead weight in the data
+// directory for the rest of the TTL, holding a second copy of bytes that are
+// already in the cache.
+func TestDownloadIngest_BepInEx_ACopyModeSuccessDropsTheRetainedArchive(t *testing.T) {
+	fixture := newBepInExDownloadFixture(t, map[string]string{
+		"BepInEx/plugins/Thing.dll": "assembly",
+		"manifest.json":             "{}",
+	}, false)
+
+	var loaderErr *core.LoaderRequiredError
+	require.ErrorAs(t, fixture.download(t), &loaderErr)
+	require.Equal(t, int64(1), fixture.downloads.Load())
+
+	retained := filepath.Join(fixture.svc.DataDirForTest(), "downloads", "retained")
+	entries, err := os.ReadDir(retained)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "the refusal kept the archive for the retry")
+
+	// The user declares the loader, and this game deploys its mods as-is
+	// rather than extracting them - so the retry succeeds down the COPY
+	// branch instead of the extract one.
+	fixture.game.Loader = &domain.GameLoader{Kind: domain.LoaderKindBepInEx}
+	fixture.game.DeployMode = domain.DeployCopy
+	require.NoError(t, fixture.svc.SaveGame(context.Background(), fixture.game))
+
+	require.NoError(t, fixture.download(t))
+	assert.Equal(t, int64(1), fixture.downloads.Load(), "the retry still reuses the kept archive")
+
+	entries, err = os.ReadDir(retained)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "the bytes are in the cache now, so the retained copy is dead weight")
 }
