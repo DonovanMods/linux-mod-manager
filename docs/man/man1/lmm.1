@@ -2,7 +2,7 @@
 .TH "LMM" "1" "Jul 2026" "lmm 2.0.0" "User Commands"
 
 .SH NAME
-lmm - Linux Mod Manager \- Terminal-based mod manager for Linux
+lmm - Linux Mod Manager \- manage game mods from the terminal or a browser
 
 
 .SH SYNOPSIS
@@ -10,10 +10,14 @@ lmm - Linux Mod Manager \- Terminal-based mod manager for Linux
 
 
 .SH DESCRIPTION
-lmm is a terminal-based mod manager for Linux for searching, installing,
-updating, and managing game mods from sources like NexusMods and CurseForge,
-plus user-defined custom sources (directory scans, static manifests, or REST
-APIs — see 'lmm source --help').
+lmm searches, installs, updates and manages game mods on Linux, from
+NexusMods, CurseForge and the Steam Workshop, plus user-defined custom
+sources (directory scans, static manifests, or REST APIs — see
+\&'lmm source --help').
+
+.PP
+It has two frontends over one engine: this command line, and a local web
+UI — run 'lmm serve' and open the address it prints.
 
 .PP
 Run 'lmm COMMAND --help' for details on any subcommand.

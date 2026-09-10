@@ -1450,6 +1450,13 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   columns out with a default game set and about seventeen without one. The
   block is now built as pairs and padded to the widest command.
 
+- **`lmm --help` and `man lmm` name the Steam Workshop and the web UI
+  (#391).** The description every help header and the man page carry
+  listed NexusMods, CurseForge and custom sources — leaving out a built-in
+  source with three shipped tiers and its own README section, and leaving
+  out `lmm serve`, which is a frontend over the same engine rather than an
+  extra. "Terminal-based mod manager" was, by 2.0, half the story.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

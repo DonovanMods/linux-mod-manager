@@ -212,3 +212,18 @@ func TestRoot_FlagErrorFunc_OnlyUnwrapsLogLevel(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `invalid argument "notabool" for "--json" flag:`)
 }
+
+// TestRootDescription_NamesEveryBuiltInSourceAndBothFrontends is #391. The
+// description that `man lmm` and every `--help` header carry named
+// NexusMods, CurseForge and custom sources - but not the Steam Workshop,
+// a built-in source with three shipped tiers and its own README section,
+// and not `lmm serve`, a co-equal frontend the README's opening line
+// names. "terminal-based" was, by v2, only half true.
+func TestRootDescription_NamesEveryBuiltInSourceAndBothFrontends(t *testing.T) {
+	description := rootCmd.Short + "\n" + rootCmd.Long
+
+	for _, want := range []string{"NexusMods", "CurseForge", "Steam Workshop", "lmm serve"} {
+		assert.Contains(t, description, want,
+			"the description man lmm and every --help header carry must name %q", want)
+	}
+}

@@ -64,11 +64,14 @@ var (
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "lmm",
-	Short: "Linux Mod Manager - Terminal-based mod manager for Linux",
-	Long: `lmm is a terminal-based mod manager for Linux for searching, installing,
-updating, and managing game mods from sources like NexusMods and CurseForge,
-plus user-defined custom sources (directory scans, static manifests, or REST
-APIs — see 'lmm source --help').
+	Short: "Linux Mod Manager - manage game mods from the terminal or a browser",
+	Long: `lmm searches, installs, updates and manages game mods on Linux, from
+NexusMods, CurseForge and the Steam Workshop, plus user-defined custom
+sources (directory scans, static manifests, or REST APIs — see
+'lmm source --help').
+
+It has two frontends over one engine: this command line, and a local web
+UI — run 'lmm serve' and open the address it prints.
 
 Run 'lmm COMMAND --help' for details on any subcommand.
 
