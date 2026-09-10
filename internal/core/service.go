@@ -1476,8 +1476,9 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 	// the archive: a source-backed download has a real mod name, and it is
 	// the name the user sees in `lmm list`.
 	//
-	// #359 replaces the false with the game's own loader declaration.
-	layout, err := normalizeBepInExTree(extractPath, mod.Name, false)
+	// The game's own loader declaration (#359) widens the rules onto the two
+	// ambiguous shapes.
+	layout, err := normalizeBepInExTree(extractPath, mod.Name, game.DeclaresBepInEx())
 	if err != nil {
 		return nil, err
 	}

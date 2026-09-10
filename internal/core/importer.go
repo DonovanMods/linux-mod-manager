@@ -308,9 +308,9 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// cache, so the cache entry - whose layout IS the game directory's
 		// layout - is already correct for every later deploy.
 		//
-		// #359 replaces the false with the game's own loader declaration,
-		// widening the rules onto the two ambiguous shapes.
-		layout, err := normalizeBepInExTree(extractedPath, modName, false)
+		// The game's own loader declaration (#359) widens the rules onto
+		// the two ambiguous shapes - a bare plugins/ root and a loose .dll.
+		layout, err := normalizeBepInExTree(extractedPath, modName, game.DeclaresBepInEx())
 		if err != nil {
 			return nil, err
 		}

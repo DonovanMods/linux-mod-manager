@@ -325,11 +325,11 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	// normalising: a normalised shape-A tree has BepInEx as its sole
 	// top-level directory, and naming the mod after that would be absurd.
 	//
-	// #359 replaces the false here with the game's own loader declaration,
-	// which widens the normaliser onto the two ambiguous shapes (a bare
-	// plugins/ root, a loose .dll) - see bepinexNormalise's doc comment.
+	// The game's own loader declaration (#359) widens the normaliser onto
+	// the two ambiguous shapes (a bare plugins/ root, a loose .dll) - see
+	// bepinexNormalise's doc comment.
 	modName := importedModName(kind, filename, ident.version, members)
-	layout, err := bepinexLayoutForListing(kind, members, modName, false)
+	layout, err := bepinexLayoutForListing(kind, members, modName, game.DeclaresBepInEx())
 	if err != nil {
 		return nil, err
 	}

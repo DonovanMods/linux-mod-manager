@@ -169,3 +169,101 @@ func TestPlanImportArchive_BepInEx_PreviewsTheNormalisedPaths(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"BepInEx/config/a.cfg", "BepInEx/plugins/A.dll"}, plan.Files)
 }
+
+// newBepInExDeclaredService is newBepInExGameRootService plus #359's loader
+// declaration - the game shape that widens the normaliser onto the two
+// AMBIGUOUS layouts (a bare plugins/ root, a loose root .dll).
+func newBepInExDeclaredService(t *testing.T) (*core.Service, *domain.Game) {
+	t.Helper()
+	svc := newFlowsTestService(t)
+	root := t.TempDir()
+	game := &domain.Game{
+		ID: "valheim", Name: "Valheim",
+		InstallPath: root, ModPath: root,
+		LinkMethod: domain.LinkSymlink,
+		Loader: &domain.GameLoader{
+			Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5",
+			Runtime: domain.LoaderRuntimeMono, Bootstrap: domain.LoaderBootstrapProton,
+		},
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	return svc, game
+}
+
+// TestImportArchive_BepInEx_ShapeBNeedsTheDeclaration is the pair that pins
+// the gate end to end: the SAME archive - Evaisa/HookGenPatcher's bare
+// patchers/ root - normalises for a game that declares the loader and is
+// left exactly where it is for one that does not.
+func TestImportArchive_BepInEx_ShapeBNeedsTheDeclaration(t *testing.T) {
+	members := map[string]string{
+		"patchers/HookGen/HookGenPatcher.dll": "assembly",
+		"manifest.json":                       "{}",
+	}
+
+	t.Run("declared: the BepInEx/ prefix is applied", func(t *testing.T) {
+		svc, game := newBepInExDeclaredService(t)
+		archivePath := filepath.Join(t.TempDir(), "HookGenPatcher-0.0.5.zip")
+		createImportTestZip(t, archivePath, members)
+
+		_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+			core.ImportArchiveOptions{Force: true}, nil)
+		require.NoError(t, err)
+
+		_, err = os.Lstat(filepath.Join(game.InstallPath, "BepInEx", "patchers", "HookGen", "HookGenPatcher.dll"))
+		assert.NoError(t, err)
+	})
+
+	t.Run("undeclared: a plugins-style root deploys exactly where it always did", func(t *testing.T) {
+		svc, game := newBepInExGameRootService(t)
+		archivePath := filepath.Join(t.TempDir(), "HookGenPatcher-0.0.5.zip")
+		createImportTestZip(t, archivePath, members)
+
+		_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+			core.ImportArchiveOptions{Force: true}, nil)
+		require.NoError(t, err)
+
+		_, err = os.Lstat(filepath.Join(game.InstallPath, "patchers", "HookGen", "HookGenPatcher.dll"))
+		assert.NoError(t, err, "an undeclared game keeps the archive's own layout")
+		_, err = os.Lstat(filepath.Join(game.InstallPath, "BepInEx"))
+		assert.True(t, os.IsNotExist(err), "and gains no BepInEx directory it never asked for")
+	})
+}
+
+// TestImportArchive_BepInEx_LooseDLLLandsUnderItsOwnPluginDirectory: the
+// other ambiguous shape, for a declared game. The directory is named after
+// the mod, which is what `lmm list` shows and what a user looks for on disk.
+func TestImportArchive_BepInEx_LooseDLLLandsUnderItsOwnPluginDirectory(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+
+	archivePath := filepath.Join(t.TempDir(), "CoolMod-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"CoolMod.dll":   "assembly",
+		"manifest.json": "{}",
+	})
+
+	result, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	_, err = os.Lstat(filepath.Join(game.InstallPath, "BepInEx", "plugins", result.Mod.Name, "CoolMod.dll"))
+	assert.NoError(t, err)
+}
+
+// TestPlanImportArchive_BepInEx_UnrecognisedLayoutWarnsOnThePlan: "warns,
+// never guesses" reaches a user where it can still change their mind - the
+// plan both frontends render before committing to the import.
+func TestPlanImportArchive_BepInEx_UnrecognisedLayoutWarnsOnThePlan(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+
+	archivePath := filepath.Join(t.TempDir(), "Odd-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"Data/StreamingAssets/thing.bundle": "bytes",
+	})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	require.NotEmpty(t, plan.Warnings)
+	assert.Contains(t, plan.Warnings[0], "did not recognise")
+	assert.Equal(t, []string{filepath.Join("Data", "StreamingAssets", "thing.bundle")}, plan.Files,
+		"an unrecognised layout is previewed exactly as the archive lists it")
+}
