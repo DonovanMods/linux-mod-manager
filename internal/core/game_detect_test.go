@@ -814,3 +814,51 @@ func TestApplyGameDetect_RepairKeepsTheFieldsDetectionDoesNotOwn(t *testing.T) {
 	assert.True(t, got.ConvertPaksExplicit)
 	assert.Equal(t, customised.Hooks, got.Hooks)
 }
+
+// TestGameDetectListing_ExistingGameUnderASymlinkedLibraryIsConfigured is
+// the re-review's M2. F1's path match used filepath.Clean, which is purely
+// lexical, so a games.yaml entry recorded through a symlinked Steam library
+// root (~/Games -> /mnt/ssd/Games, an ordinary second-drive setup) did not
+// match the resolved path detection reports, and the duplicate F1 exists to
+// prevent came straight back for exactly the users most likely to hit it.
+func TestGameDetectListing_ExistingGameUnderASymlinkedLibraryIsConfigured(t *testing.T) {
+	svc := newGameAddService(t)
+
+	realLibrary := t.TempDir()
+	install := filepath.Join(realLibrary, "Cyberpunk 2077")
+	require.NoError(t, os.MkdirAll(install, 0o755))
+	// The user's second drive, reached through a symlink in $HOME.
+	linkedLibrary := filepath.Join(t.TempDir(), "Games")
+	require.NoError(t, os.Symlink(realLibrary, linkedLibrary))
+
+	// games.yaml holds the path as the user typed it, through the symlink.
+	preCuratedGame(t, svc, "cyberpunk-2077", "Cyberpunk 2077", filepath.Join(linkedLibrary, "Cyberpunk 2077"))
+
+	// Detection reports the resolved path Steam's own scan walked to.
+	listing, err := svc.GameDetectListing(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1091500", Slug: "cyberpunk2077", Name: "Cyberpunk 2077",
+		InstallPath: install, ModPath: install, NexusID: "cyberpunk2077", Known: true,
+	}}, nil, core.GameDetectListingOptions{})
+	require.NoError(t, err)
+	require.Len(t, listing.Games, 1)
+	assert.True(t, listing.Games[0].AlreadyConfigured,
+		"one installed directory is one game however the path spells it")
+}
+
+// TestConfiguredGameFor_FallsBackToCleanWhenAPathIsGone: EvalSymlinks
+// errors on a path that no longer exists, and a game whose install
+// directory the user has since deleted or moved must still be recognised
+// as configured - otherwise a detect run offers a duplicate the moment the
+// drive is unplugged.
+func TestConfiguredGameFor_FallsBackToCleanWhenAPathIsGone(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "unplugged", "Cyberpunk 2077")
+	existing := map[string]*domain.Game{
+		"cyberpunk-2077": {ID: "cyberpunk-2077", InstallPath: gone + string(filepath.Separator)},
+	}
+
+	match := core.ConfiguredGameFor(existing, domain.DetectedGame{
+		Slug: "cyberpunk2077", InstallPath: gone,
+	})
+	require.NotNil(t, match, "a path neither side can resolve still compares lexically")
+	assert.Equal(t, "cyberpunk-2077", match.ID)
+}

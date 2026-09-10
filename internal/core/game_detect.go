@@ -156,6 +156,15 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 // deployed links still on the old id. One installed directory is one game,
 // whatever it is called, so the path is what decides.
 //
+// Paths are compared RESOLVED (filepath.EvalSymlinks), because a Steam
+// library on a second drive is routinely reached through a symlink in
+// $HOME: games.yaml then holds the path the user typed while detection
+// reports the one Steam's scan walked to, and a lexical comparison misses
+// exactly the setups most likely to have one. A path that cannot be
+// resolved - the drive is unplugged, the game was deleted - falls back to
+// its cleaned spelling, so a configured game whose directory is gone is
+// still recognised rather than offered again as a fresh add.
+//
 // Ties (two games.yaml entries at one install path - only reachable by
 // hand-editing) resolve to the lowest id, so the answer never depends on
 // map iteration order.
@@ -166,10 +175,10 @@ func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.Detecte
 	if detected.InstallPath == "" {
 		return nil
 	}
-	want := filepath.Clean(detected.InstallPath)
+	want := resolvedPath(detected.InstallPath)
 	var match *domain.Game
 	for id, game := range existing {
-		if game == nil || game.InstallPath == "" || filepath.Clean(game.InstallPath) != want {
+		if game == nil || game.InstallPath == "" || resolvedPath(game.InstallPath) != want {
 			continue
 		}
 		if match == nil || id < match.ID {
@@ -177,6 +186,19 @@ func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.Detecte
 		}
 	}
 	return match
+}
+
+// resolvedPath is filepath.EvalSymlinks with filepath.Clean as the answer
+// whenever it cannot resolve - a path that does not exist (yet, or any
+// more), or one no permission reaches. Both spellings of an existing path
+// resolve to the same string; two spellings of a MISSING path only compare
+// equal if they were written the same way, which is the conservative half
+// of the trade and the reason the fallback is Clean rather than "no match".
+func resolvedPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
 }
 
 // PrefillGameSpecFromDetected is GameSpecFromDetected against the games the
