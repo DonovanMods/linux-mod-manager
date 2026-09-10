@@ -745,9 +745,9 @@ func TestSourceListCmd_ScopedViewSaysHowManyMoreExist(t *testing.T) {
 	out, err := runSourceCmd(t, "source", "list")
 	require.NoError(t, err)
 
-	// The registry holds the four built-ins plus my-directory; only
-	// nexusmods is mapped, so four are missing from this view.
-	assert.Contains(t, out, "4 more registered source(s) not mapped to test-game")
+	// The registry holds the five built-ins plus my-directory; only
+	// nexusmods is mapped, so five are missing from this view.
+	assert.Contains(t, out, "5 more registered source(s) not mapped to test-game")
 	assert.Contains(t, out, "lmm source list --all")
 }
 
@@ -757,7 +757,7 @@ func TestSourceListCmd_ScopedViewSaysHowManyMoreExist(t *testing.T) {
 func TestSourceListCmd_ScopedViewWithNothingMoreHasNoFooter(t *testing.T) {
 	resetSourceListGameFlags(t)
 	t.Cleanup(func() { resetSourceListGameFlags(t) })
-	setupSourceListGameTest(t, "my-directory", "nexusmods", "curseforge", "icarus", "steamworkshop")
+	setupSourceListGameTest(t, "my-directory", "nexusmods", "curseforge", "icarus", "steamworkshop", "thunderstore")
 	gameID = "test-game"
 
 	out, err := runSourceCmd(t, "source", "list")
