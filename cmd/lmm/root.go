@@ -381,6 +381,26 @@ func reportError(err error) {
 	} else {
 		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
 		reportExternalToolOutput(err)
+		reportLoaderSetup(err)
+	}
+}
+
+// reportLoaderSetup prints a LoaderRequiredError's setup steps under the
+// error line (#359).
+//
+// The steps ARE the value of that refusal - "install BepInEx, record it,
+// then check it loaded" is what the user needs, and the one-line message can
+// only name the middle step. --json carries them in the envelope's details
+// and the web UI renders them from there, so without this the terminal would
+// be the one surface that dropped them.
+func reportLoaderSetup(err error) {
+	var loaderErr *core.LoaderRequiredError
+	if !errors.As(err, &loaderErr) || len(loaderErr.Setup) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\nTo set up the %s loader for this game:\n", loaderErr.Kind)
+	for i, step := range loaderErr.Setup {
+		fmt.Fprintf(os.Stderr, "  %d. %s\n", i+1, step)
 	}
 }
 

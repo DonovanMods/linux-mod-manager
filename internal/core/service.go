@@ -1482,6 +1482,15 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 	if err != nil {
 		return nil, err
 	}
+	// #359: a downloaded archive's shape is not knowable until it is
+	// extracted, which is why PlanInstall cannot answer this and this is the
+	// earliest point that can. The refusal lands before the staged entry is
+	// committed, so nothing is deployed and nothing is recorded - a cache
+	// fill is not a mutation of managed state (Ruling 1), the same standing
+	// a declined ConflictError leaves behind.
+	if err := requireDeclaredLoader(game, mod.Name, layout); err != nil {
+		return nil, err
+	}
 	for _, w := range layout.warnings() {
 		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
 	}

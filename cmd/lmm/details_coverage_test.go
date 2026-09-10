@@ -29,6 +29,10 @@ var detailsCoverage = map[string]string{
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",
 	"core.GameSourceInUseError":   "TestReportError_JSON_GameSourceInUseError",
 	"core.GameSpecError":          "TestReportError_JSON_GameSpecError",
+	// #359's plan-time loader precondition: the setup steps reach the
+	// envelope as DATA, so the web UI renders the same sentences the
+	// terminal prints instead of carrying its own copy in JavaScript.
+	"core.LoaderRequiredError": "TestReportError_JSON_LoaderRequiredError",
 	// #317's cross-process mutation refusal: the holder's pid/started_at
 	// reach the envelope as data, not only as the sentence.
 	"core.OperationInProgressError":    "TestReportError_JSON_OperationInProgressError",

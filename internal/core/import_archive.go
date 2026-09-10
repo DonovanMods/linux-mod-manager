@@ -334,6 +334,14 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		return nil, err
 	}
 
+	// #359: refuse before computing a plan that would promise a plugin the
+	// game has nothing to load it with. Plan time is the earliest an archive
+	// import can answer this, and the answer costs nothing beyond the
+	// listing already read.
+	if err := requireDeclaredLoader(game, modName, layout); err != nil {
+		return nil, err
+	}
+
 	files, err := importDeployablePaths(kind, filename, members, layout)
 	if err != nil {
 		return nil, err

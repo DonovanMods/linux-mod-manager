@@ -323,3 +323,81 @@ func AuthRequiredSource(err error) string {
 	}
 	return ""
 }
+
+// LoaderRequiredError refuses a mod that needs a mod loader the game does
+// not declare (#359).
+//
+// It is a PLAN-time precondition, not a dependency: the DependencyResolver
+// orders mods within a profile, and the loader is not in the profile - it
+// lives in the game root, it is a property of the game INSTALLATION, and it
+// must survive a profile switch (docs/plans/2026-09-09-bepinex-spike.md §2).
+// Without this refusal lmm would deploy a plugin assembly into a game with
+// nothing to load it and report success; the mod would simply do nothing,
+// which is the hardest kind of failure to diagnose.
+//
+// The requirement is inferred from the archive's SHAPE - an archive that
+// names the directory `BepInEx` is a BepInEx mod (bepinex_layout.go) - which
+// is why it fires only where lmm is certain. A Thunderstore source will
+// later infer it from the package's own dependency strings
+// ("BepInEx-BepInExPack-5.4.2100") as well.
+//
+// It follows this file's convention: Details() any puts the whole thing in
+// the --json error envelope's "details" (Ruling 3), so `lmm serve`'s failed
+// job and `lmm install --json` render the SAME setup steps the terminal
+// prints, from data rather than from a sentence.
+type LoaderRequiredError struct {
+	// GameID is the game whose configuration is missing the declaration.
+	GameID string `json:"game_id"`
+	// Kind is the loader the mod needs - today always
+	// domain.LoaderKindBepInEx.
+	Kind string `json:"kind"`
+	// ModName is the mod that needs it, as the flow named it. Empty when the
+	// refusal is about an archive whose identity is not resolved yet.
+	ModName string `json:"mod_name,omitempty"`
+	// Layout names the archive shape the requirement was inferred from, in
+	// the normaliser's own words ("game-root-relative", "wrapped in a single
+	// directory"), so a user can see WHY lmm decided this is a BepInEx mod.
+	Layout string `json:"layout,omitempty"`
+	// Setup is the ordered steps that resolve it, as complete sentences a
+	// frontend renders verbatim. Data rather than prose because both
+	// frontends show it and neither should be writing its own copy.
+	Setup []string `json:"setup"`
+}
+
+// Error states the requirement and names the command that records it, so
+// even a caller that only prints the error is told what to do.
+func (e *LoaderRequiredError) Error() string {
+	name := e.ModName
+	if name == "" {
+		name = "this mod"
+	}
+	return fmt.Sprintf("%s needs the %s mod loader, which game %q does not declare: install it into the game directory, then run `lmm game edit %s --loader %s`",
+		name, loaderDisplayName(e.Kind), e.GameID, e.GameID, e.Kind)
+}
+
+// Details implements the --json error envelope's extension point.
+func (e *LoaderRequiredError) Details() any { return e }
+
+// loaderDisplayName spells a loader kind the way its own project does, so a
+// message says "BepInEx" rather than the lower-case config value. An
+// unrecognised kind is echoed unchanged - kind is an open string.
+func loaderDisplayName(kind string) string {
+	if kind == domain.LoaderKindBepInEx {
+		return "BepInEx"
+	}
+	return kind
+}
+
+// newLoaderRequiredError builds the refusal for game, naming the mod and the
+// archive shape the requirement was read off. The setup steps are written
+// once, here, so the CLI, the web UI and `--json` cannot drift about them.
+func newLoaderRequiredError(game *domain.Game, modName, layout string) *LoaderRequiredError {
+	return &LoaderRequiredError{
+		GameID: game.ID, Kind: domain.LoaderKindBepInEx, ModName: modName, Layout: layout,
+		Setup: []string{
+			"Install BepInEx into the game directory yourself: a native Linux build needs the BepInEx_linux_x64 archive from BepInEx's own GitHub releases, while a Proton/Wine game needs the Windows pack (winhttp.dll plus doorstop_config.ini). lmm does not choose or download it - the wrong build leaves a game that silently loads nothing.",
+			fmt.Sprintf("Record it: `lmm game edit %s --loader bepinex --loader-version <version> --loader-runtime mono|il2cpp --loader-bootstrap native|proton`.", game.ID),
+			fmt.Sprintf("Then `lmm game show %s` prints the exact Steam launch option to paste, and `lmm verify --game %s` checks that the loader actually ran.", game.ID, game.ID),
+		},
+	}
+}

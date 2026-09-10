@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
 )
 
@@ -463,4 +464,27 @@ func (l *bepinexLayout) warnings() []string {
 		return nil
 	}
 	return l.Warnings
+}
+
+// requireDeclaredLoader is #359's precondition: an archive whose layout this
+// normaliser RECOGNISED is a BepInEx mod, so a game that declares no BepInEx
+// loader cannot usefully take it.
+//
+// It is asked at the earliest point each flow can answer it - plan time for
+// an archive import (whose listing is available before anything touches
+// disk), and ingest time for a download (whose shape is not knowable until
+// the archive is extracted, which is why PlanInstall cannot answer it; a
+// cache fill is not a mutation of managed state, Ruling 1, and the refusal
+// still lands before any deploy or DB write).
+//
+// Only a layout that APPLIES infers a requirement. That is deliberately
+// narrower than "looks vaguely BepInEx-ish": the two ambiguous shapes do not
+// apply for an undeclared game (bepinexNormalise's gate), so a mod for
+// another game rooted at `plugins/` infers nothing and its owner is never
+// told to install a loader they do not need.
+func requireDeclaredLoader(game *domain.Game, modName string, layout *bepinexLayout) error {
+	if !layout.Applies() || game.DeclaresBepInEx() {
+		return nil
+	}
+	return newLoaderRequiredError(game, modName, layout.Shape.String())
 }

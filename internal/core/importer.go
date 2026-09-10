@@ -314,6 +314,13 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		if err != nil {
 			return nil, err
 		}
+		// #359: the same refusal PlanImportArchive makes, repeated here
+		// because a caller can reach the ingest without planning first. It
+		// lands before the cache commit, so nothing is deployed and nothing
+		// is recorded.
+		if err := requireDeclaredLoader(game, modName, layout); err != nil {
+			return nil, err
+		}
 		for _, w := range layout.warnings() {
 			i.log.Warn(w, "archive", filename, "game", game.ID)
 		}
