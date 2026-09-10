@@ -1386,7 +1386,10 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   9–11 minutes under the race detector. A green branch could therefore fail
   CI with `panic: test timed out after 10m0s` and no failing assertion
   anywhere. The job now runs `make test-race`, so the gate and `make check`
-  share one timeout.
+  share one timeout — passing `GOCACHE_LOCAL=$(go env GOCACHE)` so it still
+  uses the build cache `actions/setup-go` restores, rather than the
+  project-local cache the Makefile defaults to for sandboxed runs (which
+  would recompile every dependency under `-race` on each run).
 
 - **A config.yaml lmm creates no longer contains settings v2 does not have
   (#390).** A first run wrote `keybindings: vim` — a key reserved for the

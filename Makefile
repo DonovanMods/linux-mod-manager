@@ -7,8 +7,12 @@ MAIN_PATH := ./cmd/lmm
 VERSION := $(shell grep 'version = ' cmd/lmm/root.go | cut -d'"' -f2)
 DESCRIBE := $(shell git describe --tags --always --dirty 2>/dev/null)
 LDFLAGS := -ldflags "-s -w -X main.buildDescribe=$(DESCRIBE)"
-# Project-local Go cache so tests run in sandboxed environments (e.g. CI, Cursor)
-GOCACHE_LOCAL := $(CURDIR)/.go-mod/cache
+# Project-local Go cache so tests run in sandboxed environments (e.g. Cursor,
+# or any run with no writable HOME). `?=` so a caller that HAS a usable cache
+# can point the targets at it instead: CI restores one at ~/.cache/go-build
+# with actions/setup-go, and overriding this is what lets the race job read
+# it rather than recompiling every dependency from cold (P1b review F7).
+GOCACHE_LOCAL ?= $(CURDIR)/.go-mod/cache
 # Trunk cache under project for sandbox-friendly lint
 TRUNK_CACHE_LOCAL := $(CURDIR)/.trunk-cache
 # Default target

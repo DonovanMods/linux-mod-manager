@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,4 +66,30 @@ func TestCIRaceJobRunsTheRaceDetector(t *testing.T) {
 	require.True(t,
 		strings.Contains(body, "make test-race") || strings.Contains(body, "go test -race"),
 		"%s no longer runs the suite under the race detector", ciTestWorkflow)
+}
+
+// TestCIRaceJobKeepsTheRestoredBuildCache is P1b review F7. Routing the race
+// job through `make test-race` (#374) fixed the timeout but pinned
+// GOCACHE to the project-local .go-mod/cache, which exists so the suite runs
+// in sandboxes with no writable HOME. On CI that means the build cache
+// actions/setup-go just restored at ~/.cache/go-build is never read: every
+// run recompiles the module and its dependencies under -race from cold.
+//
+// The Makefile's GOCACHE_LOCAL must therefore be overridable, and the
+// workflow must override it with the cache setup-go actually restored.
+func TestCIRaceJobKeepsTheRestoredBuildCache(t *testing.T) {
+	workflow, err := os.ReadFile(ciTestWorkflow)
+	require.NoError(t, err, "reading the CI workflow")
+	body := string(workflow)
+	if !strings.Contains(body, "make test-race") {
+		t.Skip("the race job no longer delegates to make; GOCACHE is Go's own default there")
+	}
+
+	makefile, err := os.ReadFile(repoMakefile)
+	require.NoError(t, err, "reading the Makefile")
+	assert.Regexp(t, `(?m)^GOCACHE_LOCAL \?=`, string(makefile),
+		"GOCACHE_LOCAL must use ?= so CI can point it at the cache setup-go restored")
+
+	assert.Contains(t, body, "GOCACHE_LOCAL=$(go env GOCACHE)",
+		"%s runs `make test-race` without restoring setup-go's build cache, so every run recompiles from cold", ciTestWorkflow)
 }
