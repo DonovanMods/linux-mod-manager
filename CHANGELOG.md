@@ -873,6 +873,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Workshop items prints `Steam Workshop: N items`, and the invalid-selection
   error now names what is accepted. `--json` is unchanged.
 
+  A bare number that is **both** a valid row number and another listed row's
+  Steam app id is **refused** rather than resolved to one of them: Steam's
+  own back catalogue occupies the low integers (Counter-Strike is app id
+  `10`, Half-Life `70`, Portal `400`) and `--include-unknown` routinely
+  lists that many rows, so guessing wrong configured a game you had not
+  named — and on an already-configured curated row that meant replaying the
+  repair path's `games.yaml` overwrite and resetting its default profile's
+  mod list. The refusal names the two spellings that are never ambiguous,
+  and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
+  Steam app id 10.
+
 - **A missing Steam library no longer prints as a warning on every scan
   (#368).** `Warning: /data/Games/SteamLibrary/steamapps: open …: no such
 file or directory` came from a `libraryfolders.vdf` entry whose directory

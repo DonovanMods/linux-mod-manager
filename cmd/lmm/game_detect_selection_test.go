@@ -616,5 +616,5 @@ func TestDoGameDetect_PromptRangeMatchesKnownCount(t *testing.T) {
 
 	err := doGameDetect(context.Background(), cmd, bufio.NewReader(strings.NewReader("none\n")), svc, games, nil)
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Add games to config? [1-1/app id/all/none]: ")
+	assert.Contains(t, buf.String(), "Add games to config? [1-1/#row/app:<id>/all/none]: ")
 }

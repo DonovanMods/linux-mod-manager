@@ -73,23 +73,30 @@ var gameDetectCmd = &cobra.Command{
 Prompts for which games to add (e.g. 1,2 or all or none). Every listed
 row is numbered, curated games first, and the prompt takes either a row
 number or a game's Steam app id - the app id does not shift when the
-listing widens. A game already configured (present in games.yaml) is
-marked "[configured]" and is excluded from the default "all" selection,
-since it needs no re-offering - but it stays listed, and you can still
-name a CURATED one explicitly to re-add/repair it (this replays the same
+listing widens. A bare number that is BOTH a row number and some other
+row's Steam app id is refused rather than guessed at (Steam's own back
+catalogue occupies the low integers - 10, 20, 70, 220, 400 - and a wide
+listing has that many rows): spell it '#3' to mean row 3, or 'app:10' to
+mean Steam app id 10. Both explicit forms are always accepted, whether
+anything collides or not.
+
+A game already configured (present in games.yaml) is marked
+"[configured]" and is excluded from the default "all" selection, since it
+needs no re-offering - but it stays listed, and you can still name a
+CURATED one explicitly to re-add/repair it (this replays the same
 games.yaml + default-profile overwrite 'lmm game add' always performs, so
-a repair also resets the default profile's mod list). An already-
-configured UNCURATED row is refused instead of overwritten - change it
-with 'lmm game edit'. Each added game gets a
-source mapping, the symlink link method, and an empty default profile;
-edit games.yaml afterwards for anything more specific, including the
-NexusMods slug if none was detected.
+a repair also resets the default profile's mod list). An
+already-configured UNCURATED row is refused instead of overwritten -
+change it with 'lmm game edit'. Each added game gets a source mapping,
+the symlink link method, and an empty default profile; edit games.yaml
+afterwards for anything more specific, including the NexusMods slug if
+none was detected.
 
 Use --all or --select to decide non-interactively (required under
 --json, which never reads stdin): --all selects every not-yet-configured
 game, the same set the interactive "all" answer selects; --select takes
-the same values the prompt accepts (e.g. "1,2" or "1,1133870"),
-including already-configured games for a repair.
+the same values the prompt accepts (e.g. "1,2", "1,1133870" or
+"#3,app:10"), including already-configured games for a repair.
 
 A game whose Steam Workshop manifest shows items already downloaded is
 mapped to the 'steamworkshop' source automatically, so 'lmm import
@@ -121,6 +128,7 @@ Examples:
   lmm game detect
   lmm game detect --all
   lmm game detect --select 1,3
+  lmm game detect --select '#3,app:10'
   lmm game detect --include-unknown
   lmm game detect --include-unknown --json
   lmm game detect --no-workshop`,
@@ -142,7 +150,7 @@ func init() {
 	gameCmd.AddCommand(gameDetectCmd)
 
 	gameDetectCmd.Flags().BoolVar(&gameDetectAll, "all", false, "select every not-yet-configured detected game without prompting")
-	gameDetectCmd.Flags().StringVar(&gameDetectSelect, "select", "", "comma-separated row numbers or Steam app ids to add/repair without prompting (see the printed listing)")
+	gameDetectCmd.Flags().StringVar(&gameDetectSelect, "select", "", "comma-separated row numbers or Steam app ids to add/repair without prompting - '#3'/'app:10' name one explicitly (see the printed listing)")
 	gameDetectCmd.Flags().BoolVar(&gameDetectNoWorkshop, "no-workshop", false,
 		"do not map games with subscribed Steam Workshop items to the steamworkshop source")
 	gameDetectCmd.Flags().BoolVar(&gameDetectIncludeUnknown, "include-unknown", false,
@@ -520,7 +528,7 @@ func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader, count int) (stri
 		return gameDetectSelect, nil
 	default:
 		if !jsonOutput {
-			cmd.Printf("Add games to config? [1-%d/app id/all/none]: ", count)
+			cmd.Printf("Add games to config? [1-%d/#row/app:<id>/all/none]: ", count)
 		}
 		return readPromptLineFrom(reader)
 	}
@@ -672,15 +680,15 @@ func unknownOnlyDetectMessage(unknownCount int) string {
 // printed order (gameDetectRows): curated rows first, then the uncurated
 // ones the listing kept.
 //
-// Each comma-separated part is a row NUMBER or a Steam APP ID (#368). Both
-// spellings are offered because neither is sufficient alone: the number is
-// what the listing prints beside the row and what --select has always
-// taken, but it shifts when --include-unknown widens the list, while the
-// app id is stable and is the value the uncurated section prints and `lmm
-// game add --from-detected` takes. A number that IS a valid row number
-// wins over an app id that happens to have the same digits - real Steam
-// app ids start well above any plausible row count, and the row is
-// reachable by its app id either way.
+// Each comma-separated part is a row NUMBER or a Steam APP ID (#368), in
+// either case optionally spelled explicitly ("#3", "app:10") - see
+// gameDetectSelector for the grammar and why a bare number that could be
+// both is refused rather than resolved. Both spellings are offered because
+// neither is sufficient alone: the number is what the listing prints beside
+// the row and what --select has always taken, but it shifts when
+// --include-unknown widens the list, while the app id is stable and is the
+// value the uncurated section prints and `lmm game add --from-detected`
+// takes.
 //
 // A row nothing can configure - uncurated, and detection found no source
 // for it - is refused by name, pointing at the flow that asks for the
@@ -738,23 +746,93 @@ func gameDetectSelectionIndices(line string, games []domain.DetectedGame, existi
 
 // gameDetectSelector resolves one part of a selection line to a 1-based row
 // number, or says what would have been accepted.
+//
+// The grammar cannot be ambiguous (#368 review Important 1). Three spellings
+// name a row:
+//
+//   - "#<n>" is the row at that number, always.
+//   - "app:<id>" is the listed row whose Steam app id is <id>, always.
+//   - a bare number is the row when no listed row carries it as an app id,
+//     and that app id's row otherwise.
+//
+// A bare number that is BOTH a valid row number and some OTHER row's Steam
+// app id is REFUSED, naming the two explicit forms. Resolving it silently
+// either way configures a game the user did not name: Steam's own back
+// catalogue occupies the low integers (Counter-Strike is app id 10, Team
+// Fortress Classic 20, Half-Life 70, Half-Life 2 220, Portal 400, Team
+// Fortress 2 440), and --include-unknown lists every installed Steam game -
+// the owner's machine in #368 produced 23 rows, so rows 10 and 20 exist.
+// The cost of guessing wrong is not a retry: naming a CURATED row is the
+// documented repair path, which unconditionally rewrites its games.yaml
+// entry and resets its default profile's mod list, exactly the loss #205
+// item 2's "all" exclusion exists to prevent. So the ambiguity is the
+// user's to resolve, not the CLI's to guess.
+//
+// A row nothing can configure - uncurated, and detection found no source for
+// it - is refused by name whichever spelling reached it, pointing at the
+// flow that asks for the source.
 func gameDetectSelector(part string, games []domain.DetectedGame) (int, error) {
-	n, numErr := strconv.Atoi(part)
-	if numErr != nil || n < 1 || n > len(games) {
-		n = 0
-		for i, g := range games {
-			if g.SteamAppID != "" && g.SteamAppID == part {
-				n = i + 1
-				break
-			}
+	if rest, ok := strings.CutPrefix(part, "#"); ok {
+		n, err := strconv.Atoi(strings.TrimSpace(rest))
+		if err != nil || n < 1 || n > len(games) {
+			return 0, gameDetectInvalidSelection(part, games)
 		}
+		return gameDetectAddableRow(part, n, games)
+	}
+	if rest, ok := strings.CutPrefix(part, "app:"); ok {
+		n := gameDetectRowByAppID(strings.TrimSpace(rest), games)
+		if n == 0 {
+			return 0, gameDetectInvalidSelection(part, games)
+		}
+		return gameDetectAddableRow(part, n, games)
+	}
+
+	byNumber := 0
+	if n, err := strconv.Atoi(part); err == nil && n >= 1 && n <= len(games) {
+		byNumber = n
+	}
+	byAppID := gameDetectRowByAppID(part, games)
+	if byNumber != 0 && byAppID != 0 && byNumber != byAppID {
+		return 0, fmt.Errorf("ambiguous selection: %q is row %d (%s) and also the Steam app id of row %d (%s) - name the row as \"#%s\", or the app id as \"app:%s\"",
+			part, byNumber, games[byNumber-1].Name, byAppID, games[byAppID-1].Name, part, part)
+	}
+	n := byNumber
+	if n == 0 {
+		n = byAppID
 	}
 	if n == 0 {
-		return 0, fmt.Errorf("invalid selection: %q (use a row number 1-%d, a Steam app id, all, or none)", part, len(games))
+		return 0, gameDetectInvalidSelection(part, games)
 	}
+	return gameDetectAddableRow(part, n, games)
+}
+
+// gameDetectRowByAppID is the listed row whose Steam app id is exactly
+// appID, or 0. A row detection recorded no app id for is never a match, so
+// an empty selector cannot collide with one.
+func gameDetectRowByAppID(appID string, games []domain.DetectedGame) int {
+	if appID == "" {
+		return 0
+	}
+	for i, g := range games {
+		if g.SteamAppID == appID {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// gameDetectAddableRow returns row n, or the refusal that names the flow
+// which collects what this row is missing.
+func gameDetectAddableRow(part string, n int, games []domain.DetectedGame) (int, error) {
 	if g := games[n-1]; !g.Addable() {
 		return 0, fmt.Errorf("invalid selection: %q - %s (Steam app id %s) is not in the known-games list and detection found no mod source for it; add it with `lmm game add --from-detected %s`, which asks for the source",
 			part, g.Name, g.SteamAppID, g.SteamAppID)
 	}
 	return n, nil
+}
+
+// gameDetectInvalidSelection is the one "that is not on this list" refusal,
+// shared by every spelling so they cannot drift apart.
+func gameDetectInvalidSelection(part string, games []domain.DetectedGame) error {
+	return fmt.Errorf("invalid selection: %q (use a row number 1-%d, a Steam app id, all, or none)", part, len(games))
 }

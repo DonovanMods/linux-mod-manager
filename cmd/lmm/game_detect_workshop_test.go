@@ -88,7 +88,7 @@ func TestDoGameDetect_ListsWorkshopRowsByDefaultAndNumbersThemContinuously(t *te
 	assert.Contains(t, out, "app id 1133870")
 	assert.Contains(t, out, "Steam Workshop: 30 items")
 	assert.NotContains(t, out, "Satisfactory", "a plain uncurated game still needs --include-unknown")
-	assert.Contains(t, out, "Add games to config? [1-2/app id/all/none]:")
+	assert.Contains(t, out, "Add games to config? [1-2/#row/app:<id>/all/none]:")
 }
 
 // TestDoGameDetect_SelectsAnUncuratedWorkshopRowByNumber: the row is
