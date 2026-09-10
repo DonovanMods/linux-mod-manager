@@ -1112,7 +1112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of Iron IV, Euro Truck Simulator 2 and Call of Duty: Black Ops 6 entries —
   every `lmm uninstall` and every `lmm purge` swept the whole game install,
   taking the folders its loaders expect to exist (for Cyberpunk:
-  `bin/x64/plugins`, `r6/scripts`, `archive/pc/mod`, `tools/redmod/mods`).
+  `bin/x64/plugins`, `r6/scripts`, `r6/tweaks`, `archive/pc/mod`,
+  `tools/redmod/mods`).
   Steam's "verify integrity of game files" does not restore an empty
   directory, so it did not heal on its own. The cleanup is now bounded to
   the directories lmm's own removals emptied: it walks up from each removed

@@ -23,13 +23,15 @@ import (
 // expect to exist. Steam's verify-integrity does not restore an empty
 // directory, so it was not self-healing either.
 
-// cyberpunkLoaderDirs is the set the review proved gone: CET's plugin
-// folder, redscript's and RED4ext's script folders, the archive mod folder
-// and REDmod's - all shipped empty by their installers, all directly under
-// the install root, which for Cyberpunk IS the mod root.
+// cyberpunkLoaderDirs is the set the review proved gone, and the same five
+// #415's own text names: CET's plugin folder, redscript's script and tweak
+// folders, the archive mod folder and REDmod's - all shipped empty by their
+// installers, all directly under the install root, which for Cyberpunk IS
+// the mod root.
 var cyberpunkLoaderDirs = []string{
 	filepath.Join("bin", "x64", "plugins"),
 	filepath.Join("r6", "scripts"),
+	filepath.Join("r6", "tweaks"),
 	filepath.Join("archive", "pc", "mod"),
 	filepath.Join("tools", "redmod", "mods"),
 }
