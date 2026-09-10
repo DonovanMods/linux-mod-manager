@@ -1169,10 +1169,17 @@ Most mutations run as a Plan, then a background job:
 
 ```text
 POST /api/v1/plans/{kind}       -> the plan, plus a single-use plan_id
-POST /api/v1/jobs               -> {plan_id, options} -> {job_id}
+POST /api/v1/jobs               -> {plan_id, options} -> {id}
 GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
 GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
 ```
+
+The start response also carries `job_id`, the same value under the name it
+originally shipped with. That spelling is **deprecated** — read `id`, which
+is what `GET /api/v1/jobs` and `GET /api/v1/jobs/{id}` have always called it
+— and it will be dropped in a later major version. (`job_id` on the event
+stream is a different thing and stays: there it names the job an event
+belongs to.)
 
 `{kind}` is one of fifteen, each the browser-side twin of a CLI command:
 `deploy`, `install`, `uninstall`, `updates`, `rollback`, `switch`,
@@ -1367,7 +1374,7 @@ and reports both in one `core.AdoptResult` (`backfilled` alongside
 (Enable/disable are an exception: with no options and nothing to preview,
 they skip the plan step entirely — `POST /api/v1/mods/{source}/{id}/enable`
 and `.../disable` start the job directly and answer with the same
-`{"job_id"}` document. Lock/unlock/update-policy skip jobs too, but for a
+`{"id"}` document. Lock/unlock/update-policy skip jobs too, but for a
 different reason: `POST /api/v1/mods/{source}/{id}/lock`, `.../unlock` and
 `.../update-policy` are single DB writes with nothing to run in the
 background at all, so they answer synchronously with the mod's full

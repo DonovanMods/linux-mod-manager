@@ -203,6 +203,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
+  (#400).** Starting a job answered `{"job_id"}` while `GET /api/v1/jobs`
+  and `GET /api/v1/jobs/{id}` answered `{"id"}` — the same entity under two
+  names, one call apart. The start response now carries `id`; `job_id` is
+  still emitted with the same value for anything already written against it,
+  is documented as deprecated, and will be dropped in a later major version.
+  (`job_id` on the event stream is unrelated and unchanged: there it names
+  the job an event belongs to.)
+
 - **Every web UI view names itself (#399).** The browser tab, your history
   and your window switcher used to say "lmm" for every screen; they now
   carry the view and the game/profile it is showing (for example

@@ -1153,9 +1153,7 @@ async function startBatchToggle(action, mods) {
   };
   await startSequencedBatch(mods, {
     run: (mod) =>
-      startToggleJob(action, mod.source_id, mod.id, context).then(
-        (r) => r.job_id,
-      ),
+      startToggleJob(action, mod.source_id, mod.id, context).then((r) => r.id),
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:toggle`,
     labelOf: (mod) => mod.name ?? `${mod.source_id}:${mod.id}`,
     verb: action === "enable" ? "Enabled" : "Disabled",
@@ -1191,7 +1189,7 @@ async function startUninstallBatch(mods) {
         { mod_id: mod.id, source_id: mod.source_id },
         context,
       );
-      const { job_id: jobID } = await startJob(response.plan_id, {});
+      const { id: jobID } = await startJob(response.plan_id, {});
       return jobID;
     },
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:uninstall`,
@@ -1214,10 +1212,7 @@ async function confirmPlan() {
   store.set({ modal: { ...modal, status: "starting" } });
   await startBinding(modal.origin, async () => {
     try {
-      const { job_id: jobID } = await startJob(
-        modal.planID,
-        modal.applyOptions,
-      );
+      const { id: jobID } = await startJob(modal.planID, modal.applyOptions);
       if (store.get().modal?.seq !== modal.seq) return;
       if (overwriteRetryKinds.has(modal.kind)) {
         rememberInstallRequest(
@@ -1315,7 +1310,7 @@ async function retryInstallOverwrite(jobID) {
   await startBinding(origin, async () => {
     try {
       const response = await planMutation(req.kind, req.planOptions, context);
-      const { job_id: newJobID } = await startJob(response.plan_id, {
+      const { id: newJobID } = await startJob(response.plan_id, {
         ...req.applyOptions,
         accept_conflicts: true,
       });
@@ -1356,7 +1351,7 @@ async function startToggle({ action, sourceID, modID, origin }) {
   };
   await startBinding(origin, async () => {
     try {
-      const { job_id: jobID } = await startToggleJob(
+      const { id: jobID } = await startToggleJob(
         action,
         sourceID,
         modID,
