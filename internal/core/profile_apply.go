@@ -605,6 +605,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 
 			fileIDs := profileApplyFileIDs(entry.Files)
 
+			var checksums []fileChecksum // #372 - saved after the DB row below
 			if !entry.Cached {
 				downloadFailed := false
 				for _, file := range entry.Files {
@@ -618,7 +619,8 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 						}
 						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 					}
-					if _, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, progressFn); err != nil {
+					downloadResult, err := s.downloadMod(ctx, entry.Ref.SourceID, game, mod, file, progressFn)
+					if err != nil {
 						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
 						// Cannot use fail(): SwitchDownloadFailed above already
 						// renders this mod's Error line; fail() would emit a
@@ -628,6 +630,7 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 						downloadFailed = true
 						break
 					}
+					checksums = appendChecksum(checksums, file.ID, downloadResult)
 				}
 				// Fires on success AND failure: doProfileApply's own
 				// unconditional Println after the download loop, which
@@ -667,6 +670,12 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 			if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 				fail(fmt.Sprintf("save failed: %v", err))
 				continue
+			}
+
+			// #372: the row exists now, so what was downloaded above finally
+			// has somewhere to record its checksum.
+			for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, plan.Profile, checksums) {
+				warn(scope, SwitchInstallWarning, msg)
 			}
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: fileIDs}

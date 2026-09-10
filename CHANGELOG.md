@@ -957,6 +957,17 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **A file lmm just downloaded is no longer reported as having no checksum
+  (#372).** `install` computed and stored each downloaded file's checksum,
+  but `update`, `deploy`'s cache-miss redownload, `profile apply`, `profile
+switch` and `profile import` all discarded the download's result — so
+  `installed_mod_files.checksum` stayed NULL and `lmm verify` reported
+  `NO CHECKSUM` for a file it had fetched seconds earlier. The first update
+  to any mod therefore degraded it from verifiable to unverifiable until the
+  next `verify --fix`, which is how a user ends up with a `verify` that
+  always warns and learns to ignore it. All five flows now record the
+  checksum, after the database row it attaches to exists.
+
 - **`profile import` gives the imported profile its own mods (#371).** A mod
   already installed under some OTHER profile was classified "already
   installed", and the import wrote nothing for it — leaving a profile whose

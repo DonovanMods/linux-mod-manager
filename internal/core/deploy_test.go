@@ -687,8 +687,14 @@ func TestService_DeployProfile_StoredIDsGone_HealPersistsFileIDs(t *testing.T) {
 // #139 item 1's checksum guard (the PR #128 SaveInstalledMod lesson applied
 // to SetModFileIDs): when a cache-miss redownload resolves to the SAME stored
 // FileIDs (no heal happened), the persist step must not rewrite the
-// installed_mod_files rows - a blind delete+reinsert would silently drop
-// their recorded checksums.
+// installed_mod_files rows - a blind delete+reinsert would drop the row
+// entirely, and with it every other column it carries.
+//
+// Since #372 the redownload also RE-RECORDS the checksum of what it just
+// fetched, so the seeded placeholder is replaced rather than preserved: the
+// row must survive, and its checksum must describe the bytes now in the
+// cache. A NULL here is the #372 symptom - `lmm verify` reporting NO CHECKSUM
+// for a file the deploy downloaded seconds earlier.
 func TestService_DeployProfile_CacheMissRedownload_SameIDsPreserveChecksums(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -716,10 +722,12 @@ func TestService_DeployProfile_CacheMissRedownload_SameIDsPreserveChecksums(t *t
 
 	files, err := svc.GetFilesWithChecksums(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	require.Len(t, files, 1)
+	require.Len(t, files, 1, "an unchanged FileIDs set must not rewrite the installed_mod_files rows")
 	assert.Equal(t, "9", files[0].FileID)
-	assert.Equal(t, "abc123", files[0].Checksum,
-		"an unchanged FileIDs set must keep its recorded checksum through a cache-miss redownload")
+	assert.NotEmpty(t, files[0].Checksum,
+		"#372: the redownload must record the checksum of what it just fetched")
+	assert.NotEqual(t, "abc123", files[0].Checksum,
+		"#372: and that checksum describes the new bytes, not the seeded placeholder")
 }
 
 // TestService_DeployProfile_HookOrder proves install.before_all ->

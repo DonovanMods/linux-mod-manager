@@ -1945,6 +1945,41 @@ type fileChecksum struct {
 	fileID, checksum string
 }
 
+// appendChecksum records what downloadMod just computed for fileID, so the
+// flow can persist it once the installed_mod_files row it belongs to exists
+// (#372). A download that produced no checksum - a local/directory source
+// has nothing to hash - simply contributes nothing.
+func appendChecksum(checksums []fileChecksum, fileID string, res *DownloadModResult) []fileChecksum {
+	if res == nil || res.Checksum == "" {
+		return checksums
+	}
+	return append(checksums, fileChecksum{fileID: fileID, checksum: res.Checksum})
+}
+
+// recordFileChecksums persists every checksum a flow's download loop
+// collected, giving update / deploy convergence / profile apply / profile
+// switch / profile import the treatment `install` always had (#372): without
+// it `installed_mod_files.checksum` stays NULL and `lmm verify` reports NO
+// CHECKSUM for a file lmm downloaded seconds earlier.
+//
+// MUST be called AFTER the flow's own installed_mods write: the row has to
+// exist, and a write that rewrites installed_mod_files (applyModUpdate,
+// setModFileIDs, saveInstalledMod) would otherwise discard what was just
+// saved.
+//
+// Never fatal - the files are installed and correct either way - so each
+// failure comes back as a message the caller surfaces the way it surfaces
+// its other diagnostics.
+func (s *Service) recordFileChecksums(ctx context.Context, sourceID, modID, gameID, profileName string, checksums []fileChecksum) []string {
+	var msgs []string
+	for _, cs := range checksums {
+		if err := s.saveFileChecksum(ctx, sourceID, modID, gameID, profileName, cs.fileID, cs.checksum); err != nil {
+			msgs = append(msgs, fmt.Sprintf("failed to save checksum: %v", err))
+		}
+	}
+	return msgs
+}
+
 // checksumFromCache computes a checksum for fileID's ALREADY-CACHED content
 // when fillPrimaryCache's cache-first guard (2026-08-29 ruling) skips the
 // download entirely (task-8 review, Important 2) - the warm-cache

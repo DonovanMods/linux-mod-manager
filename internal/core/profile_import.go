@@ -501,6 +501,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		// holds member names that match no DownloadableFile). Deploying from
 		// cache matters most for exactly this flow's drift convergence: a
 		// downgrade's archived file may have vanished upstream.
+		var checksums []fileChecksum // #372 - saved after the DB row below
 		if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 			downloadFailed := false
 			for _, file := range filesToDownload {
@@ -517,11 +518,13 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 					}
 					emit(DownloadEvent{Scope: scope, Phase: ImportDownloading, Percent: d.Percent})
 				}
-				if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+				downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn)
+				if err != nil {
 					fail(fmt.Sprintf("download failed: %v", err))
 					downloadFailed = true
 					break
 				}
+				checksums = appendChecksum(checksums, file.ID, downloadResult)
 			}
 			emit(StepEvent{Scope: scope, Phase: ImportDownloadDone})
 
@@ -562,6 +565,13 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 			fail(fmt.Sprintf("save failed: %v", err))
 			continue
+		}
+
+		// #372: the row exists now, so what was downloaded above finally has
+		// somewhere to record its checksum.
+		for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profile.Name, checksums) {
+			result.Warnings = append(result.Warnings, msg)
+			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 		}
 
 		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}

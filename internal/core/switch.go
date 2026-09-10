@@ -448,6 +448,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			// cache entry for an extracted archive holds member names that
 			// match no DownloadableFile, so a name-based check would miss
 			// every archive-based mod and redownload a complete cache.
+			var checksums []fileChecksum // #372 - saved after the DB row below
 			if !s.GetGameCache(game).HasFileIDs(game.ID, mod.SourceID, mod.ID, mod.Version, downloadedFileIDs) {
 				downloadFailed := false
 				for _, file := range filesToDownload {
@@ -461,11 +462,13 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 						}
 						emit(DownloadEvent{Scope: scope, Phase: SwitchDownloading, Percent: d.Percent})
 					}
-					if _, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn); err != nil {
+					downloadResult, err := s.downloadMod(ctx, ref.SourceID, game, mod, file, progressFn)
+					if err != nil {
 						emit(ModEvent{Scope: scope, Phase: SwitchDownloadFailed, Detail: fmt.Sprintf("download failed: %v", err)})
 						downloadFailed = true
 						break
 					}
+					checksums = appendChecksum(checksums, file.ID, downloadResult)
 				}
 				emit(StepEvent{Scope: scope, Phase: SwitchDownloadDone})
 
@@ -516,6 +519,14 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			if err := s.saveInstalledMod(ctx, installedMod); err != nil {
 				fail(fmt.Sprintf("save failed: %v", err))
 				continue
+			}
+
+			// #372: the row exists now, so what was downloaded above finally
+			// has somewhere to record its checksum - without this the switch
+			// left every converged file unverifiable.
+			for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, plan.To, checksums) {
+				result.Warnings = append(result.Warnings, msg)
+				emit(WarningEvent{Scope: scope, Phase: SwitchInstallWarning, Message: msg})
 			}
 
 			modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}

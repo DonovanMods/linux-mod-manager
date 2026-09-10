@@ -924,6 +924,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	// not in cache" even though the download just succeeded.
 	fetchedMod.Version = domain.EffectiveInstalledVersion(mod.Version, filesToDownload)
 
+	var checksums []fileChecksum // #372 - saved at the end of this function
 	for _, file := range filesToDownload {
 		if err := ctx.Err(); err != nil {
 			// Record the skip like every other early exit here: the caller
@@ -942,12 +943,14 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			}
 			emit(DownloadEvent{Scope: scope, Phase: DeployDownloading, Percent: d.Percent})
 		}
-		if _, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn); err != nil {
+		downloadResult, err := s.downloadMod(ctx, mod.SourceID, game, fetchedMod, file, progressFn)
+		if err != nil {
 			reason := fmt.Sprintf("download failed: %v", err)
 			emit(ModEvent{Scope: scope, Phase: DeployDownloadFailed, Detail: reason})
 			result.Skipped = append(result.Skipped, skippedRef(mod, reason))
 			return true
 		}
+		checksums = appendChecksum(checksums, file.ID, downloadResult)
 	}
 
 	emit(StepEvent{Scope: scope, Phase: DeployDownloadDone})
@@ -963,22 +966,29 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	// heal happened - the stored IDs were simply redownloaded): SetModFileIDs
 	// rewrites the installed_mod_files rows, and rewriting an unchanged set
 	// would silently drop their recorded checksums.
-	if sameFileIDSet(filesToDownload, mod.FileIDs) {
-		return false
-	}
-	healedIDs := make([]string, 0, len(filesToDownload))
-	for _, f := range filesToDownload {
-		if err := ctx.Err(); err != nil {
-			return skip(fmt.Sprintf("cancelled: %v", err))
+	if !sameFileIDSet(filesToDownload, mod.FileIDs) {
+		healedIDs := make([]string, 0, len(filesToDownload))
+		for _, f := range filesToDownload {
+			if err := ctx.Err(); err != nil {
+				return skip(fmt.Sprintf("cancelled: %v", err))
+			}
+			healedIDs = append(healedIDs, f.ID)
 		}
-		healedIDs = append(healedIDs, f.ID)
+		if err := s.setModFileIDs(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs); err != nil {
+			msg := fmt.Sprintf("Warning: could not persist healed file IDs for %s: %v", mod.Name, err)
+			result.Notes = append(result.Notes, msg)
+			emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
+		} else {
+			mod.FileIDs = healedIDs
+		}
 	}
-	if err := s.setModFileIDs(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, healedIDs); err != nil {
-		msg := fmt.Sprintf("Warning: could not persist healed file IDs for %s: %v", mod.Name, err)
-		result.Notes = append(result.Notes, msg)
-		emit(StepEvent{Scope: scope, Phase: DeployNote, Detail: msg})
-	} else {
-		mod.FileIDs = healedIDs
+
+	// #372: last, because the heal above rewrites the installed_mod_files
+	// rows these checksums attach to. Without this a cache-miss redownload
+	// left the row NO CHECKSUM for a file the deploy had just fetched.
+	for _, msg := range s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, mod.ProfileName, checksums) {
+		result.Warnings = append(result.Warnings, msg)
+		emit(WarningEvent{Scope: scope, Phase: DeployWarning, Message: msg})
 	}
 
 	return false
