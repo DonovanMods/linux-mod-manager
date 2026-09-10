@@ -323,7 +323,11 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		// profiles, mods and deployed links already hang off, rather than a
 		// second game over the same directory.
 		if prior := ConfiguredGameFor(existing, g); prior != nil {
-			game = repairedGame(prior, game)
+			var notice string
+			game, notice = repairedGame(prior, game)
+			if notice != "" {
+				result.Warnings = append(result.Warnings, notice)
+			}
 		}
 
 		if err := s.saveGame(ctx, game); err != nil {
@@ -370,7 +374,12 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 // and _ExplicitRowFormResolvesACollision from a hand-edited one). A title
 // is a label; the fields above it in this comment change what lmm DOES
 // with the game's files, which is why those are the user's.
-func repairedGame(prior, detected *domain.Game) *domain.Game {
+// It returns a notice - empty when there is nothing to say - for a kept
+// field the catalog disagrees with. Keeping the user's choice and telling
+// them nothing would trade one silent surprise for another: a game curated
+// as `compile` that they added by hand at `extract` goes on deploying the
+// way they set it, and now they can see that the catalog says otherwise.
+func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
 	repaired := *prior
 	repaired.Name = detected.Name
 	repaired.InstallPath = detected.InstallPath
@@ -381,7 +390,14 @@ func repairedGame(prior, detected *domain.Game) *domain.Game {
 		repaired.SourceIDs = make(map[string]string, len(detected.SourceIDs))
 	}
 	maps.Copy(repaired.SourceIDs, detected.SourceIDs)
-	return &repaired
+
+	var notice string
+	if prior.DeployMode != detected.DeployMode {
+		notice = fmt.Sprintf(
+			"kept deploy_mode: %s for %s; the catalog says %s - set deploy_mode in games.yaml to change it",
+			prior.DeployMode, repaired.ID, detected.DeployMode)
+	}
+	return &repaired, notice
 }
 
 // ApplyDetectSelection persists one detect-prompt selection - the seam BOTH

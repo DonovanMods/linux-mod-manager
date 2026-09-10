@@ -926,3 +926,78 @@ func TestApplyGameDetect_TwoRowsAtOneInstallPathBuildOnEachOther(t *testing.T) {
 	assert.Equal(t, map[string]string{"nexusmods": "thegame", "curseforge": "111", "steamworkshop": "222"},
 		saved["the-game"].SourceIDs, "the second row repairs what the first one wrote, not a stale copy of it")
 }
+
+// TestApplyGameDetect_RepairNoticesAKeptDeployModeMismatch: the repair
+// keeps the user's deploy_mode (see repairedGame - a deliberate `extract`
+// on a compile game is a behaviour choice lmm must not flip on their
+// behalf), but it must not diverge from the catalog SILENTLY. When the two
+// disagree the repair says so, naming the key, the value it kept and the
+// value the catalog holds, so the user can change it if the difference was
+// not deliberate.
+func TestApplyGameDetect_RepairNoticesAKeptDeployModeMismatch(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	// Icarus, added by hand at the default extract mode before it was
+	// curated - and under the id the user chose.
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "icarus-game", Name: "Icarus", InstallPath: install,
+		ModPath:   filepath.Join(install, "mods"),
+		SourceIDs: map[string]string{"icarus": "icarus"},
+		// DeployExtract is the zero value: this is the "never set it" case.
+	}))
+
+	curatedModPath := filepath.Join(install, "Icarus", "Content", "Paks", "mods")
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1149460", Slug: "icarus", Name: "Icarus", InstallPath: install,
+		ModPath: curatedModPath, DeployMode: "compile",
+		Sources: map[string]string{"icarus": "icarus"}, Known: true,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"icarus-game"}, result.Saved, "the repair keeps the user's id")
+
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	require.Contains(t, saved, "icarus-game")
+	assert.Equal(t, curatedModPath, saved["icarus-game"].ModPath, "the curated path is applied")
+	assert.Equal(t, domain.DeployExtract, saved["icarus-game"].DeployMode,
+		"deploy_mode is behaviour, and behaviour is the user's")
+
+	require.Len(t, result.Warnings, 1, "the kept mismatch must not be silent")
+	notice := result.Warnings[0]
+	assert.Contains(t, notice, "icarus-game")
+	assert.Contains(t, notice, "deploy_mode")
+	assert.Contains(t, notice, "extract", "the value that was kept")
+	assert.Contains(t, notice, "compile", "the value the catalog holds")
+	assert.Contains(t, notice, "games.yaml", "and what to do about it")
+}
+
+// TestApplyGameDetect_RepairIsSilentWhenTheDeployModeAgrees: the notice is
+// for a real difference only - a repair that changes nothing behavioural
+// must not add noise to every detect run.
+func TestApplyGameDetect_RepairIsSilentWhenTheDeployModeAgrees(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "cyberpunk-2077", Name: "Cyberpunk 2077", InstallPath: install, ModPath: install,
+		SourceIDs: map[string]string{"nexusmods": "cyberpunk2077"},
+	}))
+
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1091500", Slug: "cyberpunk2077", Name: "Cyberpunk 2077",
+		InstallPath: install, ModPath: install, NexusID: "cyberpunk2077", Known: true,
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, result.Warnings)
+}

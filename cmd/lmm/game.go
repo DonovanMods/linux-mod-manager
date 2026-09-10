@@ -446,6 +446,11 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	// precisely the games doGameDetect's old interleaved loop would have
 	// printed before hitting the same error.
 	//
+	// The apply's OWN warnings - today, a repair that kept a field the
+	// catalog disagrees with (core.repairedGame) - held aside before the
+	// merge below, because the scan's were already printed to stderr
+	// before the prompt and printing the merged list would repeat them.
+	applyWarnings := result.Warnings
 	// The scan's warnings lead: they happened before anything this result
 	// reports. Merged in on both the success and the partial-failure path,
 	// so a --json error envelope's details carries them too.
@@ -455,6 +460,9 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 			return &core.GameDetectPartialError{Err: applyErr, Result: result}
 		}
 		return emitJSON(result)
+	}
+	for _, w := range applyWarnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", w)
 	}
 	for i := range result.Profiles {
 		cmd.Printf("Added: %s (%s)\n", applied[i].Name, applied[i].Slug)
