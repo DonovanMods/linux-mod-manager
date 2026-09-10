@@ -19,6 +19,15 @@ type Config struct {
 	Keybindings       string            `yaml:"keybindings"`
 	CachePath         string            `yaml:"cache_path"`
 	HookTimeout       int               `yaml:"hook_timeout"`
+
+	// AutoSnapshot records a snapshot before each deploy, profile switch
+	// and update (#350). OFF by default in 2.0: every one of those
+	// operations reads the whole deployed tree to hash it, which on a large
+	// install is a real cost to pay on every deploy - and a user who wants
+	// the safety net can say so once. The failure of an automatic snapshot
+	// is never fatal to the operation it precedes: a backup that blocks
+	// what it is protecting is worse than no backup.
+	AutoSnapshot bool `yaml:"auto_snapshot"`
 }
 
 // Load reads configuration from the given directory

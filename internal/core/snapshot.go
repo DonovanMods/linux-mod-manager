@@ -310,10 +310,14 @@ func (s *Service) buildSnapshot(ctx context.Context, game *domain.Game, profileN
 		}
 	}
 	return &Snapshot{
-		Name:            name,
-		GameID:          game.ID,
-		Profile:         profileName,
-		CreatedAt:       time.Now().UTC(),
+		Name:    name,
+		GameID:  game.ID,
+		Profile: profileName,
+		// Truncated to the second: a snapshot is a moment at the
+		// resolution every renderer shows, and sub-second digits make the
+		// document's own byte length vary run to run - which would make
+		// size_bytes (and therefore a golden) unstable for no gain.
+		CreatedAt:       time.Now().UTC().Truncate(time.Second),
 		Auto:            auto,
 		ProfileDocument: config.ExportProfileValue(profile),
 		Installed:       installed,
@@ -490,4 +494,27 @@ func (s *Service) DeleteSnapshot(ctx context.Context, gameID, name string) (*Sna
 		return nil, fmt.Errorf("deleting the snapshot %s: %w", path, err)
 	}
 	return &SnapshotDeleteResult{Name: clean, GameID: gameID, Deleted: true}, nil
+}
+
+// autoSnapshot records a pre-operation snapshot when config.yaml's
+// auto_snapshot is on, and reports the diagnostic (if any) rather than
+// deciding what to do about it.
+//
+// It is called from INSIDE a flow's mutation slot, so it uses the
+// unexported createSnapshot. The returned string pair is (name, warning):
+// exactly one is non-empty, and a caller records the warning on its own
+// result rather than failing - the operation the user asked for must not be
+// blocked by the backup taken to protect it.
+//
+// Off is the common case and costs one bool read: nothing is stat-ed,
+// hashed or written for a user who has not opted in.
+func (s *Service) autoSnapshot(ctx context.Context, game *domain.Game, profileName string, op Op) (name, warning string) {
+	if s.config == nil || !s.config.AutoSnapshot {
+		return "", ""
+	}
+	result, err := s.createSnapshot(ctx, game, profileName, AutoSnapshotName(op, time.Now()), true)
+	if err != nil {
+		return "", fmt.Sprintf("could not record an automatic snapshot before this %s: %v", op, err)
+	}
+	return result.Name, ""
 }

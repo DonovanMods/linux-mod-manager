@@ -291,7 +291,9 @@ func (s *originalsStore) capture(row OriginalFile, absPath string) error {
 
 	row.SHA256, row.Size = sum, size
 	if row.CapturedAt.IsZero() {
-		row.CapturedAt = time.Now().UTC()
+		// Truncated to the second, for the same reason Snapshot.CreatedAt
+		// is: a manifest's byte length should not depend on nanoseconds.
+		row.CapturedAt = time.Now().UTC().Truncate(time.Second)
 	}
 	m.Originals = append(m.Originals, row)
 	if err := s.write(m); err != nil {

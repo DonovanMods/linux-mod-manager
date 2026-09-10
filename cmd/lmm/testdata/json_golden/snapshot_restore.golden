@@ -1,0 +1,15 @@
+{
+  "snapshot": "known-good",
+  "profile": "default",
+  "safety_snapshot": "auto-<OP>-<STAMP>",
+  "purged": 2,
+  "originals_restored": 1,
+  "disabled": 1,
+  "enabled": 0,
+  "installed": 0,
+  "replaced": 0,
+  "deployed": 1,
+  "notes": [
+    "the current state was recorded as auto-<OP>-<STAMP>"
+  ]
+}

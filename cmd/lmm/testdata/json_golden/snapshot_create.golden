@@ -1,0 +1,12 @@
+{
+  "name": "before-tweaks",
+  "game_id": "g1",
+  "profile": "default",
+  "created_at": "<TIME>",
+  "auto": false,
+  "path": "/GOLDEN/data/snapshots/g1/before-tweaks.json",
+  "mods": 1,
+  "deployed_files": 1,
+  "originals": 0,
+  "size_bytes": <SIZE>
+}

@@ -296,6 +296,16 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		return result, err
 	}
 
+	// #350's opt-in auto-snapshot, of the profile being switched AWAY from
+	// - that is the state a user would want back. After the freshness
+	// check, before the first mutation; a failure is a warning, never a
+	// refusal.
+	if name, warning := s.autoSnapshot(ctx, game, plan.From, OpSwitch); warning != "" {
+		result.Warnings = prependWarning(result.Warnings, warning)
+	} else {
+		result.Notes = prependSnapshotNote(result.Notes, name)
+	}
+
 	// #269: said once, up front, so the user reads it before the per-mod
 	// lines rather than wondering afterwards why their Workshop items
 	// followed them across the switch.

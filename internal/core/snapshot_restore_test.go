@@ -376,3 +376,29 @@ func TestApplySnapshotRestore_RestoreIsIdempotent(t *testing.T) {
 	}
 	assert.Equal(t, trees[0], trees[1])
 }
+
+// newRestoreFixtureWithConfig is newRestoreFixture with a config.yaml
+// written BEFORE the Service opens - the only way to exercise a config key,
+// since core.Load runs once at construction.
+func newRestoreFixtureWithConfig(t *testing.T, configYAML string) (*core.Service, *domain.Game, string) {
+	t.Helper()
+	configDir, dataDir := t.TempDir(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(configYAML), 0644))
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	installDir, modDir := t.TempDir(), t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", InstallPath: installDir, ModPath: modDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	seedNamedInstalledMod(t, svc, game, "src", "keeper", "Keeper", "1.0", true,
+		map[string][]byte{"Data/keeper.esp": []byte("keeper v1")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "keeper", "1.0")
+	return svc, game, dataDir
+}

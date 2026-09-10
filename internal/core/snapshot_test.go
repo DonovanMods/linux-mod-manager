@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -237,4 +238,65 @@ func TestCreateSnapshot_CapturesTheProfileOverrideOriginalToo(t *testing.T) {
 	}
 	assert.Equal(t, "Data/shipped.esp", roots[core.OriginalRootModPath])
 	assert.Equal(t, "game.ini", roots[core.OriginalRootInstallPath])
+}
+
+// TestAutoSnapshot_OffByDefault pins #350's 2.0 default: a user who has
+// not opted in pays nothing - no snapshot directory, no hashing of the
+// deployed tree on every deploy.
+func TestAutoSnapshot_OffByDefault(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	listing, err := svc.ListSnapshots(context.Background(), "g1")
+	require.NoError(t, err)
+	assert.Empty(t, listing.Snapshots)
+}
+
+// TestAutoSnapshot_RecordsOneBeforeADeployWhenEnabled pins the opted-in
+// behaviour, including the note that tells the user it happened - an
+// automatic backup nobody can see is not a feature.
+func TestAutoSnapshot_RecordsOneBeforeADeployWhenEnabled(t *testing.T) {
+	svc, game, _ := newRestoreFixtureWithConfig(t, "auto_snapshot: true\n")
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Notes)
+	assert.Contains(t, result.Notes[0], "recorded snapshot auto-deploy-")
+
+	listing, err := svc.ListSnapshots(context.Background(), "g1")
+	require.NoError(t, err)
+	require.Len(t, listing.Snapshots, 1)
+	assert.True(t, listing.Snapshots[0].Auto)
+	assert.Contains(t, listing.Snapshots[0].Name, "auto-deploy-")
+}
+
+// TestAutoSnapshot_FailureIsAWarningNotARefusal pins the rule that keeps
+// the feature safe to turn on: a backup that blocks the operation it is
+// protecting is worse than no backup. An unwritable snapshot directory is
+// the failure; the deploy still happens.
+func TestAutoSnapshot_FailureIsAWarningNotARefusal(t *testing.T) {
+	svc, game, dataDir := newRestoreFixtureWithConfig(t, "auto_snapshot: true\n")
+
+	// A FILE where the snapshot directory has to go.
+	require.NoError(t, os.MkdirAll(filepath.Join(dataDir, "snapshots"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "snapshots", "g1"), []byte("in the way"), 0600))
+
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err, "the deploy must still happen")
+	assert.Equal(t, 1, result.Deployed)
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, result.Warnings[0], "could not record an automatic snapshot")
+}
+
+// TestAutoSnapshotName_IsSortableAndCannotCollideWithAUserName pins the
+// naming rule: a listing of automatic snapshots reads as a timeline, and no
+// name a user is allowed to choose starts with "auto-".
+func TestAutoSnapshotName_IsSortableAndCannotCollideWithAUserName(t *testing.T) {
+	at := time.Date(2026, 9, 9, 14, 5, 6, 0, time.UTC)
+	assert.Equal(t, "auto-deploy-20260909-140506", core.AutoSnapshotName(core.OpDeploy, at))
+	assert.Equal(t, "auto-switch-20260909-140506", core.AutoSnapshotName(core.OpSwitch, at))
+
+	earlier := core.AutoSnapshotName(core.OpDeploy, at.Add(-time.Hour))
+	assert.Less(t, earlier, core.AutoSnapshotName(core.OpDeploy, at),
+		"the stamp sorts lexicographically in time order")
 }

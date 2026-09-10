@@ -561,7 +561,38 @@ func (s *Service) applyDeploy(ctx context.Context, game *domain.Game, plan *Depl
 	if err := s.checkPlanFresh(ctx, game.ID, plan.Profile, plan.snapshot); err != nil {
 		return &DeployResult{}, err
 	}
-	return s.deployProfile(ctx, game, plan.Profile, opts, sink)
+	// #350's opt-in auto-snapshot, after the freshness check (a refused
+	// plan changes nothing, so it needs no backup) and before the first
+	// mutation. Off by default; a failure is a warning on the result, never
+	// a reason to refuse the deploy.
+	autoName, autoWarn := s.autoSnapshot(ctx, game, plan.Profile, OpDeploy)
+	result, err := s.deployProfile(ctx, game, plan.Profile, opts, sink)
+	if result != nil {
+		result.Warnings = prependWarning(result.Warnings, autoWarn)
+		result.Notes = prependSnapshotNote(result.Notes, autoName)
+	}
+	return result, err
+}
+
+// prependWarning puts an auto-snapshot warning at the FRONT of a result's
+// warnings: it happened before everything else the flow reports, and a
+// reader scanning a warning list should not have to look past the
+// operation's own diagnostics to find out the backup did not happen. An
+// empty warning is a no-op.
+func prependWarning(warnings []string, warning string) []string {
+	if warning == "" {
+		return warnings
+	}
+	return append([]string{warning}, warnings...)
+}
+
+// prependSnapshotNote records a successful auto-snapshot as the first note,
+// for the same reason. Empty name (the feature is off) is a no-op.
+func prependSnapshotNote(notes []string, name string) []string {
+	if name == "" {
+		return notes
+	}
+	return append([]string{fmt.Sprintf("recorded snapshot %s before this operation", name)}, notes...)
 }
 
 // DeployProfile redeploys the mods of a profile in profile order: an

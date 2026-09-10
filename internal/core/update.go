@@ -811,6 +811,15 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	profileName := plan.Mod.ProfileName
 	upd := *plan.Update
 
+	// #350's opt-in auto-snapshot: after the freshness and plan checks
+	// (neither of which mutates anything), before the first download. Off
+	// by default; a failure is a warning, never a refusal.
+	if name, warning := s.autoSnapshot(ctx, game, profileName, OpUpdate); warning != "" {
+		result.Warnings = prependWarning(result.Warnings, warning)
+	} else {
+		result.Notes = prependSnapshotNote(result.Notes, name)
+	}
+
 	// #286 review (Important 1): resolved before the download loop below,
 	// applyUpdate's first mutation - mirroring every other flow
 	// (uninstallMod/deployProfile/purgeProfile/applyInstall/applyRollback
