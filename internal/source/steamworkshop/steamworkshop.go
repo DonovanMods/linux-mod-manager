@@ -49,11 +49,11 @@ type Options struct {
 // Source is the Steam Workshop ModSource (#269).
 //
 // Tier 1 tracks items the Steam client already downloaded and checks them
-// for updates, without ever touching their files. Tier 3 (download.go,
-// steamcmd.go) adds downloads - the legacy file_url, or an anonymous
-// steamcmd shell-out - for an item lmm should manage its own copy of.
-// Search (Tier 2, bring-your-own key) lands in its own unit and is
-// reported as unsupported until it does.
+// for updates, without ever touching their files. Tier 2 (search.go,
+// collection.go, auth.go) adds bring-your-own-key search and keyless
+// collection resolution. Tier 3 (download.go, steamcmd.go) adds downloads
+// - the legacy file_url, or an anonymous steamcmd shell-out - for an item
+// lmm should manage its own copy of.
 type Source struct {
 	client     *client
 	steamRoots []string
@@ -93,14 +93,18 @@ func (s *Source) TypeLabel() string { return "built-in" }
 
 // Capabilities reports what this source can do today.
 //
-// Updates is the whole point of Tier 1. Search and Auth stay false until
-// Tier 2 lands the bring-your-own-key QueryFiles client: claiming a
-// capability whose call can only return ErrNotSupported would put a Steam
-// Workshop row in `lmm search`'s source list that can never answer.
+// Search and Auth are true since Tier 2 (#269 W2): the QueryFiles client
+// exists, and it needs the user's own Steam Web API key. Search is
+// reported UNCONDITIONALLY, key or no key - the capability is a fact about
+// the source, not about this installation's credentials, and an unkeyed
+// Search returns domain.ErrAuthRequired, which is exactly what every
+// frontend already knows how to render. `lmm source list`'s auth column
+// carries the rest of the story.
+//
 // Dependencies and Versions are false permanently - a Workshop item has
 // neither concept.
 func (s *Source) Capabilities() source.Capabilities {
-	return source.Capabilities{Search: false, Dependencies: false, Updates: true, Auth: false, Versions: false}
+	return source.Capabilities{Search: true, Dependencies: false, Updates: true, Auth: true, Versions: false}
 }
 
 // AuthURL: unsupported - Tier 1 is entirely keyless.
@@ -114,12 +118,6 @@ func (s *Source) ExchangeToken(ctx context.Context, code string) (*source.Token,
 // GetDependencies: unsupported - a published file declares no dependencies.
 func (s *Source) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain.ModReference, error) {
 	return nil, fmt.Errorf("source %q: dependencies: %w", sourceID, source.ErrNotSupported)
-}
-
-// Search: unsupported until Tier 2 (#269 W2), which needs a user-supplied
-// Steam Web API key - Valve's QueryFiles endpoint returns 403 without one.
-func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
-	return source.SearchResult{}, fmt.Errorf("source %q: searching: %w", sourceID, source.ErrNotSupported)
 }
 
 // ScanWorkshopItems implements source.WorkshopScanner: it reads the Steam

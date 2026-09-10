@@ -204,14 +204,13 @@ func TestSourceIdentityAndCapabilities(t *testing.T) {
 
 	caps := src.Capabilities()
 	assert.True(t, caps.Updates, "update checking is the whole point of Tier 1")
-	assert.False(t, caps.Search, "search needs a user-supplied key (Tier 2)")
+	assert.True(t, caps.Search, "search ships in Tier 2, behind the user's own key")
 	assert.False(t, caps.Dependencies)
 	assert.False(t, caps.Versions)
 
 	// GetModFiles/GetDownloadURL are Tier 3's (download_test.go); what is
 	// permanently unsupported is what a published file has no concept of.
 	for name, call := range map[string]func() error{
-		"Search": func() error { _, err := src.Search(context.Background(), source.SearchQuery{}); return err },
 		"GetDependencies": func() error {
 			_, err := src.GetDependencies(context.Background(), nil)
 			return err

@@ -1,0 +1,71 @@
+{
+  "response": {
+    "total": 137,
+    "publishedfiledetails": [
+      {
+        "result": 1,
+        "publishedfileid": "3617086610",
+        "creator": "76561198000000000",
+        "creator_appid": 1133870,
+        "consumer_appid": 1133870,
+        "filename": "",
+        "file_size": "572330",
+        "preview_url": "https://steamuserimages-a.akamaihd.net/ugc/0000000000000000001/",
+        "hcontent_file": "7987119735124793734",
+        "hcontent_preview": "3000000000000000001",
+        "title": "Sample Workshop Item",
+        "file_description": "An item subscribed in the Steam client.",
+        "time_created": 1700000000,
+        "time_updated": 1764767935,
+        "visibility": 0,
+        "flags": 5122,
+        "workshop_file": false,
+        "workshop_accepted": false,
+        "show_subscribe_all": false,
+        "num_comments_public": 3,
+        "banned": false,
+        "ban_reason": "",
+        "banner": "0",
+        "can_be_deleted": true,
+        "app_name": "Space Engineers 2",
+        "file_type": 0,
+        "can_subscribe": true,
+        "subscriptions": 1234,
+        "favorited": 12,
+        "followers": 4,
+        "lifetime_subscriptions": 5678,
+        "lifetime_favorited": 90,
+        "lifetime_followers": 6,
+        "views": 10000,
+        "num_children": 0,
+        "language": 0,
+        "maybe_inappropriate_sex": false,
+        "maybe_inappropriate_violence": false,
+        "tags": [
+          { "tag": "Blueprint", "display_name": "Blueprint" },
+          { "tag": "Ship", "display_name": "Ship" }
+        ]
+      },
+      {
+        "result": 1,
+        "publishedfileid": "3512001122",
+        "creator": "76561198000000001",
+        "creator_appid": 1133870,
+        "consumer_appid": 1133870,
+        "file_size": 104857600,
+        "preview_url": "https://steamuserimages-a.akamaihd.net/ugc/0000000000000000002/",
+        "hcontent_file": "1122334455667788991",
+        "title": "Second Workshop Item",
+        "file_description": "Another subscribed item.",
+        "time_created": 1750000000,
+        "time_updated": 1759999999,
+        "visibility": 0,
+        "banned": false,
+        "subscriptions": 7,
+        "lifetime_subscriptions": 9,
+        "views": 40,
+        "tags": []
+      }
+    ]
+  }
+}

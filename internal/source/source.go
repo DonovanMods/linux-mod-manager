@@ -175,6 +175,33 @@ type BatchModDescriber interface {
 	DescribeMods(ctx context.Context, sourceGameID string, modIDs []string, refresh bool) ([]ModDescription, error)
 }
 
+// Collection is one CollectionResolver answer: a published list of items
+// on the source, in the order its author sequenced them. Name is
+// best-effort (a source that cannot name a collection still resolves one);
+// URL is the collection's own page, for a frontend that wants to link it.
+type Collection struct {
+	ID      string
+	Name    string
+	URL     string
+	ItemIDs []string
+}
+
+// CollectionResolver is implemented by sources that publish CURATED LISTS
+// of their own items - today, a Steam Workshop collection (#269 Tier 2).
+//
+// A collection is a mod list, which is what an lmm profile is, so core
+// consumes this as an INPUT to the existing profile-import flow rather
+// than as a search result: `lmm profile import --workshop-collection
+// <id|url>` builds an exported-profile document out of the ids and hands
+// it to PlanImport unchanged. ref is whatever the user supplied - an id, a
+// URL - and the source decides what it recognises.
+//
+// Same optional-capability pattern as WorkshopScanner: core type-asserts
+// for it, so internal/core never imports a concrete source package.
+type CollectionResolver interface {
+	ResolveCollection(ctx context.Context, ref string) (Collection, error)
+}
+
 // FetchProgressFunc reports one tick of a Fetcher's progress. phase is one
 // of the FetchPhase* constants below, detail a short human sentence the
 // frontend can print verbatim, and bytes the amount retrieved so far (0
