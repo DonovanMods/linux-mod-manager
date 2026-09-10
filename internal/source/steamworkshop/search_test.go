@@ -131,18 +131,39 @@ func TestSearch_CachesTheNormalisedQueryForFiveMinutes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, fx.calls, "a repeat inside the TTL is served from memory")
 
+	// Two orderings of the same tag set: sorted into one key. They are all
+	// REQUIRED tags, so their order carries no meaning to Valve either.
+	_, err = src.Search(context.Background(), source.SearchQuery{
+		GameID: "1133870", Query: "cargo ship",
+		Tags: []string{"Large Grid", "Ship"}, PageSize: 20,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 2, fx.calls, "a new tag set is a new query")
+	_, err = src.Search(context.Background(), source.SearchQuery{
+		GameID: "1133870", Query: "cargo ship",
+		Tags: []string{"Ship", "Large Grid"}, PageSize: 20,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, fx.calls, "tag ORDER does not make a second entry")
+
 	// A different page is a different query.
 	_, err = src.Search(context.Background(), source.SearchQuery{GameID: "1133870", Query: "cargo ship", Tags: []string{"Ship"}, PageSize: 20, Page: 1})
 	require.NoError(t, err)
-	assert.Equal(t, 2, fx.calls)
+	assert.Equal(t, 3, fx.calls)
 
 	clock = clock.Add(6 * time.Minute)
 	_, err = src.Search(context.Background(), q)
 	require.NoError(t, err)
-	assert.Equal(t, 3, fx.calls, "past the 5-minute TTL it is asked again")
+	assert.Equal(t, 4, fx.calls, "past the 5-minute TTL it is asked again")
 }
 
-func TestSearch_ThrottlingIsRetriedWithTheServersRetryAfter(t *testing.T) {
+// TestSearch_ThrottlingIsRetried pins that Tier-2 search inherits Tier-1's
+// retry transport. It does NOT pin Retry-After — serveRoutes sends no such
+// header, so what runs here is the default backoff. The header itself is
+// covered one layer down, where it is read:
+// transport_internal_test.go's TestRetryTransport_RetriesA429AndHonoursRetryAfter
+// (W2 review, Minor 7).
+func TestSearch_ThrottlingIsRetried(t *testing.T) {
 	fx := serveRoutes(t,
 		reply{status: 429, file: "queryfiles_403.json"},
 		reply{file: "queryfiles_page1.json"},
