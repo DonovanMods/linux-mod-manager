@@ -227,9 +227,50 @@ func TestE2E_WorkshopTier2_PastedCollectionURLOffersAnImport(t *testing.T) {
 	)
 
 	assert.Contains(t, modal, "cargo-ships", "the profile the collection would create")
-	assert.Contains(t, modal, "steamworkshop:"+e2eWorkshopSecondFileID)
 	assert.NotContains(t, modal, e2eWorkshopManifest,
 		"no surface prints the content id as a version")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_WorkshopTier2_TheCollectionPlanRendersItsOwnDocument is W2 review
+// Important 3. The plan ships `workshop_collection` over the wire and the
+// SPA read none of it, so a collection import rendered as the generic
+// ImportPlan buckets: an un-subscribed item was a bare
+// "steamworkshop:3512001122 @ —" line under "Missing entirely", with no
+// name, no link and no remedy — the per-item reporting design §4 asks for
+// existed only in the CLI.
+//
+// The install controls are the other half. ApplyWorkshopCollectionImport
+// forces Install=false / NoInstall=true, so "Download and install N pending
+// mods" and the advanced "Never install" were both present and ignored.
+func TestE2E_WorkshopTier2_TheCollectionPlanRendersItsOwnDocument(t *testing.T) {
+	f := newE2EWorkshopTier2Fixture(t, nil)
+
+	var modal, header string
+	var installControls, advanced, links int
+	f.runInBrowser(t,
+		chromedp.Navigate(workshopSearchPath(f, e2eWorkshopCollectionURL)),
+		chromedp.WaitVisible(`[data-testid="collection-offer"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-testid="collection-offer"] button`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="collection-items"]`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="profile_import"]`, &modal),
+		textContent(`[data-testid="collection-header"]`, &header),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll('.modal[data-kind="profile_import"] .plan__control')).filter((l) => l.textContent.includes("Download and install")).length;`, &installControls),
+		chromedp.Evaluate(`document.querySelectorAll('.modal[data-kind="profile_import"] .plan__advanced').length;`, &advanced),
+		chromedp.Evaluate(`document.querySelectorAll('[data-testid="collection-items"] a[href*="steamcommunity.com"]').length;`, &links),
+	)
+
+	assert.Contains(t, header, "Cargo Ships", "the collection's own title")
+	assert.Contains(t, header, "Nothing is downloaded",
+		"the reason the install controls are absent rather than merely unchecked")
+	assert.Contains(t, modal, "Sample Workshop Item", "the item's NAME, not a bare ref")
+	assert.Contains(t, modal, "subscribe in Steam",
+		"design §4's per-item remedy reaches the browser too")
+	assert.Contains(t, modal, "already tracked")
+	assert.Equal(t, 0, installControls,
+		"a control core would silently override must not be offered")
+	assert.Equal(t, 0, advanced, `and neither may the advanced "Never install"`)
+	assert.Positive(t, links, "each item links to its Workshop page")
 	assert.Empty(t, f.BrowserErrors())
 }
 

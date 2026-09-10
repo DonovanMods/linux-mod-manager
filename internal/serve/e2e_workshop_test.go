@@ -62,6 +62,10 @@ func (s *e2eWorkshopSource) DescribeMods(_ context.Context, _ string, ids []stri
 			Mod: domain.Mod{
 				ID: id, SourceID: e2eWorkshopSourceID, Name: "Sample Workshop Item",
 				Author: "76561198000000000",
+				// The real source answers a SourceURL here, and the
+				// collection plan's per-item list links to it (W2 review,
+				// Important 3) - core never builds one itself.
+				SourceURL: "https://steamcommunity.com/sharedfiles/filedetails/?id=" + id,
 			},
 		})
 	}
