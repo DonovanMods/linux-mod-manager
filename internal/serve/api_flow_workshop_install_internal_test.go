@@ -168,3 +168,46 @@ func TestFlowWorkshopInstall_AccessDeniedReportsAnUnavailableItem(t *testing.T) 
 	require.Equal(t, jobFailed, j.status().State)
 	require.ErrorIs(t, j.failure(), domain.ErrWorkshopItemUnavailable)
 }
+
+// TestFlowWorkshopInstall_FetchPhasesReachTheJobsEventStream is the
+// server-side half of the progress claim (the browser-side half is
+// e2e_test.go's TestE2E_FetchPhasesReachTheScreenHumanized).
+//
+// It is a REGRESSION test for a real gap: every flow adapts the
+// downloader's raw stream with a progressFn that keeps DownloadEvents and
+// drops everything else, which is right for the HTTP path and silently ate
+// every fetch phase - so a multi-gigabyte steamcmd download reported
+// nothing at all between "Working…" and done.
+func TestFlowWorkshopInstall_FetchPhasesReachTheJobsEventStream(t *testing.T) {
+	s, _, game := newWorkshopInstallServer(t)
+
+	j := runFlow(t, s, game, "install", workshopPlanBody("3000000001"), "")
+	require.Equal(t, jobSucceeded, j.status().State, "job failed: %+v", j.status().Error)
+
+	replay, _, cancel := j.subscribe(1)
+	t.Cleanup(cancel)
+
+	var phases []string
+	var details []string
+	for _, e := range replay {
+		flow, ok := e.(core.FlowEvent)
+		if !ok {
+			continue
+		}
+		phase := flow.FlowPhase().String()
+		if !strings.HasPrefix(phase, "workshop_fetch_") {
+			continue
+		}
+		phases = append(phases, phase)
+		if step, ok := e.(core.StepEvent); ok {
+			details = append(details, step.Detail)
+		}
+	}
+
+	require.NotEmpty(t, phases, "no fetch phase reached the job's stream")
+	assert.Equal(t, "workshop_fetch_started", phases[0])
+	assert.Equal(t, "workshop_fetch_done", phases[len(phases)-1])
+	assert.Contains(t, phases, "workshop_fetch_progress")
+	assert.Contains(t, strings.Join(details, "\n"), "78.90",
+		"the tool's own progress lines must survive the flow's adapter")
+}

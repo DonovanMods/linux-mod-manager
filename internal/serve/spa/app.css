@@ -1820,6 +1820,31 @@ select {
   cursor: pointer;
 }
 
+/* issue 269 Tier 3: a Workshop download failure carries a reason the user can
+ * act on, rendered from the typed error's details (failures.js). The row
+ * wraps so the explainer gets a line of its own under the failure text,
+ * and the readout is allowed to be a little wider than a bare status. */
+.job-progress--explained {
+  flex-wrap: wrap;
+  max-width: 34rem;
+}
+
+.job-progress__explainer {
+  flex-basis: 100%;
+  margin: var(--space-1) 0 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* The tool's own output, for a failure lmm could not classify - the same
+ * tail the terminal prints under its error line. */
+.job-progress__tool-output {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
 /* ---------------------------------------------------------------------- */
 /* Toasts - completions whose origin was not on screen.                    */
 /* ---------------------------------------------------------------------- */

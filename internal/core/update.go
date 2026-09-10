@@ -909,6 +909,9 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 			return result, err
 		}
 		progressFn := func(e Event) {
+			if forwardFetchStep(e, scope, emit) {
+				return
+			}
 			d, ok := e.(DownloadEvent)
 			if !ok || d.TotalBytes <= 0 {
 				return

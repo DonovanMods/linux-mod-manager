@@ -452,6 +452,9 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 				downloadFailed := false
 				for _, file := range filesToDownload {
 					progressFn := func(e Event) {
+						if forwardFetchStep(e, scope, emit) {
+							return
+						}
 						d, ok := e.(DownloadEvent)
 						if !ok || d.TotalBytes <= 0 {
 							return

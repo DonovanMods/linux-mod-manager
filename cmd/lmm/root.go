@@ -349,6 +349,26 @@ func reportError(err error) {
 		_ = emitJSON(jsonErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
 	} else {
 		fmt.Fprintf(os.Stderr, "%s %v\n", colorRed("Error:"), err)
+		reportExternalToolOutput(err)
+	}
+}
+
+// reportExternalToolOutput prints the tail of an external tool's own output
+// under the error line, for a failure lmm could not classify (#269 Tier 3:
+// a steamcmd run that neither succeeded nor printed a marker lmm knows).
+//
+// --json already carries it in the envelope's details; without this the
+// terminal would show a one-line "steamcmd failed" and throw away the only
+// evidence of WHY. A classified failure carries no tail and prints nothing
+// extra: its own sentence is the whole answer.
+func reportExternalToolOutput(err error) {
+	var fetchErr *core.WorkshopFetchError
+	if !errors.As(err, &fetchErr) || fetchErr.OutputTail == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n%s output:\n", fetchErr.Tool)
+	for line := range strings.SplitSeq(strings.TrimRight(fetchErr.OutputTail, "\n"), "\n") {
+		fmt.Fprintf(os.Stderr, "  %s\n", line)
 	}
 }
 

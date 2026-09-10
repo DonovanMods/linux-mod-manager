@@ -64,3 +64,38 @@ func TestReportError_JSON_WorkshopFetchError_UnclassifiedCarriesTheOutputTail(t 
 		"  }\n"+
 		"}\n", out)
 }
+
+// TestReportError_Human_WorkshopFetchError_PrintsTheToolsOutput is the
+// terminal half: --json carries the output tail in the envelope, so the
+// human path must not be the one place the only evidence of an
+// unclassified tool failure gets thrown away.
+func TestReportError_Human_WorkshopFetchError_PrintsTheToolsOutput(t *testing.T) {
+	err := &core.WorkshopFetchError{
+		PublishedFileID: "3000000009",
+		Reason:          "steamcmd failed to download item 3000000009.",
+		Tool:            "steamcmd",
+		OutputTail:      "line one\nline two",
+	}
+	out, _ := captureStderrErr(t, func() error { reportError(err); return nil })
+
+	assert.Contains(t, out, "steamcmd failed to download item 3000000009.")
+	assert.Contains(t, out, "steamcmd output:")
+	assert.Contains(t, out, "  line one")
+	assert.Contains(t, out, "  line two")
+}
+
+// TestReportError_Human_WorkshopFetchError_ClassifiedPrintsNoOutput is the
+// other side of the same rule: a refusal lmm can explain says its sentence
+// and stops. Dumping a subprocess's log under an answer the user can act
+// on is noise.
+func TestReportError_Human_WorkshopFetchError_ClassifiedPrintsNoOutput(t *testing.T) {
+	err := &core.WorkshopFetchError{
+		PublishedFileID: "3000000002",
+		Reason:          "This game's publisher does not allow anonymous Workshop downloads.",
+		Tool:            "steamcmd",
+	}
+	out, _ := captureStderrErr(t, func() error { reportError(err); return nil })
+
+	assert.Contains(t, out, "does not allow anonymous Workshop downloads")
+	assert.NotContains(t, out, "steamcmd output:")
+}

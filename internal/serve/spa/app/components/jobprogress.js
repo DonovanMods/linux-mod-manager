@@ -24,6 +24,7 @@ import {
 } from "../progress.js";
 import { useJobResultTally } from "../jobresult.js";
 import { OverwriteButton } from "./tray.js";
+import { explainerFor } from "../failures.js";
 
 /**
  * InlineJob renders children when origin has no job, and that job's live
@@ -97,6 +98,14 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   }
 
   const failed = state === "failed";
+  // issue 269 Tier 3: a Workshop download failure carries a reason the user can
+  // act on (subscribe in Steam and use `lmm import --workshop`, install
+  // steamcmd, ...). It renders here rather than only in the tray for the
+  // same reason the Overwrite button does - the explanation belongs where
+  // the failure is shown, which for an install is the mod panel or the
+  // search result the user clicked. Dismissing it puts the Install action
+  // straight back: nothing about this failure hides the button.
+  const explainer = failed ? explainerFor(summary) : null;
   // I3, unit 6 fix wave: a batch job's own `state` is "succeeded" even when
   // every item inside it failed (progress.js#resultTally's own doc
   // comment) - the tone class follows the TALLY, not the bare state, for
@@ -104,7 +113,7 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
   const tone = !failed && tally ? resultTallyTone(tally) : state;
   return html`
     <div
-      class="job-progress job-progress--${tone}"
+      class="job-progress job-progress--${tone} ${explainer ? "job-progress--explained" : ""}"
       data-job=${jobID}
       data-state=${state}
       role="status"
@@ -135,6 +144,21 @@ export function JobProgress({ jobID, summary, frame, actions, onDismiss }) {
       >
         ✕
       </button>
+      ${
+        explainer &&
+        html`<p
+          class="job-progress__explainer"
+          data-explainer=${explainer.tool || "reason"}
+        >
+          ${explainer.reason}
+          ${
+            explainer.outputTail &&
+            html`<span class="job-progress__tool-output mono"
+              >${explainer.outputTail}</span
+            >`
+          }
+        </p>`
+      }
     </div>
   `;
 }

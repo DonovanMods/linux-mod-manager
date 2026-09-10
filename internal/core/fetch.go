@@ -201,3 +201,33 @@ func fetchProgressSink(sink EventSink) source.FetchProgressFunc {
 		sink(StepEvent{Scope: Scope{Op: OpDownload}, Phase: p, Detail: detail})
 	}
 }
+
+// isWorkshopFetch reports whether p is one of the phases a source.Fetcher
+// produces.
+func (p DeployPhase) isWorkshopFetch() bool {
+	return p == WorkshopFetchStarted || p == WorkshopFetchProgress || p == WorkshopFetchDone
+}
+
+// forwardFetchStep re-emits a source.Fetcher's own progress step into a
+// flow's event stream under that flow's scope, reporting whether it
+// handled the event.
+//
+// Every flow that downloads adapts the downloader's raw stream to its own
+// vocabulary with a progressFn that keeps DownloadEvents and drops
+// everything else - which is correct for the HTTP path, where the raw
+// stream is thousands of byte ticks. A fetch produces no DownloadEvents at
+// all, so without this clause the ONLY progress a multi-gigabyte steamcmd
+// download can report would be dropped one layer above where it was
+// emitted, and the readout would sit at "Working…" for twenty minutes.
+//
+// The phase is passed through unchanged (unlike a download's, which each
+// flow renames): a fetch is the same operation whichever flow asked for
+// it, and the frontends humanize the phase name rather than table-match it.
+func forwardFetchStep(e Event, scope Scope, emit func(Event)) bool {
+	step, ok := e.(StepEvent)
+	if !ok || !step.Phase.isWorkshopFetch() {
+		return false
+	}
+	emit(StepEvent{Scope: scope, Phase: step.Phase, Detail: step.Detail})
+	return true
+}
