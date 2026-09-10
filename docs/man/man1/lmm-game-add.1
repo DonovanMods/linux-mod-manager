@@ -31,12 +31,12 @@ the display name, the install path, the local game id, and either the
 curated mod path and source mapping (for a game in lmm's known-games
 list) or a default mod path of the install path plus "/mods" for one
 that is not. List the app ids with 'lmm game detect --include-unknown'.
-Every other flag still wins
-over the prefill, so --mod-path/--game-id/--name correct a guess; for a
-game with no curated sources, name one with --source, and either give
---id or let the source's catalog be searched by the game's own name
-(--pick chooses among the matches; a single match whose name is exactly
-the game's name is taken automatically).
+Every other flag still wins over the prefill, so
+--mod-path/--game-id/--name correct a guess; for a game with no curated
+sources, name one with --source, and either give --id or let the source's
+catalog be searched by the game's own name (--pick chooses among the
+matches; a single match whose name is exactly the game's name is taken
+automatically).
 
 .PP
 For a game lmm ALREADY has curated sources for, naming --source (with
