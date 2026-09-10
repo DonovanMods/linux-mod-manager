@@ -551,6 +551,13 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 		// this path is entirely the convergence pass - no sync phase (that
 		// only ever reacts to a --fix repair that just ran, and nothing
 		// ran here to react to).
+		//
+		// #359's loader tier runs here too, for externalPresencePass's
+		// reason: a loader is a property of the GAME, not of its mods, so
+		// an empty profile's loader can still be missing, the wrong
+		// version, or never have run - and finding that out before
+		// installing anything is exactly when it helps most.
+		r.loaderPass(installedMods)
 		r.convergencePass()
 		return result, nil
 	}
@@ -609,6 +616,9 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	if r.opts.Fix {
 		r.syncMergedPakPass()
 	}
+	// #359: after the per-file walk, so the loader's "did it run?" question
+	// is asked about the deployment the passes above have just described.
+	r.loaderPass(installedMods)
 	r.convergencePass()
 
 	return result, nil

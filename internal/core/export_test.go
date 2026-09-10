@@ -241,3 +241,12 @@ func (s *Service) DataDirForTest() string {
 func (i *Importer) ImportForTest(ctx context.Context, archivePath string, game *domain.Game, opts ImportOptions) (*ImportResult, error) {
 	return i.importWithIdentity(ctx, archivePath, game, opts, resolveImportIdentity(filepath.Base(archivePath), opts))
 }
+
+// NewLoaderRequiredErrorForTest builds #359's refusal exactly as the flows
+// build it, so the JSON golden pins the sentences a USER actually reads
+// rather than a hand-typed stand-in that only happens to have the same
+// shape. A reader of that golden reasonably assumes it is the shipping copy;
+// this is what makes that true (review F12).
+func NewLoaderRequiredErrorForTest(game *domain.Game, modName, layout string) *LoaderRequiredError {
+	return newLoaderRequiredError(game, modName, layout)
+}

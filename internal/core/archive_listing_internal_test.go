@@ -124,32 +124,32 @@ func TestImportDeployablePaths(t *testing.T) {
 	}
 
 	t.Run("extract sorts, dedupes and drops directories", func(t *testing.T) {
-		paths, err := importDeployablePaths(importKindExtract, "mod.zip", members)
+		paths, err := importDeployablePaths(importKindExtract, "mod.zip", members, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{filepath.Join("MyMod", "a.esp"), filepath.Join("MyMod", "b.esp")}, paths)
 	})
 
 	t.Run("copy deploys the archive itself", func(t *testing.T) {
-		paths, err := importDeployablePaths(importKindCopy, "mod.zip", nil)
+		paths, err := importDeployablePaths(importKindCopy, "mod.zip", nil, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"mod.zip"}, paths)
 	})
 
 	t.Run("convertible pak deploys the archive itself", func(t *testing.T) {
-		paths, err := importDeployablePaths(importKindConvertPak, "Raw_Weapon.pak", nil)
+		paths, err := importDeployablePaths(importKindConvertPak, "Raw_Weapon.pak", nil, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"Raw_Weapon.pak"}, paths)
 	})
 
 	t.Run("native merge source deploys nothing", func(t *testing.T) {
-		paths, err := importDeployablePaths(importKindMergeSource, "mod.exmodz", nil)
+		paths, err := importDeployablePaths(importKindMergeSource, "mod.exmodz", nil, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{}, paths)
 	})
 
 	t.Run("a reserved member is refused, not skipped", func(t *testing.T) {
 		_, err := importDeployablePaths(importKindExtract, "mod.zip",
-			[]archiveMember{{Path: cache.ReservedPrefix + "file-7"}})
+			[]archiveMember{{Path: cache.ReservedPrefix + "file-7"}}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "reserved name detected")
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,6 +47,13 @@ type ImportResult struct {
 type Importer struct {
 	cache     *cache.Cache
 	extractor *Extractor
+	// log carries the ingest's own diagnostics - today, the BepInEx
+	// archive-root normaliser's "I could not place this layout" warning
+	// (#358), which has no result field to ride on (the PLAN carries it
+	// where a frontend can still act on it; this is the record for an
+	// import that ran anyway). Never nil: NewImporter discards by default,
+	// matching Installer.
+	log *slog.Logger
 	// stagingRoot is where archives are extracted before being committed to the
 	// cache. Empty means fall back to $TMPDIR — see newStagingDir.
 	stagingRoot string
@@ -68,6 +76,7 @@ func NewImporter(cache *cache.Cache) *Importer {
 	return &Importer{
 		cache:     cache,
 		extractor: NewExtractor(),
+		log:       slog.New(slog.DiscardHandler),
 	}
 }
 
@@ -80,6 +89,7 @@ func (s *Service) newImporter(game *domain.Game) *Importer {
 	imp := NewImporter(s.GetGameCache(game))
 	imp.stagingRoot = s.stagingRoot()
 	imp.resolveMergeCompiler = s.mergeCompilerSourceForGame
+	imp.log = s.logger()
 	return imp
 }
 
@@ -285,8 +295,35 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, fmt.Errorf("extracting archive: %w", err)
 		}
 
-		// Detect mod name from extracted content
+		// Detect mod name from extracted content, BEFORE the BepInEx
+		// normalisation below: a normalised shape-A tree has BepInEx as its
+		// sole top-level directory, and DetectModName's "one top-level
+		// directory names the mod" rule would name every plugin "BepInEx".
 		modName = DetectModName(extractedPath, filename)
+
+		// #358: the archive-root normaliser. It runs against the PRISTINE
+		// extracted tree (this staging directory holds exactly this
+		// archive's members), which is the precondition
+		// normalizeBepInExTree documents, and before the move into the
+		// cache, so the cache entry - whose layout IS the game directory's
+		// layout - is already correct for every later deploy.
+		//
+		// The game's own loader declaration (#359) widens the rules onto
+		// the two ambiguous shapes - a bare plugins/ root and a loose .dll.
+		layout, err := normalizeBepInExTree(extractedPath, modName, game.DeclaresBepInEx())
+		if err != nil {
+			return nil, err
+		}
+		// #359: the same refusal PlanImportArchive makes, repeated here
+		// because a caller can reach the ingest without planning first. It
+		// lands before the cache commit, so nothing is deployed and nothing
+		// is recorded.
+		if err := requireDeclaredLoader(game, modName, layout); err != nil {
+			return nil, err
+		}
+		for _, w := range layout.warnings() {
+			i.log.Warn(w, "archive", filename, "game", game.ID)
+		}
 
 		// Move extracted files to cache
 		cachePath := i.cache.ModPath(game.ID, sourceID, modID, version)

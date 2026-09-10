@@ -87,6 +87,22 @@ type GameHooksYAML struct {
 	Uninstall HookConfigYAML `yaml:"uninstall"`
 }
 
+// GameLoaderYAML is the YAML representation of a game's mod-loader
+// declaration (#359) - games.yaml's `loader:` block.
+//
+// Every member is a plain string, like every other enum-valued key in this
+// file: domain.LoaderRuntime and domain.LoaderBootstrap both implement
+// TextMarshaler, and yaml.v3 honours it, so typing them here would emit the
+// name but ALSO decode a typo into the zero value without an error. Strings
+// keep the fail-loud parse where the rest of this file does it - in
+// loadGamesLocked, naming the game and the valid set.
+type GameLoaderYAML struct {
+	Kind      string `yaml:"kind"`
+	Version   string `yaml:"version,omitempty"`
+	Runtime   string `yaml:"runtime,omitempty"`
+	Bootstrap string `yaml:"bootstrap,omitempty"`
+}
+
 // GameConfig is the YAML representation of a game
 type GameConfig struct {
 	Name        string            `yaml:"name"`
@@ -98,6 +114,10 @@ type GameConfig struct {
 	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
 	DeployMode  string            `yaml:"deploy_mode,omitempty"`
 	ConvertPaks *bool             `yaml:"convert_paks,omitempty"`
+	// Loader is #359's optional block. A POINTER, so a game that declares
+	// no loader gains no `loader:` key when an unrelated write re-marshals
+	// the whole file.
+	Loader *GameLoaderYAML `yaml:"loader,omitempty"`
 }
 
 // GamesFile is the top-level games.yaml structure
@@ -149,6 +169,10 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 		if err != nil {
 			return nil, fmt.Errorf("games.yaml: game %q: %w", id, err)
 		}
+		loader, err := parseGameLoader(id, cfg.Loader)
+		if err != nil {
+			return nil, err
+		}
 		games[id] = &domain.Game{
 			ID:                  id,
 			Name:                cfg.Name,
@@ -161,6 +185,7 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			DeployMode:          deployMode,
 			ConvertPaks:         convertPaks,
 			ConvertPaksExplicit: convertExplicit,
+			Loader:              loader,
 			Hooks: domain.GameHooks{
 				Install: domain.HookConfig{
 					BeforeAll:  ExpandPath(cfg.Hooks.Install.BeforeAll),
@@ -251,6 +276,17 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 			v := game.ConvertPaks
 			cfg.ConvertPaks = &v
 		}
+		// Only write loader: for a game that declares one. The enums emit
+		// "" for "not answered yet", which omitempty drops, so lmm never
+		// writes back a runtime or bootstrap nobody chose.
+		if game.Loader != nil {
+			cfg.Loader = &GameLoaderYAML{
+				Kind:      game.Loader.Kind,
+				Version:   game.Loader.Version,
+				Runtime:   game.Loader.Runtime.String(),
+				Bootstrap: game.Loader.Bootstrap.String(),
+			}
+		}
 		gamesFile.Games[id] = cfg
 	}
 
@@ -298,4 +334,45 @@ func DeleteGame(configDir string, gameID string) error {
 	}
 	delete(games, gameID)
 	return saveGamesLocked(configDir, games)
+}
+
+// parseGameLoader turns games.yaml's `loader:` block into the domain type,
+// or nil when the game declares none. A nil block is "this game needs no
+// loader", which is not the same as a zero-valued declaration - Game.
+// DeclaresBepInEx must never answer from a struct nobody wrote.
+//
+// The two closed values fail loud the way link_method and deploy_mode do,
+// naming the game, the offending value and the valid set (domain.
+// ErrInvalidLoaderRuntime / ErrInvalidLoaderBootstrap). An unrecognised
+// KIND is not an error: kind is deliberately an open string so a second
+// loader costs nothing, and lmm's own rules simply do not fire for a kind
+// they do not know. An EMPTY kind is: it declares nothing while looking
+// like it should, and core.LoaderSpec.loader - the same field's other door,
+// from `lmm game edit --loader` and POST /api/v1/games - already refuses
+// the identical input naming loader.kind.
+func parseGameLoader(gameID string, cfg *GameLoaderYAML) (*domain.GameLoader, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	kind := strings.ToLower(strings.TrimSpace(cfg.Kind))
+	if kind == "" {
+		return nil, fmt.Errorf("%w: games.yaml: game %q: loader.kind %q (a loader kind is required; today lmm knows %s)",
+			domain.ErrInvalidLoaderKind, gameID, cfg.Kind, domain.LoaderKindBepInEx)
+	}
+	runtime, ok := domain.ParseLoaderRuntime(cfg.Runtime)
+	if !ok {
+		return nil, fmt.Errorf("%w: games.yaml: game %q: loader.runtime %q (valid: %s)",
+			domain.ErrInvalidLoaderRuntime, gameID, cfg.Runtime, domain.ValidLoaderRuntimes)
+	}
+	bootstrap, ok := domain.ParseLoaderBootstrap(cfg.Bootstrap)
+	if !ok {
+		return nil, fmt.Errorf("%w: games.yaml: game %q: loader.bootstrap %q (valid: %s)",
+			domain.ErrInvalidLoaderBootstrap, gameID, cfg.Bootstrap, domain.ValidLoaderBootstraps)
+	}
+	return &domain.GameLoader{
+		Kind:      kind,
+		Version:   strings.TrimSpace(cfg.Version),
+		Runtime:   runtime,
+		Bootstrap: bootstrap,
+	}, nil
 }

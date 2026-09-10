@@ -1,0 +1,15 @@
+{
+  "game_id": "valheim",
+  "declared": {
+    "kind": "bepinex",
+    "version": "5.4.23.5",
+    "bootstrap": "proton"
+  },
+  "detected_runtime": "mono",
+  "detected_bootstrap": "proton",
+  "effective_runtime": "mono",
+  "effective_bootstrap": "proton",
+  "launch_option": "WINEDLLOVERRIDES=\"winhttp=n,b\" %command%",
+  "installed": true,
+  "loaded_at": "2026-08-27T12:00:00Z"
+}

@@ -178,7 +178,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	downloader := NewDownloader(nil)
 	downloader.SetLogger(log)
 
-	return &Service{
+	svc := &Service{
 		config:     appConfig,
 		db:         database,
 		cache:      modCache,
@@ -194,7 +194,17 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		cacheDir:   cfg.CacheDir,
 		warnWriter: cfg.WarnWriter,
 		opLockPath: cfg.OpLockPath,
-	}, nil
+	}
+
+	// Expire the archives a refused ingest kept (retained_download.go).
+	// Here rather than only on the way in to a NEW retention: an entry
+	// swept only by a LATER refusal is an entry a user who abandons ONE
+	// install keeps forever, which is the leak the TTL exists to close. A
+	// ReadDir of a directory that is usually absent, so it costs an open
+	// nothing measurable.
+	svc.sweepRetainedDownloads()
+
+	return svc, nil
 }
 
 // Close releases resources held by the service
@@ -1056,13 +1066,42 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	// left untouched for display purposes (the SHA256 mismatch message).
 	safeFileName := filepath.Base(file.FileName)
 	archivePath := filepath.Join(tempDir, safeFileName)
-	var headers map[string]string
-	if hp, ok := src.(source.DownloadHeaderProvider); ok {
-		headers = hp.DownloadHeaders(url)
-	}
-	downloadResult, err := s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, sink)
-	if err != nil {
-		return nil, fmt.Errorf("downloading mod: %w", err)
+
+	// An earlier ingest of this exact file may have been refused for a
+	// reason the user answers by reconfiguring the GAME (#359's loader
+	// precondition), in which case the bytes were kept and there is nothing
+	// to fetch (retained_download.go). Everything below runs unchanged
+	// either way - but note WHAT the checks below then check: a reuse
+	// rebuilds DownloadResult from the retention's sidecar, so the SHA256
+	// and exact-size comparisons are against the values the original
+	// download RECORDED, not a re-hash of the retained file. That is
+	// deliberate rather than an oversight: the sidecar is written last
+	// (storeRetainedDownload), so a retention interrupted mid-move has no
+	// sidecar at all and reuseRetainedDownload rejects it outright instead
+	// of trusting a truncated archive.
+	// Whichever branch below reaches the cache, the retained copy is dead
+	// weight once it does - so the drop is deferred on success rather than
+	// written after one of the three commits. Written after the extract
+	// commit alone, it left a retention behind whenever the same file was
+	// later ingested through the compile or copy branch.
+	defer func() {
+		if err == nil {
+			s.dropRetainedDownload(sourceID, mod.ID, file.ID)
+		}
+	}()
+
+	retainedPath, downloadResult, reused := s.reuseRetainedDownload(sourceID, mod.ID, file.ID)
+	if !reused {
+		var headers map[string]string
+		if hp, ok := src.(source.DownloadHeaderProvider); ok {
+			headers = hp.DownloadHeaders(url)
+		}
+		downloadResult, err = s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, sink)
+		if err != nil {
+			return nil, fmt.Errorf("downloading mod: %w", err)
+		}
+	} else {
+		archivePath = retainedPath
 	}
 
 	if file.SHA256 != "" && !strings.EqualFold(downloadResult.SHA256, file.SHA256) {
@@ -1156,8 +1195,9 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}, nil
 	}
 
-	members, err := s.extractIntoStaging(ctx, archivePath, cachePath, stagePath)
+	members, err := s.extractIntoStaging(ctx, game, mod, archivePath, cachePath, stagePath)
 	if err != nil {
+		s.retainRefusedDownload(err, sourceID, mod.ID, file.ID, archivePath, downloadResult)
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
 	if err := commitStagedCacheWithMarker(cachePath, stagePath, file.ID, members); err != nil {
@@ -1263,7 +1303,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 			return nil, fmt.Errorf("hashing local mod file: %w", err)
 		}
 	default:
-		if members, err = s.extractIntoStaging(ctx, localPath, cachePath, stagePath); err != nil {
+		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		if checksum, err = md5File(localPath); err != nil {
@@ -1454,7 +1494,7 @@ func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []
 // Returned members are extractDir-relative paths of regular files only,
 // matching cache.ListFiles semantics (directories and symlinks are never
 // listed, deployed, or undeployed).
-func (s *Service) extractIntoStaging(ctx context.Context, archivePath, cachePath, stagePath string) ([]string, error) {
+func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, cachePath, stagePath string) ([]string, error) {
 	extractPath := cachePath + ".extract"
 	if err := os.RemoveAll(extractPath); err != nil {
 		return nil, fmt.Errorf("clearing extraction dir: %w", err)
@@ -1465,8 +1505,38 @@ func (s *Service) extractIntoStaging(ctx context.Context, archivePath, cachePath
 		return nil, err
 	}
 
+	// #358: the BepInEx archive-root normaliser, run on the pristine
+	// intermediate rather than on stagePath - exactly the attribution
+	// property that intermediate exists for. A mod downloaded from
+	// NexusMods and one imported from a local archive therefore reach the
+	// cache in the same layout, which is what lets a BepInEx plugin deploy
+	// correctly with no source work at all (spike §5).
+	//
+	// The plugin directory a loose .dll lands in is named after the MOD, not
+	// the archive: a source-backed download has a real mod name, and it is
+	// the name the user sees in `lmm list`.
+	//
+	// The game's own loader declaration (#359) widens the rules onto the two
+	// ambiguous shapes.
+	layout, err := normalizeBepInExTree(extractPath, mod.Name, game.DeclaresBepInEx())
+	if err != nil {
+		return nil, err
+	}
+	// #359: a downloaded archive's shape is not knowable until it is
+	// extracted, which is why PlanInstall cannot answer this and this is the
+	// earliest point that can. The refusal lands before the staged entry is
+	// committed, so nothing is deployed and nothing is recorded - a cache
+	// fill is not a mutation of managed state (Ruling 1), the same standing
+	// a declined ConflictError leaves behind.
+	if err := requireDeclaredLoader(game, mod.Name, layout); err != nil {
+		return nil, err
+	}
+	for _, w := range layout.warnings() {
+		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
+	}
+
 	var members []string
-	err := filepath.WalkDir(extractPath, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(extractPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

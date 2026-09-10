@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -112,4 +113,29 @@ func TestAddGame_TildeModPathIsExpandedNotJoined(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, config.ExpandPath("~/lmm-modpath-test"), entry.ModPath)
 	assert.NotContains(t, entry.ModPath, "~", "a tilde must be expanded, never joined onto install_path")
+}
+
+// TestAddGame_AcceptsAGameRootModPath is #358's other half of the game-root
+// shape: the WRITE path both frontends share must accept mod_path set to the
+// install path itself, rather than defaulting to <install_path>/mods the way
+// an empty value does. That is how a BepInEx game is configured, and the
+// correction on #357 is that an empty mod_path is NOT the game root - the
+// installer joins it verbatim and deploys into the working directory.
+func TestAddGame_AcceptsAGameRootModPath(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+
+	entry, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "nexusmods", Identifier: "lethalcompany",
+		Name: "Lethal Company", InstallPath: install, ModPath: install,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, install, entry.ModPath)
+	assert.Equal(t, install, entry.InstallPath)
+
+	games, err := config.LoadGames(svc.ConfigDir())
+	require.NoError(t, err)
+	require.Contains(t, games, entry.ID)
+	assert.Equal(t, install, games[entry.ID].ModPath,
+		"the value written is the value every later run reads, from any working directory")
 }

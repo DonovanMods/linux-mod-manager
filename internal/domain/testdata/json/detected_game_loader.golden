@@ -1,0 +1,16 @@
+{
+  "steam_app_id": "892970",
+  "slug": "valheim",
+  "name": "Valheim",
+  "install_path": "/home/user/.steam/steam/steamapps/common/Valheim",
+  "mod_path": "/home/user/.steam/steam/steamapps/common/Valheim",
+  "nexus_id": "valheim",
+  "sources": {
+    "nexusmods": "valheim"
+  },
+  "known": true,
+  "loader": {
+    "kind": "bepinex",
+    "version": "5.4.23.5"
+  }
+}

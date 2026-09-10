@@ -33,6 +33,23 @@ var (
 	// ErrInvalidDeployMode is ErrInvalidLinkMethod's counterpart for
 	// deploy_mode; see ValidDeployModes for the recognized names (#172).
 	ErrInvalidDeployMode = errors.New("invalid deploy mode")
+	// ErrInvalidLoaderRuntime flags a loader.runtime value that is neither
+	// empty nor one of ValidLoaderRuntimes (#359). Same contract as the two
+	// above: a games.yaml LOAD fails naming the game, the value and the
+	// valid set, rather than silently defaulting a game into verifying
+	// against the wrong BepInEx build forever.
+	ErrInvalidLoaderRuntime = errors.New("invalid loader runtime")
+	// ErrInvalidLoaderBootstrap is ErrInvalidLoaderRuntime's counterpart
+	// for loader.bootstrap (ValidLoaderBootstraps).
+	ErrInvalidLoaderBootstrap = errors.New("invalid loader bootstrap")
+	// ErrInvalidLoaderKind flags a `loader:` block that names no kind
+	// (#359). Unlike runtime and bootstrap, kind is deliberately an OPEN
+	// string - an unrecognised loader is fine and simply fires none of
+	// lmm's rules - but an EMPTY one is a block that declares nothing while
+	// looking like it should, and every other door into the field
+	// (core.LoaderSpec, `lmm game edit --loader`, POST /api/v1/games)
+	// already refuses it.
+	ErrInvalidLoaderKind = errors.New("invalid loader kind")
 	ErrDependencyLoop    = errors.New("circular dependency detected")
 	// ErrExternalMod marks an operation refused because the mod is
 	// EXTERNAL: lmm tracks it, but another agent (today, the Steam client

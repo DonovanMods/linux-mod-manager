@@ -132,11 +132,12 @@ func TestGenManTree_AngleBracketArgsSurviveForEveryCommand(t *testing.T) {
 	}
 	walk(rootCmd)
 
-	// 24: 23 originally, +2 since #351 (`lmm init`, `lmm snapshot *`),
+	// 25: 23 originally, +2 since #351 (`lmm init`, `lmm snapshot *`),
 	// -1 since #346 (`profile import <file>` became `[file]` when
-	// --workshop-collection became its second input).
-	assert.Equal(t, 24, checked,
-		"expected exactly 24 commands with angle-bracket Use args; update this count if the command tree changed")
+	// --workshop-collection became its second input), +1 since #359
+	// (`lmm game show <game-id>`).
+	assert.Equal(t, 25, checked,
+		"expected exactly 25 commands with angle-bracket Use args; update this count if the command tree changed")
 }
 
 // TestGenManTree_AngleBracketPlaceholdersSurviveInLongHelp is the same

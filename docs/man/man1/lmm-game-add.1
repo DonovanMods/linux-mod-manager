@@ -113,6 +113,22 @@ lmm game detect --include-unknown          # list installed app ids
 	the game's identifier with that source (NexusMods slug, CurseForge game ID, ...)
 
 .PP
+\fB--loader\fP=""
+	declare a mod loader installed in the game directory (today: bepinex) - see 'lmm game show' for the launch option it needs
+
+.PP
+\fB--loader-bootstrap\fP=""
+	how the loader is injected: native or proton (default: read from the install directory)
+
+.PP
+\fB--loader-runtime\fP=""
+	the game's Unity scripting backend: mono or il2cpp (default: read from the install directory)
+
+.PP
+\fB--loader-version\fP=""
+	the loader version installed in the game directory, e.g. 5.4.23.5 (checked by 'lmm verify')
+
+.PP
 \fB--mod-path\fP=""
 	mod directory, absolute or relative to the install path (default: <install path>/mods)
 

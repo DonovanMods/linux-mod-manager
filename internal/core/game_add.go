@@ -244,6 +244,12 @@ type GameSpec struct {
 	LinkMethod  domain.LinkMethod
 	Sources     map[string]string
 	DeployMode  string
+	// Loader is #359's optional mod-loader declaration, unparsed
+	// (LoaderSpec, game_loader.go). nil - which is nearly every game -
+	// writes no `loader:` block at all. Carried on the SPEC rather than
+	// left to a follow-up `game edit` so a BepInEx game is configured in
+	// one step, by either frontend.
+	Loader *LoaderSpec
 }
 
 // AddGame validates spec, then - under the Service's single mutation slot -
@@ -503,6 +509,11 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		return nil, newGameSpecError("mod_path", modPath, "path exists and is not a directory")
 	}
 
+	loader, err := spec.Loader.loader()
+	if err != nil {
+		return nil, err
+	}
+
 	return &domain.Game{
 		ID:          gameID,
 		Name:        name,
@@ -511,6 +522,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		SourceIDs:   sources,
 		LinkMethod:  spec.LinkMethod,
 		DeployMode:  deployMode,
+		Loader:      loader,
 	}, nil
 }
 

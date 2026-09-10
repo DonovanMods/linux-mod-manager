@@ -2821,3 +2821,55 @@ select {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
 }
+
+/* The mod-loader declaration (issue 359, gameloader.js): the four-field
+ * editor and the panel that carries the Steam launch option to paste.
+ * Tokens only - the two ratchets over this file (no literal colour outside
+ * the token blocks, every pair at WCAG AA) make that a rule, not a habit. */
+.loader-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.loader-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.loader-panel__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.loader-panel__facts dt {
+  color: var(--text-muted);
+}
+
+.loader-panel__facts dd {
+  margin: 0;
+}
+
+.loader-panel__label {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* The launch option itself: selectable, wrapping, and visually the one thing
+ * in the panel a user is meant to take away. */
+.loader-panel__option {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  overflow-wrap: anywhere;
+  user-select: all;
+}

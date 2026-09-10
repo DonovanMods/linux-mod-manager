@@ -318,7 +318,31 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		}
 	}
 
-	files, err := importDeployablePaths(kind, filename, members)
+	// #358: the BepInEx archive-root normalisation the ingest will apply,
+	// resolved from the listing so the preview names the paths the deploy
+	// produces. modName comes from the RAW listing (importedModName), before
+	// any rewrite, for the same reason the ingest derives it before
+	// normalising: a normalised shape-A tree has BepInEx as its sole
+	// top-level directory, and naming the mod after that would be absurd.
+	//
+	// The game's own loader declaration (#359) widens the normaliser onto
+	// the two ambiguous shapes (a bare plugins/ root, a loose .dll) - see
+	// bepinexNormalise's doc comment.
+	modName := importedModName(kind, filename, ident.version, members)
+	layout, err := bepinexLayoutForListing(kind, members, modName, game.DeclaresBepInEx())
+	if err != nil {
+		return nil, err
+	}
+
+	// #359: refuse before computing a plan that would promise a plugin the
+	// game has nothing to load it with. Plan time is the earliest an archive
+	// import can answer this, and the answer costs nothing beyond the
+	// listing already read.
+	if err := requireDeclaredLoader(game, modName, layout); err != nil {
+		return nil, err
+	}
+
+	files, err := importDeployablePaths(kind, filename, members, layout)
 	if err != nil {
 		return nil, err
 	}
@@ -330,14 +354,19 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 		Files:          files,
 		Conflicts:      []Conflict{},
 		EntryPreExists: entryPreExists,
-		Warnings:       []string{},
-		ident:          ident,
-		fingerprint:    fingerprint,
+		// The normaliser's own diagnostic (an archive a BepInEx game's
+		// layout rules could not place) reaches the user on the plan,
+		// which is the surface both frontends render BEFORE committing to
+		// an import - the one place a "this is not the layout I expected"
+		// note can still change the answer.
+		Warnings:    append([]string{}, layout.warnings()...),
+		ident:       ident,
+		fingerprint: fingerprint,
 	}
 	plan.Mod = domain.Mod{
 		ID:       ident.modID,
 		SourceID: ident.sourceID,
-		Name:     importedModName(kind, filename, ident.version, members),
+		Name:     modName,
 		Version:  ident.version,
 		GameID:   game.ID,
 	}

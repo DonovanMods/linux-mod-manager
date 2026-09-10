@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,4 +92,40 @@ func captureOverriddenOriginal(originals *originalsStore, profileName, rel, dest
 		originals.noteFailure(fmt.Sprintf(
 			"could not preserve %s before writing a profile override over it; it will not be restorable from a snapshot: %v", dest, err))
 	}
+}
+
+// seedBepInExConfig writes a mod-shipped BepInEx/config/** file into the
+// game directory as a REAL FILE, and only when nothing is there already
+// (#358 (b)).
+//
+// It lives here, beside applyProfileOverrides, because it is the same
+// mechanism and the same reasoning: BepInEx generates its plugin configs on
+// first run and users hand-edit them afterwards, so a mod that ships one is
+// seeding a DEFAULT, not shipping content. Deploying it the way every other
+// member is deployed would break in whichever direction the link method
+// chose - a symlink sends the user's edit INTO the cache, where the next
+// re-download destroys it and every profile sharing the entry inherits it;
+// a hardlink does the same through a different door.
+//
+// It differs from applyProfileOverrides in the one way it has to: an
+// override is content a profile ASSERTS, so it is written every deploy and
+// the file it replaces is preserved in the originals store. A seeded config
+// is content a mod SUGGESTS, so an existing file wins outright and there is
+// nothing to preserve - which is also why it needs no originals store
+// parameter and captures nothing.
+//
+// Copy-on-first-deploy is the whole contract: after the first deploy the
+// file belongs to the user, so it is never overwritten, never entered into
+// deployed_files, and never removed by an uninstall - exactly the standing
+// every profile override has.
+func seedBepInExConfig(srcPath, dstPath string) error {
+	if _, err := os.Lstat(dstPath); err == nil {
+		return nil // already there: it is the user's file now
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("checking %s: %w", dstPath, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
+	}
+	return copyFileStreaming(srcPath, dstPath)
 }

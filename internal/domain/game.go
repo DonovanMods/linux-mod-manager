@@ -87,6 +87,12 @@ type Game struct {
 	DeployMode          DeployMode        `json:"deploy_mode"`           // How to handle downloaded files (extract vs copy)
 	ConvertPaks         bool              `json:"convert_paks"`          // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
 	ConvertPaksExplicit bool              `json:"convert_paks_explicit"` // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
+	// Loader is #359's optional per-game mod-loader declaration
+	// (games.yaml's `loader:` block, loader.go). nil for the overwhelming
+	// majority of games, which need no loader at all - so the member is
+	// absent from every document a loaderless game produces, and every
+	// golden recorded before this field existed is byte-identical.
+	Loader *GameLoader `json:"loader,omitempty"`
 }
 
 // DeployMode determines how downloaded mod archives are handled
@@ -181,6 +187,23 @@ type DetectedGame struct {
 	// the empty stub Steam leaves for a workshop-capable app with nothing
 	// subscribed, carries no member at all and gets no prefill.
 	WorkshopItems int `json:"workshop_items,omitzero"`
+	// Loader is the curated known-games entry's mod-loader declaration
+	// (#416), carried through to the Game this candidate configures so a
+	// BepInEx game detected and added in one pass arrives with the
+	// declaration #359's precondition asks for - otherwise the very first
+	// plugin install of a curated BepInEx game is refused and the flow is
+	// worse than it was before the loader existed.
+	//
+	// Only a CURATED entry can carry one: nothing on disk says which loader
+	// a game wants, so an uncurated candidate never gets a guess. The
+	// catalog declares kind and (optionally) version; runtime and bootstrap
+	// are facts about the INSTALLATION rather than about the game, which
+	// `lmm game show` answers from disk.
+	//
+	// omitempty: a game that needs no loader - which is every entry in the
+	// shipped catalog today - carries no member at all, so every detect
+	// document recorded before this field existed is byte-identical.
+	Loader *GameLoader `json:"loader,omitempty"`
 }
 
 // Listable reports whether a detect LISTING shows this candidate without

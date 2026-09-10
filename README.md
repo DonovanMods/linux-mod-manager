@@ -356,6 +356,10 @@ lmm game show-default
 
 # Clear the default
 lmm game clear-default
+
+# Everything lmm knows about one game, including its mod-loader status and
+# the Steam launch option a BepInEx game needs (see BepInEx (Unity games))
+lmm game show skyrim-se
 ```
 
 ### Basic Usage
@@ -540,6 +544,141 @@ to convert from. `lmm verify` flags these `needs_reingest`, and `--fix`
 re-ingests them — redownloading via the normal cache path — into the
 conversion pipeline; there is no separate migration step to run.
 
+### BepInEx (Unity games)
+
+Many Unity games are modded through [BepInEx](https://github.com/BepInEx/BepInEx),
+a loader that installs into the **game root** and injects plugins from
+`BepInEx/plugins/`. lmm supports those games, and the split of
+responsibility is deliberate and worth reading before you start: **lmm
+deploys and verifies plugins; you install the loader and set the Steam
+launch option.**
+
+#### Configure the game
+
+BepInEx-managed content is game-root-relative, so the game's `mod_path` is
+its own `install_path` — the same absolute path twice:
+
+```yaml
+games:
+  lethal-company:
+    name: "Lethal Company"
+    install_path: "~/.steam/steam/steamapps/common/Lethal Company"
+    mod_path: "~/.steam/steam/steamapps/common/Lethal Company"
+    sources:
+      nexusmods: "lethalcompany"
+    loader:
+      kind: bepinex
+      version: 5.4.23.5
+      runtime: mono # mono | il2cpp - omit and lmm reads it off the game directory
+      bootstrap: proton # native | proton - likewise
+```
+
+Not `mod_path: ""` — an empty value is not "the game root", it is a
+relative path, and lmm would deploy into whatever directory you ran it
+from.
+
+The same thing from the command line, or in the web UI's Setup → Games row
+(the **Edit loader…** control):
+
+```bash
+lmm game add --name "Lethal Company" --source nexusmods --id lethalcompany   --path "$HOME/.steam/steam/steamapps/common/Lethal Company"   --mod-path "$HOME/.steam/steam/steamapps/common/Lethal Company"   --loader bepinex --loader-version 5.4.23.5
+
+lmm game edit lethal-company --loader bepinex --loader-bootstrap proton
+lmm game edit lethal-company --loader ""   # remove the declaration
+```
+
+#### What lmm does
+
+- **Normalises plugin archive layouts at install.** A BepInEx plugin
+  archive comes in three real shapes, and lmm places all of them
+  correctly: game-root-relative (`BepInEx/plugins/Foo.dll`, the common
+  case), wrapped in a single directory (`BepInExPack/BepInEx/…`, whose
+  wrapper is stripped), and BepInEx-relative (a bare `plugins/`,
+  `patchers/`, `monomod/` or `config/` root, which gains its `BepInEx/`
+  prefix). A loose `.dll` at the archive root becomes
+  `BepInEx/plugins/<ModName>/`. The package metadata every Thunderstore
+  archive carries — a `manifest`, an `icon`, a `readme`, a `changelog` or a
+  `license`, whatever extension it is spelled with — is dropped, not
+  scattered into your game directory. That drop runs both before and after
+  the wrapper strip, so a package that keeps its metadata _inside_ the
+  wrapper — which is how Thunderstore builds one — does not deliver four
+  files into your Steam install directory. A layout lmm does not recognise
+  is reported, never guessed at.
+
+  The `BepInEx/`-rooted and wrapped shapes are recognised for any game. The
+  two ambiguous ones — a bare `plugins/` root and a bare `.dll` — need the
+  `loader:` declaration above, so a mod for a different game that happens
+  to be rooted at `plugins/` keeps deploying exactly where it always did.
+
+- **Seeds plugin configuration instead of linking it.** BepInEx writes its
+  `BepInEx/config/*.cfg` files on first run and you hand-edit them
+  afterwards, so a mod that ships one is offering a default. Those files
+  are written as **real files, copied only when nothing is there already**
+  — the same treatment a profile's own config overrides get. Your edits are
+  never overwritten by a later deploy, never written back into the mod
+  cache, and never removed by an uninstall.
+
+- **Refuses to deploy a plugin into a game with no loader.** A
+  BepInEx-shaped archive installed into a game that declares no loader
+  fails at plan time with the setup instructions, rather than putting a DLL
+  somewhere nothing will ever load it from — which fails silently and is
+  the hardest kind of failure to diagnose.
+
+- **Refuses to install BepInEx itself as a mod.** An archive carrying
+  `BepInEx/core/` is the loader, not a plugin: it belongs to the game
+  installation and must survive a profile switch, so tracking it as a
+  profile member would tear it out from under every plugin the next time
+  you switched. lmm says so and points at the setup.
+
+- **Tells you the exact launch option.** `lmm game show <game>` — and the
+  web UI's loader panel — read the game directory to work out whether it is
+  a native Linux build or a Windows one running under Proton, and print the
+  string to paste:
+
+  ```text
+  Steam launch options for this game:
+    WINEDLLOVERRIDES="winhttp=n,b" %command%
+  ```
+
+  (`./run_bepinex.sh %command%` for a native Linux build.) Where lmm cannot
+  tell, it says so instead of guessing — the wrong option launches the game
+  normally and loads nothing.
+
+- **Verifies the result.** For a game with a `loader:` block, `lmm verify`
+  adds five checks: the preloader is present, the installed version matches
+  what you declared, the bootstrap files match the declared mode,
+  `BepInEx/LogOutput.log` exists and is newer than your last deploy, and
+  every enabled plugin is actually linked. The log check is the point of
+  the tier — it is the only honest evidence the loader **ran**, as opposed
+  to being installed correctly, and it is how you find out you pasted the
+  launch option wrong instead of finding out from a mod that mysteriously
+  does nothing. Only the last check is `--fix`-able (it re-deploys the mod);
+  the others report and point at the setup.
+
+- **Keeps the download when it refuses one.** A plugin archive installed
+  into a game that declares no loader is refused at ingest, which is the
+  earliest point the archive's shape is knowable — but the downloaded file
+  is kept, so the retry after `lmm game edit <game> --loader bepinex` does
+  not fetch it again. Only this refusal keeps anything: a checksum
+  mismatch or a truncated download means the bytes are suspect, and those
+  are discarded as before.
+
+#### What lmm never does
+
+- **It does not install BepInEx.** Choosing the build is the hard part: the
+  Thunderstore `BepInExPack` is Windows-only and correct only under Proton,
+  a native Linux build needs the `BepInEx_linux_x64` archive from BepInEx's
+  own GitHub releases, and IL2CPP needs a BepInEx 6 bleeding-edge build
+  that is not a GitHub release at all. Get it wrong and you have a game
+  that silently loads nothing.
+- **It does not write Steam's configuration.** Launch options live in
+  `localconfig.vdf`, which must be edited with the client closed, in an
+  undocumented format that has changed; a bad write loses every launch
+  option for every game in your account, and the failure would look like
+  "Steam ate my settings". lmm prints the string; you paste it.
+- **It does not touch a Proton prefix.** No `user.reg`, no `winecfg`
+  automation, no `protontricks` shell-outs.
+
 ## Configuration
 
 Configuration files are stored in `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`; override with `--config`):
@@ -590,7 +729,29 @@ games:
       icarus: "icarus"
     deploy_mode: compile
     # convert_paks: true  # Optional: default; set false to deploy every prebuilt .pak mod raw instead of converting it
+
+  lethal-company:
+    name: "Lethal Company"
+    install_path: "/path/to/Steam/steamapps/common/Lethal Company"
+    mod_path: "/path/to/Steam/steamapps/common/Lethal Company" # BepInEx deploys into the game root
+    sources:
+      nexusmods: "lethalcompany"
+    loader: # Optional: this game uses a mod loader (see BepInEx (Unity games))
+      kind: bepinex
+      version: 5.4.23.5
+      # runtime: mono        # mono | il2cpp - omit and lmm reads it off the game directory
+      # bootstrap: proton    # native | proton - likewise
 ```
+
+An optional **`loader:`** block declares that a mod loader is installed in
+the game directory. Only `kind: bepinex` means anything to lmm today;
+`version`, `runtime` and `bootstrap` are each optional, and an unrecognised
+`runtime` or `bootstrap` fails the load naming the game, the value and the
+valid set rather than defaulting silently. What the declaration changes is
+which rules apply: archive-layout normalisation for the two ambiguous
+BepInEx shapes, a plan-time refusal to deploy a plugin the game cannot load,
+and `lmm verify`'s loader checks. lmm never installs the loader itself. See
+[BepInEx (Unity games)](#bepinex-unity-games).
 
 `mod_path` may be **absolute, or relative to `install_path` — everywhere**. A relative value — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory (`~` expands first, so `~/mods` is absolute, not relative). That rule is the same on every path that writes a game, not just for a hand-written `games.yaml`: `lmm game add`, `lmm game add --from-detected`, `lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all accept `Data` and store the resolved absolute path, so what lmm writes reads back identically from any shell. A relative `mod_path` with no `install_path` to resolve it against is refused — naming the game and the field when `games.yaml` is read, and naming `install_path` (the value that is actually missing) at the prompt, the form and the API.
 
@@ -1391,9 +1552,16 @@ takes `?game=`:
 ```text
 POST   /api/v1/games          {"source_id","identifier","name",
                                "install_path"[,"game_id","mod_path",
-                               "from_steam_app_id"]}
+                               "from_steam_app_id","loader"]}
                                           -> the new game's `lmm game list` row
+GET    /api/v1/games/{id}                 -> core.GameDetail (the row plus the
+                                             mod-loader report, incl. the Steam
+                                             launch option to paste)
 PUT    /api/v1/games/{id}     {"sources"} -> the game's `lmm game list` row
+PUT    /api/v1/games/{id}     {"loader","loader_set"}
+                                          -> the game's `lmm game list` row
+                                             (one request, one edit: a body
+                                             carrying both is refused)
 POST   /api/v1/games/{id}/set-default     -> the new default (core.SettingsResult)
 DELETE /api/v1/games/default              -> the default cleared (core.SettingsResult)
 POST   /api/v1/games/detect   {"select"}  -> what was added (index or slug)
@@ -2190,6 +2358,30 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 
 - **X ModName - VERSION MISMATCH (recorded X, source reports Y)** - The recorded version doesn't match what the installed file ID(s) report upstream; use `--fix` to repair.
 - **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
+
+For a game with a `loader:` block (see [BepInEx (Unity
+games)](#bepinex-unity-games)), verify adds a loader tier — five checks,
+reporting six statuses:
+
+- **LOADER MISSING** — the game declares a loader and its preloader
+  (`BepInEx/core/BepInEx.Preloader.dll`) is not in the install directory.
+- **LOADER VERSION MISMATCH (declared X, installed Y)** — drift between the
+  declaration and what is on disk.
+- **LOADER BOOTSTRAP INCOMPLETE** — the files the declared bootstrap needs
+  (`run_bepinex.sh` + `libdoorstop.so` for native, `winhttp.dll` +
+  `doorstop_config.ini` for Proton) are not all there, which usually means
+  the wrong BepInEx pack is installed.
+- **LOADER NEVER RAN** — everything is in place and `BepInEx/LogOutput.log`
+  does not exist, so the loader has not run; the finding names the launch
+  option to paste.
+- **LOADER STALE LOG** — the loader ran, but before the plugins currently on
+  disk were deployed, so nothing proves the current set ever loaded.
+- **LOADER PLUGIN UNLINKED** — an enabled mod's plugin files are not in the
+  game directory; `--fix` re-deploys the mod.
+
+Only the last is `--fix`-able: lmm does not install the loader or write
+Steam launch options, so the remedy for the others is the setup `lmm game
+show` prints.
 
 A locked mod's VERSION MISMATCH is still reported, but `--fix` refuses to
 rewrite a locked mod's record (other, unlocked mods in the same run are

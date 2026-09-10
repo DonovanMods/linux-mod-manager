@@ -203,6 +203,26 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 		srcPath := i.cache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
 
+		// #358 (b): a BepInEx plugin config is seeded, not linked - see
+		// seedBepInExConfig. It takes no deployed_files row and no rollback
+		// slot deliberately: once it is on disk it is the user's file, and
+		// the two things that make a file lmm's own are exactly the two
+		// things a hand-edited config must not be subject to.
+		if isBepInExConfigMember(file) {
+			if err := seedBepInExConfig(srcPath, dstPath); err != nil {
+				rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
+				i.restoreReplacedOriginals(game, deployed)
+				if i.db != nil {
+					_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID)
+				}
+				if rollbackErr != nil {
+					return &domain.DeployError{Op: fmt.Sprintf("seeding %s", file), Primary: err, Rollback: rollbackErr}
+				}
+				return fmt.Errorf("seeding %s: %w", file, err)
+			}
+			continue
+		}
+
 		// #350: preserve whatever is there before the deploy replaces it.
 		i.captureOriginal(ctx, game, profileName, file, dstPath, mod)
 
@@ -386,6 +406,21 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 
 		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
+		// #358 (b): a seeded config is not part of the replacement. The old
+		// version's copy stays exactly where it is (the obsolete-file loop
+		// above already skips it - it is a regular file with no
+		// deployed_files row, which foreignFile answers for), and the new
+		// version's default does not overwrite the user's edit.
+		if isBepInExConfigMember(file) {
+			if err := seedBepInExConfig(srcPath, dstPath); err != nil {
+				rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, replacedOrAdded, oldSet)
+				if rollbackErr != nil {
+					return &domain.DeployError{Op: fmt.Sprintf("seeding %s", file), Primary: err, Rollback: rollbackErr}
+				}
+				return fmt.Errorf("seeding %s: %w", file, err)
+			}
+			continue
+		}
 		// #350: a replace can also land on a file lmm does not own - a
 		// new version whose file list grew into stock content - so the
 		// original is preserved here before the new file goes over it.
@@ -415,6 +450,9 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			return fmt.Errorf("resetting file tracking: %w", err)
 		}
 		for _, file := range newFiles {
+			if isBepInExConfigMember(file) {
+				continue // seeded, never tracked (#358 (b))
+			}
 			if err := i.db.SaveDeployedFile(ctx, game.ID, profileName, file, newMod.SourceID, newMod.ID); err != nil {
 				_ = i.db.DeleteDeployedFiles(ctx, game.ID, profileName, newMod.SourceID, newMod.ID)
 				for _, oldFile := range oldRestorable {

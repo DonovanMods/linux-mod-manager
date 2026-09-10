@@ -1881,6 +1881,69 @@ func TestJSONGoldens(t *testing.T) {
 			"snapshot_delete_result",
 			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
 		},
+		{
+			// #359: `lmm game show <id>`'s document - a game-list row plus
+			// the loader report. The embedded Game carries the DECLARATION
+			// under "loader"; what is actually on disk is the separate
+			// "loader_status".
+			"game_detail",
+			core.GameDetail{
+				GameListEntry: core.GameListEntry{
+					Game: domain.Game{
+						ID: "valheim", Name: "Valheim",
+						InstallPath: "/home/user/.steam/steam/steamapps/common/Valheim",
+						ModPath:     "/home/user/.steam/steam/steamapps/common/Valheim",
+						SourceIDs:   map[string]string{"nexusmods": "valheim"},
+						Loader:      &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
+					},
+					Default: true,
+				},
+				Loader: &core.LoaderStatus{
+					GameID:          "valheim",
+					Declared:        &domain.GameLoader{Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5"},
+					DetectedRuntime: domain.LoaderRuntimeMono, DetectedBootstrap: domain.LoaderBootstrapProton,
+					EffectiveRuntime: domain.LoaderRuntimeMono, EffectiveBootstrap: domain.LoaderBootstrapProton,
+					LaunchOption: core.BepInExLaunchOptionProton,
+					Installed:    true,
+					LoadedAt:     "2026-08-27T12:00:00Z",
+				},
+			},
+		},
+		{
+			// #359 unit 3: the loader report `lmm game show` prints and the
+			// web game page renders. It carries the declared AND the detected
+			// answer, so a disagreement is visible on the wire rather than
+			// resolved away.
+			"loader_status",
+			core.LoaderStatus{
+				GameID: "valheim",
+				Declared: &domain.GameLoader{
+					Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5",
+					Bootstrap: domain.LoaderBootstrapProton,
+				},
+				DetectedRuntime: domain.LoaderRuntimeMono, DetectedBootstrap: domain.LoaderBootstrapProton,
+				EffectiveRuntime: domain.LoaderRuntimeMono, EffectiveBootstrap: domain.LoaderBootstrapProton,
+				LaunchOption: core.BepInExLaunchOptionProton,
+				Installed:    true,
+				LoadedAt:     "2026-08-27T12:00:00Z",
+			},
+		},
+		{
+			// #359: the loader declaration as a frontend sends it - four
+			// unparsed strings, so a rejection can name the wire field.
+			"loader_spec",
+			core.LoaderSpec{Kind: "bepinex", Version: "5.4.23.5", Runtime: "mono", Bootstrap: "proton"},
+		},
+		{
+			// #359's plan-time precondition. The setup steps are DATA on the
+			// wire, which is what lets the web UI render the same sentences
+			// the terminal prints instead of carrying its own copy - so the
+			// golden records what newLoaderRequiredError actually produces,
+			// not a hand-built stand-in of the same shape (review F12).
+			"loader_required_error",
+			core.NewLoaderRequiredErrorForTest(
+				&domain.Game{ID: "lethal-company"}, "Skinwalkers", "game-root-relative"),
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))
