@@ -392,13 +392,25 @@ func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game
 		}
 	}
 
-	restorableMods := 0
+	// #386: the count and the list below it must describe the same set. The
+	// count is of mods lmm will actually restore; the list also prints every
+	// external item, which lmm leaves exactly as Steam has it - so the
+	// header says both numbers rather than heading five bullets with "3".
+	restorableMods, externalMods := 0, 0
 	for _, m := range plan.Mods {
-		if m.Error == "" && !m.External {
+		switch {
+		case m.Error != "":
+		case m.External:
+			externalMods++
+		default:
 			restorableMods++
 		}
 	}
-	fmt.Printf("Will restore %d mod(s) at their recorded versions:\n", restorableMods)
+	header := fmt.Sprintf("Will restore %d mod(s) at their recorded versions", restorableMods)
+	if externalMods > 0 {
+		header += fmt.Sprintf(", and leave %d Steam Workshop item(s) as Steam has them", externalMods)
+	}
+	fmt.Println(header + ":")
 	for _, m := range plan.Mods {
 		if m.Error != "" {
 			continue
@@ -437,6 +449,18 @@ func renderSnapshotRestoreResult(result *core.SnapshotRestoreResult) {
 	fmt.Printf("  Undeployed: %d\n", result.Purged)
 	fmt.Printf("  Originals put back: %d\n", result.OriginalsRestored)
 	fmt.Printf("  Installed: %d, replaced: %d, deployed: %d\n", result.Installed, result.Replaced, result.Deployed)
+
+	// #386: the restore keeps the download and the installed_mods row of a
+	// mod the snapshot's profile does not list - defensible, but it means
+	// `lmm list` counts one more mod than the restored profile has. Say so
+	// here, where the difference is created.
+	if len(result.LeftInstalled) > 0 {
+		names := make([]string, 0, len(result.LeftInstalled))
+		for _, m := range result.LeftInstalled {
+			names = append(names, snapshotModLabel(m.Name, m.SourceID, m.ModID))
+		}
+		fmt.Printf("  %d mod left installed but disabled: %s\n", len(names), strings.Join(names, ", "))
+	}
 
 	if len(result.OriginalsSkipped) > 0 {
 		fmt.Printf("\n%d original(s) could NOT be put back:\n", len(result.OriginalsSkipped))

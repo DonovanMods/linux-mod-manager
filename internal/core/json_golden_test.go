@@ -1861,6 +1861,14 @@ func TestJSONGoldens(t *testing.T) {
 					Reason: "the stored copy is missing",
 				}},
 				Disabled: 1, Enabled: 2, Installed: 3, Replaced: 1, Deployed: 7,
+				// #386: a mod the restored profile does not list. Its
+				// download and its row are kept, so it is neither a refusal
+				// nor a failure - it is the reason `lmm list` counts one
+				// more mod than the profile has.
+				LeftInstalled: []core.InstalledRef{{
+					SourceID: "nexusmods", ModID: "13", Name: "Stock Override",
+					Version: "2.0", Reason: "not listed in the restored profile; its download is kept",
+				}},
 				Refused: []core.InstalledRef{{
 					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
 					Version: "0.9", Reason: "no downloadable files",

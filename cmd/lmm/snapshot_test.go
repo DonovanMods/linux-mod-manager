@@ -311,3 +311,59 @@ func TestSnapshotRestorePartialError_UnwrapsToTheFailure(t *testing.T) {
 	require.ErrorIs(t, err, inner)
 	assert.Equal(t, "disk full", err.Error())
 }
+
+// --- #386: the restore's arithmetic and its orphaned rows ---
+
+// TestSnapshotRestore_DryRun_CountsAgreeWithTheListItHeads is #386's second
+// half: the header counted only restorable mods while the list below it also
+// printed every Steam Workshop item, so a preview read "Will restore 3
+// mod(s)" above five bullets. Three, then five.
+func TestSnapshotRestore_DryRun_CountsAgreeWithTheListItHeads(t *testing.T) {
+	svc, game := setupSnapshotTest(t)
+	ctx := context.Background()
+
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "111000111", SourceID: "steamworkshop", Name: "Workshop item 111000111", Version: "9876543210", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+		Deployed: true, External: true, ExternalPath: t.TempDir(),
+	}))
+	require.NoError(t, svc.NewProfileManager().UpsertMod(ctx, game.ID, "default",
+		domain.ModReference{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}))
+
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	snapshotRestoreDry = true
+	out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
+
+	assert.Contains(t, out, "Will restore 1 mod(s) at their recorded versions, and leave 1 Steam Workshop item(s) as Steam has them:",
+		"the header must account for every bullet below it")
+}
+
+// TestSnapshotRestore_LeavesAnOrphanedRow_SaysSo is #386's first half: a mod
+// installed AFTER the snapshot is correctly undeployed and dropped from the
+// profile, but its installed_mods row stays (enabled=0, deployed=0) - so
+// `lmm list` counts one more mod than the restored profile has, with no
+// marker and nothing said. The restore now names it where it happens.
+func TestSnapshotRestore_LeavesAnOrphanedRow_SaysSo(t *testing.T) {
+	svc, game := setupSnapshotTest(t)
+	ctx := context.Background()
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	// Installed after the snapshot: the restore undeploys it and rewrites
+	// the profile without it, leaving the row behind.
+	seedSnapshotMod(t, svc, game, "latecomer", "Latecomer", "Data/latecomer.esp")
+	_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	snapshotYes = true
+	out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
+
+	assert.Contains(t, out, "1 mod left installed but disabled: Latecomer",
+		"the count difference must be explained where it happens")
+
+	row, err := svc.GetInstalledMod(ctx, "src", "latecomer", game.ID, "default")
+	require.NoError(t, err, "the download and its row are deliberately kept")
+	assert.False(t, row.Enabled)
+}

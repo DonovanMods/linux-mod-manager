@@ -261,6 +261,15 @@ type SnapshotRestoreResult struct {
 	// the purge emptied the game directory.
 	Deployed int `json:"deployed"`
 
+	// LeftInstalled names every mod the restore disabled and undeployed
+	// because the snapshot's profile does not list it (#386). Their
+	// downloads and their installed_mods rows are deliberately KEPT - a
+	// restore is not an uninstall - which means `lmm list` counts them and
+	// the restored profile does not, so the difference is reported here
+	// rather than left for the user to notice. Not a refusal and not a
+	// failure: the restore did exactly what it should.
+	LeftInstalled []InstalledRef `json:"left_installed,omitempty"`
+
 	// Refused is one entry per mod the restore could not put back - a
 	// version the source can no longer serve, or an install that failed.
 	// Never a silent partial.
@@ -667,6 +676,16 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 		return result, partial(fmt.Errorf("planning the convergence back to %s: %w", plan.Snapshot, err))
 	}
 	if !applyPlan.NoChanges {
+		// #386: ToDisable is exactly "installed and enabled here, but the
+		// restored profile does not list it" - the rows the restore leaves
+		// behind. Recorded before the apply, which reports only a count.
+		for i := range applyPlan.ToDisable {
+			im := &applyPlan.ToDisable[i]
+			result.LeftInstalled = append(result.LeftInstalled, InstalledRef{
+				SourceID: im.SourceID, ModID: im.ID, Name: im.Name, Version: im.Version,
+				Reason: "not listed in the restored profile; its download is kept",
+			})
+		}
 		applyResult, err := s.applyProfileApply(ctx, game, applyPlan, ProfileApplyOptions{}, sink)
 		if applyResult != nil {
 			result.Disabled, result.Enabled = applyResult.Disabled, applyResult.Enabled

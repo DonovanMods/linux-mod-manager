@@ -957,6 +957,17 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **A restore's counts add up, and it says what it left behind (#386).**
+  `snapshot restore --dry-run` headed its list with "Will restore 3 mod(s)"
+  and then printed five bullets — the count excluded the Steam Workshop items
+  the list included. The header now names both ("…, and leave 2 Steam
+  Workshop item(s) as Steam has them"). And a mod installed _after_ the
+  snapshot is correctly undeployed and dropped from the profile, but its
+  download and its database row are deliberately kept — so `lmm list` counted
+  one more mod than the restored profile had, with nothing said. The restore
+  summary now names them ("1 mod left installed but disabled: …"), and
+  `--json` carries an additive `left_installed` array.
+
 - **Declining a prompt exits 2, whichever command asked (#382).** `lmm --help`
   documents exit code 2 as "cancelled by the user", but the same "no" exited
   2 from `purge` and `snapshot restore`, **1** from `import` (as
