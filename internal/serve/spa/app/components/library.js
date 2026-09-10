@@ -152,6 +152,21 @@ export function Library({
     return visible.filter((r) => selected.has(r.key));
   }
 
+  // The reason the two toggle buttons are refused, or nothing (P2 review
+  // Nit 8).
+  //
+  // selectedRows() filters against `visible`, so a filter or a search that
+  // hides every selected row leaves selected.size > 0 - the bar renders -
+  // while togglableSelectedRows() is empty. Naming Steam there states a
+  // reason the bar cannot know: the selection may hold no Steam row at all,
+  // and what is actually true is that nothing it could act on is in view.
+  // The button stays refused either way; only the sentence is withheld.
+  function steamRefusalTitle(action) {
+    if (togglableSelectedRows().length > 0) return undefined;
+    if (selectedRows().length === 0) return undefined;
+    return `Steam manages the selected items — lmm cannot ${action} them`;
+  }
+
   async function toggleEnabled(row) {
     setTogglingKey(row.key);
     try {
@@ -678,11 +693,7 @@ export function Library({
               class="button"
               data-action="batch-enable"
               disabled=${togglableSelectedRows().length === 0}
-              title=${
-                togglableSelectedRows().length === 0
-                  ? "Steam manages the selected items — lmm cannot enable them"
-                  : undefined
-              }
+              title=${steamRefusalTitle("enable")}
               onClick=${() => batchEnable("enable")}
             >
               Enable
@@ -692,11 +703,7 @@ export function Library({
               class="button"
               data-action="batch-disable"
               disabled=${togglableSelectedRows().length === 0}
-              title=${
-                togglableSelectedRows().length === 0
-                  ? "Steam manages the selected items — lmm cannot disable them"
-                  : undefined
-              }
+              title=${steamRefusalTitle("disable")}
               onClick=${() => batchEnable("disable")}
             >
               Disable

@@ -7543,3 +7543,50 @@ func TestE2E_TheLockedHintOmitsAVersionTheProfileRefDoesNotCarry(t *testing.T) {
 
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_TheBatchBarStatesNoReasonItCannotKnow is P2 review Nit 8, on top
+// of issue 379.
+//
+// selectedRows() filters against `visible`, so a filter that hides every
+// selected row leaves selected.size > 0 - the bar renders - while
+// togglableSelectedRows() is empty. Both toggle buttons then claimed "Steam
+// manages the selected items — lmm cannot enable them" for a selection that
+// may hold no Steam row at all. The refusal is right; the reason is not
+// something the bar can know in that state, so it says nothing instead.
+func TestE2E_TheBatchBarStatesNoReasonItCannotKnow(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var enableTitle, disableTitle string
+	var enableDisabled bool
+	var visibleRows int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input")
+				.forEach((cb) => cb.click());
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		// The omnibar's live filter, narrowed to something no installed mod
+		// matches: every selected row is now hidden, and none of them is a
+		// Steam Workshop item.
+		chromedp.SendKeys(`.omnibar`, "zzzznotamod", chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 0`),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelectorAll(".mod-row").length`, &visibleRows),
+		chromedp.Evaluate(`document.querySelector('[data-action="batch-enable"]').title`, &enableTitle),
+		chromedp.Evaluate(`document.querySelector('[data-action="batch-enable"]').disabled`, &enableDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-action="batch-disable"]').title`, &disableTitle),
+	)
+
+	require.Equal(t, 0, visibleRows, "the filter must really have hidden every row")
+	assert.True(t, enableDisabled,
+		"a batch with nothing in view still has nothing to act on")
+	assert.NotContains(t, enableTitle, "Steam",
+		"nothing in the selection is a Steam item, so Steam cannot be the stated reason")
+	assert.NotContains(t, disableTitle, "Steam")
+	assert.Empty(t, enableTitle, "with no reason it can know, it offers none")
+	assert.Empty(t, disableTitle)
+
+	assert.Empty(t, f.BrowserErrors())
+}
