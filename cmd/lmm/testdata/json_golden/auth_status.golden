@@ -7,6 +7,7 @@
       "via": "stored",
       "env_var": "NEXUSMODS_API_KEY",
       "key_fingerprint": "f17d546f",
+      "instructions": "To authenticate with NexusMods:\n1. Visit https://www.nexusmods.com/users/myaccount?tab=api\n2. Click \"Request an API Key\" if you don't have one\n3. Copy your Personal API Key\n",
       "created_at": "<TIME>",
       "updated_at": "<TIME>"
     }

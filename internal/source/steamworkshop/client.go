@@ -130,6 +130,15 @@ func (c *client) keyed(key string) *httpclient.Client {
 	return newAPIClient(c.doer, c.baseURL, key)
 }
 
+// keyless returns a client that sends NO key, whatever this source was
+// registered with. GetCollectionDetails is the caller: it needs no
+// credential, and a key identifies the Steam account behind it, so sending
+// one on a call that ignores it would tell Valve who is asking for no
+// reason at all.
+func (c *client) keyless() *httpclient.Client {
+	return newAPIClient(c.doer, c.baseURL, "")
+}
+
 // mapSteamError translates the one non-2xx status Valve uses to mean
 // "your key is missing or wrong". The Web API answers 403 (not 401) with
 // "Please verify your key= parameter", live-verified by the #268 spike, so

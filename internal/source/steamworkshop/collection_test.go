@@ -23,6 +23,19 @@ func TestResolveCollection_KeylessAndReturnsChildrenInOrder(t *testing.T) {
 	assert.Empty(t, fx.requests[0].Get("key"), "GetCollectionDetails is keyless")
 }
 
+// TestResolveCollection_SendsNoKeyEvenWhenOneIsRegistered pins the reason
+// keyless() exists: the endpoint ignores a key, and a Steam Web API key
+// names the account behind the request, so lmm sends none.
+func TestResolveCollection_SendsNoKeyEvenWhenOneIsRegistered(t *testing.T) {
+	fx := serveRoutes(t, reply{file: "getcollectiondetails_ok.json"})
+	src := newTestSource(t, fx.srv.URL, t.TempDir(), nil)
+	src.SetAPIKey("registered")
+
+	_, err := src.ResolveCollection(context.Background(), "2500900001")
+	require.NoError(t, err)
+	assert.Empty(t, fx.requests[0].Get("key"))
+}
+
 func TestResolveCollection_AcceptsEveryShapeAUserCanPaste(t *testing.T) {
 	for name, ref := range map[string]string{
 		"bare id":         "2500900001",

@@ -68,7 +68,9 @@ func (s *Source) ResolveCollection(ctx context.Context, ref string) (source.Coll
 	form.Set("publishedfileids[0]", id)
 
 	var resp collectionResponse
-	if err := s.client.http.DoForm(ctx, collectionDetailsPath, form, &resp); err != nil {
+	// keyless(), not the registered client: this endpoint needs no
+	// credential, and a Steam Web API key names the account behind it.
+	if err := s.client.keyless().DoForm(ctx, collectionDetailsPath, form, &resp); err != nil {
 		return source.Collection{}, fmt.Errorf("source %q: resolving collection %s: %w", sourceID, id, err)
 	}
 	// A collection Valve will not describe is the REFERENCE being wrong from
