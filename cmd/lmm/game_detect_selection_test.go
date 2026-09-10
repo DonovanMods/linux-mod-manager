@@ -466,8 +466,10 @@ func TestDoGameDetect_ExistingGamesLoadFailureReportedAsLoadingGames(t *testing.
 
 // TestDoGameDetect_IncludeUnknown_ListsUnknownSection pins the console
 // half: unknown candidates get their own section, keyed by Steam app id
-// (the value `game add --from-detected` takes), and they are NOT numbered
-// into the selectable list - "all" still adds only the known ones.
+// (the value `game add --from-detected` takes). Since #368 they ARE
+// numbered, continuously after the curated rows - but "all" still adds only
+// the rows detection can configure, and a plain uncurated candidate is not
+// one of them.
 func TestDoGameDetect_IncludeUnknown_ListsUnknownSection(t *testing.T) {
 	configDir = t.TempDir()
 	oldIncludeUnknown := gameDetectIncludeUnknown
@@ -488,8 +490,9 @@ func TestDoGameDetect_IncludeUnknown_ListsUnknownSection(t *testing.T) {
 	require.NoError(t, err)
 
 	out := buf.String()
-	assert.Contains(t, out, "Found 1 moddable game(s):")
+	assert.Contains(t, out, "Found 2 moddable game(s):")
 	assert.Contains(t, out, "  1. Star Rupture (starrupture)")
+	assert.Contains(t, out, "  2. Satisfactory (satisfactory)")
 	assert.Contains(t, out, "Installed but not in the known-games list")
 	assert.Contains(t, out, "game add --from-detected")
 	assert.Contains(t, lineContaining(out, "Satisfactory"), "526870")
@@ -591,11 +594,11 @@ func TestDoGameDetect_ConsoleNumberingMatchesListingIndex(t *testing.T) {
 }
 
 // TestDoGameDetect_PromptRangeMatchesKnownCount pins Minor 6 of the unit9
-// review: the prompt's range must track the number of SELECTABLE (known)
-// rows, not a fixed "[1,2/all/none]" that advertised an index that did not
-// exist whenever the count was not exactly 2 - most confusingly right below
-// --include-unknown's own unnumbered section, where typing the app id the
-// section just printed was rejected as an invalid selection.
+// review: the prompt's range must track the number of LISTED rows, not a
+// fixed "[1,2/all/none]" that advertised an index that did not exist
+// whenever the count was not exactly 2. #368 added the second half of the
+// same complaint to the prompt itself - an app id is accepted too, so the
+// prompt says so.
 func TestDoGameDetect_PromptRangeMatchesKnownCount(t *testing.T) {
 	configDir = t.TempDir()
 	oldAll, oldSelect := gameDetectAll, gameDetectSelect
@@ -613,5 +616,5 @@ func TestDoGameDetect_PromptRangeMatchesKnownCount(t *testing.T) {
 
 	err := doGameDetect(context.Background(), cmd, bufio.NewReader(strings.NewReader("none\n")), svc, games, nil)
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "Add games to config? [1-1/all/none]: ")
+	assert.Contains(t, buf.String(), "Add games to config? [1-1/app id/all/none]: ")
 }

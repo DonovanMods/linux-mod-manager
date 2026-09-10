@@ -844,6 +844,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--include-unknown` / `?all=1` still adds everything else. A
   `--no-workshop` scan lists exactly what it always did.
 
+- **`lmm game detect`'s prompt accepts every row it prints (#368).** The
+  uncurated rows were listed unnumbered with a hint to copy their Steam app
+  id, and then the prompt read `[1-2/all/none]` and rejected that app id:
+  `invalid selection: "2383970"`. Every listed row is now numbered
+  continuously — curated first, then uncurated — and the prompt (and
+  `--select`) takes **either** a row number **or** a Steam app id, since
+  the number shifts when `--include-unknown` widens the list and the app id
+  never does. Picking an uncurated row runs the same prefill `lmm game add
+--from-detected <app-id>` runs, source map included; a row detection
+  found no source for is refused by name with that command spelled out,
+  rather than writing an unusable `games.yaml` entry. Every row with
+  Workshop items prints `Steam Workshop: N items`, and the invalid-selection
+  error now names what is accepted. `--json` is unchanged.
+
 - **The web UI no longer re-runs a full verify on every hydrate (#336).**
   Mission Control hydrates on each route change, job completion and profile
   switch, and every one of those ran the full verify tier — a source round

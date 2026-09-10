@@ -68,39 +68,45 @@ Examples:
 var gameDetectCmd = &cobra.Command{
 	Use:   "detect",
 	Short: "Detect Steam games and add them to config",
-	Long: `Scan Steam libraries for known moddable games and optionally add them to games.yaml.
+	Long: `Scan Steam libraries for moddable games and optionally add them to games.yaml.
 
-Prompts for which games to add (e.g. 1,2 or all or none). A game already
-configured (present in games.yaml) is marked "[configured]" and is
-excluded from the default "all" selection, since it needs no re-offering
-- but it stays listed, and you can still name its number explicitly to
-re-add/repair it (this replays the same games.yaml + default-profile
-overwrite 'lmm game add' always performs, so a repair also resets the
-default profile's mod list). Each added game gets a NexusMods source
-mapping, the symlink link method, and an empty default profile; edit
-games.yaml afterwards for anything more specific, including the
+Prompts for which games to add (e.g. 1,2 or all or none). Every listed
+row is numbered, curated games first, and the prompt takes either a row
+number or a game's Steam app id - the app id does not shift when the
+listing widens. A game already configured (present in games.yaml) is
+marked "[configured]" and is excluded from the default "all" selection,
+since it needs no re-offering - but it stays listed, and you can still
+name it explicitly to re-add/repair it (this replays the same games.yaml
++ default-profile overwrite 'lmm game add' always performs, so a repair
+also resets the default profile's mod list). Each added game gets a
+source mapping, the symlink link method, and an empty default profile;
+edit games.yaml afterwards for anything more specific, including the
 NexusMods slug if none was detected.
 
 Use --all or --select to decide non-interactively (required under
 --json, which never reads stdin): --all selects every not-yet-configured
 game, the same set the interactive "all" answer selects; --select takes
-the same 1-based indices the prompt accepts (e.g. "1,2"), including
-already-configured games' numbers for a repair.
+the same values the prompt accepts (e.g. "1,2" or "1,1133870"),
+including already-configured games for a repair.
 
 A game whose Steam Workshop manifest shows items already downloaded is
 mapped to the 'steamworkshop' source automatically, so 'lmm import
---workshop' can track them; --no-workshop suppresses that.
+--workshop' can track them; --no-workshop suppresses that. Such a game is
+LISTED even when lmm has no curated entry for it - the downloaded items
+are what say it is moddable - with its item count beside it, and
+selecting it configures it straight from the detection, exactly as 'lmm
+game add --from-detected <app-id>' would.
 
---include-unknown also lists every OTHER installed Steam game, in its own
-section (#206). Those are not numbered and cannot be selected here -
-nothing tells lmm where they keep their mods - so each is listed with its
-Steam app id for 'lmm game add --from-detected' with that app id, which
-prefills the name, install path, game id and a default mod path and asks
-only for the source. Under --json, --include-unknown with neither --all nor
---select emits the detect LISTING document (every candidate, known and
-unknown) instead of prompting: search first, add second. A plain --json
-scan (no --include-unknown) never carries those rows at all, known or not
-- pass the flag to see them, exactly as on a terminal.
+--include-unknown also lists every OTHER installed Steam game, in the same
+uncurated section (#206). Nothing tells lmm where those keep their mods,
+so selecting one is refused with a pointer to 'lmm game add
+--from-detected <app-id>', which prefills the name, install path, game id
+and a default mod path and asks only for the source. Under --json,
+--include-unknown with neither --all nor --select emits the detect LISTING
+document (every candidate, known and unknown) instead of prompting: search
+first, add second. A plain --json scan (no --include-unknown) carries the
+listing's default rows only - pass the flag to see the rest, exactly as on
+a terminal.
 
 If a plain scan finds no known games but this machine has OTHER installed
 Steam games lmm has no known-games entry for, it says so and names
@@ -134,7 +140,7 @@ func init() {
 	gameCmd.AddCommand(gameDetectCmd)
 
 	gameDetectCmd.Flags().BoolVar(&gameDetectAll, "all", false, "select every not-yet-configured detected game without prompting")
-	gameDetectCmd.Flags().StringVar(&gameDetectSelect, "select", "", "comma-separated 1-based indices to add/repair without prompting (see the printed listing)")
+	gameDetectCmd.Flags().StringVar(&gameDetectSelect, "select", "", "comma-separated row numbers or Steam app ids to add/repair without prompting (see the printed listing)")
 	gameDetectCmd.Flags().BoolVar(&gameDetectNoWorkshop, "no-workshop", false,
 		"do not map games with subscribed Steam Workshop items to the steamworkshop source")
 	gameDetectCmd.Flags().BoolVar(&gameDetectIncludeUnknown, "include-unknown", false,
@@ -333,12 +339,12 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return nil
 	}
 
-	// Only the known rows are selectable: ApplyGameDetect configures a game
-	// from its known-games entry, and an unknown candidate has none (#206).
-	// Splitting here - rather than filtering in the scan - is what lets the
-	// unknown ones still be LISTED, with the one thing that makes them
-	// actionable: their Steam app id.
-	known, unknown := splitDetectedGames(games)
+	// The rows this listing shows, curated first: every known-games match,
+	// then the uncurated candidates the listing rule keeps (#368 - a game
+	// with Steam Workshop items already downloaded, or everything left
+	// under --include-unknown). `hidden` is what neither half kept, which
+	// is what the "nothing here is selectable" message counts.
+	listed, curatedCount, hidden := gameDetectRows(games, gameDetectIncludeUnknown)
 
 	existingGames, err := service.LoadGamesFromDisk()
 	if err != nil {
@@ -349,36 +355,20 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	// prompt (Ruling 2 decides the selection from --all/--select or fails)
 	// and no console text may sit beside the document.
 	if !jsonOutput {
-		if len(known) > 0 {
-			cmd.Printf("Found %d moddable game(s):\n", len(known))
-			for i, g := range known {
-				marker := ""
-				if _, ok := existingGames[g.Slug]; ok {
-					marker = " " + colorGreen("[configured]")
-				}
-				cmd.Printf("  %d. %s (%s)%s\n", i+1, g.Name, g.Slug, marker)
-				cmd.Printf("      Path: %s\n", g.InstallPath)
-			}
-		}
-		// The unknown section only renders under --include-unknown (#206):
-		// the scan itself now always finds these rows (runGameDetect), but a
-		// plain scan's baseline behavior - list known games only, say
-		// nothing about the rest - must stay exactly what it always was.
-		if gameDetectIncludeUnknown {
-			if len(known) > 0 && len(unknown) > 0 {
-				cmd.Println()
-			}
-			printUnknownDetectedGames(cmd, unknown)
-		}
+		printDetectedGames(cmd, listed, curatedCount, existingGames)
 	}
 
-	if len(known) == 0 {
+	// A row nothing can configure without asking more of the user is
+	// listed, never selected: `lmm game add --from-detected` is the flow
+	// that collects a source (#368).
+	if !anyAddable(listed) {
 		// Nothing here is selectable, so there is no prompt to print and
 		// no answer to read - the unknown section above already said what
 		// to do next (when --include-unknown asked for it).
+		unselectable := countUnaddable(games)
 		if jsonOutput {
 			result := &core.GameDetectResult{Warnings: detectWarnings}
-			if msg := unknownOnlyDetectMessage(len(unknown)); msg != "" {
+			if msg := unknownOnlyDetectMessage(unselectable); msg != "" {
 				// #206 review Minor 11: --all/--select under --json with
 				// only uncurated games installed used to report an empty
 				// success ({"saved":[],"profiles":[],"warnings":[]}) - the
@@ -388,19 +378,19 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 			}
 			return emitJSON(result)
 		}
-		if !gameDetectIncludeUnknown && len(unknown) > 0 {
+		if !gameDetectIncludeUnknown && len(hidden) > 0 {
 			// #206 Important 3: the game is right there, just not curated -
 			// "No moddable Steam games found" would be a dead end for
 			// exactly the user this feature exists for. Only for the
 			// !gameDetectIncludeUnknown case: with the flag already on, the
 			// unknown section above already said everything there is to
 			// say, so repeating it here would be redundant.
-			cmd.Println(unknownOnlyDetectMessage(len(unknown)))
+			cmd.Println(unknownOnlyDetectMessage(unselectable))
 			return nil
 		}
 		return nil
 	}
-	games = known
+	games = listed
 	line, err := gameDetectAnswer(cmd, reader, len(games))
 	if err != nil {
 		return err
@@ -427,14 +417,14 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		selected[i] = games[n-1]
 	}
 
-	result, applyErr := service.ApplyGameDetect(ctx, selected)
-	// ApplyGameDetect converts and persists one game at a time, stopping at
-	// the first failing game (conversion or persistence); result.Profiles
-	// holds exactly the games that fully completed (games.yaml write +
-	// default profile), one-for-one with selected's leading entries in the
-	// same order - so this prints "Added:" for precisely the games
-	// doGameDetect's old interleaved loop would have printed before hitting
-	// the same error.
+	applied, result, applyErr := applyDetectSelection(ctx, service, selected)
+	// The curated half goes through ApplyGameDetect, which converts and
+	// persists one game at a time and stops at the first failing game
+	// (conversion or persistence); result.Profiles holds exactly the games
+	// that fully completed (games.yaml write + default profile),
+	// one-for-one with `applied`'s leading entries in the same order - so
+	// this prints "Added:" for precisely the games doGameDetect's old
+	// interleaved loop would have printed before hitting the same error.
 	//
 	// The scan's warnings lead: they happened before anything this result
 	// reports. Merged in on both the success and the partial-failure path,
@@ -447,9 +437,50 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return emitJSON(result)
 	}
 	for i := range result.Profiles {
-		cmd.Printf("Added: %s (%s)\n", selected[i].Name, selected[i].Slug)
+		cmd.Printf("Added: %s (%s)\n", applied[i].Name, applied[i].Slug)
 	}
 	return applyErr
+}
+
+// applyDetectSelection persists one detect selection, which since #368 can
+// hold two kinds of row.
+//
+//   - A CURATED row is configured from its known-games entry, in one gated
+//     ApplyGameDetect call over the whole curated subset - the batch
+//     semantics (one mutation slot for the lot, stop at the first failure)
+//     that call has always had.
+//   - An UNCURATED row - listed because detection prefilled a source map
+//     for it, today #269's `steamworkshop: <appid>` - has no curated entry
+//     to configure from, so it takes exactly the path `lmm game add
+//     --from-detected <app-id>` takes: core.GameSpecFromDetected, then
+//     AddGame. The CLI derives no slug, mod path or source map of its own.
+//
+// It returns the rows it attempted, in the order their outcomes land in
+// result (curated first, then uncurated - not the order they were typed),
+// so the caller can name each added game beside its result row.
+func applyDetectSelection(ctx context.Context, service *core.Service, selected []domain.DetectedGame) ([]domain.DetectedGame, *core.GameDetectResult, error) {
+	curated, uncurated := splitDetectedGames(selected)
+	applied := append(append([]domain.DetectedGame(nil), curated...), uncurated...)
+
+	result := &core.GameDetectResult{}
+	if len(curated) > 0 {
+		var err error
+		result, err = service.ApplyGameDetect(ctx, curated)
+		if err != nil {
+			return applied, result, err
+		}
+	}
+	for _, g := range uncurated {
+		entry, err := service.AddGame(ctx, core.GameSpecFromDetected(g, core.GameSpec{}))
+		if err != nil {
+			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
+		}
+		// AddGame creates the same "default" profile ApplyGameDetect does,
+		// so the two halves report identically.
+		result.Saved = append(result.Saved, entry.ID)
+		result.Profiles = append(result.Profiles, entry.ID+"/default")
+	}
+	return applied, result, nil
 }
 
 // gameDetectAnswer resolves the selection line gameDetectSelectionIndices
@@ -473,15 +504,15 @@ func gameDetectAnswer(cmd *cobra.Command, reader *bufio.Reader, count int) (stri
 		return gameDetectSelect, nil
 	default:
 		if !jsonOutput {
-			cmd.Printf("Add games to config? [1-%d/all/none]: ", count)
+			cmd.Printf("Add games to config? [1-%d/app id/all/none]: ", count)
 		}
 		return readPromptLineFrom(reader)
 	}
 }
 
-// splitDetectedGames separates a scan into the rows a detect selection can
-// name (the known-games matches) and the rest (#206). Order is preserved
-// within each half, so the printed numbering is exactly the numbering
+// splitDetectedGames separates a scan into the curated rows (the
+// known-games matches) and the rest (#206). Order is preserved within each
+// half, so the printed numbering is exactly the numbering
 // core.GameDetectListing assigns.
 func splitDetectedGames(games []domain.DetectedGame) (known, unknown []domain.DetectedGame) {
 	for _, g := range games {
@@ -494,19 +525,110 @@ func splitDetectedGames(games []domain.DetectedGame) (known, unknown []domain.De
 	return known, unknown
 }
 
-// printUnknownDetectedGames renders the "installed, but lmm has no curated
-// entry for it" section. It is deliberately keyed by Steam app id rather
-// than by a number: the app id is what `lmm game add --from-detected`
-// takes, and it does not shift when the scan finds one more game.
-func printUnknownDetectedGames(cmd *cobra.Command, unknown []domain.DetectedGame) {
-	if len(unknown) == 0 {
+// gameDetectRows orders a scan into the rows the CLI lists and numbers
+// (#368): every curated row first, then the uncurated ones the listing
+// keeps - domain.DetectedGame.Listable by default, everything under
+// --include-unknown. curatedCount is where the second section starts, and
+// hidden is what neither half kept.
+//
+// Curated first, then continuous numbering over the whole thing, is what
+// makes the printed list and the prompt agree: before #368 the uncurated
+// rows were printed unnumbered and the prompt rejected the only handle
+// they had (their Steam app id), so a listed row could not be chosen at
+// all. Numbers therefore shift when --include-unknown widens the list,
+// which is exactly why the prompt also takes an app id: that never shifts.
+func gameDetectRows(games []domain.DetectedGame, includeUnknown bool) (listed []domain.DetectedGame, curatedCount int, hidden []domain.DetectedGame) {
+	known, unknown := splitDetectedGames(games)
+	listed = append(listed, known...)
+	for _, g := range unknown {
+		if includeUnknown || g.Listable() {
+			listed = append(listed, g)
+			continue
+		}
+		hidden = append(hidden, g)
+	}
+	return listed, len(known), hidden
+}
+
+// anyAddable reports whether any listed row can actually be configured
+// from the prompt - i.e. whether there is a prompt to print at all.
+func anyAddable(listed []domain.DetectedGame) bool {
+	for _, g := range listed {
+		if g.Addable() {
+			return true
+		}
+	}
+	return false
+}
+
+// countUnaddable counts the scan's rows a detect selection cannot
+// configure, which is what unknownOnlyDetectMessage reports on. A
+// Workshop-bearing row is NOT one of them since #368 - detection prefilled
+// its source - so it is not counted as something the user still has to go
+// elsewhere for.
+func countUnaddable(games []domain.DetectedGame) int {
+	n := 0
+	for _, g := range games {
+		if !g.Addable() {
+			n++
+		}
+	}
+	return n
+}
+
+// printDetectedGames renders the numbered listing the prompt reads against:
+// the curated rows, then (separated by a blank line and its own header) the
+// uncurated ones, numbered continuously through both. curatedCount is where
+// the second section begins.
+//
+// The uncurated header still names `lmm game add --from-detected <app-id>`:
+// that flow is the only way to configure a row detection found no source
+// for, and it is also what a user wants when the mod path or source needs
+// correcting.
+func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curatedCount int, existingGames map[string]*domain.Game) {
+	if len(listed) == 0 {
 		return
 	}
-	cmd.Printf("Installed but not in the known-games list - add with `lmm game add --from-detected <app-id>`:\n")
-	for _, g := range unknown {
-		cmd.Printf("  %s  %s (%s)\n", g.SteamAppID, g.Name, g.Slug)
-		cmd.Printf("      Path: %s\n", g.InstallPath)
+	cmd.Printf("Found %d moddable game(s):\n", len(listed))
+	for i, g := range listed {
+		if i == curatedCount {
+			if i > 0 {
+				cmd.Println()
+			}
+			cmd.Printf("Installed but not in the known-games list - pick one by number or app id here, or add it with `lmm game add --from-detected <app-id>`:\n")
+		}
+		printDetectedGameRow(cmd, i+1, g, existingGames, i >= curatedCount)
 	}
+}
+
+// printDetectedGameRow renders one listed row. showAppID is set for the
+// uncurated section, where the app id is the handle that does not shift
+// when the scan finds one more game - and the one `lmm game add
+// --from-detected` takes.
+func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, existingGames map[string]*domain.Game, showAppID bool) {
+	marker := ""
+	if _, ok := existingGames[g.Slug]; ok {
+		marker = " " + colorGreen("[configured]")
+	}
+	appID := ""
+	if showAppID && g.SteamAppID != "" {
+		appID = "  app id " + g.SteamAppID
+	}
+	cmd.Printf("  %d. %s (%s)%s%s\n", n, g.Name, g.Slug, appID, marker)
+	cmd.Printf("      Path: %s\n", g.InstallPath)
+	if g.WorkshopItems > 0 {
+		cmd.Printf("      Steam Workshop: %d %s\n", g.WorkshopItems, pluralItems(g.WorkshopItems))
+	}
+}
+
+// pluralItems is the one-word plural the Workshop count line needs; "1
+// items" in the listing a user reads before choosing is exactly the kind of
+// sloppiness that makes a count look fabricated.
+func pluralItems(n int) string {
+	if n == 1 {
+		return "item"
+	}
+	return "items"
 }
 
 // unknownOnlyDetectMessage names what to do when a detect scan found
@@ -530,19 +652,40 @@ func unknownOnlyDetectMessage(unknownCount int) string {
 }
 
 // gameDetectSelectionIndices parses the detect prompt's answer into the
-// 1-based indices into games to add/repair.
+// 1-based indices into games to add/repair. games is the LISTED set, in
+// printed order (gameDetectRows): curated rows first, then the uncurated
+// ones the listing kept.
 //
-// "all"/"a" defaults to every NOT-yet-configured game (#205 item 2): a game
-// already in games.yaml doesn't need re-offering by default, since silently
-// re-selecting it would replay doGameDetect's unconditional games.yaml +
-// default-profile overwrite against a game the user already set up -
-// possibly wiping its default profile's installed-mod list for no reason
-// the user asked for. An explicit numeric selection (e.g. "2,5") is NOT
-// filtered: naming an already-configured game's number is how a user
-// deliberately repairs/re-adds it, mirroring the same overwrite 'lmm game
-// add' has always performed unconditionally (it has no existing-ID guard
-// either) - #205 asks only for visibility into what's already configured,
-// not a merge-preserving repair.
+// Each comma-separated part is a row NUMBER or a Steam APP ID (#368). Both
+// spellings are offered because neither is sufficient alone: the number is
+// what the listing prints beside the row and what --select has always
+// taken, but it shifts when --include-unknown widens the list, while the
+// app id is stable and is the value the uncurated section prints and `lmm
+// game add --from-detected` takes. A number that IS a valid row number
+// wins over an app id that happens to have the same digits - real Steam
+// app ids start well above any plausible row count, and the row is
+// reachable by its app id either way.
+//
+// A row nothing can configure - uncurated, and detection found no source
+// for it - is refused by name, pointing at the flow that asks for the
+// source, rather than writing an unusable games.yaml entry.
+//
+// "all"/"a" defaults to every NOT-yet-configured, addable game (#205 item
+// 2): a game already in games.yaml doesn't need re-offering by default,
+// since silently re-selecting it would replay doGameDetect's unconditional
+// games.yaml + default-profile overwrite against a game the user already
+// set up - possibly wiping its default profile's installed-mod list for no
+// reason the user asked for. An explicit selection (e.g. "2,5") is NOT
+// filtered: naming an already-configured game is how a user deliberately
+// repairs/re-adds it, mirroring the same overwrite 'lmm game add' has
+// always performed unconditionally (it has no existing-ID guard either) -
+// #205 asks only for visibility into what's already configured, not a
+// merge-preserving repair.
+//
+// A duplicate is refused: with two spellings for one row it is easy to
+// name the same game twice by accident, and the second add would fail on
+// ErrGameExists after the first had already been written. core's own
+// SelectDetectedGames refuses one for the same reason.
 func gameDetectSelectionIndices(line string, games []domain.DetectedGame, existingGames map[string]*domain.Game) ([]int, error) {
 	line = strings.TrimSpace(strings.ToLower(line))
 	if line == "" || line == "n" || line == "none" {
@@ -554,17 +697,48 @@ func gameDetectSelectionIndices(line string, games []domain.DetectedGame, existi
 			if _, ok := existingGames[g.Slug]; ok {
 				continue
 			}
+			if !g.Addable() {
+				continue
+			}
 			indices = append(indices, i+1)
 		}
 		return indices, nil
 	}
+	seen := make(map[int]bool, len(games))
 	for _, part := range strings.Split(line, ",") {
 		part = strings.TrimSpace(part)
-		n, err := strconv.Atoi(part)
-		if err != nil || n < 1 || n > len(games) {
-			return nil, fmt.Errorf("invalid selection: %q (use numbers 1-%d, all, or none)", part, len(games))
+		n, err := gameDetectSelector(part, games)
+		if err != nil {
+			return nil, err
 		}
+		if seen[n] {
+			return nil, fmt.Errorf("duplicate selection: %q (row %d is already selected)", part, n)
+		}
+		seen[n] = true
 		indices = append(indices, n)
 	}
 	return indices, nil
+}
+
+// gameDetectSelector resolves one part of a selection line to a 1-based row
+// number, or says what would have been accepted.
+func gameDetectSelector(part string, games []domain.DetectedGame) (int, error) {
+	n, numErr := strconv.Atoi(part)
+	if numErr != nil || n < 1 || n > len(games) {
+		n = 0
+		for i, g := range games {
+			if g.SteamAppID != "" && g.SteamAppID == part {
+				n = i + 1
+				break
+			}
+		}
+	}
+	if n == 0 {
+		return 0, fmt.Errorf("invalid selection: %q (use a row number 1-%d, a Steam app id, all, or none)", part, len(games))
+	}
+	if g := games[n-1]; !g.Addable() {
+		return 0, fmt.Errorf("invalid selection: %q - %s (Steam app id %s) is not in the known-games list and detection found no mod source for it; add it with `lmm game add --from-detected %s`, which asks for the source",
+			part, g.Name, g.SteamAppID, g.SteamAppID)
+	}
+	return n, nil
 }

@@ -10,43 +10,49 @@ lmm-game-detect - Detect Steam games and add them to config
 
 
 .SH DESCRIPTION
-Scan Steam libraries for known moddable games and optionally add them to games.yaml.
+Scan Steam libraries for moddable games and optionally add them to games.yaml.
 
 .PP
-Prompts for which games to add (e.g. 1,2 or all or none). A game already
-configured (present in games.yaml) is marked "[configured]" and is
-excluded from the default "all" selection, since it needs no re-offering
-- but it stays listed, and you can still name its number explicitly to
-re-add/repair it (this replays the same games.yaml + default-profile
-overwrite 'lmm game add' always performs, so a repair also resets the
-default profile's mod list). Each added game gets a NexusMods source
-mapping, the symlink link method, and an empty default profile; edit
-games.yaml afterwards for anything more specific, including the
+Prompts for which games to add (e.g. 1,2 or all or none). Every listed
+row is numbered, curated games first, and the prompt takes either a row
+number or a game's Steam app id - the app id does not shift when the
+listing widens. A game already configured (present in games.yaml) is
+marked "[configured]" and is excluded from the default "all" selection,
+since it needs no re-offering - but it stays listed, and you can still
+name it explicitly to re-add/repair it (this replays the same games.yaml
++ default-profile overwrite 'lmm game add' always performs, so a repair
+also resets the default profile's mod list). Each added game gets a
+source mapping, the symlink link method, and an empty default profile;
+edit games.yaml afterwards for anything more specific, including the
 NexusMods slug if none was detected.
 
 .PP
 Use --all or --select to decide non-interactively (required under
 --json, which never reads stdin): --all selects every not-yet-configured
 game, the same set the interactive "all" answer selects; --select takes
-the same 1-based indices the prompt accepts (e.g. "1,2"), including
-already-configured games' numbers for a repair.
+the same values the prompt accepts (e.g. "1,2" or "1,1133870"),
+including already-configured games for a repair.
 
 .PP
 A game whose Steam Workshop manifest shows items already downloaded is
 mapped to the 'steamworkshop' source automatically, so 'lmm import
---workshop' can track them; --no-workshop suppresses that.
+--workshop' can track them; --no-workshop suppresses that. Such a game is
+LISTED even when lmm has no curated entry for it - the downloaded items
+are what say it is moddable - with its item count beside it, and
+selecting it configures it straight from the detection, exactly as 'lmm
+game add --from-detected \&' would.
 
 .PP
---include-unknown also lists every OTHER installed Steam game, in its own
-section (#206). Those are not numbered and cannot be selected here -
-nothing tells lmm where they keep their mods - so each is listed with its
-Steam app id for 'lmm game add --from-detected' with that app id, which
-prefills the name, install path, game id and a default mod path and asks
-only for the source. Under --json, --include-unknown with neither --all nor
---select emits the detect LISTING document (every candidate, known and
-unknown) instead of prompting: search first, add second. A plain --json
-scan (no --include-unknown) never carries those rows at all, known or not
-- pass the flag to see them, exactly as on a terminal.
+--include-unknown also lists every OTHER installed Steam game, in the same
+uncurated section (#206). Nothing tells lmm where those keep their mods,
+so selecting one is refused with a pointer to 'lmm game add
+--from-detected \&', which prefills the name, install path, game id
+and a default mod path and asks only for the source. Under --json,
+--include-unknown with neither --all nor --select emits the detect LISTING
+document (every candidate, known and unknown) instead of prompting: search
+first, add second. A plain --json scan (no --include-unknown) carries the
+listing's default rows only - pass the flag to see the rest, exactly as on
+a terminal.
 
 .PP
 If a plain scan finds no known games but this machine has OTHER installed
@@ -84,7 +90,7 @@ Examples:
 
 .PP
 \fB--select\fP=""
-	comma-separated 1-based indices to add/repair without prompting (see the printed listing)
+	comma-separated row numbers or Steam app ids to add/repair without prompting (see the printed listing)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS
