@@ -5199,6 +5199,29 @@ func TestE2E_LockedUpdateIsReportedAsASkipNotAsDone(t *testing.T) {
 		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
 		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.card--updates .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+		// issue 344: the terminal STATE and the terminal LABEL do not arrive
+		// together. jobprogress.js renders the outcome the instant the job
+		// summary says "succeeded", while the tally behind "1 applied / 1
+		// skipped" is a SECOND read (jobresult.js -> GET
+		// /api/v1/jobs/{id}), so the control carries a bare "Done" for the
+		// frames in between. Reading the text straight after the state wait
+		// therefore sampled whichever label happened to be there, which is
+		// what made this test fail once in a full -race suite run.
+		//
+		// The label is waited out rather than the render deferred: holding
+		// the terminal render until the tally settles was tried, and it
+		// loses the outcome entirely on any control whose CONTAINER
+		// unmounts on completion (Mission Control's profile attention card
+		// disappears the moment the profile is applied). Carrying the tally
+		// on the job SUMMARY - so the first terminal render already has it -
+		// is the regression-free fix, and is filed as #364 (post-v2.0).
+		chromedp.Poll(
+			`(() => {
+				const el = document.querySelector(".card--updates .job-progress__text");
+				return Boolean(el) && el.textContent.trim() !== "" && el.textContent.trim() !== "Done";
+			})()`, nil,
+			chromedp.WithPollingInterval(50*time.Millisecond),
+		),
 		textContent(`.card--updates .job-progress__text`, &inline),
 		chromedp.Click(`.activity-bell__trigger`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.tray__row .tray__skips`, chromedp.ByQuery),
@@ -6864,5 +6887,68 @@ func TestE2E_AuthSurfaceNamesTheEnvironmentVariableAsText(t *testing.T) {
 		"the environment variable must be named as text, not as a placeholder")
 	assert.True(t, stillThereAfterTyping,
 		"and must survive the first keystroke, which a placeholder does not")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ModDescriptionRendersAsProseNotMarkup is #342: domain.Mod's
+// Description carries the source's RAW markup by design (#86) and Preact
+// renders a text child as the text it is, so the page showed the reader
+// "<p>Adds bigger backpacks.</p>" - angle brackets and all - where the CLI
+// has always printed clean prose. dangerouslySetInnerHTML is forbidden
+// here, so core hands over a cleaned sibling (description_text) and both
+// surfaces render that.
+func TestE2E_ModDescriptionRendersAsProseNotMarkup(t *testing.T) {
+	const rawHTML = "<p>Adds <b>bigger</b> backpacks.</p><p>Requires SKSE &amp; SkyUI.</p>"
+
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod: domain.Mod{
+			ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0",
+			Author: "Ada Lovelace", Summary: "A tidy little mod.", Description: rawHTML,
+		},
+		Files:     []domain.DownloadableFile{{ID: "f1", Version: "1.0"}},
+		Changelog: "Fixed a crash on load.",
+	})
+	f := newE2EFixtureFromSource(t, src)
+	seedInstalledMod(t, f.Svc, f.Game,
+		domain.Mod{ID: "a", SourceID: "fake", Name: "Alpha Mod", Version: "1.0",
+			Author: "Ada Lovelace", Summary: "A tidy little mod.", Description: rawHTML, GameID: f.Game.ID},
+		true, map[string][]byte{"alpha.esp": []byte("alpha")})
+	require.NoError(t, f.Svc.NewProfileManager().AddMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a", Version: "1.0"}))
+
+	var pageText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`.mod-page__prose`, chromedp.ByQuery),
+		textContent(`.mod-page`, &pageText),
+	)
+	assert.Contains(t, pageText, "Adds bigger backpacks.")
+	assert.Contains(t, pageText, "Requires SKSE & SkyUI.")
+	assert.NotContains(t, pageText, "<p>", "the reader must never see the source's markup")
+	assert.NotContains(t, pageText, "<b>")
+	assert.NotContains(t, pageText, "&amp;")
+
+	// The paragraph break survives as a real paragraph rather than as two
+	// runs jammed together.
+	var paragraphs []string
+	f.runInBrowser(t, chromedp.Evaluate(
+		`Array.from(document.querySelectorAll(".mod-page__prose")).map((p) => p.textContent.trim())`,
+		&paragraphs))
+	assert.Contains(t, paragraphs, "Adds bigger backpacks.")
+	assert.Contains(t, paragraphs, "Requires SKSE & SkyUI.")
+
+	// The slide-over reads the same ModDetail document (for its changelog),
+	// so it must not surface the raw field either.
+	var panelText string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Click(`.mod-row__name`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.slide-over__section[data-changelog-status="ready"]`, chromedp.ByQuery),
+		textContent(`.slide-over`, &panelText),
+	)
+	assert.NotContains(t, panelText, "<p>", "the slide-over must not render the source's markup either")
+	assert.NotContains(t, panelText, "<b>")
 	assert.Empty(t, f.BrowserErrors())
 }

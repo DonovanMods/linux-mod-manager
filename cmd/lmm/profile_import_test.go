@@ -545,3 +545,51 @@ func TestDoProfileImport_ExistingProfileWithoutForce_ReturnsError(t *testing.T) 
 	require.Len(t, saved.Mods, 1)
 	assert.Equal(t, "old-mod", saved.Mods[0].ModID, "a rejected import must leave the existing profile untouched")
 }
+
+// TestDoProfileImport_PerItemFailure_PlainOutputIsUnchanged is #308's
+// no-plain-text-change pin: the per-item failure line stays where it always
+// was - interleaved, immediately under the mod it belongs to, printed live
+// from the ImportModFailed event - while the same detail newly reaches the
+// wire as ProfileImportResult.Failures. The expected string below is the
+// PRE-#308 renderer's own output, captured before the change.
+func TestDoProfileImport_PerItemFailure_PlainOutputIsUnchanged(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+	src.AddDownload("main", []byte("mod1 content"))
+	// "ghost" is never registered with the source: GetMod fails for it.
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{
+		{SourceID: "test-src", ModID: "ghost", Version: "1.0"},
+		{SourceID: "test-src", ModID: "mod1", Version: "1.0"},
+	})
+
+	var out string
+	withStdin(t, "y\n", func() {
+		out = captureStdout(t, func() error {
+			return doProfileImport(context.Background(), svc, game, data)
+		})
+	})
+
+	assert.Equal(t, "Importing profile: target\n"+
+		"\n"+
+		"Found 2 mod(s) in profile.\n"+
+		"  ↓ 2 need to be downloaded:\n"+
+		"    - test-src:ghost v1.0\n"+
+		"    - test-src:mod1 v1.0\n"+
+		"\n"+
+		"Download and install mods? [Y/n]: \n"+
+		"✓ Imported profile: target\n"+
+		"\n"+
+		"Downloading and installing mods...\n"+
+		"  Installing test-src:ghost...\n"+
+		"    Error: failed to fetch mod: mod not found\n"+
+		"  Installing test-src:mod1...\n"+
+		"\n"+
+		"    ✓ Installed: Mod One\n"+
+		"\n"+
+		"--- Summary ---\n"+
+		"Installed: 1\n"+
+		"Failed: 1\n",
+		stripDownloadProgress(out))
+}

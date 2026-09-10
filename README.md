@@ -679,6 +679,9 @@ manifest:
 - **Key resolution**, checked in order:
   1. The `LMM_<ID>_API_KEY` environment variable, with the source's `id` uppercased and `-` replaced by `_` (source `my-repo` → `LMM_MY_REPO_API_KEY`).
   2. A key saved with `lmm auth login <id>` — this works for any registered source whose definition declares `auth`, not just NexusMods/CurseForge, and stores the key in the same local token store. An `api` source that also declares `auth.validate` has its key checked live before it is stored (see [API Sources](#api-sources)); every other custom source stores it unvalidated and exercises it on first use.
+
+  When both exist the environment variable wins, and `lmm auth status` (and the web UI's Auth card) say so: the row names the variable and adds `(stored key present, shadowed by $VAR)`, so the answer to "which key is lmm sending?" is always the key it is really sending (#356). The stored key is left alone — unset the variable, or `lmm auth logout <id>` to drop the stored one.
+
 - The resolved key is always attached to the manifest fetch itself (the request for the mod list document); for `api` sources, it's attached to every request built from an `endpoints.*.path` template (search, get_mod, mod_files, download_url).
 - File downloads follow the same same-origin rule regardless of whether the key is `in: header` or `in: query`:
   - **Remote manifests** (`https://` URL): the key (as a header, or appended to the URL) is only sent to file downloads whose scheme and host match the manifest URL's — a manifest pointing files at a third-party CDN never receives the source's key, in either form.
@@ -846,12 +849,12 @@ the omnibar, the activity bell, **⚙ Setup** and the theme toggle. Beneath
 it, attention cards render only when they have something to say, and each
 acts in place:
 
-| Card          | What it shows                                            | What it does                                                                                                                             |
-| ------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Updates**   | every mod with a newer version                           | tick rows → "Update selected" applies them as one batch                                                                                  |
-| **Health**    | `lmm verify`'s findings, and when it last ran            | per-finding **Repair**, **Repair all**, **Re-verify**; a finding that `verify --fix` would not attempt says so in the engine's own words |
-| **Conflicts** | each contested file, its contenders and the winning rule | **Resolve…** opens the reorder modal scrolled to that file                                                                               |
-| **Profile**   | which way the profile and the installed set have drifted | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                           |
+| Card          | What it shows                                                                                                          | What it does                                                                                                                                                             |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Updates**   | every mod with a newer version                                                                                         | tick rows → "Update selected" applies them as one batch                                                                                                                  |
+| **Health**    | `lmm verify`'s findings, and when it last ran (or "Unchanged since …" when the answer came from the verify memo, #336) | per-finding **Repair**, **Repair all**, **Re-verify** (a real re-run, never the memo); a finding that `verify --fix` would not attempt says so in the engine's own words |
+| **Conflicts** | each contested file, its contenders and the winning rule                                                               | **Resolve…** opens the reorder modal scrolled to that file                                                                                                               |
+| **Profile**   | which way the profile and the installed set have drifted                                                               | **Apply profile…** runs `lmm profile apply`; **Sync…** runs `lmm profile sync`                                                                                           |
 
 The **library** is the spine: an enabled toggle, the name, the installed
 version (with its update target), badges (⬆ update, ⚠ health, ⇄ conflict,
@@ -913,7 +916,12 @@ an installed game…** control — the identical picker and prefill, reachable
 without going through the detect list first, for when you already know you
 want the manual form. Either path submits with `from_steam_app_id` plus
 only the fields you actually changed; the browser never invents a slug, a
-mod path or a source map of its own. If the scan that offered a game goes
+mod path or a source map of its own. On a **curated** (Known) row that is
+the whole form: Submit is live on the app id alone, the form names the
+source map the known-games list will supply, and the source fields become
+an optional override you can layer on top — the same thing `lmm game add
+--from-detected 489830` does with no further arguments. An uncurated row
+still needs a source and identifier, because nothing on disk supplies them. If the scan that offered a game goes
 stale (it was uninstalled between the scan and the submit), the form says
 so by name and offers a **Rescan** rather than a dead end.
 
@@ -1290,10 +1298,36 @@ single trusted user on their own machine:
   Content-Security-Policy). The policy admits exactly one inline script —
   the theme bootstrap — and it does so by the SHA-256 of that script's own
   bytes, not by `'unsafe-inline'`. There is no `'unsafe-eval'`.
-- **Cross-process note:** a CLI mutation and a `serve` mutation running at
-  the same time are guarded only by SQLite's own locking, not a shared
-  lock across processes — avoid running CLI mutations while a `serve`
-  operation is in flight.
+- **The Health card does not re-verify what has not changed** (#336). A
+  hydrate — and the web UI hydrates on every route change, job completion
+  and profile switch — asks core for the same full verify tier the CLI
+  runs. Core answers from the previous run when nothing it inspects has
+  moved: the profile's mods and locks, the installed rows, the recorded
+  file checksums it compares against (so a `lmm verify --fix` typed in
+  another terminal is noticed), and a stat-only walk (path, size,
+  modification time) of the deployed tree. The card then
+  says "Unchanged since …" instead of "Last verified …", and the document
+  carries `cached: true` beside the original `checked_at`. **Any** lmm
+  mutation drops the memo, and **Re-verify** (like `lmm verify` itself,
+  which never uses the memo) forces a real run. The limit is the
+  fingerprint's: a deployed file rewritten to the same size with its
+  modification time preserved looks unchanged, so a memoised answer can be
+  stale until a mutation or a forced run — which is exactly why a typed
+  `lmm verify` always runs for real.
+
+- **Cross-process mutations are serialized** (#317). Every lmm mutation —
+  CLI or `serve` — takes an advisory `flock` on `<data dir>/.oplock` for as
+  long as it holds the in-process mutation slot, so a `lmm deploy` typed
+  while a `serve` job is mid-deploy cannot interleave its file operations
+  with it. That is every lmm mutation, not only the ones that touch the
+  game directory — `lmm auth login` during a long deploy is refused too. The second one waits up to two seconds and then refuses, naming
+  the holder: `another lmm operation is in progress (pid 4242, since
+2026-09-09T12:00:00Z)` — under `--json`, with `pid` and `started_at` in
+  the error envelope's `details`. Reads never take the lock, so `lmm list`,
+  `lmm status` and every `GET /api/v1` route keep working while a mutation
+  runs. The lock is held by an open file descriptor, so a killed lmm
+  releases it immediately: there is never a stale lock to clear by hand.
+  Two installations (different `--data` directories) never contend.
 
 ## CLI Reference
 
@@ -1609,7 +1643,7 @@ with `--json`, `--dry-run` emits the plan document itself rather than its render
 
 `lmm import` has two distinct modes, chosen by whether an archive path is given:
 
-- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Candidates are **scored** against the scanned name, and against the version too when the filename carries one: the best-scoring candidate across all sources wins, ties break deterministically (version agreement, then source ID, then mod ID), an exact name match ends the lookup early, and anything that does not clear the confidence bar is left **untracked** and imported as local rather than adopted as a similarly-named mod — searching `skyui` should never quietly attach your archive to `SkyUI Flashlite`. Three differences are refused outright, however close the rest of the name is: a **differing sequel number** (`Sim Settlements 2` is never `Sim Settlements 3`), **any difference at all in a name shorter than twelve letters** (`Vortex` is never `Vertex`), and **whole extra words** (`RaceMenu` is not `RaceMenu Special Edition`). A subtitle set off by punctuation is the exception: `Ordinator` matches `Ordinator - Perks of Skyrim`, and `HDT-SMP` matches `HDT-SMP (Skinned Mesh Physics)`, always as a `[probable match]` so the elided subtitle is visible before you confirm. A mod that stays local this way is fully usable — it just has no update target; re-link it with `lmm mod edit --source`. The scan readout annotates any match short of an exact name with its confidence (`[strong match]`, `[probable match]`). Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
+- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Candidates are **scored** against the scanned name, and against the version too when the filename carries one: the best-scoring candidate across all sources wins, ties break deterministically (version agreement, then source ID, then mod ID), an exact name match ends the lookup early, and anything that does not clear the confidence bar is left **untracked** and imported as local rather than adopted as a similarly-named mod — searching `skyui` should never quietly attach your archive to `SkyUI Flashlite`. Three differences are refused outright, however close the rest of the name is: a **differing sequel number** (`Sim Settlements 2` is never `Sim Settlements 3`), **any difference at all in a pair whose longer name is under twelve letters** (`Vortex` is never `Vertex`, and `SkyUI` is never `SkyUI SE`), and **whole extra words** (`RaceMenu` is not `RaceMenu Special Edition`). A subtitle set off by punctuation is the exception: `Ordinator` matches `Ordinator - Perks of Skyrim`, and `HDT-SMP` matches `HDT-SMP (Skinned Mesh Physics)`, always as a `[probable match]` so the elided subtitle is visible before you confirm — unless two catalogue rows hang subtitles off the same name (`Alternate Start - Live Another Life` and `Alternate Start - Realm of Lorkhan`), where the tie is refused and the archive stays untracked instead of being attached to whichever sorts first. A mod that stays local this way is fully usable — it just has no update target; re-link it with `lmm mod edit --source`. The scan readout annotates any match short of an exact name with its confidence (`[strong match]`, `[probable match]`). Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
 - **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import. `--dry-run` previews it: the archive's table of contents is read (never extracted), so the preview names the mod, the files it would deploy, and any file it would overwrite, without writing anything ([#314](https://github.com/DonovanMods/linux-mod-manager/issues/314)).
 
 Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it.
@@ -1644,7 +1678,7 @@ Only when **every** configured source fails does the command return an error, wh
 Error: search failed: all 1 source(s) failed: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
 ```
 
-`--limit N` (default 10) is a target, not just a ceiling: sources are paged until N merged results exist, every source runs out, or a safety bound of 10 pages per source is reached. A source is only paged while it honours the page size it was asked for, which is what keeps consecutive pages consecutive **rows**: most remote APIs cap how many results one page can hold (CurseForge at 50, NexusMods around 30), and asking such a source for "page 2 of 100" fetches rows 100–149 while rows 50–99 were never returned at all. So a source whose cap is below `--limit` contributes one capped page and is not paged further — `--limit 100` can legitimately come back with fewer than 100 results, and `has_more` says so — but every result you do get is really among the first ones that source had. Ask for a smaller `--limit` (at or below a source's cap) to page it further. A source that fails partway through the paging is reported as a warning like any other source failure, and the results its earlier pages returned are kept.
+`--limit N` (default 10) is a target, not just a ceiling: sources are paged until N merged results exist, every source runs out, or a safety bound of 10 pages per source is reached. A source is only paged at a page size it has shown it can honour, which is what keeps consecutive pages consecutive **rows**: most remote APIs cap how many results one page can hold (CurseForge at 50, NexusMods around 30), and asking such a source for "page 2 of 100" fetches rows 100–149 while rows 50–99 were never returned at all. When a source reports the smaller size it actually served, lmm adopts that size for the rest of the search and keeps paging it — CurseForge answers a `--limit 100` in two contiguous pages of 50. A source that caps **silently** (NexusMods reports neither its cap nor a total) has no safe size to page at, so it contributes one capped page and is not paged further: `--limit 100` can legitimately come back with fewer than 100 results, and `has_more` says so, but every result you do get is really among the first ones that source had. Ask for a smaller `--limit` (at or below such a source's cap) to page it further. A source that fails partway through the paging is reported as a warning like any other source failure, and the results its earlier pages returned are kept.
 
 Use `--source <id>` to search a single configured source instead of aggregating:
 
@@ -1796,7 +1830,7 @@ lmm follows the XDG Base Directory specification. `--config` and `--data` overri
 | Mod Cache        | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)  |
 | Download Staging | `<data>/downloads/` (in-flight downloads and archive extraction)                                  |
 
-If an XDG variable is set but `$XDG_…/lmm` does not exist yet and the legacy `~/.config/lmm` or `~/.local/share/lmm` does, the legacy directory is used, so existing installs keep working after setting the variables. Move the directory to adopt the XDG location.
+**Precedence.** `--config`/`--data` win outright. Otherwise an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path decides, whether or not `$XDG_…/lmm` exists yet — setting the variable is an explicit instruction, and lmm never silently writes somewhere else (#297). Only when the variable is **unset** — or set to a relative path, which the XDG spec requires be ignored — does lmm fall back to the legacy `~/.config/lmm` / `~/.local/share/lmm`, which is the situation an install predating XDG support is in. If you set an XDG variable and want your existing data, move the directory to the new location (or point `--data`/`--config` at the old one).
 
 The mod cache location can be customized via `cache_path` in `config.yaml`. Setting a per-game `cache_path` in `games.yaml` changes that game's on-disk layout too: the global cache is `cache/<game-id>/<source-id>-<mod-id>/<version>/`, but a game-scoped `cache_path` drops the `<game-id>` segment since the configured directory is already specific to that game (`<cache_path>/<source-id>-<mod-id>/<version>/`).
 

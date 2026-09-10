@@ -4,11 +4,14 @@
       "id": "acme-mods",
       "name": "Acme Mods",
       "authenticated": true,
-      "via": "stored",
+      "via": "env",
       "env_var": "LMM_ACME_MODS_API_KEY",
+      "key_masked": "gol...890",
       "key_fingerprint": "a7a46b97",
       "created_at": "<TIME>",
-      "updated_at": "<TIME>"
+      "updated_at": "<TIME>",
+      "stored_key_shadowed": true,
+      "stored_key_fingerprint": "a7a46b97"
     }
   ],
   "orphaned": []

@@ -77,7 +77,20 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // writeAPIError writes err as the {"error","details"} envelope at status.
+//
+// One error overrides the status the route computed:
+// core.ErrOperationInProgress (#317) is 409 wherever it surfaces. Another
+// lmm process holds the mutation lock - the request is refused, nothing is
+// wrong with the server, and the same request a second later succeeds,
+// which is what 409 says and 500 does not. Classifying it here rather than
+// in each route means the synchronous write routes (mod settings, profile
+// CRUD, game add/edit, auth, the source editor) cannot answer it
+// differently from one another; the job-backed routes never reach this
+// path, since there the refusal becomes the job's failure.
 func (s *Server) writeAPIError(w http.ResponseWriter, status int, err error) {
+	if errors.Is(err, core.ErrOperationInProgress) {
+		status = http.StatusConflict
+	}
 	s.log.Debug("api error", "status", status, "err", err)
 	s.writeJSON(w, status, apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
 }
@@ -393,13 +406,25 @@ func (s *Server) handleAPIProfiles(w http.ResponseWriter, r *http.Request) {
 // agree. An additive `?tier=` query param (default full) to let an API
 // caller opt back into the cheap offline check is a possible later
 // addition - not added here.
+//
+// `?force=1` (#336) runs the tier even when core could answer from its
+// unchanged-installation memo. Off by default: an ordinary Mission Control
+// hydrate is exactly the repeated caller the memo exists for, and the
+// answer it gets carries `cached: true` plus the original `checked_at`, so
+// the card can say how old it is and offer a forced re-run.
 func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	sel, ok := s.resolveReadyAPISelection(w, r)
 	if !ok {
 		return
 	}
 
-	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile, core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	// ?force=1 opts out of core's unchanged-installation memo (#336): the
+	// Health card's Re-verify sends it, an ordinary hydrate does not. Only
+	// that exact value counts, so a hydrate cannot accidentally spell the
+	// expensive request.
+	force := r.URL.Query().Get("force") == "1"
+	report, err := s.svc.VerifyReport(r.Context(), sel.Game, sel.Profile,
+		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, nil)
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

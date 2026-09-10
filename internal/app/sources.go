@@ -90,9 +90,44 @@ func registerCustomSources(ctx context.Context, svc *core.Service, cfgDir string
 	}
 }
 
+// credentialVia names which credential lmm will actually send for a
+// source, from whether each kind is available: "env" when the environment
+// variable named by EnvKeyFor is set - it wins outright, so a one-off
+// `NEXUSMODS_API_KEY=... lmm ...` overrides a stored key without touching
+// it - "stored" when only a usable `lmm auth login` token exists, and ""
+// when neither does. shadowed reports the case #356 was filed about: a
+// stored token that exists and would work, with the environment variable
+// in front of it.
+//
+// This is the ONE place that precedence is written down. ResolveAPIKey
+// (what the source clients are handed) and AuthStatus (what `lmm auth
+// status`, GET /api/v1/auth and the web setup card report) both derive
+// their answer from it, so they cannot disagree about which key is in use
+// the way they did before #356 - status said "stored" whenever a token
+// existed, while the clients were already sending the environment key.
+//
+// It takes two booleans rather than the credentials themselves, and that
+// is what lets both callers stay cheap and safe. ResolveAPIKey settles its
+// answer before reading the token store at all, because envSet decides it
+// on its own (this runs once per source at every app.Open). AuthStatus
+// answers the stored half from db.ListTokens' listing, which describes a
+// row without handing back its key (#79) - so no status surface decrypts a
+// credential it is only going to describe.
+func credentialVia(envSet, storedUsable bool) (via string, shadowed bool) {
+	switch {
+	case envSet:
+		return "env", storedUsable
+	case storedUsable:
+		return "stored", false
+	default:
+		return "", false
+	}
+}
+
 // ResolveAPIKey returns the API key for src: the environment variable named
 // by EnvKeyFor(src) wins, then the token stored by `lmm auth login`; "" if
-// neither is set.
+// neither is set. The precedence itself is credentialVia's, shared with
+// AuthStatus so the key lmm sends and the key it reports are one answer.
 //
 // The error is non-fatal by design and always accompanies an empty key: it
 // reports a STORED credential that exists but could not be decrypted (#79 -
@@ -101,8 +136,13 @@ func registerCustomSources(ctx context.Context, svc *core.Service, cfgDir string
 // environment key short-circuits before the stored one is even looked at,
 // so it is never reported when a working key is in hand.
 func ResolveAPIKey(ctx context.Context, svc *core.Service, src source.ModSource) (string, error) {
-	if key := os.Getenv(EnvKeyFor(src)); key != "" {
-		return key, nil
+	envKey := os.Getenv(EnvKeyFor(src))
+	// storedUsable is false here because it is not known yet, and asking
+	// would cost a decrypt per source at every app.Open: envSet settles the
+	// answer on its own when it is true, and when it is false the store has
+	// to be read to find out either way.
+	if via, _ := credentialVia(envKey != "", false); via == "env" {
+		return envKey, nil
 	}
 	token, err := svc.GetSourceToken(ctx, src.ID())
 	if err != nil {

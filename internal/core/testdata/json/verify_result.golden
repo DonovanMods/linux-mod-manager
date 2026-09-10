@@ -4,5 +4,6 @@
   "warnings": 1,
   "checked": 10,
   "has_files": true,
-  "checked_at": "2026-08-27T12:00:00Z"
+  "checked_at": "2026-08-27T12:00:00Z",
+  "cached": true
 }

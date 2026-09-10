@@ -5,8 +5,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// builtinAPIKeyEnvVars are the credential variables the built-in sources
+// honour - the two a developer's own shell is likely to have exported.
+var builtinAPIKeyEnvVars = []string{"NEXUSMODS_API_KEY", "CURSEFORGE_API_KEY"}
 
 // TestMain makes every test in this package hermetic regardless of run order
 // or -run subset (issue #115). The configDir/dataDir package globals default
@@ -30,6 +35,20 @@ func TestMain(m *testing.M) {
 	configDir = cfg
 	dataDir = data
 
+	// The other half of hermetic, added by the Track B review (N9): the
+	// developer's shell exports REAL NEXUSMODS_API_KEY/CURSEFORGE_API_KEY
+	// (.envrc does), and since #356 the environment outranks a stored
+	// token - so those values reach auth assertions and, in one case,
+	// would have been recorded into a golden as a masked real key. A test
+	// that wants a key sets its own with t.Setenv, which still works and
+	// still restores.
+	for _, key := range builtinAPIKeyEnvVars {
+		if err := os.Unsetenv(key); err != nil {
+			fmt.Fprintf(os.Stderr, "unsetting %s: %v\n", key, err)
+			os.Exit(1)
+		}
+	}
+
 	code := m.Run()
 
 	_ = os.RemoveAll(cfg)
@@ -50,4 +69,17 @@ func TestPackageGlobals_HermeticDefaults(t *testing.T) {
 		"configDir is empty: getServiceConfig would fall back to the real $XDG_CONFIG_HOME/lmm (~/.config/lmm)")
 	require.NotEmpty(t, dataDir,
 		"dataDir is empty: getServiceConfig would fall back to the real $XDG_DATA_HOME/lmm (~/.local/share/lmm)")
+}
+
+// TestPackageGlobals_NoAmbientAPIKeys is the credential half of the same
+// guard (Track B review N9). With a real key in the environment, `lmm auth
+// status` reports it as the active credential (#356) - so an assertion
+// about an unauthenticated source, or a golden recorded from one, silently
+// depended on whether the developer had authenticated.
+func TestPackageGlobals_NoAmbientAPIKeys(t *testing.T) {
+	for _, key := range builtinAPIKeyEnvVars {
+		assert.Empty(t, os.Getenv(key),
+			"TestMain must clear %s: a real key in the environment outranks a stored token "+
+				"and changes what the auth surfaces report", key)
+	}
 }

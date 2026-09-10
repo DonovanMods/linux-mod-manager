@@ -39,6 +39,9 @@ var (
 	goldenStoredFingerprint = db.TokenFingerprint("golden-nexusmods-stored-key")
 	goldenEnvFingerprint    = db.TokenFingerprint("golden-my-repo-env-key")
 	goldenOrphanFingerprint = db.TokenFingerprint("golden-ghost-repo-orphan-key")
+	// The stored token the env row shadows (#356): a second credential on
+	// the same source, identified the only way a shadowed one may be (#79).
+	goldenShadowedFingerprint = db.TokenFingerprint("golden-my-repo-stored-key")
 )
 
 // updateAppJSONGoldens re-records internal/app's JSON contract goldens. Run
@@ -105,13 +108,16 @@ func TestAppJSONGoldens(t *testing.T) {
 			// row via a stored token, one via env, one never authenticated,
 			// plus both OrphanedToken reasons. RestartRequired is set here
 			// (#334) to pin its key's wire shape; the empty report below
-			// pins that an unset one carries no key at all.
+			// pins that an unset one carries no key at all. The env row
+			// also carries the shadowed-stored-key shape (#356): a stored
+			// token that exists but loses to the environment variable, on
+			// the wire as a flag plus a fingerprint and never as the key.
 			"auth_status_report",
 			AuthStatusReport{
 				RestartRequired: true,
 				Sources: []AuthSourceStatus{
 					{ID: "keyless-repo", Name: "Keyless"},
-					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789", KeyFingerprint: goldenEnvFingerprint},
+					{ID: "my-repo", Name: "My Repo", Authenticated: true, Via: "env", EnvVar: "LMM_MY_REPO_API_KEY", KeyMasked: "sup...789", KeyFingerprint: goldenEnvFingerprint, StoredKeyShadowed: true, StoredKeyFingerprint: goldenShadowedFingerprint, CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
 					{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: goldenStoredFingerprint, CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
 				},
 				Orphaned: []OrphanedToken{

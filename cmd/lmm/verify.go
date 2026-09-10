@@ -234,7 +234,11 @@ func doVerify(cmd *cobra.Command, svc *core.Service, game *domain.Game, args []s
 		modFilter = args[0]
 	}
 
-	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter}
+	// Force: `lmm verify` is a user asking for a real look at the disk, so
+	// it never answers from core's unchanged-installation memo (#336) - not
+	// even for the shape that would otherwise qualify. The memo exists for
+	// the web UI's repeated hydrates, not for a typed command.
+	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter, Force: true}
 	report, err := svc.VerifyReport(cmd.Context(), game, profile, opts, func(e core.Event) {
 		ev, ok := e.(core.VerifyEvent)
 		if !ok {

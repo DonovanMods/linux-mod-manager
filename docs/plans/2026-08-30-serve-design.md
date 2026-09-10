@@ -145,12 +145,22 @@ freshness check) are never serve entry points.
   state-changing API call; no cookies beyond the CSRF session; assets served with
   conservative headers. A real auth token for LAN use is a later, separate feature.
 
-## Cross-process concurrency (documented caveat)
+## Cross-process concurrency (resolved by #317)
 
 In-process mutations serialize via `beginOp`. A CLI mutation racing a serve mutation
-in another process is guarded only by SQLite's locking; the deploy-tree file
-operations could interleave. v2.1.0 documents this ("avoid running CLI mutations
-while a serve operation is in flight"); the advisory file lock in `app` is #317.
+in another process was guarded only by SQLite's locking; the deploy-tree file
+operations could interleave. This section used to document that as a caveat ("avoid
+running CLI mutations while a serve operation is in flight").
+
+**Resolved by #317**: `beginOp` now takes an advisory `flock` on
+`<DataDir>/.oplock` — the path supplied by `app` through
+`core.ServiceConfig.OpLockPath`, since core resolves no paths of its own — inside the
+same slot, released with it (the Ruling 16 pairing is unchanged). Contention waits a
+bounded 2s and then fails with `core.OperationInProgressError`, naming the holder's
+pid and start time on both frontends (`409 Conflict` over HTTP, on the job routes
+and the single-step write routes alike). Reads never take the lock. The scope is
+every `beginOp`'d mutation, not only the deploy-tree ones: a token write, a game or
+profile edit and a source-definition save contend too.
 
 ## Small core/cmd additions this epic makes (each a plan task)
 

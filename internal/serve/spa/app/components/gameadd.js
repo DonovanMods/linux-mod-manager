@@ -304,6 +304,17 @@ function exactCatalogMatch(matches, name) {
   return found.length === 1 ? found[0] : null;
 }
 
+// curatedSourceSummary renders a curated known-games source map for
+// display: "nexusmods: skyrimspecialedition", id-sorted so two renders of
+// the same map read the same. An empty map (a curated entry with neither
+// sources nor a nexus_id) says so rather than rendering nothing, since
+// "sources come from the known-games list ()" would be a lie.
+function curatedSourceSummary(sources) {
+  const ids = Object.keys(sources ?? {}).sort();
+  if (ids.length === 0) return "none - this entry names no source";
+  return ids.map((id) => `${id}: ${sources[id]}`).join(", ");
+}
+
 /**
  * GameAddForm collects a GameSpec by hand: a source, then either a catalog
  * pick or a manual identifier (core.ErrNoGameCatalog's own 400 has no
@@ -392,6 +403,26 @@ export function GameAddForm({
     setFormError(null);
     setFieldError(null);
   }
+
+  // issue 341: a curated ("known") detected row already carries everything
+  // core needs - POST /api/v1/games with its from_steam_app_id alone
+  // succeeds, exactly as `lmm game add --from-detected <id>` does, because
+  // GameSpecFromDetected fills the name, paths, id and the curated SOURCE
+  // MAP. Requiring a source pair on this path made the user do work the
+  // CLI does not, and whatever they picked was then layered ON TOP of the
+  // curated map - a mapping they never asked for. So the source fields
+  // become an optional override here, and Submit needs nothing else.
+  const curatedRow = detectedRow?.known ? detectedRow : null;
+  // What that curated map actually is, so the form can show it rather than
+  // asserting it exists: the entry's own sources, else the nexus_id
+  // mapping core derives from it (GameSpecFromDetected's own rule).
+  const curatedSources =
+    curatedRow &&
+    (Object.keys(curatedRow.sources ?? {}).length > 0
+      ? curatedRow.sources
+      : curatedRow.nexus_id
+        ? { nexusmods: curatedRow.nexus_id }
+        : {});
 
   function clearDetected() {
     setDetectedRow(null);
@@ -500,11 +531,14 @@ export function GameAddForm({
         // name/install path/mod path/game id/source map itself
         // (GameSpecFromDetected). Only fields the user actually changed
         // from what was prefilled ride along as overrides.
-        const body = {
-          from_steam_app_id: detectedRow.steam_app_id,
-          source_id: spec.sourceID,
-          identifier: spec.identifier,
-        };
+        const body = { from_steam_app_id: detectedRow.steam_app_id };
+        // An empty source pair is omitted rather than sent blank: on a
+        // curated row it is genuinely absent (issue 341), and core reads a
+        // named source_id with no identifier as an error, not as "none".
+        if (spec.sourceID) {
+          body.source_id = spec.sourceID;
+          body.identifier = spec.identifier;
+        }
         if (spec.name && spec.name !== detectedRow.name) body.name = spec.name;
         if (spec.gameID) body.game_id = spec.gameID;
         if (spec.modPath) body.mod_path = spec.modPath;
@@ -663,6 +697,14 @@ export function GameAddForm({
             >
               Clear
             </button>
+            ${
+              curatedRow &&
+              html`<span data-testid="setup-add-curated-sources">
+                ${" "}Sources come from the known-games list${" "}
+                (${curatedSourceSummary(curatedSources)}) - choosing one below
+                is an optional override.
+              </span>`
+            }
           </div>
         `
       }
@@ -876,7 +918,17 @@ export function GameAddForm({
         type="submit"
         class="button button--primary"
         data-action="add-game"
-        disabled=${busy || !spec.sourceID || !spec.identifier || !spec.name || !installPathReady}
+        disabled=${
+          busy ||
+          !spec.name ||
+          !installPathReady ||
+          (!curatedRow && (!spec.sourceID || !spec.identifier)) ||
+          // Both halves of a curated row's OPTIONAL override: either
+          // field alone is an incomplete pair, and the submit path drops
+          // the pair unless both are set - so an identifier typed with no
+          // source would be discarded without a word (review N4).
+          (curatedRow && Boolean(spec.sourceID) !== Boolean(spec.identifier))
+        }
       >
         ${busy ? "Adding…" : "Add game"}
       </button>

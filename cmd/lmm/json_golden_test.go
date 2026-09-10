@@ -459,6 +459,12 @@ func TestJSONGolden_GameAdd(t *testing.T) {
 // CLI-facing document - the same convention gap TestJSONGolden_GameAdd
 // closes, for #307's other new non-interactive command. The wire itself
 // (app.AuthStatusReport) is already goldened at internal/app/testdata/json/.
+//
+// The row reads via: "env" with the stored copy shadowed (#356): the
+// variable this command COPIED the key out of is still set when the report
+// is re-read, so the environment is what lmm will send. Before #356 the
+// same fixture claimed via: "stored" - a report naming the credential that
+// was not in use is exactly what that issue was about.
 func TestJSONGolden_AuthLogin(t *testing.T) {
 	src := &mockAuthSource{id: "acme-mods", name: "Acme Mods"}
 	svc := newAuthLoginService(t, src)

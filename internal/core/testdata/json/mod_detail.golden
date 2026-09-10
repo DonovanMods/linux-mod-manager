@@ -24,6 +24,7 @@
     "locked_version": "1.2.3",
     "convert_paks": true
   },
+  "description_text": "Adds bigger backpacks.",
   "changelog": "Fixed a crash on load.",
   "notes": [
     "changelog unavailable: upstream timeout"

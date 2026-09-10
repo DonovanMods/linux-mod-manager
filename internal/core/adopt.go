@@ -206,6 +206,14 @@ type AdoptResult struct {
 	Backfilled int `json:"backfilled,omitzero"`
 
 	Warnings []string `json:"warnings,omitempty"`
+
+	// Failures carries one entry per FAILED untracked entry, appended at
+	// the point Failed is bumped, with Reason equal to the AdoptFailed
+	// event's own reason verbatim (#308) - so `--json`, which suppresses
+	// events by design, still says WHICH entry failed and why instead of
+	// only how many did. Name is the scanned file name, the way the plain
+	// line names it. omitempty: a clean adopt carries no key.
+	Failures []ItemFailure `json:"failures,omitempty"`
 }
 
 // ScanLocal scans game's mod_path for entries lmm does not track yet and
@@ -578,6 +586,11 @@ func (s *Service) applyAdopt(ctx context.Context, game *domain.Game, plan *Adopt
 			}
 			step(r, AdoptFailed, fmt.Sprintf("✗ %s: %v", r.FileName, err))
 			result.Failed++
+			failure := ItemFailure{Name: r.FileName, Reason: err.Error()}
+			if r.Mod != nil {
+				failure.SourceID, failure.ModID = r.Mod.SourceID, r.Mod.ID
+			}
+			result.Failures = append(result.Failures, failure)
 			continue
 		}
 

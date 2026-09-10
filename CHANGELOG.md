@@ -79,12 +79,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   short of an exact name with its band — in the CLI and in `lmm serve`'s
   adopt plan alike. Three differences are refused outright however close the
   rest of the name is: a differing sequel number (_Sim Settlements 2_ is
-  never _Sim Settlements 3_), any difference at all in a name shorter than
-  twelve letters (_Vortex_ is never _Vertex_), and whole extra words
-  (_RaceMenu_ is not _RaceMenu Special Edition_). A subtitle set off by
-  punctuation is the exception, so the common catalogue shape still adopts:
-  _Ordinator_ matches _Ordinator - Perks of Skyrim_, always as a
-  `[probable match]` so the elided subtitle is visible before you confirm.
+  never _Sim Settlements 3_), any difference at all in a pair whose longer
+  name is under twelve letters (_Vortex_ is never _Vertex_, and _SkyUI_ is
+  never _SkyUI SE_), and whole extra words (_RaceMenu_ is not _RaceMenu
+  Special Edition_). A subtitle set off by punctuation is the exception, so
+  the common catalogue shape still adopts: _Ordinator_ matches _Ordinator -
+  Perks of Skyrim_, always as a `[probable match]` so the elided subtitle is
+  visible before you confirm — unless two catalogue rows hang subtitles off
+  the SAME name (_Alternate Start - Live Another Life_ and
+  _Alternate Start - Realm of Lorkhan_), in which case the tie is refused
+  and the entry stays untracked rather than being attached to whichever mod
+  sorts first.
+
+- **An absolute `XDG_CONFIG_HOME`/`XDG_DATA_HOME` now always wins over the
+  legacy directory (#297).** lmm used to prefer an existing
+  `~/.config/lmm` / `~/.local/share/lmm` when the XDG location did not
+  exist yet — including when the user had set the variable explicitly, so
+  a script (or a test harness that set `XDG_DATA_HOME` but left `HOME`
+  alone) silently read and wrote the real install instead of the sandbox
+  it asked for. Setting an XDG variable to an absolute path is now an
+  explicit instruction and decides the location whether or not that
+  directory exists. The legacy fallback still applies when the variable is
+  unset or relative (the XDG spec requires relative values be ignored),
+  which is the case an install predating XDG support is actually in.
+  `--config`/`--data` are unchanged and still beat both. Move the
+  directory (or pass `--data`/`--config`) to keep existing data after
+  setting an XDG variable. Resolving an absolute XDG value no longer consults `$HOME` at all, so a container or service account that sets `XDG_DATA_HOME` and leaves `HOME` unset starts (it used to fail on a legacy path it was never going to read).
+
+- **`lmm search --limit N` fills against a source that reports its page
+  cap (#361).** #109's paging loop stops a source that could not honour the
+  page size it was asked for, because its next offset would skip the rows
+  the clamp left behind. That left the headline symptom in place: the CLI
+  asks for a page the size of `--limit`, CurseForge clamps 100 to 50 and
+  says so, and the search came back with the one page. Core now adopts the
+  size a source REPORTS on its first round as that source's own page size
+  for the rest of the search — by asking for exactly the size the source
+  says it will use, `page × requested` and `page × effective` become the
+  same number, so the next page starts where the last one ended whichever
+  of the two the source multiplies by internally. Guarded: only on a
+  source's first round, only a size smaller than the one requested, and
+  only when the rows returned match the size claimed. A source that clamps
+  without saying so (NexusMods reports neither a clamp nor a total) still
+  answers short and is still asked exactly once.
 
 - **CurseForge update checks are one request per 50 mods, not one per mod
   (#28).** `Client.GetMods` fanned out a `GET /v1/mods/{id}` per id; it now
@@ -108,17 +144,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hundreds of matches left. Core now advances each source's OWN page
   cursor, round by round, until the merged hit count reaches the limit,
   every source is exhausted, or a documented max-pages guard trips
-  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only while it
-  honours the page size it was asked for: an API that silently caps the
-  page (CurseForge at 50, NexusMods around 30) computes its next offset
-  from the size that was REQUESTED, so paging it would fetch rows 100–149
+  (`maxSearchPagesPerSource`, 10 rounds). A source is paged only at a page
+  size it has shown it can honour: an API that caps the page (CurseForge at
+  50, NexusMods around 30) computes its next offset from the size that was
+  REQUESTED, so paging it at the requested size would fetch rows 100–149
   while rows 50–99 were never returned — a strided sample with holes, which
-  after ranking is indistinguishable from a complete answer. So `--limit
-100` may still come back with fewer than 100 results, and `has_more` says
+  after ranking is indistinguishable from a complete answer. A source that
+  reports the smaller size it actually served is therefore paged at THAT
+  size instead (#361), which fills the limit with contiguous rows;
+  a source that clamps silently is asked once, so `--limit 100` may still
+  come back with fewer than 100 results, and `has_more` says
   so, but every result really is among the first ones its source had. A
-  source that fails on a later page is reported exactly like one that fails
-  on its first — a warning, with the hits its earlier pages returned kept —
-  and no longer counts as exhausted. CurseForge now clamps and reports its
+  source that reports no total and hands over its whole catalogue in one
+  short page cannot be told apart from one that was clamped, so `has_more`
+  stays deliberately optimistic there — the safe direction, since the next
+  page is merely empty. A source that fails on ANY page — its first as much
+  as a later one — is reported the same way (a warning, with the hits its
+  earlier pages returned kept) and no longer counts as exhausted, so a plain
+  single-round search can now answer `has_more: true` where it used to claim
+  the sources were exhausted. CurseForge now clamps and reports its
   own effective page size so its offsets stay contiguous. `lmm serve`
   inherits all of it through `/api/v1/search?limit=`; the search page's own
   `?page=`/`?page_size=` pagination (no `?limit=`) is deliberately
@@ -608,6 +652,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **The web UI no longer re-runs a full verify on every hydrate (#336).**
+  Mission Control hydrates on each route change, job completion and profile
+  switch, and every one of those ran the full verify tier — a source round
+  trip per mod and a cache stat per file — over state that had not moved.
+  It was correct and it was the one place a large install felt slow.
+  `Service.Verify` now memoises its last answer per (game, profile, tier),
+  keyed on a cheap fingerprint of what a run actually inspects: the
+  profile's mods and locks, the installed rows, the recorded file checksums
+  a run compares against, and a stat-only walk (path, size, modification
+  time) of the deployed tree. The checksums are in there for the
+  cross-process case: `lmm verify --fix` typed in a terminal backfills them
+  and touches nothing else, so a running `lmm serve` would otherwise keep
+  reporting a warning that had already been repaired. An unchanged installation
+  is answered from that memo with its original `checked_at` and an additive
+  `cached: true`, which the Health card renders as "Unchanged since …".
+  Every mutation drops the memo; a new `VerifyOptions.Force` (the CLI's
+  `lmm verify` always, the card's **Re-verify** via
+  `GET /api/v1/health?force=1`) bypasses it, as does any run with `--fix`, a
+  mod filter, or a caller watching progress events. Documented limit: size
+  and mtime are not content, so a file rewritten at the same size with its
+  timestamp preserved is not noticed until a mutation or a forced run.
+
+- The startup notice for the one-time credential re-encryption (#79) now
+  says what it is waiting for — `waiting for another lmm process to finish
+with the database (re-encrypting stored credentials, up to 30s)` — so it
+  cannot be mistaken for #317's `another lmm operation is in progress`,
+  which is a different wait with a different remedy.
+
+- **Two lmm processes can no longer interleave their mutations (#317).**
+  Within one process `beginOp` serialized every mutation; across processes
+  — a CLI command typed while `lmm serve` was mid-job, or two CLIs — only
+  SQLite's own locking applied, and the deploy-tree file operations could
+  interleave. Every mutation now also takes an advisory `flock` on
+  `<data dir>/.oplock` (the path supplied by `internal/app` through
+  `core.ServiceConfig.OpLockPath`; core resolves no paths of its own) for
+  exactly as long as it holds the in-process slot. A contended mutation
+  waits two seconds and then refuses with a new typed
+  `core.OperationInProgressError` naming the holder: `another lmm
+operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
+  `pid`/`started_at` in the `--json` error envelope's `details` and in
+  `lmm serve`'s, where it answers `409 Conflict` — a refusal that a retry
+  clears, on the job routes and the single-step write routes alike — and
+  never `500`. The scope is every mutation, not only the ones that touch
+  the game directory: a token write, a game or profile edit and a
+  source-definition save contend too, so `lmm auth login` typed during a
+  long deploy is refused rather than queued. Reads never take the lock. The lock lives in the open
+  descriptor, so a killed lmm leaves nothing stale behind. This resolves
+  the cross-process caveat `docs/plans/2026-08-30-serve-design.md`
+  documented.
+
+- **The web UI's "Pick an installed game…" adds a curated game by app id
+  alone (#341).** `lmm game add --from-detected 489830` needs nothing else
+  for a game in lmm's known-games list — core prefills the name, paths, id
+  and the curated source map — and `POST /api/v1/games
+{"from_steam_app_id": …}` already accepted the same. The web form,
+  though, kept Submit disabled until a source and identifier were supplied,
+  and then layered whatever was picked ON TOP of the curated map: extra
+  work, ending in a source mapping the user never asked for. Picking a row
+  badged **Known** now enables Submit immediately, names the curated map on
+  screen, and treats the source fields as an optional override. An
+  uncurated row is unchanged — nothing on disk supplies its source. On a curated row the source fields
+  are an OPTIONAL override, and half of one is now refused rather than
+  dropped: an identifier typed with no source chosen keeps Submit
+  disabled instead of silently discarding what was typed.
+
+- **`lmm profile import --json` and `lmm import --json` name the mods that
+  failed, not just how many (#308).** `core.ProfileImportResult` and
+  `core.AdoptResult` carried a bare `failed: N`, while the per-item reason
+  existed only on the event stream the plain renderers print from — and
+  `--json` suppresses events by design, so the detail never reached the
+  wire. Both documents now carry an additive `failures[]` (`source_id`,
+  `mod_id`, `name`, `reason`), appended at exactly the point the counter is
+  bumped, with each `reason` equal to that item's event detail verbatim.
+  Plain-text output is unchanged: the failure lines stay interleaved,
+  printed live at the point of occurrence, and a test pins them
+  byte-for-byte.
+
+- **Mod descriptions rendered as literal HTML tags in the web UI (#342).**
+  `domain.Mod.Description` carries a source's raw markup all the way to the
+  wire by design (#86), and the SPA rendered it as the text it is: a
+  NexusMods (and, since #246, a CurseForge) description showed the reader
+  `<p>Adds bigger backpacks.</p>`, angle brackets and all. `core.ModDetail`
+  now carries an additive `description_text` — the same
+  `core.CleanChangelog` pass `lmm mod show` has always printed through —
+  and the full mod page renders that as real paragraphs. The raw
+  `description` is unchanged for `--json` consumers that want the markup,
+  and `dangerouslySetInnerHTML` stays forbidden.
+
+- **`lmm auth status` named the credential lmm was NOT using (#356).** With
+  both a stored token and the source's environment variable set, every
+  status surface — `lmm auth status`, `GET /api/v1/auth`, the web UI's Auth
+  card — reported `via: stored`, while the source clients send the
+  environment key: the one place a user goes to debug "which key is lmm
+  actually sending?" gave the wrong answer. Both now derive it from one
+  shared precedence function, the same one `ResolveAPIKey` applies when it
+  hands a key to the source clients. The shadowed stored key is still
+  reported as present but not in use — new additive `stored_key_shadowed`
+  and `stored_key_fingerprint` fields on each source row (a fingerprint,
+  never the key, not even masked: a stored credential is encrypted at rest
+  and stays that way, #79), rendered as "(stored key present, shadowed by
+  $VAR)" by the CLI and by the web card. `lmm auth login --key-from-env`'s
+  own report says `via: env` for the same reason: that IS the key it will
+  send.
 
 - **NexusMods `--tag` and `--category` work again (#337, #343).** The
   GraphQL client still sent `tagNames` and `categoryId`, neither of which

@@ -58,8 +58,9 @@ const (
 	// certainty a matching version closes. A scanned archive and a
 	// candidate that agree on BOTH a near-identical name and an exact
 	// version are much likelier to be the same mod than the name alone
-	// suggests, so "SkyUI 5.2" can be adopted as the source's "SkyUI SE"
-	// 5.2 (0.71 -> 0.79). Deliberately small: a quarter of the gap cannot
+	// suggests, so "Winter Overhaul 1.0" can be adopted as the source's
+	// "Winter Overhaul Redux" 1.0 (0.737 -> 0.803). Deliberately small: a
+	// quarter of the gap cannot
 	// lift a genuinely different name over the bar - "SkyUI" against "SkyUI
 	// Flashlite" 5.2 only reaches 0.52 and is still refused.
 	adoptVersionAgreementBonus = 0.25
@@ -69,9 +70,13 @@ const (
 	// "Vortex"/"Vertex", "Nordic UI"/"Nordic UX" and "Campfire"/"Campsite"
 	// are all one or two edits apart and all score 0.75 or better as a
 	// RATIO, because the ratio is only as strict as the name is long; they
-	// are also three different pairs of unrelated mods. Below twelve runes
-	// the keys must therefore match exactly (once normalised, and possibly
-	// via a head segment) for the names to count as the same mod at all.
+	// are also three different pairs of unrelated mods. A pair whose LONGER
+	// key is under twelve runes must therefore match exactly (once
+	// normalised, and possibly via a head segment) for the names to count
+	// as the same mod at all: "Vortex" is never "Vertex", and "SkyUI" is
+	// never "SkyUI SE". The floor is deliberately gated on the longer of
+	// the two, so a short scanned name is still scored as a ratio against a
+	// longer candidate ("True Storms" / "True Storms SE", 0.833).
 	// Twelve is where one edit costs less than the 0.9 strong band -
 	// 1-1/12 = 0.917 - so it is exactly the length at which the ratio
 	// starts calling a single edit "a spelling difference" on its own.
@@ -154,8 +159,10 @@ func adoptNameKey(name string) string {
 //     same mod. Adopting an archive as the wrong sequel attaches it to the
 //     wrong version history and the wrong update target, which is #27's
 //     entire premise.
-//   - A key shorter than adoptShortKeyRunes must match exactly. One edit in
-//     a six-rune name is "Vortex" against "Vertex", not a typo of it.
+//   - A pair whose LONGER key is shorter than adoptShortKeyRunes must match
+//     exactly. One edit in a six-rune name is "Vortex" against "Vertex",
+//     not a typo of it. Gated on the longer key, so a short scanned name is
+//     still scored as a ratio against a longer candidate.
 //
 // An empty key on either side scores 0: there is nothing to compare, and a
 // name we could not read is not evidence of anything.
@@ -225,6 +232,12 @@ var adoptHeadSegmentSeparators = []string{" - ", " \u2014 ", " \u2013 ", ": ", "
 // limit, not an oversight - a mod whose catalogue name simply has more
 // words in it is imported as a local mod, and `lmm mod edit --source`
 // re-links it.
+//
+// Two catalogue rows can share a head segment ("Alternate Start - Live
+// Another Life" and "Alternate Start - Realm of Lorkhan"), in which case
+// both score exactly adoptHeadSegmentCap against the same scanned name.
+// adoptBestCandidate refuses that tie rather than resolving it on IDs (see
+// its doc comment).
 func adoptHeadSegment(name string) string {
 	head := name
 	for _, sep := range adoptHeadSegmentSeparators {
@@ -290,14 +303,25 @@ func adoptVersionsAgree(scanned, candidate string) bool {
 // agreeing version then closes adoptVersionAgreementBonus of whatever
 // distance to 1 is left.
 func adoptCandidateScore(scannedName, scannedVersion string, candidate domain.Mod) float64 {
-	score := adoptNameSimilarity(scannedName, candidate.Name)
+	score, _ := adoptCandidateScoreVia(scannedName, scannedVersion, candidate)
+	return score
+}
+
+// adoptCandidateScoreVia is adoptCandidateScore plus whether the score came
+// from the candidate's HEAD SEGMENT rather than its full name. The caller
+// needs that to tell an ordinary tie (the same mod listed twice) from a
+// head-segment collision between two different mods, which it refuses.
+func adoptCandidateScoreVia(scannedName, scannedVersion string, candidate domain.Mod) (score float64, viaHead bool) {
+	score = adoptNameSimilarity(scannedName, candidate.Name)
 	if head := adoptHeadSegment(candidate.Name); head != candidate.Name {
-		score = max(score, min(adoptNameSimilarity(scannedName, head), adoptHeadSegmentCap))
+		if headScore := min(adoptNameSimilarity(scannedName, head), adoptHeadSegmentCap); headScore > score {
+			score, viaHead = headScore, true
+		}
 	}
 	if score > 0 && adoptVersionsAgree(scannedVersion, candidate.Version) {
 		score += (1 - score) * adoptVersionAgreementBonus
 	}
-	return score
+	return score, viaHead
 }
 
 // adoptBestCandidate picks the best-scoring candidate for a scanned
@@ -309,22 +333,45 @@ func adoptCandidateScore(scannedName, scannedVersion string, candidate domain.Mo
 // a candidate whose version agrees with the scanned one, then the lower
 // source ID, then the lower mod ID. Two runs over the same catalogue - in
 // any order - therefore always adopt the same mod.
+//
+// One tie is REFUSED rather than broken (Track C re-review, N5): when the
+// winner scored through a head segment and another candidate ties it
+// exactly, two different catalogue rows hang subtitles off the same name
+// ("Alternate Start - Live Another Life" and "Alternate Start - Realm of
+// Lorkhan") and nothing in the archive says which one it is. An ID
+// tie-break would attach it to the wrong mod half the time, so the entry
+// stays untracked - the same answer this rule gives every other ambiguity.
+// The score is still returned, so the caller can say how close it came.
 func adoptBestCandidate(scannedName, scannedVersion string, candidates []domain.Mod) (*domain.Mod, float64) {
 	var best *domain.Mod
 	bestScore := 0.0
 	bestVersionAgrees := false
+	bestViaHead := false
+	tiedWithBest := false
 
 	for i := range candidates {
 		c := &candidates[i]
-		score := adoptCandidateScore(scannedName, scannedVersion, *c)
+		score, viaHead := adoptCandidateScoreVia(scannedName, scannedVersion, *c)
 		agrees := adoptVersionsAgree(scannedVersion, c.Version)
 
 		if best == nil || betterAdoptCandidate(score, agrees, *c, bestScore, bestVersionAgrees, *best) {
-			best, bestScore, bestVersionAgrees = c, score, agrees
+			// Assigned, not OR'd: a new best that BEATS the previous one
+			// ends whatever ambiguity there was, and leaving the flag set
+			// refused a strictly better unique match because two worse
+			// candidates had tied earlier in the list.
+			tiedWithBest = best != nil && score == bestScore
+			best, bestScore, bestVersionAgrees, bestViaHead = c, score, agrees, viaHead
+			continue
+		}
+		if score == bestScore && (c.SourceID != best.SourceID || c.ID != best.ID) {
+			tiedWithBest = true
 		}
 	}
 
 	if best == nil || bestScore < adoptMatchThreshold {
+		return nil, bestScore
+	}
+	if bestViaHead && tiedWithBest {
 		return nil, bestScore
 	}
 	return best, bestScore

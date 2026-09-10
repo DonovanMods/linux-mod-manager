@@ -154,6 +154,8 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 
 `<config>` is `$XDG_CONFIG_HOME/lmm` (default `~/.config/lmm`); `<data>` is `$XDG_DATA_HOME/lmm` (default `~/.local/share/lmm`).
 
+**Precedence** (#297): `--config`/`--data` win outright; then an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path, whether or not that directory exists yet; then — only when the variable is unset or set to a relative path, which the XDG spec requires be ignored — the legacy `~/.config/lmm` / `~/.local/share/lmm`. Setting an XDG variable is treated as an explicit instruction, so lmm never writes into the legacy directory behind your back; move your data (or point `--data`/`--config` at it) when you adopt the XDG location.
+
 | Path                                       | Description                                                             |
 | ------------------------------------------ | ----------------------------------------------------------------------- |
 | `<config>/config.yaml`                     | Global config                                                           |
@@ -162,6 +164,7 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `<config>/sources/*.yaml`                  | Custom source definitions (see [Custom Sources](#custom-sources) below) |
 | `<config>/games/<game-id>/profiles/*.yaml` | Per-game profiles                                                       |
 | `<data>/lmm.db`                            | SQLite database (metadata, tokens)                                      |
+| `<data>/.oplock`                           | Advisory mutation lock (#317) — see below                               |
 | `<data>/cache/`                            | Mod file cache (or `cache_path` override)                               |
 | `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
 
@@ -224,3 +227,61 @@ Minecraft has multiple mod sources configured. Select one:
   [2] NexusMods
 Enter choice (1-2):
 ```
+
+## The mutation lock
+
+Every lmm **mutation** — a CLI command or a `lmm serve` job — takes an advisory
+`flock` on `<data>/.oplock` while it runs, so two lmm processes pointed at the same
+data directory cannot interleave their work (#317). **Every** mutation, not only the
+ones that touch the game directory: storing or removing an API key, adding or editing
+a game, profile changes and saving a source definition all take it too, so
+`lmm auth login` typed during a long `serve` deploy is refused rather than queued.
+A second mutation waits up to two seconds and then refuses, naming the holder:
+
+```text
+another lmm operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)
+```
+
+Under `--json` the same refusal carries `pid` and `started_at` in the error
+envelope's `details`. **Reads never take the lock**, so listing, status and every
+`GET /api/v1` route keep working while a mutation is in flight.
+
+The lock lives in the open file descriptor, not in the file's contents, so the
+kernel drops it the moment the process exits — a killed or crashed lmm never leaves
+a stale lock to clear by hand, and the file itself can be deleted safely when no lmm
+is running. Two installations (different `--data` directories) have separate lock
+files and never contend.
+
+**Two different waits, and how to tell them apart.** The refusal above is about a
+*mutation* and comes from a command that had already started. A message at STARTUP —
+`lmm: waiting for another lmm process to finish with the database (re-encrypting
+stored credentials, up to 30s)…` — is a different thing: it is the one-time
+credential re-encryption (#79) waiting for the database itself, before any mutation
+lock is involved. The first says "another lmm is doing something right now"; the
+second says "another lmm still has the database open while this one upgrades it".
+
+## The verify memo
+
+`lmm verify` always looks at the disk for real. The web UI's Health card, which
+re-hydrates on every route change, job completion and profile switch, does not: core
+keeps the last verify answer per game, profile and tier, and re-uses it while a cheap
+fingerprint of what a run inspects is unchanged (#336). That fingerprint is the
+profile's mods and their locks, the installed rows, the recorded file checksums a run
+compares against, and a **stat-only** walk of the deployed tree — each file's path,
+size and modification time.
+
+A re-used answer keeps the `checked_at` of the run that produced it and carries
+`cached: true`, which the card renders as "Unchanged since …". Every lmm mutation
+drops the memo, and the card's **Re-verify** (`GET /api/v1/health?force=1`) forces a
+real run. The recorded checksums are in the fingerprint for the cross-process case:
+`lmm verify --fix` run from a terminal backfills them without touching the deployed
+tree, so a running `lmm serve` has nothing else to notice, and its Health card would
+otherwise keep reporting a warning that was repaired minutes ago.
+
+**The limit**, stated plainly: size and modification time are not content. A deployed
+file rewritten to the same length with its timestamp preserved — a restore from
+backup, a tool that copies mtimes — fingerprints identically, and the memoised answer
+stands until something else changes or a run is forced. The memo also cannot see
+anything the full tier reads over the network, nor changes inside the cache
+directory. Run `lmm verify` (or press Re-verify) whenever you want a guaranteed fresh
+answer; neither ever uses the memo.

@@ -198,6 +198,10 @@ func TestDoAuthStatus_JSON(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	svc.RegisterSource(nexusmods.New(nil, ""))
+	// The dev shell exports a real NEXUSMODS_API_KEY, which now outranks the
+	// stored token (#356) and would record the developer's own masked key
+	// into the golden. Blank it: this fixture is the STORED case.
+	t.Setenv("NEXUSMODS_API_KEY", "")
 	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "storedbuiltinkey12345"))
 	require.NoError(t, svc.SaveSourceToken(context.Background(), "ghost-repo", "leftover-secret-key12"))
 
@@ -207,4 +211,38 @@ func TestDoAuthStatus_JSON(t *testing.T) {
 	var got app.AuthStatusReport
 	decodeStrict(t, out, &got)
 	assertJSONCLIGolden(t, "auth_status", out)
+}
+
+// TestDoAuthStatusNamesAShadowedStoredKey is #356's CLI half: with both an
+// environment variable and a stored token, the environment is what lmm
+// sends, so the line names the environment AND says the stored key is
+// present but not in use. Before this, the line read "authenticated (key:
+// <stored>)" — the one place a user goes to ask which key lmm is sending
+// answered with the one it is not.
+func TestDoAuthStatusNamesAShadowedStoredKey(t *testing.T) {
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(nexusmods.New(nil, ""))
+
+	t.Setenv("NEXUSMODS_API_KEY", "envkey1234567890")
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "storedkey1234567890"))
+
+	out := captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
+	assert.Contains(t, out,
+		"authenticated via NEXUSMODS_API_KEY (key: env...890) (stored key present, shadowed by $NEXUSMODS_API_KEY)")
+	assert.NotContains(t, out, "storedkey1234567890")
+	assert.NotContains(t, out, "envkey1234567890")
+	// #79: the shadowed key is named as present, never shown - not even
+	// masked, which is what a decrypt-to-display would have produced.
+	assert.NotContains(t, out, "sto...890")
+
+	// Without the environment variable the stored key is the active one and
+	// the line is the stored form #79 gave it: a fingerprint, no key.
+	t.Setenv("NEXUSMODS_API_KEY", "")
+	out = captureStdout(t, func() error { return doAuthStatus(context.Background(), svc) })
+	assert.Regexp(t, `authenticated \(key [0-9a-f]{8}\)`, out)
+	assert.NotContains(t, out, "shadowed")
 }

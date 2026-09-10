@@ -34,21 +34,29 @@ install:
 	@echo "Installing $(BINARY_NAME)..."
 	@go install $(LDFLAGS) $(MAIN_PATH)
 
+# TEST_TIMEOUT overrides Go's 10-minute default per test BINARY, which the
+# v2 suite has outgrown: under -race, cmd/lmm, internal/core and
+# internal/serve each run for 9-11 minutes (serve because it drives a real
+# headless browser). At the default, `make check` fails on a timeout that
+# says nothing about the code. 40m is generous headroom on purpose - it is a
+# ceiling for a hang, not a budget.
+TEST_TIMEOUT := 40m
+
 ## test: Run tests (uses project GOCACHE for sandbox-friendly runs)
 test:
-	@GOCACHE=$(GOCACHE_LOCAL) go test ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go test -timeout $(TEST_TIMEOUT) ./...
 
 ## test-race: Run tests with the race detector (matches CI)
 test-race:
-	@GOCACHE=$(GOCACHE_LOCAL) go test -race ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go test -race -timeout $(TEST_TIMEOUT) ./...
 
 ## test-verbose: Run tests with verbose output
 test-verbose:
-	@GOCACHE=$(GOCACHE_LOCAL) go test -v ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go test -timeout $(TEST_TIMEOUT) -v ./...
 
 ## coverage: Run tests with coverage report
 coverage:
-	@GOCACHE=$(GOCACHE_LOCAL) go test -coverprofile=coverage.out ./...
+	@GOCACHE=$(GOCACHE_LOCAL) go test -timeout $(TEST_TIMEOUT) -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 

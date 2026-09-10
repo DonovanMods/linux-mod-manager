@@ -548,10 +548,25 @@ func TestJSONGoldens(t *testing.T) {
 			// folds its count in here (`lmm serve` does; the CLI reports it
 			// separately and leaves this zero, in which case the document
 			// is byte-identical to what it was before the field existed).
+			// #308's shared per-item failure entry, goldened on its OWN
+			// (the AST coverage ratchet requires it, and rightly: it is a
+			// type two documents embed, so its keys are contract twice
+			// over). Every member populated - an adopt failure that matched
+			// no catalogue mod carries no source_id/mod_id, which the two
+			// result goldens below already show.
+			"item_failure",
+			core.ItemFailure{SourceID: "nexusmods", ModID: "99", Name: "Sample Mod", Reason: "failed to fetch mod: upstream timeout"},
+		},
+		{
 			"adopt_result",
 			core.AdoptResult{
 				Adopted: 2, Skipped: 1, Failed: 1, Backfilled: 3,
 				Warnings: []string{"merge sync produced 1 raw fallback"},
+				// #308: the per-item detail behind the Failed counter, so
+				// --json (which suppresses the event stream by design) says
+				// WHICH entry failed and why. Named by file, the way the
+				// plain "✗ <file>: <reason>" line names it.
+				Failures: []core.ItemFailure{{Name: "GoneMod-1.0.zip", Reason: "copying to cache: no such file or directory"}},
 			},
 		},
 		{
@@ -611,8 +626,11 @@ func TestJSONGoldens(t *testing.T) {
 			core.DependencyWarning{SourceID: "nexusmods", ModID: "99", Message: "fetch failed"},
 		},
 		{
+			// Force is set here (#336) to pin its key's wire shape; it is
+			// omitempty, so the default (memo-eligible) options document is
+			// byte-identical to what it was before the field existed.
 			"verify_options",
-			core.VerifyOptions{Tier: core.VerifyFull, Fix: true, ModFilter: "Sample Mod"},
+			core.VerifyOptions{Tier: core.VerifyFull, Fix: true, ModFilter: "Sample Mod", Force: true},
 		},
 		{
 			// Fixable true here on purpose (#332): version_mismatch on an
@@ -634,8 +652,11 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			// Findings is deliberately left nil to pin that a nil slice
 			// marshals as "[]", not "null" - a clean verify run reports it.
+			// Cached (#336) is set for the same reason Force is on
+			// verify_options above: this is the only golden that carries
+			// the key, and a real run omits it entirely.
 			"verify_result",
-			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime},
+			core.VerifyResult{Findings: nil, Issues: 2, Warnings: 1, Checked: 10, HasFiles: true, CheckedAt: fixedTime, Cached: true},
 		},
 		{
 			"converged_file",
@@ -689,8 +710,12 @@ func TestJSONGoldens(t *testing.T) {
 					Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
 					Locked: true, LockedVersion: "1.2.3", ConvertPaks: boolPtr(true),
 				},
-				Changelog: "Fixed a crash on load.",
-				Notes:     []string{"changelog unavailable: upstream timeout"},
+				// #342: the plain-text sibling of the raw Mod.Description
+				// above, pinned here because it is the only golden that
+				// carries it - a mod with no description omits the key.
+				DescriptionText: "Adds bigger backpacks.",
+				Changelog:       "Fixed a crash on load.",
+				Notes:           []string{"changelog unavailable: upstream timeout"},
 			},
 		},
 		{
@@ -952,6 +977,12 @@ func TestJSONGoldens(t *testing.T) {
 				ProfileName: "default", Installed: 3, Failed: 1, Skipped: 1,
 				Warnings: []string{"could not install nexusmods:99"},
 				Notes:    []string{"created profile default"},
+				// #308: the structured half of Warnings above - same
+				// information, without a consumer having to parse
+				// "source:mod: reason" back apart.
+				Failures: []core.ItemFailure{
+					{SourceID: "nexusmods", ModID: "99", Name: "Sample Mod", Reason: "failed to fetch mod: upstream timeout"},
+				},
 			},
 		},
 		{

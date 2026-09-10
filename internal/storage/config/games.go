@@ -198,10 +198,15 @@ func SaveGame(configDir string, game *domain.Game) error {
 // becomes the absolute one it already resolved to. Recorded here (review
 // M9) so it is a decision rather than a surprise. It is the intended
 // direction - what lmm writes is what every later run reads, with no
-// working directory in the answer - and it cannot fail an unrelated write,
-// since the values in the map are already absolute by the time SaveGame's
-// guard sees them. Preserving hand-written relative/tilde values verbatim
-// would be a separate change to this function.
+// working directory in the answer - and SaveGame's OWN guard cannot fail an
+// unrelated write, since the values in the map are already absolute by the
+// time it sees them. A games.yaml that no longer LOADS does fail every
+// write - an invalid link_method/deploy_mode, or (review M6) a relative
+// mod_path with no install_path to resolve it against - because SaveGame
+// reaches this through loadGamesLocked and returns that error; it has
+// always behaved that way for the first two. Preserving hand-written
+// relative/tilde values verbatim would be a separate change to this
+// function.
 func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 	gamesFile := GamesFile{Games: make(map[string]GameConfig)}
 

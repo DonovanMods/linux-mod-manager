@@ -48,6 +48,20 @@ type ServiceConfig struct {
 	// straight through to internal/storage/db and is not a logging
 	// channel: diagnostics go to Logger.
 	WarnWriter io.Writer
+	// OpLockPath is the advisory lock file every MUTATION takes, so a CLI
+	// mutation and a running `lmm serve` cannot interleave their work on
+	// one installation (#317). EVERY mutation, not only the ones that
+	// touch the game directory: a token write, a game or profile edit and
+	// a source-definition save all take it too, so `lmm auth login` typed
+	// during a long deploy is refused rather than queued. Supplied by the caller rather than
+	// derived here: core resolves no paths of its own, and internal/app is
+	// the one place that knows where an installation lives (it passes
+	// <DataDir>/.oplock).
+	//
+	// Empty disables the cross-process lock entirely, leaving the
+	// in-process semaphore exactly as it was - which is what a test
+	// constructing a Service for one temp directory wants.
+	OpLockPath string
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -72,20 +86,29 @@ type DownloadModResult struct {
 // serialized through this semaphore; Phase 2 lifts those flows into
 // serialized Service methods.
 type Service struct {
-	config     *config.Config
-	db         *db.DB
-	cache      *cache.Cache
-	registry   *source.Registry
-	gamesMu    sync.RWMutex
-	games      map[string]*domain.Game
-	opSem      chan struct{}
-	downloader *Downloader
-	extractor  *Extractor
-	log        *slog.Logger // Diagnostics logger; nil means discard (see logger()).
+	config   *config.Config
+	db       *db.DB
+	cache    *cache.Cache
+	registry *source.Registry
+	gamesMu  sync.RWMutex
+	games    map[string]*domain.Game
+	opSem    chan struct{}
+	// verifyMemo caches the last verify answer per (game, profile, tier),
+	// keyed on a cheap fingerprint of what a run actually reads (#336). Any
+	// mutation drops it - beginOp does that - and VerifyOptions.Force
+	// bypasses it. See verify_memo.go for the fingerprint's own limits.
+	verifyMemoMu sync.Mutex
+	verifyMemo   map[string]verifyMemoEntry
+	downloader   *Downloader
+	extractor    *Extractor
+	log          *slog.Logger // Diagnostics logger; nil means discard (see logger()).
 
 	configDir string
 	dataDir   string
 	cacheDir  string
+	// opLockPath is ServiceConfig.OpLockPath: the advisory lock file
+	// beginOp takes around every mutation, or "" for no cross-process lock.
+	opLockPath string
 
 	// beforeSaveInstalled, when non-nil, runs immediately before the install
 	// flow's SaveInstalledMod call - the only point between a successful
@@ -153,6 +176,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		configDir:  cfg.ConfigDir,
 		dataDir:    cfg.DataDir,
 		cacheDir:   cfg.CacheDir,
+		opLockPath: cfg.OpLockPath,
 	}, nil
 }
 
@@ -441,6 +465,12 @@ type searchSourceState struct {
 	// paginate INDEPENDENTLY (AggregateSearchResult.Exhausted's doc
 	// comment), so each carries its own.
 	cursor int
+	// pageSize is the size THIS source is asked for. It starts as the size
+	// the caller requested and is lowered once, on the first round, to a
+	// smaller size the source reported it actually served (#361, see
+	// adoptReportedPageSize) - the rest of the loop's arithmetic then reads
+	// it rather than the caller's number.
+	pageSize int
 	// attempted mirrors the old per-source attempted flag: true once a
 	// search was really tried against this source, false for a silent skip
 	// (no Search capability, or a runtime source.ErrNotSupported on the
@@ -531,6 +561,44 @@ func sourceIsPageable(res source.SearchResult, pageSize int) bool {
 	return len(res.Mods) == pageSize
 }
 
+// adoptReportedPageSize lowers a source's own page size to the smaller one
+// it reported serving, and reports whether it did (#361). sourceIsPageable
+// stops a clamping source outright, which is correct but leaves `lmm search
+// --limit 100` short: CurseForge clamps 100 to 50, says so, and is asked
+// once. Adopting the size it named turns that back into a fillable limit
+// WITHOUT guessing how the source computes its offset - by asking for
+// exactly the size the source says it will use, page*requestedSize and
+// page*effectiveSize become the same number, so page 1 starts where page 0
+// ended whichever of the two it multiplies by internally.
+//
+// Three guards keep it from re-introducing the stride finding 1 removed:
+//
+//   - Only on the source's FIRST round - page 0, with the cursor still on
+//     it - where the rows fetched so far are exactly [0, len) and the next
+//     cursor is unambiguous. The caller checks both halves rather than
+//     inferring page 0 from the paging loop's own entry condition.
+//   - Only a size SMALLER than the one requested - a source answering with
+//     a bigger page than it was asked for is not clamping.
+//   - Only when the rows returned match the size claimed. A source that
+//     reports a page size it does not actually serve is lying, and paging
+//     on its number would skip the difference.
+//
+// A source that clamps without reporting it (NexusMods) reports no PageSize
+// at all, fails the second guard, and is still stopped after one page.
+func adoptReportedPageSize(st *searchSourceState, res source.SearchResult, firstRound bool) bool {
+	if !firstRound || st.pageSize <= 0 {
+		return false
+	}
+	if res.PageSize <= 0 || res.PageSize >= st.pageSize {
+		return false
+	}
+	if len(res.Mods) != res.PageSize {
+		return false
+	}
+	st.pageSize = res.PageSize
+	return true
+}
+
 // searchAllSources searches every source configured for a game concurrently
 // and merges the results (design §5). Per-source failures become Warnings —
 // one flaky API must not hide local modlets; only all-sources-failed is an
@@ -591,6 +659,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		st := &states[i]
 		st.id = sourceID
 		st.cursor = page
+		st.pageSize = pageSize
 		src, ok := registeredByID[sourceID]
 		if !ok {
 			// Reproduce the exact not-found error. Sound while Get stays a
@@ -633,7 +702,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 				continue
 			}
 			g.Go(func() error {
-				res, err := s.SearchMods(gctx, st.id, gameID, query, category, tags, st.cursor, pageSize)
+				res, err := s.SearchMods(gctx, st.id, gameID, query, category, tags, st.cursor, st.pageSize)
 				if err != nil {
 					st.active = false
 					if errors.Is(err, source.ErrNotSupported) && !st.succeeded {
@@ -643,10 +712,27 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					st.err = err
 					return nil // never abort the group: siblings keep searching
 				}
+				// page == 0 is not redundant with the cursor test: it is
+				// what makes it MEAN "first round". paging is only true
+				// when the caller started at page 0 (see rounds above), so
+				// the two agree today - but the guard below rests on "the
+				// rows fetched so far are exactly [0, len)", which is a
+				// claim about page 0, not about the cursor. Stating both
+				// keeps the precondition local to the code that needs it
+				// rather than two frames away (#361, review N10).
+				firstRound := page == 0 && st.cursor == page
 				st.succeeded = true
 				st.mods = append(st.mods, res.Mods...)
 				st.total = res.TotalCount
 				if paging {
+					// #361: a source that clamped the request AND named the
+					// size it served is paged at THAT size from here on,
+					// rather than being stopped by sourceIsPageable below.
+					// Lowering it before the two heuristics run is what
+					// makes them agree with the request that will actually
+					// be sent next round.
+					adoptReportedPageSize(st, res, firstRound)
+
 					// The two questions are kept apart: what this source
 					// might still hold, and whether we can safely ask it
 					// for that. A clamping source answers yes and no.
@@ -661,11 +747,11 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					// catalogue reports), and neither is wrong about the
 					// source it describes. The optimism costs nothing now:
 					// it only ever reaches Exhausted, never a round trip.
-					st.hasMore = sourceHasMore(res, st.cursor, pageSize) ||
-						pagedSourceHasMore(res, len(st.mods), pageSize)
-					st.active = st.hasMore && sourceIsPageable(res, pageSize)
+					st.hasMore = sourceHasMore(res, st.cursor, st.pageSize) ||
+						pagedSourceHasMore(res, len(st.mods), st.pageSize)
+					st.active = st.hasMore && sourceIsPageable(res, st.pageSize)
 				} else {
-					st.hasMore = sourceHasMore(res, st.cursor, pageSize)
+					st.hasMore = sourceHasMore(res, st.cursor, st.pageSize)
 					st.active = st.hasMore
 				}
 				st.cursor++

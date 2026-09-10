@@ -333,3 +333,38 @@ func TestModDetail_DBErrorPropagates(t *testing.T) {
 	assert.NotErrorIs(t, err, domain.ErrModNotFound)
 	assert.Nil(t, detail)
 }
+
+// TestModDetail_DescriptionTextIsPlainProse is #342: domain.Mod.Description
+// deliberately carries a source's RAW markup all the way to the wire (#86),
+// which the CLI has always cleaned before printing and the web UI showed
+// verbatim - "<p>Adds bigger backpacks.</p>", angle brackets and all.
+// ModDetail now carries the cleaned sibling alongside the raw field, so
+// every frontend has something safe to render without duplicating core's
+// cleaner or reaching for dangerouslySetInnerHTML.
+func TestModDetail_DescriptionTextIsPlainProse(t *testing.T) {
+	svc, game, src := newModDetailTestService(t)
+	src.AddMod(game.ID, &domain.Mod{
+		ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5",
+		Description: "<p>Adds <b>bigger</b> backpacks.</p><p>Requires SKSE &amp; SkyUI.</p>",
+	})
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+	require.NoError(t, err)
+	require.NotNil(t, detail.Mod)
+	assert.Equal(t, "<p>Adds <b>bigger</b> backpacks.</p><p>Requires SKSE &amp; SkyUI.</p>",
+		detail.Mod.Description, "the raw markup stays on the wire for --json consumers")
+	assert.Equal(t, "Adds bigger backpacks.\n\nRequires SKSE & SkyUI.", detail.DescriptionText,
+		"the sibling is plain prose, with paragraph breaks preserved as newlines")
+	assert.NotContains(t, detail.DescriptionText, "<")
+}
+
+// TestModDetail_DescriptionTextAbsentWithoutADescription: the field is
+// omitzero, so a mod whose source carries no description adds no key.
+func TestModDetail_DescriptionTextAbsentWithoutADescription(t *testing.T) {
+	svc, game, src := newModDetailTestService(t)
+	src.AddMod(game.ID, &domain.Mod{ID: "a", SourceID: "src", GameID: game.ID, Name: "Mod A", Version: "1.5"})
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "a")
+	require.NoError(t, err)
+	assert.Empty(t, detail.DescriptionText)
+}

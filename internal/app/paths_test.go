@@ -56,10 +56,49 @@ func TestResolvePaths(t *testing.T) {
 			},
 		},
 		{
-			name: "legacy directories win when they exist and the XDG ones do not",
+			// #297: the legacy directory used to win here, so a script or
+			// test harness that set XDG_DATA_HOME and left HOME alone wrote
+			// into the real ~/.local/share/lmm.
+			name: "an explicit absolute XDG value wins even when only the legacy directory exists",
 			setup: func(t *testing.T, home string) Options {
 				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg-config"))
 				t.Setenv("XDG_DATA_HOME", filepath.Join(home, "xdg-data"))
+				mkdir(t, filepath.Join(home, ".config", "lmm"))
+				mkdir(t, filepath.Join(home, ".local", "share", "lmm"))
+				return Options{}
+			},
+			want: func(home string) Paths {
+				return Paths{
+					ConfigDir: filepath.Join(home, "xdg-config", "lmm"),
+					DataDir:   filepath.Join(home, "xdg-data", "lmm"),
+					CacheDir:  filepath.Join(home, "xdg-data", "lmm", "cache"),
+				}
+			},
+		},
+		{
+			// The other half of #297: with no XDG variable to honour, the
+			// legacy directory is still what an upgrading install finds.
+			name: "legacy directories are used when the XDG variables are unset",
+			setup: func(t *testing.T, home string) Options {
+				t.Setenv("XDG_CONFIG_HOME", "")
+				t.Setenv("XDG_DATA_HOME", "")
+				mkdir(t, filepath.Join(home, ".config", "lmm"))
+				mkdir(t, filepath.Join(home, ".local", "share", "lmm"))
+				return Options{}
+			},
+			want: func(home string) Paths {
+				return Paths{
+					ConfigDir: filepath.Join(home, ".config", "lmm"),
+					DataDir:   filepath.Join(home, ".local", "share", "lmm"),
+					CacheDir:  filepath.Join(home, ".local", "share", "lmm", "cache"),
+				}
+			},
+		},
+		{
+			name: "legacy directories are used when the XDG variables are relative",
+			setup: func(t *testing.T, home string) Options {
+				t.Setenv("XDG_CONFIG_HOME", "relative/config")
+				t.Setenv("XDG_DATA_HOME", "relative/data")
 				mkdir(t, filepath.Join(home, ".config", "lmm"))
 				mkdir(t, filepath.Join(home, ".local", "share", "lmm"))
 				return Options{}
@@ -170,4 +209,27 @@ func TestResolvePaths_ExplicitDirsDoNotRequireHome(t *testing.T) {
 	got, err := ResolvePaths(Options{ConfigDir: cfg, DataDir: data})
 	require.NoError(t, err)
 	assert.Equal(t, Paths{ConfigDir: cfg, DataDir: data, CacheDir: filepath.Join(data, "cache")}, got)
+}
+
+// TestResolvePaths_AbsoluteXDGValuesDoNotRequireHome is review N7, the
+// sibling of #277 one layer down: an environment that names both base
+// directories absolutely has said everything lmm needs, and #297's whole
+// point is that such a value decides. resolveBaseDir computed the legacy
+// path first, so it called os.UserHomeDir on a directory it was never
+// going to use - and a service account or container with XDG_DATA_HOME
+// set and no HOME failed to start.
+func TestResolvePaths_AbsoluteXDGValuesDoNotRequireHome(t *testing.T) {
+	cfg := t.TempDir()
+	data := t.TempDir()
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("XDG_DATA_HOME", data)
+
+	got, err := ResolvePaths(Options{})
+	require.NoError(t, err, "an absolute XDG value is the whole answer; $HOME is not consulted")
+	assert.Equal(t, Paths{
+		ConfigDir: filepath.Join(cfg, "lmm"),
+		DataDir:   filepath.Join(data, "lmm"),
+		CacheDir:  filepath.Join(data, "lmm", "cache"),
+	}, got)
 }

@@ -80,7 +80,13 @@ func TestServer_APIHealth_ReturnsExactVerifyReport(t *testing.T) {
 	var report core.VerifyReport
 	decodeStrict(t, rec.Body.Bytes(), &report)
 
-	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	// Force, because this is the CLI's own shape: `lmm verify` never
+	// answers from core's unchanged-installation memo (issue 336), and a
+	// second un-forced call here would be handed the memoised answer the
+	// request above just stored - with `cached: true` on it, which is a
+	// difference in the memo's bookkeeping, not in the tier this test is
+	// about.
+	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Force: true}, nil)
 	require.NoError(t, err)
 	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
@@ -136,7 +142,7 @@ func TestServer_APIHealth_MatchesCLIVerifyTier(t *testing.T) {
 	assert.Equal(t, "1.0", mismatch.Recorded)
 	assert.Equal(t, "2.0", mismatch.Effective)
 
-	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	want, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Force: true}, nil)
 	require.NoError(t, err)
 	requireVerifyReportEncodesLike(t, rec.Body.Bytes(), report, want, since)
 }
@@ -184,7 +190,7 @@ func TestServer_HealthSurfaces_APIAndCLIAgreeOnCounts(t *testing.T) {
 	var apiReport core.VerifyReport
 	decodeStrict(t, apiRec.Body.Bytes(), &apiReport)
 
-	cliEquivalent, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull}, nil)
+	cliEquivalent, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Tier: core.VerifyFull, Force: true}, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, apiReport.Result.Issues, "the API must see the version_mismatch, not report a clean sheet")
@@ -250,4 +256,60 @@ func TestServer_APIConflicts_NoGames_Renders404(t *testing.T) {
 	var envelope apiErrorEnvelope
 	decodeStrict(t, rec.Body.Bytes(), &envelope)
 	assert.NotEmpty(t, envelope.Error)
+}
+
+// TestServer_APIHealth_SecondHydrateAnswersFromTheMemo is issue 336 at the
+// surface that motivated it: Mission Control re-hydrates on every route
+// change, job completion and profile switch, and each hydrate re-ran the
+// full verify tier - a source round trip per mod - over state that had not
+// moved. Two identical hydrates now cost ONE run, and the second answer
+// says so (`cached: true`) while keeping the first run's checked_at.
+func TestServer_APIHealth_SecondHydrateAnswersFromTheMemo(t *testing.T) {
+	src := newFakeSource("fake")
+	src.addMod(fakeSourceMod{
+		Mod:   domain.Mod{ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0"},
+		Files: []domain.DownloadableFile{{ID: "f1", Version: "1.0", IsPrimary: true}},
+	})
+	svc, game := newFixtureServiceWithSource(t, src)
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "fake", "boots", "1.0", "f1", []byte("content")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID: "boots", SourceID: "fake", Name: "Better Boots", Version: "1.0", GameID: game.ID,
+		},
+		ProfileName:  "default",
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+		UpdatePolicy: domain.UpdateNotify,
+	}))
+
+	srv := serve.New(t.Context(), svc, slog.New(slog.DiscardHandler), serve.Options{Addr: testAddr})
+	health := func(path string) core.VerifyReport {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "http://"+testAddr+path, nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var report core.VerifyReport
+		decodeStrict(t, rec.Body.Bytes(), &report)
+		return report
+	}
+
+	first := health("/api/v1/health")
+	require.False(t, first.Result.Cached, "the first hydrate is a real run")
+	afterFirst := src.getModFilesCalls()
+	require.Positive(t, afterFirst, "the full tier asks the source about each mod")
+
+	second := health("/api/v1/health")
+	assert.True(t, second.Result.Cached, "an unchanged installation must not re-run the tier")
+	assert.Equal(t, first.Result.CheckedAt, second.Result.CheckedAt,
+		"the memo reports when the answer was computed, not when it was served")
+	assert.Equal(t, afterFirst, src.getModFilesCalls(),
+		"two hydrates back to back must cost exactly one verify run")
+
+	// The Health card's Re-verify sends ?force=1, and that is the ONE read
+	// that opts back out.
+	forced := health("/api/v1/health?force=1")
+	assert.False(t, forced.Result.Cached, "Re-verify must really re-verify")
+	assert.Greater(t, src.getModFilesCalls(), afterFirst)
 }
