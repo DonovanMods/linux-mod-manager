@@ -1501,6 +1501,15 @@ source list --all` when there is more to show. `lmm game edit --help`
   header says how many are disabled. `-v` is unchanged: its
   `ENABLED`/`DEPLOYED` pair says it in full.
 
+- **The shipped man pages are no longer dated two months before the release
+  (#401).** `genManDate` is pinned rather than `time.Now()`, so that
+  regenerating without a help-text change produces identical bytes and the
+  drift test stays meaningful — but nothing made the pin move, and 2.0.0's
+  pages would have gone out dated "Jul 2026". A new test fails whenever the
+  newest dated `CHANGELOG.md` section is later than the date the pages
+  carry, so the release-prep commit that already runs `make man` bumps it
+  too.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

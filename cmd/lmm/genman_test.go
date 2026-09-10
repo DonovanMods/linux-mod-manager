@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -322,4 +323,34 @@ func direntNames(entries []os.DirEntry) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// changelogRelease matches a dated release heading in CHANGELOG.md,
+// capturing the date. Keep-a-Changelog orders newest first, so the first
+// match is the most recent release.
+var changelogRelease = regexp.MustCompile(`(?m)^## \[[^\]]+\] - (\d{4}-\d{2}-\d{2})\s*$`)
+
+// TestGenManDateIsNotOlderThanTheNewestRelease is #401. genManDate is
+// PINNED rather than time.Now() so that regenerating without a help-text
+// change produces identical bytes and the drift test above stays
+// meaningful - that part is right and stays. What was missing is anything
+// to make the pin move: the pages shipped with 2.0.0 would have been dated
+// "Jul 2026", two months before the release they document.
+//
+// The release-prep commit already runs `make man` (the drift test forces
+// it). This makes it bump the date too, by failing whenever the newest
+// dated CHANGELOG section is later than the date the pages carry.
+func TestGenManDateIsNotOlderThanTheNewestRelease(t *testing.T) {
+	changelog, err := os.ReadFile("../../CHANGELOG.md")
+	require.NoError(t, err, "reading CHANGELOG.md")
+
+	m := changelogRelease.FindSubmatch(changelog)
+	require.NotNil(t, m, "CHANGELOG.md has no dated release heading to compare against")
+
+	released, err := time.Parse("2006-01-02", string(m[1]))
+	require.NoError(t, err)
+
+	assert.False(t, genManDate.Before(released),
+		"genManDate (%s) predates the newest release in CHANGELOG.md (%s): bump it in the release-prep commit, alongside `version` and the CHANGELOG section, and re-run `make man`",
+		genManDate.Format("2006-01-02"), released.Format("2006-01-02"))
 }

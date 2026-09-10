@@ -233,8 +233,8 @@ Core types in `internal/domain/` have no external dependencies:
 **This project uses [Semantic Versioning](https://semver.org/).** Versions are bumped **at release time, not per story PR**:
 
 - **Story PRs into `develop`**: no version bump. Add CHANGELOG entries under `[Unreleased]`. The `version` variable in `cmd/lmm/root.go` stays at the last released version between releases.
-- **Releases (develop → main)**: cut `release/vX.Y.Z` from `develop` with a single prep commit — bump `version` in `cmd/lmm/root.go`, move `[Unreleased]` to a dated `vX.Y.Z` section, add the comparison link, and run `make man` (the genman test enforces this). PR it into `main` titled `release: vX.Y.Z`, merge with a merge commit, tag `vX.Y.Z` on the merge commit, then fast-forward develop (`git push origin main:develop`) and delete the release branch.
-- **Hotfixes**: branch from `main`, PR back into `main` with its own PATCH bump + CHANGELOG section + `make man`, tag on the merge commit, then merge `main` back into `develop`.
+- **Releases (develop → main)**: cut `release/vX.Y.Z` from `develop` with a single prep commit — bump `version` in `cmd/lmm/root.go`, bump `genManDate` in `cmd/lmm/genman.go` to the release date, move `[Unreleased]` to a dated `vX.Y.Z` section, add the comparison link, and run `make man` (the genman drift test enforces the regeneration, and `TestGenManDateIsNotOlderThanTheNewestRelease` enforces the date bump). PR it into `main` titled `release: vX.Y.Z`, merge with a merge commit, tag `vX.Y.Z` on the merge commit, then fast-forward develop (`git push origin main:develop`) and delete the release branch.
+- **Hotfixes**: branch from `main`, PR back into `main` with its own PATCH bump + `genManDate` bump + CHANGELOG section + `make man`, tag on the merge commit, then merge `main` back into `develop`.
 
 **Version increment rules** (judged by the whole release batch):
 
