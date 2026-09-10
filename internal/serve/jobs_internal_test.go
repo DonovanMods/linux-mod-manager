@@ -152,6 +152,13 @@ func newBlockingSource() *blockingSource {
 	}
 }
 
+// The fixtures map this source with an EMPTY identifier, which is a
+// legitimate configuration only for a source that says its mapped value
+// addresses nothing - true of every double here, whose answers are canned
+// (issue 408 review #3: core refuses an empty mapping for a source that
+// does NOT say so).
+func (s *blockingSource) IgnoresGameIdentifier() bool { return true }
+
 func (s *blockingSource) ID() string      { return blockingSourceID }
 func (s *blockingSource) Name() string    { return "Blocking Source" }
 func (s *blockingSource) AuthURL() string { return "" }

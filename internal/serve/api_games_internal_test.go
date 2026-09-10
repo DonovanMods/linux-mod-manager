@@ -54,6 +54,13 @@ type namedFixtureSource struct {
 func (n *namedFixtureSource) ID() string   { return n.id }
 func (n *namedFixtureSource) Name() string { return n.name }
 
+// And it REQUIRES the per-game identifier, overriding the embedded
+// fixtureSource's answer: these doubles stand in for NexusMods and
+// CurseForge specifically, whose mapped value is a real game slug or
+// numeric id, and the add/edit tests are about what may be written for
+// such a source (#387 / issue 408 review #3).
+func (n *namedFixtureSource) IgnoresGameIdentifier() bool { return false }
+
 // newGamesServer builds a Server over a Service with no games configured -
 // the first-run state the Setup surface exists for - but with "nexusmods"
 // and "curseforge" pre-registered, since the add-game tests below spend

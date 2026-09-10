@@ -66,6 +66,13 @@ func newVersionRepairSource(t *testing.T) *versionRepairSource {
 	return s
 }
 
+// The fixtures map this source with an EMPTY identifier, which is a
+// legitimate configuration only for a source that says its mapped value
+// addresses nothing - true of every double here, whose answers are canned
+// (issue 408 review #3: core refuses an empty mapping for a source that
+// does NOT say so).
+func (*versionRepairSource) IgnoresGameIdentifier() bool { return true }
+
 func (*versionRepairSource) ID() string      { return fixtureSourceID }
 func (*versionRepairSource) Name() string    { return "Version Repair Fixture Source" }
 func (*versionRepairSource) AuthURL() string { return "" }

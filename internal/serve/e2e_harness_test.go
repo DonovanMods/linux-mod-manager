@@ -1163,6 +1163,13 @@ func e2eZipWith(member, content string) []byte {
 	return buf.Bytes()
 }
 
+// The fixtures map this source with an EMPTY identifier, which is a
+// legitimate configuration only for a source that says its mapped value
+// addresses nothing - true of every double here, whose answers are canned
+// (issue 408 review #3: core refuses an empty mapping for a source that
+// does NOT say so).
+func (s *e2eSearchSource) IgnoresGameIdentifier() bool { return true }
+
 func (s *e2eSearchSource) ID() string      { return s.id }
 func (s *e2eSearchSource) Name() string    { return "E2E Search Source" }
 func (s *e2eSearchSource) AuthURL() string { return "" }
@@ -1240,6 +1247,13 @@ var _ source.ModSource = (*e2eSearchSource)(nil)
 // source, so every other method panics if reached, catching a fixture bug
 // (a real call here would mean the scenario is testing the wrong thing).
 type e2eFailingSearchSource struct{ id string }
+
+// The fixtures map this source with an EMPTY identifier, which is a
+// legitimate configuration only for a source that says its mapped value
+// addresses nothing - true of every double here, whose answers are canned
+// (issue 408 review #3: core refuses an empty mapping for a source that
+// does NOT say so).
+func (s *e2eFailingSearchSource) IgnoresGameIdentifier() bool { return true }
 
 func (s *e2eFailingSearchSource) ID() string      { return s.id }
 func (s *e2eFailingSearchSource) Name() string    { return "Flaky Source" }
