@@ -114,9 +114,12 @@ so selecting one is refused with a pointer to 'lmm game add
 and a default mod path and asks only for the source. Under --json,
 --include-unknown with neither --all nor --select emits the detect LISTING
 document (every candidate, known and unknown) instead of prompting: search
-first, add second. A plain --json scan (no --include-unknown) carries the
-listing's default rows only - pass the flag to see the rest, exactly as on
-a terminal.
+first, add second. That flag is what produces a listing document at all: a
+plain --json scan emits none - with neither --all nor --select it refuses,
+since nothing may prompt under --json, and with either one it emits the
+RESULT document naming what it added. What --all/--select choose from is
+the default listing, which since #368 includes a game with Steam Workshop
+items already downloaded.
 
 If a plain scan finds no known games but this machine has OTHER installed
 Steam games lmm has no known-games entry for, it says so and names

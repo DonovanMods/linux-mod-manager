@@ -884,6 +884,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
   Steam app id 10.
 
+- **`lmm game detect --json`'s help and the README now describe what it
+  actually emits (#368).** The help said a plain `--json` scan "carries the
+  listing's default rows only" and the README said it "never carries those
+  rows at all" — the help described a document that does not exist and the
+  README contradicted it. Both now say the same true thing: the LISTING
+  document requires `--include-unknown`; a plain `--json` scan emits none
+  (refusing without `--all`/`--select`, and emitting the RESULT document
+  with either); and what `--all`/`--select` choose from is the default
+  listing, Workshop-bearing uncurated rows included.
+
 - **The man pages no longer drop placeholders and env-var names out of the
   commands they tell you to run (#368).** `man lmm-game-detect` rendered
   `lmm game add --from-detected ` — the `<app-id>` placeholder gone, leaving

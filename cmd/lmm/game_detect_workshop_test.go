@@ -192,6 +192,34 @@ func TestDoGameDetect_AllIncludesAnUncuratedWorkshopRow(t *testing.T) {
 	assert.NotContains(t, saved, "satisfactory", "a row that was never listed is not part of \"all\"")
 }
 
+// TestDoGameDetect_JSONAllConfiguresAWorkshopRowWithoutIncludeUnknown pins
+// the rule #368 review Minor 5's corrected help and README now state: the
+// LISTING document needs --include-unknown, but what --all/--select choose
+// from is the DEFAULT listing - which since #368 holds Workshop-bearing
+// uncurated rows. So a plain `--json --all` configures one, and emits the
+// RESULT document, never a listing.
+func TestDoGameDetect_JSONAllConfiguresAWorkshopRowWithoutIncludeUnknown(t *testing.T) {
+	configDir = t.TempDir()
+	svc := workshopDetectService(t)
+	cmd, buf := newDetectCmd(t)
+	withJSONOutput(t)
+	gameDetectAll = true
+
+	var doc core.GameDetectResult
+	stdout := captureStdout(t, func() error {
+		return assertStdinNeverRead(t, func() error {
+			return doGameDetect(context.Background(), cmd,
+				bufio.NewReader(poisonReader{t}), svc, workshopDetectScan(t), nil)
+		})
+	})
+	decodeSingleDoc(t, stdout, &doc)
+
+	assert.Empty(t, buf.String(), "no console text may sit beside the document")
+	assert.Equal(t, []string{"skyrim-se", "space-engineers-2"}, doc.Saved,
+		"the default listing's rows, Workshop-bearing uncurated one included")
+	assert.NotContains(t, stdout, `"games"`, "a plain --json scan emits no LISTING document")
+}
+
 // TestDoGameDetect_UncuratedRowWithNoSourceIsRefusedWithTheAddPath: under
 // --include-unknown a game with nothing but an install path is listed and
 // numbered, but nothing tells lmm which source it belongs to - so the
