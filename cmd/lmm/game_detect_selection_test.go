@@ -490,7 +490,8 @@ func TestDoGameDetect_IncludeUnknown_ListsUnknownSection(t *testing.T) {
 	require.NoError(t, err)
 
 	out := buf.String()
-	assert.Contains(t, out, "Found 2 moddable game(s):")
+	assert.Contains(t, out, "Found 2 installed game(s):",
+		"--include-unknown lists a row the next line calls unknown, so the count is of installed games (#368 review Minor 2)")
 	assert.Contains(t, out, "  1. Star Rupture (starrupture)")
 	assert.Contains(t, out, "  2. Satisfactory (satisfactory)")
 	assert.Contains(t, out, "Installed but not in the known-games list")

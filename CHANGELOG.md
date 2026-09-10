@@ -884,6 +884,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
   Steam app id 10.
 
+- **`lmm game detect --include-unknown` no longer calls every installed
+  Steam game moddable (#368).** The header counted both sections, so it
+  claimed rows its own next line describes as not being in the known-games
+  list. With `--include-unknown` the count is now of `installed game(s)`;
+  the default listing, whose every row is curated or moddable by observation
+  (Workshop items), still reads `moddable game(s)`.
+
 - **A missing Steam library no longer prints as a warning on every scan
   (#368).** `Warning: /data/Games/SteamLibrary/steamapps: open …: no such
 file or directory` came from a `libraryfolders.vdf` entry whose directory

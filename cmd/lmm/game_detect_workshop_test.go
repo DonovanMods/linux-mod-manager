@@ -236,6 +236,38 @@ func TestDoGameDetect_DuplicateSelectionIsRefused(t *testing.T) {
 	assert.Empty(t, saved)
 }
 
+// TestDoGameDetect_IncludeUnknownHeaderDoesNotCallEveryGameModdable pins
+// #368 review Minor 2: --include-unknown widened the counted set to include
+// rows the listing's own next line says are NOT known to be moddable, so the
+// header claimed them.
+func TestDoGameDetect_IncludeUnknownHeaderDoesNotCallEveryGameModdable(t *testing.T) {
+	configDir = t.TempDir()
+	svc := workshopDetectService(t)
+	cmd, buf := newDetectCmd(t)
+	gameDetectIncludeUnknown = true
+
+	require.NoError(t, doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("none\n")), svc, workshopDetectScan(t), nil))
+
+	out := buf.String()
+	assert.Contains(t, out, "Found 3 installed game(s):")
+	assert.NotContains(t, out, "moddable game(s)",
+		"a row the next line calls unknown is not claimed as moddable")
+}
+
+// TestDoGameDetect_ModdableHeaderStaysOnTheDefaultListing: every row the
+// default listing keeps IS moddable - curated, or moddable by observation
+// (Workshop items) - so the header still says so.
+func TestDoGameDetect_ModdableHeaderStaysOnTheDefaultListing(t *testing.T) {
+	configDir = t.TempDir()
+	svc := workshopDetectService(t)
+	cmd, buf := newDetectCmd(t)
+
+	require.NoError(t, doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("none\n")), svc, workshopDetectScan(t), nil))
+	assert.Contains(t, buf.String(), "Found 2 moddable game(s):")
+}
+
 // TestDoGameDetect_CuratedRowShowsItsWorkshopCount: the count is a fact
 // about the row, not about the section it is in.
 func TestDoGameDetect_CuratedRowShowsItsWorkshopCount(t *testing.T) {

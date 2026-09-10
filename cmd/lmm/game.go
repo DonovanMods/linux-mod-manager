@@ -613,7 +613,7 @@ func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curate
 	if len(listed) == 0 {
 		return
 	}
-	cmd.Printf("Found %d moddable game(s):\n", len(listed))
+	cmd.Printf("Found %d %s game(s):\n", len(listed), detectedGamesNoun(listed))
 	for i, g := range listed {
 		if i == curatedCount {
 			if i > 0 {
@@ -623,6 +623,25 @@ func printDetectedGames(cmd *cobra.Command, listed []domain.DetectedGame, curate
 		}
 		printDetectedGameRow(cmd, i+1, g, existingGames, i >= curatedCount)
 	}
+}
+
+// detectedGamesNoun is what the listing's count is a count OF (#368 review
+// Minor 2). Every row the DEFAULT listing keeps is moddable - curated, or
+// moddable by observation (Steam Workshop items already downloaded) - so the
+// header says so. --include-unknown widens the list with rows the very next
+// line calls not-known-to-be-moddable, and counting those as "moddable
+// game(s)" contradicts the listing itself, so the whole count drops to the
+// only claim that still covers every row: they are installed.
+//
+// Read off the rows rather than off gameDetectIncludeUnknown, so the header
+// cannot disagree with what was actually printed.
+func detectedGamesNoun(listed []domain.DetectedGame) string {
+	for _, g := range listed {
+		if !g.Listable() {
+			return "installed"
+		}
+	}
+	return "moddable"
 }
 
 // printDetectedGameRow renders one listed row. showAppID is set for the
