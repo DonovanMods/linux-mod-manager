@@ -1087,7 +1087,9 @@ switch` and `profile import` all discarded the download's result — so
   the tracking row it is, never fetched; `profile apply` learned the same
   rule, so a profile naming a Workshop item lmm already tracks records it
   instead of failing on a delisted one — or, worse, downloading an
-  lmm-managed copy over what Steam manages.
+  lmm-managed copy over what Steam manages. Both frontends' apply previews
+  say so: such an entry reads as tracked rather than as a download, and shows
+  the item's revision date instead of Steam's 19-digit content id.
 
 - **Two overlapping reloads of the same web UI slice no longer commit out of
   order (#370).** The SPA already dropped an answer fetched for a route the

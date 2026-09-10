@@ -1256,3 +1256,44 @@ func TestProfileRenameCmd_Structure(t *testing.T) {
 	assert.Error(t, profileRenameCmd.Args(profileRenameCmd, []string{"only-one"}))
 	assert.NoError(t, profileRenameCmd.Args(profileRenameCmd, []string{"old", "new"}))
 }
+
+// TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload is P1a review
+// finding F5. #371 gave PlanProfileApply its External branch - a Steam
+// Workshop item lmm already tracks is recorded, never fetched - but the
+// preview went on printing every ToInstall entry as `  ↓ src:id vVERSION`.
+// For an external entry that is wrong twice over: the download arrow
+// describes work the apply will not do (it copies a tracking row), and
+// entry.Ref.Version is Steam's 19-digit CONTENT ID, which #365/#269 rule out
+// of every human-facing surface.
+func TestDoProfileApply_ExternalEntry_IsNotRenderedAsADownload(t *testing.T) {
+	svc, game := setupDoProfileSwitchTest(t)
+	ctx := context.Background()
+	pm := getProfileManager(svc)
+	_, err := pm.Create(ctx, game.ID, "shared")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "111000111", SourceID: "steamworkshop", Name: "Workshop item 111000111", Version: "9876543210", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		External:     true,
+		ExternalPath: "/steam/workshop/content/1/111000111",
+	}))
+	require.NoError(t, pm.AddMod(ctx, game.ID, "shared",
+		domain.ModReference{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}))
+
+	oldDryRun := profileApplyDryRun
+	profileApplyDryRun = true
+	t.Cleanup(func() { profileApplyDryRun = oldDryRun })
+
+	out := captureStdout(t, func() error {
+		return doProfileApply(ctx, svc, game, []string{"shared"})
+	})
+
+	assert.NotContains(t, out, "9876543210", "a Workshop content id must never be printed as a version")
+	assert.NotContains(t, out, "↓ steamworkshop:111000111", "the apply downloads nothing for a tracked item")
+	assert.Contains(t, out, "steamworkshop:111000111", "the entry must still be listed")
+	assert.Contains(t, out, "tracked", "and named as tracked rather than installed")
+}

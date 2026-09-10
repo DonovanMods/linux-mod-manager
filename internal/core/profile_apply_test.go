@@ -664,6 +664,9 @@ func TestPlanProfileApply_ExternalRefIsRecordedNotFetched(t *testing.T) {
 	require.Len(t, plan.ToInstall, 1)
 	assert.True(t, plan.ToInstall[0].External, "a tracked Steam item is recorded, not installed")
 	assert.Empty(t, plan.ToInstall[0].Error, "an external entry must not be resolved against a source")
+	// #365 (P1a review F5): the entry's own ref carries the display facts,
+	// so no renderer has to print the 19-digit content id as a version.
+	assert.True(t, plan.ToInstall[0].Ref.External, "the ref must be stamped external for its renderers")
 
 	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
 	require.NoError(t, err)

@@ -627,14 +627,15 @@ func doProfileExport(ctx context.Context, service *core.Service, game *domain.Ga
 	return nil
 }
 
-// importRefLine renders one bucket entry of a core.ImportPlan.
+// planRefLine renders one mod reference of a plan document - a core.
+// ImportPlan bucket entry, or a core.ProfileApplyPlan install entry.
 //
-// The version goes through displayModVersion, never raw (#365): an imported
-// profile document can name a Steam Workshop item, whose Version is the
-// 19-digit content id, and since #365 core stamps the ref's own external /
+// The version goes through displayModVersion, never raw (#365): a profile
+// document can name a Steam Workshop item, whose Version is the 19-digit
+// content id, and since #365 core stamps the ref's own external /
 // updated_at so this line can say the revision date instead. A ref with
 // neither prints no version at all rather than a bare "v".
-func importRefLine(ref domain.ModReference) string {
+func planRefLine(ref domain.ModReference) string {
 	shown := displayModVersion(ref.External, ref.Version, ref.UpdatedAt)
 	if shown == "" || shown == "-" {
 		return fmt.Sprintf("%s:%s", ref.SourceID, ref.ModID)
@@ -792,19 +793,19 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		if len(plan.AlreadyCached) > 0 {
 			fmt.Printf("  + %d already downloaded, will be added to this profile:\n", len(plan.AlreadyCached))
 			for _, ref := range plan.AlreadyCached {
-				fmt.Printf("    - %s\n", importRefLine(ref))
+				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
 		if len(plan.NeedsRedownload) > 0 {
 			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
 			for _, ref := range plan.NeedsRedownload {
-				fmt.Printf("    - %s\n", importRefLine(ref))
+				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
 		if len(plan.Missing) > 0 {
 			fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
 			for _, ref := range plan.Missing {
-				fmt.Printf("    - %s\n", importRefLine(ref))
+				fmt.Printf("    - %s\n", planRefLine(ref))
 			}
 		}
 	}
@@ -1316,7 +1317,18 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		if len(plan.ToInstall) > 0 {
 			fmt.Printf("Will install %d mod(s):\n", len(plan.ToInstall))
 			for _, entry := range plan.ToInstall {
-				fmt.Printf("  ↓ %s:%s v%s\n", entry.Ref.SourceID, entry.Ref.ModID, entry.Ref.Version)
+				// P1a review F5: an EXTERNAL entry is a Steam Workshop item
+				// lmm already tracks - the apply copies its row and
+				// downloads nothing - so the download arrow would describe
+				// work that never happens, and entry.Ref.Version is Steam's
+				// content id, which no human-facing surface may print
+				// (#365/#269). planRefLine reads the display facts core
+				// stamped.
+				if entry.External {
+					fmt.Printf("  = %s (tracked - Steam already has it)\n", planRefLine(entry.Ref))
+					continue
+				}
+				fmt.Printf("  ↓ %s\n", planRefLine(entry.Ref))
 			}
 		}
 	}

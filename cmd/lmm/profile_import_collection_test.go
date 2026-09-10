@@ -51,7 +51,7 @@ func TestImportRefLine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := importRefLine(tt.ref)
+			got := planRefLine(tt.ref)
 			assert.Equal(t, tt.want, got)
 			assert.NotContains(t, got, testContentID)
 		})

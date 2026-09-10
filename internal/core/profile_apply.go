@@ -328,6 +328,13 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 			entry.ExternalPath = row.ExternalPath
 			entry.Mod = &mod
 			entry.Version = mod.Version
+			// #365: stamp the ref's own display facts, so no renderer has
+			// to print a Workshop content id where a version goes - the
+			// same two additive fields PlanImport/PlanProfileSync stamp
+			// (see domain.ModReference.External's doc comment: core stamps
+			// them, nothing else may).
+			entry.Ref.External = true
+			entry.Ref.UpdatedAt = mod.UpdatedAt
 		}
 		plan.ToInstall = append(plan.ToInstall, entry)
 	}
