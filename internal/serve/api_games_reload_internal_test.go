@@ -11,6 +11,7 @@ import (
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,6 +123,42 @@ func TestAPIGames_SurvivesAGamesYAMLEditedIntoGarbage(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, []string{"g1"}, gameIDsFromListing(t, rec.Body.Bytes()),
 		"the last good game set must still be served")
+}
+
+// TestAPIGames_ARefusedRequestDoesNotReloadGamesYAML is P2 review Minor 2.
+//
+// wrap composes inside-out, so a freshGames installed OUTSIDE the guards
+// runs before them: a cross-origin request the server is about to refuse
+// with 403 had already paid for a stat of games.yaml and, when the file had
+// moved, a full re-parse under the exclusive write lock. A request the
+// server has decided not to serve must not reach the file at all, so the
+// observable is the Service's own game set - not the response, which is 403
+// either way.
+func TestAPIGames_ARefusedRequestDoesNotReloadGamesYAML(t *testing.T) {
+	s, configDir := newReloadServer(t)
+
+	appendGameToYAML(t, configDir, "testgame", t.TempDir())
+
+	req := apiRequest(s, http.MethodPost, "/api/v1/plans/deploy?game=g1&profile=default", "{}")
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code,
+		"the cross-origin POST must be refused, or this test is measuring nothing")
+
+	ids := make([]string, 0, 2)
+	for _, g := range s.svc.ListGames() {
+		ids = append(ids, g.ID)
+	}
+	assert.Equal(t, []string{"g1"}, ids,
+		"a refused request must not have re-read games.yaml")
+
+	// And the reload is not lost - the next request the server DOES serve
+	// still picks the new game up, which is what keeps this a reordering
+	// rather than a narrowing.
+	rec = doAPI(s, http.MethodGet, "/api/v1/games", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, []string{"g1", "testgame"}, gameIDsFromListing(t, rec.Body.Bytes()))
 }
 
 // appendGameToYAML adds one game to games.yaml the way a second process

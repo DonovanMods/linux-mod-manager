@@ -108,9 +108,9 @@ func unsafeMethod(m string) bool {
 // that same gap (task-3 re-review New finding 2).
 func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 	var h http.Handler = fn
+	h = s.freshGames(h)
 	h = s.csrfCheck(h)
 	h = s.originCheck(h)
-	h = s.freshGames(h)
 	h = s.requestLogging(h)
 	return h
 }
@@ -130,6 +130,14 @@ func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 // that answer ABOUT games without resolving a ?game= selection (the
 // chooser's listing, the Setup page's source editor). The cost when
 // nothing changed is one stat.
+//
+// It is the INNERMOST wrapper, inside the Origin and CSRF guards (P2
+// review Minor 2). wrap composes inside-out, so installing it outside them
+// made a cross-origin request the server was about to refuse with 403 pay
+// for that stat first - and, if the file had moved, for a full YAML
+// re-parse under the exclusive write lock. Work on behalf of a request
+// already decided against; the reload belongs on the served side of the
+// security boundary.
 //
 // A games.yaml edited into something unparsable is LOGGED, not surfaced:
 // core keeps the last good set (ReloadGames' own contract), and failing
