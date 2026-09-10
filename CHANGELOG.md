@@ -921,8 +921,8 @@ number 1-2, a Steam app id, all, or none)` — naming the spelling just used
 
 - **The man pages no longer drop placeholders and env-var names out of the
   commands they tell you to run (#368).** `man lmm-game-detect` rendered
-  `lmm game add --from-detected ` — the `<app-id>` placeholder gone, leaving
-  an incomplete command in the one place a user copies from — because the
+  "lmm game add --from-detected" with the `<app-id>` placeholder gone,
+  leaving an incomplete command in the one place a user copies from — because the
   generator only escaped Markdown-active characters in each command's
   SYNOPSIS line, not in its help text. `man lmm-auth-login` lost two
   environment variable names the same way, to Markdown emphasis:

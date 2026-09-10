@@ -75,3 +75,6 @@ coverage.html
 *.local.md
 docs/plans/*
 !docs/plans/archive
+
+# trunk/mise local caches the Makefile points at; never content
+/.trunk-cache-local/
