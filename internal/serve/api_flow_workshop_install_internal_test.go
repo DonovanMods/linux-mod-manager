@@ -69,11 +69,7 @@ func newWorkshopInstallServer(t *testing.T) (*Server, *core.Service, *domain.Gam
 	testutil.FakeSteamcmdOnPath(t)
 
 	svc := newJobsService(t)
-	svc.RegisterSource(steamworkshop.New(steamworkshop.Options{
-		BaseURL:    workshopDetailsFixtureServer(t).URL,
-		CacheDir:   t.TempDir(),
-		SteamRoots: []string{t.TempDir()},
-	}))
+	svc.RegisterSource(steamworkshop.New(testutil.WorkshopOptions(t, workshopDetailsFixtureServer(t).URL)))
 
 	ctx := t.Context()
 	game := &domain.Game{

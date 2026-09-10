@@ -72,11 +72,7 @@ func setupWorkshopInstallTest(t *testing.T, fileID string) (*core.Service, *doma
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 
-	svc.RegisterSource(steamworkshop.New(steamworkshop.Options{
-		BaseURL:    workshopDetailsFixture(t).URL,
-		CacheDir:   t.TempDir(),
-		SteamRoots: []string{t.TempDir()},
-	}))
+	svc.RegisterSource(steamworkshop.New(testutil.WorkshopOptions(t, workshopDetailsFixture(t).URL)))
 
 	game := &domain.Game{
 		ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink,

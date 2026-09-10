@@ -3,6 +3,7 @@ package steamworkshop_test
 import (
 	"context"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -241,6 +242,64 @@ func TestNoTestReachesTheProductionAPI(t *testing.T) {
 			assert.NotContains(t, string(data), host,
 				"%s names a live Steam host: tests must use an httptest server", e.Name())
 		}
+	}
+}
+
+// TestEveryTestOutsideThisPackageBuildsTheSourceThroughTheGuardedHelper
+// extends the guard above past this package's own directory, which is as
+// far as a ReadDir(".") can see. W3 added two constructions of the REAL
+// source in other packages (cmd/lmm's end-to-end install and internal/serve's
+// install job); an empty Options.BaseURL in either falls back to Valve's
+// production host, and neither file is in this directory. testutil.WorkshopOptions
+// is the one door that refuses an empty BaseURL, so this asserts every test
+// file elsewhere in the module comes through it.
+func TestEveryTestOutsideThisPackageBuildsTheSourceThroughTheGuardedHelper(t *testing.T) {
+	root := moduleRootForGuard(t)
+	own := filepath.Join(root, "internal", "source", "steamworkshop")
+
+	var offenders []string
+	require.NoError(t, filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if name := d.Name(); path != root && (strings.HasPrefix(name, ".") || name == "vendor") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), "_test.go") || filepath.Dir(path) == own {
+			return nil
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		body := string(data)
+		if strings.Contains(body, "steamworkshop.New(") && !strings.Contains(body, "testutil.WorkshopOptions(") {
+			rel, _ := filepath.Rel(root, path)
+			offenders = append(offenders, rel)
+		}
+		return nil
+	}))
+
+	assert.Empty(t, offenders,
+		"these test files build the real Steam Workshop source without testutil.WorkshopOptions, "+
+			"so an empty BaseURL would reach Valve's production API unnoticed")
+}
+
+// moduleRootForGuard walks up to the directory holding go.mod.
+func moduleRootForGuard(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		require.NotEqual(t, parent, dir, "no go.mod above the test's working directory")
+		dir = parent
 	}
 }
 
