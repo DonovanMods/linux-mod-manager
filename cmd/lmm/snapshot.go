@@ -217,15 +217,19 @@ func doSnapshotList(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 	fmt.Printf("Snapshots for %s:\n\n", game.Name)
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tTAKEN\tPROFILE\tMODS\tFILES\tORIGINALS\tSIZE")
+	if _, err := fmt.Fprintln(w, "NAME\tTAKEN\tPROFILE\tMODS\tFILES\tORIGINALS\tSIZE"); err != nil {
+		return fmt.Errorf("writing header: %w", err)
+	}
 	for _, row := range listing.Snapshots {
 		name := row.Name
 		if row.Auto {
 			name += " (auto)"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
 			name, row.CreatedAt.Local().Format("2006-01-02 15:04"), row.Profile,
-			row.Mods, row.DeployedFiles, row.Originals, humanBytes(row.SizeBytes))
+			row.Mods, row.DeployedFiles, row.Originals, humanBytes(row.SizeBytes)); err != nil {
+			return fmt.Errorf("writing row %s: %w", row.Name, err)
+		}
 	}
 	return w.Flush()
 }
