@@ -375,6 +375,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index and search; package, version and dependency reads follow in the same
   issue.
 
+- **`lmm game detect` recognises Human Host (#406).** The first of the
+  curated known-games entries this release adds: the game is detected with
+  its mod folder (`BepInEx/plugins`) and its Steam Workshop source id
+  already filled in, so adding it is one keystroke instead of answering
+  `lmm game add`'s prompts by hand. Space Engineers and Space Engineers 2
+  stay detect-only — the first loads local mods from `%APPDATA%`, outside
+  the install directory a known-games `mod_path` is relative to, and the
+  second publishes no mod folder at all — but detection still prefills
+  `steamworkshop` for both from their Workshop manifests.
+
 - **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
   (#400).** Starting a job answered `{"job_id"}` while `GET /api/v1/jobs`
   and `GET /api/v1/jobs/{id}` answered `{"id"}` — the same entity under two

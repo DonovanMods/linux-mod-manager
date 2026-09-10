@@ -72,3 +72,19 @@
   deploy_mode: compile
   sources:
     icarus: icarus
+
+# --- #406 story S1: Steam Workshop-native games -----------------------------
+# Human Host - Unity/Mono survival game with Steam Workshop support on the
+# store page; the community's mods are BepInEx plugins, and both the in-game
+# mod browser and the community mod manager sync subscribed Workshop items
+# into the BepInEx plugins folder inside the game install. No NexusMods
+# game page exists for it, so steamworkshop is the only source.
+# https://store.steampowered.com/app/2393970/Human_Host/
+# https://steamcommunity.com/app/2393970/workshop/
+# https://steamcommunity.com/sharedfiles/filedetails/?id=3740140784
+"2393970":
+  slug: human-host
+  name: Human Host
+  mod_path: BepInEx/plugins
+  sources:
+    steamworkshop: "2393970"
