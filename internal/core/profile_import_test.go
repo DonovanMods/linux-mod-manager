@@ -1163,3 +1163,207 @@ func TestPlanImport_CrossProfileMod_PartialCacheEntryIsNotAlreadyCached(t *testi
 	assert.Empty(t, plan.AlreadyCached, "a half-populated cache entry is not 'already downloaded'")
 	require.Len(t, plan.NeedsRedownload, 1, "it must be re-fetched, like every other incomplete entry")
 }
+
+// --- #404: the pick answers "where are the bytes", never "what is live" ---
+
+// TestApplyImport_CrossProfilePick_ReplacesTheLiveOlderDeployment is the P1a
+// re-review's N1, and #404's own proof: TestApplyImport_Downgrade_EndToEnd
+// with ONE row added - a third profile holding the version the document
+// names, with no cache entry of its own.
+//
+// pickImportRow scores that row 2 (the document's version, no usable cache)
+// and the DEPLOYED 1.5 row only 1, so the pick takes the first, the entry
+// falls into NeedsRedownload, and nothing recorded the live deployment the
+// install has to converge away from. The obsolete 1.5 file stayed live
+// beside the fresh 1.0 one: two versions of one mod in a game-global tree,
+// the exact state Replace exists to prevent.
+//
+// The two questions are separate and are now asked separately: which row
+// answers "is it downloaded?" (the pick) and "is a live deployment of
+// another version in the way?" (every candidate row, whichever one the pick
+// took).
+func TestApplyImport_CrossProfilePick_ReplacesTheLiveOlderDeployment(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	// Sorts BEFORE "default" in config.ListProfiles' filename order, so the
+	// scan meets it first - but the fix must not depend on that either way
+	// (TestApplyImport_CrossProfile_OneVersionOnDisk covers every ordering).
+	_, err = pm.Create(context.Background(), game.ID, "aaa")
+	require.NoError(t, err)
+
+	mock := newTwoVersionSource(t)
+	svc.RegisterSource(mock)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "mod1", "1.5", "mod1.esp", []byte("new-payload")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.5", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		FileIDs:      []string{"10"},
+	}))
+	// The added row: the document's own 1.0, under another profile, with no
+	// cache entry - it can answer "which file ids does 1.0 use", and nothing
+	// about what is on disk.
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: "1.0", GameID: game.ID},
+		ProfileName:  "aaa",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"9"},
+	}))
+	installer := svc.GetInstallerForTest(game)
+	require.NoError(t, installer.Install(context.Background(), game, &domain.Mod{ID: "mod1", SourceID: "src", Version: "1.5", GameID: game.ID}, "default"))
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	require.NoError(t, err, "precondition: 1.5 must be actually deployed")
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.5"}))
+
+	profile := &domain.Profile{
+		Name: "stable", GameID: "g1",
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: "1.0"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.NeedsRedownload, 1, "1.0 is not cached anywhere, so it has to be fetched")
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
+	assert.Equal(t, 0, result.Failed)
+
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+	assert.NoError(t, err, "the new 1.0 file must be deployed")
+	_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+	assert.True(t, os.IsNotExist(err),
+		"the obsolete 1.5 file must be removed by Replace - the pick reused another profile's row for the FILE IDS, which says nothing about what is live on disk")
+}
+
+// TestApplyImport_CrossProfile_OneVersionOnDisk is #404's invariant, stated
+// once and asserted over the whole matrix the P1a re-review re-attacked F1
+// with: three other profiles, in three orderings of who holds what, crossed
+// with the wanted version's cache entry being complete, half-populated, or
+// absent.
+//
+// One profile holds the version the document names (with that varying cache
+// state), one holds an older version that is LIVE on disk, one holds a third
+// version nobody deployed. Whichever of the nine cells this is, the game
+// directory holds exactly ONE version of the mod when the import is done -
+// which of the rows the pick happened to reuse for its bytes must not be
+// able to change that.
+func TestApplyImport_CrossProfile_OneVersionOnDisk(t *testing.T) {
+	const (
+		wanted    = "1.0" // the version the imported document names
+		live      = "1.5" // deployed on disk before the import
+		bystander = "2.0" // a third profile's row, deployed nowhere
+	)
+	others := []string{"aaa", "mmm", "zzz"}
+	orderings := []struct {
+		name    string
+		holders map[string]string // profile -> the version it holds
+	}{
+		{"the wanted version sorts first", map[string]string{"aaa": wanted, "mmm": live, "zzz": bystander}},
+		{"the wanted version sorts middle", map[string]string{"aaa": bystander, "mmm": wanted, "zzz": live}},
+		{"the wanted version sorts last", map[string]string{"aaa": live, "mmm": bystander, "zzz": wanted}},
+	}
+	cacheStates := []struct {
+		name string
+		// store writes the wanted version's cache entry, if any, and
+		// reports whether it is COMPLETE (payload plus the per-file
+		// completion marker a finished download leaves).
+		store func(t *testing.T, svc *core.Service, game *domain.Game)
+	}{
+		{"cache complete", func(t *testing.T, svc *core.Service, game *domain.Game) {
+			t.Helper()
+			gc := svc.GetGameCache(game)
+			require.NoError(t, gc.Store(game.ID, "src", "mod1", wanted, "mod1-old.esp", []byte("old-payload")))
+			require.NoError(t, cache.MarkFileCompleteWithMembers(
+				gc.ModPath(game.ID, "src", "mod1", wanted), "9", []string{"mod1-old.esp"}))
+		}},
+		{"cache half-populated", func(t *testing.T, svc *core.Service, game *domain.Game) {
+			t.Helper()
+			// The payload without the marker: a broken-off download run.
+			require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "mod1", wanted, "mod1-old.esp", []byte("old-payload")))
+		}},
+		{"cache absent", func(*testing.T, *core.Service, *domain.Game) {}},
+	}
+
+	fileIDs := map[string][]string{wanted: {"9"}, live: {"10"}, bystander: {"11"}}
+
+	for _, ordering := range orderings {
+		for _, cs := range cacheStates {
+			t.Run(ordering.name+", "+cs.name, func(t *testing.T) {
+				svc := newFlowsTestService(t)
+				game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+				pm := svc.NewProfileManager()
+				mock := newTwoVersionSource(t)
+				svc.RegisterSource(mock)
+
+				gameCache := svc.GetGameCache(game)
+				// The live deployment's own cache entry: Install reads it
+				// now, and Replace reads it again to know what to remove.
+				require.NoError(t, gameCache.Store(game.ID, "src", "mod1", live, "mod1.esp", []byte("new-payload")))
+				cs.store(t, svc, game)
+
+				for _, p := range others {
+					_, err := pm.Create(context.Background(), game.ID, p)
+					require.NoError(t, err)
+					version := ordering.holders[p]
+					require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+						Mod:          domain.Mod{ID: "mod1", SourceID: "src", Name: "Test Mod", Version: version, GameID: game.ID},
+						ProfileName:  p,
+						UpdatePolicy: domain.UpdateNotify,
+						Enabled:      true,
+						Deployed:     version == live,
+						FileIDs:      fileIDs[version],
+					}))
+					require.NoError(t, pm.AddMod(context.Background(), game.ID, p,
+						domain.ModReference{SourceID: "src", ModID: "mod1", Version: version}))
+					if version != live {
+						continue
+					}
+					installer := svc.GetInstallerForTest(game)
+					require.NoError(t, installer.Install(context.Background(), game,
+						&domain.Mod{ID: "mod1", SourceID: "src", Version: live, GameID: game.ID}, p))
+				}
+				_, err := os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+				require.NoError(t, err, "precondition: the older version must be live on disk")
+
+				profile := &domain.Profile{
+					Name: "imported", GameID: game.ID,
+					Mods: []domain.ModReference{{SourceID: "src", ModID: "mod1", Version: wanted}},
+				}
+				data, err := config.ExportProfile(profile)
+				require.NoError(t, err)
+
+				plan, err := svc.PlanImport(context.Background(), game, data)
+				require.NoError(t, err)
+
+				result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+				require.NoError(t, err)
+				require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
+				assert.Equal(t, 0, result.Failed)
+
+				row, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "imported")
+				require.NoError(t, err)
+				assert.Equal(t, wanted, row.Version, "the imported profile's row records the version its document named")
+
+				_, err = os.Lstat(filepath.Join(game.ModPath, "mod1-old.esp"))
+				assert.NoError(t, err, "the version the document named must be deployed")
+				_, err = os.Lstat(filepath.Join(game.ModPath, "mod1.esp"))
+				assert.True(t, os.IsNotExist(err),
+					"exactly one version of a mod may be live in the game-global tree - the obsolete one must be replaced, whichever row the pick reused")
+			})
+		}
+	}
+}

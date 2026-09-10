@@ -39,11 +39,13 @@ type ImportPlan struct {
 	// matching cache entry (installed somewhere, cache gone), or - #138's
 	// convergence case, mirroring PlanProfileSwitch's #96 drift case - a row
 	// installed at a DIFFERENT version than the imported profile records,
-	// scheduled for reinstall at the profile's version (downgrades included;
-	// each such ref also records the row being converged away from in
-	// priorVersions, whether that row belongs to THIS profile or to another
-	// one). Missing holds mods with no DB row anywhere. All four preserve
-	// profile.Mods' own order.
+	// scheduled for reinstall at the profile's version (downgrades
+	// included). Missing holds mods with no DB row anywhere. All four
+	// preserve profile.Mods' own order.
+	//
+	// Independently of which of those four a ref lands in, a row deployed at
+	// another version - this profile's own, or any other profile's - is
+	// recorded in priorVersions so the apply Replaces it (see below).
 	//
 	// The rule for a cross-profile drift entry, settled and implemented
 	// (P1a review F7 - this doc comment used to claim the opposite of the
@@ -106,13 +108,22 @@ type ImportPlan struct {
 	// plan-to-apply plumbing no preview renders.
 	cachedRows map[string]domain.InstalledMod
 
-	// priorVersions maps domain.ModKey keys (for NeedsRedownload's #138
-	// version-drift entries only) to the installed row being converged AWAY
-	// from - the import twin of SwitchPlan.PriorVersions (see its doc
-	// comment): ApplyImport's install loop needs it to know whether a LIVE
-	// older deployment exists that must be replaced (removing files the new
-	// version doesn't serve) rather than merely installed over. Private,
-	// like storedFileIDs: pure plan-to-apply plumbing no preview renders.
+	// priorVersions maps domain.ModKey keys to the installed row being
+	// converged AWAY from - the import twin of SwitchPlan.PriorVersions (see
+	// its doc comment): ApplyImport needs it to know whether a LIVE
+	// deployment of another version exists that must be replaced (removing
+	// files the new version doesn't serve) rather than merely installed
+	// over. Private, like storedFileIDs: pure plan-to-apply plumbing no
+	// preview renders.
+	//
+	// It is keyed by what is ON DISK, not by which bucket the ref landed in
+	// (#404): an AlreadyCached entry has a live older deployment in the way
+	// exactly as often as a NeedsRedownload one does - the buckets differ
+	// only in where that entry's own bytes come from. For an entry in THIS
+	// profile it is that row; for a cross-profile one it is whichever of the
+	// other profiles' rows is deployed at another version (liveOtherVersion),
+	// which is a different question from the one pickImportRow answers and
+	// so is asked separately.
 	priorVersions map[string]domain.InstalledMod
 
 	// snapshot is the installed-mod set (for Profile.Name, the profile being
@@ -229,6 +240,16 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 				}
 				priorVersions[key] = im
 			case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, im.Version):
+				// Bare Exists, deliberately, where the cross-profile branch
+				// below reads HasFileIDs (P1a re-review N5): the two ask
+				// different questions of the cache. There, the answer
+				// decides whether ApplyImport DEPLOYS from the entry, so a
+				// half-populated one must not qualify. Here it only
+				// separates "already installed in this very profile, with
+				// its bytes still around" from a redownload - the entry
+				// lands in Installed, which the apply skips entirely, and
+				// tightening it would schedule a fetch for a mod that is
+				// already installed and deployed.
 				installed = append(installed, ref)
 			default:
 				needsRedownload = append(needsRedownload, ref)
@@ -252,6 +273,28 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		if len(candidates) > 0 {
 			pickedElsewhere[key] = im
 		}
+
+		// The SECOND question, asked of every candidate rather than of the
+		// pick (#404, P1a re-review N1/N5). "Where do I get the bytes?" and
+		// "is a live deployment of another version in the way?" are
+		// different questions about the same rows, and answering both from
+		// one pick loses the second whenever they disagree: a profile
+		// holding this document's own version with no cache entry outscores
+		// a DEPLOYED row at another version, so the entry fell into
+		// NeedsRedownload with no prior recorded, installer.Install ran
+		// instead of installer.Replace, and the obsolete files stayed -
+		// two versions of one mod in a game-global tree, the exact state
+		// Replace exists to prevent. Recorded for every bucket below, since
+		// a live older deployment is in the way whether this profile's
+		// bytes come from the cache (AlreadyCached) or from a fetch
+		// (NeedsRedownload).
+		if prior, ok := liveOtherVersion(candidates, ref); ok {
+			if priorVersions == nil {
+				priorVersions = make(map[string]domain.InstalledMod)
+			}
+			priorVersions[key] = prior
+		}
+
 		switch {
 		case len(candidates) == 0:
 			missing = append(missing, ref)
@@ -263,15 +306,10 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		case ref.Version != "" && im.Version != ref.Version:
 			// The other profile holds a DIFFERENT version, so this
 			// profile's own version still has to be fetched - #138's
-			// convergence, with the same priorVersions record as the
-			// same-profile case above: the deployed tree is game-global, so
-			// a live older deployment of this very mod is REPLACED (its
-			// obsolete files removed) rather than installed alongside.
+			// convergence. Any live older deployment to converge away from
+			// was recorded above, by the candidate scan rather than by this
+			// row: the pick is about bytes, not about what is on disk.
 			needsRedownload = append(needsRedownload, ref)
-			if priorVersions == nil {
-				priorVersions = make(map[string]domain.InstalledMod)
-			}
-			priorVersions[key] = im
 		case cached(im):
 			// #371: the bytes are here - install this profile's own row
 			// from the cache entry rather than calling it "installed" and
@@ -366,6 +404,45 @@ func pickImportRow(rows []domain.InstalledMod, ref domain.ModReference, cached f
 		}
 	}
 	return best
+}
+
+// liveOtherVersion answers PlanImport's OTHER question about a mod's rows in
+// the other saved profiles - "is a live deployment of a DIFFERENT version in
+// the way?" - which is not the question pickImportRow answers and must not be
+// derived from its answer (#404).
+//
+// The deployed tree is game-global: one directory every profile shares. So a
+// row that is deployed at a version this document does not name describes
+// files that are on disk right now and that the version being installed will
+// not serve. ApplyImport hands it to installer.Replace, which removes them;
+// without it installer.Install deploys the new version alongside the old one
+// and the game reads two versions of one mod at once.
+//
+// The rules, and why:
+//
+//   - a ref with no version at all names no version to drift FROM, so
+//     nothing here is "another" version and nothing is replaced;
+//   - an EXTERNAL row is Steam's own item, whose files lmm did not deploy
+//     and must never remove;
+//   - first match wins. In a consistent world there is at most one live
+//     deployment of a mod to find; two rows deployed at two different
+//     versions is already the mixed state this exists to resolve, and
+//     resolving one of them is strictly better than resolving neither.
+//
+// Whether the prior's own cache entry still exists is deliberately NOT asked
+// here: Replace needs it to read what to remove, so ApplyImport re-checks it
+// at the moment it acts and falls back to a bare Install (see its install
+// loop and importCachedMod).
+func liveOtherVersion(rows []domain.InstalledMod, ref domain.ModReference) (domain.InstalledMod, bool) {
+	if ref.Version == "" {
+		return domain.InstalledMod{}, false
+	}
+	for _, row := range rows {
+		if row.Deployed && !row.External && row.Version != ref.Version {
+			return row, true
+		}
+	}
+	return domain.InstalledMod{}, false
 }
 
 // ProfileImportOptions configures ApplyImport.
@@ -535,7 +612,7 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		// call that would even succeed.
 		if row, ok := plan.cachedRows[key]; ok {
 			scope.ModName = row.Name
-			modRef, msgs, err := s.importCachedMod(ctx, game, profile.Name, installer, row)
+			modRef, msgs, err := s.importCachedMod(ctx, game, profile.Name, installer, row, plan.priorVersions[key])
 			if err != nil {
 				fail(err.Error())
 				continue
@@ -631,21 +708,8 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 			}
 		}
 
-		// #138 convergence: a version-drift entry whose prior installed row
-		// is actually live on disk must be replaced (removing files the new
-		// version doesn't serve), not just installed over - the same gate,
-		// with the same caveats, as ApplyProfileSwitch's install loop (see
-		// its comment): only Replace when the OLD version's cache entry is
-		// still there for it to read from; a corrupted/missing old cache
-		// falls back to a bare Install rather than hard-failing convergence.
-		if prior, ok := plan.priorVersions[key]; ok && prior.Deployed &&
-			s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
-			if err := installer.Replace(ctx, game, &prior.Mod, mod, profile.Name); err != nil {
-				fail(fmt.Sprintf("deploy failed: %v", err))
-				continue
-			}
-		} else if err := installer.Install(ctx, game, mod, profile.Name); err != nil {
-			fail(fmt.Sprintf("deploy failed: %v", err))
+		if err := s.deployImportedMod(ctx, game, installer, plan.priorVersions[key], mod, profile.Name); err != nil {
+			fail(err.Error())
 			continue
 		}
 
@@ -700,6 +764,40 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	return result, nil
 }
 
+// deployImportedMod puts mod on disk for an import, REPLACING a live
+// deployment of another version when the plan recorded one (#138's
+// convergence, from PlanImport's priorVersions) and installing plainly when
+// it did not. prior is the zero InstalledMod when there is nothing to
+// converge away from - the map read the callers hand it produces exactly
+// that.
+//
+// Same gate, with the same caveats, as ApplyProfileSwitch's install loop
+// (see its comment): prior.Deployed alone is not enough - only Replace when
+// the OLD version's cache entry is still there for it to read the file list
+// from, since a corrupted or evicted one would hard-fail with "old mod not
+// in cache" and abort the convergence entirely. The fallback's cost is the
+// one that flow documents too: files the new version no longer serves stay
+// behind as stale deployments, which `lmm verify` surfaces - strictly better
+// than not converging at all.
+//
+// Both of the import's deploy sites go through it (#404): the install loop's
+// downloaded mods AND importCachedMod's copies. Which of the two a mod takes
+// is a question about where its BYTES are, and a live older deployment is in
+// the way either way.
+func (s *Service) deployImportedMod(ctx context.Context, game *domain.Game, installer *Installer, prior domain.InstalledMod, mod *domain.Mod, profileName string) error {
+	if prior.Deployed && !prior.External &&
+		s.GetGameCache(game).Exists(game.ID, prior.SourceID, prior.ID, prior.Version) {
+		if err := installer.Replace(ctx, game, &prior.Mod, mod, profileName); err != nil {
+			return fmt.Errorf("deploy failed: %v", err)
+		}
+		return nil
+	}
+	if err := installer.Install(ctx, game, mod, profileName); err != nil {
+		return fmt.Errorf("deploy failed: %v", err)
+	}
+	return nil
+}
+
 // importCachedMod writes profileName's own installed_mods row for a mod that
 // is already installed under some OTHER saved profile of the same game
 // (#371's AlreadyCached bucket). row is that other profile's row: it carries
@@ -718,16 +816,22 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 // profile ref the caller records, plus any checksum-copy failures as
 // messages the caller surfaces with its other diagnostics (never fatal - the
 // files are installed and correct either way, exactly as
-// recordFileChecksums' own failures are).
-func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row domain.InstalledMod) (domain.ModReference, []string, error) {
+// recordFileChecksums' own failures are). Both ends of the copy report: a
+// failed READ of the source row's checksum as well as a failed write of the
+// new one (P1a re-review N2).
+func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row, prior domain.InstalledMod) (domain.ModReference, []string, error) {
 	mod := row.Mod
 	// Normalize GameID to the lmm game (see ApplyProfileSwitch's own
 	// identical save site for why).
 	mod.GameID = game.ID
 
 	if !row.External {
-		if err := installer.Install(ctx, game, &mod, profileName); err != nil {
-			return domain.ModReference{}, nil, fmt.Errorf("deploy failed: %v", err)
+		// #404: the same convergence gate the install loop uses. Bytes
+		// already in the cache say nothing about what is LIVE, so an entry
+		// that needs no download can still have a live deployment of
+		// another version to replace.
+		if err := s.deployImportedMod(ctx, game, installer, prior, &mod, profileName); err != nil {
+			return domain.ModReference{}, nil, err
 		}
 	}
 
@@ -735,9 +839,24 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 	// rewrites installed_mod_files, and recordFileChecksums must run after
 	// it - the same ordering rule every downloading flow follows.
 	var checksums []fileChecksum
+	var msgs []string
 	for _, fileID := range row.FileIDs {
 		checksum, err := s.db.GetFileChecksum(ctx, row.SourceID, row.ID, game.ID, row.ProfileName, fileID)
-		if err != nil || checksum == "" {
+		if err != nil {
+			// A genuine DB failure, which is NOT the same thing as the
+			// empty answer below (P1a re-review N2): GetFileChecksum
+			// reports ("", nil) for a row that simply has no checksum, so
+			// an error here means the read itself failed. Reported, never
+			// swallowed - exactly as the WRITE half of this copy
+			// (recordFileChecksums) reports its own failures - and
+			// non-fatal for the same reason: the files are installed and
+			// correct either way, the row is merely unverifiable until
+			// something rewrites it.
+			msgs = append(msgs, fmt.Sprintf("Warning: could not read checksum for %s/%s file %s: %v",
+				row.SourceID, row.ID, fileID, err))
+			continue
+		}
+		if checksum == "" {
 			// A row with no checksum of its own has nothing to copy - a
 			// legacy install, or a source that hashes nothing. Honest
 			// emptiness, not a failure.
@@ -760,7 +879,7 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 		return domain.ModReference{}, nil, fmt.Errorf("save failed: %v", err)
 	}
 
-	msgs := s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums)
+	msgs = append(msgs, s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums)...)
 
 	return domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: row.FileIDs}, msgs, nil
 }
