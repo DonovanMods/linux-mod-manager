@@ -71,9 +71,9 @@ func configureCuratedTen(t *testing.T, installPath string) {
 // and its default profile's mod list.
 func TestDoGameDetect_AmbiguousBareNumberIsRefusedAndWritesNothing(t *testing.T) {
 	configDir = t.TempDir()
-	svc := workshopDetectService(t)
 	scan := ambiguousDetectScan(t)
 	configureCuratedTen(t, scan[9].InstallPath)
+	svc := workshopDetectService(t)
 	cmd, _ := newDetectCmd(t)
 
 	err := doGameDetect(context.Background(), cmd,
@@ -102,9 +102,9 @@ func TestDoGameDetect_AmbiguousBareNumberIsRefusedAndWritesNothing(t *testing.T)
 // - which for an already-configured curated row is the documented repair.
 func TestDoGameDetect_ExplicitRowFormResolvesACollision(t *testing.T) {
 	configDir = t.TempDir()
-	svc := workshopDetectService(t)
 	scan := ambiguousDetectScan(t)
 	configureCuratedTen(t, scan[9].InstallPath)
+	svc := workshopDetectService(t)
 	cmd, buf := newDetectCmd(t)
 
 	err := doGameDetect(context.Background(), cmd,
@@ -123,9 +123,9 @@ func TestDoGameDetect_ExplicitRowFormResolvesACollision(t *testing.T) {
 // whose Steam app id is 10, always - never row 10.
 func TestDoGameDetect_ExplicitAppIDFormResolvesACollision(t *testing.T) {
 	configDir = t.TempDir()
-	svc := workshopDetectService(t)
 	scan := ambiguousDetectScan(t)
 	configureCuratedTen(t, scan[9].InstallPath)
+	svc := workshopDetectService(t)
 	cmd, buf := newDetectCmd(t)
 
 	err := doGameDetect(context.Background(), cmd,

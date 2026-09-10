@@ -236,6 +236,57 @@ func TestDoGameDetect_DuplicateSelectionIsRefused(t *testing.T) {
 	assert.Empty(t, saved)
 }
 
+// TestDoGameDetect_ConfiguredUncuratedRowNamesGameEdit pins #368 review
+// Minor 3: re-selecting a configured UNCURATED row is refused rather than
+// overwritten (unlike a curated row's repair), and --help says to "change it
+// with `lmm game edit`" - but what the user saw was the raw wrapped
+// ErrGameExists, which names no way forward at all.
+func TestDoGameDetect_ConfiguredUncuratedRowNamesGameEdit(t *testing.T) {
+	configDir = t.TempDir()
+	scan := workshopDetectScan(t)
+	// Written BEFORE the service opens: AddGame's duplicate check reads the
+	// Service's own loaded games, which is what a real run has - games.yaml
+	// is read at open, after the scan.
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "space-engineers-2", Name: "Space Engineers 2 (hand-edited)", InstallPath: scan[1].InstallPath,
+		ModPath: filepath.Join(scan[1].InstallPath, "mods"), SourceIDs: map[string]string{"steamworkshop": "1133870"},
+	}))
+	svc := workshopDetectService(t)
+	cmd, buf := newDetectCmd(t)
+
+	err := doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("2\n")), svc, scan, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, core.ErrGameExists)
+	assert.Contains(t, err.Error(), "lmm game edit space-engineers-2")
+	assert.Contains(t, buf.String(), "[configured]", "the row said so before it was picked")
+
+	saved, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	assert.Equal(t, "Space Engineers 2 (hand-edited)", saved["space-engineers-2"].Name,
+		"a refused add rewrites nothing")
+}
+
+// TestDoGameDetect_MixedSelectionSaysWhatItWroteBeforeRefusing: the curated
+// half of a selection is applied before the uncurated half, so a refusal
+// there must still report what did get written.
+func TestDoGameDetect_MixedSelectionSaysWhatItWroteBeforeRefusing(t *testing.T) {
+	configDir = t.TempDir()
+	scan := workshopDetectScan(t)
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "space-engineers-2", Name: "Space Engineers 2", InstallPath: scan[1].InstallPath,
+		ModPath: filepath.Join(scan[1].InstallPath, "mods"), SourceIDs: map[string]string{"steamworkshop": "1133870"},
+	}))
+	svc := workshopDetectService(t)
+	cmd, buf := newDetectCmd(t)
+
+	err := doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("1,2\n")), svc, scan, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lmm game edit space-engineers-2")
+	assert.Contains(t, buf.String(), "Added: Skyrim Special Edition (skyrim-se)")
+}
+
 // TestDoGameDetect_IncludeUnknownHeaderDoesNotCallEveryGameModdable pins
 // #368 review Minor 2: --include-unknown widened the counted set to include
 // rows the listing's own next line says are NOT known to be moddable, so the

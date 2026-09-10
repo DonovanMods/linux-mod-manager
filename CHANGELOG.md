@@ -884,6 +884,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
   Steam app id 10.
 
+- **Re-picking an already-configured uncurated detect row now says what to
+  do instead (#368).** Detect refuses to overwrite a row it has no
+  known-games entry for - there is nothing curated to repair it from - and
+  `--help` says to change it with `lmm game edit`, but the error a user
+  actually got was the bare `game already exists: space-engineers-2`, which
+  names no way forward. It now names the command, with the game id filled
+  in.
+
 - **`lmm game detect --include-unknown` no longer calls every installed
   Steam game moddable (#368).** The header counted both sections, so it
   claimed rows its own next line describes as not being in the known-games

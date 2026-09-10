@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -434,6 +435,7 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 	}
 
 	applied, result, applyErr := applyDetectSelection(ctx, service, selected)
+	applyErr = detectApplyError(applyErr, applied, result)
 	// The curated half goes through ApplyGameDetect, which converts and
 	// persists one game at a time and stops at the first failing game
 	// (conversion or persistence); result.Profiles holds exactly the games
@@ -456,6 +458,30 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		cmd.Printf("Added: %s (%s)\n", applied[i].Name, applied[i].Slug)
 	}
 	return applyErr
+}
+
+// detectApplyError names the way forward for the one apply failure a user
+// can act on: an UNCURATED row that is already configured (#368 review Minor
+// 3). Detect refuses that rather than overwriting it - `lmm game add`'s
+// semantics, since the row carries no curated entry to repair from - and
+// --help says to "change it with `lmm game edit`", but what the user saw was
+// the bare wrapped core.ErrGameExists, which names nothing to do next.
+//
+// The offending row is applied[len(result.Profiles)]: the apply stops at the
+// first failure and result.Profiles holds exactly the rows that completed,
+// one-for-one with applied's leading entries (applyDetectSelection's
+// contract). Wrapped with %w, so errors.Is(core.ErrGameExists) still holds
+// and --json's envelope carries the same sentence.
+func detectApplyError(applyErr error, applied []domain.DetectedGame, result *core.GameDetectResult) error {
+	if applyErr == nil || !errors.Is(applyErr, core.ErrGameExists) {
+		return applyErr
+	}
+	i := len(result.Profiles)
+	if i >= len(applied) {
+		return applyErr
+	}
+	return fmt.Errorf("%w - detect never overwrites a game it has no known-games entry for; change it with `lmm game edit %s`",
+		applyErr, applied[i].Slug)
 }
 
 // applyDetectSelection persists one detect selection, which since #368 can
