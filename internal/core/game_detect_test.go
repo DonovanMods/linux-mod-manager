@@ -423,3 +423,141 @@ func TestGameDetectListing_WorkshopBearingUncuratedRowsAreListedByDefault(t *tes
 	require.Len(t, all.Games, 3, "--include-unknown still adds everything else")
 	assert.Equal(t, 1, all.Games[0].Index, "known numbering must not shift when the wider rows join")
 }
+
+// #368 review Minor 8: the two-path apply a detect selection needs since
+// #368 - a CURATED row configured from its known-games entry, an UNCURATED
+// one added the way `lmm game add --from-detected` adds it - lived in the
+// CLI, so the web's detect selection could not do what the CLI's prompt
+// does, one user action took N+1 mutation slots instead of one, and the
+// GameDetectResult it reported was assembled by hand. These tests are the
+// CLI's own, moved down to the seam both frontends now call.
+
+// detectSelectionService is a Service with the source ids these rows map
+// registered - AddGame refuses an unregistered one - plus real directories,
+// since AddGame validates that an install path exists.
+func detectSelectionService(t *testing.T) *core.Service {
+	t.Helper()
+	svc := newGameAddService(t)
+	svc.RegisterSource(&catalogLessSource{id: "steamworkshop", name: "Steam Workshop"})
+	return svc
+}
+
+// TestApplyDetectSelection_ConfiguresBothKindsOfRowUnderOneSlot pins the
+// shape of the selection: curated rows first (their repair semantics), then
+// uncurated ones through the from-detected prefill, with the result naming
+// every game and profile in that order.
+func TestApplyDetectSelection_ConfiguresBothKindsOfRowUnderOneSlot(t *testing.T) {
+	svc := detectSelectionService(t)
+	install := t.TempDir()
+	curated := domain.DetectedGame{
+		SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
+		InstallPath: install, ModPath: filepath.Join(install, "Data"),
+		NexusID: "skyrimspecialedition", Known: true,
+	}
+	uncurated := domain.DetectedGame{
+		SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2",
+		InstallPath: install, Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30,
+	}
+
+	// Typed uncurated-first: the apply reorders to curated-first, and says so
+	// through the rows it returns, so a caller can name each added game
+	// beside its result row.
+	applied, result, err := svc.ApplyDetectSelection(context.Background(),
+		[]domain.DetectedGame{uncurated, curated})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"skyrim-se", "space-engineers-2"}, result.Saved)
+	assert.Equal(t, []string{"skyrim-se/default", "space-engineers-2/default"}, result.Profiles)
+	require.Len(t, applied, 2)
+	assert.Equal(t, []string{"skyrim-se", "space-engineers-2"},
+		[]string{applied[0].Slug, applied[1].Slug})
+
+	saved, err := svc.GetGame("space-engineers-2")
+	require.NoError(t, err)
+	assert.Equal(t, "Space Engineers 2", saved.Name)
+	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, saved.SourceIDs)
+	assert.Equal(t, filepath.Join(install, "mods"), saved.ModPath,
+		"an uncurated candidate has no curated mod path, so GameSpecFromDetected's <install>/mods default applies")
+
+	profile, err := svc.NewProfileManager().Get(context.Background(), "space-engineers-2", "default")
+	require.NoError(t, err)
+	assert.True(t, profile.IsDefault)
+}
+
+// TestApplyDetectSelection_CuratedRowRepairsAndUncuratedRowRefuses pins the
+// one deliberate asymmetry: naming an already-configured CURATED row is the
+// documented repair (it overwrites), while an uncurated one has no curated
+// entry to repair FROM, so it is refused with ErrGameExists rather than
+// destroying an existing game's default profile from a surface that says
+// "add".
+func TestApplyDetectSelection_CuratedRowRepairsAndUncuratedRowRefuses(t *testing.T) {
+	svc := detectSelectionService(t)
+	install := t.TempDir()
+	curated := domain.DetectedGame{
+		Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: install,
+		ModPath: filepath.Join(install, "Data"), NexusID: "skyrimspecialedition", Known: true,
+	}
+	uncurated := domain.DetectedGame{
+		SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2",
+		InstallPath: install, Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30,
+	}
+
+	_, _, err := svc.ApplyDetectSelection(context.Background(), []domain.DetectedGame{curated, uncurated})
+	require.NoError(t, err)
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(context.Background(), "space-engineers-2", "default",
+		domain.ModReference{SourceID: "steamworkshop", ModID: "42", Version: "1"}))
+
+	applied, result, err := svc.ApplyDetectSelection(context.Background(),
+		[]domain.DetectedGame{curated, uncurated})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, core.ErrGameExists)
+	assert.Contains(t, err.Error(), "space-engineers-2")
+	assert.Equal(t, []string{"skyrim-se"}, result.Saved, "the curated row's repair still happened")
+	require.Len(t, applied, 2, "both attempted rows are reported, curated first")
+
+	after, err := pm.Get(context.Background(), "space-engineers-2", "default")
+	require.NoError(t, err)
+	assert.Len(t, after.Mods, 1, "the refused row's default profile is untouched")
+}
+
+// TestApplyDetectSelection_UncuratedRowWithNoSourceIsRefused: nothing tells
+// lmm where such a game keeps its mods, so there is nothing to write - the
+// same refusal GameSpec makes for a game with no source at all.
+func TestApplyDetectSelection_UncuratedRowWithNoSourceIsRefused(t *testing.T) {
+	svc := detectSelectionService(t)
+
+	_, result, err := svc.ApplyDetectSelection(context.Background(), []domain.DetectedGame{
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: t.TempDir()},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "satisfactory")
+	assert.Empty(t, result.Saved)
+}
+
+// TestSelectDetectedGames_AcceptsAnAddableUncuratedRowBySlug: the selection
+// rule and the apply have to agree about what is selectable, or the shared
+// apply is unreachable from the web for exactly the rows #368 added. An
+// uncurated row detection prefilled a source map for is addable; one with
+// nothing is still ErrUnknownDetectedGame.
+func TestSelectDetectedGames_AcceptsAnAddableUncuratedRowBySlug(t *testing.T) {
+	scan := []domain.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2", InstallPath: "/games/se2",
+			Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30},
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/sf"},
+	}
+
+	selected, err := core.SelectDetectedGames(scan, []string{"space-engineers-2"})
+	require.NoError(t, err)
+	require.Len(t, selected, 1)
+	assert.Equal(t, "space-engineers-2", selected[0].Slug)
+
+	_, err = core.SelectDetectedGames(scan, []string{"satisfactory"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, core.ErrUnknownDetectedGame)
+
+	byIndex, err := core.SelectDetectedGames(scan, []string{"1"})
+	require.NoError(t, err)
+	require.Len(t, byIndex, 1)
+	assert.Equal(t, "skyrim-se", byIndex[0].Slug, "an index still counts the known rows only")
+}

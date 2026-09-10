@@ -884,6 +884,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
   Steam app id 10.
 
+- **A detect selection means the same thing on both frontends (#368).** The
+  two-path apply #368 introduced — a curated row configured from its
+  known-games entry, an uncurated one added the way `lmm game add
+--from-detected` adds it — lived in the CLI, so `POST /api/v1/games/detect`
+  could not configure the very rows #368 had just put on its own listing, one
+  user action took N+1 mutation slots instead of one (a concurrent `lmm serve`
+  job could interleave between them), and the result document was assembled by
+  hand. Both frontends now call one core seam that does the whole selection
+  under a single slot, and a Workshop-bearing uncurated row can be selected
+  over the API by slug (re-selecting a configured one answers 409 rather than
+  overwriting it, matching the CLI's refusal).
+
 - **A rejected detect selection now offers only what would have worked
   (#368).** Typing the Steam app id of a game that IS installed but is hidden
   by the default listing answered `invalid selection: "526870" (use a row

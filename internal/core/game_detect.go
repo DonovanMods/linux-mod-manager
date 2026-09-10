@@ -179,24 +179,102 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 	defer release()
 
 	result := &GameDetectResult{}
+	return result, s.applyGameDetectLocked(ctx, games, result)
+}
+
+// applyGameDetectLocked is ApplyGameDetect's loop without the gate, so
+// ApplyDetectSelection can run it as the CURATED half of one selection under
+// a single mutation slot (Ruling: exported mutating methods take the slot,
+// their unexported implementations do not, so flows compose). It appends to
+// result as it goes, which is what lets a caller report exactly how far a
+// partial failure got.
+func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.DetectedGame, result *GameDetectResult) error {
 	pm := s.NewProfileManager()
 	for _, g := range games {
 		game, err := GameFromDetected(g)
 		if err != nil {
-			return result, fmt.Errorf("converting detected game %s: %w", g.Slug, err)
+			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
 		}
 
 		if err := s.saveGame(ctx, game); err != nil {
-			return result, fmt.Errorf("saving game %s: %w", game.ID, err)
+			return fmt.Errorf("saving game %s: %w", game.ID, err)
 		}
 		result.Saved = append(result.Saved, game.ID)
 
 		if _, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID); err != nil {
-			return result, fmt.Errorf("creating default profile for %s: %w", game.ID, err)
+			return fmt.Errorf("creating default profile for %s: %w", game.ID, err)
 		}
 		result.Profiles = append(result.Profiles, game.ID+"/default")
 	}
-	return result, nil
+	return nil
+}
+
+// ApplyDetectSelection persists one detect-prompt selection - the seam BOTH
+// frontends' detect selections call, so they cannot diverge (#368 review
+// Minor 8; it lived in cmd/lmm, where `lmm serve` could not reach it).
+//
+// A selection can hold two kinds of row since #368, and they are configured
+// differently on purpose:
+//
+//   - A CURATED row is configured from its known-games entry, exactly as
+//     ApplyGameDetect always has: stop at the first failure, and naming an
+//     already-configured one is the documented REPAIR, which rewrites its
+//     games.yaml entry and resets its default profile's mod list.
+//   - An UNCURATED row - listed because detection prefilled a source map for
+//     it, today #269's `steamworkshop: <appid>` - has no curated entry to
+//     configure from, so it takes the path `lmm game add --from-detected
+//     <app-id>` takes: GameSpecFromDetected, then AddGame's own validation
+//     and writes. An already-configured one is therefore REFUSED with
+//     ErrGameExists rather than overwritten: there is nothing curated to
+//     repair it from, and an "add" that destroys a game's default profile
+//     without saying so is a trap. `lmm game edit` is what changes one.
+//
+// Curated rows are applied first, whatever order they were named in, and the
+// returned rows are in that same apply order - one-for-one with the leading
+// entries of result.Saved/result.Profiles - so a caller can name each added
+// game beside its own result row without re-deriving the split.
+//
+// ONE beginOp covers the lot: a selection is one user action, and the
+// per-row AddGame calls the CLI used to make took N+1 slots, which a
+// concurrent `lmm serve` job could interleave between.
+func (s *Service) ApplyDetectSelection(ctx context.Context, selected []domain.DetectedGame) ([]domain.DetectedGame, *GameDetectResult, error) {
+	curated, uncurated := splitDetectedSelection(selected)
+	applied := append(append([]domain.DetectedGame(nil), curated...), uncurated...)
+	result := &GameDetectResult{}
+
+	release, err := s.beginOp(ctx)
+	if err != nil {
+		return applied, result, err
+	}
+	defer release()
+
+	if err := s.applyGameDetectLocked(ctx, curated, result); err != nil {
+		return applied, result, err
+	}
+	for _, g := range uncurated {
+		entry, err := s.addGameLocked(ctx, GameSpecFromDetected(g, GameSpec{}))
+		if err != nil {
+			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
+		}
+		// AddGame creates the same "default" profile the curated half does,
+		// so the two report identically.
+		result.Saved = append(result.Saved, entry.ID)
+		result.Profiles = append(result.Profiles, entry.ID+"/default")
+	}
+	return applied, result, nil
+}
+
+// splitDetectedSelection separates a selection into the curated rows (the
+// known-games matches) and the rest, preserving order within each half.
+func splitDetectedSelection(games []domain.DetectedGame) (curated, uncurated []domain.DetectedGame) {
+	for _, g := range games {
+		if g.Known {
+			curated = append(curated, g)
+			continue
+		}
+		uncurated = append(uncurated, g)
+	}
+	return curated, uncurated
 }
 
 // GameDetectEntry is one row of a GameDetectListing: a detected game, the
@@ -295,22 +373,32 @@ func (s *Service) GameDetectListing(ctx context.Context, games []domain.Detected
 }
 
 // ErrUnknownDetectedGame is returned by SelectDetectedGames when a
-// selection names a candidate that is installed but NOT in lmm's
-// known-games list (#206). Such a row has no curated mod path and no
-// sources, so ApplyGameDetect has nothing to write; the sanctioned path is
-// the from-detected add flow, which collects exactly those two values.
-// Typed because both frontends branch on it: the CLI points at `lmm game
-// add --from-detected`, and `lmm serve` answers 400 pointing at POST
-// /api/v1/games' from_steam_app_id.
+// selection names a candidate nothing can configure: it is installed, but
+// lmm has no known-games entry for it AND detection prefilled no source map
+// either (#206, narrowed by #368 - a Workshop-bearing row IS selectable, see
+// domain.DetectedGame.Addable). Such a row has no mod path and no sources,
+// so there is nothing to write; the sanctioned path is the from-detected add
+// flow, which collects exactly those two values. Typed because both
+// frontends branch on it: the CLI points at `lmm game add --from-detected`,
+// and `lmm serve` answers 400 pointing at POST /api/v1/games'
+// from_steam_app_id.
 var ErrUnknownDetectedGame = errors.New("detected game is not in the known-games list")
 
 // SelectDetectedGames resolves a caller's selection against a detect
-// listing, in the order given, returning the detected games ApplyGameDetect
-// should persist. Each selector is either a 1-based index into games (the
-// number GameDetectEntry.Index carries and the CLI's `--select` takes) or a
-// game's slug, matched case-insensitively - two spellings of the same
-// choice, because the CLI's listing is numbered while an SPA holds the row
-// itself and has no reason to count.
+// listing, in the order given, returning the detected games
+// ApplyDetectSelection should persist. Each selector is either a 1-based
+// index into games (the number GameDetectEntry.Index carries and the CLI's
+// `--select` takes) or a game's slug, matched case-insensitively - two
+// spellings of the same choice, because the CLI's listing is numbered while
+// an SPA holds the row itself and has no reason to count.
+//
+// A row is selectable when domain.DetectedGame.Addable says it can be
+// configured with nothing more asked of the user - since #368 that includes
+// an UNCURATED row detection prefilled a source map for, which has no index
+// (only known rows are numbered) and so is named by slug. The rule has to be
+// Addable rather than Known, or the selection would refuse exactly the rows
+// #368 added and ApplyDetectSelection's uncurated half would be unreachable
+// from the web while the CLI's prompt configures them.
 //
 // An empty selection is refused rather than treated as "none": a caller
 // that means "add nothing" does not call this at all, so an empty list here
@@ -366,7 +454,7 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 		} else {
 			return nil, fmt.Errorf("invalid selection %q: no detected game with that index or slug", sel)
 		}
-		if !games[idx].Known {
+		if !games[idx].Addable() {
 			return nil, fmt.Errorf("%w: %s (Steam app id %s) - it is installed, but nothing tells lmm where it keeps its mods, so it has to be added from the detected game with the source and mod path filled in",
 				ErrUnknownDetectedGame, games[idx].Slug, games[idx].SteamAppID)
 		}

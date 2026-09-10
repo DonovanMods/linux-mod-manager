@@ -609,9 +609,40 @@ func TestAPIGamesDetect_ListsWorkshopBearingUncuratedGamesWithoutAll(t *testing.
 	assert.Equal(t, "1133870", row.SteamAppID)
 	assert.Equal(t, 2, row.WorkshopItems)
 	assert.False(t, row.Known)
-	assert.Equal(t, 0, row.Index, "listed is not selectable")
+	assert.Equal(t, 0, row.Index, "an uncurated row is not NUMBERED - it is selected by slug")
 	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, row.Sources)
 
 	wide := decodeDetectListing(t, s, "/api/v1/games/detect?all=1")
 	assert.Len(t, wide.Games, 2, "--all still adds everything else")
+}
+
+// TestAPIGameDetectApply_AddsAWorkshopBearingUncuratedRowBySlug is #368
+// review Minor 8's point: the two-path apply used to live in cmd/lmm, so this
+// endpoint could not configure the very rows #368 put on its own listing -
+// the CLI prompt could. Both frontends now go through
+// core.ApplyDetectSelection, and an uncurated row detection prefilled a
+// source map for is selected here by slug (it carries no index).
+func TestAPIGameDetectApply_AddsAWorkshopBearingUncuratedRowBySlug(t *testing.T) {
+	s := newGamesServer(t)
+	s.svc.RegisterSource(&namedFixtureSource{id: "steamworkshop", name: "Steam Workshop"})
+	install := fakeSteamApp(t, "1133870", "Space Engineers 2", "SpaceEngineers2")
+	fakeSteamWorkshopManifest(t, "1133870", "3617086610")
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["space-engineers-2"]}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var result core.GameDetectResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result, json.RejectUnknownMembers(true)))
+	assert.Equal(t, []string{"space-engineers-2"}, result.Saved)
+	assert.Equal(t, []string{"space-engineers-2/default"}, result.Profiles)
+
+	game, err := s.svc.GetGame("space-engineers-2")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, game.SourceIDs)
+	assert.Equal(t, filepath.Join(install, "mods"), game.ModPath)
+
+	// Selecting it again is a collision, not a silent overwrite: there is no
+	// curated entry to repair it from, so it would destroy the profile this
+	// call just created.
+	again := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["space-engineers-2"]}`)
+	assert.Equal(t, http.StatusConflict, again.Code, "body: %s", again.Body.String())
 }

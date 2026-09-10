@@ -437,15 +437,15 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		selected[i] = games[n-1]
 	}
 
-	applied, result, applyErr := applyDetectSelection(ctx, service, selected)
+	applied, result, applyErr := service.ApplyDetectSelection(ctx, selected)
 	applyErr = detectApplyError(applyErr, applied, result)
-	// The curated half goes through ApplyGameDetect, which converts and
-	// persists one game at a time and stops at the first failing game
-	// (conversion or persistence); result.Profiles holds exactly the games
-	// that fully completed (games.yaml write + default profile),
-	// one-for-one with `applied`'s leading entries in the same order - so
-	// this prints "Added:" for precisely the games doGameDetect's old
-	// interleaved loop would have printed before hitting the same error.
+	// core.ApplyDetectSelection persists the whole selection under ONE
+	// mutation slot, curated rows first, and stops at the first failing game;
+	// result.Profiles holds exactly the games that fully completed
+	// (games.yaml write + default profile), one-for-one with `applied`'s
+	// leading entries in the same order - so this prints "Added:" for
+	// precisely the games doGameDetect's old interleaved loop would have
+	// printed before hitting the same error.
 	//
 	// The scan's warnings lead: they happened before anything this result
 	// reports. Merged in on both the success and the partial-failure path,
@@ -472,8 +472,8 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 //
 // The offending row is applied[len(result.Profiles)]: the apply stops at the
 // first failure and result.Profiles holds exactly the rows that completed,
-// one-for-one with applied's leading entries (applyDetectSelection's
-// contract). Wrapped with %w, so errors.Is(core.ErrGameExists) still holds
+// one-for-one with applied's leading entries
+// (core.ApplyDetectSelection's contract). Wrapped with %w, so errors.Is(core.ErrGameExists) still holds
 // and --json's envelope carries the same sentence.
 func detectApplyError(applyErr error, applied []domain.DetectedGame, result *core.GameDetectResult) error {
 	if applyErr == nil || !errors.Is(applyErr, core.ErrGameExists) {
@@ -485,55 +485,6 @@ func detectApplyError(applyErr error, applied []domain.DetectedGame, result *cor
 	}
 	return fmt.Errorf("%w - detect never overwrites a game it has no known-games entry for; change it with `lmm game edit %s`",
 		applyErr, applied[i].Slug)
-}
-
-// applyDetectSelection persists one detect selection, which since #368 can
-// hold two kinds of row.
-//
-//   - A CURATED row is configured from its known-games entry, in one gated
-//     ApplyGameDetect call over the whole curated subset - the batch
-//     semantics (one mutation slot for the lot, stop at the first failure)
-//     that call has always had.
-//   - An UNCURATED row - listed because detection prefilled a source map
-//     for it, today #269's `steamworkshop: <appid>` - has no curated entry
-//     to configure from, so it takes exactly the path `lmm game add
-//     --from-detected <app-id>` takes: core.GameSpecFromDetected, then
-//     AddGame. The CLI derives no slug, mod path or source map of its own.
-//
-// It returns the rows it attempted, in the order their outcomes land in
-// result (curated first, then uncurated - not the order they were typed),
-// so the caller can name each added game beside its result row.
-//
-// The two halves differ on ONE thing, deliberately: naming an
-// already-configured CURATED row is the documented repair path and
-// overwrites, while AddGame refuses a duplicate id with ErrGameExists
-// rather than destroying an existing game's default profile from a
-// surface that says "add" (its own doc comment records that choice). So
-// re-selecting a configured uncurated row reports that it already exists;
-// `lmm game edit` is what changes one.
-func applyDetectSelection(ctx context.Context, service *core.Service, selected []domain.DetectedGame) ([]domain.DetectedGame, *core.GameDetectResult, error) {
-	curated, uncurated := splitDetectedGames(selected)
-	applied := append(append([]domain.DetectedGame(nil), curated...), uncurated...)
-
-	result := &core.GameDetectResult{}
-	if len(curated) > 0 {
-		var err error
-		result, err = service.ApplyGameDetect(ctx, curated)
-		if err != nil {
-			return applied, result, err
-		}
-	}
-	for _, g := range uncurated {
-		entry, err := service.AddGame(ctx, core.GameSpecFromDetected(g, core.GameSpec{}))
-		if err != nil {
-			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
-		}
-		// AddGame creates the same "default" profile ApplyGameDetect does,
-		// so the two halves report identically.
-		result.Saved = append(result.Saved, entry.ID)
-		result.Profiles = append(result.Profiles, entry.ID+"/default")
-	}
-	return applied, result, nil
 }
 
 // gameDetectAnswer resolves the selection line gameDetectSelectionIndices

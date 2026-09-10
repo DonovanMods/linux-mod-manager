@@ -11,7 +11,8 @@
 // --json` emits, core.GameCatalogReport, core.GameDetectListing and
 // core.GameDetectResult (Phase 3's wire rule).
 //
-// The two writes go through core's gated seams (AddGame, ApplyGameDetect),
+// The two writes go through core's gated seams (AddGame,
+// ApplyDetectSelection),
 // so adding a game cannot interleave with a deploy job running in the
 // background on the server's own goroutine.
 package serve
@@ -357,12 +358,12 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	// Scanned WIDE on purpose (#206): the selection's semantics are
-	// unchanged - only known rows can be applied here - but a selector
-	// naming an installed game lmm has no curated entry for must be told
-	// what it hit and where to go instead, and that is only possible if
-	// the scan saw the row at all. core.SelectDetectedGames enforces the
-	// rule; this handler only classifies it and names the other route.
+	// Scanned WIDE on purpose (#206): a selector naming an installed game
+	// nothing can configure must be told what it hit and where to go
+	// instead, and that is only possible if the scan saw the row at all.
+	// core.SelectDetectedGames enforces the rule - since #368 a row
+	// detection prefilled a source map for IS selectable, by slug - and this
+	// handler only classifies the refusal and names the other route.
 	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true, Logger: s.log})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
@@ -379,17 +380,37 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	result, applyErr := s.svc.ApplyGameDetect(ctx, selected)
+	// The same seam `lmm game detect`'s prompt applies its selection through
+	// (#368 review Minor 8), so the two frontends cannot diverge about what a
+	// selection DOES: one mutation slot for the whole selection, curated rows
+	// configured from their known-games entry, an uncurated one added the way
+	// POST /api/v1/games' from_steam_app_id adds it.
+	_, result, applyErr := s.svc.ApplyDetectSelection(ctx, selected)
 	result.Warnings = append(append([]string(nil), warnings...), result.Warnings...)
 	if applyErr != nil {
-		// ApplyGameDetect persists one game at a time and stops at the
-		// first failure, so the partial result is real state the caller
-		// must see - it travels in the envelope's details via
-		// core.GameDetectPartialError, exactly as it does for the CLI.
-		s.writeAPIError(w, http.StatusInternalServerError, &core.GameDetectPartialError{Err: applyErr, Result: result})
+		// It persists one game at a time and stops at the first failure, so
+		// the partial result is real state the caller must see - it travels
+		// in the envelope's details via core.GameDetectPartialError, exactly
+		// as it does for the CLI. An already-configured UNCURATED row is
+		// refused rather than overwritten (there is no curated entry to
+		// repair it from), which is a collision with state the caller could
+		// not know about from the listing alone - 409, as on POST
+		// /api/v1/games.
+		s.writeAPIError(w, gameDetectApplyErrorStatus(applyErr), &core.GameDetectPartialError{Err: applyErr, Result: result})
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)
+}
+
+// gameDetectApplyErrorStatus classifies an ApplyDetectSelection failure: a
+// taken game id is a collision (409, matching POST /api/v1/games), and
+// anything else is a real write failure (500). A REJECTED selector never
+// reaches here - SelectDetectedGames answered 400 above.
+func gameDetectApplyErrorStatus(err error) int {
+	if errors.Is(err, core.ErrGameExists) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
 }
 
 // handleAPIGameSetDefault answers POST /api/v1/games/{id}/set-default with

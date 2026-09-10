@@ -104,19 +104,16 @@ func TestDoGameDetect_SelectsAnUncuratedWorkshopRowByNumber(t *testing.T) {
 		bufio.NewReader(strings.NewReader("2\n")), svc, scan, nil)
 	require.NoError(t, err)
 
+	// The prefill itself - the source map, the <install>/mods default, the
+	// created profile - is core.ApplyDetectSelection's, pinned by
+	// TestApplyDetectSelection_ConfiguresBothKindsOfRowUnderOneSlot. What
+	// this test owns is the CLI wiring: the typed row reached that seam and
+	// the run said what it added.
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
 	require.Contains(t, saved, "space-engineers-2")
-	g := saved["space-engineers-2"]
-	assert.Equal(t, "Space Engineers 2", g.Name)
-	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, g.SourceIDs)
-	assert.Equal(t, filepath.Join(scan[1].InstallPath, "mods"), g.ModPath,
-		"an uncurated candidate has no curated mod path, so core's <install>/mods default applies")
+	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, saved["space-engineers-2"].SourceIDs)
 	assert.Contains(t, buf.String(), "Added: Space Engineers 2 (space-engineers-2)")
-
-	profile, err := config.LoadProfile(configDir, "space-engineers-2", "default")
-	require.NoError(t, err)
-	assert.True(t, profile.IsDefault)
 }
 
 // TestDoGameDetect_SelectsBySteamAppID pins the second half of the owner's
