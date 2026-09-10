@@ -86,7 +86,11 @@ func (s *Service) SourceIndexStatus(ctx context.Context, sourceID, gameID string
 	if !ok {
 		return nil, nil //nolint:nilnil // "this source keeps no index" is an ANSWER, not a failure - see the doc comment
 	}
-	status, err := indexed.IndexStatus(ctx, s.sourceGameID(sourceID, gameID))
+	indexGameID, err := s.sourceGameID(src, gameID)
+	if err != nil {
+		return nil, err
+	}
+	status, err := indexed.IndexStatus(ctx, indexGameID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the %s index: %w", sourceID, err)
 	}
@@ -122,7 +126,10 @@ func (s *Service) RefreshSourceIndex(ctx context.Context, sourceID, gameID strin
 	}
 	defer release()
 
-	sourceGameID := s.sourceGameID(sourceID, gameID)
+	sourceGameID, err := s.sourceGameID(src, gameID)
+	if err != nil {
+		return nil, err
+	}
 	before, err := indexed.IndexStatus(ctx, sourceGameID)
 	if err != nil {
 		return nil, fmt.Errorf("reading the %s index: %w", sourceID, err)
@@ -200,14 +207,40 @@ func indexPhase(phase string) DeployPhase {
 	}
 }
 
-// sourceGameID translates lmm's game id into the identifier sourceID knows
-// the game by, exactly as SearchMods does. An empty mapping (a directory
-// source's "this applies to any game") must not blank the id out.
-func (s *Service) sourceGameID(sourceID, gameID string) string {
+// sourceGameID translates lmm's game id into the identifier src knows the
+// game by: games.yaml's `sources: {<id>: <value>}`, which is a NexusMods
+// slug, a CurseForge numeric id, a Thunderstore community.
+//
+// An EMPTY mapping is answered by the source, not by a fallback (T1 review
+// #3). source.IgnoresGameIdentifier is exactly the question "may this be
+// blank": a directory source scans a path and never consults the value, so
+// blank is its ordinary configuration and lmm's own game id is what it
+// gets. Every other source REQUIRES the value, and there the old fallback
+// was a guess with a real cost - `sources: {thunderstore: ""}` on a game
+// called `valheim` downloaded and searched the real Valheim community the
+// user had never named, which is the failure the design's "there is
+// deliberately no community auto-detection" exists to prevent.
+//
+// A mapping that is ABSENT is not the same state: it means this source was
+// never configured for this game, which the callers above answer their own
+// way. Only present-but-empty is a misconfiguration.
+//
+// The refusal carries the command that fixes it, because the identifier is
+// not derivable from anything lmm knows and both frontends print the error
+// verbatim.
+func (s *Service) sourceGameID(src source.ModSource, gameID string) (string, error) {
+	sourceID := src.ID()
 	if game, ok := s.game(gameID); ok {
-		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
-			return id
+		if id, ok := game.SourceIDs[sourceID]; ok {
+			if id != "" {
+				return id, nil
+			}
+			if !source.IgnoresGameIdentifier(src) {
+				return "", fmt.Errorf(
+					"game %q maps source %q to an empty identifier; set it with 'lmm game edit %s --source %s=<identifier>': %w",
+					gameID, sourceID, gameID, sourceID, source.ErrGameIdentifierInvalid)
+			}
 		}
 	}
-	return gameID
+	return gameID, nil
 }

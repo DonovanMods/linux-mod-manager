@@ -174,3 +174,26 @@ func TestSearchJSONKeepsOneDocumentOnStdout(t *testing.T) {
 	assert.NotContains(t, stdout, "Building the Thunderstore index")
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(stdout), "{"), "stdout is one JSON document: %q", stdout)
 }
+
+// TestSearchSaysHowToFixAnEmptyCommunityMapping is T1 review #3 at the
+// surface the user actually meets. `sources: {thunderstore: ""}` used to
+// make lmm index whichever real community shared the lmm game's id; it is
+// refused now, and the refusal has to carry the one command that fixes it,
+// because the community slug is not derivable from anything lmm knows.
+//
+// The CLI adds nothing to this: core's error is the sentence, and both
+// frontends print it verbatim.
+func TestSearchSaysHowToFixAnEmptyCommunityMapping(t *testing.T) {
+	src := &coldIndexSource{id: "thunderstore"}
+	svc, game := newColdIndexService(t, src)
+
+	unmapped := *game
+	unmapped.SourceIDs = map[string]string{"thunderstore": ""}
+	require.NoError(t, svc.SaveGame(t.Context(), &unmapped))
+	withSearchFlags(t, "thunderstore", 10)
+
+	err := doSearch(t.Context(), svc, &unmapped, []string{"skinwalkers"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lmm game edit lethal --source thunderstore=<identifier>")
+	assert.False(t, src.present, "nothing may be indexed for a community the user never named")
+}

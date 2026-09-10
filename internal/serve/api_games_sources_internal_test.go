@@ -96,6 +96,26 @@ func TestAPIGameSources_EmptyMapIs400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 }
 
+// TestAPIGameSources_EmptyIdentifierForASourceThatNeedsOneIs400 is T1
+// review #3 on the web half: the sources editor could write
+// {"nexusmods":""} - and, once Thunderstore was a built-in,
+// {"thunderstore":""}, which made lmm download and search whichever real
+// community happened to share the lmm game's id. A source that needs an
+// identifier gets one or gets nothing, and the refusal names the field so
+// the form can mark the input.
+func TestAPIGameSources_EmptyIdentifierForASourceThatNeedsOneIs400(t *testing.T) {
+	s := newGameSourcesServer(t)
+
+	rec := doAPI(s, http.MethodPut, "/api/v1/games/skyrim-se", `{"sources":{"nexusmods":""}}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "nexusmods")
+
+	game, err := s.svc.GetGame("skyrim-se")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, game.SourceIDs,
+		"a refused edit must leave games.yaml exactly as it was")
+}
+
 // TestAPIGameSources_RemovingAReferencedSourceIs409WithItsDetails is M5
 // (epic review M-4): a source an installed mod still comes from cannot be
 // dropped from the map silently - the collision is a 409, and its details

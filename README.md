@@ -2147,6 +2147,8 @@ games:
 
 or `lmm game edit --source thunderstore=lethal-company`.
 
+The slug is **required**. lmm will not guess a community from the game's own id — a wrong guess silently downloads and searches the wrong 230 MB — so `lmm game add` and `lmm game edit` both refuse an empty mapping for a source that needs one, and a search against a game whose mapping is already empty says which command fixes it rather than picking a community for you.
+
 **Search runs against a locally cached copy of the community index**, because Thunderstore publishes one unpaginated document per community and no per-query search endpoint at all. The first search for a community downloads that document and turns it into an index under `<data>/cache/_thunderstore/<community>/` — a few seconds and, for the largest community on the site, around 230 MB on disk. `lmm search` says so on stderr while it happens, so `--json` still writes exactly one document on stdout. After that:
 
 - the index is served **without any request at all** for six hours;

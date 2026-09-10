@@ -73,18 +73,41 @@ func TestUpdateGameSources_KeepsTheRestOfTheGame(t *testing.T) {
 
 // TestUpdateGameSources_TrimsAndAcceptsAnEmptyIdentifier: a directory
 // source is routinely mapped with no identifier at all, so an empty VALUE
-// is legal even though an empty KEY is not.
+// is legal - for a source that says so - even though an empty KEY is not.
 func TestUpdateGameSources_TrimsAndAcceptsAnEmptyIdentifier(t *testing.T) {
 	svc := newGameAddService(t)
+	svc.RegisterSource(&identifierIgnoringSource{catalogLessSource{id: "localmods", name: "Local Mods"}})
 	game := seedSourcesGame(t, svc)
 
 	entry, err := svc.UpdateGameSources(t.Context(), game.ID, map[string]string{"  curseforge  ": "  432  "})
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"curseforge": "432"}, entry.SourceIDs)
 
-	entry, err = svc.UpdateGameSources(t.Context(), game.ID, map[string]string{"nexusmods": ""})
+	entry, err = svc.UpdateGameSources(t.Context(), game.ID, map[string]string{"  localmods  ": "   "})
 	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"nexusmods": ""}, entry.SourceIDs)
+	assert.Equal(t, map[string]string{"localmods": ""}, entry.SourceIDs)
+}
+
+// TestUpdateGameSources_RefusesAnEmptyIdentifierForASourceThatNeedsOne is
+// T1 review #3's write half. `lmm game edit <id> --source nexusmods=` and
+// PUT /api/v1/games/{id} both wrote a mapping that fails at first use -
+// and, for Thunderstore, one that used to silently index whichever real
+// community shared the lmm game's name. `game add` has refused it since
+// #387; this is the same rule on the only other way in.
+func TestUpdateGameSources_RefusesAnEmptyIdentifierForASourceThatNeedsOne(t *testing.T) {
+	svc := newGameAddService(t)
+	game := seedSourcesGame(t, svc)
+
+	_, err := svc.UpdateGameSources(t.Context(), game.ID, map[string]string{"nexusmods": "  "})
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "sources", specErr.Field)
+	assert.Equal(t, "nexusmods", specErr.Value)
+
+	reloaded, err := svc.GetGame(game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nexusmods": "fixturegame"}, reloaded.SourceIDs,
+		"a refused edit must leave the game exactly as it was")
 }
 
 // TestUpdateGameSources_RefusesAnUnregisteredSource is the typed rejection
