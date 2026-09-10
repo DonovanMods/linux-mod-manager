@@ -7287,3 +7287,87 @@ func TestE2E_FullModPageRefusesRelinkOnALockedMod(t *testing.T) {
 
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_EveryRouteNamesItselfInTheTitleAndAnnouncesTheChange is issue
+// 399. `<title>lmm</title>` was static and nothing under spa/ ever assigned
+// document.title, so Mission Control, a mod page, search and Setup were all
+// "lmm" — in the tab, in browser history and in the window switcher — and a
+// screen-reader user got nothing at all on a pushState navigation, since
+// the only role="status" regions in the application are job progress.
+//
+// Both halves are asserted here because both are claims about what a
+// BROWSER does: the title after a real history navigation, and a live
+// region that is in the accessibility tree while out of the visual layout.
+func TestE2E_EveryRouteNamesItselfInTheTitleAndAnnouncesTheChange(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	// The router's own navigation, driven the way router.js#navigate does
+	// it, so this exercises a pushState route change rather than a fresh
+	// document load - the case that had no announcement at all.
+	pushState := func(path string) chromedp.Action {
+		return chromedp.Evaluate(`(() => {
+			window.history.pushState(null, "", `+"`"+path+"`"+`);
+			window.dispatchEvent(new PopStateEvent("popstate"));
+			return true;
+		})()`, nil)
+	}
+	const regionJS = `(() => {
+		const el = document.querySelector('[data-testid="route-announcer"]');
+		if (!el) return null;
+		return {
+			text: el.textContent.trim(),
+			live: el.getAttribute("aria-live"),
+			visible: el.getBoundingClientRect().width > 2,
+		};
+	})()`
+	type announcer struct {
+		Text    string `json:"text"`
+		Live    string `json:"live"`
+		Visible bool   `json:"visible"`
+	}
+
+	var homeTitle, modTitle, searchTitle, setupTitle string
+	var homeRegion, modRegion announcer
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Title(&homeTitle),
+		chromedp.Evaluate(regionJS, &homeRegion),
+
+		pushState(f.ContextPath()+"/mod/fake/a"),
+		pollUntil(`document.title.includes("fake:a")`),
+		settleEffects(),
+		chromedp.Title(&modTitle),
+		chromedp.Evaluate(regionJS, &modRegion),
+
+		pushState(f.ContextPath()+"/search?q=alpha"),
+		pollUntil(`document.title.toLowerCase().includes("search")`),
+		chromedp.Title(&searchTitle),
+
+		pushState(f.ContextPath()+"/setup?section=auth"),
+		pollUntil(`document.title.toLowerCase().includes("setup")`),
+		chromedp.Title(&setupTitle),
+	)
+
+	assert.Contains(t, homeTitle, "Mission Control", "the tab must name the view")
+	assert.Contains(t, homeTitle, f.Game.ID, "and the context it is showing")
+	assert.Contains(t, homeTitle, "lmm", "and still say which application it is")
+
+	assert.Contains(t, modTitle, "fake:a", "a mod page names its mod")
+	assert.NotEqual(t, homeTitle, modTitle,
+		"two routes must not share one history entry title")
+	assert.Contains(t, searchTitle, "alpha", "search names what was searched for")
+	assert.Contains(t, setupTitle, "Setup")
+
+	require.NotNil(t, homeRegion.Live, "a route announcer must exist on every route")
+	assert.Equal(t, "polite", homeRegion.Live,
+		"a route change interrupts nothing - it is announced politely")
+	assert.False(t, homeRegion.Visible,
+		"it is for the accessibility tree, not the visual layout")
+	assert.Contains(t, homeRegion.Text, "Mission Control")
+	assert.Contains(t, modRegion.Text, "fake:a",
+		"and its text must actually change on a pushState navigation, or nothing is announced")
+
+	assert.Empty(t, f.BrowserErrors())
+}

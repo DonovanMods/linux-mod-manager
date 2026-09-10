@@ -8,7 +8,12 @@ import { html } from "./render.js";
 import { App } from "./components/app.js";
 import { createStore } from "./store.js";
 import { createSliceFence } from "./slicefence.js";
-import { parseLocation, onRouteChange, navigate } from "./router.js";
+import {
+  parseLocation,
+  onRouteChange,
+  navigate,
+  documentTitle,
+} from "./router.js";
 import { currentTheme, setTheme } from "./theme.js";
 import {
   get,
@@ -1815,6 +1820,12 @@ function go(route) {
     installRequests.clear();
   }
   lastGameProfile = gameProfile;
+
+  // issue 399: every route was "lmm" in the tab, in history and in the
+  // window switcher. Assigned here rather than from a component, because a
+  // route has a name before any of its documents have loaded - and because
+  // this is the one function every navigation goes through.
+  document.title = documentTitle(route);
 
   store.set({ route });
   const key = contextKey(route);

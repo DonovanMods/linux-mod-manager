@@ -10,6 +10,7 @@
 
 import { html, useEffect } from "../render.js";
 import { currentTheme, cycleTheme } from "../theme.js";
+import { routeName } from "../router.js";
 import { GameChooser } from "./gamechooser.js";
 import { MissionControl } from "./missioncontrol.js";
 import { FullModPage } from "./fullmodpage.js";
@@ -76,6 +77,24 @@ export function App({ state, onThemeChange, actions }) {
   // genuinely fresh one on the next open, no matter what shape it is next
   // time. Each component's own internal guard stays in place as
   // belt-and-braces, not as the only line of defense.
+  // issue 399: a pushState navigation moves nothing a screen reader
+  // watches - no document load, no focus change - so without this the only
+  // announcement on a route change was silence. It rides in the overlays
+  // fragment, which every branch below renders at the same position, so the
+  // NODE survives a switch between screens and only its text changes: a live
+  // region that is torn down and rebuilt announces nothing at all.
+  //
+  // polite, not assertive - arriving somewhere is never an interruption -
+  // and its text is the route's own name, the same one the tab carries.
+  const routeAnnouncer = html`<p
+    class="visually-hidden"
+    role="status"
+    aria-live="polite"
+    data-testid="route-announcer"
+  >
+    ${routeName(route)}
+  </p>`;
+
   const modalType = state.modal?.type;
   const overlays = html`
     ${
@@ -120,6 +139,7 @@ export function App({ state, onThemeChange, actions }) {
       onDismiss=${actions.dismissToast}
       actions=${actions}
     />
+    ${routeAnnouncer}
   `;
 
   if (route.view === "home") {

@@ -197,6 +197,13 @@ func (f e2eFixture) HomePath() string {
 	return f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile
 }
 
+// ContextPath is the /g/{game}/{profile} prefix every scoped route hangs
+// off, WITHOUT the origin - what a pushState navigation inside the page
+// takes, as opposed to the absolute URL chromedp.Navigate needs.
+func (f e2eFixture) ContextPath() string {
+	return "/g/" + f.Game.ID + "/" + f.Profile
+}
+
 // SlideOverPath is the Mission Control route with sourceID/modID annotated
 // as the ?mod= slide-over - a deep link into it, exactly as a bookmark or
 // the tray's ?job= would carry (router.js).

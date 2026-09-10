@@ -203,6 +203,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every web UI view names itself (#399).** The browser tab, your history
+  and your window switcher used to say "lmm" for every screen; they now
+  carry the view and the game/profile it is showing (for example
+  `Mission Control — skyrim-se/default · lmm`), and a screen reader is told
+  the new view's name on each navigation, which a single-page app otherwise
+  does silently.
+
 - **First-run Setup offers a Steam Workshop scan (#348).** The Setup page's
   **Adopt** section — where you land straight after first-run detect, asking
   "what do I already have?" — now shows a second card for a game mapped to

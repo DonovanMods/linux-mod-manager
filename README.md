@@ -1100,6 +1100,11 @@ Focus is contained inside a modal and the slide-over while either is open,
 so `Tab` cannot wander onto the page behind the scrim. If your system asks
 for reduced motion, every animation is disabled.
 
+Every view names itself: the browser tab, your history and your window
+switcher show the screen and the game/profile it is showing (for example
+`Mission Control — skyrim-se/default · lmm`), and a screen reader is told
+the new view's name on each navigation.
+
 ### URLs
 
 ```text
