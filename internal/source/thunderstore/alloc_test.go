@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,11 +38,13 @@ const peakHeapBudget = 32 << 20
 // the test either.
 func TestStreamingDecodeKeepsPeakAllocationBounded(t *testing.T) {
 	sandboxEnv(t)
-	var served int64
+	// atomic, not a plain int64: it is written on the handler's goroutine
+	// and read on the test's, with no happens-before edge between them.
+	var served atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Last-Modified", "Wed, 10 Sep 2026 12:00:00 GMT")
 		w.Header().Set("Content-Type", "application/json")
-		served = writeSyntheticCommunity(w, largePackageCount)
+		served.Store(writeSyntheticCommunity(w, largePackageCount))
 	}))
 	defer srv.Close()
 
@@ -77,12 +80,13 @@ func TestStreamingDecodeKeepsPeakAllocationBounded(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, largePackageCount, status.Packages)
-	require.Greater(t, served, int64(20<<20), "the synthetic document must be genuinely large")
+	wrote := served.Load()
+	require.Greater(t, wrote, int64(20<<20), "the synthetic document must be genuinely large")
 
 	t.Logf("document %d MB, peak heap %d MB, budget %d MB",
-		served>>20, peak>>20, int64(peakHeapBudget)>>20)
+		wrote>>20, peak>>20, int64(peakHeapBudget)>>20)
 	assert.Less(t, peak, uint64(peakHeapBudget),
-		"the decode must stream: peak heap %d MB over a %d MB document", peak>>20, served>>20)
+		"the decode must stream: peak heap %d MB over a %d MB document", peak>>20, wrote>>20)
 }
 
 // writeSyntheticCommunity streams a plausible community document straight
