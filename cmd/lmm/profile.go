@@ -1112,6 +1112,24 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			return emitJSON(&core.ProfileApplyResult{})
 		}
 		fmt.Printf("System already matches profile %s.\n", profileName)
+		// #269/#345 N6: design §2's advisory, on the path core cannot emit
+		// it. ApplyProfileApply's own `if plan.NoChanges { return }` sits
+		// ABOVE its DeployExternalSkipped emit - a deliberate contract, so a
+		// frontend calling Apply unconditionally never gets a sync the CLI
+		// did not perform - and this branch never calls Apply at all. A
+		// profile holding ONLY Workshop items is exactly this case, and it
+		// is the run most likely to leave a user wondering what happened.
+		// Gated on the human path only by position: --json returned its
+		// document above, so stdout stays one document (Ruling 15). That
+		// document is a zero-valued ProfileApplyResult, which - unlike the
+		// with-work path, where core appends the note to Result.Notes
+		// itself - carries no trace of the advisory. Closing THAT half is a
+		// core change (an external_unchanged field on the Result, or the
+		// note in Notes), so it is left to the follow-up issue rather than
+		// synthesized here.
+		if plan.ExternalUnchanged > 0 {
+			fmt.Printf("  %s\n", fmt.Sprintf(core.NoteExternalProfileScope, plan.ExternalUnchanged))
+		}
 		return nil
 	}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -477,27 +478,78 @@ func TestProfileSwitch_NamesTheWorkshopItemsItLeavesActive(t *testing.T) {
 }
 
 // TestProfileApply_NamesTheWorkshopItemsItLeavesActive is the same §2 row for
-// the sibling flow. ApplyProfileApply returns before emitting anything when
-// plan.NoChanges (core's own guard), so this covers the path that has work.
+// the sibling flow, and it has TWO paths, not one.
+//
+// With work to do, core's DeployExternalSkipped event carries the advisory and
+// the renderer prints it. With nothing else to do there is no event at all:
+// the CLI returns "System already matches profile %s." before calling Apply,
+// and core's own `if plan.NoChanges { return }` sits ABOVE the emit, so
+// neither half can produce it. That early return is a deliberate contract - a
+// frontend calling Apply unconditionally must not get a sync the CLI never
+// performed - so the honest fix is in the renderer, exactly where
+// doProfileSwitch's sink hoist put its own.
+//
+// A profile holding only Workshop items IS plan.NoChanges, and it is the run
+// most likely to leave a user wondering what happened. README.md:1596 asserts
+// the delivered behaviour for `apply` as well as `switch`.
 func TestProfileApply_NamesTheWorkshopItemsItLeavesActive(t *testing.T) {
-	svc, game, _, _ := setupWorkshopCLI(t)
-	withWorkshopImportFlags(t, false, true)
-	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
-	// Installed + enabled but absent from profile.Mods -> the disable
-	// bucket, so the apply has real work and core gets past its own
-	// plan.NoChanges guard.
-	seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true,
-		map[string][]byte{"dis1.esp": []byte("dis")})
+	const advisory = "1 Steam Workshop item(s) stay active regardless of profile"
 
-	origYes := profileApplyYes
-	profileApplyYes = true
-	t.Cleanup(func() { profileApplyYes = origYes })
+	setup := func(t *testing.T) (*core.Service, *domain.Game) {
+		t.Helper()
+		svc, game, _, _ := setupWorkshopCLI(t)
+		withWorkshopImportFlags(t, false, true)
+		require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+		origYes := profileApplyYes
+		profileApplyYes = true
+		t.Cleanup(func() { profileApplyYes = origYes })
+		return svc, game
+	}
 
-	out := captureStdout(t, func() error {
-		return doProfileApply(context.Background(), svc, game, nil)
+	t.Run("with other work to do", func(t *testing.T) {
+		svc, game := setup(t)
+		// Installed + enabled but absent from profile.Mods -> the disable
+		// bucket, so the apply has real work and core gets past its own
+		// plan.NoChanges guard.
+		seedApplyCandidateMod(t, svc, game, "src", "dis1", "Dis One", "1.0", true,
+			map[string][]byte{"dis1.esp": []byte("dis")})
+
+		out := captureStdout(t, func() error {
+			return doProfileApply(context.Background(), svc, game, nil)
+		})
+		assert.Contains(t, out, advisory)
+		assert.Contains(t, out, "manage subscriptions in the Steam client")
 	})
-	assert.Contains(t, out, "1 Steam Workshop item(s) stay active regardless of profile")
-	assert.Contains(t, out, "manage subscriptions in the Steam client")
+
+	t.Run("with nothing else to do", func(t *testing.T) {
+		svc, game := setup(t)
+
+		out := captureStdout(t, func() error {
+			return doProfileApply(context.Background(), svc, game, nil)
+		})
+		assert.Contains(t, out, "System already matches profile")
+		assert.Contains(t, out, advisory,
+			"core returns before emitting when plan.NoChanges, so the renderer owes the note itself")
+		assert.Contains(t, out, "manage subscriptions in the Steam client")
+	})
+
+	// --json stays exactly one document (Ruling 15): the advisory is a human
+	// line and must not leak onto stdout beside the JSON. What that document
+	// does NOT carry on this path is the note itself - the CLI emits a
+	// zero-valued ProfileApplyResult, where the with-work path gets
+	// Result.Notes from core - which is a core-side gap, recorded for the
+	// follow-up issue rather than papered over in the renderer.
+	t.Run("json output stays one document", func(t *testing.T) {
+		svc, game := setup(t)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error {
+			return doProfileApply(context.Background(), svc, game, nil)
+		})
+		assert.NotContains(t, out, "stay active regardless of profile")
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &doc))
+	})
 }
 
 // TestModShow_HeaderShowsTheRevisionDateNotTheContentID: the approval note
