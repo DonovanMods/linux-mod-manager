@@ -144,7 +144,14 @@ export function ProfileImportPlanView({ plan, modal, actions }) {
     <div class="plan plan--profile-import">
       <p class="plan__summary">
         Importing <span class="mono">${plan.profile?.name}</span> as a new
-        profile${installed.length > 0 ? ` (${installed.length} mod${installed.length === 1 ? "" : "s"} already installed)` : ""}.
+        profile${
+          installed.length === 0
+            ? ""
+            : // "tracked", not "installed", for a collection: an already
+              // tracked Workshop item is not deployed into the new profile,
+              // and a switch to it changes nothing (W2 review, Important 5).
+              ` (${installed.length} ${collection ? "item" : "mod"}${installed.length === 1 ? "" : "s"} already ${collection ? "tracked" : "installed"})`
+        }.
       </p>
 
       ${

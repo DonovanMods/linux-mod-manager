@@ -260,6 +260,8 @@ func TestE2E_WorkshopTier2_TheCollectionPlanRendersItsOwnDocument(t *testing.T) 
 		chromedp.Evaluate(`document.querySelectorAll('[data-testid="collection-items"] a[href*="steamcommunity.com"]').length;`, &links),
 	)
 
+	assert.Contains(t, modal, "1 item already tracked",
+		`the summary says "tracked", not "installed": nothing is deployed into this profile`)
 	assert.Contains(t, header, "Cargo Ships", "the collection's own title")
 	assert.Contains(t, header, "Nothing is downloaded",
 		"the reason the install controls are absent rather than merely unchecked")
