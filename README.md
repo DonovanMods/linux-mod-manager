@@ -113,6 +113,32 @@ the current shell instead: `source <(lmm completion bash)`.
 
 ## Quick Start
 
+### `lmm init` — the guided first run
+
+```bash
+lmm init
+```
+
+One command that walks the whole setup, once: it scans your Steam libraries
+for moddable games and adds the ones you pick (filling in their paths and
+sources from the install itself), sets a default game so you can leave
+`--game` off from then on, signs you in to each mod source your games use
+with that source's own instructions, and scans the game's mod directory for
+mods that are already there so lmm can manage them.
+
+Every step is skippable — press Enter to take the default, or answer `n` to
+move on — and **re-running it is safe**: a game that is already configured
+is marked and not added again, a source that is already authenticated is not
+asked for a key, and a default game that is already set is left alone. So
+it doubles as "add the game I just installed".
+
+It is interactive by design. Under `--json`, or with nothing to read from,
+it prints the equivalent commands instead of prompting — a script wants
+those, not a wizard.
+
+The rest of this section is the same setup done by hand, which is worth
+reading once even if you used `lmm init`.
+
 ### Authentication
 
 Mod sources require API keys for downloading mods.
@@ -930,6 +956,15 @@ date at 1440px, source and link method at 1920px. Its toolbar also carries
 and Adopt untracked mods… — the same three flows, and the same component,
 the empty-library state offers before you have installed a first mod.
 
+Below the library sits the **Snapshots** card, which — unlike the attention
+cards — renders whether or not it has anything to show, because its value is
+knowing the safety net is there. It lists the game's snapshots newest first
+(with what each recorded and how much a restore would put back), and each
+row carries **Restore…** (through the same confirm-plan modal every other
+mutation uses, with the refusals up front) and **Delete** (confirmed in
+place on the row, and it says what it keeps: the stored originals). **Snapshot
+now** records one with no name to type — see [Snapshots](#snapshots).
+
 Clicking a row opens the **slide-over**: author, installed → available
 version, an editable lock, update policy and (where it applies) pak
 conversion, that mod's own findings and conflicts, a changelog preview, and
@@ -1107,6 +1142,7 @@ GET  /api/v1/games/detect?all=
 GET  /api/v1/auth
 GET  /api/v1/sources
 GET  /api/v1/sources/{id}/definition
+GET  /api/v1/snapshots
 ```
 
 `GET /api/v1/conflicts?order=` is the reorder preview: a comma-separated
@@ -1126,12 +1162,13 @@ GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
 GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
 ```
 
-`{kind}` is one of fourteen, each the browser-side twin of a CLI command:
+`{kind}` is one of fifteen, each the browser-side twin of a CLI command:
 `deploy`, `install`, `uninstall`, `updates`, `rollback`, `switch`,
 `profile_apply`, `profile_import`, `profile_sync`, `purge`, `mod_relink`,
-`verify_fix`, `import_archive` and `adopt`. An unknown kind is a 400 whose
-details list the ones that exist. (`mod_relink` is `lmm mod edit`: it is
-named for the core flow it drives, `PlanRelinkMod`/`ApplyRelinkMod`.)
+`verify_fix`, `import_archive`, `adopt` and `snapshot_restore`. An unknown
+kind is a 400 whose details list the ones that exist. (`mod_relink` is
+`lmm mod edit`: it is named for the core flow it drives,
+`PlanRelinkMod`/`ApplyRelinkMod`.)
 
 `?tag=` on `GET /api/v1/search` is `lmm search --tag`, and is repeatable
 the same way: `?tag=lore-friendly&tag=armor` narrows on both. Support
@@ -1190,7 +1227,19 @@ POST   /api/v1/sources/validate  {"yaml"[,"probe","probe_id"]}
                                           -> the source validation report
 PUT    /api/v1/sources/{id}      {"yaml"} -> the source list, re-read
 DELETE /api/v1/sources/{id}               -> the source list, re-read
+POST   /api/v1/snapshots      {"name"?}   -> the snapshot recorded
+DELETE /api/v1/snapshots/{name}           -> {"name","game_id","deleted"}
 ```
+
+The two snapshot writes are single-step for the same reason the lock and
+policy writes are: there is nothing to preview and nothing to watch. An
+omitted `name` gets the same date-and-time default `lmm snapshot create`
+uses with no `--name`, so the UI's "Snapshot now" needs no text input; a
+name already taken is a 409 (a snapshot is never silently overwritten) and
+one that is not usable as a file name is a 400. A delete removes the record
+and keeps the stored originals. RESTORE is the destructive, four-stage half
+and is a plan kind (`POST /api/v1/plans/snapshot_restore` with
+`{"snapshot":"<name>"}`), so it gets a real preview and a job.
 
 `GET /api/v1/games` answers with the rows `lmm game list --json` prints —
 an empty array is the first-run signal; each row carries the game's
@@ -1454,6 +1503,10 @@ shows up as a diff in review.
 | `lmm status -g <id>`           | `core.GameStatus` — one game, flat                                                                                                                                                                                                                                                                                                        |
 | `lmm search`                   | `core.SearchReport` — `{game_id, query, mods[], warnings[], total_results, attempted_count, page?, page_size?, has_more?}` (each of the last three is omitted when it is unset; `lmm search` always sets `page_size` from `--limit`, default 10, and never sets `page`, while `/api/v1/search` sets none of them unless the caller pages) |
 | `lmm verify`                   | `core.VerifyReport` — `{game_id, profile, result{findings[], issues, warnings, …}}`; each finding carries `fixable` when `verify --fix` would attempt a repair for it                                                                                                                                                                     |
+| `lmm snapshot create`          | `core.SnapshotResult` — `{name, game_id, profile, created_at, auto?, path, mods, deployed_files, originals, size_bytes}`                                                                                                                                                                                                                  |
+| `lmm snapshot list`            | `core.SnapshotListing` — `{game_id, snapshots[], warnings[]}`                                                                                                                                                                                                                                                                             |
+| `lmm snapshot restore`         | `core.SnapshotRestoreResult` — `{snapshot, profile, safety_snapshot?, purged, originals_restored, originals_skipped[], disabled, enabled, installed, replaced, deployed, refused[], notes[], warnings[]}`; `--dry-run` emits `core.SnapshotRestorePlan`                                                                                   |
+| `lmm snapshot delete`          | `core.SnapshotDeleteResult` — `{name, game_id, deleted}`                                                                                                                                                                                                                                                                                  |
 | `lmm conflicts`                | `core.ConflictReport` — `{game_id, profile, conflicts[]}`                                                                                                                                                                                                                                                                                 |
 | `lmm mod show`                 | `core.ModDetail` — `{mod{…}, installed?{…}}`                                                                                                                                                                                                                                                                                              |
 | `lmm mod files <mod-id>`       | `core.ModFilesReport` — `{mod{…}, files[], merged_pak_only}`                                                                                                                                                                                                                                                                              |
@@ -1591,6 +1644,7 @@ under its issue number:
 
 | Command                                                   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lmm init`                                                | Guided first run: detect games → add → default game → sign in → import what is already there. Interactive; every step skippable, safe to re-run (see [Quick Start](#lmm-init--the-guided-first-run))                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `lmm search <query>`                                      | Search all configured sources concurrently                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm search <query> --source ID`                          | Search a single source instead of all configured ones                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `lmm search <query> --category NAME`                      | Filter by category (NexusMods: the category name, e.g. `Armour`; CurseForge: its numeric id)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -1616,6 +1670,11 @@ under its issue number:
 | `lmm update --all`                                        | Apply all available updates in one batch — locked mods are skipped and reported together, a failure on one mod does not stop the rest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `lmm update --dry-run`                                    | Preview what would update                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `lmm update rollback <mod-id>`                            | Rollback to previous version                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `lmm snapshot create [--name N]`                          | Record a named point you can bring the game back to (metadata only; see [Snapshots](#snapshots) below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `lmm snapshot list`                                       | List the game's snapshots, newest first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `lmm snapshot restore <name>`                             | Bring the game back to a snapshot (undeploy → put originals back → restore the recorded mods at their recorded versions). Records the current state first                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `lmm snapshot restore <name> --dry-run`                   | Preview the whole restore without changing anything                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `lmm snapshot delete <name>`                              | Delete a snapshot's record (the stored originals are kept)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm verify`                                              | Verify cached mod files (see below)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `lmm verify --fix`                                        | Re-download missing files, populate missing checksums, repair version-record mismatches, remove stale lmm-deployed files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `lmm mod enable <mod-id>`                                 | Enable a disabled mod                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -1791,6 +1850,50 @@ Error: no mod sources configured for Skyrim Special Edition; add sources with 'l
 
 When you run `lmm update`, the tool checks each installed mod against the source (e.g. NexusMods). If some mods cannot be fetched (e.g. deleted, private, or network error), you still see **partial results** (any updates that were found), and a **warning** is printed to stderr describing which mods could not be checked.
 
+### Snapshots
+
+A **snapshot** is a named point you can bring a game back to.
+
+```bash
+lmm snapshot create --name before-total-conversion
+lmm snapshot list
+lmm snapshot restore before-total-conversion --dry-run
+lmm snapshot restore before-total-conversion
+lmm snapshot delete before-total-conversion
+```
+
+It is **metadata, not a copy of your mods**: the profile (with its load
+order and locks), the installed versions and settings, and the deployed
+files with their checksums. The mod files themselves are already in the
+cache, so a snapshot costs kilobytes. Creating one hashes the deployed tree,
+which is the same work `lmm verify` does — so on a large install it is not
+instant.
+
+**The originals store** is the part lmm cannot reconstruct any other way.
+Whenever a deploy, or a profile override, would replace a file lmm did not
+put there — stock game content, or a file another tool left — the original
+is copied to `~/.local/share/lmm/snapshots/<game>/originals/` **first, and
+once**: the first original wins, because the second write's "original" is
+lmm's own first write. `lmm snapshot restore` puts those back, checksum
+-verified. `lmm snapshot delete` never removes them; they are the only copy.
+
+**A restore is four stages**, in this order: the current deployment is
+undeployed, every stored original goes back, the recorded profile is
+written, and the mods it lists are installed at their recorded versions and
+deployed — downgrades included, re-downloading anything the cache no longer
+has. A version the source can no longer serve is reported as a **refusal, in
+the preview, before anything is touched**; it is never a quiet partial
+restore. A snapshot of the **current** state is taken first, so a restore is
+itself reversible (`--no-safety-snapshot` to skip that).
+
+**Automatic snapshots** are opt-in. Set `auto_snapshot: true` in
+`config.yaml` and lmm records one before every deploy, profile switch and
+update, named `auto-<op>-<timestamp>`. Off by default because hashing a
+large deployed tree on every deploy is a real cost, and because a user who
+wants the safety net can say so once. An automatic snapshot that fails is a
+warning, never a refusal — a backup that blocks the operation it is
+protecting is worse than no backup.
+
 ### Verify output
 
 `lmm verify` reports per file:
@@ -1908,15 +2011,16 @@ internal/
 
 lmm follows the XDG Base Directory specification. `--config` and `--data` override the resolved directories; `cache_path` in `config.yaml` overrides the cache.
 
-| Type                    | Path                                                                                              |
-| ----------------------- | ------------------------------------------------------------------------------------------------- |
-| Config                  | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                |
-| Custom Sources          | `<config>/sources/*.yaml`                                                                         |
-| Database                | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                 |
-| Credential key          | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login` |
-| Mod Cache               | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)  |
-| Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                  |
-| Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                    |
+| Type                    | Path                                                                                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Config                  | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                                                                         |
+| Custom Sources          | `<config>/sources/*.yaml`                                                                                                                                  |
+| Database                | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                                                                          |
+| Credential key          | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login`                                                          |
+| Mod Cache               | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)                                                           |
+| Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                                                                           |
+| Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                                                                             |
+| Snapshots               | `<data>/snapshots/<game-id>/` — one `<name>.json` per snapshot, plus `originals/` and `originals.json` (the files lmm has replaced; the only copy of them) |
 
 **Precedence.** `--config`/`--data` win outright. Otherwise an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path decides, whether or not `$XDG_…/lmm` exists yet — setting the variable is an explicit instruction, and lmm never silently writes somewhere else (#297). Only when the variable is **unset** — or set to a relative path, which the XDG spec requires be ignored — does lmm fall back to the legacy `~/.config/lmm` / `~/.local/share/lmm`, which is the situation an install predating XDG support is in. If you set an XDG variable and want your existing data, move the directory to the new location (or point `--data`/`--config` at the old one).
 
@@ -1942,7 +2046,7 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 - [x] CurseForge integration
 - [x] Additional first-party built-in sources beyond NexusMods/CurseForge (Icarus)
 - [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
-- [ ] Backup and restore
+- [x] Backup and restore (`lmm snapshot`)
 
 ## Development
 

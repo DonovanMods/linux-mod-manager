@@ -199,6 +199,18 @@ func validSnapshotName(name string) (string, error) {
 	return trimmed, nil
 }
 
+// DefaultSnapshotName is the name a snapshot gets when the user did not
+// choose one - `lmm snapshot create` with no --name, and the web UI's
+// "Snapshot now" button, which has no text input at all.
+//
+// Exported so BOTH frontends produce the same name for the same gesture:
+// the format is a fact about snapshots (it sorts as a timeline, beside the
+// automatic ones), not a detail of either frontend, and two copies of a
+// time format string is exactly the kind of thing that drifts.
+func DefaultSnapshotName(at time.Time) string {
+	return at.UTC().Format("20060102-150405")
+}
+
 // AutoSnapshotName is the name an automatic snapshot is given: the op that
 // triggered it plus a sortable UTC stamp, so the listing reads as a
 // timeline and two ops in the same second cannot collide with a name the

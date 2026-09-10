@@ -204,6 +204,19 @@ equivalent already exists in a better form:
   and there is no browser analogue of "read this from an env var" or a piped stdin.
 - `lmm search -l/--limit` — the web paginates the results at a fixed page size instead of taking an
   arbitrary limit; `← Prev` / `Next →` is the browser's own answer to "how much do I see at once".
+- `lmm init` (#351) — the guided first run. It is the CLI TWIN of the web's own setup wizard
+  (`/setup`: games → sources/auth → adopt), which is why it is a judgment entry rather than a
+  parity hole: both walk the same four core flows in the same order, each in its own modality's
+  idiom (a sequence of prompts; a tabbed panel you can revisit). Neither is a capability the other
+  lacks. `lmm init` refuses under `--json` with `ErrInteractiveOnly` and prints the four
+  equivalent commands, which is the scripted path.
+
+**Bidirectional since #350** — `lmm snapshot` is on both sides from the day it shipped, and is
+recorded here because it is the newest command and the ledger is meant to be exhaustive:
+`create`/`list`/`delete` are `POST`/`GET`/`DELETE /api/v1/snapshots` (single-step writes, like
+lock and policy), and `restore` is the `snapshot_restore` plan kind behind Mission Control's
+Snapshots card. `--dry-run` is the plan document the confirm modal renders;
+`--no-safety-snapshot`, `--force` and `--no-hooks` are its Advanced controls.
 
 The epic re-review's own N-7 named two further omissions — `--version` and `lmm game add
 --game-id` — that the polish wave closed rather than left as exceptions (#326): the running

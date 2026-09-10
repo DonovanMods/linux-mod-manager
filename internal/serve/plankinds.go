@@ -6,11 +6,12 @@
 //
 // One entry describes one mutation flow end to end - how its request body
 // decodes, how its Plan is computed, what is stored server-side between
-// Plan and Apply, and how its Apply runs. Seventeen kinds are registered
-// today: the fifteen plan kinds - deploy, install, uninstall, updates,
+// Plan and Apply, and how its Apply runs. Eighteen kinds are registered
+// today: the sixteen plan kinds - deploy, install, uninstall, updates,
 // rollback, switch, profile_apply, profile_import, profile_sync, purge,
-// mod_relink, verify_fix, import_archive, adopt and workshop_adopt - here,
-// plus the two plan-free toggles in kind_toggle.go.
+// mod_relink, verify_fix, import_archive, adopt, workshop_adopt and
+// snapshot_restore - here, plus the two plan-free toggles in
+// kind_toggle.go.
 //
 // The table used to carry a browser-form half as well (planKind.Form, the
 // confirm-page decoders and display types). That went with the
@@ -138,7 +139,12 @@ func planErrorStatus(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, domain.ErrModNotFound),
 		errors.Is(err, domain.ErrGameNotFound),
-		errors.Is(err, domain.ErrProfileNotFound):
+		errors.Is(err, domain.ErrProfileNotFound),
+		// #350: a snapshot the caller named that does not exist. It has
+		// its own sentinel rather than being wrapped in one of the three
+		// above, because "profile not found" is not what happened and an
+		// envelope a user reads should not say it did.
+		errors.Is(err, core.ErrSnapshotNotFound):
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError

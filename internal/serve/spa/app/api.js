@@ -205,6 +205,27 @@ export const renameProfile = (name, newName, context) =>
 export const setDefaultProfile = (name, context) =>
   post(scoped(`${profilePath(name)}/set-default`, context), {});
 
+/** Reads the game's core.SnapshotListing document (issue 350) - the Snapshots
+ * card's list, newest first. Game-scoped but NOT profile-scoped: snapshots
+ * belong to a game, and hiding the ones taken under another profile would
+ * hide exactly the one a user switched away from. */
+export const listSnapshots = (context) =>
+  get(scoped("/api/v1/snapshots", context));
+
+/** Records a snapshot of the current arrangement. Returns
+ * core.SnapshotResult; 409 if the name is taken (a snapshot is never
+ * silently overwritten), 400 if the name is not usable as a file name.
+ * An empty name gets core's own shared default, which is what lets the
+ * card's "Snapshot now" button carry no text input at all. */
+export const createSnapshot = (name, context) =>
+  post(scoped("/api/v1/snapshots", context), name ? { name } : {});
+
+/** Deletes a snapshot's record. Returns core.SnapshotDeleteResult. The
+ * stored ORIGINALS survive - they are shared by every snapshot of the game
+ * and are the only copy of the files lmm replaced (api_snapshots.go). */
+export const deleteSnapshot = (name, context) =>
+  del(scoped(`/api/v1/snapshots/${encodeURIComponent(name)}`, context));
+
 /** The profile export download's URL - a plain GET the browser downloads
  * via <a download>, never fetched through this module: the server sets
  * Content-Disposition itself (api_profiles.go), so there is no blob to

@@ -91,6 +91,17 @@ func (s *Server) routes() {
 	// path, and a server must not take one from a browser.
 	s.mux.Handle("POST /api/v1/uploads", s.wrap(s.handleAPIUploadCreate))
 	s.mux.Handle("DELETE /api/v1/uploads/{id}", s.wrap(s.handleAPIUploadDelete))
+	// The Snapshots card's three single-step routes (api_snapshots.go).
+	// Not jobs: a create writes one metadata file and a delete removes
+	// one, with nothing to show in flight. The destructive, four-stage
+	// RESTORE is a job with a plan behind it, registered as the
+	// "snapshot_restore" plan kind (kind_snapshot_restore.go). The listing
+	// is game-scoped but NOT profile-scoped - snapshots belong to a game,
+	// and hiding the ones taken under another profile would hide exactly
+	// the one a user switched away from.
+	s.mux.Handle("GET /api/v1/snapshots", s.wrap(s.handleAPISnapshots))
+	s.mux.Handle("POST /api/v1/snapshots", s.wrap(s.handleAPISnapshotCreate))
+	s.mux.Handle("DELETE /api/v1/snapshots/{name}", s.wrap(s.handleAPISnapshotDelete))
 	s.mux.Handle("POST /api/v1/plans/{kind}", s.wrap(s.handleAPIPlan))
 	s.mux.Handle("POST /api/v1/jobs", s.wrap(s.handleAPIStartJob))
 	// The activity tray's index (api_activity.go). GET and POST on the same

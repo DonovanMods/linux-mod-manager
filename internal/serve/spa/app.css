@@ -675,6 +675,19 @@ select {
   color: var(--accent);
 }
 
+/* The Snapshots card (issue 350). Not in the .attention-cards grid: it renders
+ * unconditionally, below the library, so it gets its own full-width block
+ * rather than a column in a row whose whole premise is "only when there is
+ * something to say". The accent, like the profile card - a snapshot list is
+ * a capability, never a fault. */
+.snapshots {
+  margin-top: var(--space-6);
+}
+
+.card--snapshots .card__title {
+  color: var(--accent);
+}
+
 /* A card's own supporting line, under its title - the Health card's "Last
  * verified …" (issue 334). Muted and small: it qualifies the card, it is
  * not one of its rows. */

@@ -15,6 +15,25 @@ Global application settings. Optional; defaults apply if the file is missing.
 | `keybindings`         | string | `vim`     | Ignored. Kept so existing config files that set it still parse (it was reserved for the removed TUI) |
 | `cache_path`          | string | (empty)   | Override default mod cache directory (`<data dir>/cache`)                                            |
 | `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
+| `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |
+
+### `auto_snapshot`
+
+With `auto_snapshot: true`, lmm records a snapshot named
+`auto-<op>-<timestamp>` before each deploy, profile switch and update — the
+three operations that change what is in the game directory.
+
+It is **off by default**. Creating a snapshot hashes the whole deployed
+tree, which on a large install is real work to do on every deploy, and a
+user who wants the safety net can say so once. An automatic snapshot that
+FAILS is reported as a warning and the operation continues: a backup that
+blocks the thing it is protecting is worse than no backup.
+
+Automatic snapshots are listed by `lmm snapshot list` like any other, marked
+`(auto)`, and are deleted the same way. Nothing prunes them — a machine that
+deploys often will accumulate them, and they are cheap (kilobytes each) but
+not free.
+
 
 ## games.yaml
 
@@ -171,6 +190,10 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `<data>/.oplock`                           | Advisory mutation lock (#317) — see below                               |
 | `<data>/cache/`                            | Mod file cache (or `cache_path` override)                               |
 | `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
+| `<data>/key`                               | Token-encryption key (`0600`, created on first `auth login`)            |
+| `<data>/snapshots/<game-id>/<name>.json`   | One snapshot's record (`lmm snapshot`)                                  |
+| `<data>/snapshots/<game-id>/originals.json`| Manifest of the files lmm has replaced for that game                    |
+| `<data>/snapshots/<game-id>/originals/`    | The replaced files themselves, split by root (`mod_path`/`install_path`)|
 
 ## Custom Sources
 

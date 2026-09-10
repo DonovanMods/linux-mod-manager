@@ -30,6 +30,7 @@ const phasePrefixes = [
   ["adopt_", ""],
   ["sync_", ""],
   ["relink_", ""],
+  ["snapshot_", ""],
 ];
 
 /**
@@ -75,6 +76,7 @@ const mutationKindLabels = {
   profile_import: "Importing profile",
   enable: "Enabling",
   disable: "Disabling",
+  snapshot_restore: "Restoring snapshot",
 };
 
 /** mutationLabel names a running job's KIND in words, falling back to the

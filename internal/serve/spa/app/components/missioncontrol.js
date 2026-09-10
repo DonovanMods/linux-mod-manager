@@ -23,6 +23,7 @@ import { AttentionCards } from "./cards.js";
 import { Library } from "./library.js";
 import { ModPanel } from "./modpanel.js";
 import { OmnibarResults } from "./omnibarresults.js";
+import { SnapshotsCard } from "./snapshots.js";
 
 /** goToChooser is the error state's escape hatch: a click, not just advice
  * to edit the URL bar, back to a context that does resolve. */
@@ -194,6 +195,16 @@ export function MissionControl({ state, onThemeChange, actions }) {
           state=${state}
           actions=${actions}
         />
+        ${
+          /* The Snapshots card (issue 350) sits BELOW the library, not in the
+          attention row above it. An attention card renders only when it
+          has something to say; a snapshot list is the opposite - a safety
+          net whose value is knowing it is there, and whose main action
+          ("Snapshot now") is most useful when there is nothing to show.
+          Putting it at the top would spend the densest screen in the
+          product on something that never needs the user. */ ""
+        }
+        <${SnapshotsCard} state=${state} actions=${actions} />
       </main>
       ${
         route.mod &&

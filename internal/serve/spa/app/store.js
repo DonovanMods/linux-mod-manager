@@ -26,6 +26,11 @@ export function initialState() {
     health: null,
     conflicts: null,
     profiles: null,
+    // snapshots is the game's core.SnapshotListing (issue 350) - the Snapshots
+    // card's rows, newest first. Game-scoped, not profile-scoped: a
+    // snapshot belongs to a game, and hiding the ones taken under another
+    // profile would hide exactly the one a user switched away from.
+    snapshots: null,
     // omnibarSearch is the omnibar's fan-out (issue 331, design doc §Search:
     // "Enter fans out to the game's sources and appends 'From sources (n)'
     // rows in place"): {status: "loading"|"ready"|"error", query, report,
@@ -93,6 +98,7 @@ export function initialState() {
       updates: null,
       health: null,
       conflicts: null,
+      snapshots: null,
       status: null,
     },
   };

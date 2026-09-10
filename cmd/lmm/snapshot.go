@@ -164,9 +164,9 @@ func doSnapshotCreate(ctx context.Context, service *core.Service, game *domain.G
 	}
 	name := strings.TrimSpace(snapshotName)
 	if name == "" {
-		// A default that reads as a timeline and sorts the same way the
-		// automatic snapshots' own names do.
-		name = time.Now().UTC().Format("20060102-150405")
+		// core owns the format, so `lmm snapshot create` and the web UI's
+		// "Snapshot now" button name the same gesture the same way.
+		name = core.DefaultSnapshotName(time.Now())
 	}
 
 	result, err := service.CreateSnapshot(ctx, game, profileName, name)

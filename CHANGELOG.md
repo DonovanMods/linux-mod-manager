@@ -223,6 +223,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Workshop (needs a personal API key) and downloading items (needs
   `steamcmd`) land in later units.
 
+- **Snapshots: `lmm snapshot create|list|restore|delete` (#350).** The last
+  unchecked item on the README's roadmap since v1. A snapshot is a named
+  point you can bring a game back to, and it is **metadata**: the profile
+  (with its load order and locks), the installed versions and settings, and
+  the deployed files with their checksums. The mod files are already in the
+  cache, so a snapshot costs kilobytes — creating one does hash the deployed
+  tree, which is the same work `lmm verify` does.
+
+  The part lmm could not reconstruct any other way is now kept too. Whenever
+  a deploy, or a profile override, would replace a file lmm did not put
+  there — stock game content, or a file another tool left — the original is
+  copied to `$XDG_DATA_HOME/lmm/snapshots/<game>/originals/` **first, and
+  once**: the first original wins, because the second write's "original" is
+  lmm's own first write. lmm's own deployments are never stored (a symlink is
+  not stock content, and a file the `deployed_files` table already
+  attributes to a mod is reconstructible from the cache). A failed capture is
+  a warning, never a refusal — a backup that blocks the operation it is
+  protecting is worse than no backup.
+
+  `lmm snapshot restore` is four stages in order: undeploy what is there,
+  put every stored original back (checksum-verified — a stored copy that no
+  longer matches is refused rather than written), write the recorded profile,
+  then install the mods it lists at their recorded versions and deploy them —
+  downgrades included, re-downloading anything the cache no longer has. A
+  version the source can no longer serve is a **refusal named in the
+  preview, before anything is touched**; it is never a quiet partial
+  restore, and a restore that fails partway reports how far it got. A
+  snapshot of the CURRENT state is taken first, so a restore is itself
+  reversible (`--no-safety-snapshot` to skip that).
+
+  `--dry-run` prints the whole plan and changes nothing. `--json` on each
+  subcommand emits `core.SnapshotResult` / `core.SnapshotListing` /
+  `core.SnapshotRestoreResult` (or `core.SnapshotRestorePlan` under
+  `--dry-run`) / `core.SnapshotDeleteResult`. `auto_snapshot: true` in
+  `config.yaml` records one before every deploy, profile switch and update —
+  **off by default**, because hashing a large deployed tree on every deploy
+  is a real cost.
+
+  In the web UI, Mission Control gains a **Snapshots** card below the
+  library. Unlike an attention card it renders whether or not it has
+  anything to show, because its value is knowing the safety net is there:
+  it lists the snapshots newest first, **Snapshot now** records one with no
+  name to type, **Restore…** goes through the same confirm-plan modal every
+  other mutation uses (with the refusals up front), and **Delete** confirms
+  in place on the row and says what it keeps. Over the wire:
+  `GET`/`POST /api/v1/snapshots`, `DELETE /api/v1/snapshots/{name}`, and the
+  `snapshot_restore` plan kind.
+
+- **`lmm init` — a guided first run (#351).** The web UI has had a setup
+  wizard since v2; the CLI had every piece of it and no path through them, so
+  a new user had to discover the order from the README. `lmm init` is that
+  path: scan Steam for moddable games and add the ones you pick (paths and
+  sources filled in from the install), set a default game, sign in to each
+  mod source your games actually use with that source's own instructions,
+  and scan the game's mod directory for mods already there.
+
+  Every step is skippable, and a skip says how to run that step later rather
+  than reading as a failure. **Re-running it is safe and does the sensible
+  thing**: a configured game is marked and not added again, an authenticated
+  source is not asked for a key, and a default game already set is left
+  alone — so it doubles as "add the game I just installed". Nothing new
+  happens in `cmd/lmm` beyond the sequencing and the prompts: every step
+  calls the same core flow `lmm game detect`, `lmm game set-default`,
+  `lmm auth login` and `lmm import` call. Under `--json`, or with nothing to
+  read from, it refuses with `ErrInteractiveOnly` and prints the equivalent
+  commands — a script wants those, not a wizard. The README's Quick Start now
+  leads with it.
+
 - **Install from the AUR, or from a `.deb`/`.rpm`/`.apk` (#352).** The
   release pipeline produced tarballs only, which is the one channel that
   asks you to place a binary by hand and leaves the man pages unreachable
@@ -789,6 +857,20 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   $VAR)" by the CLI and by the web card. `lmm auth login --key-from-env`'s
   own report says `via: env` for the same reason: that IS the key it will
   send.
+
+- **An undeploy no longer deletes a file lmm did not put there (#350).**
+  `Installer.Uninstall` undeployed every path the mod's CACHE ENTRY names,
+  which is not the same as every path the mod actually put there — and the
+  `copy` and `hardlink` link methods remove whatever is at the path. So a
+  deploy (which undeploys before it installs), a `purge`, or an ordinary
+  `uninstall` **silently deleted stock game content** sitting where one of
+  the mod's files would go, with no way back. The `symlink` method refuses to
+  remove a non-symlink, which is exactly why the default never showed it.
+
+  An undeploy now leaves a regular file with no `deployed_files` row alone.
+  lmm's own deployments are unaffected: a symlink is not a regular file, and
+  a copy/hardlink deployment carries a row written by the same loop that
+  created it.
 
 - **A relative `mod_path` now means the same thing everywhere (#363).** A
   hand-written `games.yaml` has always taken `mod_path: Data` as
