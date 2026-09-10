@@ -617,10 +617,10 @@ export function GameAddForm({
       ? `${spec.installPath}/mods`
       : "";
   // ONE string, not adjacent interpolations: htm collapses the whitespace
-  // between them (no_htm_whitespace_test.go). It also states #363's rule -
-  // a relative value is resolved against the install path here exactly as
-  // it is in a hand-written games.yaml, so there is no longer a field
-  // error for typing "Data".
+  // between them (no_htm_whitespace_test.go). It also states issue 363's
+  // rule - a relative value is resolved against the install path here
+  // exactly as it is in a hand-written games.yaml, so there is no longer a
+  // field error for typing "Data".
   const modPathHint = `(${detectedRow ? "guessed" : "default"}: install path + "/mods"; a relative path is taken as relative to the install path)`;
 
   return html`

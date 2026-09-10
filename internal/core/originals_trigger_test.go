@@ -266,3 +266,77 @@ func TestDeploy_PreservesAStockFileWhenModPathIsTheInstallDir(t *testing.T) {
 	assert.Equal(t, "stock plugin",
 		readStoredOriginal(t, dataDir, "g1", "mod_path", "BepInEx/core/plugin.dll"))
 }
+
+// TestUndeploy_LeavesAFileLmmDoesNotOwnAlone is the data-loss path #350's
+// originals work exposed, and the one that needed a fix rather than a
+// backup.
+//
+// Installer.Uninstall undeploys every path the mod's CACHE ENTRY names,
+// which is not the same as every path the mod actually put there. The copy
+// and hardlink linkers remove whatever is at the path, so a deploy (which
+// undeploys before it installs), a purge or an ordinary uninstall deleted
+// stock game content sitting where one of the mod's files would go -
+// silently, with no way back. The symlink linker refuses to remove a
+// non-symlink, which is why the default link method never showed it.
+func TestUndeploy_LeavesAFileLmmDoesNotOwnAlone(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	stock := filepath.Join(gameDir, "Data", "shipped.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))
+	require.NoError(t, os.WriteFile(stock, []byte("as the game shipped"), 0644))
+
+	// A mod whose file list NAMES that path, installed but never deployed.
+	seedNamedInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("the mod's version")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.0")
+
+	_, err := svc.PurgeProfile(context.Background(), game,
+		"default", modsOf(t, svc, "g1", "default"), core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(stock)
+	require.NoError(t, err, "the stock file must still be there")
+	assert.Equal(t, "as the game shipped", string(data))
+}
+
+// TestUndeploy_StillRemovesItsOwnCopiedFile pins the other half: the fix
+// must not turn a copy-mode uninstall into a no-op. lmm's own copied file
+// carries a deployed_files row, so it is removed exactly as before.
+func TestUndeploy_StillRemovesItsOwnCopiedFile(t *testing.T) {
+	svc, _ := newOriginalsService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	seedNamedInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", true,
+		map[string][]byte{"Data/mine.esp": []byte("the mod's version")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.0")
+
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(gameDir, "Data", "mine.esp"))
+
+	_, err = svc.PurgeProfile(context.Background(), game,
+		"default", modsOf(t, svc, "g1", "default"), core.PurgeOptions{}, nil)
+	require.NoError(t, err)
+
+	assert.NoFileExists(t, filepath.Join(gameDir, "Data", "mine.esp"),
+		"lmm's own copied file carries an ownership row and is still removed")
+}
+
+// modsOf reads a profile's installed set, which PurgeProfile takes directly.
+func modsOf(t *testing.T, svc *core.Service, gameID, profileName string) []domain.InstalledMod {
+	t.Helper()
+	mods, err := svc.GetInstalledMods(context.Background(), gameID, profileName)
+	require.NoError(t, err)
+	return mods
+}

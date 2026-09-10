@@ -51,6 +51,12 @@ const (
 	// OpModEdit is `lmm mod edit` - ApplyRelinkMod's metadata-only and
 	// re-link edits (v2 Phase 3 Task 10, #303).
 	OpModEdit Op = "mod_edit"
+	// OpSnapshotRestore is `lmm snapshot restore` (#350) - the purge,
+	// originals-restore and converge sequence that returns a game to a
+	// recorded point. Its convergence step runs the profile-apply engine,
+	// which emits the Switch* phase family; Scope.Op is what tells the two
+	// apart on the wire, exactly as it does for OpProfileApply.
+	OpSnapshotRestore Op = "snapshot_restore"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),

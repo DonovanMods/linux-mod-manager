@@ -1591,6 +1591,81 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// The restore plan (#350): what `snapshot restore --dry-run`
+			// prints and what the confirm modal renders. The refusals
+			// list is the point - a version a source can no longer serve
+			// is visible BEFORE anything is purged.
+			"snapshot_restore_plan",
+			core.SnapshotRestorePlan{
+				GameID: "skyrim-se", Profile: "default",
+				Snapshot: "before-tweaks", CreatedAt: fixedTime,
+				ToPurge: []domain.InstalledMod{{
+					Mod:         jsonGoldenMod,
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify,
+					InstalledAt: fixedTime, Enabled: true, Deployed: true,
+					LinkMethod: domain.LinkSymlink,
+				}},
+				Originals: []core.SnapshotRestoreOriginal{{
+					Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",
+					Status: core.SnapshotOriginalRestorable,
+				}, {
+					Root: core.OriginalRootInstallPath, RelativePath: "Data/game.ini",
+					Status: core.SnapshotOriginalUnavailable,
+					Reason: "checksum 9c11 does not match the recorded 3f78",
+				}},
+				Mods: []core.SnapshotRestoreMod{{
+					SourceID: "nexusmods", ModID: "42", Name: "Sample Mod",
+					Version: "1.2.3", Cached: true,
+				}, {
+					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
+					Version: "0.9", Error: "no downloadable files",
+				}},
+				Refusals: []core.InstalledRef{{
+					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
+					Version: "0.9", Reason: "no downloadable files",
+				}},
+				ProfileChanged: true,
+			},
+		},
+		{
+			"snapshot_restore_original",
+			core.SnapshotRestoreOriginal{
+				Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",
+				Status: core.SnapshotOriginalRestorable,
+			},
+		},
+		{
+			"snapshot_restore_mod",
+			core.SnapshotRestoreMod{
+				SourceID: "nexusmods", ModID: "42", Name: "Sample Mod",
+				Version: "1.2.3", Cached: true,
+			},
+		},
+		{
+			// The restore result, in its most informative shape: a
+			// partial restore. This is also what
+			// SnapshotRestorePartialError's "details" carries.
+			"snapshot_restore_result",
+			core.SnapshotRestoreResult{
+				Snapshot: "before-tweaks", Profile: "default",
+				SafetySnapshot:    "auto-snapshot_restore-20260827-120000",
+				Purged:            4,
+				OriginalsRestored: 2,
+				OriginalsSkipped: []core.SnapshotRestoreOriginal{{
+					Root: core.OriginalRootInstallPath, RelativePath: "Data/game.ini",
+					Status: core.SnapshotOriginalUnavailable,
+					Reason: "the stored copy is missing",
+				}},
+				Disabled: 1, Enabled: 2, Installed: 3, Replaced: 1, Deployed: 7,
+				Refused: []core.InstalledRef{{
+					SourceID: "curseforge", ModID: "7", Name: "Gone Mod",
+					Version: "0.9", Reason: "no downloadable files",
+				}},
+				Notes:    []string{"the current state was recorded as auto-snapshot_restore-20260827-120000"},
+				Warnings: []string{"could not sync merged pak"},
+			},
+		},
+		{
 			"snapshot_delete_result",
 			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
 		},

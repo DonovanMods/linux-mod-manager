@@ -417,12 +417,19 @@ func TestService_UninstallMod_ProfileDesyncWarnsAndContinues(t *testing.T) {
 
 // TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix
 // guards the exact text (including its historical "Warning: " prefix) of the
-// undeploy-failure diagnostic. A regular file sits where the symlink linker
+// undeploy-failure diagnostic. A DIRECTORY sits where the symlink linker
 // expects its own link, so linker.Undeploy fails deterministically ("not a
-// symlink") without relying on filesystem permissions. (An absent cache
-// entry no longer works as the failure fixture here: since #260 that is a
-// documented no-op, not an error.) The profile is pre-seeded so profile
-// removal succeeds silently, isolating this one diagnostic.
+// symlink") without relying on filesystem permissions.
+//
+// It used to be a regular FILE, which #350 changed the meaning of: a
+// regular file with no deployed_files row is content lmm did not put there,
+// and the undeploy now leaves it alone rather than deleting it (silently
+// destroying stock game content was the bug). A directory is still an
+// undeploy failure and nothing else, so it isolates this diagnostic
+// without asserting the behaviour #350 deliberately removed. (An absent
+// cache entry no longer works as the fixture either: since #260 that is a
+// documented no-op.) The profile is pre-seeded so profile removal succeeds
+// silently.
 func TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -433,9 +440,10 @@ func TestService_UninstallMod_UndeployFailure_RecordedAsNoteWithHistoricalPrefix
 	})
 	seedProfileWithMod(t, svc, "g1", "default", "src", "1", "1.0")
 
-	// A foreign regular file at the deploy destination: Undeploy refuses to
-	// remove anything that is not its own symlink.
-	require.NoError(t, os.WriteFile(filepath.Join(gameDir, "plugin.esp"), []byte("not a symlink"), 0644))
+	// A directory at the deploy destination: Undeploy refuses to remove
+	// anything that is not its own symlink, and a directory is not the
+	// foreign-FILE case #350 now leaves in place.
+	require.NoError(t, os.MkdirAll(filepath.Join(gameDir, "plugin.esp"), 0755))
 
 	result, err := svc.UninstallMod(context.Background(), game, "default", "src", "1", core.UninstallOptions{})
 	require.NoError(t, err, "an undeploy failure must not fail the uninstall")

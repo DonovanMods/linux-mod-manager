@@ -376,3 +376,56 @@ func (s *Service) originalsStoreFor(gameID string) *originalsStore {
 	}
 	return newOriginalsStore(s.dataDir, gameID, s.logger())
 }
+
+// restore writes a stored original back to absPath, verifying the stored
+// copy's checksum first.
+//
+// The verification is the point: a stored original is the only surviving
+// copy of stock content, and writing a corrupted copy into a game
+// directory would turn "lmm kept your original" into "lmm broke your
+// install". A mismatch or a missing stored copy is reported, never written.
+func (s *originalsStore) restore(row OriginalFile, absPath string) error {
+	stored := s.storedPath(row.Root, row.RelativePath)
+	sum, _, err := hashFile(stored)
+	if err != nil {
+		return fmt.Errorf("reading the stored original of %s: %w", row.RelativePath, err)
+	}
+	if row.SHA256 != "" && sum != row.SHA256 {
+		return fmt.Errorf("the stored original of %s does not match its recorded checksum (%s, expected %s); it is not safe to write back",
+			row.RelativePath, sum, row.SHA256)
+	}
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return fmt.Errorf("creating the directory for %s: %w", row.RelativePath, err)
+	}
+	// The destination may still hold the mod file that replaced it - a
+	// symlink into the cache, which a plain write would follow and thereby
+	// CORRUPT THE CACHE ENTRY. Remove it first.
+	if err := os.Remove(absPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("clearing %s before restoring the original: %w", absPath, err)
+	}
+	if _, _, err := copyAndHash(stored, absPath); err != nil {
+		return err
+	}
+	// The stored copy is 0600 (it may be game content the user's umask
+	// would have widened); what goes BACK into a game directory should
+	// read like an ordinary game file again.
+	if err := os.Chmod(absPath, 0644); err != nil {
+		return fmt.Errorf("setting permissions on the restored %s: %w", row.RelativePath, err)
+	}
+	return nil
+}
+
+// verify reports whether row's stored copy is present and matches its
+// recorded checksum, so a PLAN can say what a restore would do without
+// writing anything.
+func (s *originalsStore) verify(row OriginalFile) error {
+	stored := s.storedPath(row.Root, row.RelativePath)
+	sum, _, err := hashFile(stored)
+	if err != nil {
+		return err
+	}
+	if row.SHA256 != "" && sum != row.SHA256 {
+		return fmt.Errorf("checksum %s does not match the recorded %s", sum, row.SHA256)
+	}
+	return nil
+}

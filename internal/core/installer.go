@@ -99,6 +99,26 @@ func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, prof
 	}
 }
 
+// foreignFile reports whether dstPath holds content lmm did not put there:
+// a REGULAR file (a symlink is a deployment, lmm's or another tool's) with
+// no deployed_files row for this game and profile.
+//
+// It is the same judgement captureOriginal makes before storing an
+// original, and it is deliberately conservative in the same direction: an
+// Installer with no database cannot tell, and answers false, so a
+// db-less Installer behaves exactly as it always has.
+func (i *Installer) foreignFile(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string) bool {
+	if i.db == nil {
+		return false
+	}
+	info, err := os.Lstat(dstPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	owner, err := i.db.GetFileOwner(ctx, game.ID, profileName, relPath)
+	return err == nil && owner == nil
+}
+
 // Install deploys a mod to the game directory. If DB tracking is enabled and a
 // SaveDeployedFile fails, only the file that failed to track is rolled back so
 // the filesystem stays consistent with the database (previously deployed+tracked
@@ -541,6 +561,26 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 		}
 
 		dstPath := filepath.Join(game.ModPath, file)
+
+		// #350: never delete a file lmm does not own.
+		//
+		// This loop undeploys every path the mod's cache entry NAMES,
+		// which is not the same as every path the mod actually put there.
+		// The copy and hardlink linkers remove whatever is at the path, so
+		// a deploy (which undeploys before it installs), a purge or an
+		// ordinary uninstall would DELETE stock game content sitting where
+		// one of this mod's files would go - silently, and with no way
+		// back. The symlink linker refuses to remove a non-symlink, which
+		// is exactly why this went unnoticed: the default link method does
+		// not have the bug.
+		//
+		// lmm's own deployments are unaffected: a symlink is not a regular
+		// file, and a copy/hardlink deployment carries a deployed_files
+		// row written by the same loop that created it.
+		if i.foreignFile(ctx, game, profileName, file, dstPath) {
+			i.log.Debug("leaving a file this mod does not own where it is", "path", dstPath)
+			continue
+		}
 
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			return fmt.Errorf("undeploying %s: %w", file, err)

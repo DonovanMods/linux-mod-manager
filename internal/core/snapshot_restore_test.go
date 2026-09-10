@@ -1,0 +1,378 @@
+package core_test
+
+// snapshot_restore_test.go is #350's headline claim, tested the only way
+// that means anything: a fixture game directory is snapshotted, modded
+// further, restored, and compared BYTE FOR BYTE against what it was.
+//
+// The other tests here cover the refusal semantics - the promise that a
+// restore never quietly does less than it says.
+
+import (
+	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// treeOf walks root and returns path -> content for every regular file and
+// every symlink (recorded as its target), so two states can be compared
+// exactly rather than approximately. A symlink is content: the difference
+// between "the file is a link into the cache" and "the file IS those bytes"
+// is precisely what a link method decides.
+func treeOf(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, linkErr := os.Readlink(path)
+			if linkErr != nil {
+				return linkErr
+			}
+			out[rel] = "-> " + target
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		out[rel] = string(data)
+		return nil
+	})
+	require.NoError(t, err)
+	return out
+}
+
+// newRestoreFixture builds a game with two mods, one of which deploys over
+// a stock file, and returns the service, the game and the seeded mods.
+func newRestoreFixture(t *testing.T) (*core.Service, *domain.Game, string) {
+	t.Helper()
+	svc, dataDir := newOriginalsService(t)
+	installDir, modDir := t.TempDir(), t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", InstallPath: installDir, ModPath: modDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	stock := filepath.Join(modDir, "Data", "shipped.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))
+	require.NoError(t, os.WriteFile(stock, []byte("as the game shipped"), 0644))
+
+	seedNamedInstalledMod(t, svc, game, "src", "keeper", "Keeper", "1.0", true,
+		map[string][]byte{"Data/keeper.esp": []byte("keeper v1")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "keeper", "1.0")
+
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	return svc, game, dataDir
+}
+
+// TestApplySnapshotRestore_ReturnsTheGameDirectoryToItsRecordedState is the
+// claim #350 is for. A mod is added AFTER the snapshot, and that mod
+// destroys a stock file on its way in; the restore has to remove the mod's
+// files, put the stock file back, and leave the rest untouched - down to
+// the byte.
+func TestApplySnapshotRestore_ReturnsTheGameDirectoryToItsRecordedState(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+
+	before := treeOf(t, game.ModPath)
+
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	// Now make a mess: a second mod that overwrites stock content.
+	seedNamedInstalledMod(t, svc, game, "src", "wrecker", "Wrecker", "2.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("WRECKED"), "Data/extra.esp": []byte("extra")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "wrecker", "2.0")
+	_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	messy := treeOf(t, game.ModPath)
+	require.NotEqual(t, before, messy, "the fixture must actually have changed, or the restore proves nothing")
+	assert.Equal(t, "WRECKED", messy[filepath.Join("Data", "shipped.esp")])
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "known-good")
+	require.NoError(t, err)
+	assert.Equal(t, "known-good", plan.Snapshot)
+	assert.Empty(t, plan.Refusals)
+	require.Len(t, plan.Originals, 1)
+	assert.Equal(t, core.SnapshotOriginalRestorable, plan.Originals[0].Status)
+
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.OriginalsRestored)
+	assert.Positive(t, result.Purged)
+	assert.Empty(t, result.OriginalsSkipped)
+	assert.Empty(t, result.Refused)
+
+	assert.Equal(t, before, treeOf(t, game.ModPath),
+		"the game directory must come back byte-identical to the snapshotted state")
+}
+
+// TestApplySnapshotRestore_TakesASafetySnapshotFirst pins the default that
+// makes restore itself reversible: a restore's whole purpose is to discard
+// the present state, so the way back from it is on by default.
+func TestApplySnapshotRestore_TakesASafetySnapshotFirst(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "known-good")
+	require.NoError(t, err)
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, result.SafetySnapshot)
+	listing, err := svc.ListSnapshots(ctx, "g1")
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, row := range listing.Snapshots {
+		names[row.Name] = row.Auto
+	}
+	require.Contains(t, names, result.SafetySnapshot)
+	assert.True(t, names[result.SafetySnapshot], "the safety copy is marked automatic")
+}
+
+func TestApplySnapshotRestore_NoSafetySnapshotSuppressesIt(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "known-good")
+	require.NoError(t, err)
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.SafetySnapshot)
+
+	listing, err := svc.ListSnapshots(ctx, "g1")
+	require.NoError(t, err)
+	require.Len(t, listing.Snapshots, 1)
+}
+
+// TestPlanSnapshotRestore_NamesAVersionTheSourceCanNoLongerServe is the
+// refusal promise: the user learns a mod cannot come back BEFORE anything
+// is purged, in the plan they are asked to approve - never as a surprise
+// afterwards.
+func TestPlanSnapshotRestore_NamesAVersionTheSourceCanNoLongerServe(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+
+	// A mod in the profile whose source is not registered at all: the
+	// strongest form of "cannot be served".
+	seedNamedInstalledMod(t, svc, game, "gone-source", "ghost", "Ghost Mod", "3.0", true, nil)
+	seedProfileWithMod(t, svc, "g1", "default", "gone-source", "ghost", "3.0")
+
+	_, err := svc.CreateSnapshot(ctx, game, "default", "with-ghost")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "with-ghost")
+	require.NoError(t, err)
+
+	require.Len(t, plan.Refusals, 1)
+	assert.Equal(t, "ghost", plan.Refusals[0].ModID)
+	assert.Equal(t, "Ghost Mod", plan.Refusals[0].Name, "the recorded name is used, since the source cannot be asked")
+	assert.NotEmpty(t, plan.Refusals[0].Reason)
+
+	var ghost *core.SnapshotRestoreMod
+	for i := range plan.Mods {
+		if plan.Mods[i].ModID == "ghost" {
+			ghost = &plan.Mods[i]
+		}
+	}
+	require.NotNil(t, ghost)
+	assert.NotEmpty(t, ghost.Error, "the row itself carries the reason too")
+}
+
+// TestPlanSnapshotRestore_MarksAnOriginalItCannotVouchFor: a stored
+// original whose bytes no longer match its recorded checksum is the one
+// case where writing it back would be worse than not - lmm would be
+// putting corrupted content into a game directory under the claim that it
+// is the user's original.
+func TestPlanSnapshotRestore_MarksAnOriginalItCannotVouchFor(t *testing.T) {
+	svc, game, dataDir := newRestoreFixture(t)
+	ctx := context.Background()
+
+	seedNamedInstalledMod(t, svc, game, "src", "wrecker", "Wrecker", "2.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("WRECKED")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "wrecker", "2.0")
+	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	_, err = svc.CreateSnapshot(ctx, game, "default", "point")
+	require.NoError(t, err)
+
+	// Corrupt the stored original behind lmm's back.
+	stored := filepath.Join(dataDir, "snapshots", "g1", "originals", "mod_path", "Data", "shipped.esp")
+	require.NoError(t, os.WriteFile(stored, []byte("corrupted"), 0600))
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "point")
+	require.NoError(t, err)
+	require.Len(t, plan.Originals, 1)
+	assert.Equal(t, core.SnapshotOriginalUnavailable, plan.Originals[0].Status)
+	assert.Contains(t, plan.Originals[0].Reason, "does not match")
+
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+	require.NoError(t, err)
+	assert.Zero(t, result.OriginalsRestored)
+	require.Len(t, result.OriginalsSkipped, 1,
+		"a partial restore says which parts were partial; it never reports plain success")
+	assert.Equal(t, "Data/shipped.esp", result.OriginalsSkipped[0].RelativePath)
+
+	// And the corrupted bytes were NOT written into the game directory.
+	onDisk, err := os.ReadFile(filepath.Join(game.ModPath, "Data", "shipped.esp"))
+	require.NoError(t, err)
+	assert.NotEqual(t, "corrupted", string(onDisk))
+}
+
+// TestApplySnapshotRestore_RefusesAStalePlan pins Ruling 5 for this flow.
+func TestApplySnapshotRestore_RefusesAStalePlan(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "known-good")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "late", "Late Arrival", "1.0", true,
+		map[string][]byte{"late.esp": []byte("late")})
+
+	_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan)
+}
+
+func TestPlanSnapshotRestore_UnknownSnapshotIsTyped(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	_, err := svc.PlanSnapshotRestore(context.Background(), game, "never-taken")
+	require.ErrorIs(t, err, core.ErrSnapshotNotFound)
+}
+
+// TestApplySnapshotRestore_RestoresTheProfileDocument pins that a restore
+// puts the LOAD ORDER and the locks back, not just the files - the profile
+// document is the desired state, and it is what the convergence reads.
+func TestApplySnapshotRestore_RestoresTheProfileDocument(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+
+	require.NoError(t, pm.SetModLock(ctx, "g1", "default", "src", "keeper", "1.0"))
+	_, err := svc.CreateSnapshot(ctx, game, "default", "locked")
+	require.NoError(t, err)
+
+	require.NoError(t, pm.ClearModLock(ctx, "g1", "default", "src", "keeper"))
+	after, err := pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.False(t, after.FindRef("src", "keeper").Locked, "guard: the lock really was cleared")
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "locked")
+	require.NoError(t, err)
+	assert.True(t, plan.ProfileChanged, "the plan says the profile file will be rewritten")
+
+	_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+	require.NoError(t, err)
+
+	restored, err := pm.Get(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, restored.FindRef("src", "keeper"))
+	assert.True(t, restored.FindRef("src", "keeper").Locked, "the lock came back with the profile document")
+}
+
+// TestApplySnapshotRestore_RestoresTheRecordedUpdatePolicy pins the
+// settings stage: an update policy lives on the DB row, which no profile
+// document can express, so the restore puts it back from the recorded rows.
+func TestApplySnapshotRestore_RestoresTheRecordedUpdatePolicy(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+
+	_, err := svc.SetModUpdatePolicy(ctx, "src", "keeper", "g1", "default", domain.UpdatePinned)
+	require.NoError(t, err)
+	_, err = svc.CreateSnapshot(ctx, game, "default", "pinned")
+	require.NoError(t, err)
+
+	_, err = svc.SetModUpdatePolicy(ctx, "src", "keeper", "g1", "default", domain.UpdateAuto)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "pinned")
+	require.NoError(t, err)
+	_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+	require.NoError(t, err)
+
+	mods, err := svc.GetInstalledMods(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+	assert.Equal(t, domain.UpdatePinned, mods[0].UpdatePolicy)
+}
+
+// TestApplySnapshotRestore_EmitsAPhaseForEachStage pins the live stream a
+// frontend renders: a restore is three visible stages, and a user watching
+// it needs to know which one is running.
+func TestApplySnapshotRestore_EmitsAPhaseForEachStage(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+
+	seedNamedInstalledMod(t, svc, game, "src", "wrecker", "Wrecker", "2.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("WRECKED")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "wrecker", "2.0")
+	_, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	_, err = svc.CreateSnapshot(ctx, game, "default", "point")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "point")
+	require.NoError(t, err)
+
+	var phases []string
+	_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true},
+		func(e core.Event) {
+			if fe, ok := e.(core.FlowEvent); ok {
+				phases = append(phases, fe.FlowPhase().String())
+			}
+		})
+	require.NoError(t, err)
+
+	assert.Contains(t, phases, "deploy_purging")
+	assert.Contains(t, phases, "snapshot_restoring_originals")
+	assert.Contains(t, phases, "snapshot_original_restored")
+	assert.Contains(t, phases, "snapshot_converging")
+}
+
+// TestApplySnapshotRestore_RestoreIsIdempotent: restoring twice in a row
+// leaves the same state, which is what makes a restore safe to retry after
+// an interrupted one.
+func TestApplySnapshotRestore_RestoreIsIdempotent(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	var trees []map[string]string
+	for range 2 {
+		plan, err := svc.PlanSnapshotRestore(ctx, game, "known-good")
+		require.NoError(t, err)
+		_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{NoSafetySnapshot: true}, nil)
+		require.NoError(t, err)
+		trees = append(trees, treeOf(t, game.ModPath))
+	}
+	assert.Equal(t, trees[0], trees[1])
+}
