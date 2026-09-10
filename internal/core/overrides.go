@@ -183,6 +183,14 @@ func copyOnce(src, dst string) error {
 	if err := copyFileStreaming(src, tmpName); err != nil {
 		return err
 	}
+	// CreateTemp made the file 0600 and copyFileStreaming's O_CREATE mode
+	// applies only to a file it creates, so the source's mode is carried
+	// across explicitly - the pre-M1 write took it from the source too.
+	if info, serr := os.Stat(src); serr == nil {
+		if cerr := os.Chmod(tmpName, info.Mode().Perm()); cerr != nil {
+			return fmt.Errorf("writing %s: %w", dst, cerr)
+		}
+	}
 	if err := os.Link(tmpName, dst); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			// Someone wrote it between the Lstat and here. The existing

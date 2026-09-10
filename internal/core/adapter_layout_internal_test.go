@@ -286,3 +286,18 @@ func (r recordingRouter) RouteFile(_ *domain.Game, rel string) adapter.FileRoute
 	r.onRoute(rel)
 	return adapter.RouteLink
 }
+
+// TestCopyOnceCarriesTheSourceMode: the pre-M1 write took the destination's
+// mode from the source (copyFileStreaming's O_CREATE mode), and staging
+// through a 0600 temp file must not quietly change that.
+func TestCopyOnceCarriesTheSourceMode(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.sh")
+	dst := filepath.Join(dir, "nested", "dst.sh")
+	require.NoError(t, os.WriteFile(src, []byte("#!/bin/sh\n"), 0o755))
+
+	require.NoError(t, copyOnce(src, dst))
+	info, err := os.Stat(dst)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+}
