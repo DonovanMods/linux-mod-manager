@@ -169,24 +169,37 @@ func (l *bepinexLayout) Rewrite(member string) (dest string, kept bool) {
 // always returned alongside a nil error, so a caller may hold it
 // unconditionally.
 func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*bepinexLayout, error) {
-	clean := make([]string, 0, len(members))
+	// Every rule below is asked of the CLEANED path - forward slashes, no
+	// "./" noise - while origins[i] keeps the archive's own spelling,
+	// because that is the key Rewrite(member) is called with. Judging the
+	// raw member instead read a Windows-authored `BepInEx\plugins\Foo.dll`
+	// as one path segment (hence "a loose assembly", wrapped in a plugin
+	// directory under its raw name) and read a "./"-prefixed listing as a
+	// wrapper directory named "." whose metadata was never at the root.
+	origins := make([]string, 0, len(members))
+	payload := make([]string, 0, len(members))
 	for _, m := range members {
-		if c := path.Clean(strings.ReplaceAll(m, `\`, "/")); c != "." && c != "/" {
-			clean = append(clean, m)
+		c := strings.TrimPrefix(path.Clean(strings.ReplaceAll(m, `\`, "/")), "/")
+		if c == "." || c == "" {
+			continue
 		}
+		origins = append(origins, m)
+		payload = append(payload, c)
 	}
 
-	layout := &bepinexLayout{rewrites: make(map[string]string, len(clean))}
+	layout := &bepinexLayout{rewrites: make(map[string]string, len(payload))}
 
 	// Step 1: drop the package metadata every Thunderstore archive carries
 	// at its root, and take stock of what is left.
-	payload := make([]string, 0, len(clean))
-	for _, m := range clean {
+	keptOrigins, keptPayload := origins[:0], payload[:0]
+	for i, m := range payload {
 		if isBepInExMetadata(m) {
 			continue
 		}
-		payload = append(payload, m)
+		keptOrigins = append(keptOrigins, origins[i])
+		keptPayload = append(keptPayload, m)
 	}
+	origins, payload = keptOrigins, keptPayload
 
 	// Step 2: a single root directory that itself contains BepInEx/ is
 	// shape C's wrapper, and its one leading segment comes off. Done before
@@ -213,16 +226,17 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 	// so they landed in the Steam install directory of every game a wrapped
 	// plugin was installed into.
 	if wrapped {
-		keptPayload := payload[:0]
+		keptOrigins, keptPayload := origins[:0], payload[:0]
 		keptStripped := stripped[:0]
 		for i, s := range stripped {
 			if isBepInExMetadata(s) {
 				continue
 			}
+			keptOrigins = append(keptOrigins, origins[i])
 			keptPayload = append(keptPayload, payload[i])
 			keptStripped = append(keptStripped, s)
 		}
-		payload, stripped = keptPayload, keptStripped
+		origins, payload, stripped = keptOrigins, keptPayload, keptStripped
 	}
 
 	// Step 3: classify what the (possibly stripped) root now holds.
@@ -264,10 +278,10 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 	// Step 6: build the rewrite map, refusing a collision rather than
 	// letting one member silently overwrite another at deploy time.
 	taken := make(map[string]string, len(stripped))
-	for i, m := range payload {
+	for i, m := range origins {
 		dest := prefix + stripped[i]
 		if prev, dup := taken[dest]; dup {
-			return nil, fmt.Errorf("normalising the BepInEx layout of %s: members %q and %q both deploy to %q", modName, prev, payload[i], dest)
+			return nil, fmt.Errorf("normalising the BepInEx layout of %s: members %q and %q both deploy to %q", modName, prev, m, dest)
 		}
 		taken[dest] = m
 		layout.rewrites[m] = dest

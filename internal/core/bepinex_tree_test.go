@@ -78,6 +78,15 @@ func TestNormalizeBepInExTree_RewritesEachShapeInPlace(t *testing.T) {
 			want: []string{"BepInEx/plugins/Thing.dll"},
 		},
 		{
+			// The tree half of review F3: the extracted file really is
+			// named with backslashes on Linux, and it must be moved to the
+			// path BepInEx looks at rather than wrapped in a plugin
+			// directory under its raw name.
+			name:    "a backslash-separated listing is moved to the path it means",
+			members: []string{`BepInEx\plugins\Thing.dll`, "manifest.json"},
+			want:    []string{"BepInEx/plugins/Thing.dll"},
+		},
+		{
 			name:           "shape B gains the BepInEx/ prefix for a declared game",
 			members:        []string{"patchers/HookGen/HookGenPatcher.dll", "config/HookGenPatcher.cfg", "manifest.json"},
 			loaderDeclared: true,

@@ -109,6 +109,29 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			},
 		},
 		{
+			// A Windows-authored listing separates with backslashes. The
+			// rules matched the RAW member, so `BepInEx\plugins\Thing.dll`
+			// held no "/" at all and was read as a loose assembly - wrapped
+			// in a plugin directory under the nonsense name it arrived
+			// with. Classification runs against the CLEANED path (review
+			// F3); the archive's own spelling stays the rewrite key.
+			name:      "a Windows-authored listing with backslashes is normalised, not read as a loose assembly",
+			members:   []string{`BepInEx\plugins\Thing.dll`, "manifest.json"},
+			wantShape: bepinexShapeRooted,
+			wantPaths: map[string]string{`BepInEx\plugins\Thing.dll`: "BepInEx/plugins/Thing.dll"},
+		},
+		{
+			// A "./"-prefixed listing read its root name as "." and
+			// reported shape C - a wrapper named ".". The paths came out
+			// right, but the shape string reaches the user through
+			// LoaderRequiredError.Layout, and the "./"-prefixed metadata
+			// was not dropped at all.
+			name:      `a "./"-prefixed listing is shape A, not a wrapper directory named "."`,
+			members:   []string{"./BepInEx/plugins/Foo.dll", "./manifest.json"},
+			wantShape: bepinexShapeRooted,
+			wantPaths: map[string]string{"./BepInEx/plugins/Foo.dll": "BepInEx/plugins/Foo.dll"},
+		},
+		{
 			name:      "a loose root .dll becomes a plugin under its own directory",
 			members:   []string{"CoolMod.dll", "manifest.json", "README.md"},
 			wantShape: bepinexShapePlugin,
