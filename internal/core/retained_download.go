@@ -90,7 +90,11 @@ func (s *Service) reuseRetainedDownload(sourceID, modID, fileID string) (string,
 	if err := json.Unmarshal(data, &meta); err != nil || meta.FileName == "" {
 		return "", nil, false
 	}
-	archivePath := filepath.Join(dir, meta.FileName)
+	// filepath.Base: the sidecar's file_name is a BARE name by
+	// construction (storeRetainedDownload writes filepath.Base of the
+	// staged archive), and reading it back as one keeps that a property of
+	// the code rather than of who can write into the staging root.
+	archivePath := filepath.Join(dir, filepath.Base(meta.FileName))
 	info, err := os.Stat(archivePath)
 	if err != nil || !info.Mode().IsRegular() {
 		return "", nil, false
