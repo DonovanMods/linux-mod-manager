@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -92,6 +93,21 @@ func noSearchableSourcesNotice(game *domain.Game) string {
 	// Sentence-cased with terminal punctuation - this is a printed
 	// user-facing notice, not a lowercase Go error value.
 	return fmt.Sprintf("None of %s's sources support searching; install by ID instead.", game.Name)
+}
+
+// skippedUnauthenticatedNotice renders the one line an all-sources search
+// owes the user when a searchable source was left out for want of a
+// credential (#383): the source's own name and the command that fixes it.
+// The skip itself stays silent on a search that DID find something - this
+// is the empty-result path's explanation, not a standing notice on every
+// query, which is the whole point of #383.
+func skippedUnauthenticatedNotice(sourceIDs []string) string {
+	verb, login := "was", "lmm auth login "+sourceIDs[0]
+	if len(sourceIDs) > 1 {
+		verb, login = "were", "lmm auth login <source>"
+	}
+	return fmt.Sprintf("%s %s skipped: not signed in (run: %s).",
+		strings.Join(sourceIDs, ", "), verb, login)
 }
 
 // capabilityGapNotice turns an ErrNotSupported search failure into a clean
@@ -194,8 +210,18 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		// both. honestNotice is "" for every other case (single-source
 		// search, or an aggregate search that genuinely attempted and came
 		// up empty), preserving the original message there.
+		//
+		// A source SKIPPED for want of a credential (#383) takes
+		// precedence over both: it is searchable, so the notice above
+		// would be a false capability claim, and it is the one actionable
+		// fact about this empty result. It also covers the AttemptedCount
+		// 0 case that skip produces on a game whose only searchable source
+		// is that one - the shape `lmm init` builds for a Steam game.
 		honestNotice := ""
-		if report.AttemptedCount == 0 {
+		switch {
+		case len(report.SkippedUnauthenticated) > 0:
+			honestNotice = skippedUnauthenticatedNotice(report.SkippedUnauthenticated)
+		case report.AttemptedCount == 0:
 			honestNotice = noSearchableSourcesNotice(game)
 		}
 

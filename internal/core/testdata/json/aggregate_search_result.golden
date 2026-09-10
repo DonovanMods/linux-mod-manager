@@ -26,5 +26,8 @@
     }
   ],
   "exhausted": true,
-  "attempted_count": 2
+  "attempted_count": 2,
+  "skipped_unauthenticated": [
+    "steamworkshop"
+  ]
 }

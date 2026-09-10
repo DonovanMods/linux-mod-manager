@@ -1434,6 +1434,17 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   is expired or revoked — a real problem — and stays a warning; searching
   the source directly with `-s` still reports it too.
 
+  The skip is still reported, just not as a failure: a search that comes
+  back empty names the sources it left out and how to sign in
+  (`steamworkshop was skipped: not signed in (run: lmm auth login
+steamworkshop)`, and the web UI's own wording pointing at Setup →
+  Authentication). That matters most for the setup `lmm init` actually
+  builds — a Steam game whose only mapped source is the Workshop — where
+  the skip alone would have left both frontends claiming _none_ of the
+  game's sources support searching. `--json` carries it as a new
+  `skipped_unauthenticated` array on the search report, present only when
+  something was skipped.
+
 - **`lmm init` means it when it says a step can be skipped (#384).** The
   wizard opens with "Every step can be skipped - press Enter to take the
   default", then answered a bare Enter at the source step with

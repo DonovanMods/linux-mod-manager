@@ -477,3 +477,50 @@ func TestCodeSpans_LeavesAnythingItDoesNotUnderstandAlone(t *testing.T) {
 	assert.Equal(t, "null", got[4], "a non-string error slot passes straight through")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_WorkshopTier2_WorkshopOnlyGameNamesTheSkippedSource is the
+// configuration `lmm init` actually produces: a Steam game whose ONLY mapped
+// source is the Workshop, with no key stored. #383's silent skip is right -
+// no warning row, no error - but the page must not then claim the game has
+// nothing that can search, which is both false and the opposite of
+// actionable. The skip is named once, with where to fix it.
+func TestE2E_WorkshopTier2_WorkshopOnlyGameNamesTheSkippedSource(t *testing.T) {
+	f := newE2EWorkshopTier2Fixture(t, domain.ErrAuthRequired)
+	require.Len(t, f.Game.SourceIDs, 1, "the scenario is a game with the Workshop and nothing else")
+
+	var page string
+	f.runInBrowser(t,
+		chromedp.Navigate(workshopSearchPath(f, "cargo")),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".search-page").textContent;`, &page),
+	)
+	assert.NotContains(t, page, "support searching",
+		"the Workshop DOES support searching - it needs a key (#383, F1)")
+	assert.Contains(t, page, e2eWorkshopSourceID, "the skipped source is named")
+	assert.Contains(t, page, "not signed in")
+	assert.NotContains(t, page, "authentication required",
+		"still a skip, not a warning")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_WorkshopTier2_OmnibarNamesTheSkippedSource is the same rule at the
+// other search surface: Mission Control's in-place fan-out reads the same
+// report and must not disagree with the dedicated page about what this game
+// can do.
+func TestE2E_WorkshopTier2_OmnibarNamesTheSkippedSource(t *testing.T) {
+	f := newE2EWorkshopTier2Fixture(t, domain.ErrAuthRequired)
+
+	var results string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "cargo", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.omnibar-results .empty-state__hint`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".omnibar-results").textContent;`, &results),
+	)
+	assert.NotContains(t, results, "support searching")
+	assert.Contains(t, results, e2eWorkshopSourceID)
+	assert.Contains(t, results, "not signed in")
+	assert.Empty(t, f.BrowserErrors())
+}

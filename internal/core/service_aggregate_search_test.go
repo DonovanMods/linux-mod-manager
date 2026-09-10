@@ -298,3 +298,55 @@ func TestSearchAllSources_AuthenticatedSourceStillWarnsOnAuthFailure(t *testing.
 	assert.Equal(t, "needskey", res.Warnings[0].SourceID)
 	assert.ErrorIs(t, res.Warnings[0].Err, domain.ErrAuthRequired)
 }
+
+// TestSearchAllSources_OnlyUnauthenticatedSource_IsReportedAsSkipped is the
+// one-source half of #383, and the case `lmm init` actually builds: a Steam
+// game whose ONLY mapped source is steamworkshop, with no key stored. The
+// first cut of the skip cleared the attempted flag outright, so
+// AttemptedCount fell to 0 and both frontends read that as "this game has no
+// search-capable source at all" - a false capability claim that replaced the
+// one line telling the user what to do. The skip is recorded instead: no
+// warning, no error, and the source id surfaced so a frontend can name it.
+func TestSearchAllSources_OnlyUnauthenticatedSource_IsReportedAsSkipped(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": ""}, needsKey)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err, "a skipped source is not an all-sources failure")
+	assert.Empty(t, res.Warnings, "a source the user never signed in to is a silent skip")
+	assert.Empty(t, res.Mods)
+	assert.Equal(t, 0, res.AttemptedCount, "the skipped source was never really attempted")
+	assert.Equal(t, []string{"needskey"}, res.SkippedUnauthenticated,
+		"but the skip itself must be reported, or the frontends claim nothing here can search")
+}
+
+// TestSearchAllSources_SkippedSourceIsReportedAlongsideAWorkingOne is the
+// two-source companion: the skip list is populated even when a sibling
+// source succeeded, so a frontend can explain a thin result set.
+func TestSearchAllSources_SkippedSourceIsReportedAlongsideAWorkingOne(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	open := &searchStubSource{id: "repo", result: source.SearchResult{
+		Mods: mods("repo", "alpha"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": "", "repo": ""}, needsKey, open)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.AttemptedCount)
+	assert.Equal(t, []string{"needskey"}, res.SkippedUnauthenticated)
+}
+
+// TestSearchAllSources_CapabilityLessSourceIsNotAnAuthSkip keeps the two
+// silent skips apart: a source with no Search capability at all is not a
+// sign-in problem, and naming it in the skip list would send the user off to
+// store a key that changes nothing.
+func TestSearchAllSources_CapabilityLessSourceIsNotAnAuthSkip(t *testing.T) {
+	caps := source.Capabilities{Search: false}
+	noSearch := &capsStubSource{&searchStubSource{id: "idonly", caps: &caps}}
+	svc, game := newAggregateTestService(t, map[string]string{"idonly": ""}, noSearch)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, res.AttemptedCount)
+	assert.Empty(t, res.SkippedUnauthenticated)
+}

@@ -749,12 +749,16 @@ func TestJSONGoldens(t *testing.T) {
 			core.SourceWarning{SourceID: "curseforge", ErrorMessage: "search request timed out", Err: errors.New("search request timed out")},
 		},
 		{
+			// SkippedUnauthenticated is populated (#383, F1) to pin the key
+			// itself: it is omitempty, so an unpopulated sample would leave
+			// the field's wire name untested.
 			"aggregate_search_result",
 			core.AggregateSearchResult{
 				Mods:       []domain.Mod{jsonGoldenMod},
 				TotalCount: 25,
 				Warnings:   []core.SourceWarning{{SourceID: "curseforge", ErrorMessage: "search request timed out"}},
 				Exhausted:  true, AttemptedCount: 2,
+				SkippedUnauthenticated: []string{"steamworkshop"},
 			},
 		},
 		{
@@ -960,6 +964,9 @@ func TestJSONGoldens(t *testing.T) {
 				Warnings:       []core.SourceWarning{{SourceID: "curseforge", ErrorMessage: "network down"}},
 				TotalResults:   0,
 				AttemptedCount: 2,
+				// #383 (F1): omitempty, so the key only appears when a
+				// searchable source really was skipped for want of a key.
+				SkippedUnauthenticated: []string{"steamworkshop"},
 			},
 		},
 		{

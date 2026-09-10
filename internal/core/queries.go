@@ -517,6 +517,12 @@ type SearchOptions struct {
 //     empty result unless a caller checks it (#58 item 3). It is -1 for a
 //     single named source: that path resolves to exactly one attempted
 //     source or fails outright, so it has no such case to distinguish.
+//   - SkippedUnauthenticated names the searchable sources left out because
+//     no credential is available for them (#383). They are absent from both
+//     Warnings and AttemptedCount - the skip is neither a failure nor an
+//     attempt - so a frontend that ignores this field reads a Workshop-only
+//     game as having no search-capable source at all. Empty on the
+//     single-named-source path, which returns the refusal as an error.
 //   - Warnings stay structured (SourceID + error), never pre-formatted
 //     lines: rendering them is the frontend's job.
 //   - Page/PageSize echo SearchOptions.Page/PageSize verbatim (#331: the
@@ -542,9 +548,12 @@ type SearchReport struct {
 	Warnings       []SourceWarning `json:"warnings"`
 	TotalResults   int             `json:"total_results"`
 	AttemptedCount int             `json:"attempted_count"`
-	Page           int             `json:"page,omitzero"`
-	PageSize       int             `json:"page_size,omitzero"`
-	HasMore        bool            `json:"has_more,omitzero"`
+	// SkippedUnauthenticated is omitempty: an absent key is "nothing was
+	// skipped", which is what every pre-#383 consumer already assumed.
+	SkippedUnauthenticated []string `json:"skipped_unauthenticated,omitempty"`
+	Page                   int      `json:"page,omitzero"`
+	PageSize               int      `json:"page_size,omitzero"`
+	HasMore                bool     `json:"has_more,omitzero"`
 }
 
 // Search runs query against the game's sources (or the one named in opts)
@@ -571,6 +580,7 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 		found = agg.Mods
 		report.Warnings = agg.Warnings
 		report.AttemptedCount = agg.AttemptedCount
+		report.SkippedUnauthenticated = agg.SkippedUnauthenticated
 		report.HasMore = !agg.Exhausted
 	} else {
 		result, err := s.SearchMods(ctx, opts.SourceID, game.ID, query, opts.Category, opts.Tags, opts.Page, opts.PageSize)

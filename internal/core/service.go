@@ -442,6 +442,17 @@ type AggregateSearchResult struct {
 	// 3): callers render a distinct "no source supports search" notice
 	// instead of a plain "no mods found" when this is 0.
 	AttemptedCount int `json:"attempted_count"`
+	// SkippedUnauthenticated names the sources that CAN search but were
+	// skipped because no credential is available for them (#383). They are
+	// deliberately absent from both Warnings and AttemptedCount - the skip
+	// is not a failure of this search and not an attempt - but they must
+	// not vanish either: a game whose ONLY searchable source is
+	// unauthenticated otherwise reports AttemptedCount 0, which a frontend
+	// reads as "nothing here can search at all". That claim is false and it
+	// replaces the one actionable line the user needs (sign in), so the
+	// skip is reported instead. Sorted by source id, like the states it is
+	// built from.
+	SkippedUnauthenticated []string `json:"skipped_unauthenticated,omitempty"`
 }
 
 // sourceHasMore reports whether res (one source's response to the given
@@ -502,6 +513,11 @@ type searchSourceState struct {
 	// source. Read once, up front, so the auth-required skip below (#383)
 	// costs one DB read per source rather than one per goroutine per round.
 	authenticated bool
+	// skippedUnauth records the auth-required skip (#383) that attempted
+	// above is cleared for. The two are deliberately separate flags: the
+	// search really was not attempted, AND the frontend still has to be
+	// able to say why - see AggregateSearchResult.SkippedUnauthenticated.
+	skippedUnauth bool
 	// hasMore is "this source might still hold results we did not fetch",
 	// which is NOT the same question as active: a source that clamped the
 	// requested page size has more AND cannot be paged for it. Exhausted is
@@ -745,6 +761,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					// problem and stays a warning.
 					if errors.Is(err, domain.ErrAuthRequired) && !st.succeeded && !st.authenticated {
 						st.attempted = false
+						st.skippedUnauth = true
 						return nil
 					}
 					st.err = err
@@ -813,6 +830,15 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 	allExhausted := true // vacuously true until a succeeding source proves otherwise
 	for i := range states {
 		st := &states[i]
+		if st.skippedUnauth {
+			// Counted apart from attemptedCount on purpose: a run whose
+			// only "attempt" was a skip must not trip the all-sources-failed
+			// branch below (there are no warnings to join, so it would
+			// return `all 1 source(s) failed:` with an empty cause), and
+			// must not report an attempt that never happened either.
+			result.SkippedUnauthenticated = append(result.SkippedUnauthenticated, st.id)
+			continue
+		}
 		if !st.attempted {
 			continue
 		}
