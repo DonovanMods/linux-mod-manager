@@ -186,3 +186,102 @@ func TestKnownGames_ValheimCarriesNoLoaderBlock(t *testing.T) {
 		"the plugins folder is where a Valheim mod goes once BepInEx is installed; "+
 			"installing BepInEx itself is #359's job, not the known-games list's")
 }
+
+// TestKnownGames_LongTail pins #406 story S3: the rest of the installed
+// games. Five of the seven are Unreal titles whose mods are pak bundles
+// dropped in the engine's `~mods` overlay folder (the tilde is load-order
+// significant to Unreal and is NOT a typo); Halo and LEGO Batman put that
+// folder under their own project directory rather than the install root,
+// which is why their paths carry a project segment.
+//
+// Two of the S3 candidates are not here. The Elder Scrolls Online keeps
+// add-ons in the user's Documents folder, not under the install, so there
+// is no install-relative mod_path to write down; Satisfactory Modeler is a
+// factory-planning tool, not a moddable game. Both stay detect-only and
+// both are in the epic report with the reason.
+func TestKnownGames_LongTail(t *testing.T) {
+	assertCurated(t, []curatedCase{
+		{
+			name:     "starrupture",
+			appID:    "1631270",
+			slug:     "starrupture",
+			gameName: "StarRupture",
+			nexusID:  "starrupture",
+			modPath:  "StarRupture/Content/Paks/~mods",
+		},
+		{
+			name:     "windrose",
+			appID:    "3041230",
+			slug:     "windrose",
+			gameName: "Windrose",
+			nexusID:  "windrose",
+			modPath:  "R5/Content/Paks/~mods",
+		},
+		{
+			name:     "cubic odyssey",
+			appID:    "3400000",
+			slug:     "cubic-odyssey",
+			gameName: "Cubic Odyssey",
+			nexusID:  "cubicodyssey",
+			modPath:  "modded/data",
+		},
+		{
+			name:     "the blood of dawnwalker",
+			appID:    "3751260",
+			slug:     "blood-of-dawnwalker",
+			gameName: "The Blood of Dawnwalker",
+			nexusID:  "thebloodofdawnwalker",
+			modPath:  "Dawnwalker/Content/Paks/~mods",
+		},
+		{
+			name:     "halo: campaign evolved",
+			appID:    "2806050",
+			slug:     "halo-campaign-evolved",
+			gameName: "Halo: Campaign Evolved",
+			nexusID:  "halocampaignevolved",
+			modPath:  "Meteorite/Content/Paks/~mods",
+		},
+		{
+			name:     "for the king",
+			appID:    "527230",
+			slug:     "for-the-king",
+			gameName: "For The King",
+			nexusID:  "fortheking",
+			modPath:  "BepInEx/plugins",
+		},
+		{
+			name:     "lego batman: legacy of the dark knight",
+			appID:    "2215200",
+			slug:     "lego-batman-lotdk",
+			gameName: "LEGO Batman: Legacy of the Dark Knight",
+			nexusID:  "legobatmanlegacyofthedarkknight",
+			modPath:  "LEGOBatmanLotDK/Content/Paks/~mods",
+		},
+	})
+}
+
+// TestKnownGames_DetectOnlyStayUncurated is the other half of the epic's
+// acceptance rule, and the reason it is a test rather than a line in a
+// report: "we deliberately did not curate this" and "we forgot" look
+// identical in a data file. A later contributor who adds one of these has
+// to delete its row here, which is where they meet the reason.
+func TestKnownGames_DetectOnlyStayUncurated(t *testing.T) {
+	sandboxEnv(t)
+	games, err := LoadKnownGames(t.TempDir())
+	require.NoError(t, err)
+
+	for _, tc := range []struct{ appID, name, why string }{
+		{"244850", "Space Engineers",
+			"local mods load from %APPDATA%\\SpaceEngineers\\Mods, outside the install directory"},
+		{"1133870", "Space Engineers 2",
+			"the VRAGE3 Mod HUB publishes no mod folder"},
+		{"306130", "The Elder Scrolls Online",
+			"add-ons live in the user's Documents folder, outside the install directory"},
+		{"3187030", "Satisfactory Modeler",
+			"a factory-planning tool, not a moddable game"},
+	} {
+		_, ok := games[tc.appID]
+		assert.Falsef(t, ok, "%s (%s) is curated, but it was left detect-only because %s",
+			tc.name, tc.appID, tc.why)
+	}
+}

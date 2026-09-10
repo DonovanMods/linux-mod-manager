@@ -169,3 +169,72 @@
   name: "Tainted Grail: The Fall of Avalon"
   nexus_id: taintedgrailthefallofavalon
   mod_path: BepInEx/plugins
+
+# --- #406 story S3: the long tail -------------------------------------------
+# StarRupture - Unreal Engine 5; pak/utoc/ucas bundles go in
+# <install>/StarRupture/Content/Paks/~mods (the tilde is load-order
+# significant to Unreal, not a typo). UE4SS script mods live in
+# StarRupture/Binaries/Win64 and are not managed here.
+# https://www.nexusmods.com/starrupture/mods/89
+# https://www.thegamer.com/starrupture-best-mods-installing/
+"1631270":
+  slug: starrupture
+  name: StarRupture
+  nexus_id: starrupture
+  mod_path: StarRupture/Content/Paks/~mods
+# Windrose - Unreal Engine; the project directory is R5, so single-player
+# mods go in <install>/R5/Content/Paks/~mods. A dedicated server keeps a
+# second copy under R5/Builds/WindowsServer; lmm deploys to the client one.
+# https://www.nexusmods.com/windrose/articles/4
+# https://www.gamehostbros.com/guides/games/windrose/install-mods
+"3041230":
+  slug: windrose
+  name: Windrose
+  nexus_id: windrose
+  mod_path: R5/Content/Paks/~mods
+# Cubic Odyssey - since update 1.0.2 the game reads an additive mod folder,
+# <install>/modded/data, mirroring the layout of its own data/ tree. That
+# is the drop folder here; the older technique of replacing files inside
+# data/configs edits the game's own files and is not something lmm should
+# be pointed at.
+# https://www.nexusmods.com/cubicodyssey/mods/16
+"3400000":
+  slug: cubic-odyssey
+  name: Cubic Odyssey
+  nexus_id: cubicodyssey
+  mod_path: modded/data
+# The Blood of Dawnwalker - Unreal Engine 5; pak mods go in
+# <install>/Dawnwalker/Content/Paks/~mods.
+# https://www.nexusmods.com/thebloodofdawnwalker/mods/15
+"3751260":
+  slug: blood-of-dawnwalker
+  name: The Blood of Dawnwalker
+  nexus_id: thebloodofdawnwalker
+  mod_path: Dawnwalker/Content/Paks/~mods
+# Halo: Campaign Evolved - Unreal Engine 5, project directory Meteorite;
+# mods go in <install>/Meteorite/Content/Paks/~mods. No Steam Workshop.
+# https://www.halocampaignevolved.wiki/mods/
+"2806050":
+  slug: halo-campaign-evolved
+  name: "Halo: Campaign Evolved"
+  nexus_id: halocampaignevolved
+  mod_path: Meteorite/Content/Paks/~mods
+# For The King - Unity/Mono; mods are BepInEx plugins in
+# <install>/BepInEx/plugins.
+# https://thunderstore.io/c/for-the-king/p/BepInEx/BepInExPack_ForTheKing/
+# https://www.nexusmods.com/fortheking/mods/3
+"527230":
+  slug: for-the-king
+  name: For The King
+  nexus_id: fortheking
+  mod_path: BepInEx/plugins
+# LEGO Batman: Legacy of the Dark Knight - Unreal Engine 5, project
+# directory LEGOBatmanLotDK; pak mods go in
+# <install>/LEGOBatmanLotDK/Content/Paks/~mods.
+# https://www.nexusmods.com/site/mods/1935
+# https://www.nexusmods.com/legobatmanlegacyofthedarkknight/mods/6
+"2215200":
+  slug: lego-batman-lotdk
+  name: "LEGO Batman: Legacy of the Dark Knight"
+  nexus_id: legobatmanlegacyofthedarkknight
+  mod_path: LEGOBatmanLotDK/Content/Paks/~mods

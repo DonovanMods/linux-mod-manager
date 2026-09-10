@@ -375,6 +375,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index and search; package, version and dependency reads follow in the same
   issue.
 
+- **`lmm game detect` recognises seven more games (#406).** StarRupture,
+  Windrose, Cubic Odyssey, The Blood of Dawnwalker, Halo: Campaign Evolved,
+  For The King and LEGO Batman: Legacy of the Dark Knight complete the
+  curation pass over the games detection already finds installed. Two of
+  their neighbours stay detect-only on purpose and lmm will not pretend
+  otherwise: The Elder Scrolls Online keeps add-ons in your Documents
+  folder rather than under the install, so there is no install-relative mod
+  path to prefill, and Satisfactory Modeler is a factory-planning tool
+  rather than a moddable game.
+
 - **`lmm game detect` recognises nine more NexusMods-modded games
   (#406).** Cyberpunk 2077, Valheim, 7 Days to Die, Grim Dawn, No Man's Sky,
   Satisfactory, Subnautica 2, The Planet Crafter and Tainted Grail: The Fall
