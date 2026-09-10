@@ -23,6 +23,7 @@ package steamworkshop
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -58,6 +59,19 @@ const (
 // are ticked out on a timer whether the tool says anything or not. It is a
 // var, not a const, only so a test can shorten it (export_test.go).
 var steamcmdHeartbeat = 15 * time.Second
+
+// steamcmdWaitDelay bounds cmd.Wait's I/O drain.
+//
+// cmd.Stdout is an *io.PipeWriter rather than an *os.File, so os/exec
+// creates an OS pipe and a copying goroutine, and cmd.Wait does not return
+// until that goroutine sees EOF; CommandContext's cancel function kills
+// only the DIRECT child. steamcmd is a self-bootstrapping launcher that
+// re-execs and spawns helpers, so a grandchild inheriting the write end
+// would keep cmd.Run() blocked forever - past steamcmdTimeout, past a
+// Ctrl-C, past `lmm serve`'s shutdown grace - while holding core's single
+// mutation slot. WaitDelay is what stops that. A var only so a test can
+// shorten it (export_test.go).
+var steamcmdWaitDelay = 30 * time.Second
 
 // The markers steamcmd prints for the two failures that mean something
 // specific. They are matched on the OUTPUT rather than on the exit code
@@ -161,6 +175,7 @@ func (s *Source) runSteamcmd(ctx context.Context, home, destDir, appID, fileID s
 	)
 	cmd.Env = steamcmdEnv(home)
 	cmd.Dir = home
+	cmd.WaitDelay = steamcmdWaitDelay
 
 	// Two goroutines below report progress - the output scanner and the
 	// heartbeat - and source.FetchProgressFunc promises the caller they
@@ -241,6 +256,15 @@ func (s *Source) runSteamcmd(ctx context.Context, home, destDir, appID, fileID s
 
 	if ctx.Err() != nil {
 		return collector.String(), fmt.Errorf("steamcmd: %w", ctx.Err())
+	}
+	// os/exec returns ErrWaitDelay only when the process itself exited
+	// SUCCESSFULLY and no cancel occurred - a nonzero exit comes back as
+	// its own *ExitError instead. So this means "the download finished; we
+	// simply stopped waiting for a leftover grandchild to release the
+	// pipe", which is not a failure of the download. The verdict is left
+	// to the exit status and the content on disk, per classifySteamcmd.
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		runErr = nil
 	}
 	return collector.String(), runErr
 }

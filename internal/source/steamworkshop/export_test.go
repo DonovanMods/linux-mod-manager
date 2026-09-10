@@ -25,3 +25,12 @@ func SetHeartbeatForTest(t *testing.T, d time.Duration) {
 	steamcmdHeartbeat = d
 	t.Cleanup(func() { steamcmdHeartbeat = previous })
 }
+
+// SetWaitDelayForTest shortens the bound on cmd.Wait's I/O drain so a test
+// can prove a leftover grandchild cannot hold the fetch open, without
+// waiting the production delay.
+func SetWaitDelayForTest(t *testing.T, d time.Duration) {
+	previous := steamcmdWaitDelay
+	steamcmdWaitDelay = d
+	t.Cleanup(func() { steamcmdWaitDelay = previous })
+}

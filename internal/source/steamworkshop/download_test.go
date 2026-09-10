@@ -338,3 +338,36 @@ func TestFetch_ProgressDeliveryIsSerialized(t *testing.T) {
 	assert.True(t, strings.Contains(strings.Join(ticks, "\n"), "still downloading item 3000000008"),
 		"the heartbeat must be live alongside the scanner for this test to mean anything: %v", ticks)
 }
+
+// TestFetch_AGrandchildHoldingThePipeCannotOutliveTheWaitDelay is the one
+// way the 30-minute timeout fails to do its job. cmd.Stdout is an
+// *io.PipeWriter rather than an *os.File, so os/exec creates an OS pipe and
+// a copying goroutine, and cmd.Wait does not return until that goroutine
+// finishes; CommandContext's cancel only kills the DIRECT child. steamcmd
+// re-execs and spawns helpers, so a grandchild inheriting the write end
+// would block cmd.Run() forever - holding core's single beginOp mutation
+// slot for the life of the process.
+//
+// The fake exits 0 with a `sleep 60 &` still holding stdout. Without
+// cmd.WaitDelay this test hangs until the go test timeout kills it.
+func TestFetch_AGrandchildHoldingThePipeCannotOutliveTheWaitDelay(t *testing.T) {
+	src, _ := newSteamcmdSource(t)
+	steamworkshop.SetWaitDelayForTest(t, 250*time.Millisecond)
+
+	done := make(chan struct{})
+	var path string
+	var err error
+	go func() {
+		defer close(done)
+		_, path, err = fetchTo(t, src, "1133870", "3000000007")
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Fetch never returned: a grandchild holding the inherited pipe outlived cmd.Wait")
+	}
+
+	require.NoError(t, err, "the item downloaded; only a leftover grandchild held the pipe")
+	assert.FileExists(t, filepath.Join(path, "mod.txt"))
+}

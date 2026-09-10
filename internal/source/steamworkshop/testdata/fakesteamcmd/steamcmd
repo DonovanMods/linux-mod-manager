@@ -23,6 +23,9 @@
 #   3000000003 - "(Access Denied)": the item is delisted, deleted or private
 #   3000000005 - a SLOW success that prints no progress at all, for the
 #                heartbeat: it grows a file on disk and says nothing
+#   3000000007 - a success that leaves a GRANDCHILD holding the inherited
+#                stdout pipe, the way steamcmd's re-exec and helper
+#                processes can: the script exits 0 but the pipe stays open
 #   3000000008 - a SLOW success that DOES print progress, so the output
 #                scanner and the heartbeat are both live at once
 #   anything else - a non-zero exit with no marker lmm recognises
@@ -99,6 +102,17 @@ case "$fileid" in
       sleep 0.05
     done
     echo "Success. Downloaded item $fileid to \"$content\" (240 bytes)"
+    exit 0
+    ;;
+  3000000007)
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    printf 'workshop item %s\n' "$fileid" > "$content/mod.txt"
+    echo "Success. Downloaded item $fileid to \"$content\" (10000 bytes)"
+    # A grandchild that OUTLIVES this script with the inherited stdout still
+    # open. Without cmd.WaitDelay, cmd.Wait's copying goroutine never sees
+    # EOF and cmd.Run() never returns - past the timeout, past a Ctrl-C.
+    sleep 60 &
     exit 0
     ;;
   3000000008)
