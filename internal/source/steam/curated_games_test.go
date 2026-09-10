@@ -1,6 +1,8 @@
 package steam
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -169,13 +171,13 @@ func TestKnownGames_NexusHeavy(t *testing.T) {
 	})
 }
 
-// TestKnownGames_ValheimCarriesNoLoaderBlock records a deliberate gap, so
-// that closing it is a test change rather than an oversight. Valheim's
-// whole mod ecosystem sits on BepInEx, and #359 is adding an optional
-// `loader:` block to domain.Game for exactly that - but #359 had not merged
-// into v2 when S2 landed, and there is no field here to fill. When it does,
-// this entry is the first that should grow one, and this test is where the
-// note lives.
+// TestKnownGames_ValheimCarriesNoLoaderBlock records a deliberate gap and
+// FAILS WHEN IT CLOSES, so #359 forces the decision instead of inviting
+// someone to delete a test that only restated a comment (#406 review F4).
+// Valheim's whole mod ecosystem sits on BepInEx, and #359 is adding an
+// optional `loader:` block for exactly that - but #359 had not merged into
+// v2 when S2 landed, and there is no field here to fill. The moment
+// steam.GameInfo grows one, this entry is the first that should use it.
 func TestKnownGames_ValheimCarriesNoLoaderBlock(t *testing.T) {
 	sandboxEnv(t)
 	games, err := LoadKnownGames(t.TempDir())
@@ -185,6 +187,18 @@ func TestKnownGames_ValheimCarriesNoLoaderBlock(t *testing.T) {
 	assert.Equal(t, "BepInEx/plugins", info.ModPath,
 		"the plugins folder is where a Valheim mod goes once BepInEx is installed; "+
 			"installing BepInEx itself is #359's job, not the known-games list's")
+
+	// The gap marker with teeth. A field is where the loader block would
+	// land, so a field is what this watches for - by name, since #359 has
+	// not settled its spelling.
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(info)) {
+		if strings.Contains(strings.ToLower(field.Name), "loader") {
+			t.Fatalf("#359 landed - decide Valheim's loader block: steam.GameInfo now has a %s field, "+
+				"so app 892970 can declare its BepInEx prerequisite instead of leaving it to the user. "+
+				"Same call for the other four BepInEx entries (2393970, 1284190, 1466060, 527230).",
+				field.Name)
+		}
+	}
 }
 
 // TestKnownGames_LongTail pins #406 story S3: the rest of the installed
