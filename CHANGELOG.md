@@ -957,6 +957,19 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **A bulk `lmm update` no longer asks which source to use (#375).** The
+  source was resolved at the top of the command, so a game with more than one
+  configured source prompted — and under `--json` refused outright with
+  "confirmation required" — before doing anything, even though the bulk check
+  walks every installed mod against **its own** recorded source and never
+  reads the answer. A cron job running `lmm update --json` on any
+  Workshop-bearing game (which `lmm init` produces by default) failed for
+  nothing. The prompt now belongs to the single-mod path, which is the one
+  that genuinely uses it. That refusal also named three flags, two of which
+  `lmm update` does not have: a prompt whose remedy is a specific flag now
+  says only that ("confirmation required: pass -s/--source to select a mod
+  source").
+
 - **A bare mod ID that names two mods is refused, not guessed (#373).** Mod
   IDs are unique only WITHIN a source, so the same ID can name a different
   mod in each source a game maps. `lmm uninstall <id>` and

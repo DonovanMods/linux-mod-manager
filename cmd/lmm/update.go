@@ -145,7 +145,7 @@ Examples:
 }
 
 func init() {
-	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source (default: the sole configured source; prompts when several are configured)")
+	updateCmd.Flags().StringVarP(&updateSource, "source", "s", "", "mod source for a single-mod update (default: the sole configured source; prompts when several are configured). A bulk check never needs it")
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
@@ -167,13 +167,11 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, args []string) error {
-	// Resolve source: use flag if set, otherwise first configured source
-	var err error
-	updateSource, err = resolveSource(service, game, updateSource, false)
-	if err != nil {
-		return err
-	}
-
+	// #375: the source is resolved inside the single-mod branch below, not
+	// here. The bulk check walks every installed mod against ITS OWN
+	// recorded source and never reads updateSource, so resolving it up front
+	// prompted - and under --json refused outright - for an answer that made
+	// no difference, blocking every multi-source game non-interactively.
 	// Determine profile
 	profileName, err := resolveProfile(ctx, service, game.ID, updateProfile)
 	if err != nil {
@@ -204,6 +202,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	// If specific mod ID provided, update just that mod
 	if len(args) > 0 {
+		// The single-mod path IS the one that reads the source: it picks
+		// between two installed mods sharing an ID (#373's ambiguity).
+		if updateSource, err = resolveSource(service, game, updateSource, false); err != nil {
+			return err
+		}
 		modID := args[0]
 		var targetMod *domain.InstalledMod
 		// Mod IDs are only unique within a source, so the same ID can appear

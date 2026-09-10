@@ -282,3 +282,67 @@ func TestReportError_SuppressesAlreadyReported(t *testing.T) {
 	})
 	assert.Contains(t, out, "some other failure", "unreported errors still print")
 }
+
+// --- #375: a bulk update never needs -s/--source ---
+
+// TestDoUpdate_Bulk_MultiSourceGame_NeedsNoSourceFlag is #375's
+// reproduction. doUpdate resolved the source at the very top, so a game with
+// more than one configured source prompted (or, under --json, refused with
+// "confirmation required") before it did anything - even though the bulk
+// check walks every installed mod against ITS OWN recorded source and never
+// reads the answer. A cron job running `lmm update --json` on any
+// Workshop-bearing game (which `lmm init` produces by default) was blocked
+// for nothing.
+func TestDoUpdate_Bulk_MultiSourceGame_NeedsNoSourceFlag(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	game.SourceIDs = map[string]string{"src": "src", "other": "other", "steamworkshop": "1133870"}
+	seedLocalMod(t, svc, game, "localA", "Local A")
+
+	updateSource = "" // as an unflagged invocation leaves it
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "Select one:", "a bulk check must not ask which source to use")
+	assert.NotContains(t, out, "multiple mod sources configured")
+}
+
+// TestDoUpdate_BulkJSON_MultiSourceGame_DoesNotDemandASource is the same
+// check non-interactively - the shape a script or cron job actually hits.
+func TestDoUpdate_BulkJSON_MultiSourceGame_DoesNotDemandASource(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	game.SourceIDs = map[string]string{"src": "src", "other": "other"}
+	seedLocalMod(t, svc, game, "localA", "Local A")
+	withJSONOutput(t)
+
+	updateSource = ""
+
+	out := captureStdout(t, func() error {
+		return doUpdate(context.Background(), svc, game, nil)
+	})
+
+	assert.NotContains(t, out, "confirmation required")
+	assert.Contains(t, out, "\"skipped\"", "the check ran and produced its report")
+}
+
+// TestDoUpdate_SingleMod_MultiSourceGame_StillRefusesWithoutASource pins the
+// other half of #375: the single-mod path DOES read the resolved source (it
+// is how `lmm update <id> -s <src>` picks between two mods sharing an ID), so
+// that path keeps the prompt - and, under --json, names only the flag that
+// answers it rather than --yes/--force, which this command does not have.
+func TestDoUpdate_SingleMod_MultiSourceGame_StillRefusesWithoutASource(t *testing.T) {
+	svc, game := localUpdateGame(t)
+	game.SourceIDs = map[string]string{"src": "src", "other": "other"}
+	seedLocalMod(t, svc, game, "localA", "Local A")
+	withJSONOutput(t)
+
+	updateSource = ""
+
+	err := doUpdate(context.Background(), svc, game, []string{"localA"})
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, core.ErrConfirmationRequired)
+	assert.Equal(t, "confirmation required: pass -s/--source to select a mod source", err.Error(),
+		"only the specific remedy is true here - `lmm update` has no --yes")
+}
