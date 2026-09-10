@@ -833,6 +833,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   memo now stores a deep copy on the way in as well as serving one on the
   way out.
 
+- **`lmm game detect` lists the games your Steam Workshop subscriptions are
+  for (#368).** The default listing filtered on lmm's curated known-games
+  list alone, so a game whose only claim to being moddable was the thirty
+  Workshop items Steam had already downloaded was hidden behind
+  `--include-unknown` — a flag nobody would guess, for the two games
+  Workshop tracking exists for. A detected game with Workshop items is now
+  listed by default, on the terminal and in the web UI's detect list alike
+  (one rule, `domain.DetectedGame.Listable`, so the two cannot disagree);
+  `--include-unknown` / `?all=1` still adds everything else. A
+  `--no-workshop` scan lists exactly what it always did.
+
 - **The web UI no longer re-runs a full verify on every hydrate (#336).**
   Mission Control hydrates on each route change, job completion and profile
   switch, and every one of those ran the full verify tier — a source round

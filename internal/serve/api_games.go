@@ -274,8 +274,13 @@ func gameSourcesErrorStatus(err error) int {
 // found, its 1-based index, whether games.yaml already holds it, and the
 // scan's own warnings.
 //
-// ?all=1 widens it to EVERY installed Steam game (#206), adding the rows
-// no known-games entry covers - no `known` member at all (never a literal
+// The default document is domain.DetectedGame.Listable (#368): every
+// curated game, plus an uncurated one whose Steam Workshop manifest
+// declares items already downloaded - the row #269's Tier 1 exists for,
+// which used to need ?all=1 nobody would guess to send.
+//
+// ?all=1 widens it to EVERY installed Steam game (#206), adding the rest of
+// the rows no known-games entry covers - no `known` member at all (never a literal
 // false), no sources, an empty mod path and no index, since a detect
 // selection cannot name them. The
 // document is the same one either way (the addition is additive, and the
@@ -293,7 +298,13 @@ func gameSourcesErrorStatus(err error) int {
 func (s *Server) handleAPIGamesDetect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	includeUnknown := queryFlag(r, "all")
-	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: includeUnknown})
+	// The scan itself always goes WIDE, exactly as `lmm game detect`'s own
+	// does (#206 Important 3, and #368): the default listing is
+	// domain.DetectedGame.Listable, which includes an uncurated candidate
+	// with Steam Workshop items, and a narrow scan would never have
+	// produced that row for GameDetectListing to keep. ?all= still decides
+	// what is PUBLISHED, one line below.
+	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

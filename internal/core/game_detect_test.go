@@ -390,3 +390,36 @@ func TestApplyGameDetect_CancellationBetweenGameSaveAndDefaultProfileCreate(t *t
 	require.NoError(t, err, "Ruling 16 (A): the default profile must exist even though the run was cancelled")
 	assert.True(t, profile.IsDefault)
 }
+
+// TestGameDetectListing_WorkshopBearingUncuratedRowsAreListedByDefault is
+// #368's headline, one layer below either frontend: the two games Tier 1
+// exists for were hidden behind --include-unknown, because the default
+// listing filtered on Known alone. A row with Workshop items already
+// downloaded is now listed by default; a plain uncurated row still is not,
+// and neither gains an index - listed is not selectable, and the numbering
+// a selection uses must not shift.
+func TestGameDetectListing_WorkshopBearingUncuratedRowsAreListedByDefault(t *testing.T) {
+	svc := newGameAddService(t)
+	scan := []domain.DetectedGame{
+		{SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", Known: true},
+		{SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2", InstallPath: "/games/se2",
+			Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30},
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: "/games/sf"},
+	}
+
+	listing, err := svc.GameDetectListing(context.Background(), scan, nil, core.GameDetectListingOptions{})
+	require.NoError(t, err)
+	require.Len(t, listing.Games, 2, "the Workshop-bearing row joins the default listing; the plain uncurated one does not")
+	assert.Equal(t, "skyrim-se", listing.Games[0].Slug)
+	assert.Equal(t, 1, listing.Games[0].Index)
+	workshop := listing.Games[1]
+	assert.Equal(t, "space-engineers-2", workshop.Slug)
+	assert.Equal(t, 30, workshop.WorkshopItems)
+	assert.False(t, workshop.Known)
+	assert.Equal(t, 0, workshop.Index, "an uncurated row is listed, not selectable by index")
+
+	all, err := svc.GameDetectListing(context.Background(), scan, nil, core.GameDetectListingOptions{IncludeUnknown: true})
+	require.NoError(t, err)
+	require.Len(t, all.Games, 3, "--include-unknown still adds everything else")
+	assert.Equal(t, 1, all.Games[0].Index, "known numbering must not shift when the wider rows join")
+}

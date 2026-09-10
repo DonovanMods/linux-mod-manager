@@ -230,8 +230,13 @@ type GameDetectListingOptions struct {
 	// IncludeUnknown keeps the scan's unknown candidates (no `known` member
 	// at all - never a literal false) in the document. Off by default, so a
 	// caller that scanned wide can
-	// still render exactly today's known-only listing, and a caller that
+	// still render the default listing, and a caller that
 	// never asked for unknown rows cannot accidentally publish them.
+	//
+	// "Default" is domain.DetectedGame.Listable, not Known (#368): an
+	// uncurated candidate whose Steam Workshop manifest declares installed
+	// items IS in the default document, because that is the one thing on
+	// disk saying the game is moddable. This flag adds everything else.
 	IncludeUnknown bool
 }
 
@@ -272,7 +277,7 @@ func (s *Service) GameDetectListing(ctx context.Context, games []domain.Detected
 	listing := &GameDetectListing{Games: make([]GameDetectEntry, 0, len(games)), Warnings: warnings}
 	index := 0
 	for _, g := range games {
-		if !g.Known && !opts.IncludeUnknown {
+		if !g.Listable() && !opts.IncludeUnknown {
 			continue
 		}
 		// Only a known row gets a number - see GameDetectEntry.Index.

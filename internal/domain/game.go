@@ -183,6 +183,41 @@ type DetectedGame struct {
 	WorkshopItems int `json:"workshop_items,omitzero"`
 }
 
+// Listable reports whether a detect LISTING shows this candidate without
+// being asked for the wider list (#368). Two rows qualify: one lmm has a
+// curated known-games entry for, and one whose Steam Workshop manifest
+// declares items already downloaded - a game with thirty subscribed items
+// is moddable by observation, whatever the curated list says, and #269's
+// whole Tier 1 exists to track exactly those. Hiding it behind
+// `--include-unknown` / `?all=1` put the two games the feature was built
+// for behind a flag nobody would guess.
+//
+// It is a method on the candidate rather than a filter inside either
+// frontend so `lmm game detect`, GET /api/v1/games/detect and the web
+// first-run list cannot disagree about which rows a user sees.
+//
+// A --no-workshop scan stamps no count and gets no prefill, so it lists
+// exactly what it always did - which is what that flag asks for.
+func (g DetectedGame) Listable() bool {
+	return g.Known || g.WorkshopItems > 0
+}
+
+// Addable reports whether a detect SELECTION can configure this candidate
+// with nothing more asked of the user (#368): a curated row carries its
+// known-games entry's mod path and sources, and an uncurated row carries a
+// source map only when detection prefilled one - today, #269's
+// `steamworkshop: <appid>`.
+//
+// An uncurated row with no source at all is listed (under
+// `--include-unknown`) but not addable here: `lmm game add
+// --from-detected <app-id>` is the path that collects the source, and a
+// detect prompt that silently wrote a game with no mod source would create
+// an unusable games.yaml entry (core.GameSpec refuses one for the same
+// reason).
+func (g DetectedGame) Addable() bool {
+	return g.Known || len(g.Sources) > 0
+}
+
 // WorkshopItem is one Steam Workshop item already installed on this machine
 // by the Steam client (#269). It follows DetectedGame's precedent (Ruling
 // 8): the type lives in domain so internal/core can consume a scan of the
