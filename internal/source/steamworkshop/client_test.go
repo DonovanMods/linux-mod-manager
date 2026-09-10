@@ -23,9 +23,14 @@ import (
 // records every form it was posted, so a test can assert the batching
 // contract without ever leaving the process.
 type apiFixture struct {
-	srv   *httptest.Server
-	forms []url.Values
-	calls int
+	srv *httptest.Server
+	// forms is the POST body of each call; queries is its URL query, which
+	// is where httpclient puts an API key. GetPublishedFileDetails is a
+	// keyless endpoint, so queries must never carry one (W2 review,
+	// Important 2).
+	forms   []url.Values
+	queries []url.Values
+	calls   int
 }
 
 func serveFixture(t *testing.T, files ...string) *apiFixture {
@@ -37,6 +42,7 @@ func serveFixture(t *testing.T, files ...string) *apiFixture {
 		form, err := url.ParseQuery(string(body))
 		require.NoError(t, err)
 		fx.forms = append(fx.forms, form)
+		fx.queries = append(fx.queries, r.URL.Query())
 		idx := fx.calls
 		fx.calls++
 		if idx >= len(files) {
@@ -84,6 +90,23 @@ func TestGetMod_MapsPublishedFileDetails(t *testing.T) {
 	require.Len(t, fx.forms, 1)
 	assert.Equal(t, "1", fx.forms[0].Get("itemcount"))
 	assert.Equal(t, "3617086610", fx.forms[0].Get("publishedfileids[0]"))
+}
+
+// TestGetMod_SendsNoKeyEvenWhenOneIsRegistered pins the other half of the
+// package's keyless promise (W2 review, Important 2): GetPublishedFileDetails
+// is documented as needing no credential, so a key stored for Tier-2 search
+// must not start attributing every Tier-1 metadata fetch and update check to
+// the user's Steam account.
+func TestGetMod_SendsNoKeyEvenWhenOneIsRegistered(t *testing.T) {
+	fx := serveFixture(t, "getpublishedfiledetails_ok.json")
+	src := newTestSource(t, fx.srv.URL, t.TempDir(), nil)
+	src.SetAPIKey("registered")
+
+	_, err := src.GetMod(context.Background(), "1133870", "3617086610")
+	require.NoError(t, err)
+
+	require.Len(t, fx.queries, 1)
+	assert.Empty(t, fx.queries[0].Get("key"), "GetPublishedFileDetails is keyless")
 }
 
 func TestGetMod_ItemWithResultNot1IsUnavailable(t *testing.T) {

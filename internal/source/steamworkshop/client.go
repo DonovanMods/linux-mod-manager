@@ -62,7 +62,16 @@ var ErrMetadataUnavailable = errors.New("steam workshop metadata is unavailable"
 // registered one - which is exactly what ValidateKey needs, and the only
 // way to avoid a request carrying two different key= parameters.
 type client struct {
-	http    *httpclient.Client
+	// http is the REGISTERED client: it carries the user's Steam Web API
+	// key once SetAPIKey has run. Only the keyed Tier-2 endpoints may use
+	// it — see anon for everything else.
+	http *httpclient.Client
+	// anon is the same transport with no key at all, built once and never
+	// given one. Every endpoint this package documents as keyless goes
+	// through it, so storing a key for search does not start attributing
+	// each metadata fetch to the user's Steam account (W2 review,
+	// Important 2).
+	anon    *httpclient.Client
 	doer    *http.Client
 	baseURL string
 	cache   *metaCache
@@ -97,6 +106,7 @@ func newClient(opts Options) *client {
 
 	return &client{
 		http:    newAPIClient(&retrying, baseURL, ""),
+		anon:    newAPIClient(&retrying, baseURL, ""),
 		doer:    &retrying,
 		baseURL: baseURL,
 		cache:   newMetaCache(opts.CacheDir, now),
@@ -130,13 +140,14 @@ func (c *client) keyed(key string) *httpclient.Client {
 	return newAPIClient(c.doer, c.baseURL, key)
 }
 
-// keyless returns a client that sends NO key, whatever this source was
-// registered with. GetCollectionDetails is the caller: it needs no
-// credential, and a key identifies the Steam account behind it, so sending
-// one on a call that ignores it would tell Valve who is asking for no
-// reason at all.
+// keyless returns the client that sends NO key, whatever this source was
+// registered with. Its callers are every endpoint Valve documents as
+// anonymous — GetCollectionDetails and GetPublishedFileDetails — which
+// need no credential, and a key identifies the Steam account behind the
+// request, so sending one on a call that ignores it would tell Valve who
+// is asking for no reason at all.
 func (c *client) keyless() *httpclient.Client {
-	return newAPIClient(c.doer, c.baseURL, "")
+	return c.anon
 }
 
 // mapSteamError translates the one non-2xx status Valve uses to mean
@@ -268,7 +279,7 @@ func (c *client) fetchDetails(ctx context.Context, ids []string, refresh bool) (
 
 		form := formForIDs(batch)
 		var resp detailsResponse
-		if err := c.http.DoForm(ctx, publishedFileDetailsPath, form, &resp); err != nil {
+		if err := c.keyless().DoForm(ctx, publishedFileDetailsPath, form, &resp); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return out, ctxErr
 			}
