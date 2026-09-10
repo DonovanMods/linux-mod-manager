@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -70,6 +71,22 @@ func slashMembers(members []string) []string {
 // executability rule are core's to enforce, because the write is core's -
 // and enforcing them up front is what makes a refusal leave the staging
 // tree byte-identical.
+//
+// Validation cannot predict EVERY reason a rename fails, though - a
+// destination that is an existing directory, or one nested under another
+// destination, are both refused by the kernel rather than by a rule - so
+// every move this executor performs is recorded and UNDONE when a later one
+// fails (#411, R2). "A failed rewrite leaves the staging tree exactly as the
+// extractor left it" is therefore a property of the whole function, not only
+// of its typed refusals. Dropped members are moved into a scratch directory
+// rather than unlinked, for the same reason: a drop that has already run
+// when a later rename fails has to come back.
+//
+// Members are regular FILES only - relativeFileMembers, the one listing both
+// callers use, returns no symlinks - which is what keeps the containment
+// check sound even though it runs once, before the first rename: no move
+// this loop performs can create a symlink for a later destination to route
+// through.
 func rewriteExtractedTree(root string, layout adapter.Layout, members []string) ([]string, error) {
 	if !layout.Applies() {
 		return members, nil
@@ -81,6 +98,9 @@ func rewriteExtractedTree(root string, layout adapter.Layout, members []string) 
 	if err := validateLayoutTable(root, layout, members, caseInsensitiveRoot(root, members)); err != nil {
 		return nil, err
 	}
+	x := &layoutRewrite{root: root}
+	defer x.discardScratch()
+
 	kept := make([]string, 0, len(members))
 	// vacated is every member this table moved away or dropped, spelled as
 	// it arrived. It is the bound CleanupEmptyDirs needs (#415): the sweep
@@ -91,7 +111,8 @@ func rewriteExtractedTree(root string, layout adapter.Layout, members []string) 
 		dest, keep := layout.Rewrite(m)
 		src := filepath.Join(root, filepath.FromSlash(m))
 		if !keep {
-			if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
+			if err := x.drop(src); err != nil {
+				x.undo()
 				return nil, fmt.Errorf("dropping %s: %w", m, err)
 			}
 			vacated = append(vacated, m)
@@ -102,15 +123,20 @@ func rewriteExtractedTree(root string, layout adapter.Layout, members []string) 
 			continue
 		}
 		dst := filepath.Join(root, filepath.FromSlash(dest))
-		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		if err := x.mkdirAll(filepath.Dir(dst)); err != nil {
+			x.undo()
 			return nil, fmt.Errorf("preparing %s: %w", dest, err)
 		}
-		if err := os.Rename(src, dst); err != nil {
+		if err := x.rename(src, dst); err != nil {
+			x.undo()
 			return nil, fmt.Errorf("moving %s to %s: %w", m, dest, err)
 		}
 		kept = append(kept, dest)
 		vacated = append(vacated, m)
 	}
+	// The scratch directory holds only dropped members, and the table ran to
+	// completion, so nothing in it is coming back.
+	x.discardScratch()
 	if len(vacated) > 0 {
 		// The same sweep every removal path already runs, for the same
 		// reason: a rename out of "plugins/" must not leave an empty
@@ -122,6 +148,115 @@ func rewriteExtractedTree(root string, layout adapter.Layout, members []string) 
 	}
 	slices.Sort(kept)
 	return slices.Compact(kept), nil
+}
+
+// layoutRewrite is rewriteExtractedTree's undo log (#411, R2): the moves the
+// executor has already performed and the directories it has already created,
+// so a rename the whole-table validation could not predict - the kernel
+// refusing a destination that is an existing directory, an I/O error - is
+// rolled back instead of left half-applied.
+//
+// It is a log rather than a two-phase swap because the staging tree is
+// arbitrarily large: undoing N renames costs N renames, while staging every
+// member into a shadow tree and swapping would cost a full second copy
+// whenever the two ends straddle a filesystem boundary.
+type layoutRewrite struct {
+	root string
+	// scratch holds dropped members until the table has run to completion.
+	// It is created lazily, only for a table that actually drops something,
+	// and it lives INSIDE root - the same filesystem, so the move is a
+	// rename - under lmm's own reserved ".lmm-" prefix, which an import
+	// refuses by name if a killed process ever leaves one behind.
+	scratch string
+	moves   []layoutMove
+	created []string
+}
+
+// layoutMove is one rename the executor performed, in the direction it
+// performed it.
+type layoutMove struct{ from, to string }
+
+// rename performs one move and records it.
+func (x *layoutRewrite) rename(src, dst string) error {
+	if err := os.Rename(src, dst); err != nil {
+		return err
+	}
+	x.moves = append(x.moves, layoutMove{from: src, to: dst})
+	return nil
+}
+
+// drop retires a member: it is moved into the scratch directory rather than
+// unlinked, so it can be restored if a later move fails. A member that is
+// already gone is not an error, exactly as the unlinking version tolerated.
+func (x *layoutRewrite) drop(src string) error {
+	if _, err := os.Lstat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if x.scratch == "" {
+		dir, err := os.MkdirTemp(x.root, ".lmm-layout-drop-")
+		if err != nil {
+			return err
+		}
+		x.scratch = dir
+	}
+	return x.rename(src, filepath.Join(x.scratch, strconv.Itoa(len(x.moves))))
+}
+
+// mkdirAll creates dir, recording every component it had to create so undo
+// can remove them and leave no empty directory the extractor did not.
+func (x *layoutRewrite) mkdirAll(dir string) error {
+	var missing []string
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); err == nil {
+			break
+		}
+		missing = append(missing, d)
+		if parent := filepath.Dir(d); parent == d {
+			break
+		}
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	// Shallowest first, so undo - which walks backwards - removes the
+	// deepest first.
+	for i := len(missing) - 1; i >= 0; i-- {
+		x.created = append(x.created, missing[i])
+	}
+	return nil
+}
+
+// undo reverses everything this rewrite has done, in reverse order: moves
+// first (which pulls dropped members back out of the scratch directory),
+// then the scratch directory itself, then the directories the rewrite
+// created, which are empty again by then.
+//
+// Every step is best-effort: the caller is already returning the error that
+// caused the rollback, and an undo that cannot complete must not replace it
+// with a less informative one.
+func (x *layoutRewrite) undo() {
+	for i := len(x.moves) - 1; i >= 0; i-- {
+		_ = os.Rename(x.moves[i].to, x.moves[i].from)
+	}
+	x.moves = nil
+	x.discardScratch()
+	for i := len(x.created) - 1; i >= 0; i-- {
+		_ = os.Remove(x.created[i])
+	}
+	x.created = nil
+}
+
+// discardScratch removes the dropped members for good. Idempotent, so it can
+// be both deferred and called on the success path.
+func (x *layoutRewrite) discardScratch() {
+	if x.scratch == "" {
+		return
+	}
+	_ = os.RemoveAll(x.scratch)
+	x.scratch = ""
 }
 
 // rewritePlannedPaths is rewriteExtractedTree's PURE twin: the same Layout

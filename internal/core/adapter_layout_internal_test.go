@@ -159,6 +159,55 @@ func TestRewriteExtractedTreeRefusesAnUnexecutableTable(t *testing.T) {
 	}
 }
 
+// TestRewriteExtractedTreeUndoesAPartiallyAppliedRewrite is R2's regression
+// test: whole-table validation cannot predict every reason a rename fails -
+// a destination that is an existing DIRECTORY and a destination nested under
+// another destination are both executable-looking tables that os.Rename and
+// os.MkdirAll refuse - and the executor used to return at the first such
+// error with every member before it already moved. AdapterLayoutError's
+// promise ("a refused layout leaves the staging tree exactly as the
+// extractor left it") has to hold for a refusal a CALLER sees, not only for
+// the typed ones.
+func TestRewriteExtractedTreeUndoesAPartiallyAppliedRewrite(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   map[string]string
+		members []string
+		table   map[string]string
+	}{
+		{
+			name:    "a destination that is an existing directory",
+			files:   map[string]string{"a.txt": "A", "z.txt": "Z", "dir/keep.txt": "K"},
+			members: []string{"a.txt", "dir/keep.txt", "z.txt"},
+			table:   map[string]string{"a.txt": "moved/a.txt", "z.txt": "dir"},
+		},
+		{
+			name:    "a destination nested under another destination",
+			files:   map[string]string{"x.txt": "X", "y.txt": "Y"},
+			members: []string{"x.txt", "y.txt"},
+			table:   map[string]string{"x.txt": "out", "y.txt": "out/z.txt"},
+		},
+		{
+			name:    "a drop performed before a failing rename",
+			files:   map[string]string{"a.txt": "A", "z.txt": "Z", "dir/keep.txt": "K"},
+			members: []string{"a.txt", "dir/keep.txt", "z.txt"},
+			table:   map[string]string{"a.txt": "", "z.txt": "dir"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root, before := layoutTestTree(t, tc.files)
+
+			_, err := rewriteExtractedTree(root, adapter.NewLayout("half", tc.table), tc.members)
+			require.Error(t, err, "the rewrite must fail - this is the case validation cannot see")
+
+			assert.Equal(t, before, layoutTreeSnapshot(t, root),
+				"a failed rewrite must leave the staging tree byte-identical - no half-applied table")
+		})
+	}
+}
+
 // TestRewriteExtractedTreeCanonicalisesDestinations is R1's other half:
 // a LEGAL destination spelled non-canonically must reach the validator, the
 // returned member list, the plan rewriter and the executor as ONE canonical
