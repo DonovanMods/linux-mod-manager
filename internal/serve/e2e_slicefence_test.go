@@ -6,8 +6,10 @@ package serve_test
 // spa/app/store.js directly - no DOM, no server - with the two responses
 // forced to resolve in the wrong order, which is the race stated as
 // plainly as it can be. The second proves main.js's real reload path
-// actually carries the fence, by delaying the FIRST /api/v1/mods response
-// in the browser and driving two ordinary UI mutations over it.
+// actually carries the fence, by holding the FIRST /api/v1/mods response
+// in the browser and driving two ordinary UI mutations over it - held
+// until the reload issued after it has committed, so the wrong order is
+// what the scenario ARRANGES rather than what it hopes for.
 
 import (
 	"testing"
@@ -95,6 +97,14 @@ func TestSliceFence_TheOlderAnswerIsDropped(t *testing.T) {
 // hydrate has settled) so it lands LAST while carrying the pre-second-lock
 // library - the exact ordering that, before the fence, put the older
 // document back and left a badge that was never coming.
+//
+// The ordering is driven by two OBSERVED facts rather than by timers, so
+// the scenario reproduces the bug every run rather than in whichever runs
+// the server happens to lose (issue 370's review, Important 1): the second
+// Lock is not clicked until the held GET has been ANSWERED by the server,
+// which is what makes its body provably older, and the assertions do not
+// run until that answer has been DELIVERED to the SPA, which is what makes
+// it provably last. Neither edge can land the other way round.
 func TestE2E_TwoModSettingsInFlightKeepTheNewerLibrary(t *testing.T) {
 	f := newE2EFixtureWithDeployableMods(t)
 
@@ -115,31 +125,71 @@ func TestE2E_TwoModSettingsInFlightKeepTheNewerLibrary(t *testing.T) {
 		}
 	}
 
+	// Hold the NEXT /api/v1/mods response - and only that one - until the
+	// reload issued after it has not merely resolved but COMMITTED, which
+	// the rendered library says out loud by carrying both locks.
+	holdFirstLibraryReload := chromedp.Evaluate(`(() => {
+		const real = window.fetch;
+		let held = false;
+		window.__heldAnswered = false;
+		window.__olderDelivered = false;
+		window.__bailed = false;
+		const newerCommitted = () => {
+			try {
+				return `+lockBadge("Alpha Mod")+` !== null && `+lockBadge("Beta Mod")+` !== null;
+			} catch (e) {
+				// Mid-render the rows can be momentarily absent; that is
+				// simply "not yet", never a failure to report.
+				return false;
+			}
+		};
+		window.fetch = (input, init) => {
+			const raw = input && input.url ? input.url : input;
+			const url = new URL(String(raw), location.origin);
+			const method = (init && init.method) || (input && input.method) || "GET";
+			const answer = real(input, init);
+			// The library LISTING only - the lock writes themselves live
+			// under /api/v1/mods/... and holding one of those would
+			// serialise the very pair this scenario needs overlapping.
+			if (held || method !== "GET" || url.pathname !== "/api/v1/mods") return answer;
+			held = true;
+			return answer.then((r) => {
+				// The SERVER has answered: this response carries the
+				// library from before the second Lock, which the test does
+				// not click until it sees this flag. Only its DELIVERY is
+				// delayed from here on.
+				window.__heldAnswered = true;
+				return new Promise((res) => {
+					const deliver = () => {
+						window.__olderDelivered = true;
+						res(r);
+					};
+					const poll = setInterval(() => {
+						if (!newerCommitted()) return;
+						clearInterval(poll);
+						clearTimeout(bail);
+						deliver();
+					}, 20);
+					// A deadline, so a scenario that never gets its newer
+					// commit fails an assertion instead of hanging inside a
+					// fetch nobody is ever going to resolve.
+					const bail = setTimeout(() => {
+						clearInterval(poll);
+						window.__bailed = true;
+						deliver();
+					}, 15000);
+				});
+			});
+		};
+	})()`, nil)
+
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
-		// Hold the NEXT /api/v1/mods response - and only that one - long
-		// enough that the reload issued after it resolves first.
-		chromedp.Evaluate(`(() => {
-			const real = window.fetch;
-			let held = false;
-			window.fetch = (input, init) => {
-				const raw = input && input.url ? input.url : input;
-				const url = new URL(String(raw), location.origin);
-				const method = (init && init.method) || (input && input.method) || "GET";
-				const answer = real(input, init);
-				// The library LISTING only - the lock writes themselves live
-				// under /api/v1/mods/... and holding one of those would
-				// serialise the very pair this scenario needs overlapping.
-				if (!held && method === "GET" && url.pathname === "/api/v1/mods") {
-					held = true;
-					return answer.then((r) => new Promise((res) => setTimeout(() => res(r), 2000)));
-				}
-				return answer;
-			};
-		})()`, nil),
+		holdFirstLibraryReload,
 		lockRow("Beta Mod"),
+		pollUntil(`window.__heldAnswered === true`),
 		lockRow("Alpha Mod"),
 	)
 
@@ -157,18 +207,21 @@ func TestE2E_TwoModSettingsInFlightKeepTheNewerLibrary(t *testing.T) {
 		return locked == 2
 	}, 10*time.Second, 20*time.Millisecond, "both Lock actions must reach core")
 
-	// Both badges, and they must STAY: the held reload lands ~2s in
-	// carrying a library where only Beta is locked, and must be dropped
-	// rather than applied.
+	// Both badges, and they must STAY: the held reload is delivered only
+	// after the newer one has committed, carrying a library where only Beta
+	// is locked, and must be dropped rather than applied.
+	var alpha, beta, bailed bool
 	f.runInBrowser(t,
-		pollUntil(lockBadge("Alpha Mod")+` !== null && `+lockBadge("Beta Mod")+` !== null`),
-		chromedp.Sleep(3*time.Second),
-	)
-	var alpha, beta bool
-	f.runInBrowser(t,
+		pollUntil(`window.__olderDelivered === true`),
+		// The older answer is in the SPA's hands; give the commit it would
+		// make without the fence room to land and repaint.
+		chromedp.Sleep(time.Second),
 		chromedp.Evaluate(lockBadge("Alpha Mod")+` !== null`, &alpha),
 		chromedp.Evaluate(lockBadge("Beta Mod")+` !== null`, &beta),
+		chromedp.Evaluate(`window.__bailed === true`, &bailed),
 	)
+	require.False(t, bailed,
+		"the newer reload must have committed before the held one was released - otherwise this scenario proves nothing")
 	assert.True(t, alpha, "a superseded reload must not put the pre-lock library back")
 	assert.True(t, beta, "the earlier lock must survive the later one's reload")
 	assert.Empty(t, f.BrowserErrors())
