@@ -577,6 +577,20 @@ additions the build surfaced and one deviation:
 stamps on `ImportPlan`'s and `ProfileSyncPlan`'s buckets; and the library row
 menu stopped offering "Re-link…" for an external row.
 
+**The keyed live smoke, specifically** (the one gate an agent cannot run):
+
+- `lmm auth login steamworkshop`, then `lmm search <term> --source steamworkshop`
+  **returns rows** — not an empty page beside a non-zero total. Nothing in the
+  tree can prove this: the #268 spike never obtained a successful `QueryFiles`
+  body (keyless `QueryFiles` is a guaranteed 403), so every fixture row's
+  `result` field is hand-authored. W2's own row filter was therefore loosened to
+  drop only rows Valve **explicitly** marks failed; this smoke is what confirms
+  the assumption underneath it either way.
+- Pull the network cable (or point at an unreachable proxy) mid-`lmm auth login`
+  and confirm the error names the **path**, never the key.
+- `lmm profile import --workshop-collection <a real collection>` lists the
+  collection's items with names, and the profile it writes records the list.
+
 ### W3 — "Steam Workshop Tier 3: download items via file_url or anonymous steamcmd (#269)"
 
 Files: **new** `internal/source/steamworkshop/{download,steamcmd}.go` +
