@@ -348,8 +348,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install loaders or write launch options, so the rest report and point at
   the setup.
 
-||||||| parent of 3d9d6df1 (docs: the Thunderstore source, its index and what it does not do yet (#408))
-
 - **Thunderstore is a built-in source, with search over a locally cached
   community index (#360).** Thunderstore publishes one unpaginated document
   per community and no per-query search endpoint at all, so lmm keeps a local
