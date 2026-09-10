@@ -675,10 +675,6 @@ func TestReportError_JSON_GameSpecError(t *testing.T) {
 
 // --- #206: `lmm game add --from-detected <steam-app-id>` ---
 
-// fakeSteamGame fabricates a Steam library under a sandboxed HOME holding
-// one installed app, and returns its install path. Detection tests must
-// never read the host's real library, so HOME and STEAM_ROOT are both
-// overridden (steam.FindSteamRoots reads exactly those two).
 // The uncurated-game stand-in for every test below that needs an installed
 // app with NO known-games entry. Fictional on purpose: these tests used to
 // borrow a real uncurated game (Satisfactory), so curating it (#406) turned
@@ -692,6 +688,10 @@ const (
 	uncuratedSlug  = "uncurated-example-game"
 )
 
+// fakeSteamGame fabricates a Steam library under a sandboxed HOME holding
+// one installed app, and returns its install path. Detection tests must
+// never read the host's real library, so HOME and STEAM_ROOT are both
+// overridden (steam.FindSteamRoots reads exactly those two).
 func fakeSteamGame(t *testing.T, appID, name, installDir string) string {
 	t.Helper()
 	home := t.TempDir()
