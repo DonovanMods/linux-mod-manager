@@ -261,3 +261,37 @@ func TestCheckFileConflicts_NoConflicts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, conflicts)
 }
+
+// TestListDeployedFiles_ReturnsEveryPathSorted pins #350's read: the
+// snapshot's deployed-files manifest is "what is deployed at all", across
+// every mod, in a stable order.
+func TestListDeployedFiles_ReturnsEveryPathSorted(t *testing.T) {
+	d, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+	ctx := context.Background()
+
+	require.NoError(t, d.SaveDeployedFile(ctx, "g1", "default", "z.esp", "src", "b"))
+	require.NoError(t, d.SaveDeployedFile(ctx, "g1", "default", "a.esp", "src", "a"))
+	require.NoError(t, d.SaveDeployedFile(ctx, "g1", "other", "o.esp", "src", "a"))
+
+	files, err := d.ListDeployedFiles(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, files, 2, "another profile's rows are not included")
+	assert.Equal(t, "a.esp", files[0].RelativePath)
+	assert.Equal(t, "a", files[0].ModID)
+	assert.Equal(t, "z.esp", files[1].RelativePath)
+	assert.Equal(t, "b", files[1].ModID)
+}
+
+// TestListDeployedFiles_EmptyProfileIsNotAnError pins that a profile with
+// nothing deployed is a normal state.
+func TestListDeployedFiles_EmptyProfileIsNotAnError(t *testing.T) {
+	d, err := db.New(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, d.Close()) })
+
+	files, err := d.ListDeployedFiles(context.Background(), "g1", "default")
+	require.NoError(t, err)
+	assert.Empty(t, files)
+}

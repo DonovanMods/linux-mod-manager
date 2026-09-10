@@ -1513,6 +1513,87 @@ func TestJSONGoldens(t *testing.T) {
 				Profile:      "default",
 			},
 		},
+		{
+			// The snapshot document itself (#350): the file on disk AND
+			// the wire shape /api/v1 hands back. Four halves - the
+			// profile export, the installed rows, the deployed-files
+			// manifest, the originals in force.
+			"snapshot",
+			core.Snapshot{
+				Name: "before-tweaks", GameID: "skyrim-se", Profile: "default",
+				CreatedAt: fixedTime,
+				ProfileDocument: &domain.ExportedProfile{
+					Name: "default", GameID: "skyrim-se",
+					Mods: []domain.ModReference{{
+						SourceID: "nexusmods", ModID: "42", Version: "1.2.3",
+						FileIDs: []string{"1"}, Locked: true,
+					}},
+				},
+				Installed: []domain.InstalledMod{{
+					Mod:         jsonGoldenMod,
+					ProfileName: "default", UpdatePolicy: domain.UpdateNotify,
+					InstalledAt: fixedTime, Enabled: true, Deployed: true,
+					LinkMethod: domain.LinkSymlink, FileIDs: []string{"1"},
+				}},
+				DeployedFiles: []core.SnapshotFile{{
+					RelativePath: "Data/mod.esp", SourceID: "nexusmods", ModID: "42",
+					SHA256: "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1", Size: 2048,
+				}},
+				Originals: []core.OriginalFile{{
+					Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",
+					SHA256: "9c1185a5c5e9fc54612808977ee8f548b2258d31", Size: 4096,
+					CapturedAt: fixedTime, Op: core.OriginalOpDeploy,
+					SourceID: "nexusmods", ModID: "42", Profile: "default",
+				}},
+			},
+		},
+		{
+			// A tracked path that was NOT on disk: recorded rather than
+			// dropped, with no checksum, because "tracked and absent" is a
+			// different fact from "never tracked".
+			"snapshot_file_missing",
+			core.SnapshotFile{
+				RelativePath: "Data/gone.esp", SourceID: "nexusmods", ModID: "42", Missing: true,
+			},
+		},
+		{
+			"snapshot_file",
+			core.SnapshotFile{
+				RelativePath: "Data/mod.esp", SourceID: "nexusmods", ModID: "42",
+				SHA256: "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1", Size: 2048,
+			},
+		},
+		{
+			"snapshot_result",
+			core.SnapshotResult{
+				Name: "before-tweaks", GameID: "skyrim-se", Profile: "default",
+				CreatedAt: fixedTime, Path: "/home/u/.local/share/lmm/snapshots/skyrim-se/before-tweaks.json",
+				Mods: 12, DeployedFiles: 340, Originals: 3, SizeBytes: 1048576,
+			},
+		},
+		{
+			"snapshot_info",
+			core.SnapshotInfo{
+				Name: "auto-deploy-20260827-120000", GameID: "skyrim-se", Profile: "default",
+				CreatedAt: fixedTime, Auto: true,
+				Mods: 12, DeployedFiles: 340, Originals: 3, SizeBytes: 1048576,
+			},
+		},
+		{
+			"snapshot_listing",
+			core.SnapshotListing{
+				GameID: "skyrim-se",
+				Snapshots: []core.SnapshotInfo{{
+					Name: "before-tweaks", GameID: "skyrim-se", Profile: "default",
+					CreatedAt: fixedTime, Mods: 12, DeployedFiles: 340, Originals: 3, SizeBytes: 1048576,
+				}},
+				Warnings: []string{"broken.json could not be read: parsing the snapshot: unexpected EOF"},
+			},
+		},
+		{
+			"snapshot_delete_result",
+			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))
