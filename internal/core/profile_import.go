@@ -512,10 +512,14 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		// call that would even succeed.
 		if row, ok := plan.cachedRows[key]; ok {
 			scope.ModName = row.Name
-			modRef, err := s.importCachedMod(ctx, game, profile.Name, installer, row)
+			modRef, msgs, err := s.importCachedMod(ctx, game, profile.Name, installer, row)
 			if err != nil {
 				fail(err.Error())
 				continue
+			}
+			for _, msg := range msgs {
+				result.Warnings = append(result.Warnings, msg)
+				emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
 			}
 			if cerr := s.recordImportedRef(ctx, pm, game.ID, profile.Name, modRef, scope, result, emit); cerr != nil {
 				return result, cerr
@@ -681,8 +685,18 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 //
 // An EXTERNAL row is copied without deploying anything: Steam put the item
 // where the game reads it, and lmm only tracks it (see PlanImport's own
-// external branch). Returns the profile ref the caller records.
-func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row domain.InstalledMod) (domain.ModReference, error) {
+// external branch).
+//
+// #372 reaches here too, by copying rather than by downloading (P1a review
+// F2): nothing is fetched, so there is no DownloadModResult to record, but
+// the new row describes the SAME BYTES as the row it was cloned from - so it
+// carries the same checksums. Without them one profile's copy verified and
+// the other reported NO CHECKSUM for a file lmm never touched. Returns the
+// profile ref the caller records, plus any checksum-copy failures as
+// messages the caller surfaces with its other diagnostics (never fatal - the
+// files are installed and correct either way, exactly as
+// recordFileChecksums' own failures are).
+func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row domain.InstalledMod) (domain.ModReference, []string, error) {
 	mod := row.Mod
 	// Normalize GameID to the lmm game (see ApplyProfileSwitch's own
 	// identical save site for why).
@@ -690,8 +704,23 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 
 	if !row.External {
 		if err := installer.Install(ctx, game, &mod, profileName); err != nil {
-			return domain.ModReference{}, fmt.Errorf("deploy failed: %v", err)
+			return domain.ModReference{}, nil, fmt.Errorf("deploy failed: %v", err)
 		}
+	}
+
+	// Read the source row's checksums BEFORE the save below: saveInstalledMod
+	// rewrites installed_mod_files, and recordFileChecksums must run after
+	// it - the same ordering rule every downloading flow follows.
+	var checksums []fileChecksum
+	for _, fileID := range row.FileIDs {
+		checksum, err := s.db.GetFileChecksum(ctx, row.SourceID, row.ID, game.ID, row.ProfileName, fileID)
+		if err != nil || checksum == "" {
+			// A row with no checksum of its own has nothing to copy - a
+			// legacy install, or a source that hashes nothing. Honest
+			// emptiness, not a failure.
+			continue
+		}
+		checksums = append(checksums, fileChecksum{fileID: fileID, checksum: checksum})
 	}
 
 	installedMod := &domain.InstalledMod{
@@ -705,10 +734,12 @@ func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profil
 		ExternalPath: row.ExternalPath,
 	}
 	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
-		return domain.ModReference{}, fmt.Errorf("save failed: %v", err)
+		return domain.ModReference{}, nil, fmt.Errorf("save failed: %v", err)
 	}
 
-	return domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: row.FileIDs}, nil
+	msgs := s.recordFileChecksums(ctx, mod.SourceID, mod.ID, game.ID, profileName, checksums)
+
+	return domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: row.FileIDs}, msgs, nil
 }
 
 // recordImportedRef writes the profile ref completing an installed row the

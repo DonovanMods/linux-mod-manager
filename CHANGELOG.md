@@ -1053,7 +1053,10 @@ switch` and `profile import` all discarded the download's result — so
   to any mod therefore degraded it from verifiable to unverifiable until the
   next `verify --fix`, which is how a user ends up with a `verify` that
   always warns and learns to ignore it. All five flows now record the
-  checksum, after the database row it attaches to exists.
+  checksum, after the database row it attaches to exists. A `profile import`
+  that installs a mod from the cache entry another profile already has
+  downloads nothing, so it copies that row's checksums instead — the same
+  bytes are verifiable under both profiles.
 
 - **`profile import` gives the imported profile its own mods (#371).** A mod
   already installed under some OTHER profile was classified "already
