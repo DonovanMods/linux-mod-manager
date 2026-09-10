@@ -162,3 +162,27 @@ func TestEveryAdapterPackageIsChecked(t *testing.T) {
 			"%s is not in adapterPackages, so the boundary ratchet never checks it", rel)
 	}
 }
+
+// TestCoreImportsTheSeamNeverAnAdapter is the other half of design §4's
+// rule, and the half nothing ratcheted (#411, M5): internal/core imports
+// internal/adapter - NEVER internal/adapter/<name>. Core resolving a game
+// through the registry is the whole point of the seam; core naming a
+// concrete adapter would put a game's rules back inside core one import at
+// a time.
+//
+// It lives here, beside the rule's other half, rather than in a
+// core-side boundary test of its own: the two halves are one rule, and a
+// reader who finds one should find the other. U2 introduces the first
+// subpackage, so this ratchets before there is anything to catch.
+func TestCoreImportsTheSeamNeverAnAdapter(t *testing.T) {
+	const seam = modulePrefix + "internal/adapter"
+
+	imports := listImports(t, "internal/core")
+	assert.Contains(t, imports, seam, "internal/core must reach adapters through the seam")
+
+	for _, imp := range imports {
+		if sub, ok := strings.CutPrefix(imp, seam+"/"); ok {
+			t.Errorf("internal/core imports internal/adapter/%s: core resolves an adapter through the registry, it never names one", sub)
+		}
+	}
+}
