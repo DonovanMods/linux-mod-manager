@@ -54,7 +54,13 @@ import { mutationLabel, jobStateLabel } from "../progress.js";
 import { InlineJob } from "./jobprogress.js";
 import { AwayBar } from "./awaybar.js";
 import { findingLabel } from "../verify.js";
-import { ModSettingsControls, findingsFor, conflictsFor } from "./modpanel.js";
+import { displayVersion } from "../version.js";
+import {
+  ModSettingsControls,
+  ManagedBySteam,
+  findingsFor,
+  conflictsFor,
+} from "./modpanel.js";
 
 /** BackLink is this page's one route out - always to Mission Control as it
  * stood, never the browser's own history stack. */
@@ -138,6 +144,12 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     locked: Boolean(settingsSource.locked),
     locked_version: settingsSource.locked_version,
     update_policy: settingsSource.update_policy,
+    // issue 269: ModSettingsControls hides the "auto" policy on row.external,
+    // which the slide-over gets for free from its modrows.js row. This page
+    // builds its own literal, so the flag has to be carried across
+    // explicitly - without it the two surfaces disagreed about the same mod,
+    // and this one offered a policy SetModUpdatePolicy refuses server-side.
+    external: Boolean(settingsSource.external),
   };
 
   const findings = findingsFor(state.health, modID);
@@ -151,35 +163,53 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
         ${installedMod.author ? html`by ${installedMod.author} · ` : ""}
         <span class="mono">${sourceID}/${modID}</span>${" "}
         <span>·</span>${" "}
-        <span class="mono">${installedMod.version}</span> installed
-        ${installed?.locked && " · locked"}
+        <span class="mono"
+          >${
+            // version.js#displayVersion, issue 269's version DISPLAY rule.
+            // The design names this page by hand - "the mod page show the
+            // date and, beneath it, the manifest labelled as such" - and it
+            // builds its meta line off core.ModFilesReport.Mod rather than a
+            // library row, which is exactly why the rule is a function every
+            // surface calls rather than a field one document carries.
+            displayVersion(installedMod)
+          }</span
+        >${" "}installed ${installed?.locked && " · locked"}
       </p>
 
+      ${
+        installedMod.external &&
+        html`<div class="mod-page__section">
+          <${ManagedBySteam} row=${installedMod} />
+        </div>`
+      }
       ${
         settingsRow &&
         html`<${ModSettingsControls} row=${settingsRow} actions=${actions} />`
       }
 
       <div class="mod-page__section mod-page__actions">
-        <${InlineJob}
-          origin=${origin("toggle")}
-          state=${state}
-          actions=${actions}
-        >
-          <button
-            type="button"
-            class="button"
-            onClick=${() =>
-              actions.startToggle({
-                action: installedMod.enabled ? "disable" : "enable",
-                sourceID,
-                modID,
-                origin: origin("toggle"),
-              })}
+        ${
+          !installedMod.external &&
+          html`<${InlineJob}
+            origin=${origin("toggle")}
+            state=${state}
+            actions=${actions}
           >
-            ${installedMod.enabled ? "Disable" : "Enable"}
-          </button>
-        <//>
+            <button
+              type="button"
+              class="button"
+              onClick=${() =>
+                actions.startToggle({
+                  action: installedMod.enabled ? "disable" : "enable",
+                  sourceID,
+                  modID,
+                  origin: origin("toggle"),
+                })}
+            >
+              ${installedMod.enabled ? "Disable" : "Enable"}
+            </button>
+          <//>`
+        }
         <${InlineJob}
           origin=${origin("uninstall")}
           state=${state}
@@ -193,29 +223,36 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
               actions.openPlan({
                 kind: "uninstall",
                 origin: origin("uninstall"),
-                title: `Uninstall ${installedMod.name}`,
-                confirmLabel: "Uninstall",
+                title: installedMod.external
+                  ? `Stop tracking ${installedMod.name}`
+                  : `Uninstall ${installedMod.name}`,
+                confirmLabel: installedMod.external
+                  ? "Stop tracking"
+                  : "Uninstall",
                 options: { source_id: sourceID, mod_id: modID },
               })}
           >
-            Uninstall
+            ${installedMod.external ? "Stop tracking" : "Uninstall"}
           </button>
         <//>
-        <button
-          type="button"
-          class="button"
-          data-action="relink"
-          onClick=${() =>
-            actions.openPlan({
-              kind: "mod_relink",
-              origin: origin("relink"),
-              title: `Re-link ${installedMod.name}`,
-              confirmLabel: "Re-link",
-              options: { mod_id: modID, source_id: sourceID },
-            })}
-        >
-          Re-link…
-        </button>
+        ${
+          !installedMod.external &&
+          html`<button
+            type="button"
+            class="button"
+            data-action="relink"
+            onClick=${() =>
+              actions.openPlan({
+                kind: "mod_relink",
+                origin: origin("relink"),
+                title: `Re-link ${installedMod.name}`,
+                confirmLabel: "Re-link",
+                options: { mod_id: modID, source_id: sourceID },
+              })}
+          >
+            Re-link…
+          </button>`
+        }
       </div>
 
       ${
@@ -432,7 +469,11 @@ function VersionsSection({
   modID,
 }) {
   const locked = Boolean(installed?.locked);
-  const hasPrevious = Boolean(modPage.filesReport.mod?.previous_version);
+  // issue 269: lmm never held a previous copy of a Steam Workshop item, so
+  // there is nothing to roll back TO - the control is absent, not disabled.
+  const external = Boolean(modPage.filesReport.mod?.external);
+  const hasPrevious =
+    !external && Boolean(modPage.filesReport.mod?.previous_version);
 
   return html`
     <section class="mod-page__section">

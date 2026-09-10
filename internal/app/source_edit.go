@@ -63,8 +63,9 @@ func SourcesDir(configDir string) string {
 // built-in added later is covered without anyone remembering this
 // function exists.
 func IsBuiltinSourceID(id string) bool {
+	// A zero Paths is fine here: no factory consults it to answer ID().
 	for _, factory := range builtinSourceFactories {
-		if factory().ID() == id {
+		if factory(Paths{}).ID() == id {
 			return true
 		}
 	}
@@ -297,8 +298,11 @@ func writeFileAtomic(path string, data []byte) error {
 // Building a new one and swapping it in under the mutation gate
 // (RekeySource, below) is the same operation with no shared mutable state.
 func RebuildSource(ctx context.Context, svc *core.Service, sourceID string) (source.ModSource, error) {
+	// The rebuilt source must be configured exactly as the startup one was,
+	// so a source with an on-disk cache (#269) keeps pointing at it.
+	p := Paths{ConfigDir: svc.ConfigDir(), CacheDir: svc.CacheDir()}
 	for _, factory := range builtinSourceFactories {
-		if src := factory(); src.ID() == sourceID {
+		if src := factory(p); src.ID() == sourceID {
 			attachAPIKey(ctx, svc, src)
 			return src, nil
 		}

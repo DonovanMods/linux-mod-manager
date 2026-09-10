@@ -230,7 +230,7 @@ func TestService_PlanUpdateFrom_RefusesLocked(t *testing.T) {
 
 	// The bulk listing's own check, exactly like doUpdate's top-of-function
 	// CheckGameUpdates call.
-	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", []domain.InstalledMod{*mod}, nil)
+	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", []domain.InstalledMod{*mod}, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.False(t, updates[0].Locked, "not yet locked at listing time")
@@ -261,7 +261,7 @@ func TestService_ApplyUpdate_ErrStalePlan_FromPlanUpdateFrom(t *testing.T) {
 	mod := seedUpdatableMod(t, svc, game, "src", "mod1", "Mod One", "1.0", []string{"old-1"}, map[string][]byte{"mod1.esp": []byte("content")})
 	src.currentMod = &domain.Mod{ID: "mod1", Version: "2.0"}
 
-	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", []domain.InstalledMod{*mod}, nil)
+	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", []domain.InstalledMod{*mod}, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 
@@ -295,7 +295,7 @@ func TestService_CheckGameUpdates_EntriesCarryLocked(t *testing.T) {
 	require.NoError(t, svc.NewProfileManager().SetModLock(context.Background(), game.ID, "default", "src", "modA", "1.0"))
 	src.currentMod = &domain.Mod{ID: "modA", Version: "2.0"}
 
-	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", installed, nil)
+	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.True(t, updates[0].Locked)
@@ -309,7 +309,7 @@ func TestService_CheckGameUpdates_UnlockedEntry_LockedFieldsStayZero(t *testing.
 	require.NoError(t, err)
 	src.currentMod = &domain.Mod{ID: "modA", Version: "2.0"}
 
-	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", installed, nil)
+	updates, err := svc.CheckGameUpdates(context.Background(), game, "default", installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.False(t, updates[0].Locked)

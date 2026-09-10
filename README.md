@@ -5,6 +5,7 @@ A mod manager for Linux for searching, installing, updating, and managing game m
 ## Features
 
 - **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
+- **Steam Workshop tracking**: track the Workshop items you are already subscribed to, and get told when Steam publishes an update — see [Steam Workshop](#steam-workshop)
 - **Profile System**: Manage multiple mod configurations per game
 - **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
 - **Version Locking**: Lock a mod's profile entry to an exact version, independent of update policy — see [Locking mods to a version](#locking-mods-to-a-version)
@@ -1701,7 +1702,7 @@ with `--json`, `--dry-run` emits the plan document itself rather than its render
 
 ### Import
 
-`lmm import` has two distinct modes, chosen by whether an archive path is given:
+`lmm import` has three modes: scan (no arguments), archive (an archive path), and `--workshop`. The first two are chosen by whether an archive path is given:
 
 - **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Candidates are **scored** against the scanned name, and against the version too when the filename carries one: the best-scoring candidate across all sources wins, ties break deterministically (version agreement, then source ID, then mod ID), an exact name match ends the lookup early, and anything that does not clear the confidence bar is left **untracked** and imported as local rather than adopted as a similarly-named mod — searching `skyui` should never quietly attach your archive to `SkyUI Flashlite`. Three differences are refused outright, however close the rest of the name is: a **differing sequel number** (`Sim Settlements 2` is never `Sim Settlements 3`), **any difference at all in a pair whose longer name is under twelve letters** (`Vortex` is never `Vertex`, and `SkyUI` is never `SkyUI SE`), and **whole extra words** (`RaceMenu` is not `RaceMenu Special Edition`). A subtitle set off by punctuation is the exception: `Ordinator` matches `Ordinator - Perks of Skyrim`, and `HDT-SMP` matches `HDT-SMP (Skinned Mesh Physics)`, always as a `[probable match]` so the elided subtitle is visible before you confirm — unless two catalogue rows hang subtitles off the same name (`Alternate Start - Live Another Life` and `Alternate Start - Realm of Lorkhan`), where the tie is refused and the archive stays untracked instead of being attached to whichever sorts first. A mod that stays local this way is fully usable — it just has no update target; re-link it with `lmm mod edit --source`. The scan readout annotates any match short of an exact name with its confidence (`[strong match]`, `[probable match]`). Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
 - **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import. `--dry-run` previews it: the archive's table of contents is read (never extracted), so the preview names the mod, the files it would deploy, and any file it would overwrite, without writing anything ([#314](https://github.com/DonovanMods/linux-mod-manager/issues/314)).
@@ -1713,7 +1714,33 @@ lmm import --game hytale                    # Scan mod_path for untracked mods
 lmm import --game hytale --dry-run          # Preview what would be imported
 lmm import ./my-mod.zip --game skyrim-se    # Import a specific archive
 lmm import ./mod.zip --game skyrim-se --id 12345 --source curseforge
+lmm import --workshop --game space-engineers-2   # Track subscribed Steam Workshop items
 ```
+
+The third mode, `lmm import --workshop`, is described under [Steam Workshop](#steam-workshop). It is mutually exclusive with an archive argument and with `--skip-match`.
+
+### Steam Workshop
+
+lmm can **track** the Steam Workshop items you are already subscribed to. It reads Steam's own bookkeeping (`steamapps/workshop/appworkshop_<appid>.acf`) across every Steam library on the machine, records each installed item, and checks it for updates through Valve's keyless metadata API.
+
+**What Tier 1 does:**
+
+- `lmm game detect` maps a game whose Workshop manifest shows installed items to the `steamworkshop` source automatically (the per-source game id is the Steam **app id**). Suppress it with `--no-workshop`, or add the mapping later with `lmm game edit --source steamworkshop=<appid>`.
+- `lmm import --workshop` records every subscribed item lmm does not already track. `--dry-run` previews it; `--refresh` bypasses the cached Steam metadata. In `lmm serve`, the same flow is **Add mods ▾ → Track Steam Workshop items…**, offered once the game maps the `steamworkshop` source.
+- `lmm list` marks such mods `EXTERNAL`, `lmm status` counts them separately, and `lmm mod show` prints a "Managed by: Steam Workshop" block naming the directory Steam owns.
+- `lmm update` reports an item whose Steam revision has moved on, and says plainly that **Steam** applies that update — the next time you launch the game, or via Steam's _Verify integrity of game files_.
+- `lmm verify` checks that the directory Steam owns is still there and non-empty; an item you unsubscribed from is reported as a finding.
+- `lmm uninstall` on such a mod removes **lmm's tracking only**. The item stays subscribed in Steam; unsubscribe in the Steam client to remove it.
+
+**What it deliberately does NOT do.** lmm never moves, copies, downloads or deletes a Workshop item's files — the Steam client owns them where they sit, and the game loads them from there. So:
+
+- **Deploying, enabling, disabling, updating, rolling back and re-linking are refused** for a Workshop item, with a message naming what to do in Steam instead. So is `lmm install steamworkshop:<file id>` for an item you are already subscribed to: an lmm-managed second copy alongside the one Steam loads would put the mod in the game twice. A bookkeeping-only "disabled" flag on a mod the game still loads would be a lie.
+- **Profile switches do not change what Steam has on disk.** A Workshop item is game-global; lmm profiles are not. `lmm profile switch` / `apply` leave such items exactly as they are and say so once. Managing which items are active is the Steam client's job.
+- **Conflict detection cannot see them.** `lmm conflicts` compares files deployed under the game's `mod_path`, and a Workshop item has none there. lmm cannot see inside a game's own Workshop loader.
+- **`lmm profile reorder` omits them.** Load order decides deploy precedence, and a tracked-only item deploys nothing, so any position it held would be inert.
+- **Search and downloading are not in this tier.** Searching the Workshop needs a personal Steam Web API key, and downloading items needs `steamcmd`; both land in later units.
+
+Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop/meta/` — six hours for an item Valve describes, one hour for one it refuses. The directory is safe to delete at any time; `--refresh` bypasses it for one run.
 
 ### Search
 
@@ -1881,14 +1908,15 @@ internal/
 
 lmm follows the XDG Base Directory specification. `--config` and `--data` override the resolved directories; `cache_path` in `config.yaml` overrides the cache.
 
-| Type             | Path                                                                                              |
-| ---------------- | ------------------------------------------------------------------------------------------------- |
-| Config           | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                |
-| Custom Sources   | `<config>/sources/*.yaml`                                                                         |
-| Database         | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                 |
-| Credential key   | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login` |
-| Mod Cache        | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)  |
-| Download Staging | `<data>/downloads/` (in-flight downloads and archive extraction)                                  |
+| Type                    | Path                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| Config                  | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                |
+| Custom Sources          | `<config>/sources/*.yaml`                                                                         |
+| Database                | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                 |
+| Credential key          | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login` |
+| Mod Cache               | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)  |
+| Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                  |
+| Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                    |
 
 **Precedence.** `--config`/`--data` win outright. Otherwise an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path decides, whether or not `$XDG_…/lmm` exists yet — setting the variable is an explicit instruction, and lmm never silently writes somewhere else (#297). Only when the variable is **unset** — or set to a relative path, which the XDG spec requires be ignored — does lmm fall back to the legacy `~/.config/lmm` / `~/.local/share/lmm`, which is the situation an install predating XDG support is in. If you set an XDG variable and want your existing data, move the directory to the new location (or point `--data`/`--config` at the old one).
 

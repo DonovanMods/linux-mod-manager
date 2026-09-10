@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -63,6 +64,21 @@ type InstalledDetail struct {
 	// all (not a merge-compile game, or no pak merge source) - distinct from
 	// a non-nil pointer to false, which means "applies, and is off".
 	ConvertPaks *bool `json:"convert_paks,omitempty"`
+
+	// External and ExternalPath mirror the installed row's own two fields
+	// (#269), so `lmm mod show` and the SPA's mod page can render
+	// "Managed by: Steam Workshop (<path>)" - and hide the deploy, disable,
+	// rollback and relink actions - without a second lookup.
+	External     bool   `json:"external,omitzero"`
+	ExternalPath string `json:"external_path,omitempty"`
+	// UpdatedAt is when the source published the revision that is
+	// INSTALLED - distinct from Mod.UpdatedAt above, which describes the
+	// revision the source has NOW. The two differ exactly when an update is
+	// available. It is what a human-facing surface prints as the installed
+	// version for a mod whose Version is not a readable string (#269: a
+	// Steam Workshop item's version identity is a 19-digit content id).
+	// omitzero: absent for a row installed before lmm recorded the date.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // ModDetail fetches modID from sourceID and joins whatever local install
@@ -95,6 +111,9 @@ func (s *Service) ModDetail(ctx context.Context, game *domain.Game, profile, sou
 		Version:      installed.Version,
 		Profile:      profile,
 		UpdatePolicy: installed.UpdatePolicy,
+		External:     installed.External,
+		ExternalPath: installed.ExternalPath,
+		UpdatedAt:    installed.UpdatedAt,
 	}
 	if game.DeployMode == domain.DeployCompile && s.ModHasPakMergeSource(game, installed) {
 		v := installed.ConvertPaks

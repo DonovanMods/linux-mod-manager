@@ -170,6 +170,48 @@ type DetectedGame struct {
 	// "not in the known-games list", which is also what a pre-#206 client
 	// decoding this document would assume of every row it had never seen.
 	Known bool `json:"known,omitzero"`
+	// WorkshopItems is how many Steam Workshop items this app's
+	// appworkshop manifest declares as installed (#269). Non-zero is what
+	// made detection prefill `steamworkshop: <appid>` into Sources, so the
+	// count is the evidence for that prefill rather than a separate claim -
+	// a frontend can say "30 Workshop items already downloaded" next to
+	// the row it is offering to add.
+	//
+	// omitzero: an app with no workshop manifest, or one whose manifest is
+	// the empty stub Steam leaves for a workshop-capable app with nothing
+	// subscribed, carries no member at all and gets no prefill.
+	WorkshopItems int `json:"workshop_items,omitzero"`
+}
+
+// WorkshopItem is one Steam Workshop item already installed on this machine
+// by the Steam client (#269). It follows DetectedGame's precedent (Ruling
+// 8): the type lives in domain so internal/core can consume a scan of the
+// user's Steam libraries without importing the concrete
+// internal/source/steamworkshop package that produces it.
+//
+// Every field is a fact read out of Steam's own appworkshop manifest; lmm
+// never writes any of them. Path is the directory the Steam client owns and
+// the game loads the item from - it is what lands in
+// InstalledMod.ExternalPath at adopt time.
+type WorkshopItem struct {
+	// FileID is the Steam published-file id, which is also the mod id lmm
+	// tracks the item under.
+	FileID string `json:"file_id"`
+	// Path is the absolute content directory Steam installed the item into
+	// (<library>/steamapps/workshop/content/<appid>/<fileid>).
+	Path string `json:"path"`
+	// SizeOnDisk is the manifest's recorded size in bytes; 0 when the
+	// manifest does not record one.
+	SizeOnDisk int64 `json:"size_on_disk,omitzero"`
+	// Manifest is Steam's content id for the installed revision - the
+	// version identity lmm records and compares against the API's
+	// hcontent_file. Absent on an older record, which is why TimeUpdated
+	// exists as the secondary signal.
+	Manifest string `json:"manifest,omitempty"`
+	// TimeUpdated is the manifest's Unix timestamp for the installed
+	// revision. It is what human-facing surfaces show as the item's
+	// version - a 19-digit content id is not a version anybody can read.
+	TimeUpdated int64 `json:"time_updated,omitzero"`
 }
 
 // ValidDeployModes is ValidLinkMethods' counterpart for ParseDeployMode.

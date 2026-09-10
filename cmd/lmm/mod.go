@@ -258,8 +258,11 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), result.Mod.Name, policyStr)
-	if modSetPin {
-		fmt.Printf(" (v%s)", result.Mod.Version)
+	// #269: a pin's target is the installed version, which for a Workshop
+	// item is the 19-digit content id - so an external mod is reported as
+	// pinned and nothing more (version_display.go).
+	if pinTarget := displayLockTarget(result.Mod.External, result.Mod.Version); modSetPin && pinTarget != "" {
+		fmt.Printf(" (%s)", pinTarget)
 	}
 	fmt.Println()
 
@@ -361,12 +364,20 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return emitJSON(result)
 	}
 
-	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), result.Mod.Name, target)
-	// Locking is a metadata write, not a deploy (design decision): when the
-	// target differs from what is actually installed, the game directory
-	// won't match the lock until convergence, so say so.
-	if target != result.Mod.Version {
-		fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", result.Mod.Version)
+	// #269: the same rule `mod show`'s Lock line reads. Unreachable for a
+	// Workshop item today - the capability gate above refuses it, since the
+	// source reports Versions:false - and spelled once here anyway so a
+	// source that later CAN resolve versions cannot reintroduce the shape.
+	if lockTarget := displayLockTarget(result.Mod.External, target); lockTarget != "" {
+		fmt.Printf("%s %s locked at %s\n", colorGreen("✓"), result.Mod.Name, lockTarget)
+		// Locking is a metadata write, not a deploy (design decision): when
+		// the target differs from what is actually installed, the game
+		// directory won't match the lock until convergence, so say so.
+		if target != result.Mod.Version {
+			fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", result.Mod.Version)
+		}
+	} else {
+		fmt.Printf("%s %s locked\n", colorGreen("✓"), result.Mod.Name)
 	}
 
 	return nil
@@ -663,7 +674,21 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
 	fmt.Printf("%s\n", colorHeader(mod.Name))
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(mod.Version), mod.Author)
+	// #269: an external item's catalog Version is Steam's 19-digit content
+	// id. The header shows the revision date; the labelled "Steam content
+	// id" line in the Managed-by-Steam block below is where the manifest
+	// belongs, and it is the ONLY place it appears.
+	headerVersion := mod.Version
+	switch {
+	case installedInfo != nil && installedInfo.External:
+		headerVersion = displayRevision(installedInfo.UpdatedAt)
+	case sourceIsWorkshop(svc, mod.SourceID) && !mod.UpdatedAt.IsZero():
+		// Not adopted: there is no installed row to carry External, and no
+		// "Installed:" line below either - so without this branch the header
+		// is the only version text on screen and it is the forbidden one.
+		headerVersion = displayRevision(mod.UpdatedAt)
+	}
+	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(headerVersion), mod.Author)
 	if mod.Category != "" {
 		fmt.Printf("Category: %s\n", mod.Category)
 	}
@@ -713,7 +738,17 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 
 	if installedInfo != nil {
 		fmt.Println()
-		fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
+		if installedInfo.External {
+			// #269: for an external mod the installed line is a DATE - the
+			// Version field holds Steam's 19-digit content id, which is the
+			// item's version identity and not a version anybody can read.
+			// The content id is still shown, labelled as itself, below.
+			// Same displayRevision the header above reads, so the two lines
+			// cannot word the same instant differently.
+			fmt.Printf("Installed: %s (profile: %s)\n", colorCyan(displayRevision(installedInfo.UpdatedAt)), installedInfo.Profile)
+		} else {
+			fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
+		}
 		policyDisplay := policyToString(installedInfo.UpdatePolicy)
 		switch policyDisplay {
 		case "pinned":
@@ -726,13 +761,21 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		}
 		fmt.Printf("  Update policy: %s\n", policyDisplay)
 		if installedInfo.Locked {
-			lockLine := "locked at v" + installedInfo.LockedVersion
-			// Locking is a metadata write, not a deploy (same #97 design
-			// decision doModLock's own convergence hint follows): only say
-			// so when the lock's target actually differs from what's
-			// installed.
-			if installedInfo.LockedVersion != installedInfo.Version {
-				lockLine += " — run 'lmm profile apply' to converge"
+			// #269: an external mod's lock TARGET is the content id, so the
+			// line says only that it is locked (version_display.go). The
+			// converge hint goes with it: it compares two content ids, and
+			// the run it recommends is one `profile apply` deliberately
+			// skips for this mod.
+			lockLine := "locked"
+			if target := displayLockTarget(installedInfo.External, installedInfo.LockedVersion); target != "" {
+				lockLine += " at " + target
+				// Locking is a metadata write, not a deploy (same #97 design
+				// decision doModLock's own convergence hint follows): only say
+				// so when the lock's target actually differs from what's
+				// installed.
+				if installedInfo.LockedVersion != installedInfo.Version {
+					lockLine += " — run 'lmm profile apply' to converge"
+				}
 			}
 			fmt.Printf("  Lock: %s\n", colorYellow(lockLine))
 		} else {
@@ -744,6 +787,19 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 				convertState = "off"
 			}
 			fmt.Printf("  Pak conversion: %s\n", convertState)
+		}
+		if installedInfo.External {
+			// #269: last, after the settings that DO apply, so the block
+			// reads as the qualification on everything above it.
+			fmt.Println()
+			fmt.Println("Managed by: Steam Workshop")
+			fmt.Printf("  Location: %s\n", installedInfo.ExternalPath)
+			if installedInfo.Version != "" {
+				fmt.Printf("  Steam content id: %s\n", installedInfo.Version)
+			}
+			fmt.Println("  lmm tracks this item and checks it for updates; Steam owns its")
+			fmt.Println("  files and applies its updates. Deploy, enable/disable, update and")
+			fmt.Println("  rollback are not available for it.")
 		}
 	}
 

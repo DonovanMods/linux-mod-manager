@@ -91,7 +91,7 @@ func TestUpdater_CheckUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.Equal(t, "2.0.0", updates[0].NewVersion)
@@ -127,7 +127,7 @@ func TestUpdater_CheckUpdates_NoUpdates(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, updates)
 }
@@ -157,7 +157,7 @@ func TestUpdater_CheckUpdates_PinnedModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, updates, "pinned mods should not show updates")
 }
@@ -179,7 +179,7 @@ func TestUpdater_CheckUpdates_LocalModsSkipped(t *testing.T) {
 		},
 	}
 
-	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil)
+	updates, err := updater.CheckUpdates(context.Background(), nil, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, updates, "local mods should not be checked for updates")
 }
@@ -219,7 +219,7 @@ func TestCheckUpdatesTranslatesGameIDPerSourceMapping(t *testing.T) {
 		{Mod: domain.Mod{ID: "b", SourceID: "my-repo", GameID: "skyrim-se", Version: "1.0"}},
 	}
 
-	_, err := u.CheckUpdates(context.Background(), game, installed, nil)
+	_, err := u.CheckUpdates(context.Background(), game, installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"skyrimspecialedition"}, mapped.received)
 	assert.Equal(t, []string{"skyrim-se"}, unmapped.received)
@@ -257,7 +257,7 @@ func TestUpdater_CheckUpdates_EmitsUpdateCheckEventsPerReportingSource(t *testin
 	}
 
 	sink, got := core.RecordEvents()
-	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink)
+	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, *got, 4)
 
@@ -305,7 +305,7 @@ func TestUpdater_CheckUpdates_GlobalCounterSpansSources(t *testing.T) {
 	}
 
 	sink, got := core.RecordEvents()
-	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink)
+	_, err := updater.CheckUpdates(context.Background(), nil, installed, sink, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, *got, 5)
 
@@ -402,7 +402,7 @@ func TestService_CheckGameUpdates_LoadsProfileOnce(t *testing.T) {
 	var updates []domain.Update
 	loads := core.CountProfileLoadsForTest(func() {
 		var err error
-		updates, err = svc.CheckGameUpdates(context.Background(), game, "default", installed, nil)
+		updates, err = svc.CheckGameUpdates(context.Background(), game, "default", installed, nil, core.UpdateCheckOptions{})
 		require.NoError(t, err)
 	})
 

@@ -87,6 +87,10 @@ game, the same set the interactive "all" answer selects; --select takes
 the same 1-based indices the prompt accepts (e.g. "1,2"), including
 already-configured games' numbers for a repair.
 
+A game whose Steam Workshop manifest shows items already downloaded is
+mapped to the 'steamworkshop' source automatically, so 'lmm import
+--workshop' can track them; --no-workshop suppresses that.
+
 --include-unknown also lists every OTHER installed Steam game, in its own
 section (#206). Those are not numbered and cannot be selected here -
 nothing tells lmm where they keep their mods - so each is listed with its
@@ -110,7 +114,8 @@ Examples:
   lmm game detect --all
   lmm game detect --select 1,3
   lmm game detect --include-unknown
-  lmm game detect --include-unknown --json`,
+  lmm game detect --include-unknown --json
+  lmm game detect --no-workshop`,
 	Args: cobra.NoArgs,
 	RunE: runGameDetect,
 }
@@ -119,6 +124,7 @@ var (
 	gameDetectAll            bool
 	gameDetectSelect         string
 	gameDetectIncludeUnknown bool
+	gameDetectNoWorkshop     bool
 )
 
 func init() {
@@ -129,6 +135,8 @@ func init() {
 
 	gameDetectCmd.Flags().BoolVar(&gameDetectAll, "all", false, "select every not-yet-configured detected game without prompting")
 	gameDetectCmd.Flags().StringVar(&gameDetectSelect, "select", "", "comma-separated 1-based indices to add/repair without prompting (see the printed listing)")
+	gameDetectCmd.Flags().BoolVar(&gameDetectNoWorkshop, "no-workshop", false,
+		"do not map games with subscribed Steam Workshop items to the steamworkshop source")
 	gameDetectCmd.Flags().BoolVar(&gameDetectIncludeUnknown, "include-unknown", false,
 		"also list installed games that are not in the known-games list (add one with 'game add --from-detected')")
 	gameDetectCmd.MarkFlagsMutuallyExclusive("all", "select")
@@ -273,7 +281,7 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	// "installed, but none of it is in the known-games list" so a plain scan
 	// with only the latter can say so instead of a flat "found nothing".
 	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir,
-		app.DetectOptions{IncludeUnknown: true})
+		app.DetectOptions{IncludeUnknown: true, NoWorkshop: gameDetectNoWorkshop})
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}

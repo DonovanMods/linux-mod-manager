@@ -355,6 +355,14 @@ func TestServeJSONGoldens(t *testing.T) {
 			profileSyncPlanRequest{Profile: "survival"},
 		},
 		{
+			// issue 269's workshop adopt: refresh is the ONE choice it
+			// offers, and it is a plan-time one - the decision itself is
+			// expressed by starting the job or not. Its apply struct has
+			// no json tags and pins nothing, the same shape adopt has.
+			"workshop_adopt_plan_request",
+			workshopAdoptPlanRequest{Refresh: true},
+		},
+		{
 			// mod_relink's split follows core's own: the RE-LINK is plan
 			// time (it is what the plan describes - From, To, the lock
 			// refusal), the metadata overrides are apply time

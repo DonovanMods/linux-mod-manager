@@ -352,6 +352,12 @@ type UpdatePlan struct {
 	LockedVersion string `json:"locked_version,omitempty"`
 	// Pinned reports Mod.UpdatePolicy == domain.UpdatePinned.
 	Pinned bool `json:"pinned"`
+	// External reports that Mod is an EXTERNAL mod (#269): lmm can REPORT
+	// this update but not apply it - Steam applies a Workshop update itself
+	// at the next game launch. Refusal carries that sentence, reusing the
+	// existing field rather than adding refusal-rendering machinery, and
+	// ApplyUpdate returns ExternalModError if called anyway.
+	External bool `json:"external,omitzero"`
 	// Update is the result of checking (Mod.SourceID, Mod.ID) for an update -
 	// nil means CheckGameUpdates found nothing for this mod (up to date, or
 	// pinned/filtered before the source was ever queried; a DeployCompile
@@ -408,7 +414,7 @@ func (s *Service) PlanUpdate(ctx context.Context, game *domain.Game, profileName
 		return nil, err
 	}
 
-	updates, err := s.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil)
+	updates, err := s.CheckGameUpdates(ctx, game, profileName, []domain.InstalledMod{*mod}, nil, UpdateCheckOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to check update: %w", err)
 	}
@@ -455,7 +461,11 @@ func (s *Service) planUpdateBase(ctx context.Context, game *domain.Game, profile
 	plan := &UpdatePlan{
 		Mod:      *mod,
 		Pinned:   mod.UpdatePolicy == domain.UpdatePinned,
+		External: mod.External,
 		snapshot: snapshot,
+	}
+	if mod.External {
+		plan.Refusal = ReasonExternalNoUpdate
 	}
 
 	// #97: mirrors applySingleUpdate's own pre-lift profile load - a
@@ -487,6 +497,8 @@ func (s *Service) planUpdateFrom(ctx context.Context, game *domain.Game, profile
 	plan.RecompileNeeded = upd.RecompileNeeded
 	plan.Changelog = CleanChangelog(upd.Changelog)
 	if plan.Locked {
+		// A lock is a user decision about a mod lmm COULD update, so its
+		// wording wins over the external one when both apply.
 		ref := &domain.ModReference{Version: plan.LockedVersion}
 		plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, ref)
 	}
@@ -785,6 +797,12 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// before any lock check, hook, or side effect - a stale plan is refused
 	// having changed nothing at all, mirroring applyInstall's own placement.
 	if err := s.checkPlanFresh(ctx, plan.Mod.GameID, plan.Mod.ProfileName, plan.snapshot); err != nil {
+		return result, err
+	}
+	// #269: lmm can report a Workshop item's update but never apply one -
+	// Steam does that itself. Refused before any hook or download, so the
+	// caller is left exactly as it was.
+	if err := refuseExternal("update", &plan.Mod, ReasonExternalNoUpdate); err != nil {
 		return result, err
 	}
 	if plan.Update == nil {

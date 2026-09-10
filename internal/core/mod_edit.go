@@ -92,6 +92,12 @@ func (s *Service) PlanRelinkMod(ctx context.Context, game *domain.Game, profileN
 		return nil, err
 	}
 
+	// #269: a Steam Workshop item is not deployed by lmm, so there is no
+	// link to move and no cache entry to re-key.
+	if err := refuseExternal("relink", mod, ReasonExternalNoRelink); err != nil {
+		return nil, err
+	}
+
 	relink := newSourceID != "" || newModID != ""
 	resolvedSourceID := newSourceID
 	if resolvedSourceID == "" {

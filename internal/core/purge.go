@@ -218,6 +218,13 @@ type PurgePlan struct {
 	// and none for an empty Mods set.
 	Hooks []string `json:"hooks"`
 
+	// External names every EXTERNAL mod in the profile (#269) - a Steam
+	// Workshop item lmm tracks but never deploys - by display name. They
+	// are absent from Mods because a purge does not touch them at all;
+	// naming them here is how the preview says what it will NOT do, rather
+	// than leaving the user to notice the count is short.
+	External []string `json:"external,omitempty"`
+
 	// MergedArtifact is what purgeMergedPak would do to the profile's
 	// merged artifact on a DeployCompile game - an effect Mods cannot
 	// express, since exmodz mods have no per-mod deployment of their own
@@ -243,16 +250,22 @@ type PurgePlan struct {
 // The returned plan is a snapshot: pass it to ApplyPurge promptly, and be
 // ready for ErrStalePlan if the installed set moved underneath it.
 func (s *Service) PlanPurge(ctx context.Context, game *domain.Game, profileName string, opts PurgeOptions) (*PurgePlan, error) {
-	mods, err := s.GetInstalledMods(ctx, game.ID, profileName)
+	installed, err := s.GetInstalledMods(ctx, game.ID, profileName)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
+	// #269: external mods are excluded from the purge set and named
+	// separately. The snapshot still covers the FULL installed set - the
+	// staleness precondition is about the profile changing underneath the
+	// plan, which an external mod appearing or vanishing absolutely is.
+	mods, external := partitionExternal(installed)
 	plan := &PurgePlan{
 		Profile:        profileName,
 		Mods:           mods,
+		External:       external,
 		Uninstall:      opts.Uninstall,
 		MergedArtifact: s.mergedArtifactEffectForPurge(game),
-		snapshot:       snapshotOf(mods),
+		snapshot:       snapshotOf(installed),
 	}
 	if len(mods) > 0 {
 		plan.Hooks = uninstallHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
@@ -357,6 +370,18 @@ func (s *Service) PurgeProfile(ctx context.Context, game *domain.Game, profileNa
 
 func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts PurgeOptions, sink EventSink) (*PurgeResult, error) {
 	result := &PurgeResult{}
+
+	// #269: a caller may hand this the full installed set (PurgeProfile's
+	// own signature invites it), so the exclusion is enforced HERE as well
+	// as in PlanPurge - a purge must never remove a Steam Workshop item's
+	// tracking or reach for files Steam owns, whichever entry point was used.
+	mods, externalMods := partitionExternal(mods)
+	if sink != nil {
+		for _, name := range externalMods {
+			sink(StepEvent{Scope: Scope{Op: OpPurge, ModName: name}, Phase: PurgeExternalSkipped,
+				Detail: "tracked from Steam - purge leaves it alone"})
+		}
+	}
 
 	hooks, err := s.resolvedHooks(ctx, game, profileName)
 	if err != nil {

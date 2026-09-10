@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
@@ -21,9 +23,9 @@ import (
 // for an actionable error message and bounds memory use.
 const errorBodyLimit = 10 * 1024
 
-// Options configures a Client. BaseURL, AuthHeader, and AuthLabel are
-// required and validated by New (which panics on omission); the rest have
-// sensible zero-value defaults.
+// Options configures a Client. BaseURL, AuthLabel, and ONE of AuthHeader /
+// AuthQueryParam are required and validated by New (which panics on
+// omission); the rest have sensible zero-value defaults.
 type Options struct {
 	HTTPClient *http.Client
 	BaseURL    string
@@ -31,6 +33,14 @@ type Options struct {
 	// AuthHeader is the request header used to forward APIKey, e.g. "apikey"
 	// (NexusMods) or "x-api-key" (CurseForge).
 	AuthHeader string
+	// AuthQueryParam is the alternative to AuthHeader for an API that takes
+	// its key as a QUERY PARAMETER rather than a header - Valve's Steam Web
+	// API takes "key=" (#269). Exactly one of the two is used: when this is
+	// set the key is appended to the request URL and no auth header is
+	// sent, and when it is empty the AuthHeader path is unchanged. Set
+	// neither and New panics; set both and AuthHeader wins, since that is
+	// what every existing source uses.
+	AuthQueryParam string
 	// AuthLabel is the human-readable source name interpolated into the
 	// "<label> API key required" error returned on 401.
 	AuthLabel string
@@ -53,21 +63,22 @@ type Client struct {
 	baseURL          string
 	apiKey           string
 	authHeader       string
+	authQueryParam   string
 	authLabel        string
 	errorMapper      func(int, []byte, string) error
 	maxResponseBytes int64
 }
 
 // New returns a Client configured with opts. Panics when a required field
-// (BaseURL, AuthHeader, AuthLabel) is empty — the package is internal and
-// only ever constructed at startup, so a missing required field is a
-// programming error worth catching loudly.
+// (BaseURL, AuthLabel, and one of AuthHeader / AuthQueryParam) is empty —
+// the package is internal and only ever constructed at startup, so a
+// missing required field is a programming error worth catching loudly.
 func New(opts Options) *Client {
 	if opts.BaseURL == "" {
 		panic("httpclient.New: BaseURL is required")
 	}
-	if opts.AuthHeader == "" {
-		panic("httpclient.New: AuthHeader is required")
+	if opts.AuthHeader == "" && opts.AuthQueryParam == "" {
+		panic("httpclient.New: AuthHeader or AuthQueryParam is required")
 	}
 	if opts.AuthLabel == "" {
 		panic("httpclient.New: AuthLabel is required")
@@ -81,6 +92,7 @@ func New(opts Options) *Client {
 		baseURL:          opts.BaseURL,
 		apiKey:           opts.APIKey,
 		authHeader:       opts.AuthHeader,
+		authQueryParam:   opts.AuthQueryParam,
 		authLabel:        opts.AuthLabel,
 		errorMapper:      opts.ErrorMapper,
 		maxResponseBytes: opts.MaxResponseBytes,
@@ -118,14 +130,14 @@ func (c *Client) DoJSON(ctx context.Context, method, path string, result interfa
 
 // DoJSONBody is DoJSON with a JSON request body: body is marshalled and sent
 // with a Content-Type of application/json, and the response is decoded into
-// result exactly as DoJSON decodes it - same auth header, same ErrorMapper,
+// result exactly as DoJSON decodes it - same auth injection, same ErrorMapper,
 // same 401/status mapping, same capped error-body read. A nil body sends no
 // body and no Content-Type at all, which is what DoJSON delegates.
 //
 // Added for CurseForge's batch POST /v1/mods (#28), which needs a method and
 // a body DoJSON's signature cannot express; DoJSON's own signature is
 // unchanged so no existing call site moves.
-func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, result interface{}) (err error) {
+func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, result interface{}) error {
 	var reader io.Reader
 	if body != nil {
 		encoded, merr := json.Marshal(body)
@@ -135,18 +147,69 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 		reader = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, c.authURL(path), reader)
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.apiKey != "" {
+	c.applyAuthHeader(req)
+	req.Header.Set("Accept", "application/json")
+	return c.do(req, path, result)
+}
+
+// DoForm performs a form POST against baseURL+path and JSON-decodes the
+// response body into result: Content-Type application/x-www-form-urlencoded
+// with form as the body, and otherwise identical to DoJSON — the same auth
+// injection, the same ErrorMapper hook, the same 401 -> domain.ErrAuthRequired
+// mapping, the same errorBodyLimit and the same decode.
+//
+// It exists for Valve's Steam Web API (#269), which takes its arguments as
+// a POST form (an item batch is itemcount + publishedfileids[i]) rather
+// than as a JSON body or a query string.
+func (c *Client) DoForm(ctx context.Context, path string, form url.Values, result any) error {
+	body := form.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.authURL(path), strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	c.applyAuthHeader(req)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	return c.do(req, path, result)
+}
+
+// authURL returns the absolute request URL for path, appending the API key
+// as a query parameter when the client is configured for query-parameter
+// auth (and a key is set). A path that already carries its own query string
+// keeps it. Header-auth clients — every source that predates #269 — get
+// baseURL+path back unchanged.
+func (c *Client) authURL(path string) string {
+	full := c.baseURL + path
+	if c.authHeader != "" || c.authQueryParam == "" || c.apiKey == "" {
+		return full
+	}
+	sep := "?"
+	if strings.Contains(full, "?") {
+		sep = "&"
+	}
+	return full + sep + url.QueryEscape(c.authQueryParam) + "=" + url.QueryEscape(c.apiKey)
+}
+
+// applyAuthHeader sets the auth header when the client is configured for
+// header auth and a key is set. A query-parameter client never sends one.
+func (c *Client) applyAuthHeader(req *http.Request) {
+	if c.authHeader != "" && c.apiKey != "" {
 		req.Header.Set(c.authHeader, c.apiKey)
 	}
-	req.Header.Set("Accept", "application/json")
+}
 
+// do executes req and applies the shared response contract DoJSON and
+// DoForm both promise. requestPath is the caller-supplied path (not the
+// resolved URL) so an ErrorMapper never sees a key that auth injection
+// appended.
+func (c *Client) do(req *http.Request, requestPath string, result any) (err error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
@@ -166,7 +229,7 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
 		}
 		if c.errorMapper != nil {
-			if mapped := c.errorMapper(resp.StatusCode, errBody, path); mapped != nil {
+			if mapped := c.errorMapper(resp.StatusCode, errBody, requestPath); mapped != nil {
 				return mapped
 			}
 		}

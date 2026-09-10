@@ -42,7 +42,7 @@ func TestServer_APIUpdates_ReturnsExactUpdateCheckReport(t *testing.T) {
 	ctx := context.Background()
 	installed, err := svc.GetInstalledMods(ctx, game.ID, "default")
 	require.NoError(t, err)
-	updates, err := svc.CheckGameUpdates(ctx, game, "default", installed, nil)
+	updates, err := svc.CheckGameUpdates(ctx, game, "default", installed, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	want := &core.UpdateCheckReport{GameID: game.ID, Profile: "default", Updates: updates, Skipped: core.CountUpdateSkips(installed)}
 	requireEncodesLike(t, rec.Body.Bytes(), want)

@@ -1661,7 +1661,7 @@ func TestApplyInstall_ExplicitOldFile_RecordsFileVersionAndCacheKey(t *testing.T
 	registry.Register(updateSrc)
 	updater := core.NewUpdater(registry)
 
-	updates, err := updater.CheckUpdates(context.Background(), game, []domain.InstalledMod{*got}, nil)
+	updates, err := updater.CheckUpdates(context.Background(), game, []domain.InstalledMod{*got}, nil, core.UpdateCheckOptions{})
 	require.NoError(t, err)
 	require.Len(t, updates, 1)
 	assert.Equal(t, "1.5", updates[0].NewVersion)

@@ -127,11 +127,11 @@ type UpdateBatchResult struct {
 	// Failed are the items that could not be applied, in application order.
 	Failed []UpdateBatchFailure `json:"failed,omitzero"`
 	// Skipped are the items the batch declined to attempt, in application
-	// order - today exactly the locked refs (#97): Status is UpdateSkipped
-	// and Reason is the engine's own refusal sentence, so a frontend renders
-	// the lock refusal without re-wording it. Kept apart from Failed
-	// because "we did not try, and here is why" is a different fact from
-	// "we tried and it broke".
+	// order - the locked refs (#97) and the external ones (#269): Status is
+	// UpdateSkipped and Reason is the engine's own refusal sentence, so a
+	// frontend renders the refusal without re-wording it. Kept apart from
+	// Failed because "we did not try, and here is why" is a different fact
+	// from "we tried and it broke". Mod.Locked tells the two kinds apart.
 	Skipped []UpdateApplyResult `json:"skipped,omitzero"`
 	// ErrorMessage carries a partial update-CHECK failure (the source query
 	// that produced plan.Updates, not the apply below) - ApplyUpdateBatch
@@ -163,7 +163,7 @@ func (s *Service) PlanUpdateBatch(ctx context.Context, game *domain.Game, profil
 	if err != nil {
 		return nil, err
 	}
-	updates, err := s.CheckGameUpdates(ctx, game, profileName, installed, nil)
+	updates, err := s.CheckGameUpdates(ctx, game, profileName, installed, nil, UpdateCheckOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to check updates: %w", err)
 	}
@@ -256,6 +256,9 @@ func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, pr
 //     the lock alone, so trying it would only turn a policy decision into an
 //     error. The skip carries UpdateSkipped and the plan's own Refusal
 //     sentence as its Reason.
+//   - An EXTERNAL row is skipped the same way (#269): Steam applies a
+//     Workshop update itself, so reporting one as a failed update would
+//     invert the design's whole point for Tier 1.
 //   - A RecompileNeeded row (#196/#197 merged-pak staleness) is routed to
 //     the merged-pak regen instead of the version-bump path, exactly as
 //     `lmm update <mod>` routes it - such a row carries no version change,
@@ -329,7 +332,16 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 			continue
 		}
 
-		if itemPlan.Locked {
+		// #269: an EXTERNAL item's update is a normal, expected, reportable
+		// state - Steam applies it itself - so the batch declines to attempt
+		// it exactly as it declines a locked one, rather than letting
+		// applyUpdate's refusal land in Failed and paint the run red.
+		// The two share one branch because they share one outcome. Note
+		// that the || order buys nothing about WORDING: when a row is both
+		// external and locked, planUpdateBase gives the LOCKED reason
+		// precedence (update.go), deliberately - a lock is the user's own
+		// choice and lifting it is the action available to them.
+		if itemPlan.External || itemPlan.Locked {
 			skip := planUpdateSkip(itemPlan, upd.NewVersion)
 			result.Skipped = append(result.Skipped, skip)
 			emit(ModEvent{Scope: scope, Phase: UpdateBatchItemSkipped, Detail: skip.Reason})
@@ -374,13 +386,19 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 // Mod carries the ref as it STANDS - the lock's target version, flagged
 // locked - matching cmd/lmm's own planUpdateResult for the identical case:
 // nothing was written, so the ref the document names must be the one still
-// in the profile.
+// in the profile. An EXTERNAL row that is not locked has no lock version to
+// name and is not locked, so it carries the installed version unflagged -
+// which is what lets a renderer tell the two refusals apart (#269).
 func planUpdateSkip(plan *UpdatePlan, toVersion string) UpdateApplyResult {
+	ref := domain.ModReference{
+		SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID,
+		Version: plan.LockedVersion, Locked: true,
+	}
+	if !plan.Locked {
+		ref.Version, ref.Locked = plan.Mod.Version, false
+	}
 	return UpdateApplyResult{
-		Mod: domain.ModReference{
-			SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID,
-			Version: plan.LockedVersion, Locked: true,
-		},
+		Mod:         ref,
 		Name:        plan.Mod.Name,
 		FromVersion: plan.Mod.Version,
 		ToVersion:   toVersion,

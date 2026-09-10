@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -535,6 +536,17 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	r.emitEv(VerifyEvent{Kind: VerifyEvBegin, HasFiles: result.HasFiles})
 
 	if !result.HasFiles {
+		// #269: an all-external profile has no checksummed files at all, so
+		// its presence tier has to run on this branch too - otherwise a
+		// profile of nothing but Steam Workshop items would verify as
+		// "nothing to check" and never notice an unsubscribed one.
+		installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
+		if err != nil {
+			return nil, fmt.Errorf("getting installed mods: %w", err)
+		}
+		if err := r.externalPresencePass(installedMods); err != nil {
+			return result, err
+		}
 		// #217: doVerify still runs a deploy-convergence sweep here even
 		// with no checksummed files at all (a game dir can hold stray
 		// lmm-deployed files after everything is uninstalled). The
@@ -563,6 +575,12 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	installedMods, err := s.GetInstalledMods(ctx, game.ID, profile)
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
+	}
+
+	if err := r.externalPresencePass(installedMods); err != nil {
+		// Cancelled mid-pass: return the partial result already
+		// accumulated, same contract Task 3's brief specifies.
+		return result, err
 	}
 
 	r.mergedPakStalenessPass()
@@ -597,6 +615,56 @@ func (s *Service) verify(ctx context.Context, game *domain.Game, profile string,
 	r.convergencePass()
 
 	return result, nil
+}
+
+// externalPresencePass is #269's verify tier for EXTERNAL mods: the only
+// thing lmm can honestly check about a Steam Workshop item is that the
+// directory Steam owns is still there and still has something in it.
+//
+// There is no checksum tier for these (lmm never downloaded the bytes, so
+// it has nothing recorded to compare against - which is why versionPass
+// skips them too), and there is no --fix: both repairs verify offers,
+// redownload and checksum backfill, presuppose an lmm-owned cache entry.
+// A missing directory is reported and left for the user to resolve in the
+// Steam client, which is the only place it CAN be resolved.
+func (r *verifyRun) externalPresencePass(installedMods []domain.InstalledMod) error {
+	for i := range installedMods {
+		mod := &installedMods[i]
+		if !mod.External {
+			continue
+		}
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		if r.opts.ModFilter != "" && mod.ID != r.opts.ModFilter {
+			continue
+		}
+		if externalContentPresent(mod.ExternalPath) {
+			continue
+		}
+		r.result.Issues++
+		r.finding(VerifyFinding{
+			ModID: mod.ID, ModName: mod.Name, Status: "external_missing",
+			Note:          "Steam no longer has this item on disk - it may have been unsubscribed",
+			FixableReason: "lmm does not own this item's files, so there is nothing for --fix to redownload - resubscribe in the Steam client, or uninstall it from lmm",
+		}, VerifyEvent{})
+	}
+	return nil
+}
+
+// externalContentPresent reports whether path is a directory with at least
+// one entry. An empty directory counts as absent: Steam leaves one behind
+// after an unsubscribe, and reporting it as present would hide exactly the
+// case this pass exists to catch.
+func externalContentPresent(path string) bool {
+	if path == "" {
+		return false
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false
+	}
+	return len(entries) > 0
 }
 
 // syncMergedPakPass ports cmd/lmm/verify.go's fix-mode merged-pak resync
@@ -1034,7 +1102,10 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 		// Nothing to check against: local imports and manual downloads have
 		// no source to query, and a mod with no recorded file IDs predates
 		// even the buggy stamping this check exists to catch.
-		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || len(mod.FileIDs) == 0 {
+		// #269: an external mod has no source file list to check a recorded
+		// version against - and no lmm-owned cache entry a repair could act
+		// on. Its own check is externalPresencePass.
+		if mod.SourceID == domain.SourceLocal || mod.ManualDownload || mod.External || len(mod.FileIDs) == 0 {
 			continue
 		}
 

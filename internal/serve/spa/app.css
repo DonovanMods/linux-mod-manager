@@ -746,6 +746,15 @@ select {
   white-space: nowrap;
 }
 
+/* An EXTERNAL row (issue 269) offers no update checkbox - lmm can never apply
+ * a Workshop update, so there is nothing for a tick to mean. The spacer holds
+ * the checkbox's place so its name still lines up with the rows that have one;
+ * 1em rather than a pixel figure because a checkbox is font-sized. */
+.card__row-spacer {
+  flex: 0 0 auto;
+  width: 1em;
+}
+
 .card__row-detail {
   flex: 0 100 auto;
   min-width: 0;

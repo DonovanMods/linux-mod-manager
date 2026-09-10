@@ -13,7 +13,22 @@ lmm-import - Import mods from local files or scan mod_path
 Import mods from local files or scan for untracked mods.
 
 .PP
-Two distinct modes, chosen by whether an archive path is given:
+Three modes: scan (no arguments), archive (an archive path), and
+--workshop.
+
+.PP
+--workshop brings the Steam Workshop items you are already subscribed to
+under lmm's tracking. lmm reads Steam's own bookkeeping, records each
+item and checks it for updates - it never moves, copies or deletes a
+Workshop item's files: Steam owns them where they sit and the game loads
+them from there. Deploying, enabling, disabling, updating and rolling
+back are all refused for such a mod, and uninstalling one removes lmm's
+tracking only. It is mutually exclusive with an archive argument and with
+--skip-match (there is nothing to match: items are identified by their
+Steam published-file id, exactly).
+
+.PP
+The other two modes, chosen by whether an archive path is given:
 
 .PP
 Scan mode (no arguments): scans the game's mod_path for files not yet
@@ -54,6 +69,8 @@ has nothing to check it against and will never notify about it.
 
 .PP
 Examples:
+  lmm import --workshop --game space-engineers-2   # Track subscribed Workshop items
+  lmm import --workshop --dry-run --game space-engineers-2
   lmm import --game hytale                    # Scan mod_path for untracked mods
   lmm import --game hytale --dry-run          # Preview what would be imported
   lmm import --game hytale --skip-match       # Scan without source lookup
@@ -83,12 +100,20 @@ Examples:
 	profile to import to (default: active profile)
 
 .PP
+\fB--refresh\fP[=false]
+	bypass cached source metadata (--workshop)
+
+.PP
 \fB--skip-match\fP[=false]
 	skip source lookup for untracked mods
 
 .PP
 \fB-s\fP, \fB--source\fP=""
 	source for update tracking (default: auto-detect or local)
+
+.PP
+\fB--workshop\fP[=false]
+	track the Steam Workshop items you are subscribed to (lmm never moves their files)
 
 
 .SH OPTIONS INHERITED FROM PARENT COMMANDS

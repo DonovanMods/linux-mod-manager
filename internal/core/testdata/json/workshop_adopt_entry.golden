@@ -1,0 +1,24 @@
+{
+  "file_id": "3617086610",
+  "path": "/home/user/.steam/steam/steamapps/workshop/content/1133870/3617086610",
+  "size_on_disk": 572330,
+  "manifest": "7987119735124793734",
+  "time_updated": 1764767935,
+  "mod": {
+    "id": "3617086610",
+    "source_id": "steamworkshop",
+    "name": "Sample Workshop Item",
+    "version": "7987119735124793734",
+    "author": "76561198000000000",
+    "summary": "",
+    "description": "",
+    "game_id": "space-engineers-2",
+    "category": "Blueprint",
+    "downloads": 0,
+    "picture_url": "",
+    "source_url": "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+    "files": [],
+    "dependencies": [],
+    "updated_at": "2026-08-27T12:00:00Z"
+  }
+}

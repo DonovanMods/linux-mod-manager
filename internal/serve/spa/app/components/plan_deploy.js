@@ -70,7 +70,7 @@ export function DeployPlanView({ plan, modal, state, actions }) {
             (mod) => html`
               <li
                 key=${`${mod.ref.source_id}/${mod.ref.mod_id}`}
-                class="plan__mod ${mod.skipped ? "plan__mod--skipped" : ""}"
+                class="plan__mod ${mod.skipped || mod.class === "external" ? "plan__mod--skipped" : ""}"
               >
                 <span class="plan__mod-name">${mod.name}</span>${" "}
                 ${
@@ -82,7 +82,15 @@ export function DeployPlanView({ plan, modal, state, actions }) {
                   // row shape. Rendering the span anyway would leave a gap
                   // that reads as a missing value rather than an absent
                   // field.
+                  //
+                  // issue 269: an external row's version IS Steam's 19-digit
+                  // content id, and the approval note's version DISPLAY rule
+                  // says no human-facing surface prints one as a version.
+                  // DeployPlanMod carries no timestamp to show a date
+                  // instead, and the row's detail line already says what it
+                  // is, so the span is simply omitted for it.
                   mod.ref.version &&
+                  mod.class !== "external" &&
                   html`<span class="mono plan__mod-version"
                     >${mod.ref.version}</span
                   >`
@@ -161,10 +169,16 @@ export function DeployPlanView({ plan, modal, state, actions }) {
           options=${{
             entries: [
               { value: "", label: "The whole profile" },
-              ...mods.map((m) => ({
-                value: `${m.ref.source_id}/${m.ref.mod_id}`,
-                label: m.name,
-              })),
+              // issue 269: `lmm deploy --mod <external>` is refused with
+              // ErrExternalMod, so an external row is not offered here -
+              // present-and-refused is what this frontend avoids everywhere
+              // else it touches a Steam-owned item.
+              ...mods
+                .filter((m) => m.class !== "external")
+                .map((m) => ({
+                  value: `${m.ref.source_id}/${m.ref.mod_id}`,
+                  label: m.name,
+                })),
             ],
             // mod_id and source_id are two fields of one choice, so they
             // are always written together - clearing the select has to
@@ -236,9 +250,15 @@ function mergedSummary(merged) {
 }
 
 /** modDetail is one plan row's own status line: why it will not deploy, or
- * how it will. The three states are mutually exclusive in the document
- * (DeployPlanMod: Skipped, Redownload, or a plain link list). */
+ * how it will. The states are mutually exclusive in the document
+ * (DeployPlanMod: class "external", Skipped, Redownload, or a plain link
+ * list).
+ *
+ * issue 269: an external row is checked FIRST and by class, not by an empty link
+ * list - "no files to link" is true of it but says nothing, and the preview
+ * must not read as though lmm merely found nothing to do. */
 function modDetail(mod) {
+  if (mod.class === "external") return "tracked from Steam — not deployed";
   if (mod.skipped) return `skipped — ${mod.skipped}`;
   if (mod.redownload) return "cache missing — will re-download first";
   const count = (mod.link ?? []).length;

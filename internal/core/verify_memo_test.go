@@ -217,3 +217,64 @@ func TestVerify_MemoHitDoesNotShareItsFindingsSlice(t *testing.T) {
 	assert.NotEqual(t, "clobbered", again.Findings[0].Status, "the memo kept its own copy")
 	assert.NotEqual(t, "clobbered", first.Findings[0].Status, "and so did the original caller")
 }
+
+// TestVerify_MemoMissesAfterSteamRemovesAnExternalItem is #269 x #336. An
+// EXTERNAL mod's files live where the STEAM CLIENT put them - outside
+// game.ModPath, outside lmm's cache, and recorded nowhere but as a path on
+// the row. Steam unsubscribes an item with lmm not running, so no beginOp
+// drops the memo, and nothing else the fingerprint reads moves: without
+// externalStatToken, every later Mission Control hydrate kept answering
+// "no issues" from a memo taken while the item was still on disk, and
+// externalPresencePass never got to run again.
+//
+// Two Services over ONE installation, because that is the shape the bug
+// hides in: the second one has no memo, so its answer is the ground truth
+// the first one has to agree with.
+func TestVerify_MemoMissesAfterSteamRemovesAnExternalItem(t *testing.T) {
+	cfgDir, dataDir, cacheDir := t.TempDir(), t.TempDir(), t.TempDir()
+	open := func() *core.Service {
+		svc, err := core.NewService(core.ServiceConfig{ConfigDir: cfgDir, DataDir: dataDir, CacheDir: cacheDir})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+		return svc
+	}
+
+	svc := open()
+	game := externalTestGame(t)
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	steamDir := seedExternalMod(t, svc, game, "default", "3617086610", "Workshop Item")
+
+	first := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.False(t, first.Cached, "the first run is a real one")
+	require.Zero(t, first.Issues, "a present item is fine")
+	require.True(t, verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal}).Cached,
+		"an unchanged installation answers from the memo")
+
+	// Steam unsubscribes the item. Nothing in lmm ran: no beginOp, no
+	// mutation, nothing under game.ModPath moved.
+	require.NoError(t, os.RemoveAll(steamDir))
+
+	after := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	assert.False(t, after.Cached, "the item's directory is gone, so the memo must not answer")
+	assertExternalMissing(t, after, "3617086610")
+
+	// The ground truth: a Service that never held a memo reports the same.
+	fresh := verifyOnce(t, open(), game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.False(t, fresh.Cached)
+	assertExternalMissing(t, fresh, "3617086610")
+	assert.Equal(t, fresh.Issues, after.Issues,
+		"the memoising Service and a cold one must agree about a removed item")
+}
+
+// assertExternalMissing asserts result carries externalPresencePass's
+// finding for modID.
+func assertExternalMissing(t *testing.T, result *core.VerifyResult, modID string) {
+	t.Helper()
+	for i := range result.Findings {
+		if result.Findings[i].ModID == modID {
+			assert.Equal(t, "external_missing", result.Findings[i].Status)
+			return
+		}
+	}
+	t.Fatalf("no finding for mod %q in %+v", modID, result.Findings)
+}

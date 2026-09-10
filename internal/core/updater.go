@@ -29,7 +29,7 @@ func NewUpdater(registry *source.Registry) *Updater {
 // receives an UpdateCheckEvent per mod from sources that implement
 // source.UpdateProgressReporter (nexusmods, curseforge); a nil sink, or a
 // source without the optional interface, emits nothing.
-func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink) ([]domain.Update, error) {
+func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
 	var checkable []domain.InstalledMod
 	for _, mod := range installed {
 		if UpdateCheckable(mod) {
@@ -101,14 +101,25 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 			}
 		}
 
-		var updates []domain.Update
-		if rep, ok := src.(source.UpdateProgressReporter); ok && sink != nil {
-			updates, err = rep.CheckUpdatesWithProgress(ctx, mods, func(n, total int, name string) {
+		var progress source.UpdateProgressFunc
+		if sink != nil {
+			progress = func(n, total int, name string) {
 				sink(UpdateCheckEvent{
 					Scope: Scope{Op: OpUpdateCheck, ModName: name, Index: n, Total: total}, SourceID: sourceID,
 					GlobalIndex: batchOffset + n, GlobalTotal: globalTotal,
 				})
-			})
+			}
+		}
+
+		var updates []domain.Update
+		// #269: a source that caches remote metadata gets told whether the
+		// caller asked to bypass that cache. It reports progress the same
+		// way, so this branch replaces (rather than sits beside) the
+		// progress-reporter one for such a source.
+		if refresher, ok := src.(source.RefreshingUpdateChecker); ok {
+			updates, err = refresher.CheckUpdatesRefreshing(ctx, mods, opts.Refresh, progress)
+		} else if rep, ok := src.(source.UpdateProgressReporter); ok && progress != nil {
+			updates, err = rep.CheckUpdatesWithProgress(ctx, mods, progress)
 		} else {
 			updates, err = src.CheckUpdates(ctx, mods)
 		}
@@ -122,6 +133,29 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 		return allUpdates, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
 	}
 	return allUpdates, nil
+}
+
+// UpdateCheckOptions tunes an update check.
+type UpdateCheckOptions struct {
+	// Refresh asks every source that caches remote metadata on disk to
+	// bypass that cache for this check - `lmm update --refresh`, and the
+	// web UI's refresh action. Sources with nothing to bypass (every source
+	// but Steam Workshop today) never see it; see
+	// source.RefreshingUpdateChecker.
+	Refresh bool
+}
+
+// CountExternalUpdates reports how many of updates belong to EXTERNAL mods
+// (#269), for UpdateCheckReport.External and for a frontend assembling its
+// own summary line.
+func CountExternalUpdates(updates []domain.Update) int {
+	n := 0
+	for _, u := range updates {
+		if u.InstalledMod.External {
+			n++
+		}
+	}
+	return n
 }
 
 // UpdateCheckable reports whether CheckUpdates will query a source for mod.
@@ -165,6 +199,14 @@ type UpdateCheckReport struct {
 	Updates      []domain.Update `json:"updates"`
 	Skipped      UpdateSkips     `json:"skipped"`
 	ErrorMessage string          `json:"error,omitempty"`
+
+	// External is how many of Updates belong to EXTERNAL mods (#269) -
+	// Steam Workshop items lmm can report an update for but never apply.
+	// A summary line reads them out separately ("N Steam Workshop items
+	// have updates - Steam applies these itself the next time you launch
+	// the game"), because "run lmm update" is the wrong advice for them.
+	// omitzero.
+	External int `json:"external,omitzero"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
@@ -256,8 +298,8 @@ func (s *Service) lockState(ctx context.Context, gameID, profileName, sourceID, 
 // returned, with the first non-nil error surfaced (checkErr takes priority
 // as the richer, multi-source diagnostic when both fail). sink is passed
 // straight through to Updater.CheckUpdates.
-func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink) ([]domain.Update, error) {
-	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed, sink)
+func (s *Service) CheckGameUpdates(ctx context.Context, game *domain.Game, profileName string, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
+	updates, checkErr := s.NewUpdater().CheckUpdates(ctx, game, installed, sink, opts)
 
 	staleUpd, staleErr := s.CheckMergedPakStaleness(ctx, game, profileName)
 	if staleErr != nil && checkErr == nil {

@@ -203,6 +203,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Steam Workshop tracking (#345, part of #269).** lmm can now track the
+  Steam Workshop items you are already subscribed to. It reads Steam's own
+  bookkeeping across every Steam library on the machine, records each
+  installed item, and checks it for updates through Valve's keyless
+  metadata API — with no account, no API key and no `steamcmd`.
+  `lmm game detect` maps a game whose Workshop manifest shows installed
+  items to the new built-in `steamworkshop` source (`--no-workshop` opts
+  out), `lmm import --workshop` records them — or, in `lmm serve`,
+  **Add mods ▾ → Track Steam Workshop items…** — and the web UI's library,
+  mod panel and full mod page render the same facts.
+  lmm **never** moves, copies, downloads or deletes a Workshop item's
+  files: the Steam client owns them where they sit. Such a mod is marked
+  EXTERNAL — counted and listed everywhere, refused by deploy, enable,
+  disable, update-apply, rollback and re-link, skipped by purge and by a
+  profile switch, absent from conflict detection and from the reorder
+  list, and uninstalled by removing lmm's tracking only. See the README's
+  Steam Workshop section for what that does and does not cover; searching
+  the Workshop (needs a personal API key) and downloading items (needs
+  `steamcmd`) land in later units.
+
 - **Install from the AUR, or from a `.deb`/`.rpm`/`.apk` (#352).** The
   release pipeline produced tarballs only, which is the one channel that
   asks you to place a binary by hand and leaves the man pages unreachable

@@ -14,8 +14,14 @@
 import { html, useEffect, useState } from "../render.js";
 import { navigate } from "../router.js";
 import { ApiError } from "../api.js";
-import { formatDate, FILTER_NAMES, SORT_NAMES } from "../modrows.js";
+import {
+  formatDate,
+  countExternal,
+  FILTER_NAMES,
+  SORT_NAMES,
+} from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
+import { displayVersion } from "../version.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 
 const FILTER_LABELS = {
@@ -220,7 +226,12 @@ export function Library({
   // than hand kind_updates.go's own planUpdatesKind a mod it can only file
   // under `not_found`.
   function updatableSelectedRows() {
-    return selectedRows().filter((r) => r.hasUpdate);
+    // issue 269: an EXTERNAL row is excluded even when it HAS an update.
+    // ApplyUpdateBatch declines it (core.ReasonExternalNoUpdate) and no
+    // choice in this UI changes that, so counting it would enable a button,
+    // state a batch size and open a confirm step for work that will never
+    // happen - the same defect the deploy dry run had.
+    return selectedRows().filter((r) => r.hasUpdate && !r.isExternal);
   }
 
   function batchUpdate() {
@@ -254,7 +265,11 @@ export function Library({
     return html`
       <div class="row-menu">
         ${
+          // issue 269: not offered for an external row, for the reason
+          // updatableSelectedRows states - and matching the slide-over, which
+          // hides Update for the same mod.
           row.hasUpdate &&
+          !row.isExternal &&
           html`<button
             type="button"
             class="row-menu__item"
@@ -377,7 +392,11 @@ export function Library({
             one, or bring in what you already have:
           </p>
           <div class="empty-state__actions">
-            <${AddModsMenu} route=${state.route} actions=${actions} />
+            <${AddModsMenu}
+              route=${state.route}
+              actions=${actions}
+              state=${state}
+            />
           </div>
         </div>
       </section>
@@ -393,10 +412,24 @@ export function Library({
     ? `In your library (${visible.length})`
     : `Library (${visible.length})`;
 
+  // issue 269: reported separately from the library count, so "12 mods" is never
+  // read as twelve deployments lmm made. Uses an existing class - the
+  // colour ratchets forbid a new literal.
+  // `mods` here is the core.ModList DOCUMENT, not its array (the prop is
+  // passed straight through from Mission Control's state), so the count
+  // reads its own "mods" member.
+  const externalCount = countExternal(mods?.mods);
+
   return html`
     <section class="library">
       <div class="library__toolbar">
         <h2 class="section-header">${libraryLabel}</h2>
+        ${
+          externalCount > 0 &&
+          html`<span class="library__live"
+            >${`${externalCount} tracked by Steam`}</span
+          >`
+        }
         ${
           liveActivity &&
           html`<span class="library__live" role="status">${liveActivity}</span>`
@@ -421,7 +454,11 @@ export function Library({
             ${SORT_NAMES.map((s) => html`<option value=${s}>${SORT_LABELS[s]}</option>`)}
           </select>
         </label>
-        <${AddModsMenu} route=${state.route} actions=${actions} />
+        <${AddModsMenu}
+          route=${state.route}
+          actions=${actions}
+          state=${state}
+        />
         <button
           type="button"
           class="button button--small"
@@ -510,7 +547,9 @@ export function Library({
                           }
                         </td>
                         <td class="col--version mono">
-                          ${row.version}${row.hasUpdate && html` → ${row.updateTarget}`}
+                          ${displayVersion(row)}${
+                            row.hasUpdate && html` → ${row.updateTarget}`
+                          }
                         </td>
                         <td class="col--author">${row.author || "—"}</td>
                         <td class="col--source mono">${row.source_id}</td>
@@ -545,6 +584,14 @@ export function Library({
                               class="badge"
                               title="Locked to ${row.locked_version}"
                               >🔒</span
+                            >`
+                          }
+                          ${
+                            row.isExternal &&
+                            html`<span
+                              class="badge"
+                              title="Tracked from your Steam subscription - Steam owns this item's files"
+                              >Steam</span
                             >`
                           }
                           <span class="badge badge--policy"

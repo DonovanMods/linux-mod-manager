@@ -39,6 +39,15 @@ type SwitchPlan struct {
 	// other ToInstall entry (brand-new installs, cache-miss redeploys).
 	PriorVersions map[string]domain.InstalledMod `json:"prior_versions,omitempty"`
 
+	// ExternalUnchanged counts the EXTERNAL mods (#269) this switch leaves
+	// exactly as they are because it cannot do anything else: a Steam
+	// Workshop item is game-global, lmm profiles are not, and changing what
+	// Steam has on disk would mean unsubscribing on the user's behalf
+	// (a documented NO-GO). Non-zero means the outgoing and incoming
+	// profiles differ in external mods, and ApplyProfileSwitch emits one
+	// advisory note saying so - see NoteExternalProfileScope. omitzero.
+	ExternalUnchanged int `json:"external_unchanged,omitzero"`
+
 	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise; only SetDefault is needed
 	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
 
@@ -122,12 +131,21 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// (mods enabled but absent from fromProfile.Mods sort first by key - see
 	// orderByProfile), filtered down to currentEnabled's members - not `for
 	// key, im := range currentEnabled`, which iterates map order.
+	externalUnchanged := 0
 	for _, im := range orderByProfile(currentProfile, currentMods) {
 		key := domain.ModKey(im.SourceID, im.ID)
 		if _, enabled := currentEnabled[key]; !enabled {
 			continue
 		}
 		if _, inTarget := targetKeys[key]; !inTarget {
+			// #269: an external mod is never disabled by a profile switch -
+			// lmm cannot unsubscribe it, and marking it disabled while the
+			// game still loads it would be a lie. It is counted instead, so
+			// the switch can say what it left alone.
+			if im.External {
+				externalUnchanged++
+				continue
+			}
 			toDisable = append(toDisable, im)
 		}
 	}
@@ -147,6 +165,12 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 		seenTarget[key] = true
 
 		im, installed := allInstalled[key]
+		// #269: an external mod the target profile lists needs no enable
+		// and no install - Steam already has it in place, whatever profile
+		// is active.
+		if installed && im.External {
+			continue
+		}
 		switch {
 		case !installed:
 			toInstall = append(toInstall, ref)
@@ -187,9 +211,10 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	return &SwitchPlan{
 		GameID: game.ID, From: currentName, To: target,
 		ToDisable: toDisable, ToEnable: toEnable, ToInstall: toInstall,
-		PriorVersions: priorVersions,
-		NoChanges:     len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
-		snapshot:      snapshot,
+		PriorVersions:     priorVersions,
+		ExternalUnchanged: externalUnchanged,
+		NoChanges:         len(toDisable) == 0 && len(toEnable) == 0 && len(toInstall) == 0,
+		snapshot:          snapshot,
 	}, nil
 }
 
@@ -269,6 +294,15 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 	// plan is refused having changed nothing at all.
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.From, plan.snapshot); err != nil {
 		return result, err
+	}
+
+	// #269: said once, up front, so the user reads it before the per-mod
+	// lines rather than wondering afterwards why their Workshop items
+	// followed them across the switch.
+	if plan.ExternalUnchanged > 0 {
+		note := fmt.Sprintf(NoteExternalProfileScope, plan.ExternalUnchanged)
+		result.Notes = append(result.Notes, note)
+		emit(StepEvent{Scope: Scope{Op: OpSwitch}, Phase: DeployExternalSkipped, Detail: note})
 	}
 
 	// #81: a switch spans two profiles that may carry different explicit

@@ -107,9 +107,14 @@ func (s *Service) profileConflicts(ctx context.Context, game *domain.Game, profi
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
+	// #269: external mods never contend for a game path lmm can see. Their
+	// files live under Steam's own workshop tree, not under mod_path, and
+	// lmm cannot see inside a game's own Workshop loader - so including
+	// them here could only ever produce an empty provider list, or worse, a
+	// conflict report that cannot explain itself. Documented limitation.
 	var enabled []domain.InstalledMod
 	for _, m := range mods {
-		if m.Enabled {
+		if m.Enabled && !m.External {
 			enabled = append(enabled, m)
 		}
 	}

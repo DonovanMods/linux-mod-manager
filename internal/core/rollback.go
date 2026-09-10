@@ -89,6 +89,13 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 		return nil, err
 	}
 
+	// #269: lmm never held a copy of a Steam Workshop item, so there is no
+	// previous version to roll back TO. Refused ahead of the generic
+	// "no previous version" message, which would be true but unhelpful.
+	if err := refuseExternal("rollback", mod, ReasonExternalNoRollback); err != nil {
+		return nil, err
+	}
+
 	if mod.PreviousVersion == "" {
 		return nil, fmt.Errorf("no previous version available for rollback")
 	}

@@ -1,0 +1,21 @@
+============================================================
+Sample Workshop Item
+============================================================
+ID: 3617086610  Version: revision of 2025-12-03  Author: 76561198000000000
+Category: Blueprint
+URL: https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610
+
+Summary:
+An item subscribed in the Steam client.
+
+
+Installed: revision of 2025-12-03 (profile: default)
+  Update policy: notify
+  Lock: none
+
+Managed by: Steam Workshop
+  Location: /GOLDEN/workshop/3617086610
+  Steam content id: 7987119735124793734
+  lmm tracks this item and checks it for updates; Steam owns its
+  files and applies its updates. Deploy, enable/disable, update and
+  rollback are not available for it.

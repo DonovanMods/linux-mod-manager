@@ -21,6 +21,9 @@ import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 export function PurgePlanView({ plan, modal, actions }) {
   const mods = plan.mods ?? [];
   const hooks = plan.hooks ?? [];
+  // issue 269: the display names of the mods purge will NOT touch, so the shorter
+  // mod count above has an explanation on the same screen.
+  const external = plan.external ?? [];
 
   // The type-the-name gate renders on BOTH branches (MIN-4, the closing
   // wave's gate review). confirmplan.js's typedNameFor.purge demands
@@ -46,8 +49,15 @@ export function PurgePlanView({ plan, modal, actions }) {
     return html`
       <div class="plan plan--purge">
         <p class="plan__note">
-          Nothing to purge: profile <span class="mono">${plan.profile}</span>
-          has no installed mods.
+          ${
+            external.length > 0
+              ? html`Nothing to purge: profile${" "}
+                  <span class="mono">${plan.profile}</span> holds only items
+                  tracked from Steam, and lmm never touches their files.`
+              : html`Nothing to purge: profile${" "}
+                  <span class="mono">${plan.profile}</span> has no installed
+                  mods.`
+          }
         </p>
         ${confirmName}
       </div>
@@ -84,6 +94,24 @@ export function PurgePlanView({ plan, modal, actions }) {
         </ul>
       </section>
 
+      ${
+        external.length > 0 &&
+        html`
+          <section class="plan__section" data-testid="purge-external">
+            <h3 class="plan__heading">
+              Left alone — tracked from Steam (${external.length})
+            </h3>
+            <ul class="plan__mods">
+              ${external.map(
+                (name) =>
+                  html`<li key=${name} class="plan__mod">
+                    <span class="plan__mod-name">${name}</span>
+                  </li>`,
+              )}
+            </ul>
+          </section>
+        `
+      }
       ${
         plan.merged_artifact &&
         html`

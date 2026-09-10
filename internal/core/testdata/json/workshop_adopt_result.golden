@@ -1,0 +1,8 @@
+{
+  "adopted": 28,
+  "skipped": 1,
+  "failed": 1,
+  "warnings": [
+    "Workshop item 2900001111: could not update profile: profile is read-only"
+  ]
+}

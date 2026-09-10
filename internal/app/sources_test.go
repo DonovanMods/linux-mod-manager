@@ -133,7 +133,7 @@ func TestRegisterSources_BuiltinAuthenticatesWithEnvAndToken(t *testing.T) {
 	svc := newTestService(t)
 	require.NoError(t, svc.SaveSourceToken(context.Background(), "nexusmods", "stored-db-key"))
 
-	registerSources(t.Context(), svc, t.TempDir(), os.Stderr)
+	registerSources(t.Context(), svc, Paths{ConfigDir: t.TempDir()}, os.Stderr)
 
 	src, err := svc.GetSource("nexusmods")
 	require.NoError(t, err)
@@ -163,7 +163,7 @@ manifest:
 `)
 	t.Setenv("LMM_MY_CUSTOM_API_KEY", "custom-env-key")
 
-	registerSources(t.Context(), svc, cfgDir, os.Stderr)
+	registerSources(t.Context(), svc, Paths{ConfigDir: cfgDir}, os.Stderr)
 
 	src, err := svc.GetSource("my-custom")
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ directory:
 `, t.TempDir()))
 
 	var warnBuf bytes.Buffer
-	registerSources(t.Context(), svc, cfgDir, &warnBuf)
+	registerSources(t.Context(), svc, Paths{ConfigDir: cfgDir}, &warnBuf)
 
 	src, err := svc.GetSource("nexusmods")
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ directory:
 func TestBuiltinSourceFactories_IncludesIcarus(t *testing.T) {
 	found := false
 	for _, factory := range builtinSourceFactories {
-		if factory().ID() == "icarus" {
+		if factory(Paths{}).ID() == "icarus" {
 			found = true
 		}
 	}

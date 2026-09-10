@@ -335,12 +335,17 @@ func (s *Server) handleAPIUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updates, checkErr := s.svc.CheckGameUpdates(ctx, sel.Game, sel.Profile, installed, nil)
+	// ?refresh=1 bypasses a source's own metadata cache (#269): the Steam
+	// Workshop source caches Valve's keyless answers for hours, so the web
+	// UI's explicit refresh action needs a way to say "ask again".
+	opts := core.UpdateCheckOptions{Refresh: r.URL.Query().Get("refresh") == "1"}
+	updates, checkErr := s.svc.CheckGameUpdates(ctx, sel.Game, sel.Profile, installed, nil, opts)
 	report := &core.UpdateCheckReport{
-		GameID:  sel.Game.ID,
-		Profile: sel.Profile,
-		Updates: updates,
-		Skipped: core.CountUpdateSkips(installed),
+		GameID:   sel.Game.ID,
+		Profile:  sel.Profile,
+		Updates:  updates,
+		Skipped:  core.CountUpdateSkips(installed),
+		External: core.CountExternalUpdates(updates),
 	}
 	if checkErr != nil {
 		report.ErrorMessage = checkErr.Error()

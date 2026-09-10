@@ -124,6 +124,17 @@ func doUninstall(ctx context.Context, service *core.Service, game *domain.Game, 
 		return emitJSON(result)
 	}
 
+	// #269: "Uninstalled" would claim more than happened - lmm removed its
+	// own tracking and Steam still has the item. The note is printed
+	// unconditionally here rather than left to result.Notes, which only
+	// reach stdout under --verbose.
+	if plan.External {
+		fmt.Printf("✓ Stopped tracking: %s\n", plan.Mod.Name)
+		fmt.Printf("  Removed from profile: %s\n", profileName)
+		fmt.Printf("  %s\n", core.UninstallExternalNote)
+		return nil
+	}
+
 	fmt.Printf("✓ Uninstalled: %s\n", plan.Mod.Name)
 	fmt.Printf("  Removed from profile: %s\n", profileName)
 
@@ -163,16 +174,29 @@ func renderUninstallPlan(plan *core.UninstallPlan, profileName string) {
 
 	fmt.Printf("Would uninstall: %s (%s)\n", plan.Mod.Name, domain.ModKey(plan.Mod.SourceID, plan.Mod.ID))
 	fmt.Printf("  Would remove from profile: %s\n", profileName)
-	fmt.Printf("  Would remove %d file(s) from the game directory\n", len(plan.Files))
-	if verbose {
-		for _, f := range plan.Files {
-			fmt.Printf("    - %s\n", f)
+	if plan.External {
+		// #269: neither of the two lines below is TRUE of an external mod -
+		// lmm deploys none of its files and holds no cache entry for it, so
+		// printing "0 file(s)" and "Cache entry would be deleted" would
+		// invite the reader to conclude the wrong thing about what
+		// "uninstall" is about to do. Say what it really does instead, and
+		// name where the item stays.
+		fmt.Printf("  %s\n", core.UninstallExternalNote)
+		if plan.Mod.ExternalPath != "" {
+			fmt.Printf("  Location: %s\n", plan.Mod.ExternalPath)
 		}
-	}
-	if plan.KeepCache {
-		fmt.Println("  Cache files preserved")
 	} else {
-		fmt.Println("  Cache entry would be deleted")
+		fmt.Printf("  Would remove %d file(s) from the game directory\n", len(plan.Files))
+		if verbose {
+			for _, f := range plan.Files {
+				fmt.Printf("    - %s\n", f)
+			}
+		}
+		if plan.KeepCache {
+			fmt.Println("  Cache files preserved")
+		} else {
+			fmt.Println("  Cache entry would be deleted")
+		}
 	}
 	if e := plan.MergedArtifact; e != nil {
 		if e.Action == core.MergedArtifactRemove {

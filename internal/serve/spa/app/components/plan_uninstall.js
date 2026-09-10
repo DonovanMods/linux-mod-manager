@@ -7,6 +7,16 @@
 import { html } from "../render.js";
 import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 
+/** UNINSTALL_EXTERNAL_NOTE mirrors core.UninstallExternalNote verbatim
+ * (internal/core/external.go). issue 269: an external mod's uninstall removes
+ * lmm's TRACKING and nothing else, so the deployed-files and cache notes
+ * below - both false of it - are replaced by this one, and the "Keep the
+ * cached download" option is not offered at all, since there is no cache
+ * entry for it to keep (present-and-inert is the thing this panel's own
+ * "Managed by Steam" rule exists to avoid). */
+const UNINSTALL_EXTERNAL_NOTE =
+  "this only stops lmm tracking it; the item stays subscribed in Steam - unsubscribe in the Steam client to remove it";
+
 /** UninstallPlanView renders core.UninstallPlan (internal/core/uninstall.go). */
 export function UninstallPlanView({ plan, modal, actions }) {
   const files = plan.files ?? [];
@@ -16,34 +26,61 @@ export function UninstallPlanView({ plan, modal, actions }) {
     <div class="plan plan--uninstall">
       <p class="plan__summary">
         Uninstalling <span class="mono">${plan.mod.name}</span>${" "}
-        <span class="mono">${plan.mod.version}</span> from profile${" "}
-        <span class="mono">${plan.mod.profile_name}</span>.
+        ${
+          // issue 269, the approval note's version DISPLAY rule: an external
+          // mod's `version` is Steam's 19-digit content id, and no
+          // human-facing surface prints one where a version goes.
+          // core.UninstallPlan carries no timestamp to show the revision date
+          // instead and the modal's own header already names the mod, so the
+          // span is omitted rather than filled - exactly what
+          // plan_deploy.js does for its external row.
+          !plan.external &&
+          html`<span class="mono">${plan.mod.version}</span>${" "}`
+        }from
+        profile${" "} <span class="mono">${plan.mod.profile_name}</span>.
       </p>
 
       ${
-        files.length > 0
+        plan.external
           ? html`
-              <section class="plan__section">
-                <h3 class="plan__heading">Files removed (${files.length})</h3>
-                <ul class="plan__paths">
-                  ${files.map((f) => html`<li key=${f} class="mono">${f}</li>`)}
-                </ul>
-              </section>
+              <p class="plan__note" data-testid="uninstall-external-note">
+                ${UNINSTALL_EXTERNAL_NOTE}
+              </p>
+              ${
+                plan.mod.external_path &&
+                html`<p class="plan__note mono">${plan.mod.external_path}</p>`
+              }
             `
-          : html`<p class="plan__note">
-              Not currently deployed - nothing to remove from the game
-              directory.
-            </p>`
+          : html`
+              ${
+                files.length > 0
+                  ? html`
+                      <section class="plan__section">
+                        <h3 class="plan__heading">
+                          Files removed (${files.length})
+                        </h3>
+                        <ul class="plan__paths">
+                          ${files.map(
+                            (f) => html`<li key=${f} class="mono">${f}</li>`,
+                          )}
+                        </ul>
+                      </section>
+                    `
+                  : html`<p class="plan__note">
+                      Not currently deployed - nothing to remove from the game
+                      directory.
+                    </p>`
+              }
+
+              <p class="plan__note" data-testid="uninstall-cache-note">
+                ${
+                  plan.keep_cache
+                    ? "The cached download is kept."
+                    : "The cached download is deleted too - reinstalling later re-downloads it."
+                }
+              </p>
+            `
       }
-
-      <p class="plan__note" data-testid="uninstall-cache-note">
-        ${
-          plan.keep_cache
-            ? "The cached download is kept."
-            : "The cached download is deleted too - reinstalling later re-downloads it."
-        }
-      </p>
-
       ${
         hooks.length > 0 &&
         html`
@@ -55,14 +92,17 @@ export function UninstallPlanView({ plan, modal, actions }) {
       }
 
       <${PlanAdvanced}>
-        <${PlanOption}
-          modal=${modal}
-          actions=${actions}
-          name="keep_cache"
-          alsoApply
-          label="Keep the cached download"
-          hint="lmm uninstall --keep-cache. Reinstalling later needs no download."
-        />
+        ${
+          !plan.external &&
+          html`<${PlanOption}
+            modal=${modal}
+            actions=${actions}
+            name="keep_cache"
+            alsoApply
+            label="Keep the cached download"
+            hint="lmm uninstall --keep-cache. Reinstalling later needs no download."
+          />`
+        }
         <${PlanOption}
           modal=${modal}
           actions=${actions}

@@ -11,6 +11,17 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
+// updatedAtValue is the value bound for the updated_at column: NULL rather
+// than a zero time for a mod whose source never told lmm when it was last
+// published, so an unknown date reads back as unknown rather than as the
+// year 1.
+func updatedAtValue(mod *domain.InstalledMod) any {
+	if mod.UpdatedAt.IsZero() {
+		return nil
+	}
+	return mod.UpdatedAt.UTC()
+}
+
 func encodeFileIDs(fileIDs []string) (string, error) {
 	if len(fileIDs) == 0 {
 		return "[]", nil
@@ -58,8 +69,8 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO installed_mods (source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, external, external_path, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id, mod_id, game_id, profile_name) DO UPDATE SET
 			name = excluded.name,
 			version = excluded.version,
@@ -71,8 +82,11 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 			link_method = excluded.link_method,
 			manual_download = excluded.manual_download,
 			summary = excluded.summary,
-			source_url = excluded.source_url
-	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL)
+			source_url = excluded.source_url,
+			external = excluded.external,
+			external_path = excluded.external_path,
+			updated_at = excluded.updated_at
+	`, mod.SourceID, mod.ID, mod.GameID, mod.ProfileName, mod.Name, mod.Version, mod.Author, mod.UpdatePolicy, mod.Enabled, mod.Deployed, time.Now(), prevVersion, prevFileIDs, mod.LinkMethod, mod.ManualDownload, mod.Summary, mod.SourceURL, mod.External, mod.ExternalPath, updatedAtValue(mod))
 	if err != nil {
 		return fmt.Errorf("saving installed mod: %w", err)
 	}
@@ -88,7 +102,7 @@ func (d *DB) SaveInstalledMod(ctx context.Context, mod *domain.InstalledMod) err
 // GetInstalledMods returns all installed mods for a game/profile combination
 func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (mods []domain.InstalledMod, err error) {
 	rows, err := d.QueryContext(ctx, `
-		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks
+		SELECT source_id, mod_id, game_id, profile_name, name, version, author, update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download, summary, source_url, convert_paks, external, external_path, updated_at
 		FROM installed_mods
 		WHERE game_id = ? AND profile_name = ?
 		ORDER BY installed_at ASC
@@ -101,11 +115,12 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 		var mod domain.InstalledMod
 		var prevVersion *string
 		var prevFileIDs *string
+		var updatedAt *time.Time
 		err := rows.Scan(
 			&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 			&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 			&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
-			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks,
+			&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt,
 		)
 		if err != nil {
 			_ = rows.Close()
@@ -113,6 +128,9 @@ func (d *DB) GetInstalledMods(ctx context.Context, gameID, profileName string) (
 		}
 		if prevVersion != nil {
 			mod.PreviousVersion = *prevVersion
+		}
+		if updatedAt != nil {
+			mod.UpdatedAt = updatedAt.UTC()
 		}
 		mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
 		if err != nil {
@@ -293,17 +311,18 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 	var mod domain.InstalledMod
 	var prevVersion *string
 	var prevFileIDs *string
+	var updatedAt *time.Time
 	err := d.QueryRowContext(ctx, `
 		SELECT source_id, mod_id, game_id, profile_name, name, version, author,
 		       update_policy, enabled, deployed, installed_at, previous_version, previous_file_ids, link_method, manual_download,
-		       summary, source_url, convert_paks
+		       summary, source_url, convert_paks, external, external_path, updated_at
 		FROM installed_mods
 		WHERE source_id = ? AND mod_id = ? AND game_id = ? AND profile_name = ?
 	`, sourceID, modID, gameID, profileName).Scan(
 		&mod.SourceID, &mod.ID, &mod.GameID, &mod.ProfileName,
 		&mod.Name, &mod.Version, &mod.Author, &mod.UpdatePolicy,
 		&mod.Enabled, &mod.Deployed, &mod.InstalledAt, &prevVersion, &prevFileIDs, &mod.LinkMethod, &mod.ManualDownload,
-		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks,
+		&mod.Summary, &mod.SourceURL, &mod.ConvertPaks, &mod.External, &mod.ExternalPath, &updatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -314,6 +333,9 @@ func (d *DB) GetInstalledMod(ctx context.Context, sourceID, modID, gameID, profi
 
 	if prevVersion != nil {
 		mod.PreviousVersion = *prevVersion
+	}
+	if updatedAt != nil {
+		mod.UpdatedAt = updatedAt.UTC()
 	}
 	mod.PreviousFileIDs, err = decodeFileIDs(prevFileIDs)
 	if err != nil {

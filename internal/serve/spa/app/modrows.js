@@ -8,6 +8,8 @@
 // the join and the predicates pure is what makes that coverage mean
 // anything: a rendering bug and a join bug cannot hide behind each other.
 
+import { displayUpdateTarget } from "./version.js";
+
 /** The wire key a mod is addressed by everywhere but the URL (domain.ModKey:
  * "sourceID:modID") - core.ConflictModRef.Key and every /api/v1/updates row
  * key off it the same way. */
@@ -31,9 +33,28 @@ export function modKey(mod) {
  * verify.js#findingLabel does: two surfaces saying the same thing in two
  * places is two chances to drift. */
 export function lockedNote(update) {
+  // issue 269's version DISPLAY rule reaches even here: a LOCKED external row
+  // (nothing refuses `lmm mod lock` for one) holds Steam's 19-digit content
+  // id as its lock target, and "locked at v7987119735124793734" is the
+  // forbidden shape with a "v" in front of it. There is no readable version
+  // to name for such a row, so the bare word is the whole of the truth.
+  if (update.installed_mod?.external) return "locked";
   const version = update.locked_version || update.installed_mod?.version;
   return version ? `locked at v${version}` : "locked";
 }
+
+/** EXTERNAL_UPDATE_NOTE is lockedNote's sibling for an EXTERNAL row (issue
+ * 269): the short reason the Updates card and its confirm modal give for a
+ * row neither of them will apply. Core says the same thing at length in
+ * core.ReasonExternalNoUpdate; this is the phrase that fits on a row.
+ *
+ * The two refusals are NOT the same shape, and the surfaces treat them
+ * differently on purpose. A lock is the user's own reversible choice, so a
+ * locked row stays tickable and merely carries a mark. Steam's ownership of
+ * a Workshop item is not reversible from anywhere in this UI - lmm can
+ * report the update and can never apply it - so an external row carries the
+ * mark and no checkbox at all, and never reaches the batch. */
+export const EXTERNAL_UPDATE_NOTE = "Steam applies this itself";
 
 /**
  * Builds one library row per installed mod (mods: core.ModList's own "mods"
@@ -79,7 +100,13 @@ export function buildRows(mods, updates, findings, conflicts) {
       // comment for the sibling case).
       loadOrder: index + 1,
       hasUpdate: Boolean(update),
-      updateTarget: update?.new_version ?? "",
+      // version.js#displayUpdateTarget, not the raw field: an external row's
+      // target is another Steam content id (issue 269's version DISPLAY rule).
+      updateTarget: displayUpdateTarget(update),
+      // issue 269: an EXTERNAL mod is tracked, never deployed. The row carries
+      // the flag verbatim from domain.InstalledMod so the badge, the hidden
+      // actions and the deployable counts all read one fact.
+      isExternal: Boolean(mod.external),
       hasHealthIssue: unhealthyIDs.has(mod.id),
       hasConflict: conflictKeys.has(key),
     };
@@ -129,6 +156,16 @@ export function sortRows(rows, sort) {
 }
 
 /**
+ * Counts EXTERNAL mods (issue 269) - the ones lmm tracks but never deploys,
+ * because another agent owns their files. Reported separately from the
+ * library's own count so "12 mods" is never read as twelve deployments lmm
+ * made.
+ */
+export function countExternal(mods) {
+  return (mods ?? []).reduce((n, m) => n + (m.external ? 1 : 0), 0);
+}
+
+/**
  * Counts installed mods whose desired state (Enabled) disagrees with what is
  * actually on disk (Deployed) - the top bar's undeployed-changes indicator.
  * Both fields live on every ModListing already; nothing else needs fetching
@@ -136,7 +173,10 @@ export function sortRows(rows, sort) {
  */
 export function countUndeployed(mods) {
   return (mods ?? []).reduce(
-    (n, m) => n + (m.enabled !== m.deployed ? 1 : 0),
+    // issue 269: an external mod's Deployed is true and never mutates, so it can
+    // never be an undeployed change - the guard is belt-and-braces against
+    // a row whose flags drifted.
+    (n, m) => n + (!m.external && m.enabled !== m.deployed ? 1 : 0),
     0,
   );
 }

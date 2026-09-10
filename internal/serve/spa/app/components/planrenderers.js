@@ -31,6 +31,7 @@ import { VerifyFixPlanView } from "./plan_verify_fix.js";
 import { ProfileImportPlanView } from "./plan_profile_import.js";
 import { ImportArchivePlanView } from "./plan_import_archive.js";
 import { AdoptPlanView } from "./plan_adopt.js";
+import { WorkshopAdoptPlanView } from "./plan_workshop_adopt.js";
 import { SwitchPlanView } from "./plan_switch.js";
 import { ProfileApplyPlanView } from "./plan_profile_apply.js";
 import { PurgePlanView } from "./plan_purge.js";
@@ -53,6 +54,9 @@ const renderers = {
   // issue 333's two Setup-surface kinds.
   import_archive: ImportArchivePlanView,
   adopt: AdoptPlanView,
+  // issue 269 Tier 1: tracking the Steam Workshop items Steam already
+  // downloaded. Its preview leads with what the job will NOT do.
+  workshop_adopt: WorkshopAdoptPlanView,
   // issue 334: the m8 carry's two remaining kinds. GenericPlanView stays
   // the honest fallback for the NEXT kind wired before its renderer
   // exists - it is not dead code once this table is complete.

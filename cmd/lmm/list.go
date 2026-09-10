@@ -79,7 +79,19 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 	}
 
 	// Always show total count (no longer requires --verbose)
-	fmt.Printf("Installed mods in %s (profile: %s) — %d mod(s)\n", game.Name, profileName, len(mods))
+	external := 0
+	for _, m := range mods {
+		if m.External {
+			external++
+		}
+	}
+	fmt.Printf("Installed mods in %s (profile: %s) — %d mod(s)", game.Name, profileName, len(mods))
+	if external > 0 {
+		// #269: said here rather than left to the reader to infer from the
+		// EXTERNAL markers, so the count and its explanation arrive together.
+		fmt.Printf(", %d tracked from Steam", external)
+	}
+	fmt.Println()
 	if verbose && game.CachePath != "" {
 		fmt.Printf("Cache: %s\n", game.CachePath)
 	}
@@ -93,6 +105,13 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		header = "ID\tNAME\tVERSION\tAUTHOR\tSOURCE\tENABLED\tDEPLOYED\tMETHOD\tPOLICY\tLOCKED\tCONVERT"
 		sep = "--\t----\t-------\t------\t------\t-------\t--------\t------\t------\t------\t-------"
 	}
+	// #269: the EXTERNAL column appears only when the profile actually has
+	// such a mod, so every existing listing keeps the shape it has always
+	// had.
+	if external > 0 {
+		header += "\tEXTERNAL"
+		sep += "\t--------"
+	}
 	if _, err := fmt.Fprintln(w, header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -105,6 +124,11 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		if author == "" {
 			author = "-"
 		}
+		// #269: the version shown for an external mod is its revision DATE,
+		// not the 19-digit Steam content id its Version field carries - that
+		// id is the item's version identity, and no human-facing surface
+		// prints it as a version (the design's approval note).
+		version := displayModVersion(mod.External, mod.Version, mod.UpdatedAt)
 		var row string
 		if verbose {
 			enabled := "yes"
@@ -121,7 +145,16 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 			}
 			locked := "-"
 			if mod.Locked {
-				locked = mod.LockedVersion
+				// The same rule the VERSION column above follows, and for a
+				// stronger reason: a lock target has no date to fall back on
+				// (displayLockTarget), so an external row says only THAT it
+				// is locked. Without this the two columns of one row
+				// disagreed - a date on the left, the content id on the right.
+				if target := displayLockTarget(mod.External, mod.LockedVersion); target != "" {
+					locked = mod.LockedVersion
+				} else {
+					locked = "yes"
+				}
 			}
 			convert := "-"
 			if mod.ConvertPaks != nil {
@@ -131,9 +164,16 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 					convert = "off"
 				}
 			}
-			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy), locked, convert)
+			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy), locked, convert)
 		} else {
-			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), mod.Version, truncate(author, 20))
+			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), version, truncate(author, 20))
+		}
+		if external > 0 {
+			marker := "-"
+			if mod.External {
+				marker = "EXTERNAL"
+			}
+			row += "\t" + marker
 		}
 		if _, err := fmt.Fprintln(w, row); err != nil {
 			return fmt.Errorf("writing row: %w", err)

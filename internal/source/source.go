@@ -68,6 +68,20 @@ type UpdateProgressReporter interface {
 	CheckUpdatesWithProgress(ctx context.Context, installed []domain.InstalledMod, report UpdateProgressFunc) ([]domain.Update, error)
 }
 
+// RefreshingUpdateChecker is implemented by sources that cache remote
+// metadata on disk and can be asked to bypass that cache for one check -
+// what `lmm update --refresh` (and the SPA's refresh action) means for the
+// Steam Workshop source, whose keyless metadata is cached for hours by
+// design (#269).
+//
+// Core prefers it over CheckUpdatesWithProgress / CheckUpdates when a
+// source implements it, passing report through unchanged (nil when the
+// caller wants no progress). A source that does not implement it simply
+// never sees the flag, which is correct: it has no cache to bypass.
+type RefreshingUpdateChecker interface {
+	CheckUpdatesRefreshing(ctx context.Context, installed []domain.InstalledMod, refresh bool, report UpdateProgressFunc) ([]domain.Update, error)
+}
+
 // ChangelogProvider is implemented by sources that can supply a mod's
 // changelog text for a specific version - the same optional-capability
 // pattern as UpdateProgressReporter (#87). Core calls it when present and
@@ -108,6 +122,58 @@ type DescriptionFetcher interface {
 // ...) returning file:// must never be trusted to read arbitrary paths off
 // disk into the cache (#300).
 type LocalFileServer interface{ ServesLocalFiles() bool }
+
+// WorkshopScan is one WorkshopScanner answer: the local roots that actually
+// held bookkeeping for the requested game, every item they declare, and the
+// non-fatal diagnostics collected on the way (an unreadable or damaged
+// manifest warns against that one file rather than failing the scan).
+type WorkshopScan struct {
+	Roots    []string
+	Items    []domain.WorkshopItem
+	Warnings []string
+}
+
+// WorkshopScanner is implemented by sources whose content is installed and
+// owned by ANOTHER agent on the user's machine - today, the Steam client
+// for a Workshop item (#269). Such a source discovers what is installed by
+// reading that agent's own on-disk bookkeeping, not by asking a remote API,
+// and core adopts the result as EXTERNAL mods (domain.InstalledMod.External)
+// it tracks but never deploys.
+//
+// It is the same optional-capability pattern as MergeCompiler: core type-
+// asserts for it and does nothing workshop-specific when a source does not
+// implement it, so internal/core never imports the concrete source package.
+// sourceGameID is the source's own game identifier from
+// domain.Game.SourceIDs (for Steam Workshop, the decimal app id).
+type WorkshopScanner interface {
+	ScanWorkshopItems(ctx context.Context, sourceGameID string) (WorkshopScan, error)
+}
+
+// ModDescription is one BatchModDescriber answer. Unavailable marks a mod
+// the source will not describe at all - delisted, deleted or private - with
+// Note explaining it in one sentence; Mod is the zero value in that case.
+// It is a per-item FACT, never an error: one dead item in a batch of thirty
+// must not blind the other twenty-nine.
+type ModDescription struct {
+	ModID       string
+	Mod         domain.Mod
+	Unavailable bool
+	Note        string
+}
+
+// BatchModDescriber is implemented by sources that can resolve MANY mods'
+// metadata in one round trip, so a flow with a list of ids in hand does not
+// have to make one GetMod call per id (#269: a workshop adopt routinely has
+// thirty subscribed items to describe, and Valve's endpoint takes a hundred
+// per request).
+//
+// refresh asks the source to bypass any local metadata cache, the same
+// meaning it has on RefreshingUpdateChecker. The result has one entry per
+// requested id, in the order given. An error means the source could not be
+// reached at all.
+type BatchModDescriber interface {
+	DescribeMods(ctx context.Context, sourceGameID string, modIDs []string, refresh bool) ([]ModDescription, error)
+}
 
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade

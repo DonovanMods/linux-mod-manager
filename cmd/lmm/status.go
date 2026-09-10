@@ -235,7 +235,15 @@ func showGameStatus(ctx context.Context, service *core.Service, gameID string) e
 	// Show installed mods count for active profile
 	if st.ActiveProfile != "" {
 		fmt.Printf("\nActive Profile: %s\n", colorGreen(st.ActiveProfile))
-		fmt.Printf("  Installed Mods: %s\n", colorCyan(strconv.Itoa(st.InstalledModCount)))
+		if st.ExternalCount > 0 {
+			// #269: an external count of N out of N is the common Workshop
+			// case, and reading "30 installed" without it invites the user
+			// to look for thirty deployments lmm never made.
+			fmt.Printf("  Installed Mods: %s (%s tracked from Steam)\n",
+				colorCyan(strconv.Itoa(st.InstalledModCount)), colorCyan(strconv.Itoa(st.ExternalCount)))
+		} else {
+			fmt.Printf("  Installed Mods: %s\n", colorCyan(strconv.Itoa(st.InstalledModCount)))
+		}
 
 		if st.InstalledModCount > 0 {
 			// Disabled is a routine, expected state (not an error), so it's

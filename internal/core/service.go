@@ -1776,6 +1776,15 @@ func (s *Service) ConfigDir() string {
 	return s.configDir
 }
 
+// CacheDir returns the cache root - where the mod cache lives, and where a
+// source that caches remote metadata locally (#269's Steam Workshop source,
+// under the reserved "_steamworkshop" prefix) puts its own tree. Exported
+// alongside ConfigDir so internal/app can rebuild such a source without
+// re-resolving paths of its own.
+func (s *Service) CacheDir() string {
+	return s.cacheDir
+}
+
 // SaveSourceToken saves an API token for a source
 func (s *Service) SaveSourceToken(ctx context.Context, sourceID, apiKey string) error {
 	release, err := s.beginOp(ctx)
