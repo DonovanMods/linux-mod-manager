@@ -238,10 +238,11 @@ export function resultTally(result) {
     // never "this is not a batch result".
     const failed = Array.isArray(result.failed) ? result.failed.length : 0;
     // core.UpdateBatchResult.Skipped (issue 324): the items the batch declined
-    // to attempt - today exactly the locked refs (#97). Kept its OWN term for
-    // the same reason profile_import's is: "we did not try, and here is why"
-    // is not a failure, and rolling it into one would turn the honest outcome
-    // of a locked mod red.
+    // to attempt - the locked refs (#97) and, since issue 269, the external
+    // ones Steam updates itself. Kept its OWN term for the same reason
+    // profile_import's is: "we did not try, and here is why" is not a
+    // failure, and rolling it into one would turn the honest outcome of a
+    // locked mod red.
     const skips = Array.isArray(result.skipped) ? result.skipped : [];
     if (applied === 0 && failed === 0 && skips.length === 0) return null;
     return {

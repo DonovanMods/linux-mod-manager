@@ -336,8 +336,11 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 		// state - Steam applies it itself - so the batch declines to attempt
 		// it exactly as it declines a locked one, rather than letting
 		// applyUpdate's refusal land in Failed and paint the run red.
-		// Checked ahead of Locked because an external row can be both, and
-		// "Steam owns this" is the fact the user can act on.
+		// The two share one branch because they share one outcome. Note
+		// that the || order buys nothing about WORDING: when a row is both
+		// external and locked, planUpdateBase gives the LOCKED reason
+		// precedence (update.go), deliberately - a lock is the user's own
+		// choice and lifting it is the action available to them.
 		if itemPlan.External || itemPlan.Locked {
 			skip := planUpdateSkip(itemPlan, upd.NewVersion)
 			result.Skipped = append(result.Skipped, skip)
