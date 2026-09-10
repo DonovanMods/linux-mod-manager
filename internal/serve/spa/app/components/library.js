@@ -209,8 +209,18 @@ export function Library({
     actions.openReorderModal({ profileName: state.route.profile });
   }
 
+  // issue 379: an EXTERNAL row is dropped for the same reason
+  // updatableSelectedRows drops one, and the reason the row's own enabled
+  // checkbox is disabled - core refuses enable/disable for a Steam
+  // Workshop item, and no choice in this UI changes that. The batch bar
+  // reached the identical doomed job in two clicks where the checkbox
+  // reached it in one.
+  function togglableSelectedRows() {
+    return selectedRows().filter((r) => !r.isExternal);
+  }
+
   function batchEnable(action) {
-    const rows = selectedRows();
+    const rows = togglableSelectedRows();
     if (rows.length === 0) return;
     setSelected(new Set());
     actions.startBatchToggle(
@@ -528,9 +538,35 @@ export function Library({
                         <td class="col--enabled">
                           <input
                             type="checkbox"
-                            aria-label=${`${row.enabled ? "Disable" : "Enable"} ${row.name}`}
+                            aria-label=${
+                              // issue 379: an external row's box cannot
+                              // act, so its accessible name must not offer
+                              // an action - it states what IS, and the
+                              // title carries the remedy.
+                              row.isExternal
+                                ? `${row.name} is managed by Steam`
+                                : `${row.enabled ? "Disable" : "Enable"} ${row.name}`
+                            }
                             checked=${row.enabled}
-                            disabled=${Boolean(mutation) || togglingKey === row.key}
+                            disabled=${
+                              // issue 379: EXTERNAL rows are gated here too,
+                              // matching updatableSelectedRows and the row
+                              // menu. Enable/disable is refused by core for
+                              // a Steam Workshop item - Steam owns whether
+                              // it loads - so a live checkbox on the primary
+                              // screen could only ever start a job that
+                              // fails, which is the same defect the deploy
+                              // dry run had. Disabled-with-a-reason is the
+                              // full mod page's rollback pattern.
+                              Boolean(mutation) ||
+                              togglingKey === row.key ||
+                              row.isExternal
+                            }
+                            title=${
+                              row.isExternal
+                                ? "Steam manages this item — unsubscribe in Steam, or use the game's own mod menu"
+                                : undefined
+                            }
                             onClick=${(e) => e.stopPropagation()}
                             onChange=${() => toggleEnabled(row)}
                           />
@@ -641,6 +677,12 @@ export function Library({
               type="button"
               class="button"
               data-action="batch-enable"
+              disabled=${togglableSelectedRows().length === 0}
+              title=${
+                togglableSelectedRows().length === 0
+                  ? "Steam manages the selected items — lmm cannot enable them"
+                  : undefined
+              }
               onClick=${() => batchEnable("enable")}
             >
               Enable
@@ -649,6 +691,12 @@ export function Library({
               type="button"
               class="button"
               data-action="batch-disable"
+              disabled=${togglableSelectedRows().length === 0}
+              title=${
+                togglableSelectedRows().length === 0
+                  ? "Steam manages the selected items — lmm cannot disable them"
+                  : undefined
+              }
               onClick=${() => batchEnable("disable")}
             >
               Disable

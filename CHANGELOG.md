@@ -861,6 +861,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI no longer offers Enable/Disable on a Steam Workshop row
+  (#379).** The library gated its update action and its row menu on
+  Steam-owned rows, but not the **Enabled** checkbox — so on the main screen
+  every Steam Workshop row carried a live, checked box that started a job
+  lmm could only refuse ("unsubscribe it in Steam, or use the game's own mod
+  menu"). The checkbox is now disabled on those rows and says who does own
+  the item, and the batch bar's **Enable**/**Disable** — which reached the
+  same doomed job in two clicks — drops Steam-owned rows the way its
+  **Update** button already did.
+
 - **The web UI's Profile card no longer counts disabled mods as missing
   from the load order (#378).** A profile's load order carries only enabled
   mods, but the card compared it against every installed row — so one

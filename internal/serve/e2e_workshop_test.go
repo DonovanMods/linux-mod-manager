@@ -10,6 +10,7 @@ package serve_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -799,5 +800,103 @@ func TestE2E_SetupAdopt_NoWorkshopCardWithoutTheMapping(t *testing.T) {
 	f.runInBrowser(t, chromedp.Evaluate(
 		`document.querySelectorAll('[data-testid="setup-workshop-adopt"]').length`, &cards))
 	assert.Equal(t, 0, cards)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_Workshop_TheEnabledCheckboxIsDisabledOnAnExternalRow is issue
+// 379. library.js gated the batch-update action and the row menu on
+// isExternal, but not the library's own ENABLED checkbox - so on the
+// primary screen every Steam Workshop row carried a checked, clickable box
+// that started a job which could only fail:
+//
+//	POST /api/v1/mods/steamworkshop/<id>/disable -> {"job_id":"…"}
+//	GET  /api/v1/jobs/<id>                       -> "state":"failed",
+//	  "cannot disable Workshop item …: unsubscribe it in Steam, …"
+//
+// The core refusal is right; offering the control at all is not, and it
+// contradicts `lmm import --workshop`'s own preamble, which says lmm
+// cannot deploy, enable or update these. The pattern this follows is the
+// full mod page's rollback button: disabled, with the real remedy as its
+// title.
+func TestE2E_Workshop_TheEnabledCheckboxIsDisabledOnAnExternalRow(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+	seedWorkshopManagedMod(t, f)
+
+	const boxJS = `(() => {
+		const row = Array.from(document.querySelectorAll(".mod-row"))
+			.find((r) => r.textContent.includes(%q));
+		if (!row) return null;
+		const box = row.querySelector("td.col--enabled input[type=checkbox]");
+		if (!box) return { present: false };
+		return {
+			present: true,
+			disabled: box.disabled,
+			title: box.title,
+			label: box.getAttribute("aria-label"),
+		};
+	})()`
+
+	type checkbox struct {
+		Present  bool   `json:"present"`
+		Disabled bool   `json:"disabled"`
+		Title    string `json:"title"`
+		Label    string `json:"label"`
+	}
+
+	var external, managed checkbox
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length >= 2`),
+		chromedp.Evaluate(fmt.Sprintf(boxJS, "Sample Workshop Item"), &external),
+		chromedp.Evaluate(fmt.Sprintf(boxJS, "Managed Mod"), &managed),
+	)
+
+	require.True(t, external.Present, "the external row still renders its enabled cell")
+	assert.True(t, external.Disabled,
+		"a Steam Workshop row's enabled checkbox must not start a job lmm can only refuse")
+	assert.Contains(t, external.Title, "Steam",
+		"and must say who does own the item's state")
+	assert.NotContains(t, external.Label, "Disable",
+		"the accessible name must not offer an action this control cannot perform")
+
+	require.True(t, managed.Present)
+	assert.False(t, managed.Disabled,
+		"a mod lmm manages itself is untouched - the gate is on external rows only")
+
+	// The batch bar reached the identical doomed job in two clicks: select
+	// the Steam row, press Enable. Selecting ONLY external rows must leave
+	// both buttons refused; a selection that still contains a managed row
+	// keeps them live and drops the external one.
+	var externalOnly, mixed struct {
+		Enable  bool `json:"enable"`
+		Disable bool `json:"disable"`
+	}
+	const selectRowJS = `(() => {
+		const row = Array.from(document.querySelectorAll(".mod-row"))
+			.find((r) => r.textContent.includes(%q));
+		row.querySelector("td.col--select input[type=checkbox]").click();
+		return true;
+	})()`
+	const batchStateJS = `({
+		enable: document.querySelector('[data-action="batch-enable"]').disabled,
+		disable: document.querySelector('[data-action="batch-disable"]').disabled,
+	})`
+
+	f.runInBrowser(t,
+		chromedp.Evaluate(fmt.Sprintf(selectRowJS, "Sample Workshop Item"), nil),
+		pollUntil(`document.querySelector('[data-action="batch-enable"]') !== null`),
+		settleEffects(),
+		chromedp.Evaluate(batchStateJS, &externalOnly),
+		chromedp.Evaluate(fmt.Sprintf(selectRowJS, "Managed Mod"), nil),
+		settleEffects(),
+		chromedp.Evaluate(batchStateJS, &mixed),
+	)
+
+	assert.True(t, externalOnly.Enable, "a Steam-only selection cannot be enabled")
+	assert.True(t, externalOnly.Disable, "nor disabled")
+	assert.False(t, mixed.Enable, "a selection with a managed row still acts on that row")
+	assert.False(t, mixed.Disable)
+
 	assert.Empty(t, f.BrowserErrors())
 }
