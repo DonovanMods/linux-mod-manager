@@ -296,11 +296,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A curated entry gains an optional `loader:` block (`kind`, and optionally
   `version`), which `lmm game detect`, `lmm game add --from-detected` and
   `POST /api/v1/games/detect` write into `games.yaml` — so a curated BepInEx
-  game arrives configured rather than needing `lmm game edit --loader
-bepinex` before its first plugin will install. `runtime` and `bootstrap`
-  are deliberately not part of it: they are facts about _your_ copy of the
-  game, which `lmm game show` reads off the install directory. No entry in
-  the shipped catalog declares one yet.
+  game arrives configured rather than needing
+  `lmm game edit --loader bepinex` before its first plugin will install.
+  `runtime` and `bootstrap` are deliberately not part of it: they are facts
+  about _your_ copy of the game, which `lmm game show` reads off the install
+  directory. No entry in the shipped catalog declares one yet.
 
 - **A plugin will not be deployed into a game that has no loader (#359).**
   A BepInEx-shaped archive installed into a game declaring no loader now
@@ -1019,8 +1019,8 @@ bepinex` before its first plugin will install. `runtime` and `bootstrap`
 
 - **`lmm game show` no longer offers BepInEx advice for games that have
   nothing to do with a mod loader (#359).** Every game printed a "Mod
-  loader" section — `Declared: none`, `Runtime: unknown`, `Bootstrap:
-unknown` — followed by a warning telling you to set
+  loader" section — `Declared: none`, `Runtime: unknown`,
+  `Bootstrap: unknown` — followed by a warning telling you to set
   `--loader-bootstrap`. The section is now shown only for a game something
   says is loader-relevant — it declares a loader, BepInEx is actually in its
   install directory, or that directory carries a marker lmm recognises — and
