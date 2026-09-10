@@ -59,7 +59,10 @@ func TestE2E_ShellLoadsAndStoreHydratesStatus(t *testing.T) {
 		textContent(`.game-picker__trigger`, &picker),
 	)
 
-	assert.Equal(t, "lmm", title)
+	// Issue 399 replaced the shell's static <title>lmm</title>: main.js#go
+	// names the route it just entered. The application's own name is still
+	// in there, so a tab is still identifiable as lmm's.
+	assert.Equal(t, "Mission Control — "+f.Game.ID+"/"+f.Profile+" · lmm", title)
 	assert.Contains(t, picker, f.Game.Name,
 		"the rendered text must carry a fact only /api/v1/status knows")
 	assert.Empty(t, f.BrowserErrors(),
