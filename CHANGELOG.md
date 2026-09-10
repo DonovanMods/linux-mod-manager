@@ -275,6 +275,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   removed by an uninstall. Everything that is not config still deploys
   through the game's link method.
 
+- **A game can declare a mod loader (#359).** `games.yaml` gains an optional
+  `loader:` block — `kind` (today only `bepinex`), `version`, `runtime`
+  (`mono`/`il2cpp`) and `bootstrap` (`native`/`proton`), every field but the
+  kind optional — settable with `lmm game add --loader …`, `lmm game edit
+--loader …` (and `--loader ""` to remove it), `POST /api/v1/games`, `PUT
+/api/v1/games/{id}` and the web UI's Setup → Games row. An unrecognised
+  runtime or bootstrap fails the load naming the game, the value and the
+  valid set, the way an unrecognised `link_method` already does.
+
+  A loader is not a mod: it installs into the game root, it belongs to the
+  game installation rather than to a profile, and a plugin is useless without
+  it. So it is a per-game prerequisite, and declaring one changes which rules
+  apply — the archive normaliser's two ambiguous shapes (#358), the refusal
+  below, and the verify checks below.
+
+- **A plugin will not be deployed into a game that has no loader (#359).**
+  A BepInEx-shaped archive installed into a game declaring no loader now
+  fails at plan time with the setup steps — install the right build, record
+  it with `lmm game edit --loader`, then check it — instead of putting a DLL
+  somewhere nothing will load it from and reporting success. The steps travel
+  as data, so `lmm install`, `lmm install --json` and the web UI's failed job
+  all show the same three sentences.
+
+- **`lmm game show <game-id>` (#359).** Everything lmm knows about one game:
+  its paths, its sources, and — for a game with a loader — whether the
+  loader is installed, which Unity runtime and Linux bootstrap it needs, when
+  it last ran, and **the exact Steam launch option to paste**
+  (`./run_bepinex.sh %command%` for a native Linux build,
+  `WINEDLLOVERRIDES="winhttp=n,b" %command%` under Proton). The runtime and
+  bootstrap are read from files in the game's own install directory —
+  `<Game>_Data/il2cpp_data/` versus `Managed/Assembly-CSharp.dll`,
+  `UnityPlayer.so` versus `UnityPlayer.dll` — and where they do not say, lmm
+  says "unknown" rather than guessing, because the wrong launch option
+  launches the game normally and loads nothing. `GET /api/v1/games/{id}` and
+  the web UI's loader panel carry the same document.
+
+  **lmm never writes any of it for you.** Not Steam's `localconfig.vdf` —
+  that must be edited with the client closed, in an undocumented format, and
+  a bad write loses every launch option for every game in your account — and
+  not a Proton prefix. It tells you precisely, and then checks the result.
+
+- **`lmm verify` checks a loader-enabled game's loader (#359).** Five new
+  checks for a game with a `loader:` block: the preloader present, the
+  installed version matching the declaration, the bootstrap files matching
+  the declared mode, `BepInEx/LogOutput.log` present and newer than your last
+  deploy, and every enabled plugin actually linked. The log check is the
+  point: it is the only honest evidence the loader **ran** rather than merely
+  being installed, and it is how you find out the launch option is wrong
+  instead of finding out from a mod that mysteriously does nothing. Only the
+  plugin-link check is `--fix`-able (it re-deploys the mod); lmm does not
+  install loaders or write launch options, so the rest report and point at
+  the setup.
+
 - **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
   (#400).** Starting a job answered `{"job_id"}` while `GET /api/v1/jobs`
   and `GET /api/v1/jobs/{id}` answered `{"id"}` — the same entity under two

@@ -122,6 +122,12 @@ type gameAddRequest struct {
 	InstallPath    string `json:"install_path"`
 	ModPath        string `json:"mod_path,omitempty"`
 	FromSteamAppID string `json:"from_steam_app_id,omitempty"`
+	// Loader is #359's mod-loader declaration, additive and optional: the
+	// same four values `lmm game add --loader ...` collects, unparsed, so a
+	// core.GameSpecError's "field" member points at "loader.runtime" and the
+	// form marks that select. Omitted - which is nearly every game - the
+	// game declares no loader.
+	Loader *core.LoaderSpec `json:"loader,omitempty"`
 }
 
 // spec converts the request into the core.GameSpec AddGame validates. No
@@ -136,6 +142,7 @@ func (r *gameAddRequest) spec() core.GameSpec {
 		ID:          r.GameID,
 		InstallPath: r.InstallPath,
 		ModPath:     r.ModPath,
+		Loader:      r.Loader,
 	}
 }
 
@@ -215,6 +222,20 @@ func gameAddErrorStatus(err error) int {
 // seam.
 type gameSourcesRequest struct {
 	Sources map[string]string `json:"sources"`
+	// Loader is #359's declaration, additive: a body carrying it edits the
+	// LOADER instead of the source map.
+	//
+	// One request, one edit. Each is a complete statement on its own and
+	// each is its own gated write, so handling both in one request would
+	// make a partial failure - sources written, loader not - expressible
+	// with no way to report it; a body carrying both is refused rather than
+	// silently ordered, which is the same rule `lmm game edit` follows.
+	//
+	// Clearing needs the difference between "absent" and "null", so this is
+	// a pointer to a pointer's worth of state: LoaderSet says the member was
+	// present, Loader nil then means "remove the declaration".
+	Loader    *core.LoaderSpec `json:"loader,omitempty"`
+	LoaderSet bool             `json:"loader_set,omitzero"`
 }
 
 // handleAPIGameSources answers PUT /api/v1/games/{id} with the game's own
@@ -240,12 +261,47 @@ func (s *Server) handleAPIGameSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, err := s.svc.UpdateGameSources(r.Context(), r.PathValue("id"), req.Sources)
+	editsLoader := req.Loader != nil || req.LoaderSet
+	if editsLoader && len(req.Sources) > 0 {
+		s.writeAPIError(w, http.StatusBadRequest,
+			errors.New("edit the sources and the loader in separate requests: send \"sources\", or \"loader\", not both"))
+		return
+	}
+
+	update := func() (*core.GameListEntry, error) {
+		if editsLoader {
+			return s.svc.UpdateGameLoader(r.Context(), r.PathValue("id"), req.Loader)
+		}
+		return s.svc.UpdateGameSources(r.Context(), r.PathValue("id"), req.Sources)
+	}
+	entry, err := update()
 	if err != nil {
 		s.writeAPIError(w, gameSourcesErrorStatus(err), err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, entry)
+}
+
+// handleAPIGameDetail answers GET /api/v1/games/{id} with core.GameDetail -
+// the game's own list row plus its loader report, the same document
+// `lmm game show --json` prints.
+//
+// It is the web game page's hydrate, and it is where the Steam launch option
+// comes from: lmm works out which bootstrap the game needs and hands the
+// exact string over as data, because it will not write that string into
+// Steam's own configuration (see internal/core/loader_status.go). An unknown
+// game is 404, like every other game-scoped route.
+func (s *Server) handleAPIGameDetail(w http.ResponseWriter, r *http.Request) {
+	detail, err := s.svc.GameDetail(r.Context(), r.PathValue("id"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, domain.ErrGameNotFound) {
+			status = http.StatusNotFound
+		}
+		s.writeAPIError(w, status, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, detail)
 }
 
 // gameSourcesErrorStatus classifies an UpdateGameSources failure: an

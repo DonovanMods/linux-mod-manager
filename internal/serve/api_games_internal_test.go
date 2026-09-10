@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -402,17 +403,28 @@ func TestAPIGamesUnknownSubpath(t *testing.T) {
 	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
 }
 
-// TestAPIGamesIDIsPUTOnly is the same fallback seen from a path that IS
-// claimed, just not for this method: since #326 gave /api/v1/games/{id} a
-// PUT (the source<->game mapping), a GET of it answers 405 naming PUT
-// rather than the generic 404 it used to get when nothing claimed the path
-// at all.
-func TestAPIGamesIDIsPUTOnly(t *testing.T) {
+// TestAPIGamesIDAllowsGETAndPUTOnly is the method fallback seen from a path
+// that IS claimed: /api/v1/games/{id} answers GET (#359's detail document)
+// and PUT (#326's source<->game mapping), and anything else is 405 naming
+// both rather than the generic 404 an unclaimed path gets.
+//
+// Before #359 a GET of this path was itself the 405 case; it is now a real
+// route, so the method that proves the fallback has to be one nothing claims.
+func TestAPIGamesIDAllowsGETAndPUTOnly(t *testing.T) {
+	s := newGamesServer(t)
+	rec := doAPI(s, http.MethodDelete, "/api/v1/games/nope", "")
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+	assert.ElementsMatch(t, []string{"GET", "PUT"},
+		strings.Split(strings.ReplaceAll(rec.Header().Get("Allow"), " ", ""), ","))
+	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+}
+
+// An unknown game on the GET is 404, the answer every other game-scoped
+// route gives.
+func TestAPIGameDetail_UnknownGameIs404(t *testing.T) {
 	s := newGamesServer(t)
 	rec := doAPI(s, http.MethodGet, "/api/v1/games/nope", "")
-	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
-	assert.Equal(t, "PUT", rec.Header().Get("Allow"))
-	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 // jsonString quotes a path for embedding in a request-body literal, so a

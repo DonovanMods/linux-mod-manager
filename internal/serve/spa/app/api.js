@@ -292,6 +292,29 @@ export const addGame = (spec) => post("/api/v1/games", spec);
 export const updateGameSources = (gameID, sources) =>
   put(`/api/v1/games/${encodeURIComponent(gameID)}`, { sources });
 
+/** Reads ONE game's full document: core.GameDetail - the same row
+ * `lmm game list` prints, plus the mod-loader report (issue 359).
+ *
+ * The report is where the Steam launch option comes from. lmm works out which
+ * bootstrap a game needs and hands the exact string over as DATA, because it
+ * deliberately does not write that string into Steam's own configuration. */
+export const getGameDetail = (gameID) =>
+  get(`/api/v1/games/${encodeURIComponent(gameID)}`);
+
+/** Replaces a game's mod-loader declaration (issue 359), or REMOVES it when
+ * spec is null.
+ *
+ * `loader_set` is what makes the removal expressible: an absent member means
+ * "leave the loader alone", so the flag says the member was meant. Sources and
+ * the loader are separate requests - each is its own write, and one request
+ * doing both would make a half-applied edit possible with no way to report
+ * it. */
+export const updateGameLoader = (gameID, spec) =>
+  put(`/api/v1/games/${encodeURIComponent(gameID)}`, {
+    loader: spec ?? undefined,
+    loader_set: true,
+  });
+
 /** Reads the Steam detect scan's pre-selection listing: core.GameDetectListing.
  * all=true (issue 206) widens it with every OTHER installed Steam game
  * (?all=1) - no `known` member at all (never a literal false), no index,

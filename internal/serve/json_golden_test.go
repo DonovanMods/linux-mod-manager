@@ -550,6 +550,23 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #359's additive loader member on the same body, in its own
+			// golden rather than folded into the one above: the loaderless
+			// add is the overwhelmingly common request and its shape must
+			// stay pinned as the one it always was.
+			"game_add_request_loader",
+			gameAddRequest{
+				SourceID:    "nexusmods",
+				Identifier:  "valheim",
+				Name:        "Valheim",
+				InstallPath: "/games/valheim",
+				ModPath:     "/games/valheim",
+				Loader: &core.LoaderSpec{
+					Kind: "bepinex", Version: "5.4.23.5", Runtime: "mono", Bootstrap: "proton",
+				},
+			},
+		},
+		{
 			// #326's source<->game mapping body (epic live review C-4): the
 			// FULL map the game ends up with, keyed by registered source id.
 			// Two entries with one empty identifier, because both shapes are
@@ -560,6 +577,18 @@ func TestServeJSONGoldens(t *testing.T) {
 				"nexusmods":  "skyrimspecialedition",
 				"local-mods": "",
 			}},
+		},
+		{
+			// #359: the same route's OTHER edit. One request, one edit - a
+			// body carrying both a source map and a loader is refused - so
+			// this golden carries the loader alone, and loader_set is what
+			// distinguishes "remove the declaration" (present, null) from
+			// "leave it alone" (absent).
+			"game_loader_request",
+			gameSourcesRequest{
+				Loader:    &core.LoaderSpec{Kind: "bepinex", Version: "5.4.23.5", Bootstrap: "native"},
+				LoaderSet: true,
+			},
 		},
 		{
 			// The detect apply's body: which listing rows to add, named by

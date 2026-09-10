@@ -33,6 +33,7 @@ import {
 } from "../api.js";
 import { navigate, setupPath } from "../router.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
+import { GameLoaderEditor, loaderDraft, loaderSpec } from "./gameloader.js";
 
 /**
  * GameDetectSection scans for Steam installs and offers to add the ones not
@@ -276,6 +277,11 @@ const KNOWN_FIELD_ERRORS = new Set([
   "install_path",
   "mod_path",
   "game_id",
+  // issue 359: core names the offending SELECT, not the whole block, so the
+  // loader errors land on their own controls like every other field.
+  "loader.kind",
+  "loader.runtime",
+  "loader.bootstrap",
 ]);
 
 // identifierHints names the per-source example/placeholder the "Identifier
@@ -313,6 +319,10 @@ function emptySpec() {
     installPath: "",
     modPath: "",
     gameID: undefined,
+    // issue 359: the mod-loader declaration, empty for the overwhelming
+    // majority of games. loaderSpec() turns it into the request member, or
+    // into nothing at all when no kind is chosen.
+    loader: loaderDraft(null),
   };
 }
 
@@ -587,6 +597,8 @@ export function GameAddForm({
         if (spec.name && spec.name !== detectedRow.name) body.name = spec.name;
         if (spec.gameID) body.game_id = spec.gameID;
         if (spec.modPath) body.mod_path = spec.modPath;
+        const declared = loaderSpec(spec.loader);
+        if (declared) body.loader = declared;
         entry = await addGame(body);
       } else {
         entry = await addGame({
@@ -596,6 +608,7 @@ export function GameAddForm({
           game_id: spec.gameID || undefined,
           install_path: spec.installPath,
           mod_path: spec.modPath || undefined,
+          loader: loaderSpec(spec.loader) || undefined,
         });
       }
       // The extras ride a second call, and the game is REAL by the time it
@@ -949,6 +962,17 @@ export function GameAddForm({
         />
       </label>
       ${errorFor("mod_path") && html`<p class="modal__error">${errorFor("mod_path")}</p>`}
+
+      <${GameLoaderEditor}
+        value=${spec.loader}
+        disabled=${busy}
+        onChange=${(loader) => patch({ loader })}
+      />
+      ${["loader.kind", "loader.runtime", "loader.bootstrap"].map(
+        (f) =>
+          errorFor(f) &&
+          html`<p class="modal__error" key=${f}>${errorFor(f)}</p>`,
+      )}
       ${
         formError &&
         html`<p class="modal__error">

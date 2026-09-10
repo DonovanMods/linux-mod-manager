@@ -58,6 +58,7 @@ func (s *Server) routes() {
 	// of games.yaml neither frontend could reach. A single-step write like
 	// lock/policy, answering the same core.GameListEntry row the listing
 	// carries.
+	s.mux.Handle("GET /api/v1/games/{id}", s.wrap(s.handleAPIGameDetail))
 	s.mux.Handle("PUT /api/v1/games/{id}", s.wrap(s.handleAPIGameSources))
 	s.mux.Handle("GET /api/v1/games/catalog", s.wrap(s.handleAPIGamesCatalog))
 	s.mux.Handle("GET /api/v1/games/detect", s.wrap(s.handleAPIGamesDetect))

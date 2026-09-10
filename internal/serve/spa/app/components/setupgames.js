@@ -12,6 +12,13 @@ import {
   del,
 } from "../api.js";
 import { SourcesMapEditor } from "./sourcesmap.js";
+import {
+  GameLoaderEditor,
+  GameLoaderPanel,
+  loaderDraft,
+  loaderSpec,
+  updateGameLoader,
+} from "./gameloader.js";
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
 
 /** setDefaultGame/clearDefaultGame are this section's own two mutations -
@@ -37,6 +44,14 @@ export function SetupGames({ actions, game, profile }) {
   // One at a time: two open editors over the same replacement-shaped PUT is
   // two ways to lose an edit.
   const [editing, setEditing] = useState(null); // {id, map}
+  // Which row's LOADER is open, and its draft. Separate from `editing`
+  // because the two are separate requests (api_games.go refuses a body
+  // carrying both), so they are separate controls rather than one editor
+  // whose Save means two different writes.
+  const [editingLoader, setEditingLoader] = useState(null); // {id, draft}
+  // Bumped after a loader save so the open panel re-reads the game directory
+  // instead of guessing what changed.
+  const [loaderKey, setLoaderKey] = useState(0);
 
   async function reload() {
     try {
@@ -71,6 +86,27 @@ export function SetupGames({ actions, game, profile }) {
       // is rendered verbatim rather than re-worded here.
       setRowError({
         id: editing.id,
+        message: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      setBusyID(null);
+    }
+  }
+
+  async function saveLoader() {
+    if (!editingLoader) return;
+    setBusyID(editingLoader.id);
+    setRowError(null);
+    try {
+      await updateGameLoader(editingLoader.id, loaderSpec(editingLoader.draft));
+      setLoaderKey((k) => k + 1);
+      await reload();
+      await actions.reloadStatus();
+    } catch (err) {
+      // A rejected value's envelope already names the field and the valid
+      // set, so it is rendered verbatim rather than re-worded here.
+      setRowError({
+        id: editingLoader.id,
         message: err instanceof ApiError ? err.message : String(err),
       });
     } finally {
@@ -130,6 +166,7 @@ export function SetupGames({ actions, game, profile }) {
             <th class="col--path">Install path</th>
             <th class="col--path">Mod path</th>
             <th>Sources</th>
+            <th>Loader</th>
             <th>Default</th>
           </tr>
         </thead>
@@ -167,6 +204,26 @@ export function SetupGames({ actions, game, profile }) {
                   </button>
                 </td>
                 <td>
+                  <span class="mono" data-testid="loader-cell"
+                    >${g.loader?.kind ?? "—"}</span
+                  >${" "}
+                  <button
+                    type="button"
+                    class="button button--small"
+                    data-action="edit-loader"
+                    data-game=${g.id}
+                    disabled=${busyID === g.id}
+                    onClick=${() =>
+                      setEditingLoader(
+                        editingLoader?.id === g.id
+                          ? null
+                          : { id: g.id, draft: loaderDraft(g.loader) },
+                      )}
+                  >
+                    ${editingLoader?.id === g.id ? "Cancel" : "Edit loader…"}
+                  </button>
+                </td>
+                <td>
                   <button
                     type="button"
                     class="button button--small ${g.default ? "button--primary" : ""}"
@@ -184,7 +241,7 @@ export function SetupGames({ actions, game, profile }) {
               ${
                 editing?.id === g.id &&
                 html`<tr key=${`${g.id}-sources`} class="setup-table__editor">
-                  <td colspan="5">
+                  <td colspan="6">
                     <${SourcesMapEditor}
                       sources=${sources}
                       value=${editing.map}
@@ -200,6 +257,31 @@ export function SetupGames({ actions, game, profile }) {
                     >
                       ${busyID === g.id ? "Saving…" : "Save sources"}
                     </button>
+                  </td>
+                </tr>`
+              }
+              ${
+                editingLoader?.id === g.id &&
+                html`<tr key=${`${g.id}-loader`} class="setup-table__editor">
+                  <td colspan="6">
+                    <${GameLoaderEditor}
+                      value=${editingLoader.draft}
+                      disabled=${busyID === g.id}
+                      onChange=${(draft) => setEditingLoader({ id: g.id, draft })}
+                    />
+                    <button
+                      type="button"
+                      class="button button--small button--primary"
+                      data-action="save-loader"
+                      disabled=${busyID === g.id}
+                      onClick=${saveLoader}
+                    >
+                      ${busyID === g.id ? "Saving…" : "Save loader"}
+                    </button>
+                    <${GameLoaderPanel}
+                      gameID=${g.id}
+                      refreshKey=${loaderKey}
+                    />
                   </td>
                 </tr>`
               }

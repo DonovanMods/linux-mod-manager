@@ -2414,3 +2414,16 @@ func newE2EFixtureWithAFetchingSource(t *testing.T, failure *domain.WorkshopFetc
 		Src: base,
 	}
 }
+
+// writeE2EGameMarkers drops the Unity player library that tells
+// core.DetectLoaderTarget whether a game is a native Linux build
+// (UnityPlayer.so) or a Windows one that runs under Proton
+// (UnityPlayer.dll), into the fixture's own sandboxed install directory.
+//
+// It writes ONE file into a t.TempDir()-rooted game the fixture created.
+// Nothing here touches a real game, a real Steam library or a Proton prefix.
+func writeE2EGameMarkers(t *testing.T, installPath, player string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(installPath, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(installPath, player), []byte("stub"), 0o644))
+}

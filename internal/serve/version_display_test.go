@@ -100,6 +100,9 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 	"components/plan_import_archive.js": {
 		"version": {1, "The mod an archive import creates. Adopt is the only producer of an external row, and it takes no archive."},
 	},
+	"components/gameloader.js": {
+		"version": {3, "Not a MOD's version at all: this is domain.GameLoader.Version / core.LoaderSpec.Version, the BepInEx build installed in the GAME directory (issue 359). A game carries no External field and is never a Workshop item, so displayVersion has nothing to answer here - it takes a mod. Two reads seed and patch the editor's draft; one is the version input's value."},
+	},
 }
 
 // TestVersionDisplayGoesThroughTheSharedHelper walks the SPA's modules and
