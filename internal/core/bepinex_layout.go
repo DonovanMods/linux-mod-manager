@@ -28,10 +28,13 @@ package core
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
 )
 
 // ErrBepInExFrameworkPack is the refusal for an archive that IS BepInEx
@@ -381,4 +384,73 @@ const bepinexConfigPrefix = "BepInEx/config/"
 // a loader is not a shape that exists.
 func isBepInExConfigMember(deployPath string) bool {
 	return strings.HasPrefix(filepath.ToSlash(deployPath), bepinexConfigPrefix)
+}
+
+// normalizeBepInExTree applies bepinexNormalise's rules to a PRISTINE
+// extracted tree at root, in place, and returns the layout it recognised so
+// the caller can surface its warnings.
+//
+// "Pristine" is load-bearing and is what both ingest sites already produce:
+// extractIntoStaging extracts into a sibling directory precisely so this
+// archive's members can be told apart from an earlier file's, and
+// importWithIdentity extracts into a fresh staging directory before moving
+// it into the cache. Rewriting a SEEDED tree would move an earlier file's
+// members too, whose paths this archive's listing says nothing about.
+//
+// It is one function shared by both sites rather than a transformation each
+// applies to its own walk, for archive_listing.go's reason: two copies of
+// these rules would drift the first time either side changed, and the whole
+// contract is that a plan, a download and an archive import place a plugin
+// at the same path.
+//
+// A dropped member is removed and a moved one renamed; the directories a
+// move empties are cleaned up, so no phantom wrapper survives into `lmm mod
+// files` or a plan readout. Nothing is touched at all when the layout does
+// not apply, and nothing is touched when it errors - a framework pack is
+// refused with the tree exactly as it arrived, so the caller's own cleanup
+// has a coherent directory to remove.
+func normalizeBepInExTree(root, modName string, loaderDeclared bool) (*bepinexLayout, error) {
+	members, err := relativeFileMembers(root)
+	if err != nil {
+		return nil, fmt.Errorf("listing extracted members: %w", err)
+	}
+	slash := make([]string, len(members))
+	for i, m := range members {
+		slash[i] = filepath.ToSlash(m)
+	}
+
+	layout, err := bepinexNormalise(slash, modName, loaderDeclared)
+	if err != nil {
+		return nil, err
+	}
+	if !layout.Applies() {
+		return layout, nil
+	}
+
+	for i, member := range slash {
+		src := filepath.Join(root, members[i])
+		dest, kept := layout.Rewrite(member)
+		if !kept {
+			if err := os.Remove(src); err != nil {
+				return nil, fmt.Errorf("dropping archive metadata %s: %w", member, err)
+			}
+			continue
+		}
+		if dest == member {
+			continue
+		}
+		dst := filepath.Join(root, filepath.FromSlash(dest))
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return nil, fmt.Errorf("preparing %s: %w", dest, err)
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return nil, fmt.Errorf("normalising %s to %s: %w", member, dest, err)
+		}
+	}
+
+	// The wrapper directory a shape-C strip emptied, and the bare
+	// plugins/patchers/ roots a shape-B prefix emptied, would otherwise
+	// survive as empty directories in the cache entry.
+	linker.CleanupEmptyDirs(root)
+	return layout, nil
 }
