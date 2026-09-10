@@ -26,6 +26,14 @@ import (
 // The two failure shapes are the two that can carry a key: a transport
 // failure (whose *url.Error stringifies the RESOLVED url) and a refusal
 // whose body echoes the request back.
+//
+// Tier 3's GetModFiles and GetDownloadURL are in the table because both
+// reach Valve through detailsFor. Tier 3's Fetch is NOT, and deliberately:
+// it makes no HTTP request of its own, it shells out to steamcmd, and
+// putting it here would either run that tool for real against Valve - which
+// this package forbids, see TestNoTestReachesTheProductionAPI - or assert
+// nothing. TestFetchCarriesNoKeyWhenTheToolIsMissing covers the one error
+// it can return without leaving the machine.
 
 // theKey is deliberately a string no other fixture in this package uses, so
 // a match in an error message can only have come from the credential.
@@ -57,6 +65,14 @@ func keyBearingCalls() []keyBearingCall {
 		}},
 		{"DescribeMods", func(ctx context.Context, s *steamworkshop.Source) error {
 			_, err := s.DescribeMods(ctx, "1133870", []string{"3617086610"}, true)
+			return err
+		}},
+		{"GetModFiles", func(ctx context.Context, s *steamworkshop.Source) error {
+			_, err := s.GetModFiles(ctx, &domain.Mod{ID: "3617086610", GameID: "1133870"})
+			return err
+		}},
+		{"GetDownloadURL", func(ctx context.Context, s *steamworkshop.Source) error {
+			_, err := s.GetDownloadURL(ctx, &domain.Mod{ID: "3617086610", GameID: "1133870"}, "3617086610")
 			return err
 		}},
 		{"CheckUpdates", func(ctx context.Context, s *steamworkshop.Source) error {
@@ -132,4 +148,21 @@ func assertNoKey(t *testing.T, err error) {
 	// The parameter is the tell that a resolved URL was interpolated: no
 	// message this package produces has any reason to carry one.
 	assert.False(t, strings.Contains(msg, "key="+theKey), "a resolved URL leaked into: %s", msg)
+}
+
+// TestFetchCarriesNoKeyWhenTheToolIsMissing is Fetch's share of the sweep
+// above, kept separate because Fetch reaches steamcmd rather than Valve.
+// PATH is emptied so the tool is definitively absent and the call returns
+// before it can execute anything.
+func TestFetchCarriesNoKeyWhenTheToolIsMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	src := newTestSource(t, "http://127.0.0.1:1", t.TempDir(), nil)
+	src.SetAPIKey(theKey)
+
+	_, err := src.Fetch(context.Background(),
+		&domain.Mod{ID: "3617086610", GameID: "1133870"}, "3617086610", t.TempDir(), nil)
+	require.Error(t, err)
+	require.ErrorIs(t, err, domain.ErrExternalToolMissing)
+	assertNoKey(t, err)
 }
