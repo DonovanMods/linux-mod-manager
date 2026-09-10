@@ -1,0 +1,24 @@
+{
+  "id": "lethal-company",
+  "name": "Lethal Company",
+  "install_path": "/home/user/.steam/steam/steamapps/common/Lethal Company",
+  "mod_path": "/home/user/.steam/steam/steamapps/common/Lethal Company",
+  "source_ids": {
+    "nexusmods": "lethalcompany"
+  },
+  "link_method": "symlink",
+  "link_method_explicit": false,
+  "hooks": {
+    "install": {},
+    "uninstall": {}
+  },
+  "deploy_mode": "extract",
+  "convert_paks": false,
+  "convert_paks_explicit": false,
+  "loader": {
+    "kind": "bepinex",
+    "version": "5.4.23.5",
+    "runtime": "mono",
+    "bootstrap": "proton"
+  }
+}

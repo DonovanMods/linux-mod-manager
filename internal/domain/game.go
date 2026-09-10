@@ -87,6 +87,12 @@ type Game struct {
 	DeployMode          DeployMode        `json:"deploy_mode"`           // How to handle downloaded files (extract vs copy)
 	ConvertPaks         bool              `json:"convert_paks"`          // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
 	ConvertPaksExplicit bool              `json:"convert_paks_explicit"` // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
+	// Loader is #359's optional per-game mod-loader declaration
+	// (games.yaml's `loader:` block, loader.go). nil for the overwhelming
+	// majority of games, which need no loader at all - so the member is
+	// absent from every document a loaderless game produces, and every
+	// golden recorded before this field existed is byte-identical.
+	Loader *GameLoader `json:"loader,omitempty"`
 }
 
 // DeployMode determines how downloaded mod archives are handled

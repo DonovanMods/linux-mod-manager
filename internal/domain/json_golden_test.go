@@ -219,6 +219,39 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #359's loader block on its own: the four members, with the
+			// two closed enums as their wire NAMES rather than ints.
+			"game_loader",
+			domain.GameLoader{
+				Kind:      domain.LoaderKindBepInEx,
+				Version:   "5.4.23.5",
+				Runtime:   domain.LoaderRuntimeMono,
+				Bootstrap: domain.LoaderBootstrapProton,
+			},
+		},
+		{
+			// A BepInEx game: the game-root shape (mod_path IS install_path,
+			// #358) plus the loader block, so the ADDITIVE "loader" member's
+			// placement in the Game document is pinned. game.golden above is
+			// the loaderless case, and stays byte-identical to what it was
+			// before this field existed.
+			"game_bepinex",
+			domain.Game{
+				ID:          "lethal-company",
+				Name:        "Lethal Company",
+				InstallPath: "/home/user/.steam/steam/steamapps/common/Lethal Company",
+				ModPath:     "/home/user/.steam/steam/steamapps/common/Lethal Company",
+				SourceIDs:   map[string]string{"nexusmods": "lethalcompany"},
+				LinkMethod:  domain.LinkSymlink,
+				Loader: &domain.GameLoader{
+					Kind:      domain.LoaderKindBepInEx,
+					Version:   "5.4.23.5",
+					Runtime:   domain.LoaderRuntimeMono,
+					Bootstrap: domain.LoaderBootstrapProton,
+				},
+			},
+		},
+		{
 			// A CURATED candidate: every field the known-games entry
 			// supplies, plus #206's "known": true.
 			"detected_game",
