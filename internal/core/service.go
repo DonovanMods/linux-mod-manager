@@ -105,8 +105,11 @@ type Service struct {
 	// substitutes adapter.NewRegistry() for a nil ServiceConfig.Adapters,
 	// so AdapterFor always has at least the built-in identity to resolve.
 	adapters *adapter.Registry
-	gamesMu  sync.RWMutex
-	games    map[string]*domain.Game
+	// adaptersOnce guards adapterRegistry's lazy allocation for a Service
+	// built as a bare literal rather than through NewService.
+	adaptersOnce sync.Once
+	gamesMu      sync.RWMutex
+	games        map[string]*domain.Game
 	// gamesStat fingerprints the games.yaml the snapshot above was loaded
 	// from, so ReloadGames can skip the parse when nothing moved (#376).
 	// Guarded by gamesMu, like games itself.
@@ -270,20 +273,22 @@ func (s *Service) RegisterAdapter(a adapter.GameAdapter) {
 	s.adapterRegistry().Register(a)
 }
 
-// defaultAdapters is the registry a Service built as a bare literal reads
-// from - internal white-box tests that construct &Service{} directly rather
-// than through NewService. It holds exactly what NewRegistry holds, the
-// built-in generic-files identity, and nothing registers into it: same
-// nil-tolerance idiom as logger() and for the same reason, a zero Service
-// must behave, not panic.
-var defaultAdapters = adapter.NewRegistry()
-
-// adapterRegistry returns this Service's adapter registry, substituting the
-// shared identity-only default for a Service that never had one.
+// adapterRegistry returns this Service's adapter registry, allocating one
+// for a Service built as a bare &Service{} literal - which internal
+// white-box tests do. Same nil-tolerance idiom as logger(), for the same
+// reason: a zero Service must behave, not panic.
+//
+// The registry is allocated PER SERVICE rather than shared from a package
+// variable (#411, M6): RegisterAdapter registers into whatever this
+// returns, so a process-global default would let one bare Service's
+// registration leak into every other one in the package. sync.Once because
+// the allocation is a write, and a Service is read concurrently.
 func (s *Service) adapterRegistry() *adapter.Registry {
-	if s.adapters == nil {
-		return defaultAdapters
-	}
+	s.adaptersOnce.Do(func() {
+		if s.adapters == nil {
+			s.adapters = adapter.NewRegistry()
+		}
+	})
 	return s.adapters
 }
 

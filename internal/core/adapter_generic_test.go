@@ -364,3 +364,19 @@ func TestValidateInstallFileSelectionAsksTheAdapter(t *testing.T) {
 	require.Error(t, err, "the variant-exclusivity rule must follow the adapter, not only the source")
 	assert.Contains(t, err.Error(), "alternate forms of the same mod")
 }
+
+// TestBareServiceRegistryIsPerService is M6's regression test: a Service
+// built as a bare &Service{} literal - which internal white-box tests do -
+// used to read AND WRITE a package-level default registry, so one test's
+// RegisterAdapter leaked into every other bare Service in the package.
+func TestBareServiceRegistryIsPerService(t *testing.T) {
+	one, two := &Service{}, &Service{}
+
+	one.RegisterAdapter(compileStub{id: "leaky"})
+
+	assert.Contains(t, one.ListAdapters(), "leaky")
+	assert.NotContains(t, two.ListAdapters(), "leaky",
+		"a registration on one Service must not reach another")
+	assert.Contains(t, two.ListAdapters(), adapter.GenericID,
+		"but every Service still resolves the built-in identity")
+}
