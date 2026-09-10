@@ -25,6 +25,12 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	// A TEST-ONLY import: seedProfileMod writes the same per-file completion
+	// marker a real download leaves, which is what every cache-first guard in
+	// core reads. internal/serve's own boundary ratchet scopes itself to the
+	// package's NON-test imports (go list .Imports) for exactly this reason,
+	// and Service.GetGameCache already hands this package a *cache.Cache.
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/stretchr/testify/require"
 )
 
@@ -204,8 +210,17 @@ func seedProfileMod(t *testing.T, svc *core.Service, game *domain.Game, profileN
 	ctx := t.Context()
 	fileID := modID + "-f1"
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, fixtureSourceID, modID, version,
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, fixtureSourceID, modID, version,
 		profileModFile(modID), []byte(modID+" payload")))
+	// The per-file completion marker a real download leaves behind. Without
+	// it the entry is only PARTIALLY populated by cache.HasFileIDs' rule -
+	// which is what every cache-first guard in core asks (the plan half of
+	// #371 included, since P1a review F6) - so the fixture would describe an
+	// interrupted download rather than an installed mod.
+	require.NoError(t, cache.MarkFileCompleteWithMembers(
+		gameCache.ModPath(game.ID, fixtureSourceID, modID, version),
+		fileID, []string{profileModFile(modID)}))
 	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
 		Mod: domain.Mod{
 			ID: modID, SourceID: fixtureSourceID, Name: strings.ToUpper(modID),
