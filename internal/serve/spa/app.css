@@ -2449,6 +2449,16 @@ select {
   gap: var(--space-3);
 }
 
+/* Two cards in one Setup panel (issue 368's review, Minor 6): SetupAdopt
+   renders its Steam Workshop card as a SIBLING section, and the panel around
+   them is a plain block, so the second card's heading sat flush against the
+   first card's action row. Adjacent-sibling rather than a rule on the panel,
+   so nothing else about the panel's layout moves, and the same --space-6 the
+   first-run page already puts between its sections. */
+.setup-section + .setup-section {
+  margin-top: var(--space-6);
+}
+
 /* The keyboard-shortcuts help's own table (issue 334's gate review,
  * Important 3). Same shape as .setup-table - this application has one table
  * idiom - with the key column sized to its content so the two prose columns
@@ -2601,6 +2611,18 @@ select {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+/* Issue 368: the Workshop item count, beside the row it justifies. It must
+   never be the thing that truncates - it is the shortest and the most
+   load-bearing part of the row - so it keeps its natural width and the
+   path above goes on absorbing the overflow. Muted, like the path: it is
+   context for the name, not a second title. */
+.setup-detect__workshop {
+  flex: 0 0 auto;
+  white-space: nowrap;
   color: var(--text-muted);
   font-size: 0.85em;
 }

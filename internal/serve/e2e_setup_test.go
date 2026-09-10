@@ -1656,13 +1656,13 @@ func TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone(t *testing.T) {
 		chromedp.Evaluate(fmt.Sprintf(
 			`Array.from(document.querySelectorAll('[data-action="pick-installed-row"]')).find(b => b.textContent.includes(%q)).click()`,
 			fixture.Name), nil),
-		chromedp.WaitVisible(`[data-testid="setup-add-curated-sources"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-prefilled-sources"]`, chromedp.ByQuery),
 	)
 
 	// The form SAYS where the sources come from, and names them, rather
 	// than leaving the user to guess why no source is required.
 	var curatedNote string
-	f.runInBrowser(t, textContent(`[data-testid="setup-add-curated-sources"]`, &curatedNote))
+	f.runInBrowser(t, textContent(`[data-testid="setup-add-prefilled-sources"]`, &curatedNote))
 	assert.Contains(t, curatedNote, "known-games list")
 	assert.Contains(t, curatedNote, "nexusmods: "+fixture.Slug)
 

@@ -280,16 +280,25 @@ type GameSpec struct {
 // records those semantics), and an "add" that can destroy an existing
 // game's default profile without saying so is a trap in a web form.
 func (s *Service) AddGame(ctx context.Context, spec GameSpec) (*GameListEntry, error) {
-	game, err := spec.game()
-	if err != nil {
-		return nil, err
-	}
-
 	release, err := s.beginOp(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
+
+	return s.addGameLocked(ctx, spec)
+}
+
+// addGameLocked is AddGame without the gate, so a flow already holding the
+// Service's mutation slot can compose it - ApplyDetectSelection adds an
+// UNCURATED detect row through exactly this path, under the one slot that
+// covers the whole selection (#368 review Minor 8). Every rule below is
+// AddGame's; the only difference is who took the slot.
+func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEntry, error) {
+	game, err := spec.game()
+	if err != nil {
+		return nil, err
+	}
 
 	// Checked INSIDE the gate, not before it: spec.game() validates every
 	// field EXCEPT that SourceID actually resolves, so without this a

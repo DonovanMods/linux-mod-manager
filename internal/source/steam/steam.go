@@ -2,6 +2,7 @@ package steam
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,27 @@ type DetectOptions struct {
 	// `lmm game detect`'s prompt, GET /api/v1/games/detect - does not
 	// change shape unless a caller asks for the wider list.
 	IncludeUnknown bool
+
+	// Logger receives the scan's NOTICES: facts worth recording that are
+	// not the user's problem and are not lmm's fault, so they must not
+	// reach a terminal as "Warning:" on every run (#368). Today there is
+	// exactly one - a libraryfolders.vdf entry whose directory is gone,
+	// which every scan re-discovers and no user action can fix, since
+	// Steam wrote it and Steam will rewrite it.
+	//
+	// A real WARNING - a library that exists but cannot be read - still
+	// comes back in the warnings slice, where a caller shows it without
+	// being asked. Nil is the ordinary case and discards.
+	Logger *slog.Logger
+}
+
+// logger is opts.Logger, or a discarding one - the ordinary case, since
+// every caller that has nothing to do with a notice passes none.
+func (o DetectOptions) logger() *slog.Logger {
+	if o.Logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return o.Logger
 }
 
 // steamToolNamePrefixes are the Steam-shipped tools and runtimes that
@@ -325,6 +347,19 @@ func DetectGames(configDir string, opts DetectOptions) (games []DetectedGame, wa
 			steamapps := filepath.Join(libPath, "steamapps")
 			entries, err := os.ReadDir(steamapps)
 			if err != nil {
+				// A MISSING library is Steam's own bookkeeping, not a
+				// problem lmm found: libraryfolders.vdf still lists a drive
+				// that is unplugged or a library removed outside the
+				// client. Shouting "Warning:" about it on every `lmm game
+				// detect` reads like an lmm fault and there is nothing to
+				// act on, so it is a notice (#368). Anything else -
+				// permissions, a broken mount - is about a directory that
+				// IS there, and stays a warning.
+				if os.IsNotExist(err) {
+					opts.logger().Info("skipping a Steam library that is listed in libraryfolders.vdf but missing",
+						"library", libPath)
+					continue
+				}
 				warnings = append(warnings, fmt.Sprintf("%s: %v", steamapps, err))
 				continue
 			}

@@ -65,7 +65,7 @@ game.
 .PP
 The install path must already exist. The mod path is not created here;
 deploy creates it on demand. Either path may use "~", and the mod path may
-be given relative to the install path - "Data" means "/Data",
+be given relative to the install path - "Data" means "<install path>/Data",
 exactly as it does in a hand-written games.yaml - with the resolved
 absolute path being what lmm records.
 
@@ -109,7 +109,7 @@ lmm game detect --include-unknown          # list installed app ids
 
 .PP
 \fB--mod-path\fP=""
-	mod directory, absolute or relative to the install path (default: /mods)
+	mod directory, absolute or relative to the install path (default: <install path>/mods)
 
 .PP
 \fB--name\fP=""

@@ -301,7 +301,9 @@ export const updateGameSources = (gameID, sources) =>
 export const detectGames = (all = false) =>
   get(all ? "/api/v1/games/detect?all=1" : "/api/v1/games/detect");
 
-/** Applies a detect selection (1-based indices or slugs): core.GameDetectResult. */
+/** Applies a detect selection (1-based indices or slugs): core.GameDetectResult.
+ * A bare selector that is BOTH an index and another row's slug is refused
+ * rather than guessed at; "#2" names the index and "slug:2" the slug. */
 export const applyGameDetect = (select) =>
   post("/api/v1/games/detect", { select });
 

@@ -573,3 +573,76 @@ func TestAPIGameAdd_FromSteamAppIDUnknownAppID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "from_steam_app_id")
 }
+
+// fakeSteamWorkshopManifest writes a populated appworkshop_<appID>.acf next
+// to the fabricated library fakeSteamApp built, which is what makes
+// detection prefill `steamworkshop: <appID>` and stamp the item count
+// (#269 Unit 9). items is how many installed entries the manifest declares.
+func fakeSteamWorkshopManifest(t *testing.T, appID string, fileIDs ...string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("HOME"), ".steam", "steam", "steamapps", "workshop")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	body := "\"AppWorkshop\"\n{\n\t\"appid\"\t\t\"" + appID + "\"\n\t\"WorkshopItemsInstalled\"\n\t{\n"
+	for _, id := range fileIDs {
+		body += "\t\t\"" + id + "\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"1122334455667788990\"\n\t\t}\n"
+	}
+	body += "\t}\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "appworkshop_"+appID+".acf"), []byte(body), 0o644))
+}
+
+// TestAPIGamesDetect_ListsWorkshopBearingUncuratedGamesWithoutAll is #368
+// on the web's own half: the first-run/Setup detect list asked for the
+// NARROW listing, so a game whose only claim to being moddable is the
+// thirty Workshop items Steam already downloaded was invisible unless the
+// caller thought to pass ?all=1. It is now in the default document, with
+// its count and its prefilled source map, while a plain uncurated game
+// still needs the parameter.
+func TestAPIGamesDetect_ListsWorkshopBearingUncuratedGamesWithoutAll(t *testing.T) {
+	s := newGamesServer(t)
+	fakeSteamApp(t, "1133870", "Space Engineers 2", "SpaceEngineers2")
+	fakeSteamWorkshopManifest(t, "1133870", "3617086610", "3512001122")
+	fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+
+	narrow := decodeDetectListing(t, s, "/api/v1/games/detect")
+	require.Len(t, narrow.Games, 1, "the Workshop-bearing row is listed by default; the plain uncurated one is not")
+	row := narrow.Games[0]
+	assert.Equal(t, "1133870", row.SteamAppID)
+	assert.Equal(t, 2, row.WorkshopItems)
+	assert.False(t, row.Known)
+	assert.Equal(t, 0, row.Index, "an uncurated row is not NUMBERED - it is selected by slug")
+	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, row.Sources)
+
+	wide := decodeDetectListing(t, s, "/api/v1/games/detect?all=1")
+	assert.Len(t, wide.Games, 2, "--all still adds everything else")
+}
+
+// TestAPIGameDetectApply_AddsAWorkshopBearingUncuratedRowBySlug is #368
+// review Minor 8's point: the two-path apply used to live in cmd/lmm, so this
+// endpoint could not configure the very rows #368 put on its own listing -
+// the CLI prompt could. Both frontends now go through
+// core.ApplyDetectSelection, and an uncurated row detection prefilled a
+// source map for is selected here by slug (it carries no index).
+func TestAPIGameDetectApply_AddsAWorkshopBearingUncuratedRowBySlug(t *testing.T) {
+	s := newGamesServer(t)
+	s.svc.RegisterSource(&namedFixtureSource{id: "steamworkshop", name: "Steam Workshop"})
+	install := fakeSteamApp(t, "1133870", "Space Engineers 2", "SpaceEngineers2")
+	fakeSteamWorkshopManifest(t, "1133870", "3617086610")
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["space-engineers-2"]}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var result core.GameDetectResult
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result, json.RejectUnknownMembers(true)))
+	assert.Equal(t, []string{"space-engineers-2"}, result.Saved)
+	assert.Equal(t, []string{"space-engineers-2/default"}, result.Profiles)
+
+	game, err := s.svc.GetGame("space-engineers-2")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"steamworkshop": "1133870"}, game.SourceIDs)
+	assert.Equal(t, filepath.Join(install, "mods"), game.ModPath)
+
+	// Selecting it again is a collision, not a silent overwrite: there is no
+	// curated entry to repair it from, so it would destroy the profile this
+	// call just created.
+	again := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["space-engineers-2"]}`)
+	assert.Equal(t, http.StatusConflict, again.Code, "body: %s", again.Body.String())
+}

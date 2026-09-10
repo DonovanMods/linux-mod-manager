@@ -203,6 +203,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-run Setup offers a Steam Workshop scan (#348).** The Setup page's
+  **Adopt** section — where you land straight after first-run detect, asking
+  "what do I already have?" — now shows a second card for a game mapped to
+  the `steamworkshop` source: **Scan Steam Workshop…** reads what the Steam
+  client has already downloaded and offers to track the items lmm doesn't
+  know about yet. It is a pure local read; nothing is downloaded, moved or
+  copied. Same plan preview and confirm step as **Add mods ▾ → Track Steam
+  Workshop items…** — one flow, two entry points — and the card is offered
+  only when the game actually maps that source.
+
 - **Steam Workshop tracking (#345, part of #269).** lmm can now track the
   Steam Workshop items you are already subscribed to. It reads Steam's own
   bookkeeping across every Steam library on the machine, records each
@@ -832,6 +842,143 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repair path annotating them) silently became the next cached answer. The
   memo now stores a deep copy on the way in as well as serving one on the
   way out.
+
+- **`lmm game detect` lists the games your Steam Workshop subscriptions are
+  for (#368).** The default listing filtered on lmm's curated known-games
+  list alone, so a game whose only claim to being moddable was the thirty
+  Workshop items Steam had already downloaded was hidden behind
+  `--include-unknown` — a flag nobody would guess, for the two games
+  Workshop tracking exists for. A detected game with Workshop items is now
+  listed by default, on the terminal and in the web UI's detect list alike
+  (one rule, `domain.DetectedGame.Listable`, so the two cannot disagree);
+  `--include-unknown` / `?all=1` still adds everything else. A
+  `--no-workshop` scan lists exactly what it always did.
+
+  In the web UI, every detect row with Workshop items shows
+  `Steam Workshop: N items`, and an uncurated one can be added straight
+  through **Add with details…** with no source to pick — detection already
+  mapped `steamworkshop`, and being asked to choose one anyway meant
+  overruling a mapping that was already right.
+
+- **`lmm game detect`'s prompt accepts every row it prints (#368).** The
+  uncurated rows were listed unnumbered with a hint to copy their Steam app
+  id, and then the prompt read `[1-2/all/none]` and rejected that app id:
+  `invalid selection: "2383970"`. Every listed row is now numbered
+  continuously — curated first, then uncurated — and the prompt (and
+  `--select`) takes **either** a row number **or** a Steam app id, since
+  the number shifts when `--include-unknown` widens the list and the app id
+  never does. Picking an uncurated row runs the same prefill `lmm game add
+--from-detected <app-id>` runs, source map included; a row detection
+  found no source for is refused by name with that command spelled out,
+  rather than writing an unusable `games.yaml` entry. Every row with
+  Workshop items prints `Steam Workshop: N items`, and the invalid-selection
+  error now names what is accepted. `--json` is unchanged.
+
+  A bare number that is **both** a valid row number and another listed row's
+  Steam app id is **refused** rather than resolved to one of them: Steam's
+  own back catalogue occupies the low integers (Counter-Strike is app id
+  `10`, Half-Life `70`, Portal `400`) and `--include-unknown` routinely
+  lists that many rows, so guessing wrong configured a game you had not
+  named — and on an already-configured curated row that meant replaying the
+  repair path's `games.yaml` overwrite and resetting its default profile's
+  mod list. The refusal names the two spellings that are never ambiguous,
+  and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
+  Steam app id 10.
+
+- **A detect selection means the same thing on both frontends (#368).** The
+  two-path apply #368 introduced — a curated row configured from its
+  known-games entry, an uncurated one added the way `lmm game add
+--from-detected` adds it — lived in the CLI, so `POST /api/v1/games/detect`
+  could not configure the very rows #368 had just put on its own listing, one
+  user action took N+1 mutation slots instead of one (a concurrent `lmm serve`
+  job could interleave between them), and the result document was assembled by
+  hand. Both frontends now call one core seam that does the whole selection
+  under a single slot, and a Workshop-bearing uncurated row can be selected
+  over the API by slug (re-selecting a configured one answers 409 rather than
+  overwriting it, matching the CLI's refusal).
+
+- **A rejected detect selection now offers only what would have worked
+  (#368).** Typing the Steam app id of a game that IS installed but is hidden
+  by the default listing answered `invalid selection: "526870" (use a row
+number 1-2, a Steam app id, all, or none)` — naming the spelling just used
+  as accepted. It now says a Steam app id **from the list above**, and names
+  `--include-unknown` as the flag that would list the row.
+
+- **`POST /api/v1/games/detect` no longer resolves a numeric selector as a
+  row number when it is another row's slug (#368).** The selector tried the
+  1-based index first and only fell back to the slug map when that failed —
+  the same shape as the prompt's own collision, one layer down. Since #368
+  let uncurated rows through, and their slugs are derived from the Steam
+  title, a numerically-named game can be slugged `2`; selecting it on a
+  listing with two or more known rows silently configured known row 2
+  instead. A bare selector that resolves both ways is now refused, and both
+  explicit spellings are always accepted: `#2` is the index, `slug:2` the
+  slug. The web UI is unaffected — it selects by index.
+
+- **Every detect row now prints its Steam app id, not just the uncurated
+  ones (#368).** The app id column was the uncurated section's alone, while
+  the prompt accepts — and the ambiguity check matches — any listed row's
+  app id. So a curated row's app id could be named in a refusal ("also the
+  Steam app id of row 3") for something that appeared nowhere on screen, and
+  "use a row number or a Steam app id **from the list above**" was not
+  literally true for every spelling the prompt takes. Both are now.
+
+- **The Setup page's Steam Workshop card no longer butts against the card
+  above it (#348).** The Adopt panel is the first place in the web UI to show
+  two cards in one panel, and nothing put space between them, so the "Steam
+  Workshop" heading sat flush against the previous card's button row.
+
+- **`lmm game detect --json`'s help and the README now describe what it
+  actually emits (#368).** The help said a plain `--json` scan "carries the
+  listing's default rows only" and the README said it "never carries those
+  rows at all" — the help described a document that does not exist and the
+  README contradicted it. Both now say the same true thing: the LISTING
+  document requires `--include-unknown`; a plain `--json` scan emits none
+  (refusing without `--all`/`--select`, and emitting the RESULT document
+  with either); and what `--all`/`--select` choose from is the default
+  listing, Workshop-bearing uncurated rows included.
+
+- **The man pages no longer drop placeholders and env-var names out of the
+  commands they tell you to run (#368).** `man lmm-game-detect` rendered
+  "lmm game add --from-detected" with the `<app-id>` placeholder gone,
+  leaving an incomplete command in the one place a user copies from — because the
+  generator only escaped Markdown-active characters in each command's
+  SYNOPSIS line, not in its help text. `man lmm-auth-login` lost two
+  environment variable names the same way, to Markdown emphasis:
+  `CURSEFORGE_API_KEY` and `LMM_<ID>_API_KEY` rendered as
+  `CURSEFORGE_APIKEY` and `LMM_API_KEY`. `man lmm-game-add`'s OPTIONS lost
+  one the same way: `--mod-path` announced its default as `/mods`, an
+  absolute path at the filesystem root, where the flag actually says
+  `<install path>/mods`. All three are fixed in the generator, which now
+  escapes every string the man renderer touches — a command's SYNOPSIS line,
+  its help text and each flag's usage — so it cannot recur; `--help` output
+  is untouched.
+
+- **Re-picking an already-configured uncurated detect row now says what to
+  do instead (#368).** Detect refuses to overwrite a row it has no
+  known-games entry for - there is nothing curated to repair it from - and
+  `--help` says to change it with `lmm game edit`, but the error a user
+  actually got was the bare `game already exists: space-engineers-2`, which
+  names no way forward. It now names the command, with the game id filled
+  in.
+
+- **`lmm game detect --include-unknown` no longer calls every installed
+  Steam game moddable (#368).** The header counted both sections, so it
+  claimed rows its own next line describes as not being in the known-games
+  list. With `--include-unknown` the count is now of `installed game(s)`;
+  the default listing, whose every row is curated or moddable by observation
+  (Workshop items), still reads `moddable game(s)`.
+
+- **A missing Steam library no longer prints as a warning on every scan
+  (#368).** `Warning: /data/Games/SteamLibrary/steamapps: open …: no such
+file or directory` came from a `libraryfolders.vdf` entry whose directory
+  is gone — an unplugged drive, or a library removed outside the Steam
+  client. It was honest, but it is Steam's bookkeeping, nothing lmm did,
+  and nothing the user can fix. It is now an **Info-level log line** naming
+  `libraryfolders.vdf` as what listed the missing directory (`--log-level
+info` to see it), said once per scan. A library that exists but cannot be
+  **read** — permissions, a broken mount — is a different fact and stays a
+  warning you see without asking.
 
 - **The web UI no longer re-runs a full verify on every hydrate (#336).**
   Mission Control hydrates on each route change, job completion and profile

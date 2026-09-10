@@ -92,6 +92,7 @@ export function GameDetectSection({ onAdded, onAddWithDetails }) {
 
   const games = listing?.games ?? [];
   const hasUnknown = games.some((g) => !g.known);
+  const hasWorkshop = games.some((g) => !g.known && g.workshop_items > 0);
 
   return html`
     <div class="setup-detect" data-testid="setup-detect">
@@ -129,6 +130,15 @@ export function GameDetectSection({ onAdded, onAddWithDetails }) {
         html`<p class="empty-state__hint">
           A game with no checkbox isn't in lmm's curated list yet - use "Add
           with details…" to configure its source and mod path.
+        </p>`
+      }
+      ${
+        hasWorkshop &&
+        html`<p class="empty-state__hint">
+          A game listed with Steam Workshop items is here because Steam has
+          already downloaded them: lmm can track those items where they sit, not
+          deploy them to a mod folder. "Add with details…" needs nothing more
+          from you - the source is already mapped.
         </p>`
       }
       ${
@@ -175,6 +185,12 @@ export function GameDetectSection({ onAdded, onAddWithDetails }) {
                     >${g.install_path}</span
                   >
                   ${
+                    g.workshop_items > 0 &&
+                    html`<span class="setup-detect__workshop"
+                      >${workshopCountLabel(g.workshop_items)}</span
+                    >`
+                  }
+                  ${
                     !g.known &&
                     html`
                       <button
@@ -206,6 +222,17 @@ export function GameDetectSection({ onAdded, onAddWithDetails }) {
       }
     </div>
   `;
+}
+
+/**
+ * workshopCountLabel is the detect row's "Steam Workshop: N items" line
+ * (issue 368), built as ONE string rather than adjacent interpolations: htm
+ * collapses the whitespace between those, which would run the number into
+ * the words either side of it (the trap cards.js#conflictLabel documents).
+ * It is the same sentence `lmm game detect` prints beside the same row.
+ */
+function workshopCountLabel(count) {
+  return `Steam Workshop: ${count} item${count === 1 ? "" : "s"}`;
 }
 
 // emptySpec is GameAddForm's own local state shape - the gameAddRequest
@@ -302,6 +329,15 @@ function exactCatalogMatch(matches, name) {
     (m) => (m.name ?? "").trim().toLowerCase() === target,
   );
   return found.length === 1 ? found[0] : null;
+}
+
+/**
+ * hasSources reports whether a GameDetectEntry carries a source map of its
+ * own - a curated entry's, or the `steamworkshop: <appid>` detection
+ * prefills for a game with Workshop items already downloaded (issue 269).
+ */
+function hasSources(row) {
+  return Object.keys(row?.sources ?? {}).length > 0;
 }
 
 // curatedSourceSummary renders a curated known-games source map for
@@ -404,24 +440,33 @@ export function GameAddForm({
     setFieldError(null);
   }
 
-  // issue 341: a curated ("known") detected row already carries everything
-  // core needs - POST /api/v1/games with its from_steam_app_id alone
+  // issue 341: a detected row that already carries a source map needs
+  // nothing more - POST /api/v1/games with its from_steam_app_id alone
   // succeeds, exactly as `lmm game add --from-detected <id>` does, because
-  // GameSpecFromDetected fills the name, paths, id and the curated SOURCE
-  // MAP. Requiring a source pair on this path made the user do work the
-  // CLI does not, and whatever they picked was then layered ON TOP of the
-  // curated map - a mapping they never asked for. So the source fields
-  // become an optional override here, and Submit needs nothing else.
-  const curatedRow = detectedRow?.known ? detectedRow : null;
-  // What that curated map actually is, so the form can show it rather than
-  // asserting it exists: the entry's own sources, else the nexus_id
-  // mapping core derives from it (GameSpecFromDetected's own rule).
-  const curatedSources =
-    curatedRow &&
-    (Object.keys(curatedRow.sources ?? {}).length > 0
-      ? curatedRow.sources
-      : curatedRow.nexus_id
-        ? { nexusmods: curatedRow.nexus_id }
+  // GameSpecFromDetected fills the name, paths, id and that SOURCE MAP.
+  // Requiring a source pair on this path made the user do work the CLI does
+  // not, and whatever they picked was then layered ON TOP of the prefilled
+  // map - a mapping they never asked for. So the source fields become an
+  // optional override here, and Submit needs nothing else.
+  //
+  // issue 368 widened "already carries one" from curated-only to any row
+  // with a source map: an UNCURATED game whose Steam Workshop items got it
+  // `steamworkshop: <appid>` is in the detect list now, and it is exactly
+  // as complete as a curated row - asking such a user to pick a source
+  // would be asking them to overrule a mapping detection got right.
+  const prefilledRow =
+    detectedRow && (detectedRow.known || hasSources(detectedRow))
+      ? detectedRow
+      : null;
+  // What that map actually is, so the form can show it rather than
+  // asserting it exists: the row's own sources, else the nexus_id mapping
+  // core derives from a curated entry (GameSpecFromDetected's own rule).
+  const prefilledSources =
+    prefilledRow &&
+    (hasSources(prefilledRow)
+      ? prefilledRow.sources
+      : prefilledRow.nexus_id
+        ? { nexusmods: prefilledRow.nexus_id }
         : {});
 
   function clearDetected() {
@@ -704,10 +749,15 @@ export function GameAddForm({
               Clear
             </button>
             ${
-              curatedRow &&
-              html`<span data-testid="setup-add-curated-sources">
-                ${" "}Sources come from the known-games list${" "}
-                (${curatedSourceSummary(curatedSources)}) - choosing one below
+              prefilledRow &&
+              html`<span data-testid="setup-add-prefilled-sources">
+                ${" "}Sources come from${" "}
+                ${
+                  prefilledRow.known
+                    ? "the known-games list"
+                    : "this game's Steam Workshop items"
+                }${" "}
+                (${curatedSourceSummary(prefilledSources)}) - choosing one below
                 is an optional override.
               </span>`
             }
@@ -925,12 +975,12 @@ export function GameAddForm({
           busy ||
           !spec.name ||
           !installPathReady ||
-          (!curatedRow && (!spec.sourceID || !spec.identifier)) ||
-          // Both halves of a curated row's OPTIONAL override: either
+          (!prefilledRow && (!spec.sourceID || !spec.identifier)) ||
+          // Both halves of a prefilled row's OPTIONAL override: either
           // field alone is an incomplete pair, and the submit path drops
           // the pair unless both are set - so an identifier typed with no
           // source would be discarded without a word (review N4).
-          (curatedRow && Boolean(spec.sourceID) !== Boolean(spec.identifier))
+          (prefilledRow && Boolean(spec.sourceID) !== Boolean(spec.identifier))
         }
       >
         ${busy ? "Adding…" : "Add game"}
