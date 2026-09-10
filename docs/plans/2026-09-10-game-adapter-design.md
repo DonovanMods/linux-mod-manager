@@ -358,14 +358,20 @@ because it is the one carrying real regression risk.
 ## 4. Boundary rules
 
 ```text
-internal/adapter/          interface + registry     imports: internal/domain (only)
-internal/adapter/generic/  the identity adapter     imports: internal/domain, internal/adapter
+internal/adapter/          interface + registry     imports: internal/domain, internal/source
+                           + the built-in identity  (source only for the merge primitives U1
+                                                     aliases; they MOVE here in U2)
 internal/adapter/icarus/   the compile adapter      imports: internal/domain, internal/adapter
 internal/adapter/bepinex/  the loader adapter       imports: internal/domain, internal/adapter
 internal/core/             imports internal/adapter — NEVER internal/adapter/<name>
-internal/app/              imports the concrete adapters and registers them
+internal/app/              imports the concrete NAMED adapters and registers them
 cmd/lmm, internal/serve/   unchanged allow-lists
 ```
+
+**The identity adapter has no package of its own.** `generic-files` is
+`adapter.Generic`, declared in `internal/adapter` and pre-registered by
+`NewRegistry`, so `Resolve` can never hand core a nil adapter. See the
+2026-09-10 amendment below for why.
 
 **`internal/source` is deliberately not on that list.** A source is where
 bytes come from; an adapter is what a game does with them, and the Icarus
@@ -548,3 +554,28 @@ binding on U1–U4:
 - **Boundary**: the new ratchet (internal/adapter/* imports only domain and source
   primitives, never core; core imports the registry only) lands in U1, before any adapter
   moves.
+
+### Amendment — U1 implementation (coordinator ask, 2026-09-10)
+
+Three points of §2 and §4 were settled against U1's own acceptance criterion (the entire
+golden set byte-identical, no re-recording) while implementing #411, and they bind U2–U4.
+First, **`domain.Game.Adapter` carries the CONFIGURED value only** (`omitempty`), and the
+`deploy_mode: compile` ⇒ `icarus` derivation lives in core's resolver (`Service.AdapterName`
+/ `AdapterFor`) rather than at config load: a derived value on the domain type would have
+added `"adapter": "icarus"` to an existing CLI golden and would have been written back into
+a `games.yaml` the user never edited. Core is also where the registry is, which §2 already
+made the home of existence checking, so the compile-composition rule ("`compile` with an
+adapter that cannot compile is an error naming both keys") lands there too — in U1 it fires
+for an EXPLICIT adapter only, because a compile game with no key must keep working. Second,
+**the derivation yields `icarus` only once that adapter is registered**, so U1 (which
+registers none) leaves compile games on today's source-based `MergeCompiler` resolution and
+U2 activates the derivation with no code change; `mergeCompilerForGame` /
+`mergeCompilerSourceForGame` / `soleMergeCompiler` accordingly survive U1 as a documented
+fallback behind `Service.adapterCompiler`, and U2 deletes them as §3 says. Third, **there is
+no nil adapter**: the identity lives in `internal/adapter` itself as the registry's built-in
+default (`internal/adapter/generic` folds away), because "nil means identity" is an implicit
+contract every future seam call would have to remember — exactly the class of bug this
+design exists to prevent. §6's identity proof is unchanged; it moved to
+`internal/adapter/identity_test.go`. Finally, the known-games catalog gaining
+`adapter: icarus` (§2, "Prefill from detection") is a **U2** change, not U1, because it
+would move the detect golden.

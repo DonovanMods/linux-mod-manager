@@ -238,6 +238,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The game-adapter seam: one `adapter:` key in `games.yaml` (#353, #411).**
+  What a game does with mod content — how an archive's files are laid out,
+  which of them are configuration rather than mod content, whether its mods
+  compile into one artifact, what `lmm verify` can honestly check — was
+  spelled three different ways and hung off the wrong noun: compiling was a
+  property of the _source_ a file came from, so an Icarus `.pak` downloaded
+  from NexusMods could not compile. It is a property of the **game**, and
+  `adapter:` now says so. The default is `generic-files`, the identity: an
+  omitted key means every archive lands exactly where it was extracted and
+  every file is deployed by the linker, which is what lmm has always done —
+  byte-for-byte, with no configuration change and nothing to migrate. A
+  `deploy_mode: compile` game keeps working untouched (lmm derives the
+  compiling adapter for it), and `deploy_mode: compile` is now documented as
+  deprecated in favour of the adapter. `lmm game list` gains an **ADAPTER**
+  column, `lmm game add`/`lmm game edit` gain `--adapter`, the web UI's
+  Games table shows each game's, and `POST`/`PUT /api/v1/games` read and
+  write the key. Adapters live in the tree (`internal/adapter`) and are
+  compile-time, not plugins: a contributor adds one without touching
+  `internal/core`, and a boundary ratchet keeps it that way.
+
 - **BepInEx plugin archives deploy correctly (#358).** BepInEx installs into
   the game root, which lmm already expresses by pointing a game's
   `mod_path` at its own `install_path` (the same absolute path twice — not
