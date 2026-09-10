@@ -257,10 +257,32 @@ func loaderStatusWarnings(status *LoaderStatus) []string {
 				declared.Runtime, status.DetectedRuntime))
 		}
 	}
-	if status.EffectiveBootstrap == domain.LoaderBootstrapUnknown {
+	// Only for a game something says is loader-relevant. Appended
+	// unconditionally, this told the owner of an Unreal game that neither
+	// has nor needs a mod loader to go and configure one, on every `lmm
+	// game show`.
+	if status.Relevant() && status.EffectiveBootstrap == domain.LoaderBootstrapUnknown {
 		warnings = append(warnings, "lmm could not tell whether this is a native Linux build or a Proton one, so it has no launch option to give you; set it with `lmm game edit <game> --loader-bootstrap native|proton`")
 	}
 	return warnings
+}
+
+// Relevant reports whether anything about this game says a mod loader is
+// part of the conversation: the game declares one, or its install directory
+// carries a marker DetectLoaderTarget recognised.
+//
+// It is the one rule deciding whether a frontend shows the loader report at
+// all, and it lives here rather than in each frontend so `lmm game show` and
+// the web game page cannot disagree. False means "not a loader game as far
+// as anything can tell": say nothing, rather than print a section of
+// unknowns followed by BepInEx setup advice.
+//
+// A game whose disk says nothing is still relevant the moment it DECLARES a
+// loader - that is exactly when the unanswered questions are worth asking.
+func (l *LoaderStatus) Relevant() bool {
+	return l != nil && (l.Declared != nil ||
+		l.DetectedRuntime != domain.LoaderRuntimeUnknown ||
+		l.DetectedBootstrap != domain.LoaderBootstrapUnknown)
 }
 
 // GameDetail is `lmm game show <id>`'s document and the web game page's

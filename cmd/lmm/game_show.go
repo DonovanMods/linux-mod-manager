@@ -79,12 +79,18 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 
 // printLoaderStatus renders the loader half of `lmm game show`.
 //
-// A game with no declaration still gets a section, because the useful thing
-// to tell someone who is about to set BepInEx up is which build and which
-// launch option their game needs - which lmm can answer from the install
-// directory before anything is declared at all.
+// A game with no declaration still gets a section when its install directory
+// looks like a loader game's, because the useful thing to tell someone who
+// is about to set BepInEx up is which build and which launch option their
+// game needs - which lmm can answer before anything is declared at all.
+//
+// A game that neither declares a loader nor carries a marker gets NO
+// section: core.LoaderStatus.Relevant owns that rule so the web game page
+// answers it the same way. Printing "Declared: none / Runtime: unknown /
+// Bootstrap: unknown" and then advising `--loader-bootstrap` for an Unreal
+// game is advice to configure something it neither has nor needs.
 func printLoaderStatus(status *core.LoaderStatus) {
-	if status == nil {
+	if !status.Relevant() {
 		return
 	}
 	fmt.Println()

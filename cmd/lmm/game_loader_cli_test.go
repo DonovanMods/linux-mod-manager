@@ -180,3 +180,26 @@ func TestDoGameShow_UnknownGame(t *testing.T) {
 	err := doGameShow(context.Background(), svc, "nope")
 	assert.ErrorIs(t, err, domain.ErrGameNotFound)
 }
+
+// TestDoGameShow_SkipsTheLoaderSectionForAGameWithNoLoaderInSight is review
+// F7's CLI half: `lmm game show icarus` printed a BepInEx-flavoured "Mod
+// loader" section - Declared: none, Runtime: unknown, Bootstrap: unknown -
+// and then advised setting `--loader-bootstrap` on an Unreal game that
+// neither has nor needs a loader.
+func TestDoGameShow_SkipsTheLoaderSectionForAGameWithNoLoaderInSight(t *testing.T) {
+	svc := setupGameEditTest(t)
+	install := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(install, "Content", "Paks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "Content", "Paks", "game.pak"), []byte("pak"), 0o644))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "icarus", Name: "Icarus", InstallPath: install, ModPath: install,
+		SourceIDs: map[string]string{"icarus": "icarus"},
+	}))
+
+	out := captureStdout(t, func() error {
+		return doGameShow(context.Background(), svc, "icarus")
+	})
+	assert.Contains(t, out, "Install path:", "the rest of the game document still prints")
+	assert.NotContains(t, out, "Mod loader")
+	assert.NotContains(t, out, "--loader-bootstrap")
+}

@@ -157,3 +157,41 @@ func TestLoaderStatus_UnknownGame(t *testing.T) {
 	_, err := svc.LoaderStatus(context.Background(), "nope")
 	assert.ErrorIs(t, err, domain.ErrGameNotFound)
 }
+
+// TestLoaderStatus_AGameWithNothingLoaderShapedIsNotRelevant is review F7's
+// core half: the "set it with --loader-bootstrap" warning was appended
+// unconditionally, so `lmm game show icarus` - an Unreal game that neither
+// has nor needs a mod loader - was told to configure one. The warning is
+// only honest for a game something says is loader-relevant.
+func TestLoaderStatus_AGameWithNothingLoaderShapedIsNotRelevant(t *testing.T) {
+	svc := newFlowsTestService(t)
+	install := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(install, "Content", "Paks"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "Content", "Paks", "game.pak"), []byte("pak"), 0o644))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "icarus", Name: "Icarus", InstallPath: install, ModPath: install,
+	}))
+
+	status, err := svc.LoaderStatus(context.Background(), "icarus")
+	require.NoError(t, err)
+	assert.False(t, status.Relevant(), "nothing declares or looks like a loader game")
+	assert.Empty(t, status.Warnings, "so there is no loader advice to give: %v", status.Warnings)
+}
+
+// The declaration alone makes a game relevant, whatever the disk says - and
+// there the unanswered bootstrap IS worth saying out loud, because it is the
+// difference between a launch option lmm can hand over and one it cannot.
+func TestLoaderStatus_ADeclaredGameStillWarnsAboutAnUnansweredBootstrap(t *testing.T) {
+	svc := newFlowsTestService(t)
+	install := t.TempDir()
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "declared", Name: "Declared", InstallPath: install, ModPath: install,
+		Loader: &domain.GameLoader{Kind: domain.LoaderKindBepInEx},
+	}))
+
+	status, err := svc.LoaderStatus(context.Background(), "declared")
+	require.NoError(t, err)
+	assert.True(t, status.Relevant())
+	require.NotEmpty(t, status.Warnings)
+	assert.Contains(t, status.Warnings[0], "--loader-bootstrap")
+}
