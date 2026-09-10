@@ -923,7 +923,11 @@ export function GameAddForm({
           !spec.name ||
           !installPathReady ||
           (!curatedRow && (!spec.sourceID || !spec.identifier)) ||
-          (curatedRow && spec.sourceID && !spec.identifier)
+          // Both halves of a curated row's OPTIONAL override: either
+          // field alone is an incomplete pair, and the submit path drops
+          // the pair unless both are set - so an identifier typed with no
+          // source would be discarded without a word (review N4).
+          (curatedRow && Boolean(spec.sourceID) !== Boolean(spec.identifier))
         }
       >
         ${busy ? "Adding…" : "Add game"}

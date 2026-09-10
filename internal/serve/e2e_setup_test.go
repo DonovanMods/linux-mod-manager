@@ -1670,6 +1670,27 @@ func TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone(t *testing.T) {
 	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-action="add-game"]').disabled`, &submitDisabled))
 	require.False(t, submitDisabled, "a curated row must be submittable on its app id alone")
 
+	// The override is a PAIR, and half of one is not an override: an
+	// identifier typed with no source chosen used to leave Submit enabled
+	// and then be dropped on the way out, discarding what the user typed
+	// without a word (review N4). Clearing it re-enables Submit.
+	f.runInBrowser(t,
+		chromedp.SendKeys(`input[name="add-identifier"]`, "some-slug", chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector('[data-action="add-game"]').disabled`, &submitDisabled),
+	)
+	assert.True(t, submitDisabled, "half an override pair must not submit silently")
+	f.runInBrowser(t,
+		chromedp.Evaluate(`(() => {
+			const el = document.querySelector('input[name="add-identifier"]');
+			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+			setter.call(el, '');
+			el.dispatchEvent(new Event('input', { bubbles: true }));
+			return true;
+		})()`, nil),
+		chromedp.Evaluate(`document.querySelector('[data-action="add-game"]').disabled`, &submitDisabled),
+	)
+	require.False(t, submitDisabled, "clearing it returns to the app-id-alone case")
+
 	f.runInBrowser(t,
 		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
 		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),

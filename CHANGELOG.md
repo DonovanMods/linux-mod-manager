@@ -713,7 +713,10 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   work, ending in a source mapping the user never asked for. Picking a row
   badged **Known** now enables Submit immediately, names the curated map on
   screen, and treats the source fields as an optional override. An
-  uncurated row is unchanged — nothing on disk supplies its source.
+  uncurated row is unchanged — nothing on disk supplies its source. On a curated row the source fields
+  are an OPTIONAL override, and half of one is now refused rather than
+  dropped: an identifier typed with no source chosen keeps Submit
+  disabled instead of silently discarding what was typed.
 
 - **`lmm profile import --json` and `lmm import --json` name the mods that
   failed, not just how many (#308).** `core.ProfileImportResult` and
