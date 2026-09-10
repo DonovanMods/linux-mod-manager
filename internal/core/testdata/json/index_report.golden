@@ -1,0 +1,12 @@
+{
+  "source": "thunderstore",
+  "game": "lethal-company",
+  "status": "stale",
+  "changed": false,
+  "packages": 50707,
+  "bytes": 239075328,
+  "duration_ms": 4137,
+  "warnings": [
+    "source \"thunderstore\": the lethal-company index could not be built: connection refused"
+  ]
+}

@@ -884,6 +884,16 @@ const (
 	// WorkshopFetchDone fires once, after the fetched content is fully on
 	// disk and before it is ingested into the cache.
 	WorkshopFetchDone
+
+	// IndexRefreshStarted fires once when a source begins bringing its
+	// LOCAL search index up to date (#360). Detail names the index.
+	IndexRefreshStarted
+	// IndexRefreshProgress fires repeatedly while a cold index is built.
+	// Detail carries how much of it is done.
+	IndexRefreshProgress
+	// IndexRefreshDone fires once, after the index is on disk and current -
+	// including the case where the answer was "it already was".
+	IndexRefreshDone
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -933,6 +943,9 @@ var deployPhaseNames = [...]string{
 
 	WorkshopFetchStarted: "workshop_fetch_started", WorkshopFetchProgress: "workshop_fetch_progress",
 	WorkshopFetchDone: "workshop_fetch_done",
+
+	IndexRefreshStarted: "index_refresh_started", IndexRefreshProgress: "index_refresh_progress",
+	IndexRefreshDone: "index_refresh_done",
 }
 
 // String returns the phase's wire name.

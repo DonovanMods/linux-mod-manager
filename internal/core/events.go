@@ -57,6 +57,10 @@ const (
 	// which emits the Switch* phase family; Scope.Op is what tells the two
 	// apart on the wire, exactly as it does for OpProfileApply.
 	OpSnapshotRestore Op = "snapshot_restore"
+	// OpSourceIndex is `lmm source index` - rebuilding a source's LOCAL
+	// search index (#360). It writes under the cache root and nothing else:
+	// no game directory, no database, no profile.
+	OpSourceIndex Op = "source_index"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),
