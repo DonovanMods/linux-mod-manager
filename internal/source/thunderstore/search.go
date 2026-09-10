@@ -61,6 +61,10 @@ type residentIndex struct {
 // rowTerms is one row's precomputed lowercase form. haystack is the
 // membership test ("does every term appear at all"); the separate fields
 // are what scoring weighs.
+//
+// description is a SLICE of haystack rather than its own string: it is the
+// largest field by far, and it already sits inside haystack at a known
+// offset (T1 review nit 12).
 type rowTerms struct {
 	haystack    string
 	fullName    string
@@ -336,14 +340,21 @@ func newResidentIndex(fetchedAt int64, rows []indexRow) *residentIndex {
 		}
 		lowerFull := strings.ToLower(row.FullName)
 		lowerDesc := strings.ToLower(row.Description)
+		// One haystack per row, NUL-joined so a term cannot match across a
+		// field boundary.
+		haystack := lowerFull + "\x00" + lowerDesc + "\x00" + strings.Join(cats, "\x00")
+		// description is a SLICE of the haystack, not a second copy of it
+		// (T1 review nit 12). Descriptions are the largest field here by a
+		// wide margin, and a Go string slice shares its backing array, so
+		// this drops roughly a third of the resident footprint for the
+		// cost of two offsets that the line above just determined.
+		descStart := len(lowerFull) + 1
 		terms[i] = rowTerms{
-			// One haystack per row, NUL-joined so a term cannot match
-			// across a field boundary.
-			haystack:    lowerFull + "\x00" + lowerDesc + "\x00" + strings.Join(cats, "\x00"),
+			haystack:    haystack,
 			fullName:    lowerFull,
 			name:        strings.ToLower(name),
 			owner:       strings.ToLower(owner),
-			description: lowerDesc,
+			description: haystack[descStart : descStart+len(lowerDesc)],
 			categories:  cats,
 			updated:     parseTimestamp(row.DateUpdated),
 			deprecated:  row.Deprecated,
