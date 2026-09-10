@@ -888,7 +888,10 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   An undeploy now leaves a regular file with no `deployed_files` row alone.
   lmm's own deployments are unaffected: a symlink is not a regular file, and
   a copy/hardlink deployment carries a row written by the same loop that
-  created it.
+  created it. The **update** path had the same hole and gets the same guard:
+  replacing a mod visits every path the OLD cache entry named, which is not
+  the same as every path it deployed, so `lmm update` could delete stock
+  content at a path the old entry listed but lmm never put anything at.
 
 - **A relative `mod_path` now means the same thing everywhere (#363).** A
   hand-written `games.yaml` has always taken `mod_path: Data` as

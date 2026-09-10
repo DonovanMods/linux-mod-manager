@@ -287,7 +287,21 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		if newSet[file] {
 			continue
 		}
-		if err := i.linker.Undeploy(filepath.Join(game.ModPath, file)); err != nil {
+		dstPath := filepath.Join(game.ModPath, file)
+		// #350 / review finding 4: this loop iterates the OLD entry's RAW
+		// ListFiles union, not its deployable set, so a member lmm never
+		// deployed is visited here - the #210 narrowing case, and the
+		// stale-unclaimed-member case. Under copy or hardlink Undeploy
+		// removes whatever is at the path, which for such a member is the
+		// game's own content. Same guard, same reason, as Uninstall's:
+		// leave a regular file with no deployed_files row alone. Nothing
+		// is captured, because nothing is being replaced - the file stays
+		// exactly where it is.
+		if i.foreignFile(ctx, game, profileName, file, dstPath) {
+			i.log.Debug("leaving a file this update does not own where it is", "path", dstPath)
+			continue
+		}
+		if err := i.linker.Undeploy(dstPath); err != nil {
 			if rollbackErr := i.restoreOldFiles(oldCache, game, oldMod, removedOld, nil, oldSet); rollbackErr != nil {
 				return &domain.DeployError{Op: fmt.Sprintf("removing obsolete file %s", file), Primary: err, Rollback: rollbackErr}
 			}
@@ -310,10 +324,12 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
 		// #350: a replace can also land on a file lmm does not own - a
-		// new version whose file list grew into stock content. The
-		// obsolete-file loop above only ever removes paths the OLD
-		// deployment owned, and restoreOldFiles only ever puts lmm's own
-		// files back, so neither of those needs a capture.
+		// new version whose file list grew into stock content - so the
+		// original is preserved here before the new file goes over it.
+		// The obsolete-file loop above needs no capture of its own: since
+		// review finding 4 it SKIPS a path lmm does not own rather than
+		// removing it, and restoreOldFiles only ever puts lmm's own files
+		// back.
 		i.captureOriginal(ctx, game, profileName, file, dstPath, newMod)
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			cleanupErr := i.linker.Undeploy(dstPath)

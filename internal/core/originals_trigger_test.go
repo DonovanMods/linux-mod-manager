@@ -19,7 +19,10 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -350,4 +353,53 @@ func modsOf(t *testing.T, svc *core.Service, gameID, profileName string) []domai
 	mods, err := svc.GetInstalledMods(context.Background(), gameID, profileName)
 	require.NoError(t, err)
 	return mods
+}
+
+// TestReplace_LeavesAFileLmmDoesNotOwnAlone is review finding 4: the same
+// "an undeploy deletes a file lmm did not put there" data loss survived in
+// the UPDATE path after e262cbc4 fixed Uninstall.
+//
+// replaceWithCaches' obsolete-file loop iterates the OLD cache entry's raw
+// ListFiles union and calls linker.Undeploy on every member the new side
+// does not name - with no ownership guard. Under copy or hardlink that
+// removes whatever is at the path, so `lmm update` deleted stock content
+// sitting at a path the old cache entry named but lmm never deployed: the
+// #210 narrowing case, and the "stale unclaimed member" case.
+func TestReplace_LeavesAFileLmmDoesNotOwnAlone(t *testing.T) {
+	modCache := cache.New(t.TempDir())
+	gameDir := t.TempDir()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = database.Close() }()
+
+	game := &domain.Game{ID: "g", ModPath: gameDir, LinkMethod: domain.LinkCopy}
+	oldMod := &domain.Mod{ID: "1", SourceID: "src", Version: "1.0", GameID: "g"}
+	newMod := &domain.Mod{ID: "1", SourceID: "src", Version: "2.0", GameID: "g"}
+
+	// v1's cache entry names Data/stock.esp; v2's does not, so the obsolete
+	// loop will visit it. Nothing was ever deployed there - the file on
+	// disk is the game's own.
+	require.NoError(t, modCache.Store("g", "src", "1", "1.0", "Data/stock.esp", []byte("the mod's version")))
+	require.NoError(t, modCache.Store("g", "src", "1", "1.0", "Data/mine.esp", []byte("v1")))
+	require.NoError(t, modCache.Store("g", "src", "1", "2.0", "Data/mine.esp", []byte("v2")))
+
+	stock := filepath.Join(gameDir, "Data", "stock.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))
+	require.NoError(t, os.WriteFile(stock, []byte("as the game shipped"), 0644))
+
+	// lmm's own v1 deployment of the OTHER file, with its ownership row.
+	mine := filepath.Join(gameDir, "Data", "mine.esp")
+	require.NoError(t, os.WriteFile(mine, []byte("v1"), 0644))
+	require.NoError(t, database.SaveDeployedFile(context.Background(), "g", "default", "Data/mine.esp", "src", "1"))
+
+	inst := core.NewInstaller(modCache, linker.New(domain.LinkCopy), database)
+	require.NoError(t, inst.Replace(context.Background(), game, oldMod, newMod, "default"))
+
+	data, err := os.ReadFile(stock)
+	require.NoError(t, err, "the stock file must still be there after an update")
+	assert.Equal(t, "as the game shipped", string(data))
+
+	data, err = os.ReadFile(mine)
+	require.NoError(t, err)
+	assert.Equal(t, "v2", string(data), "lmm's own file is still replaced by the new version")
 }
