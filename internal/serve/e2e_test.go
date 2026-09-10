@@ -1923,7 +1923,7 @@ func TestE2E_FullModPage_RendersFilesAndVersions(t *testing.T) {
 		// fetch out; without it this read raced the fetch and, under the
 		// load of a full -race package run, lost. Same idiom, same reason,
 		// as the rollback scenario above.
-		chromedp.Poll(`!document.querySelector(".mod-page").textContent.includes("Loading versions\u2026")`, nil),
+		pollUntil(`!document.querySelector(".mod-page").textContent.includes("Loading versions\u2026")`),
 		textContent(`.mod-page`, &versionsBody),
 	)
 	assert.Contains(t, versionsBody, "1.0")

@@ -329,7 +329,7 @@ func TestE2E_WorkshopTier2_LibraryRowMenuHidesRelinkForAnExternalRow(t *testing.
 		// headless browser can lag the menu's own DOM appearance by a few
 		// animation frames - this suite's established pattern for the same
 		// menu (TestE2E_RowMenuClosesOnOutsideClickAndEscape).
-		chromedp.Sleep(300*time.Millisecond),
+		settleEffects(),
 		chromedp.KeyEvent(kb.Escape),
 		chromedp.WaitNotPresent(`.row-menu`, chromedp.ByQuery),
 		chromedp.Evaluate(openRowMenuJS("Managed Mod"), nil),
