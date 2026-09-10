@@ -203,6 +203,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
+  (#400).** Starting a job answered `{"job_id"}` while `GET /api/v1/jobs`
+  and `GET /api/v1/jobs/{id}` answered `{"id"}` — the same entity under two
+  names, one call apart. The start response now carries `id`; `job_id` is
+  still emitted with the same value for anything already written against it,
+  is documented as deprecated, and will be dropped in a later major version.
+  (`job_id` on the event stream is unrelated and unchanged: there it names
+  the job an event belongs to.)
+
+- **Every web UI view names itself (#399).** The browser tab, your history
+  and your window switcher used to say "lmm" for every screen; they now
+  carry the view and the game/profile it is showing (for example
+  `Mission Control — skyrim-se/default · lmm`), and a screen reader is told
+  the new view's name on each navigation, which a single-page app otherwise
+  does silently.
+
 - **First-run Setup offers a Steam Workshop scan (#348).** The Setup page's
   **Adopt** section — where you land straight after first-run detect, asking
   "what do I already have?" — now shows a second card for a game mapped to
@@ -860,6 +876,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **The web UI sets a quoted command as code instead of showing raw
+  backticks (#402).** core writes one error message for both frontends, and
+  it is written for a terminal — "Steam Web API key required (run \`lmm auth
+  login steamworkshop\`)". In a browser those backticks were literal grave
+  accents the reader had to discard mentally, on the search page, which is a
+  first-run surface. What they enclose is now set in the monospace face the
+  rest of the UI uses for commands, on the search page's warnings and errors
+  and on toast details. Nothing else is parsed — it is not markdown — and an
+  unpaired backtick is left exactly as it was written.
+
+- **The web UI no longer offers Re-link… on a locked mod (#394).** `lmm mod
+edit --source/--source-id` refuses a locked mod and tells you to unlock it
+  first; the full mod page offered the button anyway, so the only way to
+  learn that was to open the form and be refused. It is now disabled, like
+  the rollback button beside it. Both also state the remedy — and the exact
+  `lmm mod unlock` command — in a line you can read, rather than only in a
+  tooltip: a disabled button cannot be focused, so its tooltip never reaches
+  a keyboard user.
+
+- **The web UI no longer offers Enable/Disable on a Steam Workshop row
+  (#379).** The library gated its update action and its row menu on
+  Steam-owned rows, but not the **Enabled** checkbox — so on the main screen
+  every Steam Workshop row carried a live, checked box that started a job
+  lmm could only refuse ("unsubscribe it in Steam, or use the game's own mod
+  menu"). The checkbox is now disabled on those rows and says who does own
+  the item, and the batch bar's **Enable**/**Disable** — which reached the
+  same doomed job in two clicks — drops Steam-owned rows the way its
+  **Update** button already did.
+
+- **The web UI's Profile card no longer counts disabled mods as missing
+  from the load order (#378).** A profile's load order carries only enabled
+  mods, but the card compared it against every installed row — so one
+  disabled mod produced a **Profile (1)** card claiming "1 installed mod is
+  not in this profile's load order", offering a **Sync…** whose own plan
+  then came back with nothing to do. `lmm profile sync --dry-run` said
+  "already in sync" for the same state. Disabled rows are now excluded, so
+  the card is silent unless something is genuinely unlisted.
+
+- **The web UI's API-key instructions are no longer cut off (#377).** On
+  **Setup → Authentication**, each source's setup steps — where to get the
+  key, and for the Steam Web API key the rule that pasting someone else's is
+  not allowed — sat inside the login row beside a ~190px field, in a
+  container that does not wrap. The paragraph simply ran off the right edge
+  of the window at a normal desktop width (`…3. C` and then nothing), and
+  squeezed the **Log in** button onto two lines. The hint and the
+  instructions now take a line of their own under the controls they belong
+  to, and the source's numbered steps keep their line breaks instead of
+  being collapsed into one run-on sentence.
+
+- **The web UI now sees games the CLI adds, edits or removes while it is
+  running (#376).** `lmm serve` read `games.yaml` once, at startup, so a
+  game added by `lmm game add`, a source mapping changed by `lmm game edit`
+  and a game removed from the file were all invisible to the running server
+  — the browser kept being offered the game set the process booted with. The
+  delete direction was the worse half: a game you had removed stayed
+  plannable in the web UI, and the next write the web UI made put it back.
+  Every `/api/v1` request now re-reads `games.yaml` when the file has moved
+  since it was last read (one `stat` when it has not), so the two frontends
+  agree without a restart. A `games.yaml` edited into something that no
+  longer parses leaves the running server on the last good game set and
+  logs the problem, rather than emptying the chooser.
 
 - **Two overlapping reloads of the same web UI slice no longer commit out of
   order (#370).** The SPA already dropped an answer fetched for a route the

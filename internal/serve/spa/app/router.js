@@ -67,6 +67,45 @@ export function parseLocation(url = window.location) {
   return route;
 }
 
+/** routeName is the human name of one route: what the tab says, and what a
+ * screen reader is told on arrival (issue 399). Derived from the URL alone,
+ * so it is available the instant the route changes rather than after the
+ * screen's own fetches settle - a title that appears three requests later
+ * is not a title, it is a flicker.
+ *
+ * A mod page names its mod by source:id rather than by display name for the
+ * same reason: the name lives in a document this route has not loaded yet,
+ * and source:id is the identity every other surface in the application
+ * (and the CLI) already uses. */
+export function routeName(route) {
+  switch (route.view) {
+    case "home":
+      return "Mission Control";
+    case "mod":
+      return `${route.sourceID}:${route.modID}`;
+    case "search":
+      return route.q ? `Search: ${route.q}` : "Search";
+    case "setup":
+      return route.section ? `Setup: ${route.section}` : "Setup";
+    default:
+      return "Choose a game";
+  }
+}
+
+/** documentTitle is routeName plus the context it is showing and the
+ * application's own name - the string main.js#go assigns to document.title
+ * on every route change (issue 399).
+ *
+ * The distinctive half comes FIRST: a browser tab, a history menu and a
+ * window switcher all truncate from the right, so "lmm — " as a prefix
+ * would have made every entry identical again, which is the bug. */
+export function documentTitle(route) {
+  const name = routeName(route);
+  const context =
+    route.game && route.profile ? ` — ${route.game}/${route.profile}` : "";
+  return `${name}${context} · lmm`;
+}
+
 /** Builds the /g/{game}/{profile} prefix every scoped URL hangs off. */
 export function contextPath(game, profile) {
   return `/g/${encodeURIComponent(game)}/${encodeURIComponent(profile)}`;

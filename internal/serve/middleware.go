@@ -108,10 +108,51 @@ func unsafeMethod(m string) bool {
 // that same gap (task-3 re-review New finding 2).
 func (s *Server) wrap(fn http.HandlerFunc) http.Handler {
 	var h http.Handler = fn
+	h = s.freshGames(h)
 	h = s.csrfCheck(h)
 	h = s.originCheck(h)
 	h = s.requestLogging(h)
 	return h
+}
+
+// freshGames re-reads games.yaml into the Service's game set when the file
+// has moved since it was last read (#376).
+//
+// `lmm serve` is the only frontend that outlives core.NewService' one-shot
+// load: the CLI writes games.yaml in a SECOND process, so without this the
+// server answers every request from the game set it booted with. A game
+// added by `lmm game add` never appeared in the chooser; worse, a game the
+// user DELETED stayed plannable, and the next serve-side SaveGame wrote it
+// back out - resurrecting it.
+//
+// It sits in wrap rather than in resolveSelection so that the reload is
+// structural: every route the SPA can reach gets it, including the ones
+// that answer ABOUT games without resolving a ?game= selection (the
+// chooser's listing, the Setup page's source editor). The cost when
+// nothing changed is one stat.
+//
+// It is the INNERMOST wrapper, inside the Origin and CSRF guards (P2
+// review Minor 2). wrap composes inside-out, so installing it outside them
+// made a cross-origin request the server was about to refuse with 403 pay
+// for that stat first - and, if the file had moved, for a full YAML
+// re-parse under the exclusive write lock. Work on behalf of a request
+// already decided against; the reload belongs on the served side of the
+// security boundary.
+//
+// A games.yaml edited into something unparsable is LOGGED, not surfaced:
+// core keeps the last good set (ReloadGames' own contract), and failing
+// every request on a typo in a file the request may not even be about
+// would be a worse answer than serving slightly stale games. The auth
+// card's restart_required idiom is the precedent for telling the user
+// about staleness in the surface that owns it, not in the transport.
+func (s *Server) freshGames(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := s.svc.ReloadGames(); err != nil {
+			s.log.Warn("games.yaml changed but could not be re-read; serving the previous game set",
+				"error", err)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // securityHeaders sets conservative response headers

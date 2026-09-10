@@ -223,7 +223,7 @@ func TestServeJSONGoldens(t *testing.T) {
 		},
 		{
 			"job_start_response",
-			jobStartResponse{JobID: "fedcba9876543210fedcba9876543210"},
+			newJobStartResponse("fedcba9876543210fedcba9876543210"),
 		},
 		{
 			"deploy_plan_request",

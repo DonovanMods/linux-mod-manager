@@ -13,6 +13,7 @@
 import { html } from "../render.js";
 import { displayVersion } from "../version.js";
 import { navigate } from "../router.js";
+import { codeSpans } from "../errortext.js";
 import { InlineJob } from "./jobprogress.js";
 
 /** installOrigin is the stable per-mod control key an inline install job
@@ -178,7 +179,7 @@ export function SourceResultsList({
             class="search-result search-result--warning"
           >
             <span class="badge badge--warn">${w.source_id}</span>
-            ${w.error}
+            ${codeSpans(w.error)}
           </li>
         `,
       )}

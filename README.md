@@ -921,6 +921,13 @@ lmm serve --addr 127.0.0.1:8080
 lmm serve --no-open
 ```
 
+The CLI stays usable while it runs, and the two agree: `lmm serve` re-reads
+`games.yaml` whenever it changes, so a game you add, edit or remove with
+`lmm game add`/`edit` in another terminal shows up in the browser on the
+next request — no restart. Stored credentials are the one exception: a key
+saved after the server started needs a restart before the server can use
+it, and the Setup page says so when that happens.
+
 It is a single-page application: one small shell, then everything happens
 in place. It needs JavaScript and a current desktop browser (there is no
 small-screen layout — the CLI is the fallback, and it does everything the
@@ -1093,6 +1100,11 @@ Focus is contained inside a modal and the slide-over while either is open,
 so `Tab` cannot wander onto the page behind the scrim. If your system asks
 for reduced motion, every animation is disabled.
 
+Every view names itself: the browser tab, your history and your window
+switcher show the screen and the game/profile it is showing (for example
+`Mission Control — skyrim-se/default · lmm`), and a screen reader is told
+the new view's name on each navigation.
+
 ### URLs
 
 ```text
@@ -1157,10 +1169,17 @@ Most mutations run as a Plan, then a background job:
 
 ```text
 POST /api/v1/plans/{kind}       -> the plan, plus a single-use plan_id
-POST /api/v1/jobs               -> {plan_id, options} -> {job_id}
+POST /api/v1/jobs               -> {plan_id, options} -> {id}
 GET  /api/v1/jobs/{id}          -> job status: running / succeeded / failed
 GET  /api/v1/jobs/{id}/events   -> Server-Sent Events: live progress
 ```
+
+The start response also carries `job_id`, the same value under the name it
+originally shipped with. That spelling is **deprecated** — read `id`, which
+is what `GET /api/v1/jobs` and `GET /api/v1/jobs/{id}` have always called it
+— and it will be dropped in a later major version. (`job_id` on the event
+stream is a different thing and stays: there it names the job an event
+belongs to.)
 
 `{kind}` is one of fifteen, each the browser-side twin of a CLI command:
 `deploy`, `install`, `uninstall`, `updates`, `rollback`, `switch`,
@@ -1355,7 +1374,7 @@ and reports both in one `core.AdoptResult` (`backfilled` alongside
 (Enable/disable are an exception: with no options and nothing to preview,
 they skip the plan step entirely — `POST /api/v1/mods/{source}/{id}/enable`
 and `.../disable` start the job directly and answer with the same
-`{"job_id"}` document. Lock/unlock/update-policy skip jobs too, but for a
+`{"id"}` document. Lock/unlock/update-policy skip jobs too, but for a
 different reason: `POST /api/v1/mods/{source}/{id}/lock`, `.../unlock` and
 `.../update-policy` are single DB writes with nothing to run in the
 background at all, so they answer synchronously with the mod's full

@@ -59,7 +59,10 @@ func TestE2E_ShellLoadsAndStoreHydratesStatus(t *testing.T) {
 		textContent(`.game-picker__trigger`, &picker),
 	)
 
-	assert.Equal(t, "lmm", title)
+	// Issue 399 replaced the shell's static <title>lmm</title>: main.js#go
+	// names the route it just entered. The application's own name is still
+	// in there, so a tab is still identifiable as lmm's.
+	assert.Equal(t, "Mission Control — "+f.Game.ID+"/"+f.Profile+" · lmm", title)
 	assert.Contains(t, picker, f.Game.Name,
 		"the rendered text must carry a fact only /api/v1/status knows")
 	assert.Empty(t, f.BrowserErrors(),
@@ -7176,5 +7179,414 @@ func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing
 	assert.Contains(t, explainer, "lmm import --workshop",
 		"the refusal must name the route that DOES work")
 	assert.True(t, installBackAfterDismiss, "dismissing the explainer puts the Install action back")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestNotListedCount_IgnoresDisabledRows is issue 378. The Profile card is
+// a subtraction of two documents rather than a plan: GET /api/v1/mods
+// lists EVERY installed row, disabled ones included, while
+// ProfileSummary.mod_count is the profile YAML's load order, which carries
+// only enabled mods (core's PlanProfileSync builds ToAdd from mods
+// "enabled in the DB but absent from the profile"). So one disabled mod
+// produced one phantom "not in this profile's load order" - the card
+// claimed drift, offered a Sync, and the Sync's own plan came back
+// no_changes, which is also what `lmm profile sync --dry-run` said at the
+// same moment.
+//
+// cards.js has no DOM in this function, so it is exercised directly here
+// through a dynamic import in a real browser, the same module Mission
+// Control runs - the pattern TestSortRows_RecentToleratesMissingInstalledAt
+// established.
+func TestNotListedCount_IgnoresDisabledRows(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var counts []float64
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { notListedCount } = await import("/static/app/components/cards.js");
+			const state = {
+				route: { profile: "default" },
+				status: { profiles: [{ name: "default", mod_count: 1 }] },
+			};
+			const oneEnabledOneDisabled = { mods: [
+				{ key: "fake:a", enabled: true },
+				{ key: "fake:b", enabled: false },
+			] };
+			const twoEnabled = { mods: [
+				{ key: "fake:a", enabled: true },
+				{ key: "fake:b", enabled: true },
+			] };
+			const onlyDisabled = { mods: [{ key: "fake:b", enabled: false }] };
+			return [
+				notListedCount(state, oneEnabledOneDisabled),
+				notListedCount(state, twoEnabled),
+				notListedCount(state, onlyDisabled),
+			];
+		})()`, &counts, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, counts, 3)
+	assert.Equal(t, float64(0), counts[0],
+		"a disabled installed mod is not 'missing from the load order' - the profile YAML never carries one")
+	assert.Equal(t, float64(1), counts[1],
+		"a genuinely unlisted ENABLED mod is still counted, which is what the card exists to say")
+	assert.Equal(t, float64(0), counts[2],
+		"and the count never goes negative when the profile lists more than is enabled")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FullModPageRefusesRelinkOnALockedMod is issue 394. The page
+// disabled its rollback button for a locked mod with a title explaining
+// why, but rendered Re-link… unconditionally - and `lmm mod edit
+// --source/--source-id` on a locked mod is refused ("mod is locked: …
+// unlock with 'lmm mod unlock …' first"). #365 had already removed Re-link
+// from the ROW menu for external mods; the locked case never got the same
+// treatment on this page.
+//
+// The issue's own aside is answered too: a title on a disabled button is
+// invisible to keyboard users, because a disabled button is not focusable.
+// Both refused actions therefore also carry a VISIBLE line naming the
+// unlock remedy, which is the only form of it a keyboard user can reach.
+func TestE2E_FullModPageRefusesRelinkOnALockedMod(t *testing.T) {
+	f := newE2EFixtureWithDrillInModsAndALockedMod(t)
+
+	var relinkDisabled bool
+	var relinkTitle, hint string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &relinkDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').title`, &relinkTitle),
+		chromedp.Evaluate(`(document.querySelector('[data-testid="mod-page-locked-actions"]')?.textContent ?? "")`, &hint),
+	)
+
+	assert.True(t, relinkDisabled,
+		"core refuses a re-link on a locked mod, so the page must not offer it live")
+	assert.Contains(t, relinkTitle, "Unlock",
+		"and must name the remedy, matching the rollback button four lines below")
+	assert.Contains(t, hint, "Unlock",
+		"the remedy must be readable without a hover, which a disabled button never gets")
+	assert.Contains(t, hint, "lmm mod unlock fake:a",
+		"and must name the command that lifts it, not merely the word")
+
+	// The unlocked sibling on the same fixture proves the gate is the lock
+	// and not the page.
+	var otherDisabled bool
+	var otherHints int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "b")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &otherDisabled),
+		chromedp.Evaluate(`document.querySelectorAll('[data-testid="mod-page-locked-actions"]').length`, &otherHints),
+	)
+	assert.False(t, otherDisabled, "an unlocked mod still offers Re-link…")
+	assert.Equal(t, 0, otherHints, "and says nothing about a lock it does not have")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_EveryRouteNamesItselfInTheTitleAndAnnouncesTheChange is issue
+// 399. `<title>lmm</title>` was static and nothing under spa/ ever assigned
+// document.title, so Mission Control, a mod page, search and Setup were all
+// "lmm" — in the tab, in browser history and in the window switcher — and a
+// screen-reader user got nothing at all on a pushState navigation, since
+// the only role="status" regions in the application are job progress.
+//
+// Both halves are asserted here because both are claims about what a
+// BROWSER does: the title after a real history navigation, and a live
+// region that is in the accessibility tree while out of the visual layout.
+func TestE2E_EveryRouteNamesItselfInTheTitleAndAnnouncesTheChange(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	// The router's own navigation, driven the way router.js#navigate does
+	// it, so this exercises a pushState route change rather than a fresh
+	// document load - the case that had no announcement at all.
+	pushState := func(path string) chromedp.Action {
+		return chromedp.Evaluate(`(() => {
+			window.history.pushState(null, "", `+"`"+path+"`"+`);
+			window.dispatchEvent(new PopStateEvent("popstate"));
+			return true;
+		})()`, nil)
+	}
+	const regionJS = `(() => {
+		const el = document.querySelector('[data-testid="route-announcer"]');
+		if (!el) return null;
+		return {
+			text: el.textContent.trim(),
+			live: el.getAttribute("aria-live"),
+			visible: el.getBoundingClientRect().width > 2,
+		};
+	})()`
+	type announcer struct {
+		Text    string `json:"text"`
+		Live    string `json:"live"`
+		Visible bool   `json:"visible"`
+	}
+
+	var homeTitle, modTitle, searchTitle, setupTitle string
+	var homeRegion, modRegion announcer
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Title(&homeTitle),
+		chromedp.Evaluate(regionJS, &homeRegion),
+
+		pushState(f.ContextPath()+"/mod/fake/a"),
+		pollUntil(`document.title.includes("fake:a")`),
+		settleEffects(),
+		chromedp.Title(&modTitle),
+		chromedp.Evaluate(regionJS, &modRegion),
+
+		pushState(f.ContextPath()+"/search?q=alpha"),
+		pollUntil(`document.title.toLowerCase().includes("search")`),
+		chromedp.Title(&searchTitle),
+
+		pushState(f.ContextPath()+"/setup?section=auth"),
+		pollUntil(`document.title.toLowerCase().includes("setup")`),
+		chromedp.Title(&setupTitle),
+	)
+
+	assert.Contains(t, homeTitle, "Mission Control", "the tab must name the view")
+	assert.Contains(t, homeTitle, f.Game.ID, "and the context it is showing")
+	assert.Contains(t, homeTitle, "lmm", "and still say which application it is")
+
+	assert.Contains(t, modTitle, "fake:a", "a mod page names its mod")
+	assert.NotEqual(t, homeTitle, modTitle,
+		"two routes must not share one history entry title")
+	assert.Contains(t, searchTitle, "alpha", "search names what was searched for")
+	assert.Contains(t, setupTitle, "Setup")
+
+	// NotEmpty, not NotNil (P2 review Nit 7): Live is a string, so NotNil
+	// was unconditionally true - an absent announcer makes regionJS evaluate
+	// to JSON null, which unmarshals into the struct as a no-op and leaves
+	// Live == "".
+	require.NotEmpty(t, homeRegion.Live, "a route announcer must exist on every route")
+	assert.Equal(t, "polite", homeRegion.Live,
+		"a route change interrupts nothing - it is announced politely")
+	assert.False(t, homeRegion.Visible,
+		"it is for the accessibility tree, not the visual layout")
+	assert.Contains(t, homeRegion.Text, "Mission Control")
+	assert.Contains(t, modRegion.Text, "fake:a",
+		"and its text must actually change on a pushState navigation, or nothing is announced")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_TheRouteAnnouncerSurvivesTheChooserBoundary is P2 review Minor 1,
+// on top of issue 399.
+//
+// The announcer only announces if its NODE survives the route change: an
+// aria-live region that is unmounted and re-created with its new text
+// already in it fires nothing. It used to ride inside the overlays
+// fragment, which four of the five branches in App render at child index 1
+// — but the chooser branch renders <header>, <main>, overlays, putting the
+// fragment at index 2. Preact diffs children positionally, so leaving or
+// entering the chooser met the old overlays Fragment with a <main>, a type
+// change, and tore the live region down.
+//
+// Those are exactly the two transitions behind Mission Control's "Choose a
+// different game" link, so this is reachable in the app rather than only on
+// a cold load. Node identity is the assertion, because it is the thing the
+// screen reader's behaviour actually depends on, and only a browser can
+// answer it.
+func TestE2E_TheRouteAnnouncerSurvivesTheChooserBoundary(t *testing.T) {
+	// Two games and no default, so the chooser STAYS on screen rather than
+	// redirecting to the single game (maybeRedirectFromChooser).
+	f := newE2EMultiGameFixture(t)
+
+	// A property set on the DOM node itself: it can only still be there if
+	// this is the same node, which no attribute or text assertion can tell.
+	const tagJS = `(() => {
+		document.querySelector('[data-testid="route-announcer"]').__lmmSameNode = "yes";
+		return true;
+	})()`
+	const readTagJS = `(() => {
+		const el = document.querySelector('[data-testid="route-announcer"]');
+		if (!el) return { present: false, tag: "", text: "" };
+		return {
+			present: true,
+			tag: el.__lmmSameNode ?? "",
+			text: el.textContent.trim(),
+		};
+	})()`
+	type announcerNode struct {
+		Present bool   `json:"present"`
+		Tag     string `json:"tag"`
+		Text    string `json:"text"`
+	}
+
+	pushState := func(path string) chromedp.Action {
+		return chromedp.Evaluate(`(() => {
+			window.history.pushState(null, "", `+"`"+path+"`"+`);
+			window.dispatchEvent(new PopStateEvent("popstate"));
+			return true;
+		})()`, nil)
+	}
+
+	var intoGame, backToChooser announcerNode
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(tagJS, nil),
+
+		// chooser -> home: picking a game.
+		pushState("/g/"+f.GameA.ID+"/default"),
+		pollUntil(`document.title.includes("Mission Control")`),
+		settleEffects(),
+		chromedp.Evaluate(readTagJS, &intoGame),
+
+		// home -> chooser: Mission Control's "Choose a different game".
+		pushState("/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(readTagJS, &backToChooser),
+	)
+
+	require.True(t, intoGame.Present, "the announcer must exist on Mission Control")
+	assert.Equal(t, "yes", intoGame.Tag,
+		"picking a game must keep the SAME live-region node - a rebuilt one announces nothing")
+	assert.Contains(t, intoGame.Text, "Mission Control",
+		"and the surviving node must carry the new route's name")
+
+	require.True(t, backToChooser.Present, "the announcer must exist on the chooser")
+	assert.Equal(t, "yes", backToChooser.Tag,
+		"and leaving a game must keep it too")
+	assert.NotContains(t, backToChooser.Text, "Mission Control",
+		"with the chooser's own name in it")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_ALockedModStillRefusesRelinkWhenItsDetailIsOffline is P2 review
+// Minor 4, on top of issue 394.
+//
+// The full mod page reads the lock/policy pair off the LIBRARY listing and
+// falls back to the live ModDetail, and the file says why: core.ModListing
+// carries locked, locked_version and update_policy without asking the
+// source anything, so a mod whose source is offline still gets working
+// controls. The new Re-link gate read only the ModDetail half, so the exact
+// degradation the rule exists for put Re-link... back on a locked mod - the
+// state #394 exists to close, and the one core refuses server-side.
+func TestE2E_ALockedModStillRefusesRelinkWhenItsDetailIsOffline(t *testing.T) {
+	f := newE2EFixtureWithALockedModAndAnOfflineDetail(t)
+
+	var relinkDisabled bool
+	var relinkTitle, hint, meta string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		settleEffects(),
+		// The premise, read off the page rather than assumed: the meta
+		// line's " - locked" suffix comes from ModDetail alone, so its
+		// absence is this page running WITHOUT the detail document.
+		chromedp.Evaluate(`document.querySelector(".mod-page__meta").textContent`, &meta),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &relinkDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').title`, &relinkTitle),
+		chromedp.Evaluate(`(document.querySelector('[data-testid="mod-page-locked-actions"]')?.textContent ?? "")`, &hint),
+	)
+
+	require.NotContains(t, meta, "locked",
+		"the detail fetch must really have failed, or this test measures the happy path")
+
+	assert.True(t, relinkDisabled,
+		"a locked mod refuses a re-link whether or not its source answered")
+	assert.Contains(t, relinkTitle, "Unlock")
+	assert.Contains(t, hint, "lmm mod unlock fake:a",
+		"and the remedy must still be readable, since a disabled button gets no hover")
+
+	// assertNoUncaughtErrors rather than Empty: the deliberate 500 on the
+	// detail endpoint is a network entry the browser reports, and it is the
+	// whole point of the fixture.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
+
+// TestE2E_TheLockedHintOmitsAVersionTheProfileRefDoesNotCarry is P2 review
+// Nit 5, on top of issue 394.
+//
+// `locked: true` with no locked_version is reachable - SetModLock sets the
+// marker and only moves Version when given a non-empty one, and both
+// core.ModListing.LockedVersion and InstalledDetail.LockedVersion are
+// omitempty - so a mod adopted or imported without a version string and
+// then locked renders the hint's unguarded interpolation as "locked to .".
+// modpanel.js already guards the same pair, which is the codebase agreeing
+// the state exists.
+func TestE2E_TheLockedHintOmitsAVersionTheProfileRefDoesNotCarry(t *testing.T) {
+	f := newE2EFixtureWithAVersionlessLockedMod(t)
+
+	var relinkDisabled bool
+	var hint string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-testid="mod-page-locked-actions"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &relinkDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-testid="mod-page-locked-actions"]').textContent.replace(/\s+/g, " ").trim()`, &hint),
+	)
+
+	require.True(t, relinkDisabled,
+		"the lock still gates the action - only the sentence about it is at issue")
+	assert.NotContains(t, hint, "locked to .",
+		"an absent locked_version must not render as a version")
+	assert.Contains(t, hint, "This mod is locked.",
+		"it says the mod is locked, and stops there")
+	assert.Contains(t, hint, "(lmm mod unlock fake:a)",
+		"and still names the command that lifts it, inside its parentheses "+
+			"rather than spaced away from them (P2 review Nit 6)")
+
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_TheBatchBarStatesNoReasonItCannotKnow is P2 review Nit 8, on top
+// of issue 379.
+//
+// selectedRows() filters against `visible`, so a filter that hides every
+// selected row leaves selected.size > 0 - the bar renders - while
+// togglableSelectedRows() is empty. Both toggle buttons then claimed "Steam
+// manages the selected items — lmm cannot enable them" for a selection that
+// may hold no Steam row at all. The refusal is right; the reason is not
+// something the bar can know in that state, so it says nothing instead.
+func TestE2E_TheBatchBarStatesNoReasonItCannotKnow(t *testing.T) {
+	f := newE2EFixtureWithDrillInMods(t)
+
+	var enableTitle, disableTitle string
+	var enableDisabled bool
+	var visibleRows int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.library__table`, chromedp.ByQuery),
+		chromedp.Evaluate(`
+			document.querySelectorAll(".mod-row td.col--select input")
+				.forEach((cb) => cb.click());
+		`, nil),
+		chromedp.WaitVisible(`.batch-bar`, chromedp.ByQuery),
+		// The omnibar's live filter, narrowed to something no installed mod
+		// matches: every selected row is now hidden, and none of them is a
+		// Steam Workshop item.
+		chromedp.SendKeys(`.omnibar`, "zzzznotamod", chromedp.ByQuery),
+		pollUntil(`document.querySelectorAll(".mod-row").length === 0`),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelectorAll(".mod-row").length`, &visibleRows),
+		chromedp.Evaluate(`document.querySelector('[data-action="batch-enable"]').title`, &enableTitle),
+		chromedp.Evaluate(`document.querySelector('[data-action="batch-enable"]').disabled`, &enableDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-action="batch-disable"]').title`, &disableTitle),
+	)
+
+	require.Equal(t, 0, visibleRows, "the filter must really have hidden every row")
+	assert.True(t, enableDisabled,
+		"a batch with nothing in view still has nothing to act on")
+	assert.NotContains(t, enableTitle, "Steam",
+		"nothing in the selection is a Steam item, so Steam cannot be the stated reason")
+	assert.NotContains(t, disableTitle, "Steam")
+	assert.Empty(t, enableTitle, "with no reason it can know, it offers none")
+	assert.Empty(t, disableTitle)
+
 	assert.Empty(t, f.BrowserErrors())
 }

@@ -92,7 +92,11 @@ type Service struct {
 	registry *source.Registry
 	gamesMu  sync.RWMutex
 	games    map[string]*domain.Game
-	opSem    chan struct{}
+	// gamesStat fingerprints the games.yaml the snapshot above was loaded
+	// from, so ReloadGames can skip the parse when nothing moved (#376).
+	// Guarded by gamesMu, like games itself.
+	gamesStat gamesFileState
+	opSem     chan struct{}
 	// verifyMemo caches the last verify answer per (game, profile, tier),
 	// keyed on a cheap fingerprint of what a run actually reads (#336). Any
 	// mutation drops it - beginOp does that - and VerifyOptions.Force
@@ -156,7 +160,11 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
-	// Load games
+	// Load games. The fingerprint is taken BEFORE the read on purpose: a
+	// write that lands between the two makes the next ReloadGames re-read
+	// (a wasted parse), where the other order would make it skip one (a
+	// missed change) - #376.
+	gamesStat := statGamesFile(cfg.ConfigDir)
 	games, err := config.LoadGames(cfg.ConfigDir)
 	if err != nil {
 		if closeErr := database.Close(); closeErr != nil {
@@ -176,6 +184,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		cache:      modCache,
 		registry:   source.NewRegistry(),
 		games:      games,
+		gamesStat:  gamesStat,
 		opSem:      make(chan struct{}, 1),
 		downloader: downloader,
 		extractor:  NewExtractor(),
@@ -1578,6 +1587,99 @@ func (s *Service) LoadGamesFromDisk() (map[string]*domain.Game, error) {
 	return config.LoadGames(s.configDir)
 }
 
+// gamesFileState is a cheap fingerprint of games.yaml: whether it exists,
+// and the size and modification time it had when the in-memory snapshot
+// was loaded from it. Two of these comparing equal is ReloadGames' licence
+// to skip a re-read.
+//
+// The modification time is nanoseconds since the epoch rather than a
+// time.Time (P2 review Nit 11). time.Time's own documentation says not to
+// compare with ==: the struct carries a wall clock, an optional monotonic
+// reading and a *Location, so two values naming the same instant can
+// compare unequal. It happened to be safe here - os.Stat's ModTime() goes
+// through time.Unix, which attaches no monotonic reading and always uses
+// the same time.Local pointer - but that is a property of this one caller,
+// not of the type, and the next struct someone compares with == will not
+// inherit it. An int64 is unambiguously comparable.
+type gamesFileState struct {
+	exists  bool
+	size    int64
+	modTime int64
+}
+
+// statGamesFile fingerprints games.yaml. Any stat failure - including the
+// file not existing, which is the normal pre-first-game state - reports the
+// zero fingerprint, so an appearing or disappearing file is itself a
+// change.
+func statGamesFile(configDir string) gamesFileState {
+	info, err := os.Stat(filepath.Join(configDir, "games.yaml"))
+	if err != nil {
+		return gamesFileState{}
+	}
+	return gamesFileState{exists: true, size: info.Size(), modTime: info.ModTime().UnixNano()}
+}
+
+// ReloadGames re-reads games.yaml into this Service's in-memory game set
+// when the file has moved since the set was loaded, and reports whether it
+// did. An unchanged file costs one stat.
+//
+// It exists for `lmm serve` (#376), the one frontend that outlives the
+// load NewService performs: the CLI writes games.yaml in another process,
+// and without this the server answered every /api/v1 request from the game
+// set it started with - a game added by `lmm game add` never appeared, and
+// (the sharper direction) a game the user DELETED stayed plannable, with
+// the next serve-side SaveGame writing it back out. internal/serve calls
+// this once per wrapped request; a CLI process, which reads games.yaml at
+// startup and exits, has no reason to.
+//
+// A games.yaml that has become unreadable or unparsable returns the error
+// and leaves the previous set in place: a typo saved mid-session must not
+// empty a running server's chooser. The caller decides how loudly to say
+// so.
+//
+// A reload that actually happened invalidates the verify memo, which
+// beginOp would otherwise have done: this is the one path that can move a
+// game's ModPath under a live Service, and the memo does not fingerprint
+// the game record. An unchanged file costs nothing.
+//
+// The mtime/size fingerprint is deliberately cheap rather than exact. A
+// rewrite that preserves both - same byte count, same nanosecond - is
+// missed; nothing lmm itself writes can do that, and the alternative (a
+// content hash, or an inotify watch) buys precision this does not need.
+func (s *Service) ReloadGames() (bool, error) {
+	s.gamesMu.Lock()
+	defer s.gamesMu.Unlock()
+
+	current := statGamesFile(s.configDir)
+	if current == s.gamesStat {
+		return false, nil
+	}
+	games, err := config.LoadGames(s.configDir)
+	if err != nil {
+		return false, fmt.Errorf("reloading games: %w", err)
+	}
+	s.games = games
+	s.gamesStat = current
+
+	// A real reload can move a game's ModPath/InstallPath, and the verify
+	// memo cannot see that: its key is (game, profile, tier) and its
+	// fingerprint walks game.ModPath without ever hashing the game record,
+	// so a repoint onto a directory that fingerprints the same - "both
+	// empty", the usual state right after one - would keep serving the
+	// previous directory's verdict (P2 review Minor 3).
+	//
+	// Every other path that changes core's picture of an installation drops
+	// the memo at beginOp; this one cannot take beginOp (see above), so it
+	// drops it here, and only when a reload ACTUALLY happened. The unchanged
+	// case is the common one - internal/serve calls this once per request -
+	// and it must stay free.
+	//
+	// Lock order: nothing takes gamesMu while holding verifyMemoMu, so
+	// taking verifyMemoMu under gamesMu cannot invert.
+	s.dropVerifyMemo()
+	return true, nil
+}
+
 // SaveGame persists game to games.yaml and publishes it to this Service's
 // in-memory game set atomically. It replaces an existing entry with the
 // same ID. Readers (GetGame, ListGames, SourcesForGame, …) may run
@@ -1598,6 +1700,10 @@ func (s *Service) saveGame(ctx context.Context, game *domain.Game) error {
 		return err
 	}
 	s.games[game.ID] = game
+	// The map and the file now agree, so re-fingerprint rather than leave
+	// ReloadGames a change it would only re-read to learn what this
+	// function just did (#376).
+	s.gamesStat = statGamesFile(s.configDir)
 	return nil
 }
 

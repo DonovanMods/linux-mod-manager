@@ -73,7 +73,9 @@ export const put = (path, body) => request("PUT", path, body);
 export const plan = (kind, options, context) =>
   post(scoped(`/api/v1/plans/${kind}`, context), options ?? {});
 
-/** Redeems a plan handle, starting its Apply as a job. Returns {job_id}. */
+/** Redeems a plan handle, starting its Apply as a job. Returns the start
+ * document, whose `id` is the job (it also carries the deprecated `job_id`
+ * spelling of the same value - issue 400). */
 export const startJob = (planID, options) =>
   post("/api/v1/jobs", { plan_id: planID, ...(options ? { options } : {}) });
 
@@ -135,7 +137,7 @@ export function search(query, opts, context) {
 
 /** Starts an enable/disable job directly - the one sanctioned plan-free
  * mutation path (kind_toggle.go); no plan step, so there is nothing to
- * confirm before it runs. Returns {job_id}, the same shape startJob does. */
+ * confirm before it runs. Returns the same start document startJob does. */
 export const startToggle = (action, sourceID, modID, context) =>
   post(scoped(`${modPath(sourceID, modID)}/${action}`, context));
 

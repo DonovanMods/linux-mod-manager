@@ -73,8 +73,30 @@ type jobStartRequest struct {
 
 // jobStartResponse is POST /api/v1/jobs's success document: the handle
 // GET /api/v1/jobs/{id} and its SSE stream are addressed by.
+//
+// It carries the SAME id twice, under two names (#400). "id" is what every
+// other document on this wire calls an entity's own identity - jobSummary
+// and jobStatus, one call apart from this one, both answer "id" - and it is
+// the name a caller should read. "job_id" is the original spelling, kept
+// because this document has shipped and a client parsing it must not break
+// inside a release line; it is DEPRECATED and will be dropped in a later
+// major version. "job_id" elsewhere on the wire is a different thing and
+// stays: jobProgressFrame's job_id is a FOREIGN key, an event naming the
+// job it belongs to, not a job document naming itself.
+//
+// newJobStartResponse is the only way to build one, so the two can never
+// disagree.
 type jobStartResponse struct {
+	ID jobID `json:"id"`
+	// Deprecated: read ID instead. Emitted through the v2.0.x line for
+	// clients written against the original spelling.
 	JobID jobID `json:"job_id"`
+}
+
+// newJobStartResponse builds the start document for id, filling both
+// spellings of the member from one value.
+func newJobStartResponse(id jobID) jobStartResponse {
+	return jobStartResponse{ID: id, JobID: id}
 }
 
 // readAPIBody reads r's body under maxAPIRequestBytes. An over-long body
@@ -219,7 +241,7 @@ func (s *Server) handleAPIStartJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusAccepted, jobStartResponse{JobID: id})
+	s.writeJSON(w, http.StatusAccepted, newJobStartResponse(id))
 }
 
 // handleAPIJobStatus answers GET /api/v1/jobs/{id} with the job status

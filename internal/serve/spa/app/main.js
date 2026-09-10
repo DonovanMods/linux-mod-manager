@@ -8,7 +8,12 @@ import { html } from "./render.js";
 import { App } from "./components/app.js";
 import { createStore } from "./store.js";
 import { createSliceFence } from "./slicefence.js";
-import { parseLocation, onRouteChange, navigate } from "./router.js";
+import {
+  parseLocation,
+  onRouteChange,
+  navigate,
+  documentTitle,
+} from "./router.js";
 import { currentTheme, setTheme } from "./theme.js";
 import {
   get,
@@ -1148,9 +1153,7 @@ async function startBatchToggle(action, mods) {
   };
   await startSequencedBatch(mods, {
     run: (mod) =>
-      startToggleJob(action, mod.source_id, mod.id, context).then(
-        (r) => r.job_id,
-      ),
+      startToggleJob(action, mod.source_id, mod.id, context).then((r) => r.id),
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:toggle`,
     labelOf: (mod) => mod.name ?? `${mod.source_id}:${mod.id}`,
     verb: action === "enable" ? "Enabled" : "Disabled",
@@ -1186,7 +1189,7 @@ async function startUninstallBatch(mods) {
         { mod_id: mod.id, source_id: mod.source_id },
         context,
       );
-      const { job_id: jobID } = await startJob(response.plan_id, {});
+      const { id: jobID } = await startJob(response.plan_id, {});
       return jobID;
     },
     originOf: (mod) => `mod:${mod.source_id}/${mod.id}:uninstall`,
@@ -1209,10 +1212,7 @@ async function confirmPlan() {
   store.set({ modal: { ...modal, status: "starting" } });
   await startBinding(modal.origin, async () => {
     try {
-      const { job_id: jobID } = await startJob(
-        modal.planID,
-        modal.applyOptions,
-      );
+      const { id: jobID } = await startJob(modal.planID, modal.applyOptions);
       if (store.get().modal?.seq !== modal.seq) return;
       if (overwriteRetryKinds.has(modal.kind)) {
         rememberInstallRequest(
@@ -1310,7 +1310,7 @@ async function retryInstallOverwrite(jobID) {
   await startBinding(origin, async () => {
     try {
       const response = await planMutation(req.kind, req.planOptions, context);
-      const { job_id: newJobID } = await startJob(response.plan_id, {
+      const { id: newJobID } = await startJob(response.plan_id, {
         ...req.applyOptions,
         accept_conflicts: true,
       });
@@ -1351,7 +1351,7 @@ async function startToggle({ action, sourceID, modID, origin }) {
   };
   await startBinding(origin, async () => {
     try {
-      const { job_id: jobID } = await startToggleJob(
+      const { id: jobID } = await startToggleJob(
         action,
         sourceID,
         modID,
@@ -1815,6 +1815,12 @@ function go(route) {
     installRequests.clear();
   }
   lastGameProfile = gameProfile;
+
+  // issue 399: every route was "lmm" in the tab, in history and in the
+  // window switcher. Assigned here rather than from a component, because a
+  // route has a name before any of its documents have loaded - and because
+  // this is the one function every navigation goes through.
+  document.title = documentTitle(route);
 
   store.set({ route });
   const key = contextKey(route);

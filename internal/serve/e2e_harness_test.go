@@ -197,6 +197,13 @@ func (f e2eFixture) HomePath() string {
 	return f.BaseURL + "/g/" + f.Game.ID + "/" + f.Profile
 }
 
+// ContextPath is the /g/{game}/{profile} prefix every scoped route hangs
+// off, WITHOUT the origin - what a pushState navigation inside the page
+// takes, as opposed to the absolute URL chromedp.Navigate needs.
+func (f e2eFixture) ContextPath() string {
+	return "/g/" + f.Game.ID + "/" + f.Profile
+}
+
 // SlideOverPath is the Mission Control route with sourceID/modID annotated
 // as the ?mod= slide-over - a deep link into it, exactly as a bookmark or
 // the tray's ?job= would carry (router.js).
@@ -487,7 +494,20 @@ func e2eProxyTransport(t *testing.T) *http.Transport {
 // address instead, which the backend would otherwise reject.
 func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath string) (baseURL string, setFailing func(bool)) {
 	t.Helper()
-	backend := startE2EServer(t, svc)
+	return startE2EFailingPathProxy(t, startE2EServer(t, svc), failPath)
+}
+
+// startE2EFailingPathProxy is the half of startE2EServerWithFailingPath
+// that layers the fault onto an ALREADY-RUNNING server, so a fixture that
+// built its own (newE2EFixtureWithDrillInMods and friends) can be given a
+// failing path by reassigning its BaseURL - the same shape
+// startE2EProxyDelayingProfileReads uses.
+//
+// failPath is a http.ServeMux pattern, so a path without a trailing slash
+// matches EXACTLY that path: "/api/v1/mods/fake/a" faults the mod detail
+// while "/api/v1/mods", the library listing, still reaches the real server.
+func startE2EFailingPathProxy(t *testing.T, backend, failPath string) (baseURL string, setFailing func(bool)) {
+	t.Helper()
 
 	backendURL, err := url.Parse(backend)
 	require.NoError(t, err)
@@ -951,6 +971,35 @@ func newE2EFixtureWithDrillInModsAndALockedMod(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixtureWithDrillInMods(t)
 	require.NoError(t, f.Svc.NewProfileManager().SetModLock(t.Context(), f.Game.ID, "default", "fake", "a", "1.0"))
+	return f
+}
+
+// newE2EFixtureWithAVersionlessLockedMod locks fake/a while its profile ref
+// carries NO version - P2 review Nit 5's state, which a mod adopted or
+// imported without a version string and then locked lands in. SetModLock
+// sets Locked and only touches Version when given a non-empty one, and
+// core's LockedVersion is that ref field, so the document really does come
+// back locked: true with locked_version absent.
+func newE2EFixtureWithAVersionlessLockedMod(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInMods(t)
+	pm := f.Svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a"}))
+	require.NoError(t, pm.SetModLock(t.Context(), f.Game.ID, "default", "fake", "a", ""))
+	return f
+}
+
+// newE2EFixtureWithALockedModAndAnOfflineDetail is
+// newE2EFixtureWithDrillInModsAndALockedMod with the mod DETAIL endpoint
+// for fake/a faulted - P2 review Minor 4's scenario, and the one the full
+// mod page's own "reads the LIBRARY listing first" comment is written for.
+// The library listing still answers, so the page has a locked row and no
+// live ModDetail: a source that is offline, rate-limited or simply down.
+func newE2EFixtureWithALockedModAndAnOfflineDetail(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInModsAndALockedMod(t)
+	f.BaseURL, _ = startE2EFailingPathProxy(t, f.BaseURL, "/api/v1/mods/fake/a")
 	return f
 }
 

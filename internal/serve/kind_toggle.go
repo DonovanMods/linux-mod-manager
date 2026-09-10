@@ -142,5 +142,5 @@ func (s *Server) startToggleJob(w http.ResponseWriter, r *http.Request, kindName
 		return
 	}
 
-	s.writeJSON(w, http.StatusAccepted, jobStartResponse{JobID: id})
+	s.writeJSON(w, http.StatusAccepted, newJobStartResponse(id))
 }

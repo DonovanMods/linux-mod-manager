@@ -15,6 +15,7 @@ package serve_test
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	kb "github.com/chromedp/chromedp/kb"
 	"github.com/stretchr/testify/assert"
@@ -351,3 +353,91 @@ func openRowMenuJS(name string) string {
 
 // rowMenuItemsJS reads the open row menu's item labels.
 const rowMenuItemsJS = `Array.from(document.querySelectorAll(".row-menu__item")).map((b) => b.textContent.trim());`
+
+// TestE2E_SearchWarningSetsABacktickedCommandAsCode is issue 402. core
+// writes one error string for both frontends and writes it for a terminal:
+// "authentication required: Steam Web API key required (run `lmm auth login
+// steamworkshop`)". In a terminal those backticks set the command apart; in
+// a browser they are literal grave accents the reader has to mentally
+// discard - and this lands on the SEARCH page, which is a first-run
+// surface.
+//
+// The web now reads them the way the message means them and sets what they
+// enclose in the monospace face it already uses for commands. Nothing else
+// is parsed: this is not markdown, and the pieces are text nodes and <code>
+// elements, never markup.
+func TestE2E_SearchWarningSetsABacktickedCommandAsCode(t *testing.T) {
+	f := newE2EWorkshopTier2Fixture(t, errors.New(
+		"authentication required: Steam Web API key required (run `lmm auth login steamworkshop`)"))
+	other := newFakeSource("other")
+	other.addMod(fakeSourceMod{Mod: domain.Mod{
+		ID: "o1", SourceID: "other", Name: "Cargo Crate", Version: "1.0",
+	}})
+	f.Svc.RegisterSource(other)
+	f.Game.SourceIDs["other"] = ""
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	var warningText, codeText string
+	f.runInBrowser(t,
+		chromedp.Navigate(workshopSearchPath(f, "cargo")),
+		chromedp.WaitVisible(`.search-result--warning`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector(".search-result--warning").textContent`, &warningText),
+		chromedp.Evaluate(`Array.from(document.querySelectorAll(".search-result--warning code")).map((c) => c.textContent).join("|")`, &codeText),
+	)
+
+	assert.Contains(t, warningText, "Steam Web API key required",
+		"the sentence itself is unchanged - only how its command is set")
+	assert.NotContains(t, warningText, "`",
+		"a grave accent is a terminal's quoting convention, not punctuation a reader should see")
+	assert.Equal(t, "lmm auth login steamworkshop", codeText,
+		"what the backticks enclosed is set as code, and nothing else is")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestCodeSpans_LeavesAnythingItDoesNotUnderstandAlone pins errortext.js's
+// one safety rule directly (issue 402): a message it cannot read comes
+// through exactly as it was written, so the worst case is the old
+// behaviour rather than a half-transformed sentence.
+func TestCodeSpans_LeavesAnythingItDoesNotUnderstandAlone(t *testing.T) {
+	f := newE2EFixture(t)
+
+	// tick is a single backtick. It cannot be written inline: this file's
+	// JS lives in Go raw strings, which a backtick ends.
+	const tick = "`"
+	script := `(async () => {
+			const { codeSpans } = await import("/static/app/errortext.js");
+			const flatten = (v) => {
+				if (typeof v === "string") return v;
+				if (v === null || v === undefined) return String(v);
+				if (Array.isArray(v)) return v.map(flatten).join("");
+				return "<code>" + flatten(v.props?.children) + "</code>";
+			};
+			return [
+				flatten(codeSpans("no backticks here")),
+				flatten(codeSpans("one ` + tick + `unpaired accent")),
+				flatten(codeSpans("run ` + tick + `lmm deploy` + tick + ` now")),
+				flatten(codeSpans("` + tick + `a` + tick + ` and ` + tick + `b` + tick + `")),
+				flatten(codeSpans(null)),
+			];
+		})()`
+
+	var got []string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(script, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, got, 5)
+	assert.Equal(t, "no backticks here", got[0], "a message with nothing to do is returned as it came")
+	assert.Equal(t, "one "+tick+"unpaired accent", got[1],
+		"an unpaired backtick is left exactly as it was typed")
+	assert.Equal(t, "run <code>lmm deploy</code> now", got[2])
+	assert.Equal(t, "<code>a</code> and <code>b</code>", got[3],
+		"every pair is read, not only the first")
+	assert.Equal(t, "null", got[4], "a non-string error slot passes straight through")
+	assert.Empty(t, f.BrowserErrors())
+}

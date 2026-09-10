@@ -154,6 +154,19 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
 
   const findings = findingsFor(state.health, modID);
   const conflicts = conflictsFor(state.conflicts, `${sourceID}:${modID}`);
+  // issue 394: `lmm mod edit --source/--source-id` on a locked mod is
+  // refused ("unlock with 'lmm mod unlock …' first"), so Re-link… below is
+  // gated the way the Versions section's rollback button already was.
+  //
+  // Off settingsSource, not off `installed` (P2 review Minor 4): the lock
+  // rule twenty lines above is that the LIBRARY listing answers first and
+  // the live ModDetail is only the fallback, precisely so a mod whose
+  // source is offline still gets working controls. Reading the ModDetail
+  // half alone put Re-link… back on a locked mod in exactly the case the
+  // rule is written for. The Versions section's two gates below take the
+  // same value as props for the same reason.
+  const lockedActions = Boolean(settingsSource?.locked);
+  const lockedVersion = settingsSource?.locked_version;
 
   return html`
     ${header}
@@ -241,6 +254,8 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             type="button"
             class="button"
             data-action="relink"
+            disabled=${lockedActions}
+            title=${lockedActions ? "Unlock this mod to re-link it" : undefined}
             onClick=${() =>
               actions.openPlan({
                 kind: "mod_relink",
@@ -254,7 +269,23 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
           </button>`
         }
       </div>
-
+      ${
+        // issue 394's own aside: a title on a DISABLED button is invisible
+        // to a keyboard user, because a disabled button is not focusable.
+        // The remedy therefore also gets a line of its own, which is the
+        // only form of it that reader can reach. Rendered only when
+        // something above it is actually refused.
+        lockedActions &&
+        html`<p
+          class="mod-page__hint empty-state__hint"
+          data-testid="mod-page-locked-actions"
+        >
+          This mod is locked${lockedVersion ? ` to ${lockedVersion}` : ""}.
+          Unlock it (<span class="mono"
+            >lmm mod unlock ${sourceID}:${modID}</span
+          >) to re-link it.
+        </p>`
+      }
       ${
         findings.length > 0 &&
         html`
@@ -355,6 +386,8 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
       <${VersionsSection}
         modPage=${modPage}
         installed=${installed}
+        locked=${lockedActions}
+        lockedVersion=${lockedVersion}
         state=${state}
         actions=${actions}
         origin=${origin}
@@ -462,13 +495,14 @@ function formatBytes(bytes) {
 function VersionsSection({
   modPage,
   installed,
+  locked,
+  lockedVersion,
   state,
   actions,
   origin,
   sourceID,
   modID,
 }) {
-  const locked = Boolean(installed?.locked);
   // issue 269: lmm never held a previous copy of a Steam Workshop item, so
   // there is nothing to roll back TO - the control is absent, not disabled.
   const external = Boolean(modPage.filesReport.mod?.external);
@@ -481,6 +515,7 @@ function VersionsSection({
       <${VersionsTable}
         modPage=${modPage}
         installed=${installed}
+        locked=${locked}
         state=${state}
         actions=${actions}
         origin=${origin}
@@ -512,6 +547,21 @@ function VersionsSection({
           </button>
         <//>`
       }
+      ${
+        // The same visible remedy the actions group above carries, for the
+        // same reason (issue 394's aside): the title on this disabled
+        // button reaches a mouse and nothing else.
+        hasPrevious &&
+        locked &&
+        html`<p
+          class="mod-page__hint empty-state__hint"
+          data-testid="mod-page-locked-rollback"
+        >
+          Locked${lockedVersion ? ` to ${lockedVersion}` : ""} — unlock it
+          (<span class="mono">lmm mod unlock ${sourceID}:${modID}</span>) to
+          roll back.
+        </p>`
+      }
     </section>
   `;
 }
@@ -521,6 +571,7 @@ function VersionsSection({
 function VersionsTable({
   modPage,
   installed,
+  locked,
   state,
   actions,
   origin,
@@ -550,7 +601,6 @@ function VersionsTable({
     </p>`;
   }
 
-  const locked = Boolean(installed?.locked);
   // The checked update target - the ONE version CheckGameUpdates actually
   // found for this mod, if any (C1: core has no primitive for landing an
   // installed mod on any OTHER non-installed version - see this file's own

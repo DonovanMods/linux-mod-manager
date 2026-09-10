@@ -2120,6 +2120,16 @@ select {
   align-items: center;
 }
 
+/* The reason an action above is refused, said out loud. A title on a
+   DISABLED button is invisible to a keyboard user - a disabled button is
+   not focusable - so the remedy gets a line of its own (issue 394). Uses
+   .empty-state__hint's colour token; no literal colour, per the
+   no_hardcoded_color ratchet. */
+.mod-page__hint {
+  margin: calc(-1 * var(--space-2)) 0 0;
+  font-size: 0.9em;
+}
+
 .mod-page__prose {
   color: var(--text-secondary);
   white-space: pre-wrap;
@@ -2699,6 +2709,11 @@ select {
   font-weight: 700;
 }
 
+/* The key field and its submit button only. The env-var hint and the
+   source's instructions are siblings of this form in .setup-auth__row, NOT
+   children of it: this container does not wrap, and a `flex-basis: 100%`
+   only forces a line of its own inside one that does (issue 377). Inside here
+   they were simply two more items on an over-full single line. */
 .setup-auth__login {
   display: flex;
   gap: var(--space-2);
@@ -2723,6 +2738,11 @@ select {
   flex: 1 0 100%;
   margin: var(--space-1) 0 0;
   font-size: 0.9em;
+  /* The source writes its steps as a numbered list on separate lines (the
+     same string `lmm auth login` prints). It is plain text, never markup,
+     so pre-line is what keeps those lines instead of collapsing them into
+     one run-on sentence - issue 377. */
+  white-space: pre-line;
 }
 
 .setup-auth__restart {

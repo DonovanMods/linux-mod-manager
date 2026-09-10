@@ -62,6 +62,7 @@ func TestAPIStartJob_RunsTheApplyAndReportsTheJobID(t *testing.T) {
 	assert.Equal(t, apiContentType, rec.Header().Get("Content-Type"))
 
 	var got struct {
+		ID    jobID `json:"id"`
 		JobID jobID `json:"job_id"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got, json.RejectUnknownMembers(true)))
@@ -315,4 +316,63 @@ func TestAPIWrongMethodOnRealRoute_405WithAllow(t *testing.T) {
 			assert.Contains(t, decodeEnvelope(t, rec.Body.Bytes()).Error, tc.wantMessage)
 		})
 	}
+}
+
+// TestAPIStartJob_AnswersBothJobIDSpellings is issue 400: the same entity
+// carried two field names one call apart - POST /api/v1/jobs answered
+// {"job_id"} while GET /api/v1/jobs and GET /api/v1/jobs/{id} answer
+// {"id"} - which is a trap for anyone scripting this API.
+//
+// The alignment is ADDITIVE for v2.0.0: "id" is the name every other
+// document on this wire gives an entity's own identity, so the start
+// response gains it, and "job_id" keeps being emitted with the same value
+// as the deprecated spelling. Nothing that already parses this document
+// breaks.
+func TestAPIStartJob_AnswersBothJobIDSpellings(t *testing.T) {
+	s, _ := newDeployFixtureServer(t)
+	planID := planDeployFixture(t, s)
+
+	rec := startJob(s, planID)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	var got struct {
+		ID    jobID `json:"id"`
+		JobID jobID `json:"job_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got, json.RejectUnknownMembers(true)))
+	require.NotEmpty(t, got.ID, `the start response must carry "id", the name the job document itself uses`)
+	assert.Equal(t, got.ID, got.JobID,
+		`"job_id" stays on the wire for v2.0.0, carrying the same value`)
+
+	j, ok := s.jobs.job(got.ID)
+	require.True(t, ok, `the "id" spelling must address the job it just started`)
+	waitFor(t, j.done(), "the deploy job to finish")
+
+	rec = doAPI(s, http.MethodGet, "/api/v1/jobs/"+string(got.ID), "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var status struct {
+		ID jobID `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
+	assert.Equal(t, got.ID, status.ID,
+		"one entity, one name: the start response and the job document must agree")
+}
+
+// TestAPIToggleJob_AnswersBothJobIDSpellings covers the other route that
+// answers this same document - enable/disable skip the plan step, so they
+// are the second half of issue 400's surface.
+func TestAPIToggleJob_AnswersBothJobIDSpellings(t *testing.T) {
+	s, _, game := newFlowFixtureServer(t)
+
+	rec := doAPI(s, http.MethodPost,
+		scoped("/api/v1/mods/"+fixtureSourceID+"/m1/disable", game), "")
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	var got struct {
+		ID    jobID `json:"id"`
+		JobID jobID `json:"job_id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got, json.RejectUnknownMembers(true)))
+	require.NotEmpty(t, got.ID)
+	assert.Equal(t, got.ID, got.JobID)
 }
