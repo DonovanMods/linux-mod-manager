@@ -1,15 +1,16 @@
 # lmm - Linux Mod Manager
 
 A native, terminal-first Linux mod manager focused on reproducible profiles,
-multiple mod sources, and scriptable game-mod deployment — with a local web UI
-over the same model.
+multiple mod sources, and scriptable game-mod deployment — with a full local
+web UI over the same engine.
 
 A profile is a declaration of the mods and versions a game should be running.
 `lmm` resolves that declaration against the sources you have configured, caches
 what it downloads, deploys it into the game directory by a method you choose,
 and can tell you at any point whether what is on disk still matches. Two
-frontends drive the same engine: a CLI built for scripting, and `lmm serve`, a
-local browser UI.
+first-class frontends drive the same engine: a CLI built for scripting,
+automation and remote work over SSH, and `lmm serve`, a local web UI built for
+day-to-day use.
 
 ## Features
 
@@ -53,9 +54,11 @@ local browser UI.
   with cycle detection (opt out with `--no-deps`)
 - **Conflict detection**: `lmm conflicts` names every contested file, its
   contenders and the rule that decides the winner
-- **Two frontends, one core**: everything below is the CLI; `lmm serve` is a
-  single-page browser UI over the same database, profiles and JSON API, with
-  live progress over SSE — see [Web UI](#web-ui-lmm-serve)
+- **Two first-class frontends, one core**: everything below is the CLI;
+  `lmm serve` is a full single-page web UI over the same database, profiles
+  and engine — the same games, sources, profiles, plans, locks, conflicts,
+  snapshots and imports, with live progress over SSE. Neither is a cut-down
+  view of the other — see [Web UI](#web-ui-lmm-serve)
 - **Scriptable**: `--json` prints exactly one document on stdout and nothing
   else, and `/api/v1` returns those same documents — see
   [JSON output](#json-output)
@@ -65,11 +68,22 @@ local browser UI.
 
 Vortex, Limo and Mosaic are **GUI-first interactive mod managers**: you arrange
 your setup by hand, in an application, and the application holds the result.
+The difference is not whether there is a window — lmm has one — it is where
+the truth about your setup lives.
 
 lmm is aimed at **reproducible, source-agnostic mod environments** — the setup
-is a document you can export, review, diff and re-apply, from a CLI or a web UI
-over the same model. If you have ever wanted your mod list to behave more like
-a package manifest than a pile of state managed by buttons, that is the pitch.
+is a document you can export, review, diff and re-apply. If you have ever
+wanted your mod list to behave more like a package manifest than a pile of
+state managed by buttons, that is the pitch.
+
+You drive that model from **either of two first-class frontends**: the CLI,
+for scripting, automation, `--json` pipelines and a headless box over SSH, and
+`lmm serve`, a local web UI meant for daily use — the library, search,
+updates, health, conflicts, profiles, snapshots, imports and setup, every
+mutation previewed as the same plan the CLI prints. They are the same code
+underneath — one engine, one database, one binary, nothing extra to
+install — which is why neither drifts behind the other, and why the web UI
+keeps growing with the engine rather than trailing it.
 
 The whole program is one pipeline:
 
@@ -89,36 +103,52 @@ game-specific adapter
                      (Icarus `.pak`/`.exmodz` merging) where a game needs one
 ```
 
-**When to pick something else.** lmm has no FOMOD installer, no LOOT-style
-plugin or load-order semantics, and no Nexus Collections. For the Bethesda
-ecosystem — Skyrim, Fallout — those are table stakes, not extras, and
-[Limo](https://github.com/limo-app/limo) or Mosaic will serve you better today.
-Reach for lmm when you want your mod setup scripted, reproduced across
-machines, driven over SSH, or extended to a source nobody has written a client
-for.
+**What lmm does not have.** There is no FOMOD installer UI, no _automated_
+LOOT-style plugin sorting (masterlists, a generated `plugins.txt`) and no
+Nexus Collections import. Load order itself lmm does have: a profile records
+it, `lmm profile reorder` and the web UI's reorder modal change it, and it
+decides precedence at merge and deploy time — what is missing is the Bethesda
+ecosystem's _automatic_ sorting of plugins, not ordering as such.
+
+**When to pick something else.** lmm installs, deploys, updates, locks and
+reproduces Skyrim and Fallout mods perfectly well. What it cannot do for that
+ecosystem _today_ is walk you through a FOMOD option tree or sort your plugins
+the way LOOT does, and a Bethesda setup that leans on those two is better
+served by [Limo](https://github.com/limo-app/limo) or Mosaic for now — both
+are tracked here as work, not dismissed
+([#354](https://github.com/DonovanMods/linux-mod-manager/issues/354),
+[#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)). Reach
+for lmm when you want your mod setup scripted, reproduced across machines,
+driven over SSH or from a browser, or extended to a source nobody has written
+a client for.
 
 ### Non-goals for 2.0
 
 These are deliberate omissions, tracked so they are not mistaken for oversights:
 
 - **FOMOD installers** — [#354](https://github.com/DonovanMods/linux-mod-manager/issues/354)
-- **LOOT-style plugin / load-order management** — [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)
+- **Automated LOOT-style plugin sorting** — masterlists and a generated
+  `plugins.txt`, for the games that need one:
+  [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355). Load
+  ordering itself is a shipped feature (`lmm profile reorder`, the web UI's
+  reorder modal, and precedence at merge and deploy time); it is the
+  _automatic_ sorting that is out of scope for 2.0
 - **Nexus Collections** — no tracking issue; a Steam Workshop collection
   already imports as a profile, and the Nexus equivalent is not planned for 2.0
-- **BepInEx / Thunderstore support** — [#357](https://github.com/DonovanMods/linux-mod-manager/issues/357), post-2.0
-- **A conventional desktop GUI** — `lmm serve` is a thin frontend over the same
-  `core` package the CLI calls, not a second product. It ships no separate
-  build, no Node, no bundler and no config of its own, and it can do what the
-  CLI can do because it is the same code underneath.
+- **A separate native desktop application** — the graphical frontend is
+  `lmm serve`, and it is a first-class one: a full web UI over the same `core`
+  package the CLI calls, in the same binary, with no Node, no bundler and no
+  config of its own. What is not planned is a _second_ application with its
+  own build, its own packaging and its own drift.
 
 ### Post-2.0 direction
 
 The Icarus support is the interesting one: lmm does not merely copy that game's
 archives, it converts prebuilt `.pak` mods, derives their changes against the
 current base game, merges them by profile precedence and regenerates the result
-when load order changes. Making that a **documented adapter seam** — so
-BepInEx, Unreal, Unity and the rest land without contaminating the generic
-core — is the direction after 2.0:
+when load order changes. Making that a **documented adapter seam** — so Unreal,
+Unity and the rest land without contaminating the generic core — is the
+direction after 2.0:
 [#353](https://github.com/DonovanMods/linux-mod-manager/issues/353).
 
 ## Installation
@@ -309,11 +339,11 @@ Set a default game to avoid specifying `--game` for every command:
 
 ```bash
 # Set default game
-lmm game set-default skyrim-se
+lmm game set-default baldurs-gate-3
 
 # Now all game commands work without --game
-lmm search "skyui"
-lmm install "skyui"
+lmm search "camera"
+lmm install "camera"
 lmm list
 lmm update
 lmm uninstall 12345
@@ -333,28 +363,28 @@ lmm game clear-default
 
 ```bash
 # Search for mods (all configured sources by default)
-lmm search "skyui" --game skyrim-se
+lmm search "camera" --game baldurs-gate-3
 
 # Install a mod (interactive selection)
-lmm install "skyui" --game skyrim-se
+lmm install "camera" --game baldurs-gate-3
 
 # Install multiple mods (select with 1,3-5 or 1..3 syntax)
-lmm install "stack" --game starrupture
+lmm install "ui" --game baldurs-gate-3
 
 # Install by mod ID (for scripting)
-lmm install --id 12345 --game skyrim-se
+lmm install --id 12345 --game baldurs-gate-3
 
 # List installed mods
-lmm list --game skyrim-se
+lmm list --game baldurs-gate-3
 
 # Check for updates (shows partial results and a warning if some mods can't be checked)
-lmm update --game skyrim-se
+lmm update --game baldurs-gate-3
 
 # Update a specific mod
-lmm update 12345 --game skyrim-se
+lmm update 12345 --game baldurs-gate-3
 
 # Rollback to previous version
-lmm update rollback 12345 --game skyrim-se
+lmm update rollback 12345 --game baldurs-gate-3
 
 # Show status
 lmm status
@@ -366,13 +396,13 @@ Control how each mod handles updates:
 
 ```bash
 # Auto-update when checking
-lmm mod set-update 12345 --game skyrim-se --auto
+lmm mod set-update 12345 --game baldurs-gate-3 --auto
 
 # Notify only (default)
-lmm mod set-update 12345 --game skyrim-se --notify
+lmm mod set-update 12345 --game baldurs-gate-3 --notify
 
 # Mute update checks for this mod (does not hold a version — see Locking below)
-lmm mod set-update 12345 --game skyrim-se --pin
+lmm mod set-update 12345 --game baldurs-gate-3 --pin
 ```
 
 `--pin` is a check-mute, not a version freeze: it stops `lmm update` from asking
@@ -397,13 +427,13 @@ instead.
 
 ```bash
 # Lock at the currently installed version
-lmm mod lock 12345 --game skyrim-se
+lmm mod lock 12345 --game baldurs-gate-3
 
 # Lock at a specific version
-lmm mod lock 12345 1.2.3 --game skyrim-se
+lmm mod lock 12345 1.2.3 --game baldurs-gate-3
 
 # Clear the lock (recorded version is left untouched)
-lmm mod unlock 12345 --game skyrim-se
+lmm mod unlock 12345 --game baldurs-gate-3
 ```
 
 Locking is a metadata write, not a deploy: if the locked version differs
@@ -517,7 +547,7 @@ Configuration files are stored in `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lm
 
 ```yaml
 default_link_method: symlink # Global default: symlink, hardlink, or copy
-default_game: skyrim-se # Optional, set via 'lmm game set-default'
+default_game: baldurs-gate-3 # Optional, set via 'lmm game set-default'
 cache_path: ~/.local/share/lmm/cache # Optional, defaults to <data_dir>/cache
 ```
 
@@ -533,14 +563,14 @@ Paths support `~` expansion for the home directory.
 
 ```yaml
 games:
-  skyrim-se:
-    name: "Skyrim Special Edition"
-    install_path: "/path/to/skyrim"
-    mod_path: "/path/to/skyrim/Data"
+  baldurs-gate-3:
+    name: "Baldur's Gate 3"
+    install_path: "/path/to/Steam/steamapps/common/Baldurs Gate 3"
+    mod_path: "Data" # Relative to install_path; an absolute path works too
     sources:
-      nexusmods: "skyrimspecialedition"
+      nexusmods: "baldursgate3"
     # link_method: symlink  # Optional: override default_link_method for this game
-    # cache_path: ~/skyrim-mods  # Optional: override global cache_path for this game
+    # cache_path: ~/bg3-mods  # Optional: override global cache_path for this game
 
   starfield:
     name: "Starfield"
@@ -563,7 +593,7 @@ games:
 
 `mod_path` may be **absolute, or relative to `install_path` — everywhere**. A relative value — `mod_path: Data` — is resolved against that game's `install_path`, never against your current working directory (`~` expands first, so `~/mods` is absolute, not relative). That rule is the same on every path that writes a game, not just for a hand-written `games.yaml`: `lmm game add`, `lmm game add --from-detected`, `lmm game detect`, `POST /api/v1/games` and the web UI's add-game form all accept `Data` and store the resolved absolute path, so what lmm writes reads back identically from any shell. A relative `mod_path` with no `install_path` to resolve it against is refused — naming the game and the field when `games.yaml` is read, and naming `install_path` (the value that is actually missing) at the prompt, the form and the API.
 
-Steam auto-detection (`lmm game detect`) knows about Icarus (App ID `1149460`) and generates an equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
+Steam auto-detection (`lmm game detect`) knows about all three of these — Baldur's Gate 3, Starfield and Icarus (App ID `1149460`) — and generates the equivalent entry for you, `install_path`/`mod_path` filled in from your actual Steam library — the YAML above is kept here as reference for what gets written, not something you need to type by hand.
 
 **Merge precedence**: with more than one `compile`-mode mod installed (currently Icarus only), the profile's load order — the same order `lmm list` displays and `lmm profile reorder` changes — decides how conflicting changes resolve. Mods are merged in load order, so a mod later in the list is applied later and wins conflicting _fields_ on a shared data-table row; it's a per-field upsert, not a whole-row overwrite, so untouched fields from earlier mods still survive. Bundled asset files can't compose that way — a same-path collision between two mods is whole-file last-wins, and installing or updating a colliding mod prints a warning naming both. Either way, the bottom of the load order has final say, and `lmm profile reorder` regenerates the merged pak immediately, so a reorder's effect on precedence is visible right away rather than at the next deploy. Prebuilt `.pak` mods participate in this same merge: at merge time each one is converted and rebased onto the game's current base pak — a pak embedding a `data.EXMOD` manifest converts exactly, otherwise lmm diff-derives the changes against the current base — and only an irreconcilable pak falls back to a raw, unconverted deploy, with a warning naming it (see [Pak conversion (Icarus)](#pak-conversion-icarus)). Set `convert_paks: false` in a game's `games.yaml` entry, or `lmm mod convert <mod-id> off` for one mod, to keep specific paks deployed raw instead.
 
@@ -689,7 +719,7 @@ mods:
     version: 1.2.0
     author: someone
     summary: Makes things cooler
-    game_ids: [skyrimspecialedition] # matched against this source's mapped `sources:` value
+    game_ids: [baldursgate3] # matched against this source's mapped `sources:` value
     url: https://example.com/mods/cool-mod # optional web page
     updated_at: 2026-07-01T00:00:00Z # optional, RFC 3339
     dependencies: [other-mod] # optional, IDs of other mods in this manifest
@@ -738,10 +768,10 @@ To use a manifest source with a game, map it under that game's `sources:` block 
 
 ```yaml
 games:
-  skyrim-se:
+  baldurs-gate-3:
     sources:
-      nexusmods: skyrimspecialedition
-      my-repo: skyrimspecialedition
+      nexusmods: baldursgate3
+      my-repo: baldursgate3
 ```
 
 ### API Sources
@@ -1011,17 +1041,17 @@ Error: probe: this definition has no search endpoint; provide a known mod id wit
 
    ```yaml
    games:
-     skyrim-se:
+     baldurs-gate-3:
        sources:
-         nexusmods: skyrimspecialedition
+         nexusmods: baldursgate3
          my-local-mods: ""
    ```
 
 5. Search and install from it like any built-in source:
 
    ```bash
-   lmm search bigger -g skyrim-se --source my-local-mods
-   lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
+   lmm search bigger -g baldurs-gate-3 --source my-local-mods
+   lmm install --source my-local-mods --id BiggerBackpack -g baldurs-gate-3
    ```
 
 A `directory` source now shows up with real capabilities in `lmm source list` (`search,updates`, `auth=n/a`), and it will show as an `error` row if the configured path is missing or not a directory. A `manifest` source shows `search,deps,updates,versions` (plus `auth` if the definition declares one, with the `AUTH` column reporting `yes`/`no` once a key is or isn't configured). An `api` source shows only the capabilities its defined endpoints provide — `updates` alone for a `get_mod`-only definition, `search,updates` once a `search` endpoint is added, plus `auth` if the definition declares one, plus `versions` once a `mod_files` endpoint is defined — and never `deps` (dependency resolution isn't supported for `api` sources). Any type will show as an `error` row if construction fails (e.g. a directory source's path doesn't exist). A definition whose `id` collides with an already-registered source (a built-in, or another definition) also produces an `error` row (`id already in use`); the source that was already registered keeps its original row and type unchanged.
@@ -1054,9 +1084,9 @@ saved after the server started needs a restart before the server can use
 it, and the Setup page says so when that happens.
 
 It is a single-page application: one small shell, then everything happens
-in place. It needs JavaScript and a current desktop browser (there is no
-small-screen layout — the CLI is the fallback, and it does everything the
-web UI does). It still installs nothing: Preact and htm are vendored in the
+in place. It is desktop-first: it needs JavaScript and a current desktop
+browser, and there is no small-screen layout yet — on a phone, reach for the
+CLI over SSH, which drives the same flows. It still installs nothing: Preact and htm are vendored in the
 repo at pinned versions and embedded in the binary, so `go build` remains
 the entire build and the UI never fetches anything from the network.
 
@@ -1227,7 +1257,7 @@ for reduced motion, every animation is disabled.
 
 Every view names itself: the browser tab, your history and your window
 switcher show the screen and the game/profile it is showing (for example
-`Mission Control — skyrim-se/default · lmm`), and a screen reader is told
+`Mission Control — baldurs-gate-3/default · lmm`), and a screen reader is told
 the new view's name on each navigation.
 
 ### URLs
@@ -1620,7 +1650,7 @@ output.
 On failure the document is an envelope instead:
 
 ```json
-{ "error": "game not found: skyrim-se" }
+{ "error": "game not found: baldurs-gate-3" }
 ```
 
 An error that carries structured data adds a `details` object beside it;
@@ -1890,6 +1920,8 @@ under its issue number:
 | `lmm source validate --probe --id <mod-id> <file>`        | Probe an `api` definition that has no `search` endpoint                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `lmm source add <file>`                                   | Install a user-defined source definition under the config dir                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `lmm source remove <id>`                                  | Remove a user-defined source (refused while a game still maps it)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `lmm serve`                                               | Start the local web UI — the second frontend — on `127.0.0.1:7420` and open a browser (see [Web UI](#web-ui-lmm-serve))                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lmm serve --addr <host:port>` / `--no-open`              | Bind somewhere other than the default, or don't open a browser                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 `lmm install --version <version>` resolves the exact version against the mod's full file list — archived/old files are searched automatically, no `--show-archived` needed — and the matching file(s) become the pool for `--file`/`-y`/the interactive prompt; when the mod has dependencies, `--version` and `--file` apply to the named mod only (`--file` picks from the version's matches when both are given, and the whole install aborts up front if either fails to resolve) — dependencies are unaffected, still installing at latest with their primary file auto-selected. An unknown version fails with an error listing the versions the source actually has (`version not found: version "..." (available: ...)`). A source whose files carry no version information fails with the standard "not supported" gap instead, same as any other missing capability — this is decided dynamically from the actual file data returned for that mod, not from the source's advertised `versions` capability flag (a source can declare `versions` support and still hit this gap for a mod whose files happen to lack version strings). Omitting `--version` installs the latest, unchanged.
 
@@ -1923,8 +1955,8 @@ Either way, a mod that ends up unmatched to any remote source is imported as loc
 ```bash
 lmm import --game hytale                    # Scan mod_path for untracked mods
 lmm import --game hytale --dry-run          # Preview what would be imported
-lmm import ./my-mod.zip --game skyrim-se    # Import a specific archive
-lmm import ./mod.zip --game skyrim-se --id 12345 --source curseforge
+lmm import ./my-mod.zip --game baldurs-gate-3    # Import a specific archive
+lmm import ./mod.zip --game baldurs-gate-3 --id 12345 --source nexusmods
 lmm import --workshop --game space-engineers-2   # Track subscribed Steam Workshop items
 ```
 
@@ -2002,7 +2034,7 @@ Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop
 `lmm search <query>` queries every source configured for the game concurrently by default — there's no prompt to pick one first, even when several sources are mapped. Results carry a `SOURCE` column so you can tell which source found each mod:
 
 ```text
-$ lmm search bigger --game skyrim-se
+$ lmm search bigger --game baldurs-gate-3
 ID                  NAME             AUTHOR   VERSION  SOURCE
 --                  ----             ------   -------  ------
 BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      donovan-mods
@@ -2025,7 +2057,7 @@ Error: search failed: all 1 source(s) failed: source my-repo: source "my-repo": 
 Use `--source <id>` to search a single configured source instead of aggregating:
 
 ```bash
-lmm search bigger --game skyrim-se --source donovan-mods
+lmm search bigger --game baldurs-gate-3 --source donovan-mods
 ```
 
 A source that doesn't support searching (e.g. an `api` source defined without a `search` endpoint — see [API Sources](#api-sources)) is silently skipped when aggregating, but targeting it directly with `--source` reports a clear notice instead of a generic error:
@@ -2045,7 +2077,7 @@ Once a key **is** stored (or supplied through `LMM_<ID>_API_KEY` or a built-in's
 A game with no configured sources at all fails fast with a diagnostic instead of an empty result:
 
 ```text
-Error: no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml
+Error: no mod sources configured for Baldur's Gate 3; add sources with 'lmm game add' or edit games.yaml
 ```
 
 `--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`, each entry `{source_id, error}`, and names any source skipped for want of a credential in `"skipped_unauthenticated"` (present only when there is one).
@@ -2270,7 +2302,8 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 
 ## Roadmap
 
-Everything below shipped. The full entry for each — what changed and why — is
+Everything under the first three headings shipped; the last two are what is
+still open. The full entry for each shipped item — what changed and why — is
 in [CHANGELOG.md](CHANGELOG.md); the 2.0 line is under `[Unreleased]` until the
 release is cut.
 
@@ -2295,17 +2328,23 @@ release is cut.
 ### Interfaces and packaging
 
 - [x] Default game setting (avoid `--game` on every command)
-- [x] `lmm serve` — a local web UI over the same core, with `/api/v1` and SSE
+- [x] `lmm serve` — the second frontend: a full local web UI over the same core, with `/api/v1` and SSE
 - [x] `lmm init` — a guided first run ([#351](https://github.com/DonovanMods/linux-mod-manager/issues/351))
 - [x] Encrypted credential storage ([#79](https://github.com/DonovanMods/linux-mod-manager/issues/79))
 - [x] Packaging: AUR, `.deb`, `.rpm`, `.apk` ([#352](https://github.com/DonovanMods/linux-mod-manager/issues/352))
 
+### In progress for 2.0
+
+- [ ] BepInEx support, tiered: plugin archives deploy correctly, the loader
+      handled as a per-game prerequisite rather than a mod, and a Thunderstore
+      source gated behind a locally cached index
+      ([#357](https://github.com/DonovanMods/linux-mod-manager/issues/357))
+
 ### After 2.0
 
 - [ ] A documented game-adapter seam — deploy mode, compile and verify — so
-      BepInEx, Unreal and Unity land without touching the generic core
+      Unreal, Unity and the rest land without touching the generic core
       ([#353](https://github.com/DonovanMods/linux-mod-manager/issues/353))
-- [ ] BepInEx support ([#357](https://github.com/DonovanMods/linux-mod-manager/issues/357))
 
 Game auto-detection beyond Steam (Lutris, Heroic, Flatpak) was considered and
 declined ([#89](https://github.com/DonovanMods/linux-mod-manager/issues/89)):
@@ -2315,9 +2354,10 @@ to save one step of a command most people run once per machine. `lmm game add
 --path` adds any of them by hand today. The issue will be reopened if a
 specific launcher draws real demand. FOMOD
 ([#354](https://github.com/DonovanMods/linux-mod-manager/issues/354)) and
-LOOT-style load-order management
+automated LOOT-style plugin sorting
 ([#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)) are
-[non-goals for 2.0](#non-goals-for-20), not backlog.
+[non-goals for 2.0](#non-goals-for-20), not backlog — lmm's own load ordering
+is shipped and unaffected by either.
 
 ## Development
 
