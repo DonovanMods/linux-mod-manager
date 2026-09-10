@@ -79,10 +79,19 @@ export function App({ state, onThemeChange, actions }) {
   // belt-and-braces, not as the only line of defense.
   // issue 399: a pushState navigation moves nothing a screen reader
   // watches - no document load, no focus change - so without this the only
-  // announcement on a route change was silence. It rides in the overlays
-  // fragment, which every branch below renders at the same position, so the
-  // NODE survives a switch between screens and only its text changes: a live
-  // region that is torn down and rebuilt announces nothing at all.
+  // announcement on a route change was silence.
+  //
+  // It is the FIRST child of every branch below (P2 review Minor 1), so the
+  // NODE survives a switch between screens and only its text changes: a
+  // live region that is torn down and rebuilt announces nothing at all. It
+  // used to ride inside the overlays fragment, which the four scoped
+  // branches render at child index 1 but the chooser branch renders at
+  // index 2, behind a <header> and a <main>. That still worked - Preact's
+  // unkeyed child diffing matches a vnode to an old one of the same type
+  // near the index rather than by index alone, so the fragment was found
+  // and the region was reused - but it worked by a heuristic of the
+  // renderer rather than by anything this file says. Index 0 in all five
+  // branches makes the invariant the comment claims a structural fact.
   //
   // polite, not assertive - arriving somewhere is never an interruption -
   // and its text is the route's own name, the same one the tab carries.
@@ -139,7 +148,6 @@ export function App({ state, onThemeChange, actions }) {
       onDismiss=${actions.dismissToast}
       actions=${actions}
     />
-    ${routeAnnouncer}
   `;
 
   if (route.view === "home") {
@@ -150,6 +158,7 @@ export function App({ state, onThemeChange, actions }) {
     // profile's omnibar text long after its own fan-out had been cleared by
     // main.js#go.
     return html`
+      ${routeAnnouncer}
       <${MissionControl}
         key=${`${route.game}:${route.profile}`}
         state=${state}
@@ -162,6 +171,7 @@ export function App({ state, onThemeChange, actions }) {
 
   if (route.view === "mod") {
     return html`
+      ${routeAnnouncer}
       <${FullModPage}
         state=${state}
         route=${route}
@@ -174,6 +184,7 @@ export function App({ state, onThemeChange, actions }) {
 
   if (route.view === "search") {
     return html`
+      ${routeAnnouncer}
       <${SearchPage}
         state=${state}
         route=${route}
@@ -186,6 +197,7 @@ export function App({ state, onThemeChange, actions }) {
 
   if (route.view === "setup") {
     return html`
+      ${routeAnnouncer}
       <${SetupPage}
         state=${state}
         route=${route}
@@ -197,6 +209,7 @@ export function App({ state, onThemeChange, actions }) {
   }
 
   return html`
+    ${routeAnnouncer}
     <header class="app-bar app-bar--minimal">
       <span class="app-bar__brand">LMM</span>
       <button

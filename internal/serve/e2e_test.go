@@ -7374,3 +7374,89 @@ func TestE2E_EveryRouteNamesItselfInTheTitleAndAnnouncesTheChange(t *testing.T) 
 
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_TheRouteAnnouncerSurvivesTheChooserBoundary is P2 review Minor 1,
+// on top of issue 399.
+//
+// The announcer only announces if its NODE survives the route change: an
+// aria-live region that is unmounted and re-created with its new text
+// already in it fires nothing. It used to ride inside the overlays
+// fragment, which four of the five branches in App render at child index 1
+// — but the chooser branch renders <header>, <main>, overlays, putting the
+// fragment at index 2. Preact diffs children positionally, so leaving or
+// entering the chooser met the old overlays Fragment with a <main>, a type
+// change, and tore the live region down.
+//
+// Those are exactly the two transitions behind Mission Control's "Choose a
+// different game" link, so this is reachable in the app rather than only on
+// a cold load. Node identity is the assertion, because it is the thing the
+// screen reader's behaviour actually depends on, and only a browser can
+// answer it.
+func TestE2E_TheRouteAnnouncerSurvivesTheChooserBoundary(t *testing.T) {
+	// Two games and no default, so the chooser STAYS on screen rather than
+	// redirecting to the single game (maybeRedirectFromChooser).
+	f := newE2EMultiGameFixture(t)
+
+	// A property set on the DOM node itself: it can only still be there if
+	// this is the same node, which no attribute or text assertion can tell.
+	const tagJS = `(() => {
+		document.querySelector('[data-testid="route-announcer"]').__lmmSameNode = "yes";
+		return true;
+	})()`
+	const readTagJS = `(() => {
+		const el = document.querySelector('[data-testid="route-announcer"]');
+		if (!el) return { present: false, tag: "", text: "" };
+		return {
+			present: true,
+			tag: el.__lmmSameNode ?? "",
+			text: el.textContent.trim(),
+		};
+	})()`
+	type announcerNode struct {
+		Present bool   `json:"present"`
+		Tag     string `json:"tag"`
+		Text    string `json:"text"`
+	}
+
+	pushState := func(path string) chromedp.Action {
+		return chromedp.Evaluate(`(() => {
+			window.history.pushState(null, "", `+"`"+path+"`"+`);
+			window.dispatchEvent(new PopStateEvent("popstate"));
+			return true;
+		})()`, nil)
+	}
+
+	var intoGame, backToChooser announcerNode
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(tagJS, nil),
+
+		// chooser -> home: picking a game.
+		pushState("/g/"+f.GameA.ID+"/default"),
+		pollUntil(`document.title.includes("Mission Control")`),
+		settleEffects(),
+		chromedp.Evaluate(readTagJS, &intoGame),
+
+		// home -> chooser: Mission Control's "Choose a different game".
+		pushState("/"),
+		chromedp.WaitVisible(`.game-chooser[data-hydrated="true"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(readTagJS, &backToChooser),
+	)
+
+	require.True(t, intoGame.Present, "the announcer must exist on Mission Control")
+	assert.Equal(t, "yes", intoGame.Tag,
+		"picking a game must keep the SAME live-region node - a rebuilt one announces nothing")
+	assert.Contains(t, intoGame.Text, "Mission Control",
+		"and the surviving node must carry the new route's name")
+
+	require.True(t, backToChooser.Present, "the announcer must exist on the chooser")
+	assert.Equal(t, "yes", backToChooser.Tag,
+		"and leaving a game must keep it too")
+	assert.NotContains(t, backToChooser.Text, "Mission Control",
+		"with the chooser's own name in it")
+
+	assert.Empty(t, f.BrowserErrors())
+}
