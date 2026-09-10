@@ -87,6 +87,23 @@ type Game struct {
 	DeployMode          DeployMode        `json:"deploy_mode"`           // How to handle downloaded files (extract vs copy)
 	ConvertPaks         bool              `json:"convert_paks"`          // #221: convert prebuilt .pak mods into the merged pak (DeployCompile games; default true when omitted from games.yaml, must be set explicitly for direct Game literals)
 	ConvertPaksExplicit bool              `json:"convert_paks_explicit"` // True if ConvertPaks was explicitly set in config (round-trip fidelity, like LinkMethodExplicit)
+	// Adapter is the game adapter that answers "what does this GAME do
+	// with mod content" (#353): the games.yaml `adapter:` value, verbatim.
+	// Empty means the generic-files identity, which is every game lmm
+	// managed before the seam existed - so an untouched games.yaml
+	// round-trips byte-identically and every existing document keeps the
+	// shape it had.
+	//
+	// It is the CONFIGURED value, not a resolved one. `deploy_mode:
+	// compile` with no adapter derives the icarus adapter, but that
+	// derivation needs the adapter registry (only core has one) and must
+	// never reach the file lmm writes back - so it lives in core's
+	// resolver, and this field stays what the user typed.
+	//
+	// It sits beside Loader deliberately: the two optional per-game
+	// declarations, both omitempty, both absent from every document a game
+	// that declares neither produces.
+	Adapter string `json:"adapter,omitempty"`
 	// Loader is #359's optional per-game mod-loader declaration
 	// (games.yaml's `loader:` block, loader.go). nil for the overwhelming
 	// majority of games, which need no loader at all - so the member is

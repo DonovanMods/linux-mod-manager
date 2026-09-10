@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"gopkg.in/yaml.v3"
@@ -113,7 +114,12 @@ type GameConfig struct {
 	CachePath   string            `yaml:"cache_path,omitempty"`
 	Hooks       GameHooksYAML     `yaml:"hooks,omitempty"`
 	DeployMode  string            `yaml:"deploy_mode,omitempty"`
-	ConvertPaks *bool             `yaml:"convert_paks,omitempty"`
+	// Adapter selects the game adapter (#353). Omitted means the
+	// generic-files identity, and the writer emits the key only when the
+	// user set one - so a games.yaml written before the seam existed
+	// round-trips byte-identically.
+	Adapter     string `yaml:"adapter,omitempty"`
+	ConvertPaks *bool  `yaml:"convert_paks,omitempty"`
 	// Loader is #359's optional block. A POINTER, so a game that declares
 	// no loader gains no `loader:` key when an unrelated write re-marshals
 	// the whole file.
@@ -158,6 +164,16 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			return nil, fmt.Errorf("%w: games.yaml: game %q: deploy_mode %q (valid: %s)",
 				domain.ErrInvalidDeployMode, id, cfg.DeployMode, domain.ValidDeployModes)
 		}
+		// Syntax only, deliberately: this layer must not learn the adapter
+		// registry (design §2, "validation splits by layer"). Whether the
+		// named adapter EXISTS is core's question, asked when it resolves
+		// the game, so a games.yaml naming an adapter a future build ships
+		// fails with the registered set in front of the user rather than
+		// with a parse error here.
+		if cfg.Adapter != "" && !adapter.ValidName(cfg.Adapter) {
+			return nil, fmt.Errorf("%w: games.yaml: game %q: adapter %q is not a valid adapter name (lowercase letters, digits and single interior hyphens)",
+				domain.ErrInvalidAdapter, id, cfg.Adapter)
+		}
 		convertPaks := true // default: paks convert (only meaningful for DeployCompile games)
 		convertExplicit := false
 		if cfg.ConvertPaks != nil {
@@ -183,6 +199,7 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 			LinkMethodExplicit:  cfg.LinkMethod != "",
 			CachePath:           ExpandPath(cfg.CachePath),
 			DeployMode:          deployMode,
+			Adapter:             cfg.Adapter,
 			ConvertPaks:         convertPaks,
 			ConvertPaksExplicit: convertExplicit,
 			Loader:              loader,
@@ -271,6 +288,10 @@ func saveGamesLocked(configDir string, games map[string]*domain.Game) error {
 		if game.DeployMode != domain.DeployExtract {
 			cfg.DeployMode = game.DeployMode.String()
 		}
+		// Only write adapter if the game carries one. Empty is the
+		// generic-files default and stays absent, which is what keeps a
+		// pre-#353 games.yaml byte-identical across any write.
+		cfg.Adapter = game.Adapter
 		// Only write convert_paks if explicitly set
 		if game.ConvertPaksExplicit {
 			v := game.ConvertPaks
