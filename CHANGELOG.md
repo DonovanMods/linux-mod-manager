@@ -1101,6 +1101,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   BepInEx installed but undeclared is told exactly that, with the command to
   declare it.
 
+- **Uninstalling or purging no longer deletes the game's own empty
+  directories (#415).** The post-removal cleanup walked the whole tree under
+  the game's mod folder and removed every empty directory it found, not only
+  the ones lmm's own deploy created. For a game whose mod root IS its
+  install root — Cyberpunk 2077 as of this release, and the existing Hearts
+  of Iron IV, Euro Truck Simulator 2 and Call of Duty: Black Ops 6 entries —
+  every `lmm uninstall` and every `lmm purge` swept the whole game install,
+  taking the folders its loaders expect to exist (for Cyberpunk:
+  `bin/x64/plugins`, `r6/scripts`, `archive/pc/mod`, `tools/redmod/mods`).
+  Steam's "verify integrity of game files" does not restore an empty
+  directory, so it did not heal on its own. The cleanup is now bounded to
+  the directories lmm's own removals emptied: it walks up from each removed
+  file, stops at the first directory that is not empty, and never reaches
+  the mod root itself. Strictly smaller behaviour for every game.
+
 - **`lmm game detect` recognises a game you already added under a different
   id (#406).** A curated known-games entry names its own game id, which
   need not match the one detection derived from the Steam title before that

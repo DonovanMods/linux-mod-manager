@@ -680,8 +680,22 @@ func rollbackDeploy(lnk linker.Linker, modPath string, relativePaths []string) e
 	return firstErr
 }
 
-// Uninstall removes a mod from the game directory
+// Uninstall removes a mod from the game directory, then prunes the
+// directories its own removals emptied (#415 - only those; see
+// linker.CleanupEmptyDirs).
 func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) error {
+	removed, err := i.uninstall(ctx, game, mod, profileName)
+	// Pruned even on failure: the paths in removed are gone either way, so
+	// the directories they emptied are lmm's to tidy either way.
+	linker.CleanupEmptyDirs(game.ModPath, removed)
+	return err
+}
+
+// uninstall is Uninstall without the prune, returning the paths (relative
+// to game.ModPath) it actually removed. purgeMods composes it so that a
+// whole purge prunes ONCE, over its whole removal set, instead of per mod -
+// which is what its single trailing CleanupEmptyDirs has always been.
+func (i *Installer) uninstall(ctx context.Context, game *domain.Game, mod *domain.Mod, profileName string) ([]string, error) {
 	// Deliberately the full ListFiles union, not deployableFiles (#210):
 	// removal must cover anything that might ever have been linked, including
 	// stale unclaimed files a pre-fix deploy linked. Narrowing this would
@@ -699,21 +713,22 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 	files, err := i.cache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("listing cached files: %w", err)
+			return nil, fmt.Errorf("listing cached files: %w", err)
 		}
 		files = nil
 		if i.db != nil {
 			if files, err = i.db.GetDeployedFilesForMod(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
-				return fmt.Errorf("listing tracked deployed files: %w", err)
+				return nil, fmt.Errorf("listing tracked deployed files: %w", err)
 			}
 		}
 	}
 
 	// Undeploy each file
+	var removed []string
 	for _, file := range files {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return removed, ctx.Err()
 		default:
 		}
 
@@ -742,8 +757,9 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 		}
 
 		if err := i.linker.Undeploy(dstPath); err != nil {
-			return fmt.Errorf("undeploying %s: %w", file, err)
+			return removed, fmt.Errorf("undeploying %s: %w", file, err)
 		}
+		removed = append(removed, file)
 		// lmm's own file is gone; whatever it displaced goes back.
 		i.restoreReplacedOriginal(file, dstPath)
 	}
@@ -751,14 +767,11 @@ func (i *Installer) Uninstall(ctx context.Context, game *domain.Game, mod *domai
 	// Remove file ownership records from database
 	if i.db != nil {
 		if err := i.db.DeleteDeployedFiles(ctx, game.ID, profileName, mod.SourceID, mod.ID); err != nil {
-			return fmt.Errorf("removing file tracking: %w", err)
+			return removed, fmt.Errorf("removing file tracking: %w", err)
 		}
 	}
 
-	// Clean up any empty directories left behind
-	linker.CleanupEmptyDirs(game.ModPath)
-
-	return nil
+	return removed, nil
 }
 
 // IsInstalled checks if a mod is currently deployed. Returns true only if every

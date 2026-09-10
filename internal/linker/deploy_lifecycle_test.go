@@ -192,15 +192,16 @@ func TestCopyLinker_IsDeployed_CannotDistinguishFromRegularFile(t *testing.T) {
 	assert.True(t, deployed, "IsDeployed is existence-only; it cannot tell this apart from a real copy")
 }
 
-func TestCleanupEmptyDirs_RemovesNestedEmptyDirs(t *testing.T) {
+func TestCleanupEmptyDirs_RemovesTheChainAboveARemovedFile(t *testing.T) {
 	base := t.TempDir()
 	nested := filepath.Join(base, "a", "b", "c")
 	require.NoError(t, os.MkdirAll(nested, 0755))
+	removed := filepath.Join("a", "b", "c", "mod.esp")
 
-	linker.CleanupEmptyDirs(base)
+	linker.CleanupEmptyDirs(base, []string{removed})
 
 	_, err := os.Stat(filepath.Join(base, "a"))
-	assert.True(t, os.IsNotExist(err), "top-level empty subdir should be removed")
+	assert.True(t, os.IsNotExist(err), "every directory the removed file left empty should go")
 
 	// basePath itself must survive.
 	info, err := os.Stat(base)
@@ -208,18 +209,33 @@ func TestCleanupEmptyDirs_RemovesNestedEmptyDirs(t *testing.T) {
 	assert.True(t, info.IsDir())
 }
 
+// TestCleanupEmptyDirs_TouchesNothingOffTheRemovalChain is #415: the sweep
+// used to walk the whole tree, so an empty directory that had nothing to do
+// with the removal - the game's own, for a game whose mod root is its
+// install root - was removed too.
+func TestCleanupEmptyDirs_TouchesNothingOffTheRemovalChain(t *testing.T) {
+	base := t.TempDir()
+	gameOwned := filepath.Join(base, "r6", "scripts")
+	require.NoError(t, os.MkdirAll(gameOwned, 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "mods", "cool"), 0755))
+
+	linker.CleanupEmptyDirs(base, []string{filepath.Join("mods", "cool", "cool.archive")})
+
+	info, err := os.Stat(gameOwned)
+	require.NoError(t, err, "a directory no removed file lived in is never even looked at")
+	assert.True(t, info.IsDir())
+	assert.NoDirExists(t, filepath.Join(base, "mods"), "the removal's own chain still goes")
+}
+
 func TestCleanupEmptyDirs_PreservesNonEmptyDirs(t *testing.T) {
 	base := t.TempDir()
 	keepDir := filepath.Join(base, "keep")
-	emptyDir := filepath.Join(base, "empty")
 	require.NoError(t, os.MkdirAll(keepDir, 0755))
-	require.NoError(t, os.MkdirAll(emptyDir, 0755))
 	require.NoError(t, os.WriteFile(filepath.Join(keepDir, "file.txt"), []byte("data"), 0644))
 
-	linker.CleanupEmptyDirs(base)
-
-	_, err := os.Stat(emptyDir)
-	assert.True(t, os.IsNotExist(err), "empty sibling dir should be removed")
+	// A sibling file under keep/ was removed; keep/ is not empty, so the
+	// walk stops there.
+	linker.CleanupEmptyDirs(base, []string{filepath.Join("keep", "gone.txt")})
 
 	info, err := os.Stat(keepDir)
 	require.NoError(t, err)
@@ -229,12 +245,30 @@ func TestCleanupEmptyDirs_PreservesNonEmptyDirs(t *testing.T) {
 	assert.NoError(t, err, "file inside non-empty dir should be preserved")
 }
 
+// TestCleanupEmptyDirs_AbsoluteRemovalPathsWork: both call sites hold the
+// relative path, but the contract accepts an absolute one under basePath
+// too, and a path OUTSIDE basePath reaches nothing.
+func TestCleanupEmptyDirs_AbsoluteRemovalPathsWork(t *testing.T) {
+	base := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(base, "mods", "cool"), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Join(outside, "empty"), 0755))
+
+	linker.CleanupEmptyDirs(base, []string{
+		filepath.Join(base, "mods", "cool", "cool.archive"),
+		filepath.Join(outside, "empty", "elsewhere.txt"),
+	})
+
+	assert.NoDirExists(t, filepath.Join(base, "mods"))
+	assert.DirExists(t, filepath.Join(outside, "empty"), "nothing outside basePath is reachable")
+}
+
 func TestCleanupEmptyDirs_MissingRootDoesNotPanic(t *testing.T) {
 	base := t.TempDir()
 	missing := filepath.Join(base, "does-not-exist")
 
 	assert.NotPanics(t, func() {
-		linker.CleanupEmptyDirs(missing)
+		linker.CleanupEmptyDirs(missing, []string{"a/b.txt"})
 	})
 }
 

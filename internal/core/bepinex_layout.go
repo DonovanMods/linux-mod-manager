@@ -525,6 +525,12 @@ func normalizeBepInExTree(root, modName string, loaderDeclared bool) (*bepinexLa
 		return layout, nil
 	}
 
+	// vacated is every member this function moved away or dropped, spelled
+	// as it arrived. It is the bound CleanupEmptyDirs needs (#415): a
+	// directory can only have been emptied HERE by one of these leaving it,
+	// so every candidate is on one of their ancestor chains, and nothing
+	// else in the extracted tree is lmm's to tidy.
+	vacated := make([]string, 0, len(slash))
 	for i, member := range slash {
 		src := filepath.Join(root, members[i])
 		dest, kept := layout.Rewrite(member)
@@ -532,6 +538,7 @@ func normalizeBepInExTree(root, modName string, loaderDeclared bool) (*bepinexLa
 			if err := os.Remove(src); err != nil {
 				return nil, fmt.Errorf("dropping archive metadata %s: %w", member, err)
 			}
+			vacated = append(vacated, members[i])
 			continue
 		}
 		if dest == member {
@@ -544,12 +551,15 @@ func normalizeBepInExTree(root, modName string, loaderDeclared bool) (*bepinexLa
 		if err := os.Rename(src, dst); err != nil {
 			return nil, fmt.Errorf("normalising %s to %s: %w", member, dest, err)
 		}
+		vacated = append(vacated, members[i])
 	}
 
 	// The wrapper directory a shape-C strip emptied, and the bare
 	// plugins/patchers/ roots a shape-B prefix emptied, would otherwise
-	// survive as empty directories in the cache entry.
-	linker.CleanupEmptyDirs(root)
+	// survive as empty directories in the cache entry. The sweep runs after
+	// the whole loop, so a directory several members shared is only empty -
+	// and only removed - once the last of them has left it.
+	linker.CleanupEmptyDirs(root, vacated)
 	return layout, nil
 }
 
