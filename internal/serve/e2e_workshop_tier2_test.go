@@ -274,6 +274,39 @@ func TestE2E_WorkshopTier2_TheCollectionPlanRendersItsOwnDocument(t *testing.T) 
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_WorkshopTier2_ProfilesModalImportsACollection is W2 review Minor
+// 9: the Profiles modal's collection input is named FIRST among the task
+// spec's SPA surfaces and had no test of any kind — no E2E, no HTTP flow,
+// no reference outside its own definition. Its search-box twin got the
+// browser test; this is the same journey through the other door.
+func TestE2E_WorkshopTier2_ProfilesModalImportsACollection(t *testing.T) {
+	f := newE2EWorkshopTier2Fixture(t, nil)
+
+	var modal string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Click(`.profile-picker__trigger`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.profile-picker__menu`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".profile-picker__menu button"))
+				.find((b) => b.textContent.includes("Manage profiles"))?.click();
+		`, nil),
+		chromedp.WaitVisible(`[data-testid="collection-ref"]`, chromedp.ByQuery),
+		chromedp.SetValue(`[data-testid="collection-ref"]`, e2eWorkshopCollectionID, chromedp.ByQuery),
+		chromedp.SetValue(`[data-testid="collection-profile-name"]`, "my-ships", chromedp.ByQuery),
+		chromedp.Click(`.profiles-import__collection button[type="submit"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="collection-items"]`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="profile_import"]`, &modal),
+	)
+
+	assert.Contains(t, modal, "my-ships", "--as reaches the plan from this door too")
+	assert.Contains(t, modal, "Cargo Ships")
+	assert.Contains(t, modal, "subscribe in Steam")
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_WorkshopTier2_LibraryRowMenuHidesRelinkForAnExternalRow is issue
 // 365 (b): the full mod page has hidden Re-link since Tier 1 ("there is no
 // link to move"), while the row's own menu still offered it - the same
