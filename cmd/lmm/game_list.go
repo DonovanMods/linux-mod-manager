@@ -60,10 +60,10 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 
 	var buf bytes.Buffer
 	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tNAME\tINSTALL PATH\tMOD PATH\tDEPLOY MODE\tCONVERT PAKS\tSOURCES"); err != nil {
+	if _, err := fmt.Fprintln(w, "ID\tNAME\tINSTALL PATH\tMOD PATH\tADAPTER\tDEPLOY MODE\tCONVERT PAKS\tSOURCES"); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
-	if _, err := fmt.Fprintln(w, "--\t----\t------------\t--------\t-----------\t-----------\t-------"); err != nil {
+	if _, err := fmt.Fprintln(w, "--\t----\t------------\t--------\t-------\t-----------\t-----------\t-------"); err != nil {
 		return fmt.Errorf("writing separator: %w", err)
 	}
 	for _, g := range games {
@@ -88,6 +88,21 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 	}
 
 	return printTable(&buf, 2, nil)
+}
+
+// formatGameAdapter renders the game's configured adapter for the table
+// (#353). An absent `adapter:` key IS the generic-files identity, so the
+// column names it rather than leaving a blank cell - there is no such thing
+// as a game with no adapter.
+//
+// It shows the CONFIGURED value: a `deploy_mode: compile` game's derived
+// adapter is a resolution core performs, and surfacing the resolved name
+// here is U2's change, when the derivation goes live.
+func formatGameAdapter(name string) string {
+	if name == "" {
+		return "generic-files"
+	}
+	return name
 }
 
 // formatGameSources renders a game's SourceIDs map as a compact,

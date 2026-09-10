@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -228,6 +229,8 @@ func ExactGameCatalogMatch(report *GameCatalogReport, name string) *GameCatalogM
 //     layered on top of it, so an explicit source ADDS to a prefilled map
 //     rather than replacing it, and a spec carrying only this map is
 //     complete on its own.
+//   - Adapter is games.yaml's adapter string (#353). Optional: "" means
+//     the generic-files identity.
 //   - DeployMode is games.yaml's deploy_mode string, passed through to
 //     domain.ParseDeployMode. Optional: "" means the default (extract),
 //     exactly what every add wrote before this field existed. #206's
@@ -244,6 +247,12 @@ type GameSpec struct {
 	LinkMethod  domain.LinkMethod
 	Sources     map[string]string
 	DeployMode  string
+	// Adapter is games.yaml's `adapter:` value (#353). Optional: ""
+	// means the generic-files identity, which is every game lmm managed
+	// before the seam existed. Validated for SYNTAX here; whether the
+	// named adapter is registered is checked by the caller against
+	// Service.ListAdapters(), and again when core resolves the game.
+	Adapter string
 	// Loader is #359's optional mod-loader declaration, unparsed
 	// (LoaderSpec, game_loader.go). nil - which is nearly every game -
 	// writes no `loader:` block at all. Carried on the SPEC rather than
@@ -430,6 +439,15 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		}
 	}
 
+	adapterName := strings.TrimSpace(spec.Adapter)
+	if adapterName != "" && !adapter.ValidName(adapterName) {
+		return nil, &GameSpecError{
+			Field: "adapter", Value: spec.Adapter,
+			Reason: "not a valid adapter name (lowercase letters, digits and single interior hyphens)",
+			Err:    domain.ErrInvalidAdapter,
+		}
+	}
+
 	// An explicit id is taken as given (only slug-normalised); an absent one
 	// is derived from the identifier, which is the manual path's rule.
 	gameID := DeriveGameID(spec.ID)
@@ -522,6 +540,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		SourceIDs:   sources,
 		LinkMethod:  spec.LinkMethod,
 		DeployMode:  deployMode,
+		Adapter:     adapterName,
 		Loader:      loader,
 	}, nil
 }

@@ -58,7 +58,7 @@ func TestDoGameEdit_AddsASourceKeepingTheRest(t *testing.T) {
 	gameEditSources = []string{"local-mods=skyrim"}
 
 	out := captureStdout(t, func() error {
-		return doGameEdit(context.Background(), svc, "skyrim-se")
+		return doGameEdit(context.Background(), svc, "skyrim-se", false)
 	})
 	assert.Contains(t, out, "local-mods")
 
@@ -74,7 +74,7 @@ func TestDoGameEdit_OverwritesAnExistingMapping(t *testing.T) {
 	gameEditSources = []string{"nexusmods=skyrim"}
 
 	captureStdout(t, func() error {
-		return doGameEdit(context.Background(), svc, "skyrim-se")
+		return doGameEdit(context.Background(), svc, "skyrim-se", false)
 	})
 
 	game, err := svc.GetGame("skyrim-se")
@@ -90,7 +90,7 @@ func TestDoGameEdit_AcceptsAnEmptyIdentifier(t *testing.T) {
 	gameEditSources = []string{"local-mods="}
 
 	captureStdout(t, func() error {
-		return doGameEdit(context.Background(), svc, "skyrim-se")
+		return doGameEdit(context.Background(), svc, "skyrim-se", false)
 	})
 
 	game, err := svc.GetGame("skyrim-se")
@@ -106,7 +106,7 @@ func TestDoGameEdit_RemovesASource(t *testing.T) {
 	gameEditRemove = []string{"nexusmods"}
 
 	captureStdout(t, func() error {
-		return doGameEdit(context.Background(), svc, "skyrim-se")
+		return doGameEdit(context.Background(), svc, "skyrim-se", false)
 	})
 
 	game, err := svc.GetGame("skyrim-se")
@@ -120,7 +120,7 @@ func TestDoGameEdit_RefusesRemovingASourceTheGameDoesNotMap(t *testing.T) {
 	svc := setupGameEditTest(t)
 	gameEditRemove = []string{"curseforge"}
 
-	err := doGameEdit(context.Background(), svc, "skyrim-se")
+	err := doGameEdit(context.Background(), svc, "skyrim-se", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "curseforge")
 }
@@ -142,7 +142,7 @@ func TestDoGameEdit_RefusesRemovingASourceStillReferenced(t *testing.T) {
 	gameEditSources = []string{"local-mods=skyrim"}
 	gameEditRemove = []string{"nexusmods"}
 
-	err = doGameEdit(context.Background(), svc, "skyrim-se")
+	err = doGameEdit(context.Background(), svc, "skyrim-se", false)
 	var inUse *core.GameSourceInUseError
 	require.ErrorAs(t, err, &inUse)
 	assert.Equal(t, "nexusmods", inUse.SourceID)
@@ -159,7 +159,7 @@ func TestDoGameEdit_RefusesAMalformedSourceFlag(t *testing.T) {
 	svc := setupGameEditTest(t)
 	gameEditSources = []string{"local-mods"}
 
-	err := doGameEdit(context.Background(), svc, "skyrim-se")
+	err := doGameEdit(context.Background(), svc, "skyrim-se", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "=")
 }
@@ -169,7 +169,7 @@ func TestDoGameEdit_RefusesAMalformedSourceFlag(t *testing.T) {
 func TestDoGameEdit_RefusesWithNoFlags(t *testing.T) {
 	svc := setupGameEditTest(t)
 
-	err := doGameEdit(context.Background(), svc, "skyrim-se")
+	err := doGameEdit(context.Background(), svc, "skyrim-se", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--source")
 }
@@ -180,7 +180,7 @@ func TestDoGameEdit_UnknownGame(t *testing.T) {
 	svc := setupGameEditTest(t)
 	gameEditSources = []string{"local-mods=x"}
 
-	err := doGameEdit(context.Background(), svc, "nope")
+	err := doGameEdit(context.Background(), svc, "nope", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "game not found")
 }
@@ -191,7 +191,7 @@ func TestDoGameEdit_UnregisteredSourceIsRefused(t *testing.T) {
 	svc := setupGameEditTest(t)
 	gameEditSources = []string{"nope=x"}
 
-	err := doGameEdit(context.Background(), svc, "skyrim-se")
+	err := doGameEdit(context.Background(), svc, "skyrim-se", false)
 	var specErr *core.GameSpecError
 	require.ErrorAs(t, err, &specErr)
 	assert.Equal(t, "sources", specErr.Field)
@@ -228,7 +228,7 @@ func TestDoGameEdit_JSONEmitsTheGameListRow(t *testing.T) {
 	t.Cleanup(func() { jsonOutput = false })
 
 	out := captureStdout(t, func() error {
-		return doGameEdit(context.Background(), svc, "skyrim-se")
+		return doGameEdit(context.Background(), svc, "skyrim-se", false)
 	})
 
 	var entry core.GameListEntry

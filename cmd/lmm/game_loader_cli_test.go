@@ -63,7 +63,7 @@ func TestDoGameEditLoader_DeclaresAndClears(t *testing.T) {
 
 	gameEditLoader, gameEditLoaderVersion, gameEditLoaderBootstrap = "bepinex", "5.4.23.5", "proton"
 	out := captureStdout(t, func() error {
-		return doGameEditLoader(context.Background(), svc, "skyrim-se")
+		return doGameEditLoader(context.Background(), svc, "skyrim-se", false)
 	})
 	assert.Contains(t, out, "declares the bepinex loader")
 	assert.Contains(t, out, "lmm game show skyrim-se")
@@ -75,7 +75,7 @@ func TestDoGameEditLoader_DeclaresAndClears(t *testing.T) {
 
 	gameEditLoader, gameEditLoaderVersion, gameEditLoaderBootstrap = "", "", ""
 	out = captureStdout(t, func() error {
-		return doGameEditLoader(context.Background(), svc, "skyrim-se")
+		return doGameEditLoader(context.Background(), svc, "skyrim-se", false)
 	})
 	assert.Contains(t, out, "no longer declares a mod loader")
 	game, err = svc.GetGame("skyrim-se")
@@ -92,7 +92,7 @@ func TestDoGameEditLoader_RefusesACombinedEdit(t *testing.T) {
 	gameEditLoader = "bepinex"
 	gameEditSources = []string{"local-mods=skyrim"}
 
-	err := doGameEditLoader(context.Background(), svc, "skyrim-se")
+	err := doGameEditLoader(context.Background(), svc, "skyrim-se", false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "separately")
 }
@@ -106,7 +106,7 @@ func TestDoGameEditLoader_JSONEmitsTheGameRow(t *testing.T) {
 	gameEditLoader = "bepinex"
 
 	out := captureStdout(t, func() error {
-		return doGameEditLoader(context.Background(), svc, "skyrim-se")
+		return doGameEditLoader(context.Background(), svc, "skyrim-se", false)
 	})
 	var entry core.GameListEntry
 	require.NoError(t, json.Unmarshal([]byte(out), &entry))

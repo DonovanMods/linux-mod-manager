@@ -157,6 +157,10 @@ export function SetupGames({ actions, game, profile }) {
     return html`<p class="app-booting">Loading your games…</p>`;
   }
 
+  // The Adapter column (issue 353, the game-adapter seam) is READ-ONLY in
+  // this unit. An absent `adapter` key IS the generic-files identity, so
+  // the cell names it rather than leaving a blank - there is no such thing
+  // as a game with no adapter.
   return html`
     <div class="setup-section" data-testid="setup-games">
       <table class="setup-table">
@@ -165,6 +169,7 @@ export function SetupGames({ actions, game, profile }) {
             <th>Name</th>
             <th class="col--path">Install path</th>
             <th class="col--path">Mod path</th>
+            <th>Adapter</th>
             <th>Sources</th>
             <th>Loader</th>
             <th>Default</th>
@@ -183,6 +188,7 @@ export function SetupGames({ actions, game, profile }) {
                 <td class="col--path mono" title=${g.mod_path}>
                   ${g.mod_path}
                 </td>
+                <td class="mono">${g.adapter || "generic-files"}</td>
                 <td>
                   <span class="mono"
                     >${Object.keys(g.source_ids ?? {}).join(", ") || "—"}</span

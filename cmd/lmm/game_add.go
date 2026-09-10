@@ -107,6 +107,7 @@ var (
 	gameAddGameID       string
 	gameAddPath         string
 	gameAddModPath      string
+	gameAddAdapter      string
 	gameAddFromDetected string
 	// #359's loader declaration. --loader alone is enough (a game whose
 	// runtime and bootstrap lmm can read off the install directory needs
@@ -128,6 +129,7 @@ func init() {
 	gameAddCmd.Flags().StringVar(&gameAddGameID, "game-id", "", "the LOCAL games.yaml key (default: derived from the catalog match's slug, or from --id)")
 	gameAddCmd.Flags().StringVar(&gameAddPath, "path", "", "game install path (must exist)")
 	gameAddCmd.Flags().StringVar(&gameAddModPath, "mod-path", "", "mod directory, absolute or relative to the install path (default: <install path>/mods)")
+	gameAddCmd.Flags().StringVar(&gameAddAdapter, "adapter", "", "game adapter (default: generic-files; see `lmm game list` for each game's)")
 	gameAddCmd.Flags().StringVar(&gameAddLoader, "loader", "",
 		"declare a mod loader installed in the game directory (today: bepinex) - see 'lmm game show' for the launch option it needs")
 	gameAddCmd.Flags().StringVar(&gameAddLoaderVersion, "loader-version", "",
@@ -170,6 +172,15 @@ func doGameAdd(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, se
 	spec := core.GameSpec{
 		Name: gameAddName, ID: gameAddGameID,
 		InstallPath: gameAddPath, ModPath: gameAddModPath,
+		Adapter: gameAddAdapter,
+	}
+
+	// #353: validated against the registry HERE, before any prompt runs,
+	// so a typo is a one-line refusal naming the real names rather than a
+	// failure after the whole walk-through. core re-checks it inside the
+	// write's gate; this is the frontend courtesy, not the rule.
+	if err := validateAdapterFlag(service, gameAddAdapter); err != nil {
+		return err
 	}
 
 	// #359: the loader declaration, if any. Validated by core (which owns

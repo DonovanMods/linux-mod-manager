@@ -59,6 +59,7 @@ Examples:
 var (
 	gameEditSources []string
 	gameEditRemove  []string
+	gameEditAdapter string
 
 	gameEditLoader          string
 	gameEditLoaderVersion   string
@@ -73,6 +74,8 @@ func init() {
 		`add or replace a source mapping, as "SOURCE-ID=IDENTIFIER" (repeatable)`)
 	gameEditCmd.Flags().StringArrayVar(&gameEditRemove, "remove-source", nil,
 		"drop a source mapping by its source id (repeatable)")
+	gameEditCmd.Flags().StringVar(&gameEditAdapter, "adapter", "",
+		`set the game adapter; the empty string ("") clears it back to generic-files`)
 	gameEditCmd.Flags().StringVar(&gameEditLoader, "loader", "",
 		`declare a mod loader installed in the game directory (today: bepinex); "" removes the declaration`)
 	gameEditCmd.Flags().StringVar(&gameEditLoaderVersion, "loader-version", "",
@@ -84,15 +87,16 @@ func init() {
 }
 
 func runGameEdit(cmd *cobra.Command, args []string) error {
+	adapterSet := cmd.Flags().Changed("adapter")
 	return withService(cmd, func(ctx context.Context, service *core.Service) error {
 		// Changed("loader") rather than a non-empty value, so `--loader ""`
 		// is an explicit "this game has no loader after all" and reaches
 		// core's nil rather than reading as "no loader flag was passed" -
 		// the same distinction --id draws in game_add.go (#387).
 		if cmd.Flags().Changed("loader") {
-			return doGameEditLoader(ctx, service, args[0])
+			return doGameEditLoader(ctx, service, args[0], adapterSet)
 		}
-		return doGameEdit(ctx, service, args[0])
+		return doGameEdit(ctx, service, args[0], adapterSet)
 	})
 }
 
@@ -100,13 +104,14 @@ func runGameEdit(cmd *cobra.Command, args []string) error {
 // core.Service.UpdateGameLoader, which owns replace semantics, validation
 // and the write.
 //
-// It is a SEPARATE edit from the source map rather than one call taking
-// both, because each is a complete statement on its own and combining them
-// would make a partial failure - sources written, loader not - expressible.
-// The command refuses a run that asks for both rather than picking an order.
-func doGameEditLoader(ctx context.Context, service *core.Service, gameID string) error {
-	if len(gameEditSources) > 0 || len(gameEditRemove) > 0 {
-		return fmt.Errorf("edit the sources and the loader separately: pass --loader, or --source/--remove-source, not both")
+// It is a SEPARATE edit from the source map and from the adapter (#353)
+// rather than one call taking all three, because each is a complete
+// statement on its own and combining them would make a partial failure -
+// sources written, loader not - expressible. The command refuses a run that
+// asks for more than one rather than picking an order.
+func doGameEditLoader(ctx context.Context, service *core.Service, gameID string, adapterSet bool) error {
+	if len(gameEditSources) > 0 || len(gameEditRemove) > 0 || adapterSet {
+		return fmt.Errorf("edit the sources, the adapter and the loader separately: pass --loader, or --source/--remove-source/--adapter, not both")
 	}
 
 	spec, err := loaderSpecFromFlags(gameEditLoader, gameEditLoaderVersion, gameEditLoaderRuntime, gameEditLoaderBootstrap)
@@ -143,14 +148,36 @@ func doGameEditLoader(ctx context.Context, service *core.Service, gameID string)
 // what `PUT /api/v1/games/{id}` wants; resolving the one into the other is
 // this function's entire job, and it is the only difference between the
 // two frontends' paths.
-func doGameEdit(ctx context.Context, service *core.Service, gameID string) error {
-	if len(gameEditSources) == 0 && len(gameEditRemove) == 0 {
-		return fmt.Errorf("nothing to edit: pass --source <id>=<identifier> or --remove-source <id>")
+func doGameEdit(ctx context.Context, service *core.Service, gameID string, adapterSet bool) error {
+	if len(gameEditSources) == 0 && len(gameEditRemove) == 0 && !adapterSet {
+		return fmt.Errorf("nothing to edit: pass --source <id>=<identifier>, --remove-source <id>, or --adapter <name>")
 	}
 
 	game, err := service.GetGame(gameID)
 	if err != nil {
 		return fmt.Errorf("game not found: %s", gameID)
+	}
+
+	// #353: the adapter edit is its own single-step write
+	// (core.SetGameAdapter), which owns the registry check and the
+	// deploy_mode: compile composition rule. Done FIRST so that
+	// "--adapter x --source y=z" leaves both applied or fails before
+	// touching the source map.
+	if adapterSet {
+		if err := validateAdapterFlag(service, gameEditAdapter); err != nil {
+			return err
+		}
+		entry, err := service.SetGameAdapter(ctx, gameID, gameEditAdapter)
+		if err != nil {
+			return err
+		}
+		if len(gameEditSources) == 0 && len(gameEditRemove) == 0 {
+			if jsonOutput {
+				return emitJSON(entry)
+			}
+			fmt.Printf("%s %s adapter set to %s\n", colorGreen("✓"), entry.Name, formatGameAdapter(entry.Adapter))
+			return nil
+		}
 	}
 
 	sources := maps.Clone(game.SourceIDs)
