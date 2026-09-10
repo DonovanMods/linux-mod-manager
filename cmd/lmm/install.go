@@ -706,6 +706,14 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 			}
 		case core.InstallDownloadDone:
 			fmt.Println()
+		case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
+			// A source.Fetcher's shell-out replaces the download bar above
+			// with its own readout, and the terminal is where a
+			// twenty-minute silence is felt hardest. Printed whole lines
+			// rather than \r-overwritten: the tool's own progress lines and
+			// lmm's heartbeats interleave, and a scrollback of both is what
+			// a user needs when a steamcmd run goes wrong.
+			fmt.Printf("  %s\n", p.Detail)
 		case core.InstallDownloadFailed:
 			if strings.Contains(p.Detail, "third-party downloads") && mod.SourceURL != "" {
 				fmt.Println()

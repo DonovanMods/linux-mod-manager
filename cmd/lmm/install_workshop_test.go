@@ -163,3 +163,21 @@ func TestDoInstall_Workshop_MissingSteamcmdIsAnActionableRefusal(t *testing.T) {
 	assert.True(t, errors.Is(err, domain.ErrExternalToolMissing))
 	assert.Contains(t, err.Error(), "SteamCMD")
 }
+
+// TestDoInstall_Workshop_TheFetchesProgressReachesTheTerminal is the
+// design's "a silent multi-gigabyte download is the worst possible UX"
+// rule, in the place a twenty-minute silence is felt hardest. The CLI's
+// install closure switches on explicit phases, so the fetch's three had to
+// be named there or they were simply dropped - lmm printed nothing at all
+// for the entire duration of a steamcmd run.
+func TestDoInstall_Workshop_TheFetchesProgressReachesTheTerminal(t *testing.T) {
+	svc, game := setupWorkshopInstallTest(t, "3000000001")
+
+	out, err := captureStdoutErr(t, func() error { return doInstall(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "fetching Workshop item 3000000001 with steamcmd",
+		"the fetch announces itself")
+	assert.Contains(t, out, "78.90", "the tool's own progress lines reach the terminal")
+	assert.Contains(t, out, "Workshop item 3000000001 downloaded", "and it says when it finished")
+}
