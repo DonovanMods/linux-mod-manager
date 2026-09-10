@@ -67,6 +67,7 @@ internal/
 │   ├── nexusmods/        # NexusMods GraphQL client
 │   ├── curseforge/       # CurseForge API client
 │   ├── custom/           # User-defined sources (directory, manifest, api)
+│   ├── steamworkshop/    # Steam Workshop (#269): Tier 1 tracks the Steam client's own items, Tier 3 downloads them (legacy file_url, or an anonymous steamcmd shell-out in steamcmd.go)
 │   ├── steam/            # Steam library scanning (for 'lmm game detect')
 │   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
 ├── storage/
@@ -79,6 +80,7 @@ internal/
     ├── ops.go             # beginOp: the Service's single mutation-serialization slot
     ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
     ├── errors.go          # Typed errors a frontend branches on: ConflictError, ErrConfirmationRequired, ErrInteractiveOnly
+    ├── fetch.go           # The source.Fetcher half of a download - staging, containment, WorkshopFetchError (#269 Tier 3)
     ├── events.go          # EventSink wire envelope + the Op/EventType/FlowPhase vocabulary
     ├── queries.go         # Read-only query types: ModList, StatusReport, SearchReport, GameListEntry, VerifyReport
     ├── moddetail.go       # ModDetail: mod metadata + local install state for `lmm mod show` (#86)

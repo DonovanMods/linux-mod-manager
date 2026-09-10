@@ -213,18 +213,22 @@ const (
 // Workshop's legacy file_url items do) keeps the ordinary download path,
 // with its retries, its progress ticks and its checksum verification.
 //
-// The contract, all of which core enforces rather than trusts:
+// The contract. Core ENFORCES the returned-path rule and guarantees the
+// three it makes to the implementation; writing only inside destDir is the
+// implementation's own obligation, which core does not verify:
 //
 //   - destDir is created by CORE, under its own staging root, and is owned
-//     by core: the implementation writes into it and nothing else.
+//     by core: the implementation writes into it and nothing else. Core
+//     removes it either way, so a failed fetch leaves nothing behind.
 //   - The returned path MUST be inside destDir (a file or a directory).
-//     Core refuses anything else, so a Fetcher never gains the ability to
-//     name an arbitrary path on disk - the same rule LocalFileServer's
-//     file:// gate applies to URLs (#300).
-//   - mod.GameID is the SOURCE's own game identifier (domain.Game.SourceIDs
-//   - for Steam Workshop, the decimal app id), already translated by
-//     core, exactly as GetMod receives it.
-//   - progress is never nil.
+//     Core REFUSES anything else, symlinks resolved on both sides, so a
+//     Fetcher never gains the ability to name an arbitrary path on disk -
+//     the same rule LocalFileServer's file:// gate applies to URLs (#300).
+//   - mod.GameID is the SOURCE's own game identifier (domain.Game.SourceIDs;
+//     for Steam Workshop, the decimal app id), already translated by core,
+//     exactly as GetMod receives it.
+//   - progress is never nil, and its calls are serialized - see
+//     FetchProgressFunc.
 type Fetcher interface {
 	Fetch(ctx context.Context, mod *domain.Mod, fileID, destDir string, progress FetchProgressFunc) (string, error)
 }
