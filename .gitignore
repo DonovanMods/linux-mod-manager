@@ -40,6 +40,12 @@ vendor/
 /dist/
 /lmm
 
+# Release-time generated packaging inputs (see .goreleaser.yaml's before hooks):
+# shell completions emitted by `lmm completion`, and gzipped copies of the
+# tracked man pages under docs/man/man1.
+/completions/
+/manpages/
+
 # IDE and editor files
 .idea/
 .vscode/

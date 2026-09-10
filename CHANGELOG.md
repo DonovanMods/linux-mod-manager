@@ -203,6 +203,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Install from the AUR, or from a `.deb`/`.rpm`/`.apk` (#352).** The
+  release pipeline produced tarballs only, which is the one channel that
+  asks you to place a binary by hand and leaves the man pages unreachable
+  by `man`. Arch users can now `yay -S lmm-bin`; every release also
+  attaches `.deb`, `.rpm` and `.apk` packages for `amd64` and `arm64`. All
+  of them install `/usr/bin/lmm`, the full set of man pages under
+  `/usr/share/man/man1`, bash/zsh/fish completions at their standard paths,
+  and the README, CHANGELOG and LICENSE under `/usr/share/doc/lmm`. `p7zip`
+  is recommended, never required — `.zip` extraction is native Go, and only
+  `.7z`/`.rar` mods shell out. The AUR push is skipped cleanly on a release
+  whose CI has no AUR deploy key, so it can be turned on later without
+  touching the pipeline again.
+
 - **Custom `api` sources can resolve dependencies (#122).** They reported no
   dependency capability unconditionally, because the definition had no way
   to express "ask the API what this mod needs". Declaring

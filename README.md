@@ -17,6 +17,43 @@ A mod manager for Linux for searching, installing, updating, and managing game m
 
 ## Installation
 
+### Arch Linux (AUR)
+
+```bash
+yay -S lmm-bin        # or: paru -S lmm-bin
+```
+
+[`lmm-bin`](https://aur.archlinux.org/packages/lmm-bin) installs the released
+binary, the man pages, and shell completions for bash, zsh and fish. It
+`provides`/`conflicts` `lmm`, so it will not fight a source build of the same
+name.
+
+### Debian, Ubuntu, Fedora, openSUSE, Alpine
+
+`.deb`, `.rpm` and `.apk` packages are attached to every release on the
+[Releases page](https://github.com/DonovanMods/linux-mod-manager/releases),
+for `amd64` and `arm64`:
+
+```bash
+# Debian / Ubuntu
+sudo dpkg -i lmm_<version>_linux_amd64.deb
+
+# Fedora / RHEL
+sudo rpm -i lmm_<version>_linux_amd64.rpm
+
+# openSUSE
+sudo zypper install ./lmm_<version>_linux_amd64.rpm
+
+# Alpine
+sudo apk add --allow-untrusted lmm_<version>_linux_amd64.apk
+```
+
+These install `/usr/bin/lmm`, the man pages under `/usr/share/man/man1`
+(`man lmm`), shell completions, and the README, CHANGELOG and LICENSE under
+`/usr/share/doc/lmm`. `p7zip` is a _recommended_ dependency, not a required
+one: lmm extracts `.zip` archives itself and shells out to `7z` (and `unrar`)
+only for `.7z` and `.rar` mods.
+
 ### From GitHub Releases
 
 Download the latest release for your architecture from the [Releases page](https://github.com/DonovanMods/linux-mod-manager/releases):
@@ -30,6 +67,9 @@ Extract and install:
 tar -xzf lmm_*.tar.gz
 sudo mv lmm /usr/local/bin/
 ```
+
+The tarball also carries the man pages under `docs/man/man1/`; copy them to
+`/usr/share/man/man1` (or `~/.local/share/man/man1`) to get `man lmm`.
 
 ### With Go Install
 
@@ -49,6 +89,26 @@ go build -o lmm ./cmd/lmm
 
 This checks out `main`, the v1.x line; to build v2 instead, run
 `git checkout v2.0.0` before `go build`.
+
+### Shell completions
+
+The distro packages and the AUR package install completions for you. If you
+installed from a tarball, `go install`, or source, generate them yourself —
+`lmm completion --help` covers every shell, including PowerShell:
+
+```bash
+# bash (needs bash-completion)
+lmm completion bash | sudo tee /usr/share/bash-completion/completions/lmm >/dev/null
+
+# zsh
+lmm completion zsh | sudo tee /usr/share/zsh/site-functions/_lmm >/dev/null
+
+# fish
+lmm completion fish > ~/.config/fish/completions/lmm.fish
+```
+
+Start a new shell afterwards. To try one without installing it, source it in
+the current shell instead: `source <(lmm completion bash)`.
 
 ## Quick Start
 
