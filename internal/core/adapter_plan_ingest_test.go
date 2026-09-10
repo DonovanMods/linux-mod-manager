@@ -126,3 +126,49 @@ func TestImportArchive_ModNameIsDerivedBeforeTheRewrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"by-name/Flat-2.0/named.txt"}, cached)
 }
+
+// nonCanonicalStub returns destinations spelled non-canonically ("./out/x"),
+// which is what an adapter author writes when they build a path by
+// concatenation. Legal, and it must reach both halves of the import as the
+// same canonical string.
+type nonCanonicalStub struct{}
+
+func (nonCanonicalStub) ID() string    { return "noncanonical" }
+func (nonCanonicalStub) Label() string { return "Non-canonical" }
+
+func (nonCanonicalStub) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, error) {
+	rewrites := make(map[string]string, len(req.Members))
+	for _, m := range req.Members {
+		rewrites[m] = "./out/" + filepath.Base(m)
+	}
+	return adapter.NewLayout("noncanonical", rewrites), nil
+}
+
+// TestPlanImportArchive_AgreesWithIngestForANonCanonicalDestination is R1's
+// plan-side half: rewritePlannedPaths appended the adapter's RAW destination
+// while the ingest wrote the one filepath.Join cleaned, so the plan's file
+// list - the confirmation screen, --json and serve's confirm-plan all render
+// it - named a path the ingest never created.
+func TestPlanImportArchive_AgreesWithIngestForANonCanonicalDestination(t *testing.T) {
+	svc, game := newImportArchiveTestService(t)
+	svc.RegisterAdapter(nonCanonicalStub{})
+	game.Adapter = "noncanonical"
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	archivePath := filepath.Join(t.TempDir(), "Flat-2.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{"a.txt": "A"})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"out/a.txt"}, plan.Files,
+		"the plan must promise the canonical destination, not the adapter's spelling")
+
+	result, err := svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
+	require.NoError(t, err)
+
+	cached, err := svc.GetGameCache(game).ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	require.NoError(t, err)
+	slices.Sort(cached)
+	assert.Equal(t, plan.Files, cached,
+		"the plan's file list must equal what the ingest actually cached")
+}

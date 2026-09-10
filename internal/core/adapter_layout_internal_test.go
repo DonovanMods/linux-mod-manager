@@ -103,6 +103,35 @@ func TestRewriteExtractedTreeRefusesAnUnexecutableTable(t *testing.T) {
 			wants:  []string{"b.dll"},
 			reason: "escap",
 		},
+		{
+			// R1: the chain rule's own case, spelled non-canonically. The
+			// validator compared raw strings while the executor wrote
+			// through filepath.Join, which cleans - so "./b.txt" did not
+			// look like member "b.txt" to the rule and B's bytes were
+			// silently destroyed.
+			name:   "a chained rewrite spelled non-canonically",
+			files:  map[string]string{"a.txt": "contentA", "b.txt": "contentB"},
+			table:  map[string]string{"a.txt": "./b.txt"},
+			wants:  []string{"a.txt", "b.txt"},
+			reason: "chain",
+		},
+		{
+			// R1: the collision rule's own case, spelled non-canonically.
+			name:   "colliding destinations spelled non-canonically",
+			files:  map[string]string{"a/x.dll": "A", "b/x.dll": "B"},
+			table:  map[string]string{"a/x.dll": "out/x.dll", "b/x.dll": "out/./x.dll"},
+			wants:  []string{"a/x.dll", "b/x.dll"},
+			reason: "collide",
+		},
+		{
+			// R1: a destination that cleans to the cache entry's own root
+			// would rename a member onto the staging directory itself.
+			name:   "a destination naming the root",
+			files:  map[string]string{"a.txt": "A"},
+			table:  map[string]string{"a.txt": "./"},
+			wants:  []string{"a.txt"},
+			reason: "unusable destination path",
+		},
 	}
 
 	for _, tc := range tests {
@@ -126,6 +155,41 @@ func TestRewriteExtractedTreeRefusesAnUnexecutableTable(t *testing.T) {
 
 			assert.Equal(t, before, layoutTreeSnapshot(t, root),
 				"a refused layout must leave the staging tree byte-identical - no partial rewrite")
+		})
+	}
+}
+
+// TestRewriteExtractedTreeCanonicalisesDestinations is R1's other half:
+// a LEGAL destination spelled non-canonically must reach the validator, the
+// returned member list, the plan rewriter and the executor as ONE canonical
+// string. Before the fix the first three saw the adapter's raw spelling and
+// only the executor cleaned it, so a plan promised "./out/a.txt" while the
+// ingest created "out/a.txt".
+func TestRewriteExtractedTreeCanonicalisesDestinations(t *testing.T) {
+	tests := []struct {
+		name string
+		dest string
+		want string
+	}{
+		{name: "a leading dot slash", dest: "./out/a.txt", want: "out/a.txt"},
+		{name: "a trailing slash", dest: "out/a.txt/", want: "out/a.txt"},
+		{name: "a doubled separator", dest: "x//y.txt", want: "x/y.txt"},
+		{name: "an interior dot", dest: "x/./y.txt", want: "x/y.txt"},
+		{name: "an interior dotdot that stays inside", dest: "x/../y.txt", want: "y.txt"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root, _ := layoutTestTree(t, map[string]string{"a.txt": "A"})
+			layout := adapter.NewLayout("noncanonical", map[string]string{"a.txt": tc.dest})
+
+			got, err := rewriteExtractedTree(root, layout, []string{"a.txt"})
+			require.NoError(t, err)
+			assert.Equal(t, []string{tc.want}, got,
+				"the returned member list must carry the canonical destination")
+			assert.Equal(t, []string{tc.want}, rewritePlannedPaths(layout, []string{"a.txt"}),
+				"the plan rewriter must promise the same canonical destination")
+			assert.FileExists(t, filepath.Join(root, filepath.FromSlash(tc.want)))
 		})
 	}
 }

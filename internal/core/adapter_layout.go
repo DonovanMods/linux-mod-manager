@@ -158,7 +158,11 @@ func containedIn(root, kind, member, rel string) error {
 	refuse := func(reason string) error {
 		return &AdapterLayoutError{Kind: kind, Reason: reason, Dest: rel, Members: []string{member}}
 	}
-	if rel == "" || filepath.IsAbs(filepath.FromSlash(rel)) {
+	// rel arrives canonical (adapter.Layout.Rewrite cleans it, #411 R1), so
+	// the unusable shapes are exactly these three: nothing, the cache
+	// entry's own root - a rename onto the staging directory itself - and
+	// an absolute path.
+	if rel == "" || rel == "." || filepath.IsAbs(filepath.FromSlash(rel)) {
 		return refuse("unusable destination path")
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(rel))

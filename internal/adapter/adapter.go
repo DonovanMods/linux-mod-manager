@@ -32,6 +32,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"path"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -136,6 +137,21 @@ func (l Layout) Applies() bool { return l.applies }
 // Rewrite maps one archive member to the cache-entry-relative path it takes
 // and reports whether it is kept. A member the Layout says nothing about
 // keeps its own name, so an adapter's table only lists what it MOVES.
+//
+// The destination is CANONICALISED here, once, with path.Clean (#411, R1):
+// "./out/a.dll", "out//a.dll", "out/./a.dll" and "out/a.dll/" are all the
+// same destination, and core's validator, its kept-member list, its plan
+// rewriter and its executor must every one of them see the same string -
+// the executor writes through filepath.Join, which cleans, so any half that
+// kept the adapter's raw spelling disagreed with the file that actually
+// appeared. Canonicalising at this single point is what makes "the
+// destination you get back is the destination core writes" a guarantee an
+// adapter author can rely on rather than an unstated precondition.
+//
+// A destination whose canonical form is UNUSABLE - empty, ".", absolute, or
+// escaping the cache entry with a leading ".." - is returned in that
+// canonical form and refused by core, which is the layer that owns the
+// write and can name the offending member in a typed error.
 func (l Layout) Rewrite(member string) (string, bool) {
 	if !l.applies {
 		return member, true
@@ -147,7 +163,7 @@ func (l Layout) Rewrite(member string) (string, bool) {
 	if dest == "" {
 		return "", false
 	}
-	return dest, true
+	return path.Clean(dest), true
 }
 
 // FileRoute says what happens to one deployable file. It is how "this file
