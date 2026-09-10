@@ -20,12 +20,8 @@
 // own TTL, same as a Cancelled plan always has.
 
 import { html } from "../render.js";
-import {
-  EXTERNAL_UPDATE_NOTE,
-  isoDate,
-  lockedNote,
-  modKey,
-} from "../modrows.js";
+import { EXTERNAL_UPDATE_NOTE, lockedNote, modKey } from "../modrows.js";
+import { displayVersion, displayUpdateTarget } from "../version.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** rowKey identifies one UpdateBatchPlan row - the same "source:id" key
@@ -113,7 +109,7 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
                 ? `will be skipped — ${lockedNote(u)}`
                 : u.installed_mod.external
                   ? `will be skipped — ${EXTERNAL_UPDATE_NOTE}`
-                  : `${u.installed_mod.version} → ${u.new_version}`;
+                  : `${displayVersion(u.installed_mod)} → ${displayUpdateTarget(u)}`;
               return html`
                 <li key=${key} class="plan__mod">
                   <label>

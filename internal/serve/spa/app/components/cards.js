@@ -8,12 +8,8 @@
 import { html, useState } from "../render.js";
 import { findingLabel } from "../verify.js";
 import { InlineJob } from "./jobprogress.js";
-import {
-  EXTERNAL_UPDATE_NOTE,
-  isoDate,
-  lockedNote,
-  modKey,
-} from "../modrows.js";
+import { EXTERNAL_UPDATE_NOTE, lockedNote, modKey } from "../modrows.js";
+import { displayVersion, displayUpdateTarget } from "../version.js";
 import { relativeTime } from "../relativetime.js";
 import { conflictLabel } from "../conflicts.js";
 
@@ -194,15 +190,11 @@ function UpdatesCard({ state, rows, error, onRetry, actions }) {
                   // the whitespace between those, and at this indent Prettier
                   // is free to break the line in the middle of the arrow -
                   // which puts a real newline into the rendered text (the trap
-                  // conflictLabel below documents). The version DISPLAY rule
-                  // (issue 269's approval note) is why the external form
-                  // exists: its version pair would otherwise be two 19-digit
-                  // Steam content ids, so it reads as the item's revision date
-                  // and an honest "newer" - the pair library.js renders for
-                  // the same row.
-                  const detail = external
-                    ? `${isoDate(u.installed_mod.updated_at) || "—"} → newer`
-                    : `${u.installed_mod.version} → ${u.new_version}`;
+                  // conflictLabel below documents). Both halves go through
+                  // version.js, so an external row reads as its revision date
+                  // and an honest "newer" rather than two 19-digit Steam
+                  // content ids (issue 269's version DISPLAY rule).
+                  const detail = `${displayVersion(u.installed_mod)} → ${displayUpdateTarget(u)}`;
                   return html`
                     <li key=${key} class="card__row">
                       ${

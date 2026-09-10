@@ -8,6 +8,8 @@
 // the join and the predicates pure is what makes that coverage mean
 // anything: a rendering bug and a join bug cannot hide behind each other.
 
+import { displayUpdateTarget } from "./version.js";
+
 /** The wire key a mod is addressed by everywhere but the URL (domain.ModKey:
  * "sourceID:modID") - core.ConflictModRef.Key and every /api/v1/updates row
  * key off it the same way. */
@@ -31,6 +33,12 @@ export function modKey(mod) {
  * verify.js#findingLabel does: two surfaces saying the same thing in two
  * places is two chances to drift. */
 export function lockedNote(update) {
+  // issue 269's version DISPLAY rule reaches even here: a LOCKED external row
+  // (nothing refuses `lmm mod lock` for one) holds Steam's 19-digit content
+  // id as its lock target, and "locked at v7987119735124793734" is the
+  // forbidden shape with a "v" in front of it. There is no readable version
+  // to name for such a row, so the bare word is the whole of the truth.
+  if (update.installed_mod?.external) return "locked";
   const version = update.locked_version || update.installed_mod?.version;
   return version ? `locked at v${version}` : "locked";
 }
@@ -92,17 +100,13 @@ export function buildRows(mods, updates, findings, conflicts) {
       // comment for the sibling case).
       loadOrder: index + 1,
       hasUpdate: Boolean(update),
-      updateTarget: update?.new_version ?? "",
+      // version.js#displayUpdateTarget, not the raw field: an external row's
+      // target is another Steam content id (issue 269's version DISPLAY rule).
+      updateTarget: displayUpdateTarget(update),
       // issue 269: an EXTERNAL mod is tracked, never deployed. The row carries
       // the flag verbatim from domain.InstalledMod so the badge, the hidden
       // actions and the deployable counts all read one fact.
       isExternal: Boolean(mod.external),
-      // The version SHOWN for an external row is its revision date: the
-      // version field holds Steam's 19-digit content id, which is the
-      // item's version identity and not a version anybody can read.
-      displayVersion: mod.external
-        ? isoDate(mod.updated_at) || "—"
-        : mod.version,
       hasHealthIssue: unhealthyIDs.has(mod.id),
       hasConflict: conflictKeys.has(key),
     };
@@ -159,17 +163,6 @@ export function sortRows(rows, sort) {
  */
 export function countExternal(mods) {
   return (mods ?? []).reduce((n, m) => n + (m.external ? 1 : 0), 0);
-}
-
-/**
- * isoDate renders a wire timestamp as a plain date, or "" when there is
- * none. Shared by the library row and the mod panel so both say the same
- * thing about the same item (issue 269).
- */
-export function isoDate(value) {
-  if (!value) return "";
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? "" : new Date(ms).toISOString().slice(0, 10);
 }
 
 /**

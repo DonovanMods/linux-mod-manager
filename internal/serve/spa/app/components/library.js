@@ -21,6 +21,7 @@ import {
   SORT_NAMES,
 } from "../modrows.js";
 import { mutationLabel, progressText } from "../progress.js";
+import { displayVersion } from "../version.js";
 import { AddModsMenu } from "./addmodsmenu.js";
 
 const FILTER_LABELS = {
@@ -546,11 +547,9 @@ export function Library({
                           }
                         </td>
                         <td class="col--version mono">
-                          ${row.displayVersion ?? row.version}${
-                            row.hasUpdate &&
-                            !row.isExternal &&
-                            html` → ${row.updateTarget}`
-                          }${row.hasUpdate && row.isExternal && html` → newer`}
+                          ${displayVersion(row)}${
+                            row.hasUpdate && html` → ${row.updateTarget}`
+                          }
                         </td>
                         <td class="col--author">${row.author || "—"}</td>
                         <td class="col--source mono">${row.source_id}</td>
