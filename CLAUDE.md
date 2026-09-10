@@ -35,10 +35,13 @@ Read these global guidance files before starting any development work:
 # Build the binary
 go build -o lmm ./cmd/lmm
 
-# Run all tests
-go test ./... -v
+# Run all tests (make, not a bare `go test`: the suite needs the Makefile's
+# TEST_TIMEOUT - Go's 10-minute per-binary default is shorter than cmd/lmm,
+# internal/core and internal/serve each take under -race)
+make test
+make test-race
 
-# Run tests for a specific package
+# Run tests for a specific package (pass -timeout for a slow one)
 go test ./internal/storage/db/... -v
 
 # Format code

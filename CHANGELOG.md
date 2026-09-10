@@ -1379,6 +1379,15 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   refused when `games.yaml` is read, naming the game and the field, instead
   of falling back to the working-directory behaviour this fixes.
 
+- **CI runs the test suite with the Makefile's timeout (#374).** The `test`
+  workflow invoked `go test -race ./...` directly, so it kept Go's
+  10-minute-per-binary default — the very limit `TEST_TIMEOUT` was added to
+  raise, since `cmd/lmm`, `internal/core` and `internal/serve` each run for
+  9–11 minutes under the race detector. A green branch could therefore fail
+  CI with `panic: test timed out after 10m0s` and no failing assertion
+  anywhere. The job now runs `make test-race`, so the gate and `make check`
+  share one timeout.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
