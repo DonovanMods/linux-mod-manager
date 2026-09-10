@@ -937,6 +937,17 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   own report says `via: env` for the same reason: that IS the key it will
   send.
 
+- **The web UI's browser E2E suite no longer flakes on a wait that stopped
+  asking (#367).** Thirteen waits in the suite used `chromedp.Poll`'s
+  default `requestAnimationFrame` mode, so a headless page that had
+  finished animating — or a tab the machine had throttled under load —
+  could stop scheduling frames and the wait would simply never evaluate
+  again, failing as a 30-second timeout from a test that was in fact
+  green. They all poll on a timer now, through one harness helper.
+  `TestE2E_LibraryRow_ToggleAndMenu` additionally waits for the browser
+  (not just the service) to have a mutation's answer before issuing the
+  next one; see #370 for the SPA behaviour that made the overlap matter.
+
 - **A failed update puts back the stock file it displaced (#369).** When a
   new version ships a file the old one did not, `lmm update` preserves
   whatever the game had at that path before deploying over it. If the

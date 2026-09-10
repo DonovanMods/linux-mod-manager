@@ -1070,7 +1070,7 @@ func TestE2E_Sources_CreateValidateFixSaveEditDelete(t *testing.T) {
 		chromedp.WaitVisible(`[data-testid="source-editor"]`, chromedp.ByQuery),
 		// getSourceDefinition's own fetch resolves asynchronously after the
 		// editor mounts - poll rather than reading .value immediately.
-		chromedp.Poll(`document.querySelector('.source-editor__textarea').value.includes('my-mods')`, nil),
+		pollUntil(`document.querySelector('.source-editor__textarea').value.includes('my-mods')`),
 	)
 	var loaded string
 	f.runInBrowser(t, chromedp.Value(`.source-editor__textarea`, &loaded, chromedp.ByQuery))
