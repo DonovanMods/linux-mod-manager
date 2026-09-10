@@ -459,7 +459,7 @@ func renderSnapshotRestoreResult(result *core.SnapshotRestoreResult) {
 		for _, m := range result.LeftInstalled {
 			names = append(names, snapshotModLabel(m.Name, m.SourceID, m.ModID))
 		}
-		fmt.Printf("  %d mod left installed but disabled: %s\n", len(names), strings.Join(names, ", "))
+		fmt.Printf("  %d mod(s) left installed but disabled: %s\n", len(names), strings.Join(names, ", "))
 	}
 
 	if len(result.OriginalsSkipped) > 0 {

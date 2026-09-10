@@ -360,10 +360,32 @@ func TestSnapshotRestore_LeavesAnOrphanedRow_SaysSo(t *testing.T) {
 	snapshotYes = true
 	out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
 
-	assert.Contains(t, out, "1 mod left installed but disabled: Latecomer",
+	assert.Contains(t, out, "1 mod(s) left installed but disabled: Latecomer",
 		"the count difference must be explained where it happens")
 
 	row, err := svc.GetInstalledMod(ctx, "src", "latecomer", game.ID, "default")
 	require.NoError(t, err, "the download and its row are deliberately kept")
 	assert.False(t, row.Enabled)
+}
+
+// TestSnapshotRestore_LeavesTwoOrphanedRows_SaysSoInThePlural is P1a review
+// finding F8: the #386 summary line read "2 mod left installed but disabled"
+// - singular for any count, where every neighbouring line in this renderer
+// uses "mod(s)".
+func TestSnapshotRestore_LeavesTwoOrphanedRows_SaysSoInThePlural(t *testing.T) {
+	svc, game := setupSnapshotTest(t)
+	ctx := context.Background()
+	_, err := svc.CreateSnapshot(ctx, game, "default", "known-good")
+	require.NoError(t, err)
+
+	seedSnapshotMod(t, svc, game, "latecomer", "Latecomer", "Data/latecomer.esp")
+	seedSnapshotMod(t, svc, game, "straggler", "Straggler", "Data/straggler.esp")
+	_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	snapshotYes = true
+	out := captureStdout(t, func() error { return doSnapshotRestore(ctx, svc, game, "known-good") })
+
+	assert.Contains(t, out, "2 mod(s) left installed but disabled: ",
+		"the summary must read like its neighbours at any count")
 }

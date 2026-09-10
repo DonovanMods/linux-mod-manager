@@ -975,7 +975,7 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   snapshot is correctly undeployed and dropped from the profile, but its
   download and its database row are deliberately kept — so `lmm list` counted
   one more mod than the restored profile had, with nothing said. The restore
-  summary now names them ("1 mod left installed but disabled: …"), and
+  summary now names them ("1 mod(s) left installed but disabled: …"), and
   `--json` carries an additive `left_installed` array.
 
 - **Declining a prompt exits 2, whichever command asked (#382).** `lmm --help`
