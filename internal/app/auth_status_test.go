@@ -275,3 +275,29 @@ func TestCredentialPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveAPIKeyDoesNotReadTheStoreWhenTheEnvironmentSuppliesTheKey is
+// review N8: ResolveAPIKey runs on the registration path, once per source
+// at every app.Open, and since #79 reading the store means decrypting a
+// credential. The environment wins outright (credentialVia), so the store
+// must not be touched at all when it answers.
+//
+// A row that will NOT decrypt is the proof: reading it produces D1's
+// error, so a call that returns the environment key with no error cannot
+// have read it.
+func TestResolveAPIKeyDoesNotReadTheStoreWhenTheEnvironmentSuppliesTheKey(t *testing.T) {
+	svc, dataDir := newSandboxedService(t)
+	src := nexusmods.New(nil, "")
+	svc.RegisterSource(src)
+	ctx := context.Background()
+	require.NoError(t, svc.SaveSourceToken(ctx, "nexusmods", "stored-but-doomed"))
+	corruptToken(t, dataDir, "nexusmods")
+
+	_, err := ResolveAPIKey(ctx, svc, src)
+	require.Error(t, err, "with no environment key, the damaged row is what it finds")
+
+	t.Setenv("NEXUSMODS_API_KEY", "envkey1234567890")
+	key, err := ResolveAPIKey(ctx, svc, src)
+	require.NoError(t, err, "the store is not consulted once the environment has answered")
+	assert.Equal(t, "envkey1234567890", key)
+}
