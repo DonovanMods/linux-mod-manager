@@ -69,7 +69,7 @@ func (s *Source) IndexStatus(ctx context.Context, community string) (source.Inde
 	if err := validateCommunity(community); err != nil {
 		return source.IndexStatus{}, err
 	}
-	wm, ok := s.usable(community)
+	wm, _, ok := s.usable(community)
 	if !ok {
 		return source.IndexStatus{GameID: community}, nil
 	}
@@ -88,7 +88,7 @@ func (s *Source) RefreshIndex(ctx context.Context, community string, force bool,
 	if err := validateCommunity(community); err != nil {
 		return source.IndexStatus{}, err
 	}
-	wm, present, err := s.ensureIndex(ctx, community, force, progress)
+	wm, _, present, err := s.ensureIndex(ctx, community, force, progress)
 	if !present {
 		return source.IndexStatus{GameID: community}, err
 	}
@@ -119,9 +119,11 @@ func (s *Source) statusFor(community string, wm watermark) source.IndexStatus {
 //
 // present reports whether there is a usable index AFTER the call, which is
 // the only thing a caller needs to decide between serving and failing.
-func (s *Source) ensureIndex(ctx context.Context, community string, force bool, progress source.IndexProgressFunc) (wm watermark, present bool, err error) {
+// rows is index.json already parsed when getting to this answer required
+// parsing it, and nil otherwise (T1 review #4).
+func (s *Source) ensureIndex(ctx context.Context, community string, force bool, progress source.IndexProgressFunc) (wm watermark, rows []indexRow, present bool, err error) {
 	if err := ctx.Err(); err != nil {
-		return watermark{}, false, err
+		return watermark{}, nil, false, err
 	}
 	// Per community rather than per source: a cold build for one community
 	// must not block a search of another that is already cached, and two
@@ -134,8 +136,8 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 	// inside its TTL is a pure read of three files, and making the most
 	// common call in the source contend with anything at all would be a
 	// cost paid on every query to fix a case that arises on a rebuild.
-	if current, usable := s.usable(community); usable && !force && s.now().Sub(time.Unix(current.FetchedAt, 0)) < indexTTL {
-		return current, true, nil
+	if current, rows, usable := s.usable(community); usable && !force && s.now().Sub(time.Unix(current.FetchedAt, 0)) < indexTTL {
+		return current, rows, true, nil
 	}
 
 	// From here a rebuild is possible, so the CROSS-PROCESS lock applies
@@ -144,21 +146,21 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 	// leaves one build's index.json addressing the other's packages.jsonl.
 	unlock, lockErr := s.store.lockCommunity(ctx, community)
 	if lockErr != nil {
-		if current, usable := s.usable(community); usable {
+		if current, rows, usable := s.usable(community); usable {
 			// Another lmm is rebuilding and we have a copy: serve it, and
 			// report the contention as the warning a stale index gets.
-			return current, true, lockErr
+			return current, rows, true, lockErr
 		}
-		return watermark{}, false, indexUnavailable(community, lockErr)
+		return watermark{}, nil, false, indexUnavailable(community, lockErr)
 	}
 	defer unlock()
 
 	// Re-read UNDER the lock. The process we waited for has very likely
 	// just built exactly the index we were about to fetch, and the whole
 	// value of waiting is not downloading it a second time.
-	current, usable := s.usable(community)
+	current, rows, usable := s.usable(community)
 	if usable && !force && s.now().Sub(time.Unix(current.FetchedAt, 0)) < indexTTL {
-		return current, true, nil
+		return current, rows, true, nil
 	}
 
 	refreshed, err := s.refresh(ctx, community, current, usable, progress)
@@ -167,11 +169,13 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 			// A failed refresh over a usable index is not an error: serve
 			// what is on disk and let the caller decide how loudly to say
 			// the copy is old.
-			return current, true, err
+			return current, rows, true, err
 		}
-		return watermark{}, false, err
+		return watermark{}, nil, false, err
 	}
-	return refreshed, true, nil
+	// A rebuild published new bytes, so whatever was parsed above describes
+	// the index that has just been replaced.
+	return refreshed, nil, true, nil
 }
 
 // refresh performs the conditional GET and, when the document has changed,
@@ -293,17 +297,22 @@ func project(p wirePackage) (packageRecord, indexRow) {
 	return rec, row
 }
 
-// usable reports the watermark of an index that can be searched right now.
+// usable reports the watermark of an index that can be searched right now,
+// AND the rows it had to parse to say so.
+//
 // The full check runs once per index generation per process: once the
 // resident copy has been loaded out of these bytes, re-reading index.json
-// on every query to re-answer the same question would buy nothing.
-func (s *Source) usable(community string) (watermark, bool) {
+// on every query to re-answer the same question would buy nothing - and
+// that is the case rows comes back nil for, because nothing was read.
+// Otherwise the rows verify parsed are handed on to residentFor rather
+// than thrown away and re-parsed (T1 review #4).
+func (s *Source) usable(community string) (watermark, []indexRow, bool) {
 	wm, ok := s.store.state(community)
 	if !ok {
-		return watermark{}, false
+		return watermark{}, nil, false
 	}
 	if s.residentMatches(community, wm.FetchedAt) {
-		return wm, true
+		return wm, nil, true
 	}
 	return s.store.verify(community)
 }

@@ -85,13 +85,13 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 	if err := validateCommunity(community); err != nil {
 		return source.SearchResult{}, err
 	}
-	wm, present, err := s.ensureIndex(ctx, community, false, nil)
+	wm, rows, present, err := s.ensureIndex(ctx, community, false, nil)
 	if !present {
 		return source.SearchResult{}, err
 	}
 	// err here is a refresh that failed over an index still worth serving:
 	// the stale copy answers the query rather than the user seeing nothing.
-	idx, err := s.residentFor(community, wm)
+	idx, err := s.residentFor(community, wm, rows)
 	if err != nil {
 		return source.SearchResult{}, indexUnavailable(community, err)
 	}
@@ -275,7 +275,14 @@ func (r *rowTerms) score(terms []string) float64 {
 // residentFor returns the loaded index for community, loading it if this is
 // the first search in this process or if a refresh has moved the watermark
 // since the last one.
-func (s *Source) residentFor(community string, wm watermark) (*residentIndex, error) {
+//
+// rows is index.json ALREADY PARSED, when the caller had to parse it to
+// decide the index was usable at all (T1 review #4). Reading the file
+// again to answer a question already answered one frame up was a third of
+// a warm search's wall clock on the largest community. nil means nothing
+// was parsed - a resident copy already matched, or a rebuild replaced the
+// bytes - and the file is read here.
+func (s *Source) residentFor(community string, wm watermark, rows []indexRow) (*residentIndex, error) {
 	s.mu.Lock()
 	if idx, ok := s.resident[community]; ok && idx.fetchedAt == wm.FetchedAt {
 		s.mu.Unlock()
@@ -283,11 +290,14 @@ func (s *Source) residentFor(community string, wm watermark) (*residentIndex, er
 	}
 	s.mu.Unlock()
 
-	loaded, err := s.store.loadIndex(community)
-	if err != nil {
-		return nil, err
+	if rows == nil {
+		loaded, err := s.store.loadIndex(community)
+		if err != nil {
+			return nil, err
+		}
+		rows = loaded.Rows
 	}
-	idx := newResidentIndex(wm.FetchedAt, loaded.Rows)
+	idx := newResidentIndex(wm.FetchedAt, rows)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

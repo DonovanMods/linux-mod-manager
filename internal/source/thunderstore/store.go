@@ -255,22 +255,28 @@ func (st *store) state(community string) (watermark, bool) {
 // Paid once per index generation per process (see Source.usable): the
 // resident copy that follows has already been read out of these same
 // bytes, so re-checking on every query would buy nothing.
-func (st *store) verify(community string) (watermark, bool) {
+// It RETURNS the rows it parsed (T1 review #4). Checking the index means
+// reading and parsing the whole of index.json, and the caller's very next
+// act is to build the search copy out of those same bytes - so parsing
+// them twice, once to answer "is this valid" and once to answer "what is
+// in it", was 97 ms and 8.22 MB of the largest community's warm search
+// spent computing an answer that was already on the stack.
+func (st *store) verify(community string) (watermark, []indexRow, bool) {
 	wm, ok := st.state(community)
 	if !ok {
-		return watermark{}, false
+		return watermark{}, nil, false
 	}
 	idx, err := st.loadIndex(community)
 	if err != nil {
-		return watermark{}, false
+		return watermark{}, nil, false
 	}
 	if idx.Generation == "" || idx.Generation != wm.Generation {
-		return watermark{}, false
+		return watermark{}, nil, false
 	}
 	if !st.packagesCarry(community, idx) {
-		return watermark{}, false
+		return watermark{}, nil, false
 	}
-	return wm, true
+	return wm, idx.Rows, true
 }
 
 // packagesCarry reports whether packages.jsonl is the file idx addresses:
