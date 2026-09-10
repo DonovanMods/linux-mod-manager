@@ -404,3 +404,30 @@ func TestCleanupEmptyDirs_StopsAtASymlinkedDirectoryPointingInsideBasePath(t *te
 		assert.NotZero(t, info.Mode()&os.ModeSymlink)
 	}
 }
+
+// TestCleanupEmptyDirs_EmptyRemovalSetTouchesNothing covers the case #415
+// is ultimately about, at its quietest: the mod root IS the game install
+// root, and nothing was removed. Trivially safe - the loop body never runs
+// - but it is the shape the old whole-tree sweep destroyed a game install
+// in, so it is worth a test rather than a claim (re-review nit 2).
+func TestCleanupEmptyDirs_EmptyRemovalSetTouchesNothing(t *testing.T) {
+	install := t.TempDir()
+	loaderDirs := []string{
+		filepath.Join("bin", "x64", "plugins"),
+		filepath.Join("r6", "scripts"),
+		filepath.Join("r6", "tweaks"),
+		filepath.Join("archive", "pc", "mod"),
+		filepath.Join("tools", "redmod", "mods"),
+	}
+	for _, dir := range loaderDirs {
+		require.NoError(t, os.MkdirAll(filepath.Join(install, dir), 0o755))
+	}
+
+	for _, removed := range [][]string{nil, {}} {
+		linker.CleanupEmptyDirs(install, removed)
+		for _, dir := range loaderDirs {
+			assert.DirExists(t, filepath.Join(install, dir))
+		}
+		assert.DirExists(t, install)
+	}
+}
