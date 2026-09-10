@@ -7,6 +7,7 @@ import { render } from "./render.js";
 import { html } from "./render.js";
 import { App } from "./components/app.js";
 import { createStore } from "./store.js";
+import { createSliceFence } from "./slicefence.js";
 import { parseLocation, onRouteChange, navigate } from "./router.js";
 import { currentTheme, setTheme } from "./theme.js";
 import {
@@ -127,13 +128,34 @@ function isCurrentHydration(seq) {
   return seq === hydrateSeq;
 }
 
-/** commitHydration writes patch into the store only while seq is still the
- * newest claim, and reports whether it did - so a caller with more work to
- * do after the write can stop instead of continuing to fetch for a route
- * nobody is looking at. */
-function commitHydration(seq, patch) {
+// slices is the SECOND fence, and it answers what hydrateSeq structurally
+// cannot (issue 370).
+//
+// hydrateSeq is about the ROUTE: it drops an answer fetched for a context
+// nobody is looking at any more. It says nothing about two loads of the
+// SAME slice for the SAME route, which is what a user clicking twice
+// produces - a row's Enabled checkbox re-hydrates the route while another
+// row's Lock reloads the library - and under the route fence alone both
+// commit, so the OLDER answer could land last and put the pre-lock library
+// back. slicefence.js makes each load claim its slices when it ISSUES its
+// requests and commit only the ones it is still the newest claim on.
+//
+// The two are independent and both apply: a write passes the route fence
+// first (is this context still on screen at all) and the per-key fence
+// second (is this still the freshest answer for each slice).
+const slices = createSliceFence(store);
+
+/** commitSlices writes into the store under BOTH fences: `patch` names
+ * top-level store slices and `errors` names fetchErrors entries, and each
+ * lands only while the route fence still holds AND `claim` is still the
+ * newest claim on its key. The return value is the ROUTE fence's answer -
+ * "is this context still on screen", the question every caller branches on
+ * (a caller with more work to do stops rather than keep fetching for a
+ * route nobody is looking at) - so it is not lowered merely because one
+ * slice was superseded by a fresher load of that slice. */
+function commitSlices(seq, claim, patch, errors) {
   if (!isCurrentHydration(seq)) return false;
-  store.set(patch);
+  slices.commit(claim, patch, errors);
   return true;
 }
 
@@ -152,13 +174,26 @@ async function hydrate(route) {
   const seq = beginHydration();
 
   if (route.view === "chooser") {
+    const claim = slices.claim(["status", "games"]);
     try {
       const status = await get("/api/v1/status");
-      if (!commitHydration(seq, { status, games: status.games, error: null }))
+      if (
+        !commitSlices(
+          seq,
+          claim,
+          { status, games: status.games, error: null },
+          {},
+        )
+      )
         return;
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
-      commitHydration(seq, { status: null, games: null, error: message });
+      commitSlices(
+        seq,
+        claim,
+        { status: null, games: null, error: message },
+        {},
+      );
       return;
     }
     await maybeRedirectFromChooser(store.get().games);
@@ -166,17 +201,18 @@ async function hydrate(route) {
   }
 
   const context = { game: route.game, profile: route.profile };
+  const statusClaim = slices.claim(["status", "games"]);
   try {
     const [status, allStatus] = await Promise.all([
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    const committed = commitHydration(seq, {
-      status,
-      games: allStatus.games,
-      error: null,
-      fetchErrors: { ...store.get().fetchErrors, status: null },
-    });
+    const committed = commitSlices(
+      seq,
+      statusClaim,
+      { status, games: allStatus.games, error: null },
+      { status: null },
+    );
     if (!committed) return;
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
@@ -187,12 +223,15 @@ async function hydrate(route) {
     // The fatal `error` slice is reserved for the FIRST load, where there
     // is nothing on screen yet to protect (the I3 rule, applied here).
     if (store.get().status) {
-      commitHydration(seq, {
-        fetchErrors: { ...store.get().fetchErrors, status: message },
-      });
+      commitSlices(seq, statusClaim, {}, { status: message });
       return;
     }
-    commitHydration(seq, { status: null, games: null, error: message });
+    commitSlices(
+      seq,
+      statusClaim,
+      { status: null, games: null, error: message },
+      {},
+    );
     return;
   }
 
@@ -210,6 +249,13 @@ async function hydrate(route) {
   // snapshot of every retained job and maintains it from there
   // (activity.js), so a per-route poll could only ever disagree with the
   // live stream about what the machine is doing.
+  const homeClaim = slices.claim([
+    "mods",
+    "updates",
+    "health",
+    "conflicts",
+    "snapshots",
+  ]);
   const [mods, updates, health, conflicts, snapshots] =
     await Promise.allSettled([
       get(scoped("/api/v1/mods", context)),
@@ -222,20 +268,24 @@ async function hydrate(route) {
       // tell "no snapshots" from "couldn't list them".
       get(scoped("/api/v1/snapshots", context)),
     ]);
-  commitHydration(seq, {
-    mods: settled(mods),
-    updates: settled(updates),
-    health: settled(health),
-    conflicts: settled(conflicts),
-    snapshots: settled(snapshots),
-    fetchErrors: {
+  commitSlices(
+    seq,
+    homeClaim,
+    {
+      mods: settled(mods),
+      updates: settled(updates),
+      health: settled(health),
+      conflicts: settled(conflicts),
+      snapshots: settled(snapshots),
+    },
+    {
       mods: failureMessage(mods),
       updates: failureMessage(updates),
       health: failureMessage(health),
       conflicts: failureMessage(conflicts),
       snapshots: failureMessage(snapshots),
     },
-  });
+  );
 }
 
 /**
@@ -268,24 +318,60 @@ async function hydrate(route) {
  */
 async function hydrateModPage(route, context, seq = hydrateSeq) {
   const key = `${route.sourceID}/${route.modID}`;
+  // The per-key fence (slices) covers what modPage.key cannot: two loads of
+  // the SAME mod page - the pair refreshAfterModSetting and onJobDone
+  // create - are equally capable of landing out of order, and this function
+  // is reached directly (no beginHydration) from both.
+  const pageClaim = slices.claim(["modPage"]);
   const reHydrating = store.get().modPage?.key === key;
   if (!reHydrating) {
-    commitHydration(seq, { modPage: { key, filesReport: null, error: null } });
+    commitSlices(
+      seq,
+      pageClaim,
+      { modPage: { key, filesReport: null, error: null } },
+      {},
+    );
   }
+  // ...and hands it back on every path that gives up before writing under
+  // it - a fetch that failed, a mod the user has arrowed away from, a route
+  // that has moved on. The silent one (a failed RE-hydrate, which
+  // deliberately leaves the page it could not refresh alone) is the one
+  // that bites: without the release, an older but
+  // SUCCESSFUL load that the abandoned one superseded is dropped for a
+  // claim that never wrote anything, and the page keeps the document from
+  // before both - issue 370's symptom, through its own fix. Only while
+  // nothing has been written under the claim: past that point releasing
+  // would put modPage back below this load's own write.
+  let pageWritten = !reHydrating;
+  const abandonPage = () => {
+    if (!pageWritten) slices.release(pageClaim);
+  };
 
   let filesReport;
   try {
     filesReport = await getModFiles(route.sourceID, route.modID, context);
   } catch (err) {
-    if (store.get().modPage?.key !== key) return;
-    if (reHydrating) return;
+    if (store.get().modPage?.key !== key) {
+      abandonPage();
+      return;
+    }
+    if (reHydrating) {
+      abandonPage();
+      return;
+    }
     const message = err instanceof ApiError ? err.message : String(err);
-    commitHydration(seq, {
-      modPage: { key, filesReport: null, error: message },
-    });
+    commitSlices(
+      seq,
+      pageClaim,
+      { modPage: { key, filesReport: null, error: message } },
+      {},
+    );
     return;
   }
-  if (store.get().modPage?.key !== key) return;
+  if (store.get().modPage?.key !== key) {
+    abandonPage();
+    return;
+  }
   // Both writes above and below pass the SAME fence the final one does
   // (MIN-2 of the closing wave's gate review). They were guarded by
   // modPage.key alone, which cannot see the case the counter exists for:
@@ -296,21 +382,28 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
   // extras by then, so they stay blank until something hydrates again.
   // Narrow, but it is the class C-1 closed everywhere else.
   if (
-    !commitHydration(seq, {
-      modPage: {
-        key,
-        filesReport,
-        error: null,
-        detail: null,
-        detailError: null,
-        versions: null,
-        versionsError: null,
-        updates: null,
+    !commitSlices(
+      seq,
+      pageClaim,
+      {
+        modPage: {
+          key,
+          filesReport,
+          error: null,
+          detail: null,
+          detailError: null,
+          versions: null,
+          versionsError: null,
+          updates: null,
+        },
       },
-    })
+      {},
+    )
   ) {
+    abandonPage();
     return;
   }
+  pageWritten = true;
 
   // updates joins the versions table against the ONE version
   // CheckGameUpdates would actually land this mod on (C1) - fetched
@@ -327,6 +420,19 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
   // same context - a second copy under another key is how two surfaces
   // come to disagree about one profile. That also means arriving here from
   // a cold deep link warms them for the "Back to library" that follows.
+  const extrasClaim = slices.claim([
+    "mods",
+    "health",
+    "conflicts",
+    // ...and this page's two supplementary reads under keys of their OWN,
+    // which is how a Retry of one of them (reloadModPageSlice) and this
+    // load come to fence each other at all: both write the same sub-field
+    // of modPage, and through the "modPage" slot alone neither can see the
+    // other. Namespaced so a sub-field key can never collide with a
+    // top-level slice name.
+    "modPage.detail",
+    "modPage.versions",
+  ]);
   const [detail, versions, updates, mods, health, conflicts] =
     await Promise.allSettled([
       getModDetail(route.sourceID, route.modID, context),
@@ -336,27 +442,44 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
       get(scoped("/api/v1/health", context)),
       get(scoped("/api/v1/conflicts", context)),
     ]);
-  if (store.get().modPage?.key !== key) return;
-  if (!isCurrentHydration(seq)) return;
-  store.set({
-    modPage: {
-      ...store.get().modPage,
-      detail: settled(detail),
-      detailError: failureMessage(detail),
-      versions: settled(versions),
-      versionsError: failureMessage(versions),
-      updates: settled(updates),
+  if (store.get().modPage?.key !== key) {
+    // The three shared documents were fetched and are being thrown away:
+    // hand their keys back rather than leaving Mission Control's own
+    // in-flight reload of them fenced out by a claim with nothing to
+    // write. pageClaim is NOT released - it has already written above.
+    slices.release(extrasClaim);
+    return;
+  }
+  // A Retry of detail/versions issued AFTER these requests went out owns
+  // its sub-field: leave it out of the patch, which merges onto the
+  // modPage already in the store, rather than writing an answer that was
+  // asked for earlier over one asked for later.
+  const fresh = (name, value, error) =>
+    slices.isCurrent(extrasClaim, `modPage.${name}`)
+      ? { [name]: value, [`${name}Error`]: error }
+      : {};
+  commitSlices(
+    seq,
+    // One commit, two claims: this page's own slot and the three shared
+    // documents, each claimed when ITS requests went out.
+    new Map([...pageClaim, ...extrasClaim]),
+    {
+      modPage: {
+        ...store.get().modPage,
+        ...fresh("detail", settled(detail), failureMessage(detail)),
+        ...fresh("versions", settled(versions), failureMessage(versions)),
+        updates: settled(updates),
+      },
+      mods: settled(mods) ?? store.get().mods,
+      health: settled(health) ?? store.get().health,
+      conflicts: settled(conflicts) ?? store.get().conflicts,
     },
-    mods: settled(mods) ?? store.get().mods,
-    health: settled(health) ?? store.get().health,
-    conflicts: settled(conflicts) ?? store.get().conflicts,
-    fetchErrors: {
-      ...store.get().fetchErrors,
+    {
       mods: failureMessage(mods),
       health: failureMessage(health),
       conflicts: failureMessage(conflicts),
     },
-  });
+  );
 }
 
 /**
@@ -375,21 +498,21 @@ async function reload(key, path) {
   // decides which document is fetched, never which route is on screen when
   // it comes back.
   const seq = hydrateSeq;
+  // ...and claims THIS slice, which is the other half (issue 370): the
+  // route fence cannot tell one load of `key` from another, so without a
+  // claim two overlapping reloads of the same slice both commit and the
+  // older answer can land last.
+  const claim = slices.claim([key]);
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
   };
   try {
     const value = await get(scoped(path, context));
-    commitHydration(seq, {
-      [key]: value,
-      fetchErrors: { ...store.get().fetchErrors, [key]: null },
-    });
+    commitSlices(seq, claim, { [key]: value }, { [key]: null });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    commitHydration(seq, {
-      fetchErrors: { ...store.get().fetchErrors, [key]: message },
-    });
+    commitSlices(seq, claim, {}, { [key]: message });
   }
 }
 
@@ -406,6 +529,7 @@ async function reload(key, path) {
  */
 async function reloadStatus() {
   const seq = hydrateSeq;
+  const claim = slices.claim(["status", "games"]);
   const context = {
     game: store.get().route.game,
     profile: store.get().route.profile,
@@ -415,16 +539,15 @@ async function reloadStatus() {
       get(scoped("/api/v1/status", context)),
       get("/api/v1/status"),
     ]);
-    commitHydration(seq, {
-      status,
-      games: allStatus.games,
-      fetchErrors: { ...store.get().fetchErrors, status: null },
-    });
+    commitSlices(
+      seq,
+      claim,
+      { status, games: allStatus.games },
+      { status: null },
+    );
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    commitHydration(seq, {
-      fetchErrors: { ...store.get().fetchErrors, status: message },
-    });
+    commitSlices(seq, claim, {}, { status: message });
   }
 }
 
@@ -1321,21 +1444,45 @@ async function setModConvert(sourceID, modID, enabled) {
  * affordance the four Mission Control reads already offer, applied to this
  * page's own pair. The primary read (ModFiles) has no slice retry of its
  * own; a failure there is the whole page's fatal state, retried by
- * revisiting the route (actions.reloadModPage). */
+ * revisiting the route (actions.reloadModPage).
+ *
+ * Under BOTH fences, like every other document writer in this module
+ * (issue 370). It checked `route.view` at entry and nothing at all at the
+ * commit, so an answer that resolved after the user had moved on was
+ * written into whatever page was on screen by then, and two Retry clicks
+ * committed in arrival order - this issue's own shape on a sub-field. The
+ * per-key claim is on the sub-field rather than on `modPage`, so a retry
+ * of one supplementary read fences the other retries of it AND the full
+ * page load that writes it (hydrateModPage claims the same two keys with
+ * its extras), without a retry of one read retiring a whole page load that
+ * is fetching the files as well. */
 async function reloadModPageSlice(key, fetcher) {
   const route = store.get().route;
   if (route.view !== "mod") return;
+  const seq = hydrateSeq;
+  const pageKey = store.get().modPage?.key;
+  const fenceKey = `modPage.${key}`;
+  const claim = slices.claim([fenceKey]);
   const context = { game: route.game, profile: route.profile };
+  // Both fences in the order commitSlices applies them - the route first
+  // (is this context still on screen), the key second (is this still the
+  // freshest answer for this sub-field) - written out here rather than
+  // through commitSlices, because this is a merge INTO modPage and a
+  // top-level slice write is the only shape commit() can express.
+  const write = (patch) => {
+    if (!isCurrentHydration(seq) || store.get().modPage?.key !== pageKey) {
+      slices.release(claim);
+      return;
+    }
+    if (!slices.isCurrent(claim, fenceKey)) return;
+    store.set({ modPage: { ...store.get().modPage, ...patch } });
+  };
   try {
     const value = await fetcher(route.sourceID, route.modID, context);
-    store.set({
-      modPage: { ...store.get().modPage, [key]: value, [`${key}Error`]: null },
-    });
+    write({ [key]: value, [`${key}Error`]: null });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({
-      modPage: { ...store.get().modPage, [`${key}Error`]: message },
-    });
+    write({ [`${key}Error`]: message });
   }
 }
 

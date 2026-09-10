@@ -3188,19 +3188,6 @@ func TestE2E_LibraryRow_ToggleAndMenu(t *testing.T) {
 			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
 				.querySelector("td.col--enabled input").click();
 		`, nil),
-		// Wait for the BROWSER to have the toggle's answer, not just the
-		// service (#367). toggleEnabled awaits its POST and then reloads
-		// /api/v1/mods, and require.Eventually below is satisfied by the DB
-		// row alone - so without this the test went on to click Lock while
-		// that reload was still in flight, leaving two overlapping loads of
-		// the same slice racing to commit. When the older one landed last
-		// it put the pre-lock library back, the lock badge never appeared,
-		// and the poll below ran out the harness's whole 30-second budget.
-		// Measured: 2 failures in 10 -race runs before this line, 20 in 20
-		// green after it. The aria-label is read rather than the checkbox's
-		// own `checked`, which the browser flips on the click itself and so
-		// says nothing about what the store holds.
-		pollUntil(`document.querySelector('input[aria-label="Enable Alpha Mod"]') !== null`),
 	)
 	require.Eventually(t, func() bool {
 		m, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
