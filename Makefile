@@ -11,7 +11,6 @@ LDFLAGS := -ldflags "-s -w -X main.buildDescribe=$(DESCRIBE)"
 GOCACHE_LOCAL := $(CURDIR)/.go-mod/cache
 # Trunk cache under project for sandbox-friendly lint
 TRUNK_CACHE_LOCAL := $(CURDIR)/.trunk-cache
-
 # Default target
 all: build
 
@@ -37,10 +36,13 @@ install:
 # TEST_TIMEOUT overrides Go's 10-minute default per test BINARY, which the
 # v2 suite has outgrown: under -race, cmd/lmm, internal/core and
 # internal/serve each run for 9-11 minutes (serve because it drives a real
-# headless browser). At the default, `make check` fails on a timeout that
-# says nothing about the code. 40m is generous headroom on purpose - it is a
-# ceiling for a hang, not a budget.
-TEST_TIMEOUT := 40m
+# headless browser, ~575s of it on an idle machine and rather more when a
+# second worktree is running its own suite). At the default, `make check`
+# fails with "panic: test timed out after 10m0s" and no failing assertion
+# anywhere - a red gate that says nothing about the code. 60m is generous
+# headroom on purpose: it is a ceiling for a hang, not a budget. `?=` so a
+# deliberately shorter run can override it on the command line.
+TEST_TIMEOUT ?= 60m
 
 ## test: Run tests (uses project GOCACHE for sandbox-friendly runs)
 test:
