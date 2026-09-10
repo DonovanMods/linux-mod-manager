@@ -1068,7 +1068,11 @@ switch` and `profile import` all discarded the download's result — so
   as already downloaded and installed into the profile from the cache entry
   that is already there — no fetch and no download — while "already
   installed" is reserved for rows the profile being imported into genuinely
-  has. `ImportPlan` gains an additive `already_cached` bucket, and both
+  has. The scan weighs EVERY other profile's row for the mod, so which one
+  answers does not depend on what the profiles are called: a friend's build
+  of mods you already own, held at another version by a profile that happens
+  to sort first, is still recognised as downloaded. `ImportPlan` gains an
+  additive `already_cached` bucket, and both
   frontends offer those mods as pending work rather than reporting a clean
   success over an empty profile. A tracked Steam Workshop item is copied as
   the tracking row it is, never fetched; `profile apply` learned the same

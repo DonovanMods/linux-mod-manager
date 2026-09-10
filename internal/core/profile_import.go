@@ -151,7 +151,16 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	// for exactly that reason. Errors from List/GetInstalledMods are
 	// ignored, matching doProfileImport exactly (a missing/unreadable
 	// profile simply contributes nothing).
-	elsewhereRows := make(map[string]domain.InstalledMod)
+	//
+	// EVERY other profile's row is collected, not just the first (P1a review
+	// F1): pm.List is filename order, so keeping the first hit made the
+	// answer to "is the version this document names already downloaded?"
+	// depend on what the other profiles happen to be CALLED - an imported
+	// build of mods you already own, held at a different version by an
+	// earlier-sorting profile, fell into NeedsRedownload and, with the
+	// source gone, back into #371's zero-row symptom. pickImportRow below
+	// picks among the candidates by what they can answer, not by order.
+	elsewhereRows := make(map[string][]domain.InstalledMod)
 	allProfiles, _ := pm.List(ctx, game.ID)
 	for _, p := range allProfiles {
 		if p.Name == profile.Name {
@@ -163,16 +172,18 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 			if _, inTarget := targetRows[key]; inTarget {
 				continue
 			}
-			if _, seen := elsewhereRows[key]; !seen {
-				elsewhereRows[key] = im
-			}
+			elsewhereRows[key] = append(elsewhereRows[key], im)
 		}
 	}
 
 	var installed, alreadyCached, needsRedownload, missing []domain.ModReference
 	storedFileIDs := make(map[string][]string)
 	cachedRows := make(map[string]domain.InstalledMod) // #371 - see ImportPlan.cachedRows
-	var priorVersions map[string]domain.InstalledMod   // #138 - see ImportPlan.priorVersions
+	// pickedElsewhere records which candidate row answered for each
+	// cross-profile mod, so the display stamping below describes the SAME
+	// row the classification used rather than an arbitrary one.
+	pickedElsewhere := make(map[string]domain.InstalledMod)
+	var priorVersions map[string]domain.InstalledMod // #138 - see ImportPlan.priorVersions
 	gameCache := s.GetGameCache(game)
 	for _, ref := range profile.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
@@ -211,9 +222,15 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 			continue
 		}
 
-		im, elsewhere := elsewhereRows[key]
+		candidates := elsewhereRows[key]
+		im := pickImportRow(candidates, ref, func(row domain.InstalledMod) bool {
+			return gameCache.Exists(game.ID, ref.SourceID, ref.ModID, row.Version)
+		})
+		if len(candidates) > 0 {
+			pickedElsewhere[key] = im
+		}
 		switch {
-		case !elsewhere:
+		case len(candidates) == 0:
 			missing = append(missing, ref)
 		case im.External:
 			// #371/#269: nothing to fetch and nothing to deploy - this
@@ -246,8 +263,8 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 
 	// #365: stamp the display facts every bucket's renderer needs, so no
 	// surface has to print a Workshop content id where a version goes.
-	displayRows := make(map[string]domain.InstalledMod, len(targetRows)+len(elsewhereRows))
-	for k, im := range elsewhereRows {
+	displayRows := make(map[string]domain.InstalledMod, len(targetRows)+len(pickedElsewhere))
+	for k, im := range pickedElsewhere {
 		displayRows[k] = im
 	}
 	for k, im := range targetRows {
@@ -272,6 +289,60 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		priorVersions:   priorVersions,
 		snapshot:        snapshot,
 	}, nil
+}
+
+// pickImportRow chooses which of a mod's rows from the OTHER saved profiles
+// answers PlanImport's cross-profile question: "is what this document names
+// already downloaded, or does this import have to fetch it?" (P1a review F1).
+//
+// The scan used to keep whichever row came first in profile-FILENAME order,
+// which made the answer depend on what the other profiles were called: a
+// profile holding an older version of the same mod, sorting before the one
+// holding the version the document names, sent the ref to NeedsRedownload
+// over bytes that were sitting in the cache - and with a delisted or offline
+// source, straight back to #371's zero-row symptom.
+//
+// So the pick is by what a row can ANSWER, best first:
+//
+//  1. an EXTERNAL row - there is nothing to fetch or deploy for it in any
+//     profile, so no other candidate can beat it;
+//  2. a row at the version this document names, whose cache entry is
+//     complete - the AlreadyCached bucket, the whole point of the scan;
+//  3. a row at that version with no usable cache entry - a redownload that
+//     can at least reuse the row's own FileIDs;
+//  4. a DEPLOYED row at some other version - the #138 drift case, whose
+//     live deployment the install has to Replace rather than install over;
+//  5. anything else.
+//
+// A ref with no version at all matches every row's version (the drift branch
+// cannot fire for it), so it simply prefers a cached row. Ties keep scan
+// order, which is itself deterministic - among equally-scoring rows the
+// classification is identical, so nothing observable depends on the choice.
+//
+// cached reports whether row's cache entry is complete; it is a parameter
+// rather than a cache lookup here so the rule stays a pure function of the
+// rows.
+func pickImportRow(rows []domain.InstalledMod, ref domain.ModReference, cached func(domain.InstalledMod) bool) domain.InstalledMod {
+	best := domain.InstalledMod{}
+	bestScore := -1
+	for _, row := range rows {
+		versionMatches := ref.Version == "" || row.Version == ref.Version
+		score := 0
+		switch {
+		case row.External:
+			score = 4
+		case versionMatches && cached(row):
+			score = 3
+		case versionMatches:
+			score = 2
+		case row.Deployed:
+			score = 1
+		}
+		if score > bestScore {
+			best, bestScore = row, score
+		}
+	}
+	return best
 }
 
 // ProfileImportOptions configures ApplyImport.

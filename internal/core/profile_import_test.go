@@ -1056,3 +1056,70 @@ func TestApplyImport_CrossProfileExternalMod_IsRecordedNotFetched(t *testing.T) 
 	assert.True(t, row.External, "the copied row must stay external")
 	assert.Equal(t, "/steam/workshop/content/1/111000111", row.ExternalPath)
 }
+
+// TestPlanImport_CrossProfileMod_ClassificationIgnoresProfileOrder is P1a
+// review finding F1: #371's cross-profile scan kept ONE row per mod - the
+// first profile config.ListProfiles returned, i.e. the alphabetically first
+// profile FILENAME. So whether the imported document's own version was found
+// in the cache depended on what the other profiles happened to be called: a
+// mod held at a different version by an earlier-sorting profile fell into
+// NeedsRedownload, and with no source registered that is a failure and, once
+// again, an imported profile with zero rows - #371's exact symptom.
+//
+// Three other profiles hold three different versions; the imported document
+// names 2.0.0 every time and only which profile holds it moves. All three
+// orderings must classify identically.
+func TestPlanImport_CrossProfileMod_ClassificationIgnoresProfileOrder(t *testing.T) {
+	// The other profiles, in config.ListProfiles' own (filename) order. Each
+	// case puts the WANTED version under a different one of them.
+	others := []string{"aaa", "mmm", "zzz"}
+	cases := []struct {
+		name    string
+		holders map[string]string // profile -> version it holds
+	}{
+		{"wanted version sorts first", map[string]string{"aaa": "2.0.0", "mmm": "1.0.0", "zzz": "3.0.0"}},
+		{"wanted version sorts middle", map[string]string{"aaa": "1.0.0", "mmm": "2.0.0", "zzz": "3.0.0"}},
+		{"wanted version sorts last", map[string]string{"aaa": "1.0.0", "mmm": "3.0.0", "zzz": "2.0.0"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFlowsTestService(t)
+			gameDir := t.TempDir()
+			game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+			pm := svc.NewProfileManager()
+			for _, p := range others {
+				_, err := pm.Create(context.Background(), game.ID, p)
+				require.NoError(t, err)
+				seedInstalledModUnderProfile(t, svc, game, p, "src", "alpha", "Alpha Overhaul", tc.holders[p], true,
+					map[string][]byte{"alpha-" + tc.holders[p] + ".esp": []byte("a")})
+			}
+
+			profile := &domain.Profile{
+				Name: "imported", GameID: game.ID,
+				Mods: []domain.ModReference{{SourceID: "src", ModID: "alpha", Version: "2.0.0"}},
+			}
+			data, err := config.ExportProfile(profile)
+			require.NoError(t, err)
+
+			// No source is registered, so a needless redownload cannot even
+			// be attempted: the bytes for 2.0.0 are cached under one of the
+			// other profiles and that is the whole point of the bucket.
+			plan, err := svc.PlanImport(context.Background(), game, data)
+			require.NoError(t, err)
+			assert.Len(t, plan.AlreadyCached, 1, "the cached 2.0.0 entry must be found whichever profile holds it")
+			assert.Empty(t, plan.NeedsRedownload, "nothing needs re-downloading: 2.0.0 is in the cache")
+
+			result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+			require.NoError(t, err)
+			assert.Equal(t, 1, result.Installed)
+			assert.Equal(t, 0, result.Failed, "warnings: %v", result.Warnings)
+
+			rows, err := svc.GetInstalledMods(context.Background(), game.ID, "imported")
+			require.NoError(t, err)
+			require.Len(t, rows, 1, "the imported profile must have its own installed_mods row")
+			assert.Equal(t, "2.0.0", rows[0].Version, "the row must record the version the document named")
+		})
+	}
+}
