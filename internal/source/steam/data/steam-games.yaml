@@ -79,6 +79,8 @@
 # mod browser and the community mod manager sync subscribed Workshop items
 # into the BepInEx plugins folder inside the game install. No NexusMods
 # game page exists for it, so steamworkshop is the only source.
+# Installing the BepInEx loader itself is a prerequisite lmm does not
+# manage yet (#359); the path below is where mods go once it is there.
 # https://store.steampowered.com/app/2393970/Human_Host/
 # https://steamcommunity.com/app/2393970/workshop/
 # https://steamcommunity.com/sharedfiles/filedetails/?id=3740140784
@@ -100,8 +102,11 @@
   nexus_id: cyberpunk2077
   mod_path: ""
 # Valheim - Unity/Mono; every mod is a BepInEx plugin dropped in
-# <install>/BepInEx/plugins. Installing the BepInEx loader itself is a
-# prerequisite lmm does not manage yet (#359), so no loader block here.
+# <install>/BepInEx/plugins.
+# Installing the BepInEx loader itself is a prerequisite lmm does not
+# manage yet (#359); the path below is where mods go once it is there.
+# There is no loader block to put it in yet, which is what
+# TestKnownGames_ValheimCarriesNoLoaderBlock watches for.
 # https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/
 # https://nodecraft.com/support/games/valheim/adding-plugins-to-your-valheim-server-using-bepinex
 "892970":
@@ -154,6 +159,8 @@
   mod_path: Subnautica2/Content/Paks/LogicMods
 # The Planet Crafter - Unity/Mono; mods are BepInEx plugins in
 # <install>/BepInEx/plugins.
+# Installing the BepInEx loader itself is a prerequisite lmm does not
+# manage yet (#359); the path below is where mods go once it is there.
 # https://www.nexusmods.com/planetcrafter/videos/1
 "1284190":
   slug: planet-crafter
@@ -163,6 +170,8 @@
 # Tainted Grail: The Fall of Avalon - Unity; the Nexus page ships both a
 # Mono and an IL2CPP BepInEx pack, and either way plugins go in
 # <install>/BepInEx/plugins.
+# Installing the BepInEx loader itself is a prerequisite lmm does not
+# manage yet (#359); the path below is where mods go once it is there.
 # https://www.nexusmods.com/taintedgrailthefallofavalon/mods/50
 "1466060":
   slug: tainted-grail-fall-of-avalon
@@ -221,6 +230,8 @@
   mod_path: Meteorite/Content/Paks/~mods
 # For The King - Unity/Mono; mods are BepInEx plugins in
 # <install>/BepInEx/plugins.
+# Installing the BepInEx loader itself is a prerequisite lmm does not
+# manage yet (#359); the path below is where mods go once it is there.
 # https://thunderstore.io/c/for-the-king/p/BepInEx/BepInExPack_ForTheKing/
 # https://www.nexusmods.com/fortheking/mods/3
 "527230":
