@@ -103,10 +103,24 @@ document (peak heap 26 MB), and the searchable projection is **2.6 %** of the de
 
 ```text
 <CacheDir>/_thunderstore/<community>/
-    index.json        the searchable projection + an offset table
-    packages.jsonl    one full package record per line, byte-addressed by index.json
-    watermark.json    {"last_modified": "...", "fetched_at": ..., "packages": N, "schema": 1}
+    index.json        {"schema": 2, "rows": [...], "generation": "<sha256>"}
+    packages.jsonl    one full package record per line, byte-addressed by index.json,
+                      ending in a {"generation": "<sha256>"} trailer line
+    watermark.json    {"last_modified": "...", "fetched_at": ..., "packages": N,
+                       "schema": 2, "generation": "<sha256>"}
+    .lock             the flock one build at a time is taken on
 ```
+
+> **Amended by the T1 fix wave (#408 review #2), schema 1 → 2.** The three files as
+> originally specified had no way to say they were the SAME build, and the ordering that
+> makes a torn commit read as cold is a rule about ONE process: two lmm processes
+> committing the same community can interleave into one build's `index.json` beside the
+> other's `packages.jsonl`, which the "last row's bytes fit inside the file" check cannot
+> see. The **generation** — the SHA-256 of the record stream, so a rebuild of the same
+> document is still byte-for-byte identical — appears in all three files, and `verify`
+> requires `packages.jsonl`'s trailer to name `index.json`'s own generation AND to begin
+> exactly where `index.json`'s last row ends AND to run to EOF. A cross-process `flock` on
+> `.lock`, held across the whole build and commit, stops the interleave arising at all.
 
 The `_`-prefixed root is `steamworkshop`'s convention and for its reason: `_` is unreachable
 as a game slug (`core.DeriveGameID` never emits one), so this tree cannot collide with the
@@ -114,8 +128,8 @@ game-scoped mod cache sharing the root. `<community>` is validated against
 `^[a-z0-9][a-z0-9-]{0,63}$` before it is joined onto a path — the slug comes from
 games.yaml, which the user edits.
 
-**`index.json`** is a JSON array of fixed-shape rows, not objects (the field names would be
-a third of the file):
+**`index.json`**'s `rows` is an array of fixed-shape rows, not objects (the field names
+would be a third of the file):
 
 ```text
 [full_name, description, categories[], date_updated, latest_version, is_deprecated, offset, length]
