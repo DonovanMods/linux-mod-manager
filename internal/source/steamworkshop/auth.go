@@ -73,6 +73,14 @@ func (s *Source) SetAPIKey(key string) {
 	s.client.keyID = keyFingerprint(key)
 }
 
+// IsAuthenticated reports whether a Steam Web API key is configured.
+//
+// `lmm source list`'s auth column reads it through app.authState, whose
+// fallback for a source that does not implement it is "authenticated" -
+// which for this source would be a flat lie in the overwhelmingly common
+// case of a user who has never asked for a key.
+func (s *Source) IsAuthenticated() bool { return s.client.http.IsAuthenticated() }
+
 // keyFingerprint is the first 8 hex of a key's SHA-256, or "" for no key -
 // the same shape app.AuthStatusReport uses to identify a stored credential
 // it must never carry (#79).

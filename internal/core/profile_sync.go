@@ -190,6 +190,19 @@ func (s *Service) PlanProfileSync(ctx context.Context, game *domain.Game, profil
 		}
 	}
 
+	// #365: stamp the display facts a bare ref carries for its renderers,
+	// so a Steam Workshop item that reaches any of the three buckets shows
+	// its revision date rather than the 19-digit content id its Version
+	// holds. installedByKey is the same set installedRefs was built from,
+	// keyed for stampRefDisplay.
+	installedByKey := make(map[string]domain.InstalledMod, len(installedMods))
+	for _, im := range installedMods {
+		installedByKey[domain.ModKey(im.SourceID, im.ID)] = im
+	}
+	s.stampRefDisplay(plan.ToAdd, installedByKey)
+	s.stampRefDisplay(plan.ToRemove, installedByKey)
+	s.stampRefDisplay(plan.ToUpdate, installedByKey)
+
 	plan.NoChanges = len(plan.ToAdd) == 0 && len(plan.ToRemove) == 0 && len(plan.ToUpdate) == 0
 
 	snapshot, err := s.currentInstalledSnapshot(ctx, game.ID, profileName)

@@ -39,9 +39,11 @@
     "id": "steamworkshop",
     "name": "Steam Workshop",
     "type": "built-in",
-    "auth": "none",
+    "auth": "required",
     "capabilities": [
-      "updates"
+      "search",
+      "updates",
+      "auth"
     ]
   },
   {

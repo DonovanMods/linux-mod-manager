@@ -1,0 +1,82 @@
+{
+  "profile": {
+    "name": "cargo-ships",
+    "game_id": "space-engineers-2",
+    "mods": [
+      {
+        "source_id": "steamworkshop",
+        "mod_id": "3617086610",
+        "locked": false,
+        "external": true,
+        "updated_at": "2026-08-27T12:00:00Z"
+      },
+      {
+        "source_id": "steamworkshop",
+        "mod_id": "3512001122",
+        "locked": false,
+        "external": true
+      }
+    ],
+    "link_method": "symlink",
+    "link_method_explicit": false,
+    "is_default": false,
+    "hooks": {
+      "install": {},
+      "uninstall": {}
+    },
+    "hooks_explicit": {
+      "install": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      },
+      "uninstall": {
+        "before_all": false,
+        "before_each": false,
+        "after_each": false,
+        "after_all": false
+      }
+    }
+  },
+  "installed": [
+    {
+      "source_id": "steamworkshop",
+      "mod_id": "3617086610",
+      "version": "7987119735124793734",
+      "locked": false,
+      "external": true,
+      "updated_at": "2026-08-27T12:00:00Z"
+    }
+  ],
+  "needs_redownload": [],
+  "missing": [
+    {
+      "source_id": "steamworkshop",
+      "mod_id": "3512001122",
+      "locked": false,
+      "external": true
+    }
+  ],
+  "workshop_collection": {
+    "source_id": "steamworkshop",
+    "collection_id": "2500900001",
+    "name": "Cargo Ships",
+    "game_id": "space-engineers-2",
+    "profile_name": "cargo-ships",
+    "items": [
+      {
+        "file_id": "3617086610",
+        "name": "Sample Workshop Item",
+        "tracked": true
+      },
+      {
+        "file_id": "3512001122",
+        "note": "subscribe in Steam and re-run `lmm import --workshop`"
+      }
+    ],
+    "tracked": 1,
+    "not_subscribed": 1
+  },
+  "exists": false
+}

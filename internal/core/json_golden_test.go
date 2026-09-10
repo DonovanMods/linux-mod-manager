@@ -1183,6 +1183,106 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #269 W2: the collection document `lmm profile import
+			// --workshop-collection` renders and rides on ImportPlan. One
+			// item of each kind - already adopted from a Steam subscription,
+			// and one the user has to subscribe to first.
+			"workshop_collection",
+			core.WorkshopCollection{
+				SourceID:     "steamworkshop",
+				CollectionID: "2500900001",
+				Name:         "Cargo Ships",
+				URL:          "https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001",
+				GameID:       "space-engineers-2",
+				ProfileName:  "cargo-ships",
+				Items: []core.WorkshopCollectionItem{
+					{
+						FileID: "3617086610", Name: "Sample Workshop Item",
+						URL:     "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+						Tracked: true,
+					},
+					{
+						FileID: "3512001122", Name: "Second Workshop Item",
+						URL:  "https://steamcommunity.com/sharedfiles/filedetails/?id=3512001122",
+						Note: "subscribe in Steam and re-run `lmm import --workshop`",
+					},
+				},
+				Tracked:       1,
+				NotSubscribed: 1,
+			},
+		},
+		{
+			// One row of the collection above, on its own: an item the user
+			// is NOT subscribed to, which is the shape carrying the note.
+			"workshop_collection_item",
+			core.WorkshopCollectionItem{
+				FileID: "3512001122",
+				Name:   "Second Workshop Item",
+				URL:    "https://steamcommunity.com/sharedfiles/filedetails/?id=3512001122",
+				Note:   "subscribe in Steam and re-run `lmm import --workshop`",
+			},
+		},
+		{
+			// The plan half: an ordinary ImportPlan whose refs are Workshop
+			// items, carrying the collection. Its buckets pin #365's two
+			// additive display fields - external, and the revision timestamp
+			// a renderer shows INSTEAD of the 19-digit content id in
+			// Version. Missing is nil, as import_plan's is, so the "[]" not
+			// "null" rule stays pinned here too.
+			"profile_import_workshop_plan",
+			core.ImportPlan{
+				Profile: &domain.Profile{
+					Name: "cargo-ships", GameID: "space-engineers-2",
+					Mods: []domain.ModReference{
+						{SourceID: "steamworkshop", ModID: "3617086610", External: true, UpdatedAt: fixedTime},
+						{SourceID: "steamworkshop", ModID: "3512001122", External: true},
+					},
+					LinkMethod: domain.LinkSymlink,
+				},
+				Installed: []domain.ModReference{
+					{SourceID: "steamworkshop", ModID: "3617086610", Version: "7987119735124793734", External: true, UpdatedAt: fixedTime},
+				},
+				NeedsRedownload: []domain.ModReference{},
+				Missing: []domain.ModReference{
+					{SourceID: "steamworkshop", ModID: "3512001122", External: true},
+				},
+				WorkshopCollection: &core.WorkshopCollection{
+					SourceID: "steamworkshop", CollectionID: "2500900001", Name: "Cargo Ships",
+					GameID: "space-engineers-2", ProfileName: "cargo-ships",
+					Items: []core.WorkshopCollectionItem{
+						{FileID: "3617086610", Name: "Sample Workshop Item", Tracked: true},
+						{FileID: "3512001122", Note: "subscribe in Steam and re-run `lmm import --workshop`"},
+					},
+					Tracked: 1, NotSubscribed: 1,
+				},
+			},
+		},
+		{
+			// The result half: a collection import installs NOTHING (Tier 3
+			// owns the download path), so every un-subscribed item is
+			// Skipped and the note says what to do about them.
+			"profile_import_workshop_result",
+			core.ProfileImportResult{
+				ProfileName: "cargo-ships",
+				Skipped:     1,
+				Notes:       []string{"1 item(s) are not subscribed: subscribe in Steam and re-run `lmm import --workshop`"},
+			},
+		},
+		{
+			// #365 on the OTHER leaking plan: a sync bucket holding an
+			// external ref. Same two fields, same reason - the renderer
+			// prints the date, never the content id.
+			"profile_sync_plan_external",
+			core.ProfileSyncPlan{
+				GameID:  "space-engineers-2",
+				Profile: "default",
+				ToAdd: []domain.ModReference{
+					{SourceID: "steamworkshop", ModID: "3617086610", Version: "7987119735124793734", External: true, UpdatedAt: fixedTime},
+				},
+				Names: map[string]string{"steamworkshop:3617086610": "Sample Workshop Item"},
+			},
+		},
+		{
 			// #269: an update lmm can REPORT but never apply. external says
 			// which kind of refusal this is; refusal is the existing field,
 			// reused rather than a second refusal-rendering path.
