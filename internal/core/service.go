@@ -1591,10 +1591,20 @@ func (s *Service) LoadGamesFromDisk() (map[string]*domain.Game, error) {
 // and the size and modification time it had when the in-memory snapshot
 // was loaded from it. Two of these comparing equal is ReloadGames' licence
 // to skip a re-read.
+//
+// The modification time is nanoseconds since the epoch rather than a
+// time.Time (P2 review Nit 11). time.Time's own documentation says not to
+// compare with ==: the struct carries a wall clock, an optional monotonic
+// reading and a *Location, so two values naming the same instant can
+// compare unequal. It happened to be safe here - os.Stat's ModTime() goes
+// through time.Unix, which attaches no monotonic reading and always uses
+// the same time.Local pointer - but that is a property of this one caller,
+// not of the type, and the next struct someone compares with == will not
+// inherit it. An int64 is unambiguously comparable.
 type gamesFileState struct {
 	exists  bool
 	size    int64
-	modTime time.Time
+	modTime int64
 }
 
 // statGamesFile fingerprints games.yaml. Any stat failure - including the
@@ -1606,7 +1616,7 @@ func statGamesFile(configDir string) gamesFileState {
 	if err != nil {
 		return gamesFileState{}
 	}
-	return gamesFileState{exists: true, size: info.Size(), modTime: info.ModTime()}
+	return gamesFileState{exists: true, size: info.Size(), modTime: info.ModTime().UnixNano()}
 }
 
 // ReloadGames re-reads games.yaml into this Service's in-memory game set
