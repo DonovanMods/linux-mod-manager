@@ -847,7 +847,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gives up without writing - a refresh whose fetch failed, an answer for a
   page you have already left - hands its slices back, so an older but
   successful answer still lands instead of being discarded for a claim that
-  wrote nothing.
+  wrote nothing. The full mod page's own Retry on its description/versions
+  reads joined the same rule: it committed whatever came back, so two
+  clicks landed in arrival order and an answer that arrived after you had
+  moved to another mod was written onto that one's page.
 
 - **A verify result handed to a caller is no longer the memo's own copy
   (#366).** #336's memo cloned the result it served from a cache HIT, but

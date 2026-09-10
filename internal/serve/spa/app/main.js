@@ -420,7 +420,19 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
   // same context - a second copy under another key is how two surfaces
   // come to disagree about one profile. That also means arriving here from
   // a cold deep link warms them for the "Back to library" that follows.
-  const extrasClaim = slices.claim(["mods", "health", "conflicts"]);
+  const extrasClaim = slices.claim([
+    "mods",
+    "health",
+    "conflicts",
+    // ...and this page's two supplementary reads under keys of their OWN,
+    // which is how a Retry of one of them (reloadModPageSlice) and this
+    // load come to fence each other at all: both write the same sub-field
+    // of modPage, and through the "modPage" slot alone neither can see the
+    // other. Namespaced so a sub-field key can never collide with a
+    // top-level slice name.
+    "modPage.detail",
+    "modPage.versions",
+  ]);
   const [detail, versions, updates, mods, health, conflicts] =
     await Promise.allSettled([
       getModDetail(route.sourceID, route.modID, context),
@@ -438,6 +450,14 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
     slices.release(extrasClaim);
     return;
   }
+  // A Retry of detail/versions issued AFTER these requests went out owns
+  // its sub-field: leave it out of the patch, which merges onto the
+  // modPage already in the store, rather than writing an answer that was
+  // asked for earlier over one asked for later.
+  const fresh = (name, value, error) =>
+    slices.isCurrent(extrasClaim, `modPage.${name}`)
+      ? { [name]: value, [`${name}Error`]: error }
+      : {};
   commitSlices(
     seq,
     // One commit, two claims: this page's own slot and the three shared
@@ -446,10 +466,8 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
     {
       modPage: {
         ...store.get().modPage,
-        detail: settled(detail),
-        detailError: failureMessage(detail),
-        versions: settled(versions),
-        versionsError: failureMessage(versions),
+        ...fresh("detail", settled(detail), failureMessage(detail)),
+        ...fresh("versions", settled(versions), failureMessage(versions)),
         updates: settled(updates),
       },
       mods: settled(mods) ?? store.get().mods,
@@ -1426,21 +1444,45 @@ async function setModConvert(sourceID, modID, enabled) {
  * affordance the four Mission Control reads already offer, applied to this
  * page's own pair. The primary read (ModFiles) has no slice retry of its
  * own; a failure there is the whole page's fatal state, retried by
- * revisiting the route (actions.reloadModPage). */
+ * revisiting the route (actions.reloadModPage).
+ *
+ * Under BOTH fences, like every other document writer in this module
+ * (issue 370). It checked `route.view` at entry and nothing at all at the
+ * commit, so an answer that resolved after the user had moved on was
+ * written into whatever page was on screen by then, and two Retry clicks
+ * committed in arrival order - this issue's own shape on a sub-field. The
+ * per-key claim is on the sub-field rather than on `modPage`, so a retry
+ * of one supplementary read fences the other retries of it AND the full
+ * page load that writes it (hydrateModPage claims the same two keys with
+ * its extras), without a retry of one read retiring a whole page load that
+ * is fetching the files as well. */
 async function reloadModPageSlice(key, fetcher) {
   const route = store.get().route;
   if (route.view !== "mod") return;
+  const seq = hydrateSeq;
+  const pageKey = store.get().modPage?.key;
+  const fenceKey = `modPage.${key}`;
+  const claim = slices.claim([fenceKey]);
   const context = { game: route.game, profile: route.profile };
+  // Both fences in the order commitSlices applies them - the route first
+  // (is this context still on screen), the key second (is this still the
+  // freshest answer for this sub-field) - written out here rather than
+  // through commitSlices, because this is a merge INTO modPage and a
+  // top-level slice write is the only shape commit() can express.
+  const write = (patch) => {
+    if (!isCurrentHydration(seq) || store.get().modPage?.key !== pageKey) {
+      slices.release(claim);
+      return;
+    }
+    if (!slices.isCurrent(claim, fenceKey)) return;
+    store.set({ modPage: { ...store.get().modPage, ...patch } });
+  };
   try {
     const value = await fetcher(route.sourceID, route.modID, context);
-    store.set({
-      modPage: { ...store.get().modPage, [key]: value, [`${key}Error`]: null },
-    });
+    write({ [key]: value, [`${key}Error`]: null });
   } catch (err) {
     const message = err instanceof ApiError ? err.message : String(err);
-    store.set({
-      modPage: { ...store.get().modPage, [`${key}Error`]: message },
-    });
+    write({ [`${key}Error`]: message });
   }
 }
 
