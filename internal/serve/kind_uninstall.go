@@ -40,8 +40,11 @@ func init() {
 // list).
 type uninstallPlanRequest struct {
 	// ModID is the installed mod's own ID, required. SourceID picks which
-	// source's copy when the same ID is installed from more than one; empty
-	// takes the first, exactly as `lmm uninstall <id>` always has.
+	// source's copy when the same ID is installed from more than one; since
+	// #373 an empty SourceID against an ambiguous ID is REFUSED rather than
+	// resolved to the first match, by PlanUninstall itself - so this
+	// frontend inherits the refusal (core.AmbiguousModError, which the
+	// error envelope carries with its candidate list).
 	ModID    string `json:"mod_id"`
 	SourceID string `json:"source_id,omitzero"`
 	// KeepCache and SkipHooks mirror `lmm uninstall --keep-cache/--no-hooks`.
