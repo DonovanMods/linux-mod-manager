@@ -205,7 +205,10 @@
 # <install>/modded/data, mirroring the layout of its own data/ tree. That
 # is the drop folder here; the older technique of replacing files inside
 # data/configs edits the game's own files and is not something lmm should
-# be pointed at.
+# be pointed at. Unlike ~mods and BepInEx/plugins, which are scanned
+# recursively, this folder is read by path: the archive's inner tree must
+# mirror the game's own data/ layout, so a mod packed inside a wrapper
+# folder extracts cleanly and then silently does nothing.
 # https://www.nexusmods.com/cubicodyssey/mods/16
 "3400000":
   slug: cubic-odyssey
