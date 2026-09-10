@@ -35,8 +35,9 @@ day-to-day use.
   so `lmm snapshot create|list|restore|delete` can bring a game back to a
   recorded arrangement — see [Snapshots](#snapshots)
 - **Sources are first-class, not hard-coded**: NexusMods, CurseForge, Steam
-  Workshop and Icarus are built in, and `directory`, `manifest` and `api`
-  sources are defined in YAML — with advertised capabilities, live validation
+  Workshop, Thunderstore and Icarus are built in, and `directory`, `manifest`
+  and `api` sources are defined in YAML — with advertised capabilities, live
+  validation
   (`lmm source validate --probe`), their own authentication, and graceful
   degradation where a capability is missing — see
   [Custom Sources](#custom-sources)
@@ -2131,6 +2132,34 @@ lmm import --workshop --game space-engineers-2   # Track subscribed Steam Worksh
 
 The third mode, `lmm import --workshop`, is described under [Steam Workshop](#steam-workshop). It is mutually exclusive with an archive argument and with `--skip-match`.
 
+### Thunderstore
+
+lmm can **search Thunderstore** — the mod host behind Lethal Company, Valheim, Risk of Rain 2 and most BepInEx-era Unity games — with no credential of any kind. Thunderstore needs no key for anything, so there is nothing to sign in to and `lmm source list` shows its auth as `n/a`.
+
+Map a game to it by community slug, which is the per-source game id:
+
+```yaml
+games:
+  - id: lethal-company
+    sources:
+      thunderstore: lethal-company # the slug in a thunderstore.io/c/<slug>/ URL
+```
+
+or `lmm game edit --source thunderstore=lethal-company`.
+
+**Search runs against a locally cached copy of the community index**, because Thunderstore publishes one unpaginated document per community and no per-query search endpoint at all. The first search for a community downloads that document and turns it into an index under `<data>/cache/_thunderstore/<community>/` — a few seconds and, for the largest community on the site, around 230 MB on disk. `lmm search` says so on stderr while it happens, so `--json` still writes exactly one document on stdout. After that:
+
+- the index is served **without any request at all** for six hours;
+- past that, a refresh is a conditional request that upstream usually answers "unchanged" in **zero bytes**;
+- if Thunderstore cannot be reached, the copy you have keeps answering searches rather than the source going dark;
+- results carry an **exact** total, so paging through them is exact and deep — Thunderstore is the first source that knows how many results it has.
+
+`--category` and `--tag` both filter Thunderstore's own categories (`Mods`, `BepInEx`, `Client-side`, …), case-insensitively and ANDed together. A deprecated package still appears, marked `Deprecated` among its categories, and never above a package that is not.
+
+The index directory is safe to delete at any time; the next search rebuilds it.
+
+> **Installing** from Thunderstore is not wired up yet — this release line adds the source, its index and search over it ([#360](https://github.com/DonovanMods/linux-mod-manager/issues/360)); package, version and dependency reads land with the next unit of the same issue.
+
 ### Steam Workshop
 
 lmm can **track** the Steam Workshop items you are already subscribed to, and **download** an item so it manages its own copy. Tracking reads Steam's own bookkeeping (`steamapps/workshop/appworkshop_<appid>.acf`) across every Steam library on the machine, records each installed item, and checks it for updates through Valve's keyless metadata API.
@@ -2423,6 +2452,7 @@ internal/
 │   ├── nexusmods/        # NexusMods GraphQL client
 │   ├── curseforge/       # CurseForge API client
 │   ├── steamworkshop/    # Steam Workshop: track subscribed items, search, collections, anonymous steamcmd download
+│   ├── thunderstore/     # Thunderstore: the locally cached community index and the search over it
 │   ├── icarus/           # Icarus: its mod catalog, plus the .pak/.exmodz merge compiler
 │   ├── custom/           # User-defined sources (directory, manifest, api)
 │   ├── steam/            # Steam library scanning (for `lmm game detect`)
@@ -2478,6 +2508,7 @@ lmm follows the XDG Base Directory specification. `--config` and `--data` overri
 | Mod Cache               | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)                                                                                                                                                                                      |
 | Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                                                                                                                                                                                                      |
 | Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                                                                                                                                                                                                        |
+| Thunderstore index      | `<data>/cache/_thunderstore/<community>/` (the community index searches run against; safe to delete, rebuilt on the next search)                                                                                                                                                      |
 | Snapshots               | `<data>/snapshots/<game-id>/` — one `<name>.json` per snapshot, plus `_originals/` (the files lmm has replaced; the only copy of them). A snapshot name may use letters, digits, `.`, `_` and `-`, and may not start with `.` or `_` — which is what keeps `_originals/` out of reach |
 | steamcmd home           | `<data>/cache/_steamworkshop/steamcmd-home/` (steamcmd's isolated `HOME`; safe to delete)                                                                                                                                                                                             |
 

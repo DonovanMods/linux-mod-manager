@@ -348,6 +348,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install loaders or write launch options, so the rest report and point at
   the setup.
 
+||||||| parent of 3d9d6df1 (docs: the Thunderstore source, its index and what it does not do yet (#408))
+
+- **Thunderstore is a built-in source, with search over a locally cached
+  community index (#360).** Thunderstore publishes one unpaginated document
+  per community and no per-query search endpoint at all, so lmm keeps a local
+  copy: the first search for a community downloads that document and turns it
+  into a split index under `<data>/cache/_thunderstore/<community>/` — a
+  searchable projection plus a byte-addressed detail store — and searches run
+  against that. `lmm search` prints one line on **stderr** while the one-time
+  build happens, so `--json` still writes exactly one document on stdout.
+
+  The index is served with no request at all for six hours; past that, a
+  refresh is a conditional request upstream usually answers "unchanged" in
+  zero bytes. It is written whole and published with its watermark last, so a
+  refresh interrupted halfway leaves an index that reads as absent — one
+  wasted rebuild — rather than one whose offsets address the previous
+  document, and a refresh that fails over a working index serves the copy you
+  have rather than taking the source away. Results carry an **exact** total,
+  so paging is exact and deep.
+
+  **No credential of any kind**: Thunderstore needs no key for search,
+  metadata or downloads, so this is the first built-in whose auth is reported
+  as "none" rather than as a login you have not done yet. Map a game to it by
+  community slug (`lmm game edit --source thunderstore=lethal-company`).
+
+  Installing from Thunderstore is not wired up yet — this adds the source, its
+  index and search; package, version and dependency reads follow in the same
+  issue.
+
 - **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
   (#400).** Starting a job answered `{"job_id"}` while `GET /api/v1/jobs`
   and `GET /api/v1/jobs/{id}` answered `{"id"}` — the same entity under two
