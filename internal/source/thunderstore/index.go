@@ -59,7 +59,9 @@ type wireVersion struct {
 // IndexStatus implements source.LocalIndexSource: what is cached for this
 // community, if anything. It runs the FULL validity check - a frontend
 // asking "what have I got" is exactly where a truncated index should be
-// reported as absent rather than as an index.
+// reported as absent rather than as an index - except once the resident
+// copy has already been loaded out of those same bytes, when there is
+// nothing left to re-check (see usable).
 func (s *Source) IndexStatus(ctx context.Context, community string) (source.IndexStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return source.IndexStatus{}, err
@@ -67,7 +69,7 @@ func (s *Source) IndexStatus(ctx context.Context, community string) (source.Inde
 	if err := validateCommunity(community); err != nil {
 		return source.IndexStatus{}, err
 	}
-	wm, ok := s.store.verify(community)
+	wm, ok := s.usable(community)
 	if !ok {
 		return source.IndexStatus{GameID: community}, nil
 	}
