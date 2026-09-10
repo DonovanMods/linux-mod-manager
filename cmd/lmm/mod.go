@@ -663,7 +663,21 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
 	fmt.Printf("%s\n", colorHeader(mod.Name))
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(mod.Version), mod.Author)
+	// #269: an external item's catalog Version is Steam's 19-digit content
+	// id. The header shows the revision date; the labelled "Steam content
+	// id" line in the Managed-by-Steam block below is where the manifest
+	// belongs, and it is the ONLY place it appears.
+	headerVersion := mod.Version
+	switch {
+	case installedInfo != nil && installedInfo.External:
+		headerVersion = displayRevision(installedInfo.UpdatedAt)
+	case sourceIsWorkshop(svc, mod.SourceID) && !mod.UpdatedAt.IsZero():
+		// Not adopted: there is no installed row to carry External, and no
+		// "Installed:" line below either - so without this branch the header
+		// is the only version text on screen and it is the forbidden one.
+		headerVersion = displayRevision(mod.UpdatedAt)
+	}
+	fmt.Printf("ID: %s  Version: %s  Author: %s\n", mod.ID, colorCyan(headerVersion), mod.Author)
 	if mod.Category != "" {
 		fmt.Printf("Category: %s\n", mod.Category)
 	}
@@ -718,11 +732,9 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 			// Version field holds Steam's 19-digit content id, which is the
 			// item's version identity and not a version anybody can read.
 			// The content id is still shown, labelled as itself, below.
-			revision := "unknown"
-			if !installedInfo.UpdatedAt.IsZero() {
-				revision = installedInfo.UpdatedAt.Format("2006-01-02")
-			}
-			fmt.Printf("Installed: revision of %s (profile: %s)\n", colorCyan(revision), installedInfo.Profile)
+			// Same displayRevision the header above reads, so the two lines
+			// cannot word the same instant differently.
+			fmt.Printf("Installed: %s (profile: %s)\n", colorCyan(displayRevision(installedInfo.UpdatedAt)), installedInfo.Profile)
 		} else {
 			fmt.Printf("Installed: v%s (profile: %s)\n", colorCyan(installedInfo.Version), installedInfo.Profile)
 		}

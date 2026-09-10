@@ -1,7 +1,7 @@
 ============================================================
 Sample Workshop Item
 ============================================================
-ID: 3617086610  Version:   Author: 76561198000000000
+ID: 3617086610  Version: revision of 2025-12-03  Author: 76561198000000000
 Category: Blueprint
 URL: https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610
 

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -685,19 +684,4 @@ func workshopEntryLine(e core.WorkshopAdoptEntry) string {
 		line += " - " + e.Note
 	}
 	return line
-}
-
-// workshopRevisionDate formats a Workshop item's revision timestamp as a
-// plain date. Empty for a record that carries none.
-//
-// UTC, not local: `lmm mod show` renders the same instant off a .UTC() time
-// and the SPA renders it through toISOString, so a local-time date here
-// would show one item as two different dates on two surfaces for any user
-// east of about UTC+11:30 (review Minor 7 - which is also why the test
-// asserting "2025-12-03" only passed in the reviewer's timezone).
-func workshopRevisionDate(unix int64) string {
-	if unix <= 0 {
-		return ""
-	}
-	return time.Unix(unix, 0).UTC().Format("2006-01-02")
 }

@@ -121,6 +121,12 @@ func setupWorkshopCLI(t *testing.T) (*core.Service, *domain.Game, *cliWorkshopSo
 			Mod: domain.Mod{
 				ID: "3617086610", SourceID: "steamworkshop", Name: "Sample Workshop Item",
 				Author: "76561198000000000", Category: "Blueprint",
+				// The live source stamps the item's 19-digit content id here
+				// (steamworkshop/client.go#modFromDetails), so the fixture must
+				// too: a catalog document with an EMPTY Version is a state
+				// production never produces, and a golden recorded against one
+				// cannot see a surface printing the manifest as a version.
+				Version:   "7987119735124793734",
 				Summary:   "An item subscribed in the Steam client.",
 				SourceURL: "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
 				UpdatedAt: time.Unix(1764767935, 0).UTC(),
@@ -492,4 +498,50 @@ func TestProfileApply_NamesTheWorkshopItemsItLeavesActive(t *testing.T) {
 	})
 	assert.Contains(t, out, "1 Steam Workshop item(s) stay active regardless of profile")
 	assert.Contains(t, out, "manage subscriptions in the Steam client")
+}
+
+// TestModShow_HeaderShowsTheRevisionDateNotTheContentID: the approval note
+// names this surface by hand. The catalog document's Version is Steam's
+// 19-digit content id (steamworkshop/client.go#modFromDetails), so printing
+// it in the header's "Version:" slot is the forbidden shape - and it appeared
+// there alongside the correctly labelled "Steam content id" line below, the
+// same twice-on-screen defect the mod panel and the mod page had.
+func TestModShow_HeaderShowsTheRevisionDateNotTheContentID(t *testing.T) {
+	showWorkshopItem := func(t *testing.T, svc *core.Service, game *domain.Game) string {
+		t.Helper()
+		old := modProfile
+		modProfile = "default"
+		t.Cleanup(func() { modProfile = old })
+		return captureStdout(t, func() error {
+			return doModShow(context.Background(), svc, game, "3617086610")
+		})
+	}
+
+	t.Run("adopted", func(t *testing.T) {
+		svc, game, _, _ := setupWorkshopCLI(t)
+		withWorkshopImportFlags(t, false, true)
+		require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+
+		out := showWorkshopItem(t, svc, game)
+		assert.NotContains(t, out, "Version: 7987119735124793734",
+			"the header must not print the content id in the slot a version goes")
+		assert.Contains(t, out, "2025-12-03", "the header shows the revision date instead")
+		assert.Contains(t, out, "Steam content id: 7987119735124793734",
+			"the manifest still appears once, labelled, where the design put it")
+	})
+
+	// The item the user has NOT adopted has no installed row to carry
+	// External and prints no "Installed:" line, so the header is the only
+	// version text on screen - and the catalog document's Version is the
+	// content id. Without the source-capability branch this case shows the
+	// forbidden shape with nothing else to correct it.
+	t.Run("not adopted", func(t *testing.T) {
+		svc, game, _, _ := setupWorkshopCLI(t)
+
+		out := showWorkshopItem(t, svc, game)
+		assert.NotContains(t, out, "7987119735124793734",
+			"an un-adopted Workshop item names the content id nowhere at all")
+		assert.Contains(t, out, "revision of 2025-12-03")
+		assert.NotContains(t, out, "Installed:")
+	})
 }
