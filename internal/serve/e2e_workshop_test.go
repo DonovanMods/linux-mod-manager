@@ -249,6 +249,21 @@ func TestE2E_Workshop_FullModPageHidesRelinkAndRollback(t *testing.T) {
 	assert.Contains(t, page, "Managed by Steam")
 	assert.NotContains(t, page, "Re-link…", "there is no link to move")
 	assert.NotContains(t, page, "Roll back", "lmm never held a previous copy")
+
+	// N2: the same rule the slide-over already keeps for the SAME mod. This
+	// page builds its own settingsRow literal rather than a modrows.js row,
+	// so it never carried `external` and went on offering an "Auto" update
+	// policy SetModUpdatePolicy refuses server-side - the present-and-refused
+	// shape this page's own ManagedBySteam block argues against.
+	var options []string
+	f.runInBrowser(t,
+		chromedp.Evaluate(`
+			Array.from(document.querySelectorAll(".mod-page .slide-over__settings select option"))
+				.map((o) => o.value);
+		`, &options),
+	)
+	assert.Equal(t, []string{"notify", "pinned"}, options,
+		"the two policies that mean something for an item Steam owns")
 	assert.Empty(t, f.BrowserErrors())
 }
 

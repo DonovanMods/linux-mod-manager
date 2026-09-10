@@ -144,6 +144,12 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     locked: Boolean(settingsSource.locked),
     locked_version: settingsSource.locked_version,
     update_policy: settingsSource.update_policy,
+    // issue 269: ModSettingsControls hides the "auto" policy on row.external,
+    // which the slide-over gets for free from its modrows.js row. This page
+    // builds its own literal, so the flag has to be carried across
+    // explicitly - without it the two surfaces disagreed about the same mod,
+    // and this one offered a policy SetModUpdatePolicy refuses server-side.
+    external: Boolean(settingsSource.external),
   };
 
   const findings = findingsFor(state.health, modID);
