@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -478,9 +479,15 @@ func (s *Service) verifyMemoized(ctx context.Context, game *domain.Game, profile
 		if hit := s.verifyMemoLookup(key, fingerprint); hit != nil {
 			// A copy, with the ORIGINAL CheckedAt: the answer really was
 			// computed then, and a surface saying "unchanged since ..."
-			// needs that moment, not this one. Findings are shared - core
-			// never mutates a returned result, and neither may a caller.
+			// needs that moment, not this one. Findings is cloned rather
+			// than shared: *hit is a shallow copy, so without this every
+			// hit would hand out the stored entry's own backing array -
+			// and the caller that ran the original verify holds it too.
+			// Nothing outside core writes to it today, but "nobody
+			// appends to this slice" is a comment, and one allocation per
+			// hit removes the class instead (review N6).
 			cached := *hit
+			cached.Findings = slices.Clone(hit.Findings)
 			cached.Cached = true
 			return &cached, nil
 		}

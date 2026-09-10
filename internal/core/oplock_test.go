@@ -112,3 +112,32 @@ func TestBeginOp_WithoutALockPathIsUnchanged(t *testing.T) {
 	rb()
 	assert.False(t, errors.Is(err, ErrOperationInProgress))
 }
+
+// TestAcquireOpLock_ContentionRespectsContextCancellation covers the
+// branch TestBeginOp_CrossProcessLockReleasesOnContextCancel does not: the
+// `case <-ctx.Done()` INSIDE the bounded wait. A caller cancelled while
+// queueing behind another lmm must get ctx.Err() and get it promptly - not
+// an OperationInProgressError (which would report a refusal that the
+// caller's own cancellation caused), and not the full opLockWait (which
+// would be a cancellation the wait ignored).
+func TestAcquireOpLock_ContentionRespectsContextCancellation(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), ".oplock")
+	holder := newLockedOpsService(t, lockPath)
+	release, err := holder.beginOp(context.Background())
+	require.NoError(t, err)
+	defer release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	started := time.Now()
+	lock, err := acquireOpLock(ctx, lockPath)
+	waited := time.Since(started)
+
+	require.Error(t, err)
+	assert.Nil(t, lock, "a failed acquire hands back no descriptor to release")
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.NotErrorIs(t, err, ErrOperationInProgress,
+		"the caller's own cancellation is not another process refusing it")
+	assert.Less(t, waited, opLockWait, "and the wait ends at the cancellation, not at the deadline")
+}

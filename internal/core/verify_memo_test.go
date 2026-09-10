@@ -192,3 +192,28 @@ func TestVerify_MemoMissesAfterAnOutOfProcessChecksumBackfill(t *testing.T) {
 	assert.False(t, after.Cached, "a checksum backfill changes what verify reads, so it must invalidate the memo")
 	assert.Zero(t, after.Warnings, "and the repaired state is what the surface reports from then on")
 }
+
+// TestVerify_MemoHitDoesNotShareItsFindingsSlice: a hit is a shallow copy
+// of the stored entry, so without a clone every caller - and the one that
+// ran the original verify - would hold the same backing array. Nothing
+// outside core writes to Findings today, which is why the review filed
+// this Minor; the guard was a comment, and this makes it a test.
+func TestVerify_MemoHitDoesNotShareItsFindingsSlice(t *testing.T) {
+	svc, game := newVerifyTestServiceWithFiles(t, 3)
+
+	first := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.False(t, first.Cached)
+	require.NotEmpty(t, first.Findings)
+
+	hit := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.True(t, hit.Cached)
+	require.Equal(t, first.Findings, hit.Findings)
+
+	// A caller mutating what it was handed cannot reach the memo, nor the
+	// result of any other caller.
+	hit.Findings[0].Status = "clobbered"
+	again := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.True(t, again.Cached)
+	assert.NotEqual(t, "clobbered", again.Findings[0].Status, "the memo kept its own copy")
+	assert.NotEqual(t, "clobbered", first.Findings[0].Status, "and so did the original caller")
+}
