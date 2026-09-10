@@ -1703,3 +1703,77 @@ func TestE2E_ManualAdd_CuratedRowAddsWithTheAppIDAlone(t *testing.T) {
 		"the curated map only - nothing the user was made to invent")
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
+
+// TestE2E_AuthInstructionsGetTheirOwnLineAndAreNotClipped is #376's
+// sibling, #377: `setup-auth__instructions` sat inside the non-wrapping
+// `.setup-auth__login` flex row, where its own `flex-basis: 100%` cannot
+// force a line - a flex-basis only breaks a line in a WRAPPING container.
+// So the paragraph became one more item on an over-full single line and
+// simply overflowed: at 1280-1400px the Nexus Mods row's instructions read
+// "…3. C" and stopped at the viewport edge, and the Log in button beside
+// them was squeezed onto two lines.
+//
+// This is the one screen that tells a first-time user where to get a
+// secret, and - for the Steam Web API key - that pasting somebody else's
+// is not allowed, so a clipped sentence is a real loss. The existing
+// coverage only asserted the element EXISTS, which is why nothing caught
+// it; these assertions are about what the browser lays out.
+func TestE2E_AuthInstructionsGetTheirOwnLineAndAreNotClipped(t *testing.T) {
+	f := newE2EWorkshopTier2Fixture(t, nil)
+
+	type box struct {
+		Left        float64 `json:"left"`
+		Top         float64 `json:"top"`
+		Right       float64 `json:"right"`
+		Bottom      float64 `json:"bottom"`
+		ScrollWidth float64 `json:"scrollWidth"`
+		ClientWidth float64 `json:"clientWidth"`
+		WhiteSpace  string  `json:"whiteSpace"`
+		ParentClass string  `json:"parentClass"`
+	}
+	measure := func(sel string) string {
+		return `(() => {
+			const el = document.querySelector(` + "`" + sel + "`" + `);
+			if (!el) return null;
+			const r = el.getBoundingClientRect();
+			return {
+				left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+				scrollWidth: el.scrollWidth, clientWidth: el.clientWidth,
+				whiteSpace: getComputedStyle(el).whiteSpace,
+				parentClass: el.parentElement.className,
+			};
+		})()`
+	}
+
+	var instructions, envVar, field, form box
+	var viewport float64
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("auth")),
+		chromedp.WaitVisible(`[data-testid="auth-instructions-steamworkshop"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`window.innerWidth`, &viewport),
+		chromedp.Evaluate(measure(`[data-testid="auth-instructions-steamworkshop"]`), &instructions),
+		chromedp.Evaluate(measure(`.setup-auth__row[data-source="steamworkshop"] .setup-auth__env-var`), &envVar),
+		chromedp.Evaluate(measure(`.setup-auth__row[data-source="steamworkshop"] input[type="password"]`), &field),
+		chromedp.Evaluate(measure(`.setup-auth__row[data-source="steamworkshop"] .setup-auth__login`), &form),
+	)
+
+	require.NotZero(t, viewport)
+
+	assert.LessOrEqual(t, instructions.Right, viewport,
+		"the instructions must end inside the viewport, not run off its right edge")
+	assert.LessOrEqual(t, instructions.ScrollWidth, instructions.ClientWidth+1,
+		"and must not be clipped by their own box either")
+	assert.GreaterOrEqual(t, instructions.Top, field.Bottom,
+		"they take a line of their own UNDER the login controls, which is what the CSS says they are for")
+	assert.NotContains(t, instructions.ParentClass, "setup-auth__login",
+		"a flex-basis of 100% only forces a line in a wrapping container; .setup-auth__login does not wrap")
+	assert.Equal(t, "pre-line", instructions.WhiteSpace,
+		"the source prints its steps as a numbered list on separate lines - the web must not collapse them into one run-on sentence")
+
+	assert.LessOrEqual(t, envVar.Right, viewport,
+		"the environment-variable hint must stay on screen too")
+	assert.LessOrEqual(t, form.ScrollWidth, form.ClientWidth+1,
+		"with the paragraph out of it, the login row's own items fit - the Log in button is no longer squeezed onto two lines")
+	assert.Empty(t, f.BrowserErrors())
+}

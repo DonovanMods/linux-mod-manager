@@ -861,6 +861,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI's API-key instructions are no longer cut off (#377).** On
+  **Setup → Authentication**, each source's setup steps — where to get the
+  key, and for the Steam Web API key the rule that pasting someone else's is
+  not allowed — sat inside the login row beside a ~190px field, in a
+  container that does not wrap. The paragraph simply ran off the right edge
+  of the window at a normal desktop width (`…3. C` and then nothing), and
+  squeezed the **Log in** button onto two lines. The hint and the
+  instructions now take a line of their own under the controls they belong
+  to, and the source's numbered steps keep their line breaks instead of
+  being collapsed into one run-on sentence.
+
 - **The web UI now sees games the CLI adds, edits or removes while it is
   running (#376).** `lmm serve` read `games.yaml` once, at startup, so a
   game added by `lmm game add`, a source mapping changed by `lmm game edit`

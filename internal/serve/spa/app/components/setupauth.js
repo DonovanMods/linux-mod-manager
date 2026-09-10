@@ -224,37 +224,45 @@ function AuthSourceRow({ source, onChanged }) {
                 >
                   ${busy ? "Checking…" : "Log in"}
                 </button>
-                ${
-                  // M-1/D-3: this was a PLACEHOLDER, in a ~190px field on a
-                  // ~900px row - visibly truncated to "or set NEXUSMODS_API_KE"
-                  // and gone entirely the moment the user typed. It is the
-                  // only place the UI names the variable, and the README
-                  // says it is shown beside the field, so it is text now.
-                  source.env_var &&
-                  html`<span class="setup-auth__env-var empty-state__hint"
-                    >or set <span class="mono">${source.env_var}</span></span
-                  >`
-                }
-                ${
-                  // app.AuthSourceStatus.Instructions - the source's own
-                  // setup steps, the same text `lmm auth login` prints
-                  // before its prompt (issue 269 W2). Beside the field
-                  // rather than behind a link, because for a Steam Web API
-                  // key it carries a rule the user has to read before
-                  // pasting one: the key is personal, and pasting somebody
-                  // else's is both a ToU violation and their account at
-                  // risk. Plain TEXT, never markup - it is a source's own
-                  // string, and a custom source supplies it.
-                  source.instructions &&
-                  html`<p
-                    class="setup-auth__instructions empty-state__hint"
-                    data-testid=${`auth-instructions-${source.id}`}
-                  >
-                    ${source.instructions}
-                  </p>`
-                }
               </form>
             `
+      }
+      ${
+        // M-1/D-3: this was a PLACEHOLDER, in a ~190px field on a ~900px
+        // row - visibly truncated to "or set NEXUSMODS_API_KE" and gone
+        // entirely the moment the user typed. It is the only place the UI
+        // names the variable, and the README says it is shown beside the
+        // field, so it is text now.
+        !source.authenticated &&
+        source.env_var &&
+        html`<span class="setup-auth__env-var empty-state__hint"
+          >or set <span class="mono">${source.env_var}</span></span
+        >`
+      }
+      ${
+        // app.AuthSourceStatus.Instructions - the source's own setup steps,
+        // the same text `lmm auth login` prints before its prompt (issue
+        // 269 W2). Beside the field rather than behind a link, because for
+        // a Steam Web API key it carries a rule the user has to read before
+        // pasting one: the key is personal, and pasting somebody else's is
+        // both a ToU violation and their account at risk. Plain TEXT, never
+        // markup - it is a source's own string, and a custom source
+        // supplies it.
+        //
+        // issue 377: this and the env-var hint above are children of the ROW,
+        // not of the login <form>. Inside the form they were flex items in
+        // a container with no flex-wrap, where `flex-basis: 100%` cannot
+        // force a line of their own - so the paragraph overflowed the
+        // viewport and squeezed the Log in button onto two lines. The row
+        // wraps; that is what makes the basis mean what the CSS says.
+        !source.authenticated &&
+        source.instructions &&
+        html`<p
+          class="setup-auth__instructions empty-state__hint"
+          data-testid=${`auth-instructions-${source.id}`}
+        >
+          ${source.instructions}
+        </p>`
       }
       ${error && html`<p class="modal__error">${error}</p>`}
       ${
