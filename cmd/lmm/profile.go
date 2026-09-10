@@ -115,11 +115,17 @@ instead of failing.
 
 --workshop-collection takes a Steam Workshop collection id or the URL of
 its page, and imports the collection AS a profile: a collection is a mod
-list, which is what a profile is. It needs no API key. Items you are
-already subscribed to (and have tracked with 'lmm import --workshop') are
-recorded as installed; the rest are listed with what to do about them -
-lmm cannot download a Workshop item you are not subscribed to. The profile
-is named after the collection unless you name it with --as.
+list, which is what a profile is. It needs no API key. The profile RECORDS
+the list: items you are already subscribed to (and have tracked with 'lmm
+import --workshop') are marked as such, and the rest are listed with what
+to do about them - lmm cannot download a Workshop item you are not
+subscribed to. The profile is named after the collection unless you name
+it with --as.
+
+A Workshop item is game-global: Steam has it on disk and the game loads it
+whichever profile is active. So switching to a collection profile deploys
+nothing, and the profile is a record of what the collection contains
+rather than a set you turn on and off.
 
 Examples:
   lmm profile import survival.yaml --game skyrim-se
@@ -732,7 +738,13 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 	for _, note := range result.Notes {
 		fmt.Printf("  %s\n", note)
 	}
-	fmt.Printf("\nUse 'lmm profile switch %s' to make it active.\n", result.ProfileName)
+	// Deliberately NOT the file-import path's "switch ... to make it
+	// active": every ref in a collection profile is a game-global Workshop
+	// item, so a switch to it would deploy nothing and change nothing about
+	// what the game loads (W2 review, Important 5).
+	fmt.Printf("\nThe profile records the collection's list. "+
+		"Steam decides what the game loads for these items, so switching to %s deploys nothing.\n",
+		result.ProfileName)
 	return nil
 }
 

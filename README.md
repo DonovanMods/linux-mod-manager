@@ -1836,7 +1836,9 @@ lmm profile import --workshop-collection 2500900001 --game space-engineers-2
 lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships
 ```
 
-It takes the collection's id or the URL of its page, needs **no API key**, and names the profile after the collection unless you name it with `--as`. Items you are already subscribed to and tracking are recorded as installed; every other item is listed with what to do about it — subscribe to it in Steam, then run `lmm import --workshop`. Nothing is downloaded, because lmm cannot yet fetch a Workshop item you are not subscribed to.
+It takes the collection's id or the URL of its page, needs **no API key**, and names the profile after the collection unless you name it with `--as`. The profile **records the collection's list**: every item becomes a `steamworkshop:<file id>` entry in it. Items you are already subscribed to and tracking are marked as such; every other item is listed with what to do about it — subscribe to it in Steam, then run `lmm import --workshop`. Nothing is downloaded, because lmm cannot yet fetch a Workshop item you are not subscribed to.
+
+What such a profile does **not** do is change what the game loads. A Workshop item is game-global — Steam has it on disk and the game loads it whichever lmm profile is active — so switching to a collection profile deploys nothing and undeploys nothing, and `lmm list --profile <name>` for it is empty until the items are installed by something. It is a **record of the list**, useful for seeing what a collection contains and what you are missing from it, not a way to turn a set of Workshop items on and off. That changes with Tier 3, when lmm can fetch the items itself.
 
 In `lmm serve` the same input is in the **Profiles** modal, and pasting a collection link into the search box offers the import directly.
 

@@ -230,6 +230,52 @@ func TestApplyWorkshopCollectionImport_SavesTheProfileAndInstallsNothing(t *test
 // TestPlanWorkshopCollectionImport_RefusesASourceThatCannotResolveOne pins
 // the optional-capability gate: a game mapped to a workshop-capable source
 // that is not ALSO a collection resolver has nothing to import from.
+// TestApplyWorkshopCollectionImport_ATrackedItemIsNotInstalledIntoTheProfile
+// pins what the docs now say, after they said the opposite (W2 review,
+// Important 5). An item `lmm import --workshop` already tracks is
+// classified by the plan as `installed` — but applyImport writes installed
+// rows only for mods it DOWNLOADS, and a collection import downloads
+// nothing, so the new profile gets the REF and no row. That is right: a
+// Workshop item is game-global and lmm profiles are not (design §2), and
+// switch.go skips an external installed row anyway. The claim being pinned
+// is that the profile is a RECORD of the list, not a set of installed mods.
+func TestApplyWorkshopCollectionImport_ATrackedItemIsNotInstalledIntoTheProfile(t *testing.T) {
+	svc, game, src := newCollectionService(t)
+	src.collection = source.Collection{
+		ID: "2500900001", Name: "Cargo Ships",
+		ItemIDs: []string{"3617086610", "3512001122"},
+	}
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{ID: "3617086610", SourceID: "steamworkshop",
+			Name: "Sample Workshop Item", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		External:     true,
+		ExternalPath: "/steam/workshop/content/1133870/3617086610",
+	}))
+
+	plan, err := svc.PlanWorkshopCollectionImport(context.Background(), game, "", "2500900001")
+	require.NoError(t, err)
+	require.Len(t, plan.Installed, 1, "the plan classifies the tracked item as installed")
+
+	_, err = svc.ApplyWorkshopCollectionImport(context.Background(), game, plan,
+		core.ProfileImportOptions{}, nil)
+	require.NoError(t, err)
+
+	saved, err := svc.NewProfileManager().Get(context.Background(), game.ID, "cargo-ships")
+	require.NoError(t, err)
+	assert.Len(t, saved.Mods, 2, "the profile records the whole list")
+
+	rows, err := svc.GetInstalledMods(context.Background(), game.ID, "cargo-ships")
+	require.NoError(t, err)
+	assert.Empty(t, rows,
+		"the tracked item stays tracked in `default`, game-wide; the new profile holds no row")
+
+	still, err := svc.GetInstalledMods(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.Len(t, still, 1, "and the import moved nothing out of where it was")
+}
+
 func TestPlanWorkshopCollectionImport_RefusesASourceThatCannotResolveOne(t *testing.T) {
 	svc := newFlowsTestService(t)
 	svc.RegisterSource(newWorkshopTestSource())

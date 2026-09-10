@@ -483,8 +483,9 @@ export function ImportCollectionForm({ actions, close }) {
         Import collection
       </button>
       <p class="empty-state__hint">
-        No API key needed. Items you are already subscribed to are recorded as
-        installed; the rest are listed with what to do about them.
+        No API key needed. The profile records the collection's list: items you
+        are already subscribed to are marked as such, and the rest are listed
+        with what to do about them.
       </p>
     </form>
   `;

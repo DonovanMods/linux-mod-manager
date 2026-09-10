@@ -250,11 +250,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   **A Workshop collection imports as a profile**, because a collection _is_
   a mod list: `lmm profile import --workshop-collection <id|url>`, with
-  `--as` to name the result. It needs no API key. Items you already track
-  are recorded as installed; every other item is listed with what to do
-  about it — subscribe in Steam, then run `lmm import --workshop` — and
-  nothing is downloaded, since lmm cannot yet fetch an item you are not
-  subscribed to. In `lmm serve` the same input is in the Profiles modal, and
+  `--as` to name the result. It needs no API key. The profile RECORDS the
+  collection's list: items you already track are marked as such, every
+  other item is listed with what to do about it — subscribe in Steam, then
+  run `lmm import --workshop` — and nothing is downloaded, since lmm cannot
+  yet fetch an item you are not subscribed to. A Workshop item is
+  game-global, so such a profile is a record of what the collection
+  contains rather than a set you switch on and off; a switch to it deploys
+  nothing. In `lmm serve` the same input is in the Profiles modal, and
   pasting a collection link into the search box offers the import directly.
 
 - **Download a Steam Workshop item so lmm manages it (#347, part of
