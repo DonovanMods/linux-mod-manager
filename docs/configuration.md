@@ -217,7 +217,7 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | ------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | _(the key)_   | yes      | The Steam App ID, **quoted** so it stays a string. It is on the store page URL (`store.steampowered.com/app/<id>/`).                                            |
 | `slug`        | yes      | The lmm game id the entry creates. Lowercase alphanumerics in dash-separated runs, and unique across the whole list.                                            |
-| `name`        | yes      | Display name. Use the title exactly as the Steam store page writes it.                                                                                         |
+| `name`        | yes      | Display name. Use the plain-text store title (drop `®`/`™`).                                                                                                   |
 | `mod_path`    | yes      | The mod folder, **relative to the game's install directory** — `""` means the install root. Detection joins it to the install path it found.                    |
 | `nexus_id`    | no       | The game's NexusMods domain: the path segment in `nexusmods.com/<domain>`. Omit it for a game with no NexusMods page.                                           |
 | `deploy_mode` | no       | `extract` (the default), `copy` or `compile`.                                                                                                                    |
