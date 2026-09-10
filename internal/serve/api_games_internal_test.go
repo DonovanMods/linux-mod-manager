@@ -677,3 +677,42 @@ func TestAPIGameDetectApply_AddsAWorkshopBearingUncuratedRowBySlug(t *testing.T)
 	again := doAPI(s, http.MethodPost, "/api/v1/games/detect", `{"select":["space-engineers-2"]}`)
 	assert.Equal(t, http.StatusConflict, again.Code, "body: %s", again.Body.String())
 }
+
+// TestAPIGameAdd_FromSteamAppIDRefusesADuplicateInstallPath is the
+// re-review's M3: F1's web half had no test. api_games.go calls
+// s.svc.PrefillGameSpecFromDetected rather than the pure
+// core.GameSpecFromDetected, and the SPA's detected mode deliberately omits
+// game_id so nothing overrides the id core resolves - but reverting that
+// one call compiled and passed, while the CLI half (cmd/lmm's
+// game_curation_slug_test.go) did get a test. Both halves of the
+// CLI/web parity rule are pinned now.
+//
+// The scenario is the one #406's curation wave creates: games.yaml holds
+// the game under the id detection derived before the known-games entry
+// named a different slug for it.
+func TestAPIGameAdd_FromSteamAppIDRefusesADuplicateInstallPath(t *testing.T) {
+	s := newGamesServer(t)
+	install := fakeSteamApp(t, "489830", "Skyrim Special Edition", "Skyrim Special Edition")
+
+	// What the user already has, under the pre-curation id.
+	added := doAPI(s, http.MethodPost, "/api/v1/games",
+		`{"game_id":"skyrim-special-edition","name":"Skyrim Special Edition",`+
+			`"install_path":`+jsonString(install)+`,"source_id":"nexusmods","identifier":"skyrimspecialedition"}`)
+	require.Equal(t, http.StatusOK, added.Code, "body: %s", added.Body.String())
+
+	// The detect listing must say so, not offer it as a fresh add.
+	listing := decodeDetectListing(t, s, "/api/v1/games/detect")
+	require.Len(t, listing.Games, 1)
+	assert.True(t, listing.Games[0].AlreadyConfigured,
+		"one install directory is one game, whatever the curated entry calls it")
+
+	// And the add is refused by name rather than writing a second game.
+	rec := doAPI(s, http.MethodPost, "/api/v1/games", `{"from_steam_app_id":"489830"}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "skyrim-special-edition",
+		"the refusal names the id the user already has")
+
+	games, err := s.svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	assert.NotContains(t, games, "skyrim-se", "no second game over the same directory")
+}
