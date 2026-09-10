@@ -1397,8 +1397,9 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
 
 - **An absent version or author no longer leaves a dangling label (#398).**
   A mod whose source reports no version printed as `✓ Installed: alpha v`,
-  and one with no author as `Selected: StockOverride v1.0.0 by ` — lines
-  that read as truncated rather than as "this mod has no version". The
+  and one with no author as `Selected: StockOverride v1.0.0 by` with
+  nothing after it — lines that read as truncated rather than as "this mod
+  has no version". The
   label now goes with the value across `lmm install`'s search picker,
   its Selected/Installed lines, the per-mod batch progress line, the
   dependency tree, and `lmm import`'s scan summary (`(local, v)` →
@@ -1445,7 +1446,7 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   else the wizard prints.
 
 - **`lmm init`'s closing "What next" block lines up (#389).** The first four
-  commands interpolated ` --game <game-id>` and padded around it while the
+  commands interpolated `--game <game-id>` and padded around it while the
   `lmm serve` line carried hard-coded spacing, so its description sat six
   columns out with a default game set and about seventeen without one. The
   block is now built as pairs and padded to the widest command.

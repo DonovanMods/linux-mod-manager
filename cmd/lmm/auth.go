@@ -268,16 +268,19 @@ func doAuthLoginIndented(ctx context.Context, service *core.Service, sourceID, i
 	// BEFORE the call it describes.
 	hasValidator := app.HasKeyValidator(service, sourceID)
 	if hasValidator && !jsonOutput {
-		fmt.Fprint(out, "Validating... ")
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprint(out, "Validating... ")
 	}
 	if _, err := app.ValidateSourceKey(ctx, service, sourceID, apiKey); err != nil {
 		if hasValidator && !jsonOutput {
-			fmt.Fprintln(out, "failed")
+			//nolint:errcheck // best-effort console write
+			_, _ = fmt.Fprintln(out, "failed")
 		}
 		return fmt.Errorf("invalid API key: %w", err)
 	}
 	if hasValidator && !jsonOutput {
-		fmt.Fprintln(out, "done")
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(out, "done")
 	}
 
 	if err := service.SaveSourceToken(ctx, sourceID, apiKey); err != nil {
@@ -543,23 +546,26 @@ func orphanKeyLabel(o app.OrphanedToken) string {
 // their exact wording), otherwise generic instructions naming the
 // environment variable app.EnvKeyFor resolves for src.
 func printAuthInstructions(w io.Writer, src source.ModSource) {
+	//nolint:errcheck // best-effort console writes
 	if p, ok := src.(source.AuthInstructionsProvider); ok {
-		fmt.Fprint(w, p.AuthInstructions())
+		_, _ = fmt.Fprint(w, p.AuthInstructions())
 	} else {
-		fmt.Fprintf(w, "Enter the API key for %s.\n", src.ID())
-		fmt.Fprintf(w, "(Alternatively, set the %s environment variable.)\n", app.EnvKeyFor(src))
+		_, _ = fmt.Fprintf(w, "Enter the API key for %s.\n", src.ID())
+		_, _ = fmt.Fprintf(w, "(Alternatively, set the %s environment variable.)\n", app.EnvKeyFor(src))
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 }
 
 // readAPIKey prompts for and reads an API key from the terminal
 func readAPIKey(w io.Writer) (string, error) {
-	fmt.Fprint(w, "Enter API key: ")
+	//nolint:errcheck // best-effort console write
+	_, _ = fmt.Fprint(w, "Enter API key: ")
 
 	// Try to read securely (hidden input)
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(w) // Add newline after hidden input
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(w) // Add newline after hidden input
 		if err != nil {
 			return "", fmt.Errorf("reading password: %w", err)
 		}

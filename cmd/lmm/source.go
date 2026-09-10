@@ -173,7 +173,8 @@ Examples:
 					return err
 				}
 				if more := len(full) - len(infos); more > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(),
+					//nolint:errcheck // best-effort console write
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 						"\n%d more registered source(s) not mapped to %s — lmm source list --all\n",
 						more, gameCtx.ID)
 				}
