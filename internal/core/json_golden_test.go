@@ -1506,11 +1506,14 @@ func TestJSONGoldens(t *testing.T) {
 				RelativePath: "Data/shipped.esp",
 				SHA256:       "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1",
 				Size:         4096,
-				CapturedAt:   fixedTime,
-				Op:           core.OriginalOpDeploy,
-				SourceID:     "nexusmods",
-				ModID:        "42",
-				Profile:      "default",
+				// Review finding 6: the mode the file had, so an
+				// executable comes back executable.
+				Mode:       0o755,
+				CapturedAt: fixedTime,
+				Op:         core.OriginalOpDeploy,
+				SourceID:   "nexusmods",
+				ModID:      "42",
+				Profile:    "default",
 			},
 		},
 		{

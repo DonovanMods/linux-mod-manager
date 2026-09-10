@@ -9,6 +9,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -26,6 +27,10 @@ import (
 // exactly rather than approximately. A symlink is content: the difference
 // between "the file is a link into the cache" and "the file IS those bytes"
 // is precisely what a link method decides.
+//
+// A regular file's entry carries its PERMISSION bits too (review finding
+// 6): "byte for byte" that ignores the mode would call a stock launcher
+// script restored non-executable an exact restore.
 func treeOf(t *testing.T, root string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -52,7 +57,11 @@ func treeOf(t *testing.T, root string) map[string]string {
 		if readErr != nil {
 			return readErr
 		}
-		out[rel] = string(data)
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return infoErr
+		}
+		out[rel] = fmt.Sprintf("%04o %s", info.Mode().Perm(), data)
 		return nil
 	})
 	require.NoError(t, err)
@@ -107,7 +116,7 @@ func TestApplySnapshotRestore_ReturnsTheGameDirectoryToItsRecordedState(t *testi
 
 	messy := treeOf(t, game.ModPath)
 	require.NotEqual(t, before, messy, "the fixture must actually have changed, or the restore proves nothing")
-	assert.Equal(t, "WRECKED", messy[filepath.Join("Data", "shipped.esp")])
+	assert.Contains(t, messy[filepath.Join("Data", "shipped.esp")], "WRECKED")
 
 	plan, err := svc.PlanSnapshotRestore(ctx, game, "known-good")
 	require.NoError(t, err)
@@ -527,4 +536,44 @@ func TestApplySnapshotRestore_ADisabledModComesBackDisabledAndUndeployed(t *test
 	require.True(t, ok)
 	assert.True(t, keeper.Enabled, "and the enabled one is unaffected")
 	assert.FileExists(t, filepath.Join(game.ModPath, "Data", "keeper.esp"))
+}
+
+// TestApplySnapshotRestore_ARestoredOriginalKeepsItsMode is review finding
+// 6. OriginalFile recorded root, path, sha256, size, time, op and
+// provenance - but no mode - and originalsStore.restore chmod-ed
+// unconditionally to 0644. An executable file lmm replaced came back
+// non-executable, which is not hypothetical for the shape this store
+// exists to cover: mod_path == install_path (the BepInEx / #267 shape)
+// puts launcher scripts, wrappers and shipped binaries squarely in range.
+func TestApplySnapshotRestore_ARestoredOriginalKeepsItsMode(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+
+	// A stock launcher script, executable, at a path a mod is about to
+	// deploy over.
+	launcher := filepath.Join(game.ModPath, "run.sh")
+	require.NoError(t, os.WriteFile(launcher, []byte("#!/bin/sh\necho stock\n"), 0755))
+
+	_, err := svc.CreateSnapshot(ctx, game, "default", "with-launcher")
+	require.NoError(t, err)
+
+	seedNamedInstalledMod(t, svc, game, "src", "wrapper", "Wrapper", "1.0", true,
+		map[string][]byte{"run.sh": []byte("#!/bin/sh\necho modded\n")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "wrapper", "1.0")
+	_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "with-launcher")
+	require.NoError(t, err)
+	_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.NoError(t, err)
+
+	info, err := os.Stat(launcher)
+	require.NoError(t, err)
+	assert.Equal(t, fs.FileMode(0755), info.Mode().Perm(),
+		"a restored original must keep the mode it had, or an executable comes back unrunnable")
+
+	data, err := os.ReadFile(launcher)
+	require.NoError(t, err)
+	assert.Equal(t, "#!/bin/sh\necho stock\n", string(data))
 }

@@ -252,6 +252,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the one thing lmm cannot re-download. Names use letters, digits, `.`,
   `_` and `-`.
 
+  A stored original records its file **mode** and comes back with it, so a
+  stock launcher script or shipped binary is executable again rather than
+  `rw-r--r--` (`core.OriginalFile` gains an additive `mode`).
+
   `lmm snapshot restore` is five stages in order: undeploy what is there,
   put every stored original back (checksum-verified — a stored copy that no
   longer matches is refused rather than written), write the recorded profile

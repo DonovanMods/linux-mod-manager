@@ -126,6 +126,13 @@ type OriginalFile struct {
 	SHA256 string `json:"sha256"`
 	// Size is the original's length in bytes.
 	Size int64 `json:"size"`
+	// Mode is the original's PERMISSION bits (info.Mode().Perm()), so an
+	// executable file lmm replaced comes back executable (review finding
+	// 6). Additive and omitzero: a row written before this build carries
+	// none, and a restore falls back to 0644 for it. The type is uint32
+	// because a wire document should not encode Go's fs.FileMode bit
+	// layout.
+	Mode uint32 `json:"mode,omitzero"`
 	// CapturedAt is when the copy was taken.
 	CapturedAt time.Time `json:"captured_at"`
 	// Op is OriginalOpDeploy or OriginalOpProfileOverride.
@@ -345,6 +352,7 @@ func (s *originalsStore) capture(row OriginalFile, absPath string) error {
 	}
 
 	row.SHA256, row.Size = sum, size
+	row.Mode = uint32(info.Mode().Perm())
 	if row.CapturedAt.IsZero() {
 		// Truncated to the second, for the same reason Snapshot.CreatedAt
 		// is: a manifest's byte length should not depend on nanoseconds.
@@ -496,9 +504,17 @@ func (s *originalsStore) restore(row OriginalFile, absPath string) error {
 		return err
 	}
 	// The stored copy is 0600 (it may be game content the user's umask
-	// would have widened); what goes BACK into a game directory should
-	// read like an ordinary game file again.
-	if err := os.Chmod(absPath, 0644); err != nil {
+	// would have widened); what goes BACK into a game directory is the
+	// mode the file HAD - review finding 6: an unconditional 0644 came
+	// back non-executable, which for the mod_path == install_path shape
+	// this store exists to cover means launcher scripts, wrappers and
+	// shipped binaries. 0644 remains the fallback for a row written before
+	// the mode was recorded.
+	mode := fs.FileMode(0644)
+	if row.Mode != 0 {
+		mode = fs.FileMode(row.Mode).Perm()
+	}
+	if err := os.Chmod(absPath, mode); err != nil {
 		return fmt.Errorf("setting permissions on the restored %s: %w", row.RelativePath, err)
 	}
 	return nil
