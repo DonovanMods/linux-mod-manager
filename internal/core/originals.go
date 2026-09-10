@@ -457,10 +457,14 @@ func (s *Service) originalsStoreFor(gameID string) *originalsStore {
 	return store
 }
 
-// takeCaptureWarnings drains gameID's pending capture failures onto
+// takeCaptureWarnings drains gameID's pending originals failures onto
 // warnings and emits one WarningEvent each, so a failed capture is visible
 // at DEFAULT verbosity in every frontend (review finding 5). No-op when
 // there is no store or nothing failed.
+//
+// "Capture" is the historical name; the pending list holds failed PUT-BACKS
+// too (ruling (a)), which is why the removal flows drain it as well - a
+// purge and an uninstall through re-review finding N2.
 func (s *Service) takeCaptureWarnings(gameID string, op Op, phase DeployPhase, warnings *[]string, emit func(Event)) {
 	store := s.originalsStoreFor(gameID)
 	if store == nil {

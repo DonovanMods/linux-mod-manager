@@ -11,7 +11,7 @@
 // Create and delete are api_snapshots.go's single-step writes, called
 // directly the way profilesmodal.js calls its own - they answer with the
 // document they produced, so there is nothing to preview and nothing to
-// watch. RESTORE is the destructive, four-stage one, and it goes through
+// watch. RESTORE is the destructive, five-stage one, and it goes through
 // the shared confirm-plan framework like every other mutation in this UI.
 
 import { html, useState } from "../render.js";

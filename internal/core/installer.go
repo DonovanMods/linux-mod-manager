@@ -369,7 +369,8 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 		// The obsolete-file loop above needs no capture of its own: since
 		// review finding 4 it SKIPS a path lmm does not own rather than
 		// removing it, and restoreOldFiles only ever puts lmm's own files
-		// back.
+		// back. What that loop DOES need is the release, which is at the
+		// end of this function - see the comment there.
 		i.captureOriginal(ctx, game, profileName, file, dstPath, newMod)
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			cleanupErr := i.linker.Undeploy(dstPath)
@@ -403,6 +404,24 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 			}
 		}
 	}
+
+	// #350 re-review finding N1 - ruling (a) for the obsolete-file loop.
+	// That loop removed lmm's OWN files (a member the new side no longer
+	// ships), which is exactly the removal ruling (a) covers: whatever each
+	// of them replaced goes back, so `lmm update` and `lmm update rollback`
+	// stop leaving the hole every other removal path has stopped leaving.
+	//
+	// Deliberately HERE rather than inside the loop, because this function -
+	// unlike Uninstall and Install's rollbacks - can still fail after the
+	// removal: every error path above replays removedOld through
+	// restoreOldFiles, which would deploy the old mod's file back OVER a
+	// just-restored original whose manifest row had already been dropped,
+	// leaving lmm with no record and the user with the wrong bytes. Past the
+	// last failure point there is nothing left to roll back, and "the row
+	// goes once the original is back in place" stays true. A failed put-back
+	// is reported on the always-on channel and keeps its row, so
+	// `lmm snapshot restore` can still do it (restoreReplacedOriginal).
+	i.restoreReplacedOriginals(game, removedOld)
 
 	return nil
 }

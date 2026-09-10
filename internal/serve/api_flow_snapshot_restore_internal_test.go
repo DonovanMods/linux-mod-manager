@@ -130,7 +130,7 @@ func TestFlowSnapshotRestore_RejectsUnknownOptions(t *testing.T) {
 
 // TestFlowSnapshotRestore_UsedPlanIsRefused is the plan store's
 // single-use rule, which matters more here than anywhere: replaying a
-// restore handle would re-run a destructive four-stage flow.
+// restore handle would re-run a destructive five-stage flow.
 func TestFlowSnapshotRestore_UsedPlanIsRefused(t *testing.T) {
 	s, _, game := newFlowFixtureServer(t)
 	deployFixtureProfile(t, s, game)

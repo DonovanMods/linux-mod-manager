@@ -192,6 +192,14 @@ type SnapshotRestorePlan struct {
 	// could delete and recreate the name in between).
 	snapshot installedSnapshot `json:"-"`
 	doc      *Snapshot         `json:"-"`
+	// activeSnapshot is Ruling 5's precondition for the OTHER profile this
+	// plan touches - the active one it undeploys in stage 1 (re-review
+	// finding N7). Empty when no switch is involved. Without it, a mod
+	// installed into the active profile between plan and apply was the one
+	// input to a restore that nothing re-checked: stage 1 purged the stale
+	// ToPurgeActive list and left that mod's files deployed under a profile
+	// the restore had just switched away from.
+	activeSnapshot installedSnapshot `json:"-"`
 	// originals is the manifest the Originals verdicts were computed from,
 	// carried so the apply restores exactly the rows the user approved.
 	originals []OriginalFile `json:"-"`
@@ -348,6 +356,10 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		plan.ActiveProfile = active.Name
 		plan.ToPurgeActive = activeToPurge
 		plan.External = appendUnseen(plan.External, activeExternal)
+		// The freshness precondition for the active profile too, over the
+		// FULL set for the same reason the snapshot profile's is (an
+		// external row appearing or vanishing is a move).
+		plan.activeSnapshot = snapshotOf(activeMods)
 	}
 
 	// The store's CURRENT manifest, not the snapshot's recorded list - see
@@ -543,6 +555,14 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	result := &SnapshotRestoreResult{Snapshot: plan.Snapshot, Profile: plan.Profile}
 	if err := s.checkPlanFresh(ctx, plan.GameID, plan.Profile, plan.snapshot); err != nil {
 		return result, err
+	}
+	// Re-review finding N7: the active profile is undeployed by stage 1, so
+	// its installed set is an input to this apply and gets the same
+	// precondition.
+	if plan.ActiveProfile != "" {
+		if err := s.checkPlanFresh(ctx, plan.GameID, plan.ActiveProfile, plan.activeSnapshot); err != nil {
+			return result, err
+		}
 	}
 	doc := plan.doc
 	if doc == nil {

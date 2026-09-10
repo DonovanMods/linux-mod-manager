@@ -485,6 +485,48 @@ func TestApplySnapshotRestore_CarriesTheProfileSwitch(t *testing.T) {
 		"and the snapshot's own mods must be deployed")
 }
 
+// TestApplySnapshotRestore_TheActiveProfileHasAFreshnessPrecondition is
+// re-review finding N7. Stage 1 undeploys the ACTIVE profile's installed
+// set, taken at plan time - and that set was the one input to the apply that
+// no precondition re-checked, so a mod installed into the active profile
+// between the preview and the confirmation was purged from a stale list and
+// left deployed under a profile the restore had just switched away from.
+// Ruling 5's precondition covers both profiles the plan touches now.
+func TestApplySnapshotRestore_TheActiveProfileHasAFreshnessPrecondition(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+
+	_, err := svc.CreateSnapshot(ctx, game, "default", "under-default")
+	require.NoError(t, err)
+
+	seedInstalledModInProfile(t, svc, game, "other", "src", "otherling", "Otherling", "1.0",
+		map[string][]byte{"Data/other.esp": []byte("other v1")})
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "other"))
+	_, err = svc.DeployProfile(ctx, game, "other", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "under-default")
+	require.NoError(t, err)
+	require.Equal(t, "other", plan.ActiveProfile)
+	require.Len(t, plan.ToPurgeActive, 1)
+
+	// The world moves under the plan - in the ACTIVE profile, not the
+	// snapshot's own.
+	seedInstalledModInProfile(t, svc, game, "other", "src", "latecomer", "Latecomer", "1.0",
+		map[string][]byte{"Data/late.esp": []byte("late v1")})
+	_, err = svc.DeployProfile(ctx, game, "other", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(game.ModPath, "Data", "late.esp"))
+
+	_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.ErrorIs(t, err, core.ErrStalePlan,
+		"a restore must not act on a stale picture of the profile it undeploys")
+
+	assert.FileExists(t, filepath.Join(game.ModPath, "Data", "late.esp"),
+		"and it must not have started: the refusal is a precondition, not a partial")
+}
+
 // TestApplySnapshotRestore_ADisabledModComesBackDisabledAndUndeployed is
 // review finding 3. domain.ModReference carries no enabled flag, so the
 // snapshot's profile document lists a disabled mod like any other;

@@ -98,12 +98,17 @@ var snapshotRestoreCmd = &cobra.Command{
 	Short: "Bring a game back to a recorded snapshot",
 	Long: `Bring a game back to a recorded snapshot.
 
-Four stages, in order: the current deployment is undeployed, every original
+Five stages, in order: the current deployment is undeployed, every original
 lmm has stored is put back (each verified against its recorded checksum),
-the recorded profile is written, and the mods it lists are installed at
-their recorded versions and deployed - downgrades included. A version the
-source can no longer serve is reported as a refusal, in the preview, before
-anything is touched; it is never a quiet partial restore.
+the recorded profile is written and made the active one, the mods it lists
+are installed at their recorded versions, and the ones the snapshot recorded
+as enabled are deployed - downgrades included. A version the source can no
+longer serve is reported as a refusal, in the preview, before anything is
+touched; it is never a quiet partial restore.
+
+Restoring a snapshot taken while ANOTHER profile was active switches you
+back: that profile's deployment is undeployed first, and the snapshot's own
+profile becomes the active one.
 
 A snapshot of the CURRENT state is recorded first, so a restore is itself
 reversible. Pass --no-safety-snapshot to skip that.

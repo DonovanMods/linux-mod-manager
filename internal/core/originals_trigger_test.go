@@ -552,3 +552,88 @@ func TestDeploy_DoesNotPreserveAnotherProfilesOwnFile(t *testing.T) {
 	assert.Empty(t, readOriginalsManifest(t, dataDir, "g1"),
 		"another profile's own deployment is not stock content")
 }
+
+// TestRemoval_AFailedPutBackIsOnTheResult is #350 re-review finding N2.
+// Ruling (a) made an uninstall and a purge into paths that WRITE stored
+// originals back, so they became paths a put-back can fail on - a stored
+// copy whose checksum no longer matches, which is precisely when the user
+// most needs telling. The message reached ServiceConfig.WarnWriter, but
+// only the deploy/install/update flows drained the pending list onto their
+// result, so under `lmm serve` - where WarnWriter is the SERVER's stderr,
+// not the job's event stream - a browser user saw nothing, and the entry was
+// then surfaced late on whatever deploy ran next.
+func TestRemoval_AFailedPutBackIsOnTheResult(t *testing.T) {
+	t.Run("purge", func(t *testing.T) {
+		svc, dataDir, warned, game := newFailedPutBackFixture(t)
+		result, err := svc.PurgeProfile(context.Background(), game,
+			"default", modsOf(t, svc, "g1", "default"), core.PurgeOptions{}, nil)
+		require.NoError(t, err, "a failed put-back never fails the removal")
+		assertPutBackFailureIsVisible(t, dataDir, warned, result.Warnings)
+	})
+
+	t.Run("uninstall", func(t *testing.T) {
+		svc, dataDir, warned, game := newFailedPutBackFixture(t)
+		result, err := svc.UninstallMod(context.Background(), game, "default", "src", "m1",
+			core.UninstallOptions{})
+		require.NoError(t, err, "a failed put-back never fails the removal")
+		assertPutBackFailureIsVisible(t, dataDir, warned, result.Warnings)
+	})
+}
+
+// newFailedPutBackFixture deploys a mod over the game's own
+// Data/shipped.esp - so the original is captured - and then CORRUPTS the
+// stored copy, which is what makes the put-back that follows fail its
+// checksum check.
+func newFailedPutBackFixture(t *testing.T) (*core.Service, string, *bytes.Buffer, *domain.Game) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	warned := &bytes.Buffer{}
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+		WarnWriter: warned,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	stock := filepath.Join(gameDir, "Data", "shipped.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))
+	require.NoError(t, os.WriteFile(stock, []byte("as the game shipped"), 0755))
+
+	seedNamedInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("the mod's version")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.0")
+
+	_, err = svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, readOriginalsManifest(t, dataDir, "g1"), 1, "the deploy captured the stock file")
+
+	stored := filepath.Join(dataDir, "snapshots", "g1", "_originals", "files", "mod_path", "Data", "shipped.esp")
+	require.NoError(t, os.WriteFile(stored, []byte("corrupted in the store"), 0600))
+
+	warned.Reset()
+	return svc, dataDir, warned, game
+}
+
+func assertPutBackFailureIsVisible(t *testing.T, dataDir string, warned *bytes.Buffer, warnings []string) {
+	t.Helper()
+	assert.Contains(t, strings.Join(warnings, "\n"), "could not put back",
+		"the removal's result must name the file it could not put back - it is all `lmm serve` has")
+	assert.Contains(t, warned.String(), "could not put back",
+		"and the always-on user channel, since the CLI's default log level discards logs")
+	assert.Len(t, readOriginalsManifest(t, dataDir, "g1"), 1,
+		"the row survives a failed put-back: `lmm snapshot restore` can still do it")
+}

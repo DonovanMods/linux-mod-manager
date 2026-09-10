@@ -65,6 +65,13 @@ The one thing a snapshot restore does NOT need from anywhere is the stock
 game content lmm replaced: those bytes are in the originals store, which is
 the only copy of them and is never pruned or deleted by lmm.
 
+Removing the mod that replaced a file puts that file back on its own — an
+uninstall, a purge, an update that drops a file the previous version
+shipped, a rolled-back install, or the deploy-time convergence — and the
+stored copy is dropped only once the original is back in place. `lmm
+snapshot restore` remains the whole-state path, and the one that can put
+back everything at once.
+
 
 ## games.yaml
 

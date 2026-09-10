@@ -428,5 +428,17 @@ func (s *Service) purgeProfile(ctx context.Context, game *domain.Game, profileNa
 		}
 	}
 
+	// #350 re-review finding N2: a purge is now a REMOVAL path that puts
+	// originals back (ruling (a)), so it is a path a put-back can fail on -
+	// and WarnWriter alone is the CLI's stderr but the SERVER's stderr under
+	// `lmm serve`, where a browser user would never see it and the pending
+	// entry would be drained onto whatever deploy/install/update ran next.
+	// Drained here, exactly as deployProfile/ApplyInstall/applyUpdate do it.
+	s.takeCaptureWarnings(game.ID, OpPurge, PurgeWarning, &result.Warnings, func(e Event) {
+		if sink != nil {
+			sink(e)
+		}
+	})
+
 	return result, nil
 }

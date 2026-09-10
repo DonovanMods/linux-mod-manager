@@ -11,7 +11,7 @@
 // and the originals in force at that moment.
 //
 // One file per snapshot, at <DataDir>/snapshots/<game-id>/<name>.json,
-// beside the originals/ tree those rows point into.
+// beside the _originals/ tree those rows point into.
 //
 // The deployed-files manifest IS hashed at create time, which makes the
 // cost O(deployed bytes) rather than O(1). That is deliberate: a manifest
@@ -151,6 +151,13 @@ type SnapshotResult struct {
 // SnapshotResult minus Path, which is create's own answer to "where did it
 // go" rather than something a listing repeats per row.
 type SnapshotInfo struct {
+	// file is the directory entry this row was read from, kept so a caller
+	// that DELETES a row deletes the file it found rather than re-deriving
+	// a path from Name, which is the value inside the document and can
+	// disagree with it (re-review finding N3). Unexported: it is not part
+	// of the wire contract, and a ReadDir name is a single path element by
+	// construction, which is exactly the property the derivation lacked.
+	file          string
 	Name          string    `json:"name"`
 	GameID        string    `json:"game_id"`
 	Profile       string    `json:"profile"`
@@ -491,6 +498,7 @@ func (s *Service) ListSnapshots(ctx context.Context, gameID string) (*SnapshotLi
 		}
 		info := snapshotResultOf(doc, "")
 		row := SnapshotInfo{
+			file: entry.Name(),
 			Name: doc.Name, GameID: doc.GameID, Profile: doc.Profile,
 			CreatedAt: doc.CreatedAt, Auto: doc.Auto,
 			Mods: info.Mods, DeployedFiles: info.DeployedFiles,
@@ -613,7 +621,18 @@ func (s *Service) pruneAutoSnapshots(ctx context.Context, gameID string) string 
 		if seen <= keep {
 			continue
 		}
-		if err := os.Remove(s.snapshotPath(gameID, row.Name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if row.file == "" {
+			// Only ListSnapshots produces these rows and it always sets
+			// the field; guarded anyway, because joining "" would name the
+			// snapshot DIRECTORY.
+			continue
+		}
+		// The FILE the listing read, not a path rebuilt from the name
+		// inside the document (re-review finding N3): a ReadDir entry name
+		// is a single path element, so this join can never leave the
+		// snapshot directory, and it removes the document that was
+		// actually counted.
+		if err := os.Remove(filepath.Join(snapshotsDirFor(s.dataDir, gameID), row.file)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			failed = append(failed, row.Name)
 		}
 	}

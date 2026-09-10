@@ -2,7 +2,7 @@
 // `lmm snapshot restore` as a Plan -> confirm -> job flow (#350).
 //
 // This is the one snapshot operation that earns a job: it is destructive,
-// it runs four stages (purge, originals, profile, converge+deploy), each
+// it runs five stages (purge, originals, profile, convergence, deploy), each
 // with its own live phases, and it can take minutes when a recorded version
 // has to be downloaded again. Create and delete are single writes and go
 // through api_snapshots.go instead.

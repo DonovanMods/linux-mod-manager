@@ -129,3 +129,42 @@ func TestPruneAutoSnapshots_AnAbsentKeyGetsTheDefault(t *testing.T) {
 	assert.Equal(t, 10, svc.config.AutoSnapshotKeep,
 		"an absent auto_snapshot_keep is the documented default, not unlimited")
 }
+
+// TestPruneAutoSnapshots_RemovesTheFileItFound is re-review finding N3.
+// ListSnapshots finds a document by directory entry but reported
+// `row.Name = doc.Name` - the value INSIDE the JSON - and the prune rebuilt
+// a path from that, unvalidated. The two agree in normal operation, so this
+// needs a hand-edited document to reach: with them disagreeing, the prune
+// removed a path derived from untrusted file CONTENT (or, when no such file
+// existed, silently nothing, leaving the snapshot it had counted as pruned
+// still on disk).
+func TestPruneAutoSnapshots_RemovesTheFileItFound(t *testing.T) {
+	svc, game := newPruneFixture(t, "auto_snapshot: true\nauto_snapshot_keep: 1\n")
+	ctx := context.Background()
+
+	seedAutoSnapshot(t, svc, game, "auto-newest", time.Minute)
+	seedAutoSnapshot(t, svc, game, "auto-oldest", time.Hour)
+
+	// The oldest document's INNER name no longer matches its file name.
+	oldest := svc.snapshotPath(game.ID, "auto-oldest")
+	data, err := os.ReadFile(oldest)
+	require.NoError(t, err)
+	var doc Snapshot
+	require.NoError(t, json.Unmarshal(data, &doc))
+	doc.Name = "../canary"
+	out, err := json.Marshal(doc, json.Deterministic(true), jsontext.WithIndent("  "))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(oldest, out, 0600))
+
+	// A canary one level up in <DataDir>/snapshots, where the rebuilt path
+	// would have landed.
+	canary := filepath.Join(snapshotsDirFor(svc.dataDir, ""), "canary"+snapshotFileExt)
+	require.NoError(t, os.MkdirAll(filepath.Dir(canary), 0755))
+	require.NoError(t, os.WriteFile(canary, []byte("not a snapshot"), 0600))
+
+	assert.Empty(t, svc.pruneAutoSnapshots(ctx, "g1"))
+
+	assert.NoFileExists(t, oldest, "the file the prune counted is the file it removes")
+	assert.FileExists(t, svc.snapshotPath(game.ID, "auto-newest"), "the newest survives")
+	assert.FileExists(t, canary, "nothing outside the game's snapshot directory is touched")
+}

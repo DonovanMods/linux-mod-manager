@@ -93,7 +93,7 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/uploads/{id}", s.wrap(s.handleAPIUploadDelete))
 	// The Snapshots card's three single-step routes (api_snapshots.go).
 	// Not jobs: a create writes one metadata file and a delete removes
-	// one, with nothing to show in flight. The destructive, four-stage
+	// one, with nothing to show in flight. The destructive, five-stage
 	// RESTORE is a job with a plan behind it, registered as the
 	// "snapshot_restore" plan kind (kind_snapshot_restore.go). The listing
 	// is game-scoped but NOT profile-scoped - snapshots belong to a game,
