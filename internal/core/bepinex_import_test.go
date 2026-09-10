@@ -13,6 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The two fixtures below divide the BepInEx game shape in half.
+//
+// newBepInExGameRootService is a game-root game with NO loader declaration:
+// it is the fixture for the normaliser's gate (an ambiguous shape must be
+// left alone) and for #359's plan-time refusal (an unmistakable shape into a
+// game that declares nothing). newBepInExDeclaredService adds the
+// declaration, and is the fixture for every test about what a correctly
+// configured BepInEx game does.
+//
 // newBepInExGameRootService builds the game shape a BepInEx install needs
 // and the spike settled on (docs/plans/2026-09-09-bepinex-spike.md §1.3):
 // mod_path IS install_path, the same absolute path twice, so a
@@ -39,7 +48,7 @@ func newBepInExGameRootService(t *testing.T) (*core.Service, *domain.Game) {
 // game-root game, lands at <install_path>/BepInEx/plugins/... through the
 // existing linker - and the package metadata does not land at all.
 func TestImportArchive_BepInEx_ShapeADeploysIntoTheGameRoot(t *testing.T) {
-	svc, game := newBepInExGameRootService(t)
+	svc, game := newBepInExDeclaredService(t)
 
 	archivePath := filepath.Join(t.TempDir(), "Skinwalkers-5.0.0.zip")
 	createImportTestZip(t, archivePath, map[string]string{
@@ -67,7 +76,7 @@ func TestImportArchive_BepInEx_ShapeADeploysIntoTheGameRoot(t *testing.T) {
 // one #237's `.EXMODZ` strip is the precedent for: a pack wrapped in a
 // single directory deploys as though it never had one.
 func TestImportArchive_BepInEx_WrapperDirectoryIsStripped(t *testing.T) {
-	svc, game := newBepInExGameRootService(t)
+	svc, game := newBepInExDeclaredService(t)
 
 	archivePath := filepath.Join(t.TempDir(), "SomePack-1.0.0.zip")
 	createImportTestZip(t, archivePath, map[string]string{
@@ -116,7 +125,7 @@ func TestImportArchive_BepInEx_FrameworkPackIsRefused(t *testing.T) {
 // the next re-download destroys it and every profile sharing the entry
 // inherits it - so it takes profile-config-override semantics instead.
 func TestImportArchive_BepInEx_ConfigIsSeededAsARealFileAndNeverOverwritten(t *testing.T) {
-	svc, game := newBepInExGameRootService(t)
+	svc, game := newBepInExDeclaredService(t)
 
 	archivePath := filepath.Join(t.TempDir(), "Configured-1.0.0.zip")
 	createImportTestZip(t, archivePath, map[string]string{
@@ -155,7 +164,7 @@ func TestImportArchive_BepInEx_ConfigIsSeededAsARealFileAndNeverOverwritten(t *t
 // the ingest produces - that sharing is archive_listing.go's whole reason
 // for existing.
 func TestPlanImportArchive_BepInEx_PreviewsTheNormalisedPaths(t *testing.T) {
-	svc, game := newBepInExGameRootService(t)
+	svc, game := newBepInExDeclaredService(t)
 
 	archivePath := filepath.Join(t.TempDir(), "Wrapped-1.0.0.zip")
 	createImportTestZip(t, archivePath, map[string]string{
