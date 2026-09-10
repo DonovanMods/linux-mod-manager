@@ -38,7 +38,6 @@ type fetchTestSource struct {
 	seenGameID  string
 	seenFileID  string
 	seenDestDir string
-	seenPhases  []string
 }
 
 func newFetchTestSource(id string) *fetchTestSource {
