@@ -145,3 +145,49 @@ func TestService_Uninstall_KeepsADirectoryAnotherDeployedModStillUses(t *testing
 		&domain.Mod{ID: "b", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
 	assert.NoDirExists(t, filepath.Join(game.ModPath, shared), "the last mod took the directory with it")
 }
+
+// TestApplyProfileSwitch_StopsAtASymlinkedDirectoryOnTheChain is the #415
+// re-review's I1 at the flow level, and it is deliberately NOT an
+// uninstall: every deploy-direction flow prunes now (deploy.go, switch.go,
+// mod_toggle.go, merged_pak.go, install.go's replace, profile_apply.go,
+// verify_repair.go), all through Installer.Uninstall's removal set. So an
+// ordinary `lmm profile switch` reaches the symlink case, and a user who
+// keeps their mod folder on another drive - `mods -> /mnt/ssd/gamemods`,
+// ordinary practice - would have lost the far-side directory and then the
+// symlink itself, which is exactly #415's harm through the one door the
+// bound left open.
+func TestApplyProfileSwitch_StopsAtASymlinkedDirectoryOnTheChain(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := cyberpunkInstall(t)
+
+	// The user's mod folder lives on another drive.
+	elsewhere := t.TempDir()
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(game.ModPath, "mods")))
+
+	seedNamedInstalledMod(t, svc, game, "src", "a", "Mod A", "1.0", true,
+		map[string][]byte{filepath.Join("mods", "coolmod", "cool.archive"): []byte("a")})
+	installSeededMod(t, svc, game, "a")
+	require.DirExists(t, filepath.Join(elsewhere, "coolmod"), "deploy wrote through the symlink")
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod(context.Background(), game.ID, "default",
+		domain.ModReference{SourceID: "src", ModID: "a", Version: "1.0"}))
+	_, err = pm.Create(context.Background(), game.ID, "other")
+	require.NoError(t, err)
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "other")
+	require.NoError(t, err)
+	require.Len(t, plan.ToDisable, 1, "the switch must undeploy Mod A - that is what reaches the prune")
+	_, err = svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+
+	assert.DirExists(t, filepath.Join(elsewhere, "coolmod"),
+		"the switch undeployed the file, but nothing on the far side of the symlink is lmm's to remove")
+	info, lerr := os.Lstat(filepath.Join(game.ModPath, "mods"))
+	if assert.NoError(t, lerr, "the user's symlink must survive the switch") {
+		assert.NotZero(t, info.Mode()&os.ModeSymlink, "and must still BE a symlink")
+	}
+	assertLoaderDirsSurvive(t, game)
+}

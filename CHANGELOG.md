@@ -1117,7 +1117,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory, so it did not heal on its own. The cleanup is now bounded to
   the directories lmm's own removals emptied: it walks up from each removed
   file, stops at the first directory that is not empty, and never reaches
-  the mod root itself. Strictly smaller behaviour for every game.
+  the mod root itself. A directory you symlinked elsewhere — a mod folder
+  kept on another drive — stops the walk before anything is removed, so
+  neither the symlink nor anything behind it is touched. Strictly smaller
+  behaviour for every game.
 
 - **`lmm game detect` recognises a game you already added under a different
   id (#406).** A curated known-games entry names its own game id, which

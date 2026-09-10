@@ -38,6 +38,14 @@ func New(method domain.LinkMethod) Linker {
 // basePath. basePath itself is never removed, and a directory that was not
 // on a removed file's ancestor chain is never even looked at.
 //
+// A SYMLINKED directory anywhere on the chain stops the walk before it
+// removes anything: os.ReadDir and os.Remove both follow a symlink, while
+// filepath.Dir and the prefix check are string operations, so without this
+// guard a mod folder the user symlinked onto another drive would have been
+// read through and removed on the far side - outside basePath entirely -
+// and then unlinked on the way back up. The symlink is left in place, and
+// so is everything it points at.
+//
 // It used to walk the WHOLE tree under basePath and remove every empty
 // directory it found (#415). For a game whose mod root is its install root
 // (`mod_path: ""` - Cyberpunk 2077, hearts-of-iron-iv,
@@ -47,7 +55,11 @@ func New(method domain.LinkMethod) Linker {
 // redscript's r6/scripts, archive/pc/mod, tools/redmod/mods). Steam's
 // verify-integrity does not restore an empty directory, so it did not heal
 // on its own. Bounding the walk to what lmm removed is strictly smaller
-// behaviour for every game.
+// behaviour for every game: every directory this removes is empty, strictly
+// under basePath, and reachable from basePath through real directories
+// only, so the old sweep's fixpoint removed it too. (That was NOT true
+// before the symlink guard above - the far side of a symlink is not under
+// basePath, and filepath.Walk, which Lstats, never descended into one.)
 func CleanupEmptyDirs(basePath string, removedFiles []string) {
 	if basePath == "" {
 		return
@@ -62,6 +74,9 @@ func CleanupEmptyDirs(basePath string, removedFiles []string) {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(base, path)
 		}
+		if !realDirChain(prefix, filepath.Dir(path)) {
+			continue
+		}
 		for dir := filepath.Dir(path); strings.HasPrefix(dir, prefix); dir = filepath.Dir(dir) {
 			entries, err := os.ReadDir(dir)
 			if err != nil || len(entries) > 0 {
@@ -72,4 +87,25 @@ func CleanupEmptyDirs(basePath string, removedFiles []string) {
 			}
 		}
 	}
+}
+
+// realDirChain reports whether every step from dir up to (but not
+// including) the base prefix is a REAL directory - Lstat, so a symlink is
+// not one.
+//
+// The check runs before anything is removed, and covers the whole chain
+// rather than one directory at a time, because the walk goes bottom-up: by
+// the time it reached a symlink at `<base>/link` it would already have
+// ReadDir'd and removed `<base>/link/sub`, which lives on the far side.
+// One symlink on the chain therefore puts that whole chain out of reach,
+// which is the conservative answer - lmm did not create the symlink and
+// cannot know what else depends on what is behind it.
+func realDirChain(prefix, dir string) bool {
+	for ; strings.HasPrefix(dir, prefix); dir = filepath.Dir(dir) {
+		info, err := os.Lstat(dir)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
 }

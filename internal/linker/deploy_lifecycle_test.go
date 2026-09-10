@@ -352,3 +352,55 @@ func TestLinker_Deploy_OverwritesExistingForeignFile(t *testing.T) {
 		})
 	}
 }
+
+// TestCleanupEmptyDirs_StopsAtASymlinkedDirectoryOnTheChain is the #415
+// re-review's I1: os.ReadDir and os.Remove both FOLLOW a symlink, while
+// filepath.Dir and strings.HasPrefix are string operations. A directory
+// symlink anywhere on a removed file's ancestor chain therefore let the
+// bounded walk read and remove on the far side - outside basePath entirely -
+// and then unlink the user's symlink on the way back up.
+//
+// Symlinking a large mod folder (archive/pc/mod, ~mods, BepInEx/plugins)
+// onto another drive is ordinary practice, so this is reachable, not
+// theoretical. The old whole-tree filepath.Walk sweep was never exposed to
+// it: Walk Lstats, so a symlink is not info.IsDir() and it neither
+// descended nor removed one.
+func TestCleanupEmptyDirs_StopsAtASymlinkedDirectoryOnTheChain(t *testing.T) {
+	base := t.TempDir()
+	elsewhere := t.TempDir()
+	farSide := filepath.Join(elsewhere, "real")
+	require.NoError(t, os.MkdirAll(filepath.Join(farSide, "sub"), 0o755))
+	link := filepath.Join(base, "link")
+	require.NoError(t, os.Symlink(farSide, link))
+
+	linker.CleanupEmptyDirs(base, []string{filepath.Join("link", "sub", "mod.esp")})
+
+	assert.DirExists(t, filepath.Join(farSide, "sub"),
+		"nothing on the far side of a symlink is lmm's to remove")
+	assert.DirExists(t, farSide, "the symlink's target must survive")
+	info, err := os.Lstat(link)
+	if assert.NoError(t, err, "the user's symlink itself must survive") {
+		assert.NotZero(t, info.Mode()&os.ModeSymlink, "and must still BE a symlink")
+	}
+}
+
+// TestCleanupEmptyDirs_StopsAtASymlinkedDirectoryPointingInsideBasePath:
+// the guard is "is this a real directory", not "does it leave basePath".
+// A symlink whose target is inside the mod root is left alone too - lmm did
+// not create it and cannot tell what else relies on it.
+func TestCleanupEmptyDirs_StopsAtASymlinkedDirectoryPointingInsideBasePath(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "real")
+	require.NoError(t, os.MkdirAll(filepath.Join(target, "sub"), 0o755))
+	link := filepath.Join(base, "link")
+	require.NoError(t, os.Symlink(target, link))
+
+	linker.CleanupEmptyDirs(base, []string{filepath.Join("link", "sub", "mod.esp")})
+
+	assert.DirExists(t, filepath.Join(target, "sub"))
+	assert.DirExists(t, target)
+	info, err := os.Lstat(link)
+	if assert.NoError(t, err, "an in-tree symlink is still not lmm's to remove") {
+		assert.NotZero(t, info.Mode()&os.ModeSymlink)
+	}
+}
