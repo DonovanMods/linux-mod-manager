@@ -18,7 +18,11 @@ func setupGameEditTest(t *testing.T) *core.Service {
 	t.Helper()
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(&mockAuthSource{id: "nexusmods", name: "NexusMods"})
-	svc.RegisterSource(&mockAuthSource{id: "local-mods", name: "Local Mods"})
+	// local-mods declares that its per-game mapped value addresses nothing
+	// - what a directory source does - which is what makes the empty
+	// mapping below a configuration rather than a value the user left out
+	// (#387 / T1 review #3).
+	svc.RegisterSource(&mockIdentifierIgnoringSource{mockGameAddSource{id: "local-mods", name: "Local Mods"}})
 	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
 		ID:          "skyrim-se",
 		Name:        "Skyrim Special Edition",

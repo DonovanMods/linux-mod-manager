@@ -220,9 +220,14 @@ type pageSizeSpySource struct {
 	calls       int
 }
 
-func (s *pageSizeSpySource) ID() string      { return s.id }
-func (s *pageSizeSpySource) Name() string    { return s.id }
-func (s *pageSizeSpySource) AuthURL() string { return "" }
+// pageSizeSpySource IGNORES the per-game mapped identifier: its canned
+// answer does not depend on the game id, which is what lets the fixture
+// map it with an empty value (T1 review #3 - core refuses an empty
+// mapping for a source that does NOT say so).
+func (s *pageSizeSpySource) ID() string                  { return s.id }
+func (s *pageSizeSpySource) Name() string                { return s.id }
+func (s *pageSizeSpySource) IgnoresGameIdentifier() bool { return true }
+func (s *pageSizeSpySource) AuthURL() string             { return "" }
 func (s *pageSizeSpySource) ExchangeToken(context.Context, string) (*source.Token, error) {
 	return nil, nil
 }
@@ -338,6 +343,10 @@ func TestDoSearch_NonPositiveLimit_FallsBackToSourceDefaultPageSize(t *testing.T
 // exists to reproduce the "attempted == 0" case that used to be
 // indistinguishable from a genuine zero-result search.
 type noSearchCapSource struct{ id string }
+
+// noSearchCapSource ignores the per-game mapped identifier, like every
+// other stub here (T1 review #3).
+func (s *noSearchCapSource) IgnoresGameIdentifier() bool { return true }
 
 func (s *noSearchCapSource) ID() string      { return s.id }
 func (s *noSearchCapSource) Name() string    { return s.id }
