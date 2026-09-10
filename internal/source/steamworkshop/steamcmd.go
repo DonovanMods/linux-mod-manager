@@ -251,7 +251,7 @@ func (s *Source) runSteamcmd(ctx context.Context, home, destDir, appID, fileID s
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				bytes := dirSize(destDir)
+				bytes := dirSize(contentRoot(destDir))
 				report(source.FetchPhaseProgress,
 					fmt.Sprintf("still downloading item %s - %s on disk after %s",
 						fileID, humanBytes(bytes), time.Since(started).Round(time.Second)),
@@ -315,17 +315,31 @@ func steamcmdEnv(home string) []string {
 // for the user to delete at any time.
 //
 // A source constructed with no cache dir (only test doubles, in practice)
-// falls back to a directory inside the staging area core already owns:
-// correct, just slower, and never a write into the user's real home.
+// falls back to the same leaf inside the staging area core already owns:
+// correct, just slower, and never a write into the user's real home. That
+// fallback lands INSIDE destDir, which is why the heartbeat measures
+// contentRoot rather than destDir - otherwise it would report the tool's
+// own bootstrap as downloaded bytes.
 func (s *Source) steamcmdHome(destDir string) (string, error) {
-	home := filepath.Join(destDir, "_steamcmd-home")
-	if s.cacheDir != "" {
-		home = filepath.Join(s.cacheDir, "_steamworkshop", "steamcmd-home")
+	root := s.cacheDir
+	if root == "" {
+		root = destDir
 	}
+	home := filepath.Join(root, "_steamworkshop", "steamcmd-home")
 	if err := os.MkdirAll(home, 0700); err != nil {
 		return "", err
 	}
 	return home, nil
+}
+
+// contentRoot is the only subtree a Workshop download puts content in:
+// +force_install_dir pins steamcmd to destDir, and the item lands at
+// <destDir>/steamapps/workshop/content/<appid>/<fileid>/. The heartbeat
+// measures this rather than destDir so nothing else the tool leaves in the
+// staging directory - its own isolated home, on the no-cache-dir fallback -
+// is counted as bytes downloaded.
+func contentRoot(destDir string) string {
+	return filepath.Join(destDir, "steamapps")
 }
 
 // classifySteamcmd turns one run into the typed failure a frontend

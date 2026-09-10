@@ -500,3 +500,42 @@ func TestFetch_TheTimeoutBoundsAHungTool(t *testing.T) {
 		t.Fatal("Fetch outlived its own timeout")
 	}
 }
+
+// TestFetch_TheHeartbeatMeasuresOnlyTheDownloadedContent covers the branch
+// no test could previously reach. A source built with no cache dir puts
+// steamcmd's isolated home inside the staging directory core handed over -
+// so a heartbeat measuring the whole of destDir would report the tool's own
+// ~200 MB self-bootstrap as bytes downloaded, on the first tick, before a
+// single byte of the item had arrived.
+func TestFetch_TheHeartbeatMeasuresOnlyTheDownloadedContent(t *testing.T) {
+	testutil.FakeSteamcmdOnPath(t)
+	src := newTestSource(t, "http://127.0.0.1:0", "", nil)
+	steamworkshop.SetHeartbeatForTest(t, 20*time.Millisecond)
+
+	var mu sync.Mutex
+	var beatBytes []int64
+	dest := t.TempDir()
+	_, err := src.Fetch(context.Background(), &domain.Mod{ID: "3000000005", GameID: "1133870"}, "3000000005", dest,
+		func(phase, _ string, bytes int64) {
+			if phase != source.FetchPhaseProgress {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			beatBytes = append(beatBytes, bytes)
+		})
+	require.NoError(t, err)
+
+	// The fallback home is inside destDir, and the fake drops a 4 KiB decoy
+	// bootstrap in it. The item itself is a few hundred bytes.
+	assert.DirExists(t, filepath.Join(dest, "_steamworkshop", "steamcmd-home"))
+	assert.FileExists(t, filepath.Join(dest, "_steamworkshop", "steamcmd-home", "steamcmd-bootstrap.bin"))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, beatBytes)
+	for _, n := range beatBytes {
+		assert.Less(t, n, int64(4096), "the heartbeat counted steamcmd's own home as downloaded bytes")
+	}
+	assert.Greater(t, beatBytes[len(beatBytes)-1], int64(0))
+}

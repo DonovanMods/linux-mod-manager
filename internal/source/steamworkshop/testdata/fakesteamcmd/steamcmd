@@ -137,6 +137,11 @@ case "$fileid" in
     exit 0
     ;;
   3000000005)
+    # A decoy for the tool's own ~200 MB self-bootstrap. It lives in HOME,
+    # which on the no-cache-dir fallback is INSIDE the staging directory -
+    # so a heartbeat that measured the whole staging tree would report it as
+    # bytes downloaded.
+    head -c 4096 /dev/zero > "$HOME/steamcmd-bootstrap.bin" 2>/dev/null || :
     content="$force_dir/steamapps/workshop/content/$appid/$fileid"
     mkdir -p "$content"
     for _ in 1 2 3 4 5 6; do
