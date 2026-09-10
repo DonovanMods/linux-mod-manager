@@ -66,9 +66,10 @@ func (s *Service) dropVerifyMemo() {
 
 // verifyFingerprint is a cheap summary of everything a verify run reads
 // LOCALLY: the profile's mod refs (and their locks), the installed rows
-// (version, file ids, policy, deployed/enabled state), the deployed_files
-// checksum rows the run walks, and a stat-only walk of the game's deployed
-// tree - each entry's path, size and modification time.
+// (version, file ids, policy, deployed/enabled state), a stat of each
+// EXTERNAL row's ExternalPath (#269), the deployed_files checksum rows the
+// run walks, and a stat-only walk of the game's deployed tree - each
+// entry's path, size and modification time.
 //
 // KNOWN LIMIT, and the reason VerifyOptions.Force exists: size+mtime is not
 // content. A file rewritten with the same length and its timestamp restored
@@ -100,6 +101,12 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		rows = append(rows, fmt.Sprintf("mod\x1f%s\x1f%s\x1f%s\x1f%t\x1f%t\x1f%s\x1f%s\x1f%t",
 			m.SourceID, m.ID, m.Version, m.Enabled, m.Deployed,
 			m.UpdatePolicy, strings.Join(m.FileIDs, ","), m.ManualDownload))
+		if m.External {
+			// #269 x #336: the ONE thing verify reads that nothing else in
+			// this fingerprint can see. See externalStatToken.
+			rows = append(rows, fmt.Sprintf("ext\x1f%s\x1f%s\x1f%s\x1f%s",
+				m.SourceID, m.ID, m.ExternalPath, externalStatToken(m.ExternalPath)))
+		}
 	}
 	sort.Strings(rows)
 	for _, row := range rows {
@@ -206,4 +213,37 @@ func fingerprintTree(ctx context.Context, w io.Writer, root string) error {
 		_, werr := fmt.Fprintf(w, "file\x1f%s\x1f%d\x1f%d\n", rel, info.Size(), info.ModTime().UnixNano())
 		return werr
 	})
+}
+
+// externalStatToken summarises what verify's external presence pass reads
+// about ONE external mod: whether Steam still has content at its
+// ExternalPath, and when that directory last changed
+// (verify.go's externalPresencePass / externalContentPresent).
+//
+// It belongs in the fingerprint because that directory is the only input
+// to a verify answer that lies entirely OUTSIDE everything else summarised
+// here. It is not under game.ModPath, so fingerprintTree never reaches it;
+// no lmm row records its contents, so the installed rows say nothing about
+// it; and the agent that owns it is the STEAM CLIENT, which unsubscribes
+// an item with lmm not running at all - so no beginOp ever drops the memo
+// for it. Without this, unsubscribing a Workshop item left every later
+// Mission Control hydrate answering "no issues" from a memo taken while
+// the item was still there.
+//
+// A path that cannot be stat'ed is not an error: "absent" IS a state the
+// pass reports, and it only has to fingerprint DIFFERENTLY from "present".
+// The presence predicate is recorded beside the stat because the pass
+// counts an EMPTY directory as absent (Steam leaves one behind after an
+// unsubscribe), and that is a distinction a size and an mtime alone are
+// not guaranteed to carry on every filesystem.
+func externalStatToken(path string) string {
+	if path == "" {
+		return "unset"
+	}
+	present := externalContentPresent(path)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Sprintf("absent\x1f%t", present)
+	}
+	return fmt.Sprintf("stat\x1f%t\x1f%d\x1f%d", present, info.Size(), info.ModTime().UnixNano())
 }
