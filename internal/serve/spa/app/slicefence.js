@@ -24,6 +24,18 @@
 // is dropped rather than applied. Per-key rather than global, because two
 // loads of DIFFERENT slices never conflict: a health re-run must not throw
 // away the library reload issued a moment after it.
+//
+// The one thing that rule cannot do on its own is notice a claim nobody
+// ever writes. A load that gives up - its fetch failed, or the page it was
+// for is no longer on screen - would otherwise keep every earlier load's
+// answer out for good, and a slice whose newest claim wrote nothing and
+// whose older, SUCCESSFUL answer was dropped for it keeps a document older
+// than both: issue 370's own symptom, reached through the fix for it. So a
+// load that abandons a claim RELEASES it, handing the key back to the
+// newest claim still in flight. Releasing is deliberately not an
+// "unclaim-anything" primitive: it rolls a key back only while the
+// abandoning claim is still the newest on it, so a load that has already
+// been superseded cannot resurrect itself and reopen the race.
 
 /**
  * Creates a fence over `store`. One per application - the numbers are the
@@ -46,6 +58,21 @@ export function createSliceFence(store) {
       claimed.set(key, next);
     }
     return claimed;
+  }
+
+  /**
+   * Hands back the keys of `claimed` that are still its own, so the newest
+   * claim still in flight owns them again. Called by a load that will
+   * write nothing under this claim - a failed fetch, or an answer for a
+   * context that has since gone - and a no-op for any key a later claim
+   * has already taken. A load that HAS written under the claim must not
+   * release it: that would put the key back below its own write and let an
+   * older answer land on top of it.
+   */
+  function release(claimed) {
+    for (const [key, number] of claimed) {
+      if (latest.get(key) === number) latest.set(key, number - 1);
+    }
   }
 
   /**
@@ -92,5 +119,5 @@ export function createSliceFence(store) {
     return wrote;
   }
 
-  return { claim, isCurrent, commit };
+  return { claim, release, isCurrent, commit };
 }

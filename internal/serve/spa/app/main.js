@@ -332,13 +332,33 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
       {},
     );
   }
+  // ...and hands it back on every path that gives up before writing under
+  // it - a fetch that failed, a mod the user has arrowed away from, a route
+  // that has moved on. The silent one (a failed RE-hydrate, which
+  // deliberately leaves the page it could not refresh alone) is the one
+  // that bites: without the release, an older but
+  // SUCCESSFUL load that the abandoned one superseded is dropped for a
+  // claim that never wrote anything, and the page keeps the document from
+  // before both - issue 370's symptom, through its own fix. Only while
+  // nothing has been written under the claim: past that point releasing
+  // would put modPage back below this load's own write.
+  let pageWritten = !reHydrating;
+  const abandonPage = () => {
+    if (!pageWritten) slices.release(pageClaim);
+  };
 
   let filesReport;
   try {
     filesReport = await getModFiles(route.sourceID, route.modID, context);
   } catch (err) {
-    if (store.get().modPage?.key !== key) return;
-    if (reHydrating) return;
+    if (store.get().modPage?.key !== key) {
+      abandonPage();
+      return;
+    }
+    if (reHydrating) {
+      abandonPage();
+      return;
+    }
     const message = err instanceof ApiError ? err.message : String(err);
     commitSlices(
       seq,
@@ -348,7 +368,10 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
     );
     return;
   }
-  if (store.get().modPage?.key !== key) return;
+  if (store.get().modPage?.key !== key) {
+    abandonPage();
+    return;
+  }
   // Both writes above and below pass the SAME fence the final one does
   // (MIN-2 of the closing wave's gate review). They were guarded by
   // modPage.key alone, which cannot see the case the counter exists for:
@@ -377,8 +400,10 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
       {},
     )
   ) {
+    abandonPage();
     return;
   }
+  pageWritten = true;
 
   // updates joins the versions table against the ONE version
   // CheckGameUpdates would actually land this mod on (C1) - fetched
@@ -405,7 +430,14 @@ async function hydrateModPage(route, context, seq = hydrateSeq) {
       get(scoped("/api/v1/health", context)),
       get(scoped("/api/v1/conflicts", context)),
     ]);
-  if (store.get().modPage?.key !== key) return;
+  if (store.get().modPage?.key !== key) {
+    // The three shared documents were fetched and are being thrown away:
+    // hand their keys back rather than leaving Mission Control's own
+    // in-flight reload of them fenced out by a claim with nothing to
+    // write. pageClaim is NOT released - it has already written above.
+    slices.release(extrasClaim);
+    return;
+  }
   commitSlices(
     seq,
     // One commit, two claims: this page's own slot and the three shared

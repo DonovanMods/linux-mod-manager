@@ -843,7 +843,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never appeared and nothing re-fetched, so the page stayed stale until some
   unrelated refresh. Every load now claims a per-slice sequence number when
   it issues its requests and commits only the slices it is still the newest
-  claim on, so a late answer is dropped rather than applied.
+  claim on, so a late answer is dropped rather than applied. A load that
+  gives up without writing - a refresh whose fetch failed, an answer for a
+  page you have already left - hands its slices back, so an older but
+  successful answer still lands instead of being discarded for a claim that
+  wrote nothing.
 
 - **A verify result handed to a caller is no longer the memo's own copy
   (#366).** #336's memo cloned the result it served from a cache HIT, but

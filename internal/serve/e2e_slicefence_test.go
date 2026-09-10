@@ -86,6 +86,72 @@ func TestSliceFence_TheOlderAnswerIsDropped(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestSliceFence_AnAbandonedClaimReleasesItsSlice is the other half of the
+// rule: a load that will write nothing must not keep the answers it
+// superseded out for good. Without the release, a slice whose newest claim
+// was abandoned (a failed re-hydrate, an answer for a page the user has
+// left) and whose older, SUCCESSFUL answer was dropped for it keeps the
+// document from before both - issue 370's own symptom, reached through the
+// fix for it.
+//
+// The second half pins the limit that keeps the release from reopening the
+// race: a claim that has ALREADY been superseded releases nothing.
+func TestSliceFence_AnAbandonedClaimReleasesItsSlice(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var got struct {
+		AfterRelease string `json:"afterRelease"`
+		OlderWrote   bool   `json:"olderWrote"`
+		StaleWrote   bool   `json:"staleWrote"`
+		NewestWrote  bool   `json:"newestWrote"`
+		Final        string `json:"final"`
+	}
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.Evaluate(`(async () => {
+			const { createStore } = await import("/static/app/store.js");
+			const { createSliceFence } = await import("/static/app/slicefence.js");
+
+			// An older load, superseded by one that then gives up.
+			const store = createStore();
+			const fence = createSliceFence(store);
+			const older = fence.claim(["mods"]);
+			const abandoned = fence.claim(["mods"]);
+			fence.release(abandoned);
+			const olderWrote = fence.commit(older, { mods: "older-but-successful" }, {});
+
+			// A claim that is no longer the newest cannot release its way
+			// back in front of the one that took the key from it.
+			const store2 = createStore();
+			const fence2 = createSliceFence(store2);
+			const stale = fence2.claim(["mods"]);
+			const newest = fence2.claim(["mods"]);
+			fence2.release(stale);
+			const staleWrote = fence2.commit(stale, { mods: "stale" }, {});
+			const newestWrote = fence2.commit(newest, { mods: "newest" }, {});
+
+			return {
+				afterRelease: store.get().mods,
+				olderWrote,
+				staleWrote,
+				newestWrote,
+				final: store2.get().mods,
+			};
+		})()`, &got, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	assert.True(t, got.OlderWrote,
+		"a claim released by the load that abandoned it must belong to the newest load still in flight")
+	assert.Equal(t, "older-but-successful", got.AfterRelease,
+		"a superseded-but-successful answer must land rather than being discarded for a claim that wrote nothing")
+	assert.False(t, got.StaleWrote, "releasing an already-superseded claim must not revive it")
+	assert.True(t, got.NewestWrote, "...and must not cost the claim that superseded it its own write")
+	assert.Equal(t, "newest", got.Final)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_TwoModSettingsInFlightKeepTheNewerLibrary is issue 370 through
 // the application itself: Lock one row, then Lock another before the first
 // one's /api/v1/mods reload has come back.
