@@ -40,6 +40,11 @@ import (
 //
 // The \b is load-bearing twice over: it keeps `.versions` (a source's version
 // LIST, a different document entirely) and `.locked_version` out.
+//
+// It matches property ACCESS only, so `mod["version"]` would slip past. That
+// limit is deliberate: this codebase never writes that shape, and widening the
+// pattern to string literals would fire on every doc comment that names the
+// field - including the ones in this file.
 var versionRead = regexp.MustCompile(`\??\.\s*(version|new_version|installed_version|available_version)\b`)
 
 // versionAllowance is one registered raw read: how many, and why that file is
@@ -79,10 +84,10 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 		"version": {1, "core.PurgePlan.Mods is partitionExternal's NON-external half (internal/core/purge.go); the external items are names only, in their own 'Left alone' section, and carry no version."},
 	},
 	"components/plan_switch.js": {
-		"version": {4, "core.SwitchPlan's three buckets. PlanProfileSwitch `continue`s on im.External in both classification loops (internal/core/switch.go), counting the row under ExternalUnchanged instead, so no bucket can carry one."},
+		"version": {4, "core.SwitchPlan's three buckets. ToDisable and ToEnable are safe outright: PlanProfileSwitch classifies an INSTALLED row, and `if installed && im.External { continue }` counts it under ExternalUnchanged first (internal/core/switch.go). ToInstall is the KNOWN GAP: a profile ref whose installed row is gone falls past that guard as a bare domain.ModReference, which carries no External flag to branch on - the same shape plan_profile_sync.js and plan_profile_import.js register below."},
 	},
 	"components/plan_profile_apply.js": {
-		"version": {4, "core.ProfileApplyPlan's three buckets, for the identical reason: `if im.External { plan.ExternalUnchanged++; continue }` runs before any bucket is chosen (internal/core/profile_apply.go)."},
+		"version": {4, "core.ProfileApplyPlan's three buckets, with the identical split: pass 1's `if im.External { plan.ExternalUnchanged++; continue }` covers ToDisable and ToEnable, but pass 2 (internal/core/profile_apply.go) appends ANY un-installed profile ref to ToInstall with no External test, because a bare domain.ModReference has none to test. KNOWN GAP, same follow-up as plan_switch.js's."},
 	},
 	"components/plan_install.js": {
 		"version": {7, "Source-side file and version lists on core.InstallPlan. PlanInstall refuses a mod already tracked from Steam as its FIRST statement (issue 269's install-exclusivity gate), so an external mod never reaches this renderer."},
@@ -94,7 +99,7 @@ var allowedRawVersionReads = map[string]map[string]versionAllowance{
 		"version": {1, "A search hit is a domain.Mod - a catalog document with no External field - and Workshop search needs a user's own Steam Web API key, which is not Tier 1 (issue 269)."},
 	},
 	"components/plan_profile_sync.js": {
-		"version": {2, "KNOWN GAP, registered rather than fixed. core.ProfileSyncPlan's buckets are bare domain.ModReferences, which carry neither External nor a timestamp, so this renderer cannot tell an external ref from a managed one. An external ref reaches ToAdd only when the profile lost its ref and sync puts it back (internal/core/profile_sync.go's own note); closing it needs an additive core field on the plan plus the CLI renderer alongside, which is a follow-up rather than part of this unit."},
+		"version": {2, "KNOWN GAP, registered rather than fixed. core.ProfileSyncPlan's buckets are bare domain.ModReferences, which carry neither External nor a timestamp, so this renderer cannot tell an external ref from a managed one. An external ref reaches ToAdd only when the profile lost its ref and sync puts it back (internal/core/profile_sync.go's own note); closing it needs an additive core field on the plan plus the CLI renderer alongside, which is a follow-up rather than part of this unit. FOUR renderers share this gap, not two - plan_switch.js's and plan_profile_apply.js's ToInstall buckets above are the other half."},
 	},
 	"components/plan_profile_import.js": {
 		"version": {2, "KNOWN GAP, the sibling of plan_profile_sync.js's: core.ImportPlan's refs are bare domain.ModReferences from another machine's profile document, with no External flag to branch on."},
