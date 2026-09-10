@@ -298,19 +298,25 @@ func loaderStatusWarnings(status *LoaderStatus) []string {
 }
 
 // Relevant reports whether anything about this game says a mod loader is
-// part of the conversation: the game declares one, or its install directory
-// carries a marker DetectLoaderTarget recognised.
+// part of the conversation: the game declares one, BepInEx is installed in
+// its directory or has left a log there, or the directory carries a marker
+// DetectLoaderTarget recognised.
 //
-// It is the one rule deciding whether a frontend shows the loader report at
-// all, and it lives here rather than in each frontend so `lmm game show` and
-// the web game page cannot disagree. False means "not a loader game as far
-// as anything can tell": say nothing, rather than print a section of
-// unknowns followed by BepInEx setup advice.
+// It decides whether a surface shows the loader report at all, and it lives
+// here rather than in each frontend so `lmm game show` and the web game
+// page's warning cannot disagree. False means "not a loader game as far as
+// anything can tell": say nothing, rather than print a section of unknowns
+// followed by BepInEx setup advice.
 //
-// A game whose disk says nothing is still relevant the moment it DECLARES a
-// loader - that is exactly when the unanswered questions are worth asking.
+// Every piece of evidence LoaderStatus gathers counts, not just the two
+// DETECTED enums (re-review R3). A game whose disk says nothing is relevant
+// the moment it DECLARES a loader - that is exactly when the unanswered
+// questions are worth asking - and a game that declares nothing is relevant
+// the moment BepInEx is actually THERE, which is the undeclared, mid-setup
+// user the report has the most to say to.
 func (l *LoaderStatus) Relevant() bool {
 	return l != nil && (l.Declared != nil ||
+		l.Installed || l.LoadedAt != "" ||
 		l.DetectedRuntime != domain.LoaderRuntimeUnknown ||
 		l.DetectedBootstrap != domain.LoaderBootstrapUnknown)
 }

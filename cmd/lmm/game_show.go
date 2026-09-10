@@ -84,11 +84,12 @@ func doGameShow(ctx context.Context, service *core.Service, gameID string) error
 // is about to set BepInEx up is which build and which launch option their
 // game needs - which lmm can answer before anything is declared at all.
 //
-// A game that neither declares a loader nor carries a marker gets NO
-// section: core.LoaderStatus.Relevant owns that rule so the web game page
-// answers it the same way. Printing "Declared: none / Runtime: unknown /
-// Bootstrap: unknown" and then advising `--loader-bootstrap` for an Unreal
-// game is advice to configure something it neither has nor needs.
+// A game that declares no loader, carries no marker and has no BepInEx on
+// disk gets NO section: core.LoaderStatus.Relevant owns that rule so the
+// server-side warning answers it the same way. Printing "Declared: none /
+// Runtime: unknown / Bootstrap: unknown" and then advising
+// `--loader-bootstrap` for an Unreal game is advice to configure something
+// it neither has nor needs.
 func printLoaderStatus(status *core.LoaderStatus) {
 	if !status.Relevant() {
 		return
@@ -97,18 +98,28 @@ func printLoaderStatus(status *core.LoaderStatus) {
 	fmt.Println(colorBold("Mod loader"))
 
 	if status.Declared == nil {
-		fmt.Printf("  Declared:     %s\n", colorDim("none"))
+		// An UNDECLARED game with the preloader actually on disk is the
+		// one state where the missing declaration is the whole story
+		// (re-review R3): lmm will refuse to deploy a plugin into it, and
+		// the fix is one command. Saying "none" and moving on left that
+		// user with nothing to act on.
+		if status.Installed {
+			fmt.Printf("  Declared:     %s\n", colorRed("none - BepInEx is in the game directory but this game does not declare it"))
+			fmt.Printf("                %s\n", colorDim(fmt.Sprintf("declare it with `lmm game edit %s --loader bepinex`", status.GameID)))
+		} else {
+			fmt.Printf("  Declared:     %s\n", colorDim("none"))
+		}
 	} else {
 		version := status.Declared.Version
 		if version == "" {
 			version = colorDim("(no version declared)")
 		}
 		fmt.Printf("  Declared:     %s %s\n", status.Declared.Kind, version)
-		if status.Installed {
-			fmt.Printf("  Installed:    %s\n", colorGreen("yes"))
-		} else {
-			fmt.Printf("  Installed:    %s\n", colorRed("no - the preloader is not in the game directory"))
-		}
+	}
+	if status.Installed {
+		fmt.Printf("  Installed:    %s\n", colorGreen("yes"))
+	} else if status.Declared != nil {
+		fmt.Printf("  Installed:    %s\n", colorRed("no - the preloader is not in the game directory"))
 	}
 
 	fmt.Printf("  Runtime:      %s\n", loaderValueOrUnknown(status.EffectiveRuntime.String()))

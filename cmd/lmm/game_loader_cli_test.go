@@ -203,3 +203,27 @@ func TestDoGameShow_SkipsTheLoaderSectionForAGameWithNoLoaderInSight(t *testing.
 	assert.NotContains(t, out, "Mod loader")
 	assert.NotContains(t, out, "--loader-bootstrap")
 }
+
+// TestDoGameShow_AnInstalledButUndeclaredLoaderSaysTheDeclarationIsMissing is
+// re-review R3's CLI half. BepInEx is in the game directory and has run, but
+// the game declares nothing - so `lmm game show` printed no loader section at
+// all, when the one thing it had to say ("declare it") was the actionable
+// one.
+func TestDoGameShow_AnInstalledButUndeclaredLoaderSaysTheDeclarationIsMissing(t *testing.T) {
+	svc := setupGameEditTest(t)
+	install := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(install, "BepInEx", "core"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "BepInEx", "core", "BepInEx.Preloader.dll"), []byte("pe"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "BepInEx", "LogOutput.log"), []byte("log"), 0o644))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "mid-setup", Name: "Mid Setup", InstallPath: install, ModPath: install,
+		SourceIDs: map[string]string{"nexusmods": "mid-setup"},
+	}))
+
+	out := captureStdout(t, func() error {
+		return doGameShow(context.Background(), svc, "mid-setup")
+	})
+	assert.Contains(t, out, "Mod loader", "the section is exactly what this user needs")
+	assert.Contains(t, out, "does not declare it")
+	assert.Contains(t, out, "--loader bepinex")
+}

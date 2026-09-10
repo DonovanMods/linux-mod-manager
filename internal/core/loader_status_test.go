@@ -223,3 +223,29 @@ func TestLoaderStatus_ADeclaredGameStillWarnsAboutAnUnansweredBootstrap(t *testi
 	require.NotEmpty(t, status.Warnings)
 	assert.Contains(t, status.Warnings[0], "--loader-bootstrap")
 }
+
+// TestLoaderStatus_AnInstalledButUndeclaredLoaderIsRelevant is re-review R3:
+// Relevant() consulted only the declaration and the two DETECTED enums, so a
+// game with BepInEx actually installed - and a LogOutput.log proving it has
+// run - but no declaration and no Unity/launcher marker was told nothing at
+// all. That is the user the report exists for: undeclared, mid-setup, one
+// `lmm game edit --loader bepinex` from working.
+func TestLoaderStatus_AnInstalledButUndeclaredLoaderIsRelevant(t *testing.T) {
+	svc := newFlowsTestService(t)
+	install := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(install, "BepInEx", "core"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "BepInEx", "core", "BepInEx.Preloader.dll"), []byte("pe"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "BepInEx", "LogOutput.log"), []byte("log"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(install, "start.sh"), []byte("#!/bin/sh\n"), 0o755))
+	require.NoError(t, svc.SaveGame(context.Background(), &domain.Game{
+		ID: "mid-setup", Name: "Mid Setup", InstallPath: install, ModPath: install,
+	}))
+
+	status, err := svc.LoaderStatus(context.Background(), "mid-setup")
+	require.NoError(t, err)
+	require.True(t, status.Installed, "the fixture must be the installed-but-undeclared state")
+	assert.Equal(t, domain.LoaderBootstrapUnknown, status.DetectedBootstrap, "and nothing on disk answers the bootstrap")
+	assert.True(t, status.Relevant(), "BepInEx being ON DISK is as loader-relevant as a declaration")
+	require.NotEmpty(t, status.Warnings, "so the bootstrap question is worth asking")
+	assert.Contains(t, status.Warnings[0], "--loader-bootstrap")
+}
