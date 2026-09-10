@@ -1156,7 +1156,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 		}, nil
 	}
 
-	members, err := s.extractIntoStaging(ctx, archivePath, cachePath, stagePath)
+	members, err := s.extractIntoStaging(ctx, game, mod, archivePath, cachePath, stagePath)
 	if err != nil {
 		return nil, fmt.Errorf("extracting mod: %w", err)
 	}
@@ -1263,7 +1263,7 @@ func (s *Service) ingestLocalToCache(ctx context.Context, gameCache *cache.Cache
 			return nil, fmt.Errorf("hashing local mod file: %w", err)
 		}
 	default:
-		if members, err = s.extractIntoStaging(ctx, localPath, cachePath, stagePath); err != nil {
+		if members, err = s.extractIntoStaging(ctx, game, mod, localPath, cachePath, stagePath); err != nil {
 			return nil, fmt.Errorf("extracting mod: %w", err)
 		}
 		if checksum, err = md5File(localPath); err != nil {
@@ -1454,7 +1454,7 @@ func commitStagedCacheWithMarker(cachePath, stagePath, fileID string, members []
 // Returned members are extractDir-relative paths of regular files only,
 // matching cache.ListFiles semantics (directories and symlinks are never
 // listed, deployed, or undeployed).
-func (s *Service) extractIntoStaging(ctx context.Context, archivePath, cachePath, stagePath string) ([]string, error) {
+func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod *domain.Mod, archivePath, cachePath, stagePath string) ([]string, error) {
 	extractPath := cachePath + ".extract"
 	if err := os.RemoveAll(extractPath); err != nil {
 		return nil, fmt.Errorf("clearing extraction dir: %w", err)
@@ -1465,8 +1465,28 @@ func (s *Service) extractIntoStaging(ctx context.Context, archivePath, cachePath
 		return nil, err
 	}
 
+	// #358: the BepInEx archive-root normaliser, run on the pristine
+	// intermediate rather than on stagePath - exactly the attribution
+	// property that intermediate exists for. A mod downloaded from
+	// NexusMods and one imported from a local archive therefore reach the
+	// cache in the same layout, which is what lets a BepInEx plugin deploy
+	// correctly with no source work at all (spike §5).
+	//
+	// The plugin directory a loose .dll lands in is named after the MOD, not
+	// the archive: a source-backed download has a real mod name, and it is
+	// the name the user sees in `lmm list`.
+	//
+	// #359 replaces the false with the game's own loader declaration.
+	layout, err := normalizeBepInExTree(extractPath, mod.Name, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range layout.warnings() {
+		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
+	}
+
 	var members []string
-	err := filepath.WalkDir(extractPath, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(extractPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

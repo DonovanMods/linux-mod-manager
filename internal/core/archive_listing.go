@@ -118,7 +118,15 @@ func importMemberRelPath(name string) (string, error) {
 // The cache entry's own layout IS the game-directory layout (Installer.
 // Install links versionDir/<file> to ModPath/<file>), so these paths need no
 // further translation.
-func importDeployablePaths(kind importArchiveKind, filename string, members []archiveMember) ([]string, error) {
+//
+// layout is the BepInEx archive-root normalisation the INGEST will apply
+// (bepinex_layout.go, #358), or nil for an archive it does not recognise:
+// applying it here is what keeps a preview from promising
+// "SomePack/BepInEx/plugins/A.dll" for an import that will deploy
+// "BepInEx/plugins/A.dll". A member the layout drops (the package metadata
+// every Thunderstore archive carries) contributes nothing and is absent
+// from the result, exactly as it will be absent from the cache entry.
+func importDeployablePaths(kind importArchiveKind, filename string, members []archiveMember, layout *bepinexLayout) ([]string, error) {
 	switch kind {
 	case importKindMergeSource:
 		return []string{}, nil
@@ -135,10 +143,42 @@ func importDeployablePaths(kind importArchiveKind, filename string, members []ar
 		if m.Dir {
 			continue
 		}
-		paths = append(paths, rel)
+		dest, kept := layout.Rewrite(filepath.ToSlash(rel))
+		if !kept {
+			continue
+		}
+		paths = append(paths, filepath.FromSlash(dest))
 	}
 	slices.Sort(paths)
 	return slices.Compact(paths), nil
+}
+
+// bepinexLayoutForListing is the BepInEx normalisation the ingest of these
+// members would apply, for a plan that has only the archive's table of
+// contents. It runs bepinexNormalise over exactly the paths
+// importDeployablePaths will map, so the plan and the ingest agree by
+// construction rather than by inspection.
+//
+// A member the extractor itself would refuse (a reserved name, a zip-slip
+// escape) fails the whole listing here, the same refusal at the same
+// granularity importDeployablePaths makes - a plan must not preview an
+// import the ingest will reject.
+func bepinexLayoutForListing(kind importArchiveKind, members []archiveMember, modName string, loaderDeclared bool) (*bepinexLayout, error) {
+	if kind != importKindExtract {
+		return nil, nil
+	}
+	paths := make([]string, 0, len(members))
+	for _, m := range members {
+		if m.Dir {
+			continue
+		}
+		rel, err := importMemberRelPath(m.Path)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+	}
+	return bepinexNormalise(paths, modName, loaderDeclared)
 }
 
 // importedModName is the mod name an import records for archivePath's

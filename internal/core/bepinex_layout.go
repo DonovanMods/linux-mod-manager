@@ -454,3 +454,13 @@ func normalizeBepInExTree(root, modName string, loaderDeclared bool) (*bepinexLa
 	linker.CleanupEmptyDirs(root)
 	return layout, nil
 }
+
+// warnings is Warnings with a nil-safe receiver, so a caller holding a
+// layout it never resolved (a non-extract import kind) can splice the
+// diagnostics in without a branch.
+func (l *bepinexLayout) warnings() []string {
+	if l == nil {
+		return nil
+	}
+	return l.Warnings
+}
