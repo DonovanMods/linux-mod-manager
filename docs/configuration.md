@@ -12,7 +12,7 @@ Global application settings. Optional; defaults apply if the file is missing.
 | --------------------- | ------ | --------- | ---------------------------------------------------------------------------------------------------- |
 | `default_link_method` | string | `symlink` | How to deploy mods: `symlink`, `hardlink`, or `copy`                                                 |
 | `default_game`        | string | (empty)   | Game ID to use when `--game` is not specified                                                        |
-| `keybindings`         | string | `vim`     | Ignored. Kept so existing config files that set it still parse (it was reserved for the removed TUI) |
+| `keybindings`         | string | (unset)   | Ignored. Kept so existing config files that set it still parse (it was reserved for the removed TUI); lmm never writes it |
 | `cache_path`          | string | (empty)   | Override default mod cache directory (`<data dir>/cache`)                                            |
 | `hook_timeout`        | int    | 60        | Timeout in seconds for hook scripts                                                                  |
 | `auto_snapshot`       | bool   | `false`   | Record a snapshot before every deploy, profile switch and update (see below)                         |

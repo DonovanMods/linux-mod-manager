@@ -96,6 +96,23 @@ func readPromptLineFrom(r io.Reader) (string, error) {
 	return strings.TrimSpace(strings.ToLower(line)), nil
 }
 
+// The remedy each interactive prompt names: the flag or argument that would
+// have answered it without a human. Each is used TWICE - once by the --json
+// envelope (confirmationRequiredVia) and once by the EOF rendering that has
+// to say the same thing (promptReadError, #385) - so they are constants
+// rather than a literal typed out at each site, and the two renderings
+// cannot drift apart (P1b review F9). cmd/lmm/prompt_remedy_test.go refuses
+// a literal at either call site.
+const (
+	// remedySelectSource answers resolveSource's source picker.
+	remedySelectSource = "pass -s/--source to select a mod source"
+	// remedyPickInstallMod answers `lmm install`'s search-result picker.
+	remedyPickInstallMod = "pass -y/--yes to auto-select the first result, or --id to install a specific mod directly"
+	// remedyNameAuthSource answers `lmm auth login`/`logout`'s source
+	// picker, which has no flag of its own - the source is positional.
+	remedyNameAuthSource = "pass the source ID as a positional argument (e.g. lmm auth logout <source>)"
+)
+
 // confirmationRequiredVia returns core.ErrConfirmationRequired augmented
 // with how, the specific flag or argument that would have answered this
 // particular prompt without one. Most prompts share the sentinel's own
@@ -105,6 +122,46 @@ func readPromptLineFrom(r io.Reader) (string, error) {
 // --json envelope names the actual way out.
 func confirmationRequiredVia(how string) error {
 	return fmt.Errorf("%w: %s", core.ErrConfirmationRequired, how)
+}
+
+// interactiveOnlyVia returns core.ErrInteractiveOnly naming how - the flag
+// or argument that would have supplied this particular value without a
+// prompt. The counterpart to confirmationRequiredVia for a value (a name, a
+// path, an identifier) rather than a decision.
+func interactiveOnlyVia(how string) error {
+	return fmt.Errorf("%w: %s", core.ErrInteractiveOnly, how)
+}
+
+// promptReadErrorAs is promptReadError for a prompt whose non-interactive
+// path refuses with a specific error VALUE rather than a remedy sentence:
+// at EOF - stdin closed by a pipe, a redirect or Ctrl-D, so no answer is
+// ever coming - it returns that same error (#385, P1b review F10). Call
+// sites build the refusal once and hand it to both branches, so the two
+// renderings are one expression rather than two texts that happen to agree.
+// Any other read failure is a genuine stdin fault and keeps its
+// "reading input:" wrapper.
+func promptReadErrorAs(err, refusal error) error {
+	if errors.Is(err, io.EOF) {
+		return refusal
+	}
+	return fmt.Errorf("reading input: %w", err)
+}
+
+// promptReadError words a failed prompt read for a caller whose --json path
+// already names a remedy via confirmationRequiredVia.
+//
+// At EOF - stdin closed by a pipe, a redirect or Ctrl-D - no answer is ever
+// coming, and the plain-mode run used to report "reading input: EOF": an
+// implementation detail, with no way forward, handed to exactly the
+// scripted/cron caller the exit-code table exists for (#385). It now gets
+// the same remedy the --json envelope carries, so the two renderings say
+// the same thing. Any OTHER read failure is a genuine stdin fault and keeps
+// its "reading input:" wrapper.
+func promptReadError(err error, how string) error {
+	if errors.Is(err, io.EOF) {
+		return confirmationRequiredVia(how)
+	}
+	return fmt.Errorf("reading input: %w", err)
 }
 
 // resolveSource determines which source to use for a game.
@@ -174,7 +231,7 @@ func resolverFromService(svc *core.Service) func(string) string {
 // envelope names that flag as the way to decide the prompt non-interactively.
 func promptForGameSource(gameName string, sources []string, resolve func(string) string) (string, error) {
 	if jsonOutput {
-		return "", confirmationRequiredVia("pass -s/--source to select a mod source")
+		return "", confirmationRequiredVia(remedySelectSource)
 	}
 	if resolve == nil {
 		resolve = func(id string) string { return "" }
@@ -193,8 +250,8 @@ func promptForGameSource(gameName string, sources []string, resolve func(string)
 
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("reading input: %w", err)
+	if err != nil && strings.TrimSpace(input) == "" {
+		return "", promptReadError(err, remedySelectSource)
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))

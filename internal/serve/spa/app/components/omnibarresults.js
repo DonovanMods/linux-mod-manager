@@ -9,7 +9,11 @@
 // gate does it for free.
 
 import { html } from "../render.js";
-import { SourceResultsList, warningsCaption } from "./searchresults.js";
+import {
+  SourceResultsList,
+  skippedSignInNotice,
+  warningsCaption,
+} from "./searchresults.js";
 
 export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   const q = (query ?? "").trim();
@@ -37,6 +41,10 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   const report = omnibarSearch.report;
   const hits = report.mods ?? [];
   const warnings = report.warnings ?? [];
+  // Issue 383 (F1), the same rule the dedicated search page applies: a source
+  // skipped for want of a key is named once, and never reported as a game
+  // with nothing that can search.
+  const skippedNotice = skippedSignInNotice(report.skipped_unauthenticated);
 
   return html`
     <section class="library omnibar-results">
@@ -44,6 +52,12 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
         From sources (${hits.length})${warningsCaption(warnings)}
       </h2>
       ${
+        hits.length === 0 &&
+        skippedNotice !== "" &&
+        html`<p class="empty-state__hint">${skippedNotice}</p>`
+      }
+      ${
+        skippedNotice === "" &&
         report.attempted_count === 0 &&
         html`<p class="empty-state__hint">
           None of this game's sources support searching.

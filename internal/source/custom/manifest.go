@@ -256,6 +256,12 @@ func (m *Manifest) Capabilities() source.Capabilities {
 // TypeLabel implements source.TypeLabeler.
 func (m *Manifest) TypeLabel() string { return "manifest" }
 
+// IgnoresGameIdentifier implements source.GameIdentifierIgnorer: the mapped
+// value only FILTERS a manifest's own per-mod game_ids, and an empty one
+// matches every entry (gameMatches) - so a manifest that serves one game, or
+// serves them all, needs no mapping at all (#387).
+func (m *Manifest) IgnoresGameIdentifier() bool { return true }
+
 // toMod converts a manifest entry to a domain.Mod. GameID is stamped by
 // searchMods / the callers, not here.
 func (m *Manifest) toMod(mm manifestMod) domain.Mod {

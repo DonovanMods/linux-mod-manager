@@ -148,6 +148,21 @@ export function warningsCaption(warnings) {
   return ` · ${n} source${n === 1 ? "" : "s"} failed`;
 }
 
+/** skippedSignInNotice is issue 383's one line for a searchable source that was
+ * left out because no key is stored for it. core reports the skip apart from
+ * both warnings and the attempted count, so without this a game whose only
+ * searchable source is the Workshop renders "none of this game's sources
+ * support searching" - false, and the opposite of actionable. Empty when
+ * nothing was skipped. The destination is Setup > Authentication, which is
+ * where a browser user stores the key. */
+export function skippedSignInNotice(skipped) {
+  const ids = skipped ?? [];
+  if (ids.length === 0) return "";
+  const verb = ids.length === 1 ? "was" : "were";
+  const them = ids.length === 1 ? "it" : "them";
+  return `${ids.join(", ")} ${verb} skipped: not signed in. Add a key in Setup → Authentication to search ${them}.`;
+}
+
 /** SourceResultsList renders every hit, THEN per-source warnings (M3: a
  * warning ahead of the real hits it sits beside read as the headline result,
  * not a footnote about one source among several). detailed forwards to

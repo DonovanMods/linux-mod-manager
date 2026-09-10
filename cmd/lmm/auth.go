@@ -171,7 +171,7 @@ func promptForSource(service *core.Service) (string, error) {
 	// for (#307 gave 'login' its --key-from-env/--key-stdin, not a
 	// --source). Naming the source directly is the way out for both.
 	if jsonOutput {
-		return "", confirmationRequiredVia("pass the source ID as a positional argument (e.g. lmm auth logout <source>)")
+		return "", confirmationRequiredVia(remedyNameAuthSource)
 	}
 
 	fmt.Println("Select a source to authenticate with:")
@@ -184,8 +184,8 @@ func promptForSource(service *core.Service) (string, error) {
 
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("reading input: %w", err)
+	if err != nil && strings.TrimSpace(input) == "" {
+		return "", promptReadError(err, remedyNameAuthSource)
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))
@@ -220,6 +220,27 @@ func runAuthLogin(cmd *cobra.Command, args []string) error {
 // runAuthLogin so the validator-vs-stored message split is testable against
 // a mock source without driving the full interactive prompt.
 func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) error {
+	return doAuthLoginIndented(ctx, service, sourceID, "")
+}
+
+// errAPIKeyEmpty is the interactive key prompt answered with nothing.
+//
+// A sentinel rather than a bare fmt.Errorf because `lmm init` has to tell
+// it apart from a real failure: the wizard's banner promises "every step
+// can be skipped - press Enter to take the default", so an empty key there
+// is a SKIP and gets the same wording every other step's skip does. Only
+// `lmm auth login`, where the user asked for the prompt, reports it as an
+// error (#384).
+var errAPIKeyEmpty = errors.New("API key cannot be empty")
+
+// doAuthLoginIndented is doAuthLogin with every line it prints prefixed by
+// indent, so `lmm init` can nest the source's own instruction block and key
+// prompt inside its two-space step layout instead of being the one thing on
+// screen that breaks out of it (#384). indent "" is `lmm auth login`'s own
+// rendering, byte for byte.
+func doAuthLoginIndented(ctx context.Context, service *core.Service, sourceID, indent string) error {
+	out := newIndentWriter(os.Stdout, indent)
+
 	src, err := service.GetSource(sourceID)
 	if err != nil {
 		return fmt.Errorf("looking up source %s: %w", sourceID, err)
@@ -229,15 +250,15 @@ func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) er
 	// where to get a key, which is noise for a --key-from-env run and
 	// forbidden output beside a --json document (Ruling 15).
 	if !authKeyFromEnv && !authKeyStdin && !jsonOutput {
-		printAuthInstructions(src)
+		printAuthInstructions(out, src)
 	}
 
-	apiKey, err := acquireAPIKey(src)
+	apiKey, err := acquireAPIKey(out, src)
 	if err != nil {
 		return err
 	}
 	if apiKey == "" {
-		return fmt.Errorf("API key cannot be empty")
+		return errAPIKeyEmpty
 	}
 
 	// app owns the live check (app.ValidateSourceKey), shared with `lmm
@@ -247,16 +268,19 @@ func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) er
 	// BEFORE the call it describes.
 	hasValidator := app.HasKeyValidator(service, sourceID)
 	if hasValidator && !jsonOutput {
-		fmt.Print("Validating... ")
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprint(out, "Validating... ")
 	}
 	if _, err := app.ValidateSourceKey(ctx, service, sourceID, apiKey); err != nil {
 		if hasValidator && !jsonOutput {
-			fmt.Println("failed")
+			//nolint:errcheck // best-effort console write
+			_, _ = fmt.Fprintln(out, "failed")
 		}
 		return fmt.Errorf("invalid API key: %w", err)
 	}
 	if hasValidator && !jsonOutput {
-		fmt.Println("done")
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(out, "done")
 	}
 
 	if err := service.SaveSourceToken(ctx, sourceID, apiKey); err != nil {
@@ -273,8 +297,8 @@ func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) er
 		// document, for the same reason.
 		return doAuthStatus(ctx, service)
 	}
-	printLoginResult(os.Stdout, hasValidator)
-	printAuthLoginSuccess(os.Stdout, src, hasValidator)
+	printLoginResult(out, hasValidator)
+	printAuthLoginSuccess(out, src, hasValidator)
 	return nil
 }
 
@@ -287,7 +311,7 @@ func doAuthLogin(ctx context.Context, service *core.Service, sourceID string) er
 // The prompt is the only path that reads stdin without being asked to, so
 // it is the only one --json refuses (Ruling 2), naming the two flags that
 // answer it.
-func acquireAPIKey(src source.ModSource) (string, error) {
+func acquireAPIKey(w io.Writer, src source.ModSource) (string, error) {
 	switch {
 	case authKeyFromEnv:
 		envKey := app.EnvKeyFor(src)
@@ -305,7 +329,7 @@ func acquireAPIKey(src source.ModSource) (string, error) {
 	case jsonOutput:
 		return "", fmt.Errorf("%w: pass --key-from-env or --key-stdin", core.ErrInteractiveOnly)
 	}
-	key, err := readAPIKey()
+	key, err := readAPIKey(w)
 	if err != nil {
 		return "", fmt.Errorf("reading API key: %w", err)
 	}
@@ -521,24 +545,27 @@ func orphanKeyLabel(o app.OrphanedToken) string {
 // own AuthInstructionsProvider text when implemented (built-ins preserve
 // their exact wording), otherwise generic instructions naming the
 // environment variable app.EnvKeyFor resolves for src.
-func printAuthInstructions(src source.ModSource) {
+func printAuthInstructions(w io.Writer, src source.ModSource) {
+	//nolint:errcheck // best-effort console writes
 	if p, ok := src.(source.AuthInstructionsProvider); ok {
-		fmt.Print(p.AuthInstructions())
+		_, _ = fmt.Fprint(w, p.AuthInstructions())
 	} else {
-		fmt.Printf("Enter the API key for %s.\n", src.ID())
-		fmt.Printf("(Alternatively, set the %s environment variable.)\n", app.EnvKeyFor(src))
+		_, _ = fmt.Fprintf(w, "Enter the API key for %s.\n", src.ID())
+		_, _ = fmt.Fprintf(w, "(Alternatively, set the %s environment variable.)\n", app.EnvKeyFor(src))
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(w)
 }
 
 // readAPIKey prompts for and reads an API key from the terminal
-func readAPIKey() (string, error) {
-	fmt.Print("Enter API key: ")
+func readAPIKey(w io.Writer) (string, error) {
+	//nolint:errcheck // best-effort console write
+	_, _ = fmt.Fprint(w, "Enter API key: ")
 
 	// Try to read securely (hidden input)
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		keyBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println() // Add newline after hidden input
+		//nolint:errcheck // best-effort console write
+		_, _ = fmt.Fprintln(w) // Add newline after hidden input
 		if err != nil {
 			return "", fmt.Errorf("reading password: %w", err)
 		}
@@ -549,7 +576,10 @@ func readAPIKey() (string, error) {
 	reader := bufio.NewReader(os.Stdin)
 	key, err := reader.ReadString('\n')
 	if err != nil {
-		return "", fmt.Errorf("reading input: %w", err)
+		// The same refusal acquireAPIKey's --json branch makes: a closed
+		// stdin cannot supply a key, and these two flags can. Reachable
+		// from `lmm init`, which drives this prompt too (P1b review F10).
+		return "", promptReadErrorAs(err, interactiveOnlyVia("pass --key-from-env or --key-stdin"))
 	}
 	return strings.TrimSpace(key), nil
 }

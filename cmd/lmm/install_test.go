@@ -1830,3 +1830,67 @@ func TestInstallFileIDList_DedupesPreservingOrder(t *testing.T) {
 	t.Cleanup(func() { installFileID = "" })
 	assert.Equal(t, []string{"9", "8"}, installFileIDList())
 }
+
+// TestDoInstall_EmptyVersionAndAuthor_OmitsTheLabels is #398: a mod whose
+// source reports no version and no author rendered as
+// "Selected: StockOverride v by " and "✓ Installed: alpha v" - a dangling
+// "v" and a dangling "by" that read as a truncated line rather than as
+// "this mod has no version". The labels belong to the values, so they go
+// when the values are absent.
+func TestDoInstall_EmptyVersionAndAuthor_OmitsTheLabels(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "StockOverride", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "Selected: StockOverride\n")
+	assert.Contains(t, out, "✓ Installed: StockOverride\n")
+	assert.NotContains(t, out, "StockOverride v\n")
+	assert.NotContains(t, out, " by \n")
+}
+
+// TestDoInstall_VersionAndAuthorPresent_KeepsTheLabels is the other half:
+// #398 must not strip a version or author that is actually there.
+func TestDoInstall_VersionAndAuthorPresent_KeepsTheLabels(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", Author: "Someone", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", Name: "Main File", FileName: "mod1.esp", IsPrimary: true, Category: "MAIN"}})
+	src.AddDownload("main", []byte("plugin content"))
+
+	out := captureStdout(t, func() error {
+		return doInstall(context.Background(), svc, game, nil)
+	})
+
+	assert.Contains(t, out, "Selected: Mod One v1.0 by Someone\n")
+	assert.Contains(t, out, "✓ Installed: Mod One v1.0\n")
+}
+
+// TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON is #385 at the third
+// prompt that has a --json remedy of its own: a piped `lmm install <query>`
+// matching more than one mod reported "reading input: EOF" instead of
+// naming -y/--yes or --id.
+func TestSearchAndSelectMods_EOFNamesTheSameRemedyAsJSON(t *testing.T) {
+	svc, game, src := setupDoInstallTest(t)
+	installYes = false // the flag whose absence is what makes this a prompt
+	src.searchResults = []domain.Mod{
+		{ID: "mod1", SourceID: "test-src", Name: "Alpha", Version: "1.0", GameID: "g1"},
+		{ID: "mod2", SourceID: "test-src", Name: "Alpha Two", Version: "1.0", GameID: "g1"},
+	}
+
+	var selErr error
+	captureStdout(t, func() error {
+		withStdin(t, "", func() {
+			_, selErr = searchAndSelectMods(context.Background(), svc, game.ID, "test-src", "Alpha", "default")
+		})
+		return nil
+	})
+
+	require.Error(t, selErr)
+	assert.NotContains(t, selErr.Error(), "EOF")
+	require.ErrorIs(t, selErr, core.ErrConfirmationRequired)
+	assert.Contains(t, selErr.Error(), "--id")
+}

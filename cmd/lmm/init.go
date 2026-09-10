@@ -361,11 +361,26 @@ func initStepAuth(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 			cmd.Printf("  Skipped. ('lmm auth login %s' when you want it.)\n", id)
 			continue
 		}
-		// doAuthLogin is `lmm auth login <source>` itself: the source's own
-		// instructions, the key prompt, the live validation and the store,
-		// all unchanged. A failure here is reported and the loop continues -
-		// a mistyped key must not end the wizard.
-		if err := doAuthLogin(ctx, service, id); err != nil {
+		// The answer above was read without a newline of its own, and the
+		// instruction block that follows is the delegated flow's, printed
+		// on os.Stdout - so the separator goes to that same stream, or it
+		// would land somewhere else entirely in a redirect (#384).
+		fmt.Println()
+		// doAuthLoginIndented is `lmm auth login <source>` itself: the
+		// source's own instructions, the key prompt, the live validation
+		// and the store, all unchanged bar the wizard's own two-space
+		// indent. A failure here is reported and the loop continues - a
+		// mistyped key must not end the wizard.
+		err := doAuthLoginIndented(ctx, service, id, "  ")
+		switch {
+		case err == nil:
+		case errors.Is(err, errAPIKeyEmpty):
+			// The banner promised every step could be skipped by pressing
+			// Enter; at this one it used to answer with an error per
+			// configured source (#384). A bare Enter is a skip, worded
+			// like every other skip in the run.
+			cmd.Printf("  Skipped. ('lmm auth login %s' when you want it.)\n", id)
+		default:
 			cmd.Printf("  %s: %v\n", capable[id], err)
 			cmd.Printf("  ('lmm auth login %s' to try again.)\n", id)
 		}
@@ -445,13 +460,29 @@ func printInitNextSteps(cmd *cobra.Command, defaultGame string) {
 	if defaultGame == "" {
 		scope = " --game <game-id>"
 	}
+	// Built as pairs and padded to the widest command, rather than with
+	// per-line padding: the first four carry `scope` and the last does not,
+	// so any hard-coded spacing is wrong for at least one of the two
+	// layouts, and was (#389).
+	next := []struct{ command, does string }{
+		{"lmm search <term>" + scope, "find a mod"},
+		{"lmm install <mod-id>" + scope, "install one"},
+		{"lmm deploy" + scope, "put your mods in the game directory"},
+		{"lmm snapshot create" + scope, "record a point you can come back to"},
+		{"lmm serve", "the same thing in a browser"},
+	}
+	width := 0
+	for _, n := range next {
+		if len(n.command) > width {
+			width = len(n.command)
+		}
+	}
+
 	cmd.Println()
 	cmd.Println("Done. What next:")
-	cmd.Printf("  lmm search <term>%s      find a mod\n", scope)
-	cmd.Printf("  lmm install <mod-id>%s   install one\n", scope)
-	cmd.Printf("  lmm deploy%s             put your mods in the game directory\n", scope)
-	cmd.Printf("  lmm snapshot create%s    record a point you can come back to\n", scope)
-	cmd.Println("  lmm serve                    the same thing in a browser")
+	for _, n := range next {
+		cmd.Printf("  %-*s   %s\n", width, n.command, n.does)
+	}
 }
 
 // askInitYes prints a yes/no prompt and reads the answer, with def as the

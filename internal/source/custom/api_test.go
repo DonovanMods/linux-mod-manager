@@ -525,3 +525,23 @@ func TestAPISearchCategoryAndTagsPlaceholders(t *testing.T) {
 		})
 	}
 }
+
+// TestAPIIgnoresGameIdentifierFollowsTheEndpointTemplates is P1b review F5's
+// half of the rule for api sources: {game_id} is substituted into endpoint
+// paths and nowhere else, so a definition that never writes it addresses
+// nothing with the game's mapped value and may be mapped empty - while one
+// that does would otherwise send a request with an empty game_id.
+func TestAPIIgnoresGameIdentifierFollowsTheEndpointTemplates(t *testing.T) {
+	a, err := NewAPI(apiDef("https://x.test"))
+	require.NoError(t, err)
+	assert.True(t, a.IgnoresGameIdentifier(),
+		"no endpoint in this definition interpolates {game_id}")
+	assert.True(t, source.IgnoresGameIdentifier(a), "and the helper agrees")
+
+	def := apiDef("https://x.test")
+	def.API.Endpoints.Search = &EndpointConfig{Path: "/games/{game_id}/mods?q={query}", List: "results"}
+	scoped, err := NewAPI(def)
+	require.NoError(t, err)
+	assert.False(t, scoped.IgnoresGameIdentifier(),
+		"this source addresses the game by its mapped value; an empty one is a missing value")
+}

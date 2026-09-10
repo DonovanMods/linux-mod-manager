@@ -29,9 +29,10 @@ empty for a source that needs none. --remove-source drops one entry by
 its source id. Both are repeatable, and removals are applied before
 additions, so the same id can be re-pointed in one run.
 
-The source must already be registered ('lmm source list' shows every one,
-built-in or custom). A game must keep at least one source, so removing
-the last one is refused.
+The source must already be registered ('lmm source list --all' shows every
+one, built-in or custom; without --all the list is scoped to the current
+game, which is exactly the set you are editing). A game must keep at
+least one source, so removing the last one is refused.
 
 Examples:
   lmm game edit skyrim-se --source curseforge=skyrim

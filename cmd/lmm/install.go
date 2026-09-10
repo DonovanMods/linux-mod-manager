@@ -271,7 +271,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 	// to auto-pick the first has no other deciding flag - --id names a mod
 	// directly and skips search entirely, so it's the other way out.
 	if jsonOutput {
-		return nil, confirmationRequiredVia("pass -y/--yes to auto-select the first result, or --id to install a specific mod directly")
+		return nil, confirmationRequiredVia(remedyPickInstallMod)
 	}
 
 	// Interactive paginated selection
@@ -286,7 +286,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 			if installedIDs[m.ID] {
 				installedMark = " [installed]"
 			}
-			fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
+			fmt.Printf("  [%d] %s%s%s (ID: %s)%s\n", i+1, m.Name, displayVersionSuffix(m.Version), displayAuthorSuffix(m.Author), m.ID, installedMark)
 		}
 
 		hasMore := false
@@ -307,8 +307,10 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 
 		fmt.Printf("\nSelect mod(s) (e.g., 1 or 1,3,5 or 1-3) [1]: ")
 		input, err := reader.ReadString('\n')
-		if err != nil {
-			return nil, fmt.Errorf("reading input: %w", err)
+		if err != nil && strings.TrimSpace(input) == "" {
+			// The same constant the --json path names just above,
+			// which is what makes "the two cannot drift" true (#385).
+			return nil, promptReadError(err, remedyPickInstallMod)
 		}
 		input = strings.TrimSpace(input)
 
@@ -542,7 +544,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// Every human-facing line below is suppressed under --json: the run
 	// emits exactly one document (Ruling 15).
 	if !jsonOutput {
-		fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
+		fmt.Printf("\nSelected: %s%s%s\n", mod.Name, displayVersionSuffix(mod.Version), displayAuthorSuffix(mod.Author))
 
 		if !installNoDeps && mod.SourceID != domain.SourceLocal {
 			fmt.Println("\nResolving dependencies...")
@@ -786,7 +788,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		return emitJSON(result)
 	}
 
-	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
+	fmt.Printf("\n✓ Installed: %s%s\n", mod.Name, displayVersionSuffix(mod.Version))
 	// #197 postsmoke UX fix: a DeployCompile ".exmodz" mod deploys zero
 	// files of its own by design (validate+retain only - it participates
 	// in the profile's shared merged pak instead, synced separately
@@ -883,7 +885,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		case core.InstallBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.InstallDepInstalling:
-			fmt.Printf("\n[%d/%d] Installing: %s v%s\n", p.Index, p.Total, p.ModName, p.ModVersion)
+			fmt.Printf("\n[%d/%d] Installing: %s%s\n", p.Index, p.Total, p.ModName, displayVersionSuffix(p.ModVersion))
 		case core.InstallDepReinstalling:
 			fmt.Printf("  Removing previous installation...\n")
 		case core.InstallDepFileSelected:
@@ -1024,7 +1026,10 @@ func readMultiSelectionLine(reader *bufio.Reader, prompt string, defaultChoice, 
 	fmt.Printf("\n%s (q to cancel) [%d]: ", prompt, defaultChoice)
 	input, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, false, fmt.Errorf("reading input: %w", err)
+		// The very sentinel the --json branch above returns: a closed
+		// stdin has no answer coming either, so both say the same thing
+		// (#385, P1b review F10).
+		return nil, false, promptReadErrorAs(err, core.ErrConfirmationRequired)
 	}
 
 	input = strings.TrimSpace(input)
@@ -1127,7 +1132,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		case core.InstallBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.InstallDepInstalling:
-			fmt.Printf("\n[%d/%d] Installing: %s v%s\n", p.Index, p.Total, p.ModName, p.ModVersion)
+			fmt.Printf("\n[%d/%d] Installing: %s%s\n", p.Index, p.Total, p.ModName, displayVersionSuffix(p.ModVersion))
 		case core.InstallDepReinstalling:
 			fmt.Printf("  Removing previous installation...\n")
 		case core.InstallDepFileSelected:
@@ -1307,10 +1312,10 @@ func showInstallPlan(plan *core.InstallPlan) {
 	fmt.Printf("\nDependency tree (install order):\n")
 	i := 1
 	for _, dep := range plan.Dependencies {
-		fmt.Printf("  %d. %s v%s (ID: %s) [dependency]\n", i, dep.Name, dep.Version, dep.ID)
+		fmt.Printf("  %d. %s%s (ID: %s) [dependency]\n", i, dep.Name, displayVersionSuffix(dep.Version), dep.ID)
 		i++
 	}
-	fmt.Printf("  %d. %s v%s (ID: %s) [target]\n", i, plan.Mod.Name, plan.Mod.Version, plan.Mod.ID)
+	fmt.Printf("  %d. %s%s (ID: %s) [target]\n", i, plan.Mod.Name, displayVersionSuffix(plan.Mod.Version), plan.Mod.ID)
 
 	if plan.CycleDetected {
 		fmt.Fprintf(os.Stderr, "\n⚠ Warning: Circular dependency detected among dependencies; install order is best-effort.\n")

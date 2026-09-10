@@ -330,6 +330,32 @@ type GameCatalog interface {
 	ListGames(ctx context.Context) ([]GameEntry, error)
 }
 
+// GameIdentifierIgnorer is implemented by a source whose per-game mapped
+// value (games.yaml's `sources: {<id>: <value>}`) addresses nothing, so an
+// EMPTY mapping is a legitimate configuration rather than a value the user
+// left out - a directory source scans a path and never consults it (the
+// README's "directory sources ignore this value").
+//
+// Absent: the value is required. That is the safe default for a source
+// whose behaviour is unknown, and the one every built-in takes: NexusMods'
+// game slug and Steam Workshop's appid are required even though neither
+// offers a GameCatalog to pick them from.
+type GameIdentifierIgnorer interface{ IgnoresGameIdentifier() bool }
+
+// IgnoresGameIdentifier reports whether src ignores the value a game maps
+// it to, which is what makes an empty mapping legitimate for it (#387, P1b
+// review F5). Mirrors CapabilitiesOf's optional-interface pattern; a source
+// implementing no GameIdentifierIgnorer requires the value.
+//
+// Deliberately NOT "does this source have a GameCatalog": having nothing to
+// look an identifier up IN says nothing about whether the source needs one.
+func IgnoresGameIdentifier(src ModSource) bool {
+	if r, ok := src.(GameIdentifierIgnorer); ok {
+		return r.IgnoresGameIdentifier()
+	}
+	return false
+}
+
 // TypeLabeler names the source's kind for listings (directory/manifest/api/
 // built-in). Absent: "unknown".
 type TypeLabeler interface{ TypeLabel() string }

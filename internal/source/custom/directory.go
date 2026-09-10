@@ -69,6 +69,11 @@ func (d *Directory) Capabilities() source.Capabilities {
 // TypeLabel implements source.TypeLabeler.
 func (d *Directory) TypeLabel() string { return "directory" }
 
+// IgnoresGameIdentifier implements source.GameIdentifierIgnorer: a directory
+// source scans a path and never consults the value a game maps it to, which
+// is why `sources: {localmods: ""}` is a legitimate mapping (#387).
+func (d *Directory) IgnoresGameIdentifier() bool { return true }
+
 // dirMod pairs a scanned mod with its filesystem location.
 type dirMod struct {
 	mod  domain.Mod

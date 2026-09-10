@@ -144,7 +144,9 @@ func TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash(t *testing
 	})
 
 	require.NoError(t, err)
-	assert.Contains(t, out, "(local, v", "an unmatched mod must show a plain \"local\" tag")
+	// No ", v…": this fixture's filename carries no version, and an empty
+	// one is omitted rather than rendered as a dangling "v" (#398).
+	assert.Contains(t, out, "(local)", "an unmatched mod must show a plain \"local\" tag")
 	assert.NotContains(t, out, "local #", "an unmatched mod must not be tagged with a fake source ID like \"local #<id>\"")
 }
 
@@ -169,7 +171,7 @@ func TestRunImportScan_ScanFailure_StillPrintsTheLeadingNotices(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mod_path does not exist")
-	expected := "Note: Scan import for extract-mode games tracks mods in-place without caching.\n" +
+	expected := "Note: Scan import for extract- and compile-mode games tracks mods in-place without caching.\n" +
 		"      Uninstall will only remove the database entry, not the files.\n" +
 		"\n" +
 		"Scanning " + game.ModPath + " for untracked mods...\n"

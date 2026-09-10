@@ -39,12 +39,12 @@ the display name, the install path, the local game id, and either the
 curated mod path and source mapping (for a game in lmm's known-games
 list) or a default mod path of the install path plus "/mods" for one
 that is not. List the app ids with 'lmm game detect --include-unknown'.
-Every other flag still wins
-over the prefill, so --mod-path/--game-id/--name correct a guess; for a
-game with no curated sources, name one with --source, and either give
---id or let the source's catalog be searched by the game's own name
-(--pick chooses among the matches; a single match whose name is exactly
-the game's name is taken automatically).
+Every other flag still wins over the prefill, so
+--mod-path/--game-id/--name correct a guess; for a game with no curated
+sources, name one with --source, and either give --id or let the source's
+catalog be searched by the game's own name (--pick chooses among the
+matches; a single match whose name is exactly the game's name is taken
+automatically).
 
 For a game lmm ALREADY has curated sources for, naming --source (with
 --id, --query or --pick) ADDS a mapping to the curated map rather than
@@ -61,6 +61,11 @@ first and choose second. All other registered sources (NexusMods today;
 any custom source without a catalog) take the game's identifier with that
 source directly via --id - for NexusMods, the slug from its URL (e.g.
 https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
+A source that has no identifier to give - a directory source ignores the
+mapped value entirely - may be left empty: press Enter at the prompt, or
+pass --id "", and give --game-id so the entry still has a key. Only such a
+source is offered that: NexusMods and Steam Workshop have no catalog
+either, but their mapped value is a real game slug/appid and is required.
 
 The LOCAL games.yaml key defaults to a slug derived from the catalog
 match (the catalog path) or from --id (the manual path); --game-id sets
@@ -277,8 +282,14 @@ func resolveGameAddSource(cmd *cobra.Command, reader *bufio.Reader, service *cor
 		}
 		return src, nil
 	}
+	// Built once and used by BOTH the --json refusal and the closed-stdin
+	// one below: a piped run has no answer coming either way, so the two
+	// must say the same thing, and sharing the value is what makes that
+	// true rather than intended (#385, P1b review F10). Same shape at
+	// every prompt in this file.
+	noSource := interactiveOnlyVia(fmt.Sprintf("pass --source (registered: %s)", sourceIDList(sources)))
 	if jsonOutput {
-		return nil, fmt.Errorf("%w: pass --source (registered: %s)", core.ErrInteractiveOnly, sourceIDList(sources))
+		return nil, noSource
 	}
 
 	cmd.Println("Select a mod source:")
@@ -289,7 +300,7 @@ func resolveGameAddSource(cmd *cobra.Command, reader *bufio.Reader, service *cor
 
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("reading input: %w", err)
+		return nil, promptReadErrorAs(err, noSource)
 	}
 	choice, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil || choice < 1 || choice > len(sources) {
@@ -314,13 +325,14 @@ func sourceIDList(sources []source.ModSource) string {
 // how a non-interactive caller searches first and chooses second.
 func resolveGameAddFromCatalog(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader, service *core.Service, selected source.ModSource, spec *core.GameSpec, query, autoPickName string) (done bool, err error) {
 	if query == "" {
+		noQuery := interactiveOnlyVia(fmt.Sprintf("pass --query (to search %s's catalog) or --id", selected.ID()))
 		if jsonOutput {
-			return false, fmt.Errorf("%w: pass --query (to search %s's catalog) or --id", core.ErrInteractiveOnly, selected.ID())
+			return false, noQuery
 		}
 		cmd.Print("\nSearch for a game: ")
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			return false, fmt.Errorf("reading input: %w", err)
+			return false, promptReadErrorAs(err, noQuery)
 		}
 		query = strings.TrimSpace(line)
 	}
@@ -375,7 +387,10 @@ func resolveGameAddFromCatalog(ctx context.Context, cmd *cobra.Command, reader *
 		cmd.Print("Select a game (number): ")
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			return false, fmt.Errorf("reading input: %w", err)
+			// --json answers this prompt by EMITTING the matches (search
+			// first, choose second), so the flag is what a closed stdin
+			// names instead.
+			return false, promptReadErrorAs(err, interactiveOnlyVia("pass --pick <n> to choose one of the matches"))
 		}
 		pick, err = strconv.Atoi(strings.TrimSpace(line))
 		if err != nil {
@@ -414,7 +429,11 @@ func applyGameCatalogMatch(cmd *cobra.Command, match core.GameCatalogMatch, spec
 // catalog: --id when given, otherwise the display name and identifier
 // prompts, in the order the pre-#307 flow used them.
 func resolveGameAddManual(cmd *cobra.Command, reader *bufio.Reader, selected source.ModSource, spec *core.GameSpec) error {
-	if gameAddID != "" {
+	// Changed("id") as well as a non-empty value, so `--id ""` is an
+	// explicit "this source has nothing to map" and reaches core rather
+	// than falling through to the prompt (or, under --json, to a refusal
+	// naming the flag that was in fact passed) - #387.
+	if gameAddID != "" || cmd.Flags().Changed("id") {
 		spec.Identifier = gameAddID
 		return nil
 	}
@@ -428,7 +447,19 @@ func resolveGameAddManual(cmd *cobra.Command, reader *bufio.Reader, selected sou
 			return err
 		}
 	}
-	if err := missingGameAddValue(cmd, reader, selected.Name()+" identifier: ", "--id", &spec.Identifier); err != nil {
+	// Optional only where the SOURCE says so: a directory source ignores
+	// the value entirely - the README's own words, and what
+	// `lmm game edit --source localmods=` has always written - while
+	// NexusMods and Steam Workshop have no catalogue either and still need
+	// a real game slug/appid. Offering "Enter if it has none" there invited
+	// a `nexusmods: ""` mapping that fails at first use (P1b review F5).
+	// core applies the same rule to the value that arrives, and still
+	// refuses the add when the result leaves no usable game id (#387).
+	if source.IgnoresGameIdentifier(selected) {
+		if err := optionalGameAddValue(cmd, reader, selected.Name()+" identifier (Enter if it has none): ", "--id", &spec.Identifier); err != nil {
+			return err
+		}
+	} else if err := missingGameAddValue(cmd, reader, selected.Name()+" identifier: ", "--id", &spec.Identifier); err != nil {
 		return err
 	}
 	cmd.Printf("\nConfiguring %s...\n", spec.Name)
@@ -458,7 +489,7 @@ func resolveGameAddPaths(cmd *cobra.Command, reader *bufio.Reader, spec *core.Ga
 		cmd.Printf("Mod path [%s/mods]: ", spec.InstallPath)
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("reading input: %w", err)
+			return promptReadErrorAs(err, interactiveOnlyVia("pass --mod-path (or --path, which takes the default of <install>/mods)"))
 		}
 		spec.ModPath = strings.TrimSpace(line)
 	}
@@ -469,18 +500,40 @@ func resolveGameAddPaths(cmd *cobra.Command, reader *bufio.Reader, spec *core.Ga
 // where stdin is never read (Ruling 2) - refuses with core.ErrInteractiveOnly
 // naming the flag that would have supplied it.
 func missingGameAddValue(cmd *cobra.Command, reader *bufio.Reader, prompt, flag string, out *string) error {
+	missing := interactiveOnlyVia("pass " + flag)
 	if jsonOutput {
-		return fmt.Errorf("%w: pass %s", core.ErrInteractiveOnly, flag)
+		return missing
 	}
 	cmd.Print(prompt)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		return fmt.Errorf("reading input: %w", err)
+		return promptReadErrorAs(err, missing)
 	}
 	*out = strings.TrimSpace(line)
 	if *out == "" {
 		return fmt.Errorf("%s is required", strings.TrimPrefix(flag, "--"))
 	}
+	return nil
+}
+
+// optionalGameAddValue is missingGameAddValue for a value an empty answer
+// is a legitimate answer to: it prompts and stores whatever comes back,
+// including nothing (#387). Under --json it reads nothing at all
+// (Ruling 2) and leaves the value as the caller had it - every current
+// caller has already handled the flag that supplies it.
+func optionalGameAddValue(cmd *cobra.Command, reader *bufio.Reader, prompt, flag string, out *string) error {
+	if jsonOutput {
+		return nil
+	}
+	cmd.Print(prompt)
+	line, err := reader.ReadString('\n')
+	if err != nil && strings.TrimSpace(line) == "" {
+		// An empty ANSWER is legitimate here; a closed stdin is not an
+		// answer at all, so it names the flag - including the explicit
+		// empty form - rather than reporting EOF (P1b review F10).
+		return promptReadErrorAs(err, interactiveOnlyVia(`pass `+flag+` (`+flag+` "" if this source has none)`))
+	}
+	*out = strings.TrimSpace(line)
 	return nil
 }
 

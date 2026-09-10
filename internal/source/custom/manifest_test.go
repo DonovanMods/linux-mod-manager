@@ -744,3 +744,15 @@ func TestManifestDownloadHeaders(t *testing.T) {
 		assert.Nil(t, noKey.DownloadHeaders("https://repo.test/a.zip"))
 	})
 }
+
+// TestManifestIgnoresGameIdentifier: the mapped value only filters a
+// manifest's own per-mod game_ids, and an empty one matches every entry, so
+// a manifest may be mapped with no identifier at all (#387, P1b review F5).
+func TestManifestIgnoresGameIdentifier(t *testing.T) {
+	m, err := NewManifest(SourceDefinition{
+		ID: "my-repo", Name: "My Repo", Type: TypeManifest,
+		Manifest: &ManifestConfig{URL: "https://example.test/mods.yaml"},
+	})
+	require.NoError(t, err)
+	assert.True(t, source.IgnoresGameIdentifier(m))
+}

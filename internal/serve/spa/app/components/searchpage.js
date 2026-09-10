@@ -19,7 +19,7 @@
 import { html, useMemo, useState } from "../render.js";
 import { contextPath } from "../router.js";
 import { workshopCollectionRef } from "../workshopcollection.js";
-import { SourceResultsList } from "./searchresults.js";
+import { SourceResultsList, skippedSignInNotice } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
 import { AwayBar } from "./awaybar.js";
 import { codeSpans } from "../errortext.js";
@@ -45,6 +45,11 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   const report = matches ? searchPage.report : null;
   const hits = report?.mods ?? [];
   const facets = matches ? searchPage.facets : null;
+  // Issue 383 (F1): the sources that CAN search but were left out for want of a
+  // key. Reported apart from warnings and attempted_count, so the notice
+  // below has to consult it rather than reading attempted_count 0 as "this
+  // game has nothing that searches".
+  const skippedNotice = skippedSignInNotice(report?.skipped_unauthenticated);
 
   const sorted = useMemo(() => {
     if (sort === "downloads") {
@@ -194,6 +199,12 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       </div>
 
       ${
+        sorted.length === 0 &&
+        skippedNotice !== "" &&
+        html`<p class="empty-state__hint">${skippedNotice}</p>`
+      }
+      ${
+        skippedNotice === "" &&
         report.attempted_count === 0 &&
         html`<p class="empty-state__hint">
           None of this game's sources support searching.

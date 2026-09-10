@@ -15,9 +15,14 @@ import (
 // genManDate is a pinned generation date rather than time.Now(): the drift
 // test in genman_test.go byte-compares a fresh regeneration against
 // docs/man/man1, which only works if regenerating without a help-text change
-// produces identical output. Bump this deliberately (and re-run `make man`)
-// when cutting a release that regenerates the pages.
-var genManDate = time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
+// produces identical output.
+//
+// Bump it in the release-prep commit, alongside `version` in root.go and
+// the CHANGELOG's dated section, then re-run `make man`. That is not a
+// convention anyone has to remember: TestGenManDateIsNotOlderThanTheNewestRelease
+// fails whenever the newest dated CHANGELOG section is later than this,
+// which is what stopped 2.0.0's pages from shipping dated "Jul 2026" (#401).
+var genManDate = time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 
 // defaultManDir is where `make man` and the goreleaser build expect the
 // generated pages to live.

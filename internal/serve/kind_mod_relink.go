@@ -45,7 +45,7 @@ type modRelinkPlanRequest struct {
 	// resolution does.
 	ModID    string `json:"mod_id"`
 	SourceID string `json:"source_id,omitzero"`
-	// NewSourceID and NewModID are `lmm mod edit --source/--source-id`:
+	// NewSourceID and NewModID are `lmm mod edit --to-source/--to-source-id`:
 	// leave both empty for a metadata-only edit, or set either to re-link
 	// (the one left empty keeps the mod's current value).
 	NewSourceID string `json:"new_source_id,omitzero"`

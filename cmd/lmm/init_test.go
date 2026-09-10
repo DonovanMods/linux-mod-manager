@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -63,6 +64,15 @@ func setupInitTest(t *testing.T) *core.Service {
 // runInitWith drives doInit with a scripted stdin and returns everything it
 // printed.
 func runInitWith(t *testing.T, svc *core.Service, input string) string {
+	cmdOut, stdout := runInitStreams(t, svc, input)
+	return cmdOut + stdout
+}
+
+// runInitStreams is runInitWith with the two streams kept apart, for the
+// few assertions that are ABOUT a stream - the delegated auth flow's own
+// output, which the wizard has to separate from the answer above it and
+// indent under its step (#384).
+func runInitStreams(t *testing.T, svc *core.Service, input string) (string, string) {
 	t.Helper()
 	cmd := &cobra.Command{}
 	// The delegated import flow re-derives its context from the command
@@ -80,7 +90,7 @@ func runInitWith(t *testing.T, svc *core.Service, input string) string {
 	stdout := captureStdout(t, func() error {
 		return doInit(context.Background(), cmd, bufio.NewReader(strings.NewReader(input)), svc)
 	})
-	return out.String() + stdout
+	return out.String(), stdout
 }
 
 // TestInit_NonInteractiveRefusesAndPrintsTheEquivalentCommands is the
@@ -262,4 +272,107 @@ func TestIsInitCancellation_CoversTheDelegatedFlowsDeclines(t *testing.T) {
 	assert.False(t, isInitCancellation(nil))
 	assert.False(t, isInitCancellation(errors.New("disk full")),
 		"an actual failure must still read as one")
+}
+
+// seedInitAuthGame is seedInitGame with an auth-capable source mapped to
+// the game, so the wizard's step 3 has something to offer a login for.
+func seedInitAuthGame(t *testing.T, svc *core.Service) *domain.Game {
+	t.Helper()
+	svc.RegisterSource(&mockAuthSource{id: "acme-mods", name: "Acme Mods"})
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(),
+		LinkMethod: domain.LinkSymlink,
+		SourceIDs:  map[string]string{"acme-mods": ""},
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	return game
+}
+
+// TestInit_EmptyAPIKeyIsASkipNotAnError is #384. The wizard's banner says
+// "Every step can be skipped - press Enter to take the default"; a user who
+// did exactly that at the source step collected
+// "Nexus Mods: API key cannot be empty" per configured source. An empty key
+// at the WIZARD's prompt is a skip, worded like every other skip in the
+// run; "API key cannot be empty" belongs to `lmm auth login`, where the
+// user asked for the prompt.
+func TestInit_EmptyAPIKeyIsASkipNotAnError(t *testing.T) {
+	svc := setupInitTest(t)
+	seedInitAuthGame(t, svc)
+	require.NoError(t, svc.SetDefaultGame(context.Background(), "g1"))
+	// os.Stdin answers the delegated key prompt (a bare Enter), then the
+	// import step's own confirmation.
+	stdinFromString(t, "\nn\n")
+
+	// n = don't scan Steam, y = sign in to Acme Mods, n = don't import.
+	out := runInitWith(t, svc, "n\ny\nn\n")
+
+	assert.NotContains(t, out, "API key cannot be empty")
+	assert.Contains(t, out, "Skipped. ('lmm auth login acme-mods' when you want it.)")
+	assert.False(t, svc.IsSourceAuthenticated(context.Background(), "acme-mods"),
+		"a skip stores nothing")
+}
+
+// TestInit_AuthInstructionsAreIndentedAndOnTheirOwnLine covers #384's two
+// secondary defects: the source's instruction block ran on from the [Y/n]
+// answer with no newline between them, and it was the only text in the
+// wizard without the two-space step indentation.
+func TestInit_AuthInstructionsAreIndentedAndOnTheirOwnLine(t *testing.T) {
+	svc := setupInitTest(t)
+	seedInitAuthGame(t, svc)
+	require.NoError(t, svc.SetDefaultGame(context.Background(), "g1"))
+	stdinFromString(t, "\nn\n")
+
+	_, delegated := runInitStreams(t, svc, "n\ny\nn\n")
+
+	assert.True(t, strings.HasPrefix(delegated, "\n"),
+		"the instruction block must start on its own line, not run on from the [Y/n] answer; got %q", delegated)
+	assert.Contains(t, delegated, "  Enter the API key for acme-mods.\n")
+	assert.Contains(t, delegated, "  Enter API key: ")
+	assert.NotContains(t, delegated, "  \n", "a blank line inside the block keeps no trailing indent")
+}
+
+// TestInit_NextStepsBlockIsAligned is #389: the first four lines
+// interpolated the --game scope and padded around it, while the `lmm serve`
+// line carried hard-coded padding - so its description sat six columns out
+// with a default game set, and ~17 columns further out without one.
+func TestInit_NextStepsBlockIsAligned(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		setDefault bool
+	}{
+		{"with a default game", true},
+		{"without one", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := setupInitTest(t)
+			seedInitGame(t, svc)
+			input := "n\nn\n"
+			if tc.setDefault {
+				require.NoError(t, svc.SetDefaultGame(context.Background(), "g1"))
+			} else {
+				input = "n\nn\nn\n" // one more: decline the default-game prompt
+			}
+
+			out := runInitWith(t, svc, input)
+
+			_, block, ok := strings.Cut(out, "Done. What next:\n")
+			require.True(t, ok, "the closing block is missing from:\n%s", out)
+
+			// A run of two or more spaces separates the command from what
+			// it does; the descriptions themselves are single-spaced, so
+			// the LAST such run on a line is where the description starts.
+			gap := regexp.MustCompile(` {2,}`)
+			columns := map[int]bool{}
+			for _, line := range strings.Split(strings.TrimRight(block, "\n"), "\n") {
+				require.True(t, strings.HasPrefix(line, "  lmm "), "unexpected line %q", line)
+				runs := gap.FindAllStringIndex(line[2:], -1)
+				require.NotEmpty(t, runs, "no gap between command and description in %q", line)
+				columns[2+runs[len(runs)-1][1]] = true
+			}
+			require.Len(t, columns, 1, "every description must start in the same column, got:\n%s", block)
+		})
+	}
 }

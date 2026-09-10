@@ -415,3 +415,16 @@ func TestDirectoryCheckUpdates(t *testing.T) {
 	assert.Equal(t, "BiggerBackpack", updates[0].InstalledMod.ID)
 	assert.Equal(t, "1.2.0", updates[0].NewVersion)
 }
+
+// TestDirectoryIgnoresGameIdentifier pins the README's own claim as a
+// capability the rest of lmm can ask about (#387, P1b review F5): a
+// directory source scans a path and never reads the value a game maps it
+// to, which is what makes `donovan-mods: ""` a legitimate mapping.
+func TestDirectoryIgnoresGameIdentifier(t *testing.T) {
+	d, err := NewDirectory(SourceDefinition{
+		ID: "my-mods", Name: "My Mods", Type: TypeDirectory,
+		Directory: &DirectoryConfig{Path: t.TempDir()},
+	})
+	require.NoError(t, err)
+	assert.True(t, source.IgnoresGameIdentifier(d))
+}

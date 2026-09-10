@@ -155,11 +155,11 @@ that does not stamp a version on its files can never identify it, so
 unlock first to repair such a mod. Those refusals print as
 "--fix skipped: ..." naming the unlock remedy - not as a repair that
 failed - and their --json rows keep their status with note "locked" too.
-Separately, a locked mod whose
-recorded version hasn't yet caught up to the lock's target (pending a
-"lmm profile apply", not corruption) prints its own "~ NAME - lock pending
-convergence" informational line instead of being silently folded into the
-OK case - this is never counted in issues or warnings.
+Separately, a locked mod whose recorded version hasn't yet caught up to
+the lock's target (pending a "lmm profile apply", not corruption) prints
+its own "~ NAME - lock pending convergence" informational line instead of
+being silently folded into the OK case - this is never counted in issues
+or warnings.
 
 --json emits {game_id, profile, result: {findings: [{mod_id, mod_name,
 file_id, status, note, recorded, effective, version}], issues, warnings,

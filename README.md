@@ -321,7 +321,7 @@ wherever they'd conflict, the lock wins and the output names it:
   and keeps the lock.
 - **`lmm mod edit` of a locked mod**: refused before anything is written —
   `--version` (other than the locked version itself) with the same
-  move-the-lock/unlock remedies, and `--source`/`--source-id` re-linking
+  move-the-lock/unlock remedies, and `--to-source`/`--to-source-id` re-linking
   with the unlock remedy alone, since a re-link would replace the locked
   profile entry with a fresh, unlocked one and moving the lock can't help.
   Metadata-only edits (`--name`/`--author`) still work.
@@ -1782,7 +1782,7 @@ with `--json`, `--dry-run` emits the plan document itself rather than its render
 
 `lmm import` has three modes: scan (no arguments), archive (an archive path), and `--workshop`. The first two are chosen by whether an archive path is given:
 
-- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Candidates are **scored** against the scanned name, and against the version too when the filename carries one: the best-scoring candidate across all sources wins, ties break deterministically (version agreement, then source ID, then mod ID), an exact name match ends the lookup early, and anything that does not clear the confidence bar is left **untracked** and imported as local rather than adopted as a similarly-named mod — searching `skyui` should never quietly attach your archive to `SkyUI Flashlite`. Three differences are refused outright, however close the rest of the name is: a **differing sequel number** (`Sim Settlements 2` is never `Sim Settlements 3`), **any difference at all in a pair whose longer name is under twelve letters** (`Vortex` is never `Vertex`, and `SkyUI` is never `SkyUI SE`), and **whole extra words** (`RaceMenu` is not `RaceMenu Special Edition`). A subtitle set off by punctuation is the exception: `Ordinator` matches `Ordinator - Perks of Skyrim`, and `HDT-SMP` matches `HDT-SMP (Skinned Mesh Physics)`, always as a `[probable match]` so the elided subtitle is visible before you confirm — unless two catalogue rows hang subtitles off the same name (`Alternate Start - Live Another Life` and `Alternate Start - Realm of Lorkhan`), where the tie is refused and the archive stays untracked instead of being attached to whichever sorts first. A mod that stays local this way is fully usable — it just has no update target; re-link it with `lmm mod edit --source`. The scan readout annotates any match short of an exact name with its confidence (`[strong match]`, `[probable match]`). Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --source` to clear that once it can be checked for updates normally.
+- **Scan mode** (`lmm import`, no arguments): scans the game's `mod_path` for files not yet tracked by lmm, tries to match each one by name against every search-capable source configured for the game (in ID-sorted order — e.g. `curseforge` before `nexusmods` when both are configured; skip matching entirely with `--skip-match`), and imports whatever is left after confirmation. Candidates are **scored** against the scanned name, and against the version too when the filename carries one: the best-scoring candidate across all sources wins, ties break deterministically (version agreement, then source ID, then mod ID), an exact name match ends the lookup early, and anything that does not clear the confidence bar is left **untracked** and imported as local rather than adopted as a similarly-named mod — searching `skyui` should never quietly attach your archive to `SkyUI Flashlite`. Three differences are refused outright, however close the rest of the name is: a **differing sequel number** (`Sim Settlements 2` is never `Sim Settlements 3`), **any difference at all in a pair whose longer name is under twelve letters** (`Vortex` is never `Vertex`, and `SkyUI` is never `SkyUI SE`), and **whole extra words** (`RaceMenu` is not `RaceMenu Special Edition`). A subtitle set off by punctuation is the exception: `Ordinator` matches `Ordinator - Perks of Skyrim`, and `HDT-SMP` matches `HDT-SMP (Skinned Mesh Physics)`, always as a `[probable match]` so the elided subtitle is visible before you confirm — unless two catalogue rows hang subtitles off the same name (`Alternate Start - Live Another Life` and `Alternate Start - Realm of Lorkhan`), where the tie is refused and the archive stays untracked instead of being attached to whichever sorts first. A mod that stays local this way is fully usable — it just has no update target; re-link it with `lmm mod edit --to-source`. The scan readout annotates any match short of an exact name with its confidence (`[strong match]`, `[probable match]`). Useful for mods that were installed manually — e.g. mods whose source has disabled API downloads. `--skip-match` only applies to this mode. Every mod imported this way is marked as requiring manual download (since lmm did not fetch it itself); re-link it to a source with `lmm mod edit --to-source` to clear that once it can be checked for updates normally.
 - **Archive mode** (`lmm import <archive-path>`): imports that one specific mod file, deploying it and adding it to the profile. Pass `--id` (with `--source`, or it defaults to the game's sole configured source, prompting interactively when several are configured) to fetch and attach source metadata as part of the import. `--dry-run` previews it: the archive's table of contents is read (never extracted), so the preview names the mod, the files it would deploy, and any file it would overwrite, without writing anything ([#314](https://github.com/DonovanMods/linux-mod-manager/issues/314)).
 
 Either way, a mod that ends up unmatched to any remote source is imported as local — it deploys and installs normally, but `lmm update` has nothing to check it against and will never notify about it.
@@ -1900,13 +1900,21 @@ A source that doesn't support searching (e.g. an `api` source defined without a 
 Error: source "demo-api" does not support searching; install by ID instead: lmm install --source demo-api --id <mod-id>
 ```
 
+A source that **can** search but that you have never signed in to is skipped the same way, rather than warned about on every query: `lmm init` maps `steamworkshop` from a Steam scan because tracking and updating Workshop items needs no key, while searching the Workshop does. The skip is still reported — a search that comes back empty names what it left out and how to fix it — it just isn't a failure:
+
+```text
+steamworkshop was skipped: not signed in (run: lmm auth login steamworkshop).
+```
+
+Once a key **is** stored (or supplied through `LMM_<ID>_API_KEY` or a built-in's own variable), an authentication failure means that key is expired or revoked — a real problem — and is reported as a warning like any other source failure. Targeting the source directly with `--source` always reports it.
+
 A game with no configured sources at all fails fast with a diagnostic instead of an empty result:
 
 ```
 Error: no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml
 ```
 
-`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`, each entry `{source_id, error}`.
+`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`, each entry `{source_id, error}`, and names any source skipped for want of a credential in `"skipped_unauthenticated"` (present only when there is one).
 
 ### Update check behavior
 

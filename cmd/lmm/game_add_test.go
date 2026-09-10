@@ -55,6 +55,12 @@ func (m *mockGameAddSource) CheckUpdates(context.Context, []domain.InstalledMod)
 	return nil, nil
 }
 
+// mockIdentifierIgnoringSource declares that its per-game mapped value
+// addresses nothing (P1b review F5) - what a directory source does.
+type mockIdentifierIgnoringSource struct{ mockGameAddSource }
+
+func (m *mockIdentifierIgnoringSource) IgnoresGameIdentifier() bool { return true }
+
 // mockGameAddCatalogSource additionally implements source.GameCatalog, for
 // exercising the catalog-search flow (today's CurseForge path, generalized)
 // against a source that is neither NexusMods nor CurseForge - proving the
@@ -927,4 +933,72 @@ func TestDoGameAdd_FromDetected_JSONEmitsTheGameDocument(t *testing.T) {
 	var entry core.GameListEntry
 	require.NoError(t, json.Unmarshal([]byte(out), &entry))
 	assert.Equal(t, "skyrim-se", entry.ID)
+}
+
+// TestDoGameAdd_ManualPath_EmptyIdentifierIsAcceptedForACatalogLessSource is
+// #387's own reproduction: a directory source has no identifier to give -
+// the README says "directory sources ignore this value", and
+// `lmm game edit --source localmods=` writes it empty - but `game add`
+// answered a bare Enter with "Error: id is required" and abandoned the
+// whole add. With a --game-id to key the entry, an empty identifier is a
+// legitimate mapping.
+//
+// The source declares that itself (P1b review F5); a catalogue-less source
+// whose mapped value is a real game slug does not, and is covered below.
+func TestDoGameAdd_ManualPath_EmptyIdentifierIsAcceptedForACatalogLessSource(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockIdentifierIgnoringSource{mockGameAddSource{id: "localmods", name: "Local Mods"}})
+	gameAddGameID = "testgame"
+
+	installDir := t.TempDir()
+	input := strings.Join([]string{
+		"1",         // select localmods (only registered source)
+		"Test Game", // game name (display)
+		"",          // no identifier: this source has none
+		installDir,  // install path (must exist)
+		"",          // accept default mod path
+	}, "\n") + "\n"
+
+	cmd, buf := newGameAddCmd()
+	err := doGameAdd(context.Background(), cmd, bufio.NewReader(strings.NewReader(input)), svc)
+	require.NoError(t, err, "output so far:\n%s", buf.String())
+
+	games, err := config.LoadGames(configDir)
+	require.NoError(t, err)
+	game, ok := games["testgame"]
+	require.True(t, ok, "expected a game keyed testgame; got %v", games)
+	assert.Equal(t, map[string]string{"localmods": ""}, game.SourceIDs,
+		"the mapping is written empty, exactly as `game edit --source localmods=` writes it")
+}
+
+// TestDoGameAdd_ManualPath_ASourceThatNeedsAnIdentifierIsNotOfferedAnEmptyOne
+// is P1b review F5. #387 made the identifier optional for every
+// catalogue-less source, and the prompt said so - "NexusMods identifier
+// (Enter if it has none): " - but NexusMods and Steam Workshop are
+// catalogue-less with a real, REQUIRED game slug/appid. Pressing Enter wrote
+// `nexusmods: ""`, a mapping that fails at first use and that `game add`
+// refused before. Whether an empty value is legitimate is the source's own
+// answer, not a consequence of having no catalogue.
+func TestDoGameAdd_ManualPath_ASourceThatNeedsAnIdentifierIsNotOfferedAnEmptyOne(t *testing.T) {
+	svc := setupGameAddTest(t)
+	svc.RegisterSource(&mockGameAddSource{id: "nexusmods", name: "NexusMods"})
+	gameAddGameID = "testgame"
+
+	input := strings.Join([]string{
+		"1",         // select nexusmods (only registered source)
+		"Test Game", // game name (display)
+		"",          // a bare Enter: the identifier this source needs
+	}, "\n") + "\n"
+
+	cmd, buf := newGameAddCmd()
+	err := doGameAdd(context.Background(), cmd, bufio.NewReader(strings.NewReader(input)), svc)
+
+	require.Error(t, err, "output so far:\n%s", buf.String())
+	assert.Contains(t, err.Error(), "id is required")
+	assert.NotContains(t, buf.String(), "Enter if it has none",
+		"the prompt must not invite an empty value this source cannot use")
+
+	games, loadErr := config.LoadGames(configDir)
+	require.NoError(t, loadErr)
+	assert.Empty(t, games, "nothing is written when the identifier is refused")
 }

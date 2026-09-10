@@ -62,6 +62,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: `lmm mod edit`'s re-link flags are renamed to
+  `--to-source`/`--to-source-id`, and `-s` works again (#396).** `lmm mod`'s
+  persistent `-s/--source` means "which source this mod is in"; `mod edit`
+  declared a local `--source` meaning "re-link it to this source", which
+  replaced the group's flag outright — so `lmm mod edit alpha -s repo`
+  failed with `unknown shorthand flag: 's'`, and there was no way at all to
+  say which of two same-id mods to edit. The re-link target is renamed
+  (there is no `--source` alias: keeping one would re-create the
+  shadowing), and `mod edit` now uses `-s` to pick among same-id mods,
+  refusing with the candidate sources named when it is ambiguous instead of
+  silently editing whichever it found first.
+
+  `--source-id` fails loudly (`unknown flag`), but an old
+  `lmm mod edit <mod> --source <target>` cannot: it resolves to the
+  group's `-s/--source` and is read as a filter. When that filter matches
+  nothing, the error now names `--to-source` so the rename is visible
+  rather than reading as "no such mod".
+
 - **`lmm import` scan mode scores its source matches instead of taking the
   first hit (#27).** An untracked archive used to be adopted as whatever the
   first search-capable source returned first, so searching `skyui` could
@@ -1378,6 +1396,158 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   no `install_path` at all has nothing to resolve against, so it is now
   refused when `games.yaml` is read, naming the game and the field, instead
   of falling back to the working-directory behaviour this fixes.
+
+- **CI runs the test suite with the Makefile's timeout (#374).** The `test`
+  workflow invoked `go test -race ./...` directly, so it kept Go's
+  10-minute-per-binary default — the very limit `TEST_TIMEOUT` was added to
+  raise, since `cmd/lmm`, `internal/core` and `internal/serve` each run for
+  9–11 minutes under the race detector. A green branch could therefore fail
+  CI with `panic: test timed out after 10m0s` and no failing assertion
+  anywhere. The job now runs `make test-race`, so the gate and `make check`
+  share one timeout — passing `GOCACHE_LOCAL=$(go env GOCACHE)` so it still
+  uses the build cache `actions/setup-go` restores, rather than the
+  project-local cache the Makefile defaults to for sandboxed runs (which
+  would recompile every dependency under `-race` on each run).
+
+- **A config.yaml lmm creates no longer contains settings v2 does not have
+  (#390).** A first run wrote `keybindings: vim` — a key reserved for the
+  TUI v2 removed, which nothing reads — and an empty `cache_path: ""`.
+  Both keys still _parse_ (an existing config.yaml that sets `keybindings`
+  loads and round-trips exactly as before, which is the documented
+  compatibility contract), but neither is written out when it is unset.
+
+- **An absent version or author no longer leaves a dangling label (#398).**
+  A mod whose source reports no version printed as `✓ Installed: alpha v`,
+  and one with no author as `Selected: StockOverride v1.0.0 by` with
+  nothing after it — lines that read as truncated rather than as "this mod
+  has no version". The
+  label now goes with the value across `lmm install`'s search picker,
+  its Selected/Installed lines, the per-mod batch progress line, the
+  dependency tree, and `lmm import`'s scan summary (`(local, v)` →
+  `(local)`).
+
+- **The scan-import caveat names both of the modes it applies to (#388).**
+  `lmm import`'s note read "Scan import for extract-mode games tracks mods
+  in-place without caching", but its guard is "not copy mode" — so a
+  `compile`-mode game (Icarus) got a sentence naming a mode its
+  `games.yaml` does not say. It now reads "extract- and compile-mode
+  games".
+
+- **A prompt that can never be answered names the flag that answers it, in
+  plain output too (#385).** Piping lmm without `--json` — `lmm mod lock
+alpha < /dev/null`, the scripted/cron case the exit-code table exists for
+  — reported `Error: reading input: EOF`, an implementation detail with no
+  way forward, while the `--json` path for the very same prompt already
+  named `-s/--source`. The source-selection prompt, `lmm auth`'s source
+  picker and `lmm install`'s search picker now return the same remedy in
+  both renderings. A genuine stdin failure (anything other than EOF) still
+  reports as `reading input: …`.
+
+  Every remaining prompt does the same: `lmm game add`'s source picker,
+  catalogue search, match picker, name/path and identifier prompts;
+  `lmm install`'s file picker; `lmm profile reorder -i`; and the piped-key
+  fallback in `lmm auth login` that `lmm init` also drives. Each now
+  answers a closed stdin with the flag or argument that supplies the
+  value — the same error its non-interactive path returns, built once and
+  shared, so the two cannot drift.
+
+- **A source you have never signed in to no longer warns on every search
+  (#383).** `lmm init` maps `steamworkshop` from the Steam prefill, which is
+  right — Tier 1 (tracking and updating the items the Steam client already
+  has) needs no key at all — but Tier 2 SEARCH does, so a default setup
+  printed `warning: source steamworkshop: authentication required: …` above
+  every `lmm search` result and rendered the same string as an orange block
+  in the web UI's results list. An unauthenticated source is now left out of
+  an all-sources search the way a source with no search capability already
+  is. Once a credential IS stored, an authentication failure means that key
+  is expired or revoked — a real problem — and stays a warning; searching
+  the source directly with `-s` still reports it too.
+
+  The skip is still reported, just not as a failure: a search that comes
+  back empty names the sources it left out and how to sign in
+  (`steamworkshop was skipped: not signed in (run: lmm auth login
+steamworkshop)`, and the web UI's own wording pointing at Setup →
+  Authentication). That matters most for the setup `lmm init` actually
+  builds — a Steam game whose only mapped source is the Workshop — where
+  the skip alone would have left both frontends claiming _none_ of the
+  game's sources support searching. `--json` carries it as a new
+  `skipped_unauthenticated` array on the search report, present only when
+  something was skipped.
+
+  "Signed in" counts a key supplied through the environment
+  (`LMM_<ID>_API_KEY`, or a built-in's own variable), not just one stored
+  by `lmm auth login`: such a key never reaches lmm's token store, so an
+  expired or mistyped one would otherwise have been skipped silently
+  instead of reported.
+
+- **`lmm init` means it when it says a step can be skipped (#384).** The
+  wizard opens with "Every step can be skipped - press Enter to take the
+  default", then answered a bare Enter at the source step with
+  `Nexus Mods: API key cannot be empty` — one error per configured source,
+  for doing exactly what the banner said. An empty key in the wizard is now
+  a skip, worded like every other skip in the run; `lmm auth login`, where
+  you asked for the prompt, still reports it as an error. Two layout fixes
+  in the same block: the source's instruction text no longer runs on from
+  the `[Y/n]` answer, and it is indented under its step like everything
+  else the wizard prints.
+
+- **`lmm init`'s closing "What next" block lines up (#389).** The first four
+  commands interpolated `--game <game-id>` and padded around it while the
+  `lmm serve` line carried hard-coded spacing, so its description sat six
+  columns out with a default game set and about seventeen without one. The
+  block is now built as pairs and padded to the widest command.
+
+- **`lmm --help` and `man lmm` name the Steam Workshop and the web UI
+  (#391).** The description every help header and the man page carry
+  listed NexusMods, CurseForge and custom sources — leaving out a built-in
+  source with three shipped tiers and its own README section, and leaving
+  out `lmm serve`, which is a frontend over the same engine rather than an
+  extra. "Terminal-based mod manager" was, by 2.0, half the story.
+
+- **`lmm game add` accepts an empty identifier for a source that has none
+  (#387).** A directory source ignores the value `games.yaml` maps it to —
+  the README says so, and `lmm game edit --source localmods=` has always
+  written it empty — but `game add` printed "Local Mods has no searchable
+  game catalog; enter this game's identifier with Local Mods directly" and
+  then refused the empty answer with `Error: id is required`. Pressing
+  Enter (or passing `--id ""`) is now accepted for a source that says the
+  mapped value addresses nothing — a directory or manifest source, or an
+  `api` source whose endpoints never interpolate `{game_id}` — provided
+  `--game-id` gives the entry a key. Every other source still requires the
+  identifier, including the ones with no catalogue to pick it from:
+  NexusMods' game slug and Steam Workshop's appid are real, required
+  values, and neither the prompt nor `--id ""` will write them empty. An
+  add that would leave no usable game id is still refused, naming the
+  identifier field.
+
+- **The scoped `lmm source list` says how many sources it left out (#395).**
+  With a game resolvable the list scopes to that game's sources, so a user
+  who had just written their first `sources/*.yaml` ran `lmm source list`,
+  did not see it, and had nothing on screen to say why. A one-line footer
+  now reports `N more registered source(s) not mapped to <game> —
+lmm source list --all` when there is more to show. `lmm game edit --help`
+  pointed at `lmm source list` for "every one, built-in or custom", which
+  is true only of `--all`; it now says so.
+
+- **`lmm list` shows which mods are not live, without `-v` (#397).** The
+  default view is ID / NAME / VERSION / AUTHOR, so a disabled, undeployed
+  mod rendered identically to a working one and the header count included
+  it — which is how the final review's orphaned row read as a normal mod.
+  Row tinting already carried the state, but colour is gone under
+  `--no-color`, in a pipe, and for anyone who cannot see it. A `STATE`
+  column now marks `disabled` / `not deployed`, appearing only when there
+  is such a mod (the rule the `EXTERNAL` column already follows), and the
+  header says how many are disabled. `-v` is unchanged: its
+  `ENABLED`/`DEPLOYED` pair says it in full.
+
+- **The shipped man pages are no longer dated two months before the release
+  (#401).** `genManDate` is pinned rather than `time.Now()`, so that
+  regenerating without a help-text change produces identical bytes and the
+  drift test stays meaningful — but nothing made the pin move, and 2.0.0's
+  pages would have gone out dated "Jul 2026". A new test fails whenever the
+  newest dated `CHANGELOG.md` section is later than the date the pages
+  carry, so the release-prep commit that already runs `make man` bumps it
+  too.
 
 ## [2.0.0] - 2026-08-30
 

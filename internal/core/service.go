@@ -442,6 +442,17 @@ type AggregateSearchResult struct {
 	// 3): callers render a distinct "no source supports search" notice
 	// instead of a plain "no mods found" when this is 0.
 	AttemptedCount int `json:"attempted_count"`
+	// SkippedUnauthenticated names the sources that CAN search but were
+	// skipped because no credential is available for them (#383). They are
+	// deliberately absent from both Warnings and AttemptedCount - the skip
+	// is not a failure of this search and not an attempt - but they must
+	// not vanish either: a game whose ONLY searchable source is
+	// unauthenticated otherwise reports AttemptedCount 0, which a frontend
+	// reads as "nothing here can search at all". That claim is false and it
+	// replaces the one actionable line the user needs (sign in), so the
+	// skip is reported instead. Sorted by source id, like the states it is
+	// built from.
+	SkippedUnauthenticated []string `json:"skipped_unauthenticated,omitempty"`
 }
 
 // sourceHasMore reports whether res (one source's response to the given
@@ -498,6 +509,15 @@ type searchSourceState struct {
 	// of the Track C review added - when the source could not honour the
 	// page size it was asked for, so its next offset would skip rows.
 	active bool
+	// authenticated is whether the user has stored a credential for this
+	// source. Read once, up front, so the auth-required skip below (#383)
+	// costs one DB read per source rather than one per goroutine per round.
+	authenticated bool
+	// skippedUnauth records the auth-required skip (#383) that attempted
+	// above is cleared for. The two are deliberately separate flags: the
+	// search really was not attempted, AND the frontend still has to be
+	// able to say why - see AggregateSearchResult.SkippedUnauthenticated.
+	skippedUnauth bool
 	// hasMore is "this source might still hold results we did not fetch",
 	// which is NOT the same question as active: a source that clamped the
 	// requested page size has more AND cannot be paged for it. Exhausted is
@@ -690,6 +710,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		if !source.CapabilitiesOf(src).Search {
 			continue // silent skip (design §5)
 		}
+		st.authenticated = s.sourceHasCredential(ctx, src, sourceID)
 		st.attempted = true
 		st.active = true
 	}
@@ -724,6 +745,23 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					st.active = false
 					if errors.Is(err, source.ErrNotSupported) && !st.succeeded {
 						st.attempted = false // runtime capability gap: silent skip, not a warning
+						return nil
+					}
+					// #383: a source the user has never signed in to is a
+					// capability they have not opted into, not a failure of
+					// this search - `lmm init` maps steamworkshop from the
+					// ACF prefill (correctly: #269's Tier 1 needs no key),
+					// and warning about Tier 2's missing key on every single
+					// query made the most-used command in the tool carry a
+					// permanent notice. Skipped exactly like the capability
+					// gap above; `lmm source list`'s AUTH column and the
+					// Setup page are where the capability is discoverable.
+					// Once a credential IS stored, an auth failure means
+					// THAT key is expired or revoked, which is a real
+					// problem and stays a warning.
+					if errors.Is(err, domain.ErrAuthRequired) && !st.succeeded && !st.authenticated {
+						st.attempted = false
+						st.skippedUnauth = true
 						return nil
 					}
 					st.err = err
@@ -792,6 +830,15 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 	allExhausted := true // vacuously true until a succeeding source proves otherwise
 	for i := range states {
 		st := &states[i]
+		if st.skippedUnauth {
+			// Counted apart from attemptedCount on purpose: a run whose
+			// only "attempt" was a skip must not trip the all-sources-failed
+			// branch below (there are no warnings to join, so it would
+			// return `all 1 source(s) failed:` with an empty cause), and
+			// must not report an attempt that never happened either.
+			result.SkippedUnauthenticated = append(result.SkippedUnauthenticated, st.id)
+			continue
+		}
 		if !st.attempted {
 			continue
 		}
@@ -1973,6 +2020,28 @@ func (s *Service) deleteSourceToken(ctx context.Context, sourceID string) error 
 func (s *Service) ListSourceTokens(ctx context.Context) ([]db.TokenInfo, error) {
 	infos, err := s.db.ListTokens(ctx)
 	return infos, asTokenKeyError(err)
+}
+
+// sourceHasCredential answers "has the user supplied a key for this source",
+// which is the question the auth-required search skip (#383) actually rests
+// on - a refusal from a source the user HAS keyed means that key is expired,
+// revoked or mistyped, and must stay a warning.
+//
+// Both places a credential can live are consulted (P1b review F2). The
+// source's own view covers a key that never reaches the token store at all:
+// app.ResolveAPIKey wires LMM_<ID>_API_KEY (and the built-ins' own env
+// names) straight into the source at registration, and asking the database
+// alone silently skipped exactly the expired-env-key case the rule exists
+// for. The store covers the opposite gap: `lmm serve` re-keys a source live
+// but the running instance only adopts it on restart (api_auth.go's
+// restart_required), so a just-stored key is in the database before it is in
+// the source. Either signal is a supplied credential; only neither is a
+// capability the user never opted into.
+func (s *Service) sourceHasCredential(ctx context.Context, src source.ModSource, sourceID string) bool {
+	if a, ok := src.(interface{ IsAuthenticated() bool }); ok && a.IsAuthenticated() {
+		return true
+	}
+	return s.IsSourceAuthenticated(ctx, sourceID)
 }
 
 // IsSourceAuthenticated checks if a source has a stored API token.

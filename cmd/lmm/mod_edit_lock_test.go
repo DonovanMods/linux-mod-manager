@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -23,18 +25,18 @@ func setupDoModEditTest(t *testing.T) (*core.Service, *domain.Game, *fakeInstall
 	svc, game, src := setupDoModLockTest(t)
 
 	oldName, oldVersion, oldAuthor := editName, editVersion, editAuthor
-	oldSource, oldID, oldProfile := editSource, editID, editProfile
-	editName, editVersion, editAuthor, editSource, editID, editProfile = "", "", "", "", "", ""
+	oldSource, oldID, oldProfile := editToSource, editToID, editProfile
+	editName, editVersion, editAuthor, editToSource, editToID, editProfile = "", "", "", "", "", ""
 	t.Cleanup(func() {
 		editName, editVersion, editAuthor = oldName, oldVersion, oldAuthor
-		editSource, editID, editProfile = oldSource, oldID, oldProfile
+		editToSource, editToID, editProfile = oldSource, oldID, oldProfile
 	})
 
 	return svc, game, src
 }
 
 // TestDoModEdit_ReLink_LockedRef_Refuses guards #146 shape 1: re-linking a
-// LOCKED ref (--source/--source-id) must refuse up front - the pre-fix code
+// LOCKED ref (--to-source/--to-source-id) must refuse up front - the pre-fix code
 // did RemoveMod (deleting the locked ref) then UpsertMod of a fresh ref with
 // zero-value Locked, silently dropping the lock. Lock-wins (#97/#143): only
 // explicit unlock releases the ref, so the edit must fail with ErrModLocked,
@@ -47,7 +49,7 @@ func TestDoModEdit_ReLink_LockedRef_Refuses(t *testing.T) {
 	require.NoError(t, pm.SetModLock(context.Background(), game.ID, "default", "src", "a", ""))
 	src.AddMod(&domain.Mod{ID: "b", SourceID: "src", Name: "Mod B", Version: "2.0", GameID: game.ID}, nil)
 
-	editID = "b"
+	editToID = "b"
 	err := doModEdit(context.Background(), svc, game, "a")
 
 	require.Error(t, err)
@@ -165,4 +167,133 @@ func TestDoModEdit_MetadataOnly_LockedRef_Allowed(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.True(t, profile.Mods[0].Locked)
 	assert.Equal(t, "1.0", profile.Mods[0].Version)
+}
+
+// TestModEditCmd_DoesNotShadowTheGroupsSourceShorthand is #396: `lmm mod`'s
+// persistent -s/--source means "which source this mod is in", but
+// `mod edit` declared a LOCAL --source meaning "re-link it to this source".
+// The local flag replaced the persistent one outright, so
+// `lmm mod edit alpha -s repo` failed with "unknown shorthand flag: 's'"
+// and there was no way at all to say which of two same-ID mods to edit.
+// The re-link target is --to-source/--to-source-id; -s belongs to the group.
+func TestModEditCmd_DoesNotShadowTheGroupsSourceShorthand(t *testing.T) {
+	// LocalFlags, not Flags: cobra merges the inherited persistent flags
+	// into Flags() once anything has parsed, so Flags() legitimately holds
+	// a "source" - the GROUP's. What must not exist is a local one.
+	assert.Nil(t, modEditCmd.LocalFlags().Lookup("source"),
+		"a local --source shadows the mod group's persistent -s/--source")
+	assert.Nil(t, modEditCmd.LocalFlags().Lookup("source-id"),
+		"renamed alongside --source so the pair stays consistent")
+	require.NotNil(t, modEditCmd.LocalFlags().Lookup("to-source"))
+	require.NotNil(t, modEditCmd.LocalFlags().Lookup("to-source-id"))
+
+	// And the group's own flag, shorthand intact, is what `mod edit` now
+	// resolves -s against.
+	resolved := modEditCmd.Flags().Lookup("source")
+	require.NotNil(t, resolved, "the mod group's --source must still reach mod edit")
+	assert.Equal(t, "s", resolved.Shorthand)
+}
+
+// TestDoModEdit_AmbiguousModIDNamesTheSourceFlag is #396's other half
+// (final review finding 3): two profiles entries can share a mod id across
+// sources, and mod edit took whichever the scan hit first. It now says so
+// and names the flag that decides it.
+func TestDoModEdit_AmbiguousModIDNamesTheSourceFlag(t *testing.T) {
+	svc, game, _ := setupDoModEditTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	seedSameIDModFromOtherSource(t, svc, game, "a", "Other Mod A", "9.9")
+	modSource = "" // no -s: the ambiguity is the point
+
+	editName = "Renamed"
+	err := doModEdit(context.Background(), svc, game, "a")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-s/--source")
+	assert.Contains(t, err.Error(), "src")
+	assert.Contains(t, err.Error(), "other")
+}
+
+// TestDoModEdit_SourceFlagPicksAmongSameIDMods is the resolution: with -s
+// given, the right one is edited and the other is untouched.
+func TestDoModEdit_SourceFlagPicksAmongSameIDMods(t *testing.T) {
+	svc, game, _ := setupDoModEditTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	seedSameIDModFromOtherSource(t, svc, game, "a", "Other Mod A", "9.9")
+	modSource = "other"
+
+	editName = "Renamed"
+	require.NoError(t, doModEdit(context.Background(), svc, game, "a"))
+
+	edited, err := svc.GetInstalledMod(context.Background(), "other", "a", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed", edited.Name)
+
+	untouched, err := svc.GetInstalledMod(context.Background(), "src", "a", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "Mod A", untouched.Name)
+}
+
+// seedSameIDModFromOtherSource is seedLockableMod for a SECOND registered
+// source mapped to the same game, so a profile can hold two entries with
+// the same mod id - the shape #396's disambiguation is about. (Distinct
+// from uninstall_purge_dry_run_golden_test.go's seedSecondSourceMod, which
+// seeds a cache entry and registers nothing.)
+func seedSameIDModFromOtherSource(t *testing.T, svc *core.Service, game *domain.Game, modID, name, version string) {
+	t.Helper()
+	other := newFakeInstallSource("other")
+	t.Cleanup(other.Close)
+	svc.RegisterSource(other)
+	game.SourceIDs["other"] = game.ID
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: modID, SourceID: "other", Name: name, Version: version, GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	pm := svc.NewProfileManager()
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default",
+		domain.ModReference{SourceID: "other", ModID: modID, Version: version}))
+}
+
+// TestREADMEDoesNotNameTheRenamedRelinkFlags is P1b review F3: #396 renamed
+// `mod edit`'s re-link pair to --to-source/--to-source-id, and the wave
+// updated the man page and the README's import-scan mentions but missed the
+// lock caveat, which still told readers to re-link with --source/--source-id.
+// The README is prose nobody executes, so nothing else notices it going
+// stale (the shortcuts ratchet's own reasoning) - and --source-id in
+// particular now names no flag of any lmm command at all.
+func TestREADMEDoesNotNameTheRenamedRelinkFlags(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	require.NoError(t, err)
+	text := string(readme)
+
+	assert.NotContains(t, text, "--source-id",
+		"no lmm command has a --source-id flag since #396; the re-link flag is --to-source-id")
+	assert.NotContains(t, text, "`--source`/",
+		"the re-link pair is --to-source/--to-source-id; the mod group's -s/--source means the opposite thing")
+	assert.Contains(t, text, "`--to-source`/`--to-source-id` re-linking",
+		"the lock caveat must name the flags that actually re-link")
+}
+
+// TestDoModEdit_ZeroMatchesForASourceFilterNamesTheRelinkFlag is P1b review
+// F4. Of the two flags #396 removed, --source-id fails loudly ("unknown
+// flag"); --source does not - it resolves to the mod group's persistent
+// -s/--source, which means the opposite thing. So the old
+// `lmm mod edit alpha --source curseforge` is silently reinterpreted as a
+// filter and reports "not found ... for source curseforge", a message that
+// says nothing about the rename. There is deliberately no alias (the
+// shadowing IS #396's defect), so the 0-match branch carries the pointer.
+func TestDoModEdit_ZeroMatchesForASourceFilterNamesTheRelinkFlag(t *testing.T) {
+	svc, game, _ := setupDoModEditTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	modSource = "curseforge" // the mod is in "src", so this filters it out
+
+	editName = "Renamed"
+	err := doModEdit(context.Background(), svc, game, "a")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "curseforge")
+	assert.Contains(t, err.Error(), "--to-source",
+		"a user who typed the pre-#396 --source must be told which flag re-links")
 }

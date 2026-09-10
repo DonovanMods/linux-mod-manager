@@ -179,7 +179,9 @@ func promptReorderFrom(r io.Reader, profileName string, refs []domain.ModReferen
 		fmt.Printf("\nNew order (Enter to keep, q to cancel): ")
 		line, err := reader.ReadString('\n')
 		if err != nil && line == "" {
-			return nil, fmt.Errorf("reading input: %w", err)
+			// `-i` with nothing piped in: the same command takes the order
+			// as mod ID arguments, which is the way out (P1b review F10).
+			return nil, promptReadErrorAs(err, interactiveOnlyVia("pass the new order as mod ID arguments instead of -i"))
 		}
 
 		line = strings.TrimSpace(line)

@@ -745,3 +745,68 @@ func TestSelectDetectedGames_RefusesUnknown(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "skyrim-se", got[0].Slug)
 }
+
+// identifierIgnoringSource is a source that declares its per-game mapped
+// value addresses nothing - a directory source, which scans a path (the
+// README's "directory sources ignore this value").
+type identifierIgnoringSource struct{ catalogLessSource }
+
+func (m *identifierIgnoringSource) IgnoresGameIdentifier() bool { return true }
+
+// TestAddGame_SourceThatIgnoresTheIdentifierTakesAnEmptyOne is #387. `lmm
+// game edit --source localmods=` has always written an empty mapping, and
+// the README documents it ("directory sources ignore this value"), but
+// AddGame demanded one for every source - including the ones with nothing
+// to address with it.
+//
+// The condition is the SOURCE's own answer, not the absence of a game
+// catalogue (P1b review F5): NexusMods and Steam Workshop have no
+// catalogue either, and their mapped value is a real, required game
+// slug/appid.
+func TestAddGame_SourceThatIgnoresTheIdentifierTakesAnEmptyOne(t *testing.T) {
+	svc := newGameAddService(t)
+	svc.RegisterSource(&identifierIgnoringSource{catalogLessSource{id: "localmods", name: "Local Mods"}})
+	install := t.TempDir()
+
+	entry, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "localmods", Identifier: "", ID: "testgame",
+		Name: "Test Game", InstallPath: install,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "testgame", entry.ID)
+	assert.Equal(t, map[string]string{"localmods": ""}, entry.SourceIDs)
+}
+
+// TestAddGame_CatalogLessSourceThatNeedsAnIdentifierStillRequiresOne is P1b
+// review F5's own case: a catalogue-less source whose mapped value is a
+// real game slug (NexusMods) or appid (Steam Workshop). Accepting an empty
+// one there writes `nexusmods: ""` - a mapping that fails at first use, and
+// one `game add` refused before #387.
+func TestAddGame_CatalogLessSourceThatNeedsAnIdentifierStillRequiresOne(t *testing.T) {
+	svc := newGameAddService(t)
+
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "nexusmods", Identifier: "", ID: "testgame",
+		Name: "Test Game", InstallPath: t.TempDir(),
+	})
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "identifier", specErr.Field)
+}
+
+// TestAddGame_CatalogSourceStillRequiresAnIdentifier is the other half: a
+// source WITH a catalogue has something to name, and an empty identifier
+// there is a value the caller left out rather than one the source ignores.
+func TestAddGame_CatalogSourceStillRequiresAnIdentifier(t *testing.T) {
+	svc := newGameAddService(t)
+
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "curseforge", Identifier: "", ID: "testgame",
+		Name: "Test Game", InstallPath: t.TempDir(),
+	})
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "identifier", specErr.Field)
+}
