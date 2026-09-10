@@ -1,8 +1,6 @@
 package steam
 
 import (
-	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -171,35 +169,72 @@ func TestKnownGames_NexusHeavy(t *testing.T) {
 	})
 }
 
-// TestKnownGames_ValheimCarriesNoLoaderBlock records a deliberate gap and
-// FAILS WHEN IT CLOSES, so #359 forces the decision instead of inviting
-// someone to delete a test that only restated a comment (#406 review F4).
-// Valheim's whole mod ecosystem sits on BepInEx, and #359 is adding an
-// optional `loader:` block for exactly that - but #359 had not merged into
-// v2 when S2 landed, and there is no field here to fill. The moment
-// steam.GameInfo grows one, this entry is the first that should use it.
-func TestKnownGames_ValheimCarriesNoLoaderBlock(t *testing.T) {
+// bepinexApps is the curated catalog's complete BepInEx set: the games
+// whose entire mod ecosystem is BepInEx plugins, which is why each one's
+// mod_path is the install root (#358's normaliser rewrites a plugin archive
+// to a BepInEx/-rooted layout under it) and each one declares the loader
+// (#416) so the FIRST plugin install is not refused by #359's precondition.
+var bepinexApps = map[string]string{
+	"892970":  "valheim",
+	"1284190": "planet-crafter",
+	"1466060": "tainted-grail-fall-of-avalon",
+	"527230":  "for-the-king",
+	"2393970": "human-host",
+}
+
+// TestKnownGames_OnlyTheBepInExEntriesDeclareALoader pins #416's data half
+// over the WHOLE shipped catalog, in both directions: exactly these five
+// entries declare `loader: {kind: bepinex}`, and every other entry declares
+// nothing at all.
+//
+// It replaces two deliberate gap markers, one from each branch that merged
+// here - TestKnownGames_ValheimCarriesNoLoaderBlock (#406: "no field exists
+// to fill yet, fail when one does") and
+// TestKnownGames_NoShippedEntryDeclaresALoaderYet (#416's schema half: "the
+// field exists, no entry uses it yet"). Both existed to force this decision
+// and both are now answered, so they are replaced by the positive claim
+// rather than deleted.
+//
+// The "every other entry declares nothing" half is the load-bearing one.
+// Nothing on disk says which loader a game wants, so a declaration is a
+// research claim about a particular game, and a wrong one makes lmm refuse
+// a perfectly good non-BepInEx mod for it (#359's precondition) or report a
+// missing loader at verify time. A new curated entry therefore has to come
+// here and say so.
+//
+// No VERSION is declared. A catalog shipped inside the binary cannot know
+// which BepInEx pack a user installed, and a version here would be compared
+// against theirs at verify time - so pinning one would turn "you are on a
+// newer pack than lmm was built against" into a reported problem. Version
+// stays a per-installation fact, which is what `lmm game show` reads off the
+// game directory.
+func TestKnownGames_OnlyTheBepInExEntriesDeclareALoader(t *testing.T) {
 	sandboxEnv(t)
 	games, err := LoadKnownGames(t.TempDir())
 	require.NoError(t, err)
-	info, ok := games["892970"]
-	require.True(t, ok)
-	assert.Equal(t, "", info.ModPath,
-		"a BepInEx game's mod root is its install root (#358): the loader's own tree - "+
-			"plugins, patchers, config - hangs off BepInEx/ under it. Installing BepInEx "+
-			"itself is still #359's job, not the known-games list's")
 
-	// The gap marker with teeth. A field is where the loader block would
-	// land, so a field is what this watches for - by name, since #359 has
-	// not settled its spelling.
-	for _, field := range reflect.VisibleFields(reflect.TypeOf(info)) {
-		if strings.Contains(strings.ToLower(field.Name), "loader") {
-			t.Fatalf("#359 landed - decide Valheim's loader block: steam.GameInfo now has a %s field, "+
-				"so app 892970 can declare its BepInEx prerequisite instead of leaving it to the user. "+
-				"Same call for the other four BepInEx entries (2393970, 1284190, 1466060, 527230).",
-				field.Name)
+	declared := make(map[string]string)
+	for appID, info := range games {
+		if info.Loader == nil {
+			continue
 		}
+		declared[appID] = info.Slug
+		assert.Equal(t, "bepinex", info.Loader.Kind,
+			"app %s (%s) declares loader kind %q; bepinex is the only kind the catalog curates today",
+			appID, info.Slug, info.Loader.Kind)
+		assert.Equal(t, "", info.Loader.Version,
+			"app %s (%s) pins a loader version; the installed version is a fact about the "+
+				"user's copy, not about the game, so verify would compare theirs against ours",
+			appID, info.Slug)
+		assert.Equal(t, "", info.ModPath,
+			"app %s (%s) declares BepInEx, so its mod root must be the install root (#358): "+
+				"the loader's own tree - plugins, patchers, config - hangs off BepInEx/ under it",
+			appID, info.Slug)
 	}
+	assert.Equal(t, bepinexApps, declared,
+		"the set of entries declaring a loader has changed; a declaration is a research claim "+
+			"about one game, so add or remove the app id here with the reason in its "+
+			"data/steam-games.yaml comment")
 }
 
 // TestKnownGames_LongTail pins #406 story S3: the rest of the installed

@@ -305,7 +305,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lmm game edit --loader bepinex` before its first plugin will install.
   `runtime` and `bootstrap` are deliberately not part of it: they are facts
   about _your_ copy of the game, which `lmm game show` reads off the install
-  directory. No entry in the shipped catalog declares one yet.
+  directory — and nor is `version`, which would be compared against the pack
+  you actually installed.
+
+  **The five curated BepInEx games declare it**: Valheim, The Planet
+  Crafter, Tainted Grail: The Fall of Avalon, For The King and Human Host.
+  `lmm game detect` and `lmm game add --from-detected` write
+  `loader: {kind: bepinex}` for each, next to the install-root `mod_path`
+  BepInEx needs, so a plugin installs on the first try. Every other entry in
+  the shipped list declares nothing — a declaration is a research claim
+  about one game, and a wrong one would make lmm refuse a perfectly good mod
+  for it. lmm still does not **install** BepInEx for you; it records that
+  the game needs it, and `lmm game show` and `lmm verify` tell you whether
+  it is there and whether it ran.
 
 - **A plugin will not be deployed into a game that has no loader (#359).**
   A BepInEx-shaped archive installed into a game declaring no loader now

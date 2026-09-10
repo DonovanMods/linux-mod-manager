@@ -565,6 +565,36 @@ func TestAPIGameAdd_FromSteamAppIDPrefillsAKnownGame(t *testing.T) {
 	assert.Equal(t, map[string]string{"nexusmods": "skyrimspecialedition"}, entry.SourceIDs)
 }
 
+// TestAPIGameAdd_FromSteamAppIDCarriesTheCuratedLoader is #416's data half on
+// the web side: the SPA's Setup -> Games "Add" button sends nothing but
+// `from_steam_app_id`, so every field of the games.yaml entry - the loader
+// declaration included - has to come out of the curated catalog. Without it
+// the CLI and the web UI write different entries for one app id, and only one
+// of them can install a plugin.
+func TestAPIGameAdd_FromSteamAppIDCarriesTheCuratedLoader(t *testing.T) {
+	s := newGamesServer(t)
+	install := fakeSteamApp(t, "892970", "Valheim", "Valheim")
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games", `{"from_steam_app_id":"892970"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var entry core.GameListEntry
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &entry, json.RejectUnknownMembers(true)))
+	assert.Equal(t, "valheim", entry.ID)
+	assert.Equal(t, install, entry.ModPath, "a BepInEx game's mod root IS its install root (#358)")
+	require.NotNil(t, entry.Loader, "the add response carries no loader declaration")
+	assert.Equal(t, domain.LoaderKindBepInEx, entry.Loader.Kind)
+
+	// And it is on disk, not only in the response the SPA splices into its
+	// list: the next request reads games.yaml.
+	game, err := s.svc.GetGame("valheim")
+	require.NoError(t, err)
+	require.NotNil(t, game.Loader, "games.yaml gained no loader: block")
+	assert.True(t, game.DeclaresBepInEx(), "the rules #358/#359 gate on must fire for it")
+	assert.Empty(t, game.Loader.Version,
+		"the catalog declares no version: which pack is installed is a fact about the user's copy")
+}
+
 // TestAPIGameAdd_FromSteamAppIDUnknownGameTakesTheSourcePair covers the
 // uncurated half, and that the body's other members are overrides: the mod
 // path defaults to <install>/mods unless the form corrects it.
