@@ -10,6 +10,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -240,4 +242,24 @@ func seedInitGame(t *testing.T, svc *core.Service) *domain.Game {
 	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 	return game
+}
+
+// TestIsInitCancellation_CoversTheDelegatedFlowsDeclines is #351 review
+// minor 9, and the correction to its premise: errors.Is is now the primary
+// test, but the string fallback stays because runImportScan's declined
+// confirm returns a bare fmt.Errorf("import cancelled") rather than the
+// shared sentinel - pinned deliberately by
+// TestRunImportScan_ConfirmDecline_ReturnsPlainCancelledError_NotErrCancelled.
+// Without it a user's "no" to the import step reads as a failure.
+func TestIsInitCancellation_CoversTheDelegatedFlowsDeclines(t *testing.T) {
+	assert.True(t, isInitCancellation(ErrCancelled), "the sentinel itself")
+	assert.True(t, isInitCancellation(fmt.Errorf("running the step: %w", ErrCancelled)),
+		"a wrapped sentinel - what errors.Is is for")
+	assert.True(t, isInitCancellation(errors.New("import cancelled")),
+		"runImportScan's own decline, which is deliberately NOT the sentinel")
+	assert.True(t, isInitCancellation(context.Canceled), "and a real ctrl-c")
+
+	assert.False(t, isInitCancellation(nil))
+	assert.False(t, isInitCancellation(errors.New("disk full")),
+		"an actual failure must still read as one")
 }

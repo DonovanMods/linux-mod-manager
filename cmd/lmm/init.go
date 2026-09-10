@@ -516,10 +516,19 @@ func initChoice(line string, count int) int {
 // rather than something going wrong - the one error the wizard reports as
 // a plain "nothing happened".
 func isInitCancellation(err error) bool {
-	// errors.Is, not ==, and no string fallback: the string test happened
-	// to cover wrapping, but errors.Is is the rule everywhere else in this
-	// tree and makes the fallback unnecessary (#351 review minor 9).
-	return errors.Is(err, ErrCancelled)
+	if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	// The string test is NOT redundant, and it is not about wrapping -
+	// errors.Is covers that. Review minor 9 read it that way; what it
+	// actually covers is that runImportScan's declined confirm returns a
+	// bare fmt.Errorf("import cancelled") rather than the shared sentinel,
+	// which import_characterize_test.go pins deliberately ("a future lift
+	// decision to unify onto ErrCancelled is a deliberate, visible
+	// change"). That flow is one of the two this wizard delegates to, so
+	// dropping the fallback would turn a user's "no" into
+	// "Import scan failed: import cancelled".
+	return err != nil && strings.Contains(err.Error(), ErrCancelled.Error())
 }
 
 // gameLabelList renders configured games as "Name (id), Name (id)".
