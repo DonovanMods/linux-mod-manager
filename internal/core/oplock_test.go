@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -140,4 +142,36 @@ func TestAcquireOpLock_ContentionRespectsContextCancellation(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrOperationInProgress,
 		"the caller's own cancellation is not another process refusing it")
 	assert.Less(t, waited, opLockWait, "and the wait ends at the cancellation, not at the deadline")
+}
+
+// TestBeginOp_SnapshotMutationsTakeTheCrossProcessLock pins that #350's
+// three mutations are inside #317's slot, not beside it: a snapshot taken
+// while another process is mid-deploy would describe neither the before nor
+// the after, and a delete racing one is a write to the same directory.
+//
+// Driven through the lock rather than through a second flow, for the reason
+// newLockedOpsService gives: flock is per open file description, so one
+// process holding it twice contends exactly as two processes would.
+func TestBeginOp_SnapshotMutationsTakeTheCrossProcessLock(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), ".oplock")
+	holder := newLockedOpsService(t, lockPath)
+	other := newLockedOpsService(t, lockPath)
+
+	// Seeded BEFORE the lock is taken: SaveGame is itself a mutation.
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir()}
+	require.NoError(t, other.SaveGame(context.Background(), game))
+
+	release, err := holder.beginOp(context.Background())
+	require.NoError(t, err)
+	defer release()
+
+	_, err = other.CreateSnapshot(context.Background(), game, "default", "blocked")
+	assert.ErrorIs(t, err, ErrOperationInProgress, "CreateSnapshot is a mutation")
+
+	_, err = other.DeleteSnapshot(context.Background(), "g1", "blocked")
+	assert.ErrorIs(t, err, ErrOperationInProgress, "DeleteSnapshot is a mutation")
+
+	_, err = other.ApplySnapshotRestore(context.Background(), game,
+		&SnapshotRestorePlan{GameID: "g1", Profile: "default"}, SnapshotRestoreOptions{}, nil)
+	assert.ErrorIs(t, err, ErrOperationInProgress, "ApplySnapshotRestore is a mutation")
 }
