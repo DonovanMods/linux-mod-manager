@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
+	"github.com/spf13/pflag"
 )
 
 // genManDate is a pinned generation date rather than time.Now(): the drift
@@ -92,6 +93,12 @@ func genManTree(dir string) error {
 	// emphasis, so `lmm auth login`'s "CURSEFORGE_API_KEY, or the derived
 	// LMM_<ID>_API_KEY" rendered as "CURSEFORGE_APIKEY ... LMM_API_KEY" -
 	// two environment variable names that do not exist.
+	//
+	// And over the pflag USAGE strings, which reach OPTIONS through that
+	// same pass (#368 re-review N2): `lmm game add --mod-path` says
+	// "(default: <install path>/mods)" and rendered "(default: /mods)", an
+	// absolute path at the filesystem root - wrong rather than merely
+	// incomplete.
 	restore := escapeHelpAngleBrackets(rootCmd)
 	defer restore()
 
@@ -163,10 +170,10 @@ func escapeHelpText(text string) string {
 }
 
 // escapeHelpAngleBrackets walks cmd and its descendants, escaping every
-// help string the man generator renders through Markdown - Use (SYNOPSIS)
-// plus Short/Long/Example (NAME and DESCRIPTION) - in place. Returns a
-// restore func - callers must defer it - that puts every changed string back
-// exactly as it was, so --help is never affected.
+// help string the man generator renders through Markdown - Use (SYNOPSIS),
+// Short/Long/Example (NAME and DESCRIPTION) and each flag's Usage (OPTIONS)
+// - in place. Returns a restore func - callers must defer it - that puts
+// every changed string back exactly as it was, so --help is never affected.
 func escapeHelpAngleBrackets(cmd *cobra.Command) (restore func()) {
 	type saved struct {
 		field   *string
@@ -188,15 +195,27 @@ func escapeHelpAngleBrackets(cmd *cobra.Command) (restore func()) {
 		escape(&c.Short)
 		escape(&c.Long)
 		escape(&c.Example)
+		// NonInherited is the set cobra renders under OPTIONS, and it
+		// already includes this command's own persistent flags; a parent's
+		// persistent flags - the OPTIONS INHERITED FROM PARENT COMMANDS
+		// section - are the same *pflag.Flag values, escaped when the walk
+		// reaches the parent that declared them.
+		c.NonInheritedFlags().VisitAll(func(f *pflag.Flag) {
+			escape(&f.Usage)
+		})
 		for _, sub := range c.Commands() {
 			walk(sub)
 		}
 	}
 	walk(cmd)
 
+	// Restored in REVERSE, so a field recorded twice (pflag hands the same
+	// *Flag to more than one FlagSet, and a merge can put one in front of
+	// the walk twice) ends up holding the value it had before the FIRST
+	// escape rather than the one it had between the two.
 	return func() {
-		for _, o := range originals {
-			*o.field = o.content
+		for i := len(originals) - 1; i >= 0; i-- {
+			*originals[i].field = originals[i].content
 		}
 	}
 }

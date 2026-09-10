@@ -927,8 +927,13 @@ number 1-2, a Steam app id, all, or none)` — naming the spelling just used
   SYNOPSIS line, not in its help text. `man lmm-auth-login` lost two
   environment variable names the same way, to Markdown emphasis:
   `CURSEFORGE_API_KEY` and `LMM_<ID>_API_KEY` rendered as
-  `CURSEFORGE_APIKEY` and `LMM_API_KEY`. Both are fixed in the generator, so
-  it cannot recur; `--help` output is untouched.
+  `CURSEFORGE_APIKEY` and `LMM_API_KEY`. `man lmm-game-add`'s OPTIONS lost
+  one the same way: `--mod-path` announced its default as `/mods`, an
+  absolute path at the filesystem root, where the flag actually says
+  `<install path>/mods`. All three are fixed in the generator, which now
+  escapes every string the man renderer touches — a command's SYNOPSIS line,
+  its help text and each flag's usage — so it cannot recur; `--help` output
+  is untouched.
 
 - **Re-picking an already-configured uncurated detect row now says what to
   do instead (#368).** Detect refuses to overwrite a row it has no

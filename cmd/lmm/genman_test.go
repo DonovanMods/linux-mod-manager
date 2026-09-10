@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -189,12 +190,66 @@ func TestGenManTree_UnderscoredNamesSurviveMarkdown(t *testing.T) {
 	assert.Contains(t, body, "LMM_<ID>_API_KEY")
 }
 
+// TestGenManTree_PlaceholdersSurviveInFlagHelp is the same generator defect
+// one section further down the page (#368 re-review N2): the escaping
+// covered Use/Short/Long/Example, but a command's pflag USAGE strings go
+// through the same Markdown pass on their way into OPTIONS, and nothing
+// escaped those. `lmm game add --mod-path` says "(default: <install
+// path>/mods)" and the page rendered "(default: /mods)" - an absolute path
+// at the filesystem root, which is actively WRONG rather than merely
+// incomplete, on the page a user reads while adding their first game.
+//
+// Exhaustive over the tree like its Use and Long/Short twins, and the count
+// pins how many flags actually carry such a placeholder so a new one is a
+// deliberate change rather than a silent one.
+func TestGenManTree_PlaceholdersSurviveInFlagHelp(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, genManTree(dir))
+
+	checked := 0
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.IsAvailableCommand() {
+			page := strings.ReplaceAll(c.CommandPath(), " ", "-") + ".1"
+			// NonInherited, because that is exactly the set cobra renders
+			// under .SH OPTIONS; a parent's persistent flags land in the
+			// separate .SH OPTIONS INHERITED FROM PARENT COMMANDS section,
+			// and are checked on the page that owns them.
+			c.NonInheritedFlags().VisitAll(func(f *pflag.Flag) {
+				args := flagPlaceholderRE.FindAllString(f.Usage, -1)
+				if len(args) == 0 {
+					return
+				}
+				checked++
+				options := readSection(t, filepath.Join(dir, page), ".SH OPTIONS")
+				for _, arg := range args {
+					assert.Contains(t, options, arg,
+						"%s OPTIONS should keep the %s placeholder --%s's usage string spells out",
+						page, arg, f.Name)
+				}
+			})
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(rootCmd)
+
+	assert.Equal(t, 1, checked,
+		"expected exactly 1 flag whose usage string spells an angle-bracket placeholder (game add --mod-path); update this count if a flag's help changed")
+}
+
 var angleBracketArgsRE = regexp.MustCompile(`<[^>]+>`)
 
 // helpPlaceholderRE is angleBracketArgsRE narrowed to a PLACEHOLDER token -
 // no whitespace, so a shell redirect in `lmm completion`'s help ("lmm
 // completion zsh > ...") is not read as one.
 var helpPlaceholderRE = regexp.MustCompile(`<[A-Za-z][A-Za-z0-9|._-]*>`)
+
+// flagPlaceholderRE is helpPlaceholderRE widened to allow an inner SPACE, so
+// `--mod-path`'s "<install path>" counts. Safe here where it would not be in
+// prose: a flag usage string is one short line with no shell examples in it.
+var flagPlaceholderRE = regexp.MustCompile(`<[A-Za-z][A-Za-z0-9|._ -]*>`)
 
 // readSynopsis extracts the roff SYNOPSIS section's body from a generated
 // man page for content assertions.
