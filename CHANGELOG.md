@@ -861,6 +861,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI no longer offers Re-link… on a locked mod (#394).** `lmm mod
+edit --source/--source-id` refuses a locked mod and tells you to unlock it
+  first; the full mod page offered the button anyway, so the only way to
+  learn that was to open the form and be refused. It is now disabled, like
+  the rollback button beside it. Both also state the remedy — and the exact
+  `lmm mod unlock` command — in a line you can read, rather than only in a
+  tooltip: a disabled button cannot be focused, so its tooltip never reaches
+  a keyboard user.
+
 - **The web UI no longer offers Enable/Disable on a Steam Workshop row
   (#379).** The library gated its update action and its row menu on
   Steam-owned rows, but not the **Enabled** checkbox — so on the main screen

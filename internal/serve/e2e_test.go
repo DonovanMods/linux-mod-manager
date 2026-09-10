@@ -7235,3 +7235,55 @@ func TestNotListedCount_IgnoresDisabledRows(t *testing.T) {
 		"and the count never goes negative when the profile lists more than is enabled")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_FullModPageRefusesRelinkOnALockedMod is issue 394. The page
+// disabled its rollback button for a locked mod with a title explaining
+// why, but rendered Re-link… unconditionally - and `lmm mod edit
+// --source/--source-id` on a locked mod is refused ("mod is locked: …
+// unlock with 'lmm mod unlock …' first"). #365 had already removed Re-link
+// from the ROW menu for external mods; the locked case never got the same
+// treatment on this page.
+//
+// The issue's own aside is answered too: a title on a disabled button is
+// invisible to keyboard users, because a disabled button is not focusable.
+// Both refused actions therefore also carry a VISIBLE line naming the
+// unlock remedy, which is the only form of it a keyboard user can reach.
+func TestE2E_FullModPageRefusesRelinkOnALockedMod(t *testing.T) {
+	f := newE2EFixtureWithDrillInModsAndALockedMod(t)
+
+	var relinkDisabled bool
+	var relinkTitle, hint string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &relinkDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').title`, &relinkTitle),
+		chromedp.Evaluate(`(document.querySelector('[data-testid="mod-page-locked-actions"]')?.textContent ?? "")`, &hint),
+	)
+
+	assert.True(t, relinkDisabled,
+		"core refuses a re-link on a locked mod, so the page must not offer it live")
+	assert.Contains(t, relinkTitle, "Unlock",
+		"and must name the remedy, matching the rollback button four lines below")
+	assert.Contains(t, hint, "Unlock",
+		"the remedy must be readable without a hover, which a disabled button never gets")
+	assert.Contains(t, hint, "lmm mod unlock fake:a",
+		"and must name the command that lifts it, not merely the word")
+
+	// The unlocked sibling on the same fixture proves the gate is the lock
+	// and not the page.
+	var otherDisabled bool
+	var otherHints int
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "b")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &otherDisabled),
+		chromedp.Evaluate(`document.querySelectorAll('[data-testid="mod-page-locked-actions"]').length`, &otherHints),
+	)
+	assert.False(t, otherDisabled, "an unlocked mod still offers Re-link…")
+	assert.Equal(t, 0, otherHints, "and says nothing about a lock it does not have")
+
+	assert.Empty(t, f.BrowserErrors())
+}

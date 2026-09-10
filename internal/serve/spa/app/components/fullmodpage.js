@@ -154,6 +154,10 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
 
   const findings = findingsFor(state.health, modID);
   const conflicts = conflictsFor(state.conflicts, `${sourceID}:${modID}`);
+  // issue 394: `lmm mod edit --source/--source-id` on a locked mod is
+  // refused ("unlock with 'lmm mod unlock …' first"), so Re-link… below is
+  // gated the way the Versions section's rollback button already was.
+  const lockedActions = Boolean(installed?.locked);
 
   return html`
     ${header}
@@ -241,6 +245,8 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
             type="button"
             class="button"
             data-action="relink"
+            disabled=${lockedActions}
+            title=${lockedActions ? "Unlock this mod to re-link it" : undefined}
             onClick=${() =>
               actions.openPlan({
                 kind: "mod_relink",
@@ -254,7 +260,22 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
           </button>`
         }
       </div>
-
+      ${
+        // issue 394's own aside: a title on a DISABLED button is invisible
+        // to a keyboard user, because a disabled button is not focusable.
+        // The remedy therefore also gets a line of its own, which is the
+        // only form of it that reader can reach. Rendered only when
+        // something above it is actually refused.
+        lockedActions &&
+        html`<p
+          class="mod-page__hint empty-state__hint"
+          data-testid="mod-page-locked-actions"
+        >
+          This mod is locked to ${installed.locked_version}. Unlock it (${" "}
+          <span class="mono">lmm mod unlock ${sourceID}:${modID}</span>${" "})
+          to re-link it.
+        </p>`
+      }
       ${
         findings.length > 0 &&
         html`
@@ -511,6 +532,21 @@ function VersionsSection({
             Roll back to the previous version
           </button>
         <//>`
+      }
+      ${
+        // The same visible remedy the actions group above carries, for the
+        // same reason (issue 394's aside): the title on this disabled
+        // button reaches a mouse and nothing else.
+        hasPrevious &&
+        locked &&
+        html`<p
+          class="mod-page__hint empty-state__hint"
+          data-testid="mod-page-locked-rollback"
+        >
+          Locked to ${installed.locked_version} — unlock it (${" "}
+          <span class="mono">lmm mod unlock ${sourceID}:${modID}</span>${" "})
+          to roll back.
+        </p>`
       }
     </section>
   `;
