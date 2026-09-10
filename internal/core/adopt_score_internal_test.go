@@ -220,6 +220,24 @@ func TestAdoptBestCandidateRefusesAHeadSegmentTie(t *testing.T) {
 	assert.Equal(t, "1", best.ID)
 }
 
+// TestAdoptBestCandidateAdoptsAUniqueWinnerOverATiedPair is the review's
+// N1: the tie flag was set when a new best TIED the previous one and never
+// cleared when a later candidate BEAT the tied pair, so a strictly better
+// unique match was refused because two worse candidates had tied earlier
+// in the list. Here the third row's version agrees with the scanned one,
+// which lifts it clear of the two that tie at the head-segment cap.
+func TestAdoptBestCandidateAdoptsAUniqueWinnerOverATiedPair(t *testing.T) {
+	candidates := []domain.Mod{
+		{ID: "1", SourceID: "alpha", Name: "Alternate Start - Live Another Life", Version: "9.9"},
+		{ID: "2", SourceID: "alpha", Name: "Alternate Start - Realm of Lorkhan", Version: "9.9"},
+		{ID: "3", SourceID: "alpha", Name: "Alternate Start - The Chosen One", Version: "1.0"},
+	}
+	best, score := adoptBestCandidate("Alternate Start", "1.0", candidates)
+	require.NotNil(t, best, "a candidate that BEATS the tied pair is not itself ambiguous")
+	assert.Equal(t, "3", best.ID)
+	assert.Greater(t, score, adoptHeadSegmentCap, "the version agreement is what lifts it clear")
+}
+
 // TestAdoptBestCandidateBreaksANonHeadTie keeps the ordinary tie-break in
 // place: two candidates carrying the SAME full name are the same mod listed
 // twice (or on two sources), which the deterministic order resolves.

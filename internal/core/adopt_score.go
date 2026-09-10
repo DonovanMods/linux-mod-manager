@@ -355,9 +355,11 @@ func adoptBestCandidate(scannedName, scannedVersion string, candidates []domain.
 		agrees := adoptVersionsAgree(scannedVersion, c.Version)
 
 		if best == nil || betterAdoptCandidate(score, agrees, *c, bestScore, bestVersionAgrees, *best) {
-			if best != nil && score == bestScore {
-				tiedWithBest = true
-			}
+			// Assigned, not OR'd: a new best that BEATS the previous one
+			// ends whatever ambiguity there was, and leaving the flag set
+			// refused a strictly better unique match because two worse
+			// candidates had tied earlier in the list.
+			tiedWithBest = best != nil && score == bestScore
 			best, bestScore, bestVersionAgrees, bestViaHead = c, score, agrees, viaHead
 			continue
 		}
