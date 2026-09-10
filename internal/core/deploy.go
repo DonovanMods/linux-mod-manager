@@ -310,7 +310,11 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 	if err != nil {
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
-	plan := &DeployPlan{Profile: profileName, snapshot: snapshotOf(installedMods)}
+	snapshot, err := s.snapshotOf(game.ID, installedMods)
+	if err != nil {
+		return nil, err
+	}
+	plan := &DeployPlan{Profile: profileName, snapshot: snapshot}
 	gameCache := s.GetGameCache(game)
 
 	// #380: a plan's refs are built from the installed ROW, which carries no

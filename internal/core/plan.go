@@ -30,14 +30,7 @@ func (s *Service) currentInstalledSnapshot(ctx context.Context, gameID, profileN
 	if err != nil {
 		return nil, fmt.Errorf("loading installed mods: %w", err)
 	}
-	// #353: the adapter's precondition is checked HERE - the one place both
-	// a Plan and its Apply read the installed-mod set, so a refusal cannot
-	// reach a frontend from only one of the two. An adapter with no
-	// Preconditioner (every adapter U1 ships) makes this a no-op.
-	if err := s.checkAdapterPreconditions(gameID, mods); err != nil {
-		return nil, err
-	}
-	return snapshotOf(mods), nil
+	return s.snapshotOf(gameID, mods)
 }
 
 // AdapterPreconditionError is the typed error a frontend branches on when a
@@ -101,12 +94,27 @@ func (s *Service) checkAdapterPreconditions(gameID string, mods []domain.Install
 // for a Plan that had to load one anyway (PlanAdopt) - so the plan's own
 // views and its staleness precondition come from a single read rather than
 // several that could disagree.
-func snapshotOf(mods []domain.InstalledMod) installedSnapshot {
+//
+// #353: it is ALSO where the game adapter's precondition is checked, which
+// is why it is a method taking a gameID rather than a free function. Every
+// installedSnapshot in core is built here - by currentInstalledSnapshot for
+// the Plans that re-read the set, and directly by the eight that already
+// hold it - so a Plan cannot acquire its freshness precondition without the
+// adapter having had its say. Checking in only one of the two constructors
+// is exactly the bug this shape closes (I4): `lmm deploy` used to render a
+// clean plan that its own Apply then refused.
+//
+// An adapter with no Preconditioner - every adapter U1 ships - makes the
+// check a nil return.
+func (s *Service) snapshotOf(gameID string, mods []domain.InstalledMod) (installedSnapshot, error) {
+	if err := s.checkAdapterPreconditions(gameID, mods); err != nil {
+		return nil, err
+	}
 	snap := make(installedSnapshot, len(mods))
 	for _, m := range mods {
 		snap[domain.ModKey(m.SourceID, m.ID)] = fmt.Sprintf("%s|%t", m.Version, m.Enabled)
 	}
-	return snap
+	return snap, nil
 }
 
 // checkPlanFresh re-derives gameID/profileName's CURRENT installed-mod

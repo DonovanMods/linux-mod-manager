@@ -95,7 +95,10 @@ func (s *Service) PlanProfileSwitch(ctx context.Context, game *domain.Game, targ
 	// against, so ApplyProfileSwitch can refuse it once From has moved on -
 	// snapshotOf reuses currentMods rather than re-querying (see its own doc
 	// comment).
-	snapshot := snapshotOf(currentMods)
+	snapshot, err := s.snapshotOf(game.ID, currentMods)
+	if err != nil {
+		return nil, err
+	}
 
 	currentEnabled := make(map[string]*domain.InstalledMod)
 	for i := range currentMods {

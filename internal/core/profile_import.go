@@ -169,7 +169,10 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	// against, so ApplyImport can refuse it once profile.Name's has moved on
 	// - snapshotOf reuses installedMods rather than re-querying (see its own
 	// doc comment).
-	snapshot := snapshotOf(installedMods)
+	snapshot, err := s.snapshotOf(game.ID, installedMods)
+	if err != nil {
+		return nil, err
+	}
 	targetRows := make(map[string]domain.InstalledMod)
 	for _, im := range installedMods {
 		key := domain.ModKey(im.SourceID, im.ID)
