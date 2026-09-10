@@ -204,3 +204,71 @@ func TestVerify_LoaderTier_SkipsAGameThatDeclaresNoLoader(t *testing.T) {
 		assert.NotContains(t, s, "loader_")
 	}
 }
+
+// TestVerify_LoaderTier_UnlinkedPluginIsReportedAndFixed is the tier's ONE
+// repairable check. The engine had no other: the per-file walk asks whether
+// the CACHE still holds a mod's files, and the convergence sweep is
+// remove-only by design, so "the mod is enabled, its cache entry is intact,
+// and nothing is linked into BepInEx/plugins/" was invisible - which for a
+// loader game is exactly the state in which every plugin silently stops
+// working.
+func TestVerify_LoaderTier_UnlinkedPluginIsReportedAndFixed(t *testing.T) {
+	svc, game := newVerifyLoaderService(t, &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapNative,
+	})
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Thing-1.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"BepInEx/plugins/Thing.dll": "assembly",
+		"manifest.json":             "{}",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	// The game directory loses the link - a launcher update, a manual
+	// cleanup - while the mod stays installed and enabled.
+	deployed := filepath.Join(game.ModPath, "BepInEx", "plugins", "Thing.dll")
+	require.NoError(t, os.Remove(deployed))
+
+	res, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	f := findingWithStatus(res.Result, "loader_plugin_unlinked")
+	require.NotNil(t, f, "statuses were %v", findingStatuses(res.Result))
+	assert.True(t, f.Fixable, "this is the one loader check --fix can act on")
+	assert.Contains(t, f.Note, "BepInEx/plugins/Thing.dll")
+
+	fixed, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, findingWithStatus(fixed.Result, "fixed_loader_plugin_unlinked"),
+		"statuses were %v", findingStatuses(fixed.Result))
+	_, statErr := os.Lstat(deployed)
+	assert.NoError(t, statErr, "--fix re-deploys the mod through the ordinary installer")
+}
+
+// A seeded BepInEx/config file the user deleted is NOT an unlinked plugin:
+// it was written once and then became theirs (#358), so its absence is a
+// choice, not a failed deploy.
+func TestVerify_LoaderTier_ADeletedSeededConfigIsNotAFinding(t *testing.T) {
+	svc, game := newVerifyLoaderService(t, &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapNative,
+	})
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Thing-1.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"BepInEx/plugins/Thing.dll": "assembly",
+		"BepInEx/config/thing.cfg":  "[General]\n",
+		"manifest.json":             "{}",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(game.ModPath, "BepInEx", "config", "thing.cfg")))
+
+	res, err := svc.VerifyReport(context.Background(), game, "default", core.VerifyOptions{Force: true}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, findingWithStatus(res.Result, "loader_plugin_unlinked"),
+		"statuses were %v", findingStatuses(res.Result))
+}
