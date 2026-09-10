@@ -392,6 +392,15 @@ var ErrUnknownDetectedGame = errors.New("detected game is not in the known-games
 // spellings of the same choice, because the CLI's listing is numbered while
 // an SPA holds the row itself and has no reason to count.
 //
+// A BARE selector that is both a valid index and some OTHER row's slug is
+// refused rather than guessed at (#368 re-review N4, the CLI prompt's own
+// Important 1 one layer down). The index used to win outright, so a game
+// slugged "2" on a listing with two or more known rows silently configured
+// row 2 instead - reachable since #368 let uncurated rows through, because
+// their slugs are derived from the Steam title and a numerically-named game
+// derives an all-digits slug. Both explicit spellings are always accepted,
+// collision or not: "#2" is the index, "slug:2" is the slug.
+//
 // A row is selectable when domain.DetectedGame.Addable says it can be
 // configured with nothing more asked of the user - since #368 that includes
 // an UNCURATED row detection prefilled a source map for, which has no index
@@ -427,32 +436,39 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 		}
 	}
 
+	// rowByIndex resolves a 1-based selection number, reporting the refusal
+	// that fits: a listing with no known row at all cannot count, and a
+	// number past the end names the range it could have used.
+	rowByIndex := func(sel, digits string) (int, error) {
+		n, err := strconv.Atoi(digits)
+		if err != nil {
+			return -1, fmt.Errorf("invalid selection %q: no detected game with that index or slug", sel)
+		}
+		if len(byIndex) == 0 {
+			// "use 1-0" is not a range; the scan found installed games,
+			// just none of them in the known-games list, so a numbered
+			// selection has nothing to count. ErrUnknownDetectedGame
+			// (not a bare string) so the caller - only `lmm serve`
+			// reaches this today - can append its OWN next step
+			// (api_games.go already does, for the per-row case below);
+			// a CLI command baked into the message here would be wrong
+			// wherever a browser is what actually shows it (#206 review
+			// Minor 7).
+			return -1, fmt.Errorf("%w: nothing in this selection is in the known-games list", ErrUnknownDetectedGame)
+		}
+		if n < 1 || n > len(byIndex) {
+			return -1, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(byIndex))
+		}
+		return byIndex[n-1], nil
+	}
+
 	seen := make(map[int]bool, len(selectors))
 	out := make([]domain.DetectedGame, 0, len(selectors))
 	for _, sel := range selectors {
 		sel = strings.TrimSpace(sel)
-		var idx int
-		if n, err := strconv.Atoi(sel); err == nil {
-			if len(byIndex) == 0 {
-				// "use 1-0" is not a range; the scan found installed games,
-				// just none of them in the known-games list, so a numbered
-				// selection has nothing to count. ErrUnknownDetectedGame
-				// (not a bare string) so the caller - only `lmm serve`
-				// reaches this today - can append its OWN next step
-				// (api_games.go already does, for the per-row case below);
-				// a CLI command baked into the message here would be wrong
-				// wherever a browser is what actually shows it (#206 review
-				// Minor 7).
-				return nil, fmt.Errorf("%w: nothing in this selection is in the known-games list", ErrUnknownDetectedGame)
-			}
-			if n < 1 || n > len(byIndex) {
-				return nil, fmt.Errorf("invalid selection %q: use 1-%d or a game slug", sel, len(byIndex))
-			}
-			idx = byIndex[n-1]
-		} else if i, ok := bySlug[strings.ToLower(sel)]; ok {
-			idx = i
-		} else {
-			return nil, fmt.Errorf("invalid selection %q: no detected game with that index or slug", sel)
+		idx, err := resolveDetectSelector(sel, bySlug, rowByIndex)
+		if err != nil {
+			return nil, err
 		}
 		if !games[idx].Addable() {
 			return nil, fmt.Errorf("%w: %s (Steam app id %s) - it is installed, but nothing tells lmm where it keeps its mods, so it has to be added from the detected game with the source and mod path filled in",
@@ -465,4 +481,39 @@ func SelectDetectedGames(games []domain.DetectedGame, selectors []string) ([]dom
 		out = append(out, games[idx])
 	}
 	return out, nil
+}
+
+// resolveDetectSelector turns one selector into a row of the listing.
+//
+// The two explicit prefixes come first and are unconditional, so a caller
+// that knows which axis it means never depends on what else the scan
+// happened to find: "#n" is the index, "slug:name" the slug. A bare
+// selector is resolved BOTH ways, and disagreement is the caller's to
+// settle - resolving it here would silently configure a game nobody named,
+// and a detect selection overwrites the row it lands on.
+func resolveDetectSelector(sel string, bySlug map[string]int, rowByIndex func(sel, digits string) (int, error)) (int, error) {
+	if digits, ok := strings.CutPrefix(sel, "#"); ok {
+		return rowByIndex(sel, strings.TrimSpace(digits))
+	}
+	if slug, ok := strings.CutPrefix(sel, "slug:"); ok {
+		i, found := bySlug[strings.ToLower(strings.TrimSpace(slug))]
+		if !found {
+			return -1, fmt.Errorf("invalid selection %q: no detected game with that slug", sel)
+		}
+		return i, nil
+	}
+
+	bySlugIdx, isSlug := bySlug[strings.ToLower(sel)]
+	byIndexIdx, indexErr := rowByIndex(sel, sel)
+	switch {
+	case indexErr == nil && isSlug && byIndexIdx != bySlugIdx:
+		return -1, fmt.Errorf("ambiguous selection %q: it is index %s and also the slug of another detected game - name the index as %q, or the slug as %q",
+			sel, sel, "#"+sel, "slug:"+sel)
+	case indexErr == nil:
+		return byIndexIdx, nil
+	case isSlug:
+		return bySlugIdx, nil
+	default:
+		return -1, indexErr
+	}
 }

@@ -333,10 +333,12 @@ func queryFlag(r *http.Request, name string) bool {
 
 // gameDetectSelectRequest is POST /api/v1/games/detect's body: which of
 // the listing's rows to add, each named by its 1-based index or its slug
-// (core.SelectDetectedGames resolves both). Selecting an
-// already-configured row is legal and overwrites it - that is `lmm game
-// detect`'s documented repair path, and the listing's already_configured
-// flag is what lets the SPA warn before offering it.
+// (core.SelectDetectedGames resolves both, and refuses a bare selector that
+// is both an index and another row's slug - "#2" and "slug:2" name one
+// axis each). Selecting an already-configured row is legal and overwrites
+// it - that is `lmm game detect`'s documented repair path, and the
+// listing's already_configured flag is what lets the SPA warn before
+// offering it.
 type gameDetectSelectRequest struct {
 	Select []string `json:"select"`
 }

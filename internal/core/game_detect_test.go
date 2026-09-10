@@ -561,3 +561,72 @@ func TestSelectDetectedGames_AcceptsAnAddableUncuratedRowBySlug(t *testing.T) {
 	require.Len(t, byIndex, 1)
 	assert.Equal(t, "skyrim-se", byIndex[0].Slug, "an index still counts the known rows only")
 }
+
+// TestSelectDetectedGames_RefusesASelectorThatIsBothAnIndexAndASlug is #368
+// re-review N4, the CLI's Important 1 one layer down: the selector resolved
+// a number as an index FIRST and only fell through to the slug map when
+// strconv failed, so on a listing whose rows include a game slugged "2",
+// selecting that game by its slug silently configured known row 2 instead.
+// Uncurated rows reach this path since #368 and their slugs are machine-
+// derived from the Steam title, so an all-digits slug is reachable.
+//
+// It is refused rather than guessed, and both explicit spellings resolve:
+// "#2" is always the index, "slug:2" always the slug.
+func TestSelectDetectedGames_RefusesASelectorThatIsBothAnIndexAndASlug(t *testing.T) {
+	scan := []domain.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{Slug: "fallout-4", Name: "Fallout 4", InstallPath: "/games/fo4", NexusID: "fallout4", Known: true},
+		{SteamAppID: "1133870", Slug: "2", Name: "2", InstallPath: "/games/two",
+			Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 3},
+	}
+
+	_, err := core.SelectDetectedGames(scan, []string{"2"})
+	require.Error(t, err, "a bare \"2\" is row 2 AND the slug of another row")
+	assert.Contains(t, err.Error(), "ambiguous selection")
+	assert.Contains(t, err.Error(), `"#2"`)
+	assert.Contains(t, err.Error(), `"slug:2"`)
+
+	byIndex, err := core.SelectDetectedGames(scan, []string{"#2"})
+	require.NoError(t, err)
+	require.Len(t, byIndex, 1)
+	assert.Equal(t, "fallout-4", byIndex[0].Slug)
+
+	bySlug, err := core.SelectDetectedGames(scan, []string{"slug:2"})
+	require.NoError(t, err)
+	require.Len(t, bySlug, 1)
+	assert.Equal(t, "2", bySlug[0].Slug)
+}
+
+// TestSelectDetectedGames_UnambiguousSelectorsAreUnaffected pins that the
+// refusal above is narrow: an index no row claims as a slug still resolves,
+// a slug no index can be still resolves, and the explicit forms work on a
+// listing with no collision at all.
+func TestSelectDetectedGames_UnambiguousSelectorsAreUnaffected(t *testing.T) {
+	scan := []domain.DetectedGame{
+		{Slug: "skyrim-se", Name: "Skyrim Special Edition", InstallPath: "/games/skyrim", NexusID: "skyrimspecialedition", Known: true},
+		{SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2", InstallPath: "/games/se2",
+			Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30},
+	}
+
+	for _, tc := range []struct{ sel, want string }{
+		{"1", "skyrim-se"},
+		{"#1", "skyrim-se"},
+		{"space-engineers-2", "space-engineers-2"},
+		{"slug:space-engineers-2", "space-engineers-2"},
+		{"SPACE-ENGINEERS-2", "space-engineers-2"},
+		{"slug:SPACE-ENGINEERS-2", "space-engineers-2"},
+	} {
+		got, err := core.SelectDetectedGames(scan, []string{tc.sel})
+		require.NoError(t, err, "selector %q", tc.sel)
+		require.Len(t, got, 1)
+		assert.Equal(t, tc.want, got[0].Slug, "selector %q", tc.sel)
+	}
+
+	_, err := core.SelectDetectedGames(scan, []string{"#9"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid selection")
+
+	_, err = core.SelectDetectedGames(scan, []string{"slug:nope"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid selection")
+}

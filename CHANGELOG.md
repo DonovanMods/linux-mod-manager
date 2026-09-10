@@ -904,6 +904,17 @@ number 1-2, a Steam app id, all, or none)` — naming the spelling just used
   as accepted. It now says a Steam app id **from the list above**, and names
   `--include-unknown` as the flag that would list the row.
 
+- **`POST /api/v1/games/detect` no longer resolves a numeric selector as a
+  row number when it is another row's slug (#368).** The selector tried the
+  1-based index first and only fell back to the slug map when that failed —
+  the same shape as the prompt's own collision, one layer down. Since #368
+  let uncurated rows through, and their slugs are derived from the Steam
+  title, a numerically-named game can be slugged `2`; selecting it on a
+  listing with two or more known rows silently configured known row 2
+  instead. A bare selector that resolves both ways is now refused, and both
+  explicit spellings are always accepted: `#2` is the index, `slug:2` the
+  slug. The web UI is unaffected — it selects by index.
+
 - **Every detect row now prints its Steam app id, not just the uncurated
   ones (#368).** The app id column was the uncurated section's alone, while
   the prompt accepts — and the ambiguity check matches — any listed row's
