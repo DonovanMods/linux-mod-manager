@@ -1937,16 +1937,12 @@ func TestJSONGoldens(t *testing.T) {
 		{
 			// #359's plan-time precondition. The setup steps are DATA on the
 			// wire, which is what lets the web UI render the same sentences
-			// the terminal prints instead of carrying its own copy.
+			// the terminal prints instead of carrying its own copy - so the
+			// golden records what newLoaderRequiredError actually produces,
+			// not a hand-built stand-in of the same shape (review F12).
 			"loader_required_error",
-			core.LoaderRequiredError{
-				GameID: "lethal-company", Kind: "bepinex", ModName: "Skinwalkers",
-				Layout: "game-root-relative",
-				Setup: []string{
-					"Install BepInEx into the game directory yourself.",
-					"Record it: `lmm game edit lethal-company --loader bepinex`.",
-				},
-			},
+			core.NewLoaderRequiredErrorForTest(
+				&domain.Game{ID: "lethal-company"}, "Skinwalkers", "game-root-relative"),
 		},
 	}
 
