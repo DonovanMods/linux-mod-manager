@@ -77,7 +77,20 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // writeAPIError writes err as the {"error","details"} envelope at status.
+//
+// One error overrides the status the route computed:
+// core.ErrOperationInProgress (#317) is 409 wherever it surfaces. Another
+// lmm process holds the mutation lock - the request is refused, nothing is
+// wrong with the server, and the same request a second later succeeds,
+// which is what 409 says and 500 does not. Classifying it here rather than
+// in each route means the synchronous write routes (mod settings, profile
+// CRUD, game add/edit, auth, the source editor) cannot answer it
+// differently from one another; the job-backed routes never reach this
+// path, since there the refusal becomes the job's failure.
 func (s *Server) writeAPIError(w http.ResponseWriter, status int, err error) {
+	if errors.Is(err, core.ErrOperationInProgress) {
+		status = http.StatusConflict
+	}
 	s.log.Debug("api error", "status", status, "err", err)
 	s.writeJSON(w, status, apiErrorEnvelope{Error: err.Error(), Details: errorDetails(err)})
 }

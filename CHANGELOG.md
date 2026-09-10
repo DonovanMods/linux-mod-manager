@@ -687,7 +687,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `core.OperationInProgressError` naming the holder: `another lmm
 operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   `pid`/`started_at` in the `--json` error envelope's `details` and in
-  `lmm serve`'s. Reads never take the lock. The lock lives in the open
+  `lmm serve`'s, where it answers `409 Conflict` — a refusal that a retry
+  clears, on the job routes and the single-step write routes alike — and
+  never `500`. Reads never take the lock. The lock lives in the open
   descriptor, so a killed lmm leaves nothing stale behind. This resolves
   the cross-process caveat `docs/plans/2026-08-30-serve-design.md`
   documented.
