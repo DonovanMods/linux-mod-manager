@@ -96,3 +96,61 @@ func TestDoStream_ContextCancellationPropagates(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
+
+// TestDoStream_RefusesABodyPastTheCap is T1 review #6. DoStream is the one
+// call in lmm that writes an unvalidated response body straight to disk,
+// and nothing bounded it: no byte cap, no free-space check, only a
+// ten-minute timeout - which on a domestic link is tens of gigabytes. A
+// stream cannot be capped by reading it all first, but it can be capped by
+// an io.LimitReader, and the overrun has to be a TYPED error rather than a
+// truncation the decoder reports as a malformed document.
+func TestDoStream_RefusesABodyPastTheCap(t *testing.T) {
+	body := make([]byte, 4096)
+	for i := range body {
+		body[i] = 'x'
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	t.Run("a body over the cap", func(t *testing.T) {
+		c := httpclient.New(httpclient.Options{
+			BaseURL: srv.URL, AuthHeader: "unused", AuthLabel: "Test",
+			MaxResponseBytes: 1024,
+		})
+		resp, err := c.DoStream(t.Context(), http.MethodGet, "/", nil)
+		require.NoError(t, err, "the cap is enforced while READING, not before the response exists")
+		defer func() { _ = resp.Body.Close() }()
+
+		read, err := io.ReadAll(resp.Body)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, httpclient.ErrResponseTooLarge)
+		assert.LessOrEqual(t, len(read), 1025, "no more than the cap (plus the byte that proved the overrun) is read")
+	})
+
+	t.Run("a body exactly at the cap", func(t *testing.T) {
+		c := httpclient.New(httpclient.Options{
+			BaseURL: srv.URL, AuthHeader: "unused", AuthLabel: "Test",
+			MaxResponseBytes: int64(len(body)),
+		})
+		resp, err := c.DoStream(t.Context(), http.MethodGet, "/", nil)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		read, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "exactly at the cap is not over it")
+		assert.Len(t, read, len(body))
+	})
+
+	t.Run("no cap configured", func(t *testing.T) {
+		c := newStreamClient(t, srv.URL)
+		resp, err := c.DoStream(t.Context(), http.MethodGet, "/", nil)
+		require.NoError(t, err)
+		defer func() { _ = resp.Body.Close() }()
+
+		read, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		assert.Len(t, read, len(body))
+	})
+}

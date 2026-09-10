@@ -425,3 +425,47 @@ func TestAFailedBuildKeepsItsCauseInTheChain(t *testing.T) {
 	var typeErr *json.UnmarshalTypeError
 	assert.ErrorAs(t, err, &typeErr, "the decode failure must stay in the chain, not be flattened to text")
 }
+
+// TestAnOversizedDocumentFailsRatherThanFillingTheDisk is T1 review #6 at
+// this source's own surface: the index build is the one place in lmm that
+// writes a response body straight to disk as it arrives, so the ceiling
+// has to stop it, and the failure has to be the ordinary "no index" one -
+// leaving nothing half-written behind.
+func TestAnOversizedDocumentFailsRatherThanFillingTheDisk(t *testing.T) {
+	sandboxEnv(t)
+	cacheDir := t.TempDir()
+
+	// A document that never ends. The cap is what stops it; nothing else
+	// here would, short of the ten-minute timeout.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", "Wed, 10 Sep 2026 12:00:00 GMT")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("["))
+		// The document never closes: one package list's worth of records,
+		// bracket-stripped and comma-terminated, written over and over.
+		doc := syntheticDocument(200, 8)
+		filler := append(doc[1:len(doc)-1:len(doc)-1], ',')
+		for r.Context().Err() == nil {
+			if _, err := w.Write(filler); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	src := thunderstore.New(thunderstore.Options{CacheDir: cacheDir, BaseURL: srv.URL, MaxIndexBytes: 1 << 20})
+	_, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, thunderstore.ErrIndexUnavailable)
+
+	status, err := src.IndexStatus(t.Context(), testCommunity)
+	require.NoError(t, err)
+	assert.False(t, status.Present, "an over-long document leaves no index behind")
+
+	entries, err := os.ReadDir(indexDir(cacheDir, testCommunity))
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), ".packages-", "no staging file may be left behind")
+		assert.NotContains(t, e.Name(), ".index-", "no staging file may be left behind")
+	}
+}

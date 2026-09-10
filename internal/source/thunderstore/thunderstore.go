@@ -54,6 +54,11 @@ type Options struct {
 	BaseURL string
 	// Now is the clock the index TTL is judged against. nil uses time.Now.
 	Now func() time.Time
+	// MaxIndexBytes caps ONE community document, measured on the stream
+	// after net/http has decompressed it. 0 uses maxIndexBytes, which is
+	// the only value production ever wants; a test sets it small so that
+	// proving the ceiling works does not mean serving half a gigabyte.
+	MaxIndexBytes int64
 }
 
 // Source is the Thunderstore ModSource (#360).

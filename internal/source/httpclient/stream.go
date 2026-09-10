@@ -10,17 +10,55 @@ package httpclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 )
 
+// cappedBody is a response body that refuses to yield more than the
+// client's MaxResponseBytes. It is an io.ReadCloser over the real one:
+// Close still closes the connection, and Read reports the overrun as
+// ErrResponseTooLarge rather than as the EOF an io.LimitReader alone would
+// produce - which a decoder would report as a malformed document, blaming
+// the wrong thing.
+type cappedBody struct {
+	closer  io.Closer
+	limited *io.LimitedReader
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	n, err := b.limited.Read(p)
+	if b.limited.N <= 0 {
+		// The whole cap plus one byte has been handed over, so the body is
+		// longer than the cap whatever the underlying reader says next.
+		return n, ErrResponseTooLarge
+	}
+	return n, err
+}
+
+func (b *cappedBody) Close() error { return b.closer.Close() }
+
+// ErrResponseTooLarge reports that a streamed response body ran past the
+// client's MaxResponseBytes. It is returned by the body's Read, not by
+// DoStream itself - a cap on a stream can only be discovered while reading
+// it - so a caller decoding the body sees it through whatever wrapper its
+// decoder puts around a read error, and classifies it with errors.Is.
+var ErrResponseTooLarge = errors.New("response body exceeds the maximum size")
+
 // DoStream performs a request against baseURL+path and returns the LIVE
 // response for the caller to read incrementally and CLOSE. It is DoJSON
-// with the decode - and the MaxResponseBytes cap, which cannot mean
-// anything for a stream - left to the caller: the same auth injection, the
-// same ErrorMapper hook, the same 401 -> domain.ErrAuthRequired mapping and
-// the same capped error-body read.
+// with the DECODE left to the caller: the same auth injection, the same
+// ErrorMapper hook, the same 401 -> domain.ErrAuthRequired mapping and the
+// same capped error-body read.
+//
+// MaxResponseBytes IS honoured (T1 review #6), streaming: the body is
+// wrapped in an io.LimitReader and reading past the cap fails with
+// ErrResponseTooLarge instead of quietly truncating. This is the one call
+// in lmm that writes an unvalidated response body straight to DISK, so an
+// unbounded one is a hostile or broken upstream filling a filesystem, not
+// an out-of-memory the runtime would stop. A client with no cap set
+// streams unbounded, as every other source does.
 //
 // header carries per-request headers the caller needs (a conditional GET's
 // If-Modified-Since). A nil map sends none. Accept-Encoding is deliberately
@@ -51,6 +89,16 @@ func (c *Client) DoStream(ctx context.Context, method, path string, header map[s
 		return nil, c.requestError("executing request", path, err)
 	}
 	if resp.StatusCode == http.StatusNotModified || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
+		if c.maxResponseBytes > 0 {
+			resp.Body = &cappedBody{
+				closer: resp.Body,
+				// +1 so that a body EXACTLY at the cap still reads whole
+				// and only the byte past it is the overrun - DoJSON's own
+				// rule, which reads one byte past the cap for the same
+				// reason.
+				limited: &io.LimitedReader{R: resp.Body, N: c.maxResponseBytes + 1},
+			}
+		}
 		return resp, nil
 	}
 

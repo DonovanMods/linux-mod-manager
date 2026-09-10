@@ -28,6 +28,21 @@ func communityPackagesPath(community string) string {
 // slow link must still get an index rather than a timeout.
 const fetchTimeout = 10 * time.Minute
 
+// maxIndexBytes is the ceiling on ONE community document, measured on the
+// stream the decoder reads - which net/http has already decompressed, so
+// the number to compare it against is the 329 MB of JSON behind the site's
+// largest community's 34.6 MB of gzip, not the 34.6 MB.
+//
+// 512 MiB is that with about half again in headroom. It exists because
+// this is the one response in lmm written straight to DISK as it arrives
+// (T1 review #6): the ten-minute fetchTimeout alone bounds a hostile or
+// broken upstream at tens of gigabytes on a domestic link, and the failure
+// would be a full filesystem rather than the out-of-memory a buffered
+// source would hit. Over it, the build fails with ErrIndexUnavailable and
+// the previous index - if any - is untouched, exactly as any other failed
+// refresh.
+const maxIndexBytes = 512 << 20
+
 // client is the Thunderstore half of the source: one httpclient over a
 // retrying transport.
 type client struct {
@@ -48,7 +63,11 @@ func newClient(opts Options, now func() time.Time) *client {
 	// retry BEFORE the streaming decode has started reading the body.
 	retrying := *httpClient
 	retrying.Transport = newRetryTransport(httpClient.Transport, now)
-	return &client{http: newAPIClient(&retrying, baseURL)}
+	limit := opts.MaxIndexBytes
+	if limit <= 0 {
+		limit = maxIndexBytes
+	}
+	return &client{http: newAPIClient(&retrying, baseURL, limit)}
 }
 
 // fetchCommunity issues the conditional GET. ifModifiedSince is the
@@ -78,11 +97,12 @@ type apiClient = httpclient.Client
 // declared only to satisfy New's required-field check - APIKey is never
 // set, so applyAuthHeader never sends the header and nothing here can leak
 // a credential lmm does not have.
-func newAPIClient(doer *http.Client, baseURL string) *apiClient {
+func newAPIClient(doer *http.Client, baseURL string, maxBytes int64) *apiClient {
 	return httpclient.New(httpclient.Options{
-		HTTPClient: doer,
-		BaseURL:    baseURL,
-		AuthHeader: "authorization",
-		AuthLabel:  "Thunderstore",
+		HTTPClient:       doer,
+		BaseURL:          baseURL,
+		AuthHeader:       "authorization",
+		AuthLabel:        "Thunderstore",
+		MaxResponseBytes: maxBytes,
 	})
 }
