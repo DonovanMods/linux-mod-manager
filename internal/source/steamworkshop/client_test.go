@@ -207,17 +207,17 @@ func TestSourceIdentityAndCapabilities(t *testing.T) {
 	assert.False(t, caps.Dependencies)
 	assert.False(t, caps.Versions)
 
+	// GetModFiles/GetDownloadURL are Tier 3's (download_test.go); what is
+	// permanently unsupported is what a published file has no concept of.
 	for name, call := range map[string]func() error{
-		"Search":         func() error { _, err := src.Search(context.Background(), source.SearchQuery{}); return err },
-		"GetModFiles":    func() error { _, err := src.GetModFiles(context.Background(), nil); return err },
-		"GetDownloadURL": func() error { _, err := src.GetDownloadURL(context.Background(), nil, "1"); return err },
+		"Search": func() error { _, err := src.Search(context.Background(), source.SearchQuery{}); return err },
 		"GetDependencies": func() error {
 			_, err := src.GetDependencies(context.Background(), nil)
 			return err
 		},
 		"ExchangeToken": func() error { _, err := src.ExchangeToken(context.Background(), "c"); return err },
 	} {
-		t.Run(name+" is not supported in Tier 1", func(t *testing.T) {
+		t.Run(name+" is not supported", func(t *testing.T) {
 			require.ErrorIs(t, call(), source.ErrNotSupported)
 		})
 	}

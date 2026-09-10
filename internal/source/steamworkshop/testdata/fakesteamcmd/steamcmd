@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# A stand-in for the real steamcmd, for tests only.
+#
+# lmm shells out to steamcmd for an anonymous Workshop download (#269 Tier
+# 3). No test may ever run the real one - it self-bootstraps ~200 MB, talks
+# to Valve, and (this is the trap the #268 spike found the hard way) will
+# happily write into the user's REAL Steam library if +force_install_dir is
+# not pinned. This script exists so every one of those rules is a test that
+# fails loudly rather than a comment nobody reads.
+#
+# It asserts, before printing anything:
+#   exit 3 - +force_install_dir was not passed at all
+#   exit 4 - +force_install_dir came AFTER +login, which is the order that
+#            let the real steamcmd resolve the user's library first
+#   exit 5 - HOME is not lmm's isolated steamcmd home
+#
+# It then switches on the published file id, reproducing the three outcomes
+# the spike observed against the live tool:
+#   3000000001 - success: progress lines, a success line, and a real
+#                content directory under the force_install_dir
+#   3000000002 - "(Failure)": the publisher does not allow anonymous
+#                downloads for this app
+#   3000000003 - "(Access Denied)": the item is delisted, deleted or private
+#   3000000005 - a SLOW success that prints no progress at all, for the
+#                heartbeat: it grows a file on disk and says nothing
+#   anything else - a non-zero exit with no marker lmm recognises
+
+set -u
+
+force_dir=""
+appid=""
+fileid=""
+saw_login=0
+saw_force_after_login=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    +force_install_dir)
+      force_dir="${2:-}"
+      [ "$saw_login" -eq 1 ] && saw_force_after_login=1
+      shift 2
+      ;;
+    +login)
+      saw_login=1
+      shift 2
+      ;;
+    +workshop_download_item)
+      appid="${2:-}"
+      fileid="${3:-}"
+      shift 3
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$force_dir" ]; then
+  echo "FAKE STEAMCMD: +force_install_dir was not passed - the real tool would have written into the user's Steam library" >&2
+  exit 3
+fi
+
+if [ "$saw_force_after_login" -eq 1 ]; then
+  echo "FAKE STEAMCMD: +force_install_dir came after +login" >&2
+  exit 4
+fi
+
+# lmm's isolated home, per the design: <CacheDir>/_steamworkshop/steamcmd-home.
+# Anything else means the real one leaked in, which is how steamcmd finds the
+# user's real install.
+case "${HOME:-}" in
+  */_steamworkshop/steamcmd-home) ;;
+  *)
+    echo "FAKE STEAMCMD: HOME is ${HOME:-<unset>}, not lmm's isolated steamcmd home" >&2
+    exit 5
+    ;;
+esac
+
+case "$fileid" in
+  3000000001)
+    echo "Redirecting stderr to '$HOME/Steam/logs/stderr.txt'"
+    echo "Logging directory: '$HOME/Steam/logs'"
+    echo "[  0%] Checking for available updates..."
+    echo " Update state (0x61) downloading, progress: 12.34 (1234 / 10000)"
+    echo " Update state (0x61) downloading, progress: 78.90 (7890 / 10000)"
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    printf 'workshop item %s\n' "$fileid" > "$content/mod.txt"
+    echo "Success. Downloaded item $fileid to \"$content\" (10000 bytes)"
+    exit 0
+    ;;
+  3000000005)
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    for _ in 1 2 3 4 5 6; do
+      printf '%s\n' "0123456789012345678901234567890123456789" >> "$content/mod.txt"
+      sleep 0.05
+    done
+    echo "Success. Downloaded item $fileid to \"$content\" (240 bytes)"
+    exit 0
+    ;;
+  3000000002)
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Download item $fileid failed (Failure)."
+    exit 1
+    ;;
+  3000000003)
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Download item $fileid failed (Access Denied)."
+    exit 1
+    ;;
+  *)
+    echo "steamcmd: something went wrong that lmm has no name for"
+    exit 1
+    ;;
+esac
