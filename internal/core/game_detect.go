@@ -297,11 +297,11 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		// #406 review F1: this install path may already be a game under a
 		// different id - the one detection derived before the known-games
 		// entry named a nicer slug. Selecting the row is then the REPAIR of
-		// that game, applying the curated prefill to the id its profiles,
-		// mods and deployed links already hang off, rather than a second
-		// game over the same directory.
+		// that game, applying the curated paths and sources to the id its
+		// profiles, mods and deployed links already hang off, rather than a
+		// second game over the same directory.
 		if prior := ConfiguredGameFor(existing, g); prior != nil {
-			game.ID = prior.ID
+			game = repairedGame(prior, game)
 		}
 
 		if err := s.saveGame(ctx, game); err != nil {
@@ -317,6 +317,36 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 	return nil
 }
 
+// repairedGame applies a detected candidate to the games.yaml entry that
+// already configures its install path, instead of replacing that entry.
+//
+// config.SaveGame writes the whole entry (games[game.ID] = game) and
+// GameFromDetected builds a fresh domain.Game carrying only the curated
+// fields, so saving the converted game directly dropped the user's
+// link_method, cache_path, hooks, deploy_mode/convert_paks and any source
+// mapping they had added by hand - none of which detection knows, or could
+// know (re-review M1). A repair is an edit of the game they have, not a
+// re-add of it.
+//
+// It therefore starts from the game on disk and overwrites only what
+// detection genuinely owns: where the game is installed, where its mods go,
+// and the source ids the curated entry names (added to the user's map, not
+// swapped for it). Anything domain.Game grows later - a loader or adapter
+// block (#353/#358) - is preserved by construction rather than by
+// remembering to list it here.
+func repairedGame(prior, detected *domain.Game) *domain.Game {
+	repaired := *prior
+	repaired.InstallPath = detected.InstallPath
+	repaired.ModPath = detected.ModPath
+
+	repaired.SourceIDs = maps.Clone(prior.SourceIDs)
+	if repaired.SourceIDs == nil {
+		repaired.SourceIDs = make(map[string]string, len(detected.SourceIDs))
+	}
+	maps.Copy(repaired.SourceIDs, detected.SourceIDs)
+	return &repaired
+}
+
 // ApplyDetectSelection persists one detect-prompt selection - the seam BOTH
 // frontends' detect selections call, so they cannot diverge (#368 review
 // Minor 8; it lived in cmd/lmm, where `lmm serve` could not reach it).
@@ -326,8 +356,10 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 //
 //   - A CURATED row is configured from its known-games entry, exactly as
 //     ApplyGameDetect always has: stop at the first failure, and naming an
-//     already-configured one is the documented REPAIR, which rewrites its
-//     games.yaml entry and resets its default profile's mod list.
+//     already-configured one is the documented REPAIR, which rewrites the
+//     paths and sources of its games.yaml entry (see repairedGame - the
+//     rest of the entry is the user's) and resets its default profile's mod
+//     list.
 //   - An UNCURATED row - listed because detection prefilled a source map for
 //     it, today #269's `steamworkshop: <appid>` - has no curated entry to
 //     configure from, so it takes the path `lmm game add --from-detected

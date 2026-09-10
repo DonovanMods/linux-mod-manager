@@ -1132,7 +1132,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at the same install directory while your profiles, mods and deployed
   links stayed on the first. lmm now treats one install directory as one
   game whoever named it: the row is marked `[configured]`, selecting it
-  repairs the game you have rather than duplicating it, and
+  repairs the game you have rather than duplicating it — updating its paths
+  and adding the curated sources, and leaving your `link_method`,
+  `cache_path`, `hooks`, `deploy_mode` and the rest of the entry as you
+  wrote them — and
   `lmm game add --from-detected` refuses by naming the id you already have
   instead of adding a duplicate. `lmm game add` with an explicit id and
   path is unchanged.

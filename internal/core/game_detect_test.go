@@ -743,3 +743,74 @@ func TestPrefillGameSpecFromDetected_KeepsTheConfiguredGamesID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "my-nms", explicit.ID, "an explicitly named id is the user's, not detection's")
 }
+
+// TestApplyGameDetect_RepairKeepsTheFieldsDetectionDoesNotOwn is the
+// re-review's M1. `config.SaveGame` does `games[game.ID] = game` - a full
+// replacement - and `GameFromDetected` builds a fresh domain.Game carrying
+// only the curated fields, so repairing a game silently dropped its
+// link_method, cache_path, deploy_mode/convert_paks and both hooks blocks.
+// Pre-existing for an id match; F1 widened it to path matches, which is why
+// it is worth pinning here rather than leaving to the day someone notices
+// their hooks stopped running.
+//
+// The repair now edits the game the user has instead of replacing it: it
+// changes the paths detection found and adds the curated sources, and every
+// other field is theirs.
+func TestApplyGameDetect_RepairKeepsTheFieldsDetectionDoesNotOwn(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	customised := &domain.Game{
+		ID:          "cyberpunk-2077",
+		Name:        "Cyberpunk (my copy)",
+		InstallPath: install,
+		ModPath:     filepath.Join(install, "mods"),
+		SourceIDs:   map[string]string{"nexusmods": "cyberpunk2077", "curseforge": "7777"},
+		// Everything below is the user's, and none of it is anything
+		// detection knows or could know.
+		LinkMethod:          domain.LinkHardlink,
+		LinkMethodExplicit:  true,
+		CachePath:           filepath.Join(t.TempDir(), "cyberpunk-cache"),
+		DeployMode:          domain.DeployCopy,
+		ConvertPaks:         false,
+		ConvertPaksExplicit: true,
+		Hooks: domain.GameHooks{
+			Install:   domain.HookConfig{BeforeAll: "/bin/true", BeforeEach: "/bin/true", AfterEach: "/bin/true", AfterAll: "/bin/true"},
+			Uninstall: domain.HookConfig{BeforeAll: "/bin/true", BeforeEach: "/bin/true", AfterEach: "/bin/true", AfterAll: "/bin/true"},
+		},
+	}
+	require.NoError(t, config.SaveGame(configDir, customised))
+
+	result, err := svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{{
+		SteamAppID: "1091500", Slug: "cyberpunk2077", Name: "Cyberpunk 2077",
+		InstallPath: install, ModPath: install, NexusID: "cyberpunk2077", Known: true,
+	}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"cyberpunk-2077"}, result.Saved)
+
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	require.Contains(t, saved, "cyberpunk-2077")
+	got := saved["cyberpunk-2077"]
+
+	// What detection owns.
+	assert.Equal(t, install, got.InstallPath)
+	assert.Equal(t, install, got.ModPath, "the curated mod path is the point of the repair")
+	assert.Equal(t, "cyberpunk2077", got.SourceIDs["nexusmods"], "the curated source mapping is applied")
+
+	// What it does not.
+	assert.Equal(t, "7777", got.SourceIDs["curseforge"], "a source the user added is not detection's to drop")
+	assert.Equal(t, "Cyberpunk (my copy)", got.Name)
+	assert.Equal(t, domain.LinkHardlink, got.LinkMethod)
+	assert.True(t, got.LinkMethodExplicit)
+	assert.Equal(t, customised.CachePath, got.CachePath)
+	assert.Equal(t, domain.DeployCopy, got.DeployMode)
+	assert.False(t, got.ConvertPaks)
+	assert.True(t, got.ConvertPaksExplicit)
+	assert.Equal(t, customised.Hooks, got.Hooks)
+}
