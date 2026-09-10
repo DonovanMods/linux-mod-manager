@@ -1579,10 +1579,7 @@ func clickModRow(name string) chromedp.Action {
 // .focus() genuinely made the element document.activeElement (a known
 // headless quirk, confirmed against this exact page).
 func waitForPanelFocus() chromedp.Action {
-	return chromedp.Poll(
-		`document.activeElement && document.activeElement.classList.contains("slide-over__panel")`,
-		nil,
-	)
+	return pollUntil(`document.activeElement && document.activeElement.classList.contains("slide-over__panel")`)
 }
 
 // TestE2E_SlideOver_OpensWithModInfoAndDeepLinkWorks proves the slide-over
@@ -1723,7 +1720,7 @@ func TestE2E_SlideOver_LockAndPolicyEditsPersistThroughTheAPI(t *testing.T) {
 		// reclaims focus once the write settles.
 		waitForPanelFocus(),
 		chromedp.SetValue(`.slide-over__settings select`, "pinned", chromedp.ByQuery),
-		chromedp.Poll(`document.querySelector(".slide-over__settings select").value === "pinned"`, nil),
+		pollUntil(`document.querySelector(".slide-over__settings select").value === "pinned"`),
 		waitForPanelFocus(),
 	)
 
@@ -1863,7 +1860,7 @@ func TestE2E_FullModPage_RollbackRoundTrip(t *testing.T) {
 		// separately from the page's primary ModFiles read) - waiting for
 		// its own text is what waits out that fetch rather than clicking
 		// nothing.
-		chromedp.Poll(`Array.from(document.querySelectorAll("button")).some((b) => b.textContent.trim() === "Roll back to the previous version")`, nil),
+		pollUntil(`Array.from(document.querySelectorAll("button")).some((b) => b.textContent.trim() === "Roll back to the previous version")`),
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll("button"))
 				.find((b) => b.textContent.trim() === "Roll back to the previous version").click();
@@ -2049,10 +2046,10 @@ func TestE2E_UpdatesBatch_DropsARowAndAppliesTheRest(t *testing.T) {
 		// plan…" during that window), so a bare .textContent read here would
 		// throw against a null element mid-transition rather than just
 		// polling again.
-		chromedp.Poll(`(() => {
+		pollUntil(`(() => {
 			const el = document.querySelector('[data-testid="updates-batch-rows"]');
 			return el !== null && !el.textContent.includes("Beta Mod");
-		})()`, nil),
+		})()`),
 	)
 	f.runInBrowser(t,
 		textContent(`[data-testid="updates-batch-rows"]`, &rowsText),
@@ -2103,7 +2100,7 @@ func TestE2E_FullModPage_VersionsTableUpdateButtonTargetsTheCheckedVersion(t *te
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
 		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
-		chromedp.Poll(`document.querySelectorAll(".mod-page__table tbody tr").length === 3`, nil),
+		pollUntil(`document.querySelectorAll(".mod-page__table tbody tr").length === 3`),
 		chromedp.Evaluate(`document.querySelectorAll(".mod-page__table tbody button").length`, &buttonCount),
 		textContent(`.mod-page__table`, &rowsText),
 	)
@@ -2185,7 +2182,7 @@ func TestE2E_FullModPage_RollbackHiddenWithNoPreviousVersion(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.ModPagePath("fake", "a")),
 		chromedp.WaitVisible(`.mod-page`, chromedp.ByQuery),
-		chromedp.Poll(`document.querySelectorAll(".mod-page__table tbody tr").length > 0`, nil),
+		pollUntil(`document.querySelectorAll(".mod-page__table tbody tr").length > 0`),
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll("button"))
 				.some((b) => b.textContent.trim() === "Roll back to the previous version")
@@ -3191,6 +3188,19 @@ func TestE2E_LibraryRow_ToggleAndMenu(t *testing.T) {
 			Array.from(document.querySelectorAll(".mod-row")).find((r) => r.textContent.includes("Alpha Mod"))
 				.querySelector("td.col--enabled input").click();
 		`, nil),
+		// Wait for the BROWSER to have the toggle's answer, not just the
+		// service (#367). toggleEnabled awaits its POST and then reloads
+		// /api/v1/mods, and require.Eventually below is satisfied by the DB
+		// row alone - so without this the test went on to click Lock while
+		// that reload was still in flight, leaving two overlapping loads of
+		// the same slice racing to commit. When the older one landed last
+		// it put the pre-lock library back, the lock badge never appeared,
+		// and the poll below ran out the harness's whole 30-second budget.
+		// Measured: 2 failures in 10 -race runs before this line, 20 in 20
+		// green after it. The aria-label is read rather than the checkbox's
+		// own `checked`, which the browser flips on the click itself and so
+		// says nothing about what the store holds.
+		pollUntil(`document.querySelector('input[aria-label="Enable Alpha Mod"]') !== null`),
 	)
 	require.Eventually(t, func() bool {
 		m, err := f.Svc.GetInstalledMod(t.Context(), "fake", "a", f.Game.ID, "default")
@@ -3217,7 +3227,7 @@ func TestE2E_LibraryRow_ToggleAndMenu(t *testing.T) {
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Lock").click();
 		`, nil),
-		chromedp.Poll(betaLockBadge+` !== null`, nil),
+		pollUntil(betaLockBadge+` !== null`),
 	)
 	p, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
 	require.NoError(t, err)
@@ -3233,7 +3243,7 @@ func TestE2E_LibraryRow_ToggleAndMenu(t *testing.T) {
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll(".row-menu__item")).find((b) => b.textContent.trim() === "Unlock").click();
 		`, nil),
-		chromedp.Poll(betaLockBadge+` === null`, nil),
+		pollUntil(betaLockBadge+` === null`),
 	)
 	p, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "default")
 	require.NoError(t, err)
@@ -4072,7 +4082,7 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 		// after it needs (observed: "Cannot find context with specified
 		// id" on the very next command, every time).
 		chromedp.Click(`.profiles-create button[type="submit"]`, chromedp.ByQuery),
-		chromedp.Poll(profilesListContains("survival"), nil),
+		pollUntil(profilesListContains("survival")),
 	)
 	_, err := f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "survival")
 	require.NoError(t, err, "the create form must actually create the profile")
@@ -4084,7 +4094,7 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 		chromedp.WaitVisible(`.profiles-row__rename-form`, chromedp.ByQuery),
 		chromedp.SetValue(`.profiles-row__rename-form input`, "outpost", chromedp.ByQuery),
 		chromedp.Click(`.profiles-row__rename-form button[type="submit"]`, chromedp.ByQuery),
-		chromedp.Poll(profilesListContains("outpost"), nil),
+		pollUntil(profilesListContains("outpost")),
 	)
 	_, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "outpost")
 	require.NoError(t, err, "the rename must actually rename the profile")
@@ -4093,7 +4103,7 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 	// Set outpost as default.
 	f.runInBrowser(t,
 		clickInRow(".profiles-row", "outpost", "Set default"),
-		chromedp.Poll(`Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("outpost")).textContent.includes("default")`, nil),
+		pollUntil(`Array.from(document.querySelectorAll(".profiles-row")).find((r) => r.textContent.includes("outpost")).textContent.includes("default")`),
 	)
 	require.Eventually(t, func() bool {
 		listing, err := f.Svc.ListProfiles(t.Context(), f.Game.ID)
@@ -4114,7 +4124,7 @@ func TestE2E_ProfilesModal_CRUDExportImport(t *testing.T) {
 		clickInRow(".profiles-row", "outpost", "Delete"),
 		chromedp.WaitVisible(`.profiles-row--confirm`, chromedp.ByQuery),
 		chromedp.Click(`.profiles-row--confirm button.button--danger`, chromedp.ByQuery),
-		chromedp.Poll(profilesListNotContains("outpost"), nil),
+		pollUntil(profilesListNotContains("outpost")),
 	)
 	_, err = f.Svc.NewProfileManager().Get(t.Context(), f.Game.ID, "outpost")
 	assert.ErrorIs(t, err, domain.ErrProfileNotFound, "the inline confirm must actually delete the profile")

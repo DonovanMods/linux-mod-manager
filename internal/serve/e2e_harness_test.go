@@ -1729,10 +1729,28 @@ func newE2EFixtureWithAnUnappliedProfile(t *testing.T) e2eSearchFixture {
 // times, see it still present, and then never run again once the page went
 // idle, which is the very moment the answer changed. A timer keeps asking.
 func waitGone(sel string) chromedp.Action {
-	return chromedp.Poll(
-		fmt.Sprintf("document.querySelector(%q) === null", sel), nil,
-		chromedp.WithPollingInterval(50*time.Millisecond),
-	)
+	return pollUntil(fmt.Sprintf("document.querySelector(%q) === null", sel))
+}
+
+// e2ePollInterval is how often a pollUntil condition is re-asked. Small
+// enough that a wait costs nothing on a fast machine, long enough that a
+// -race run under load is not spending its time re-evaluating JavaScript.
+const e2ePollInterval = 50 * time.Millisecond
+
+// pollUntil waits until js evaluates truthy, on a TIMER - and it is how
+// every wait-for-a-condition in these tests is spelled (#367).
+//
+// chromedp.Poll's default mode is requestAnimationFrame, and a headless
+// page that has finished animating stops scheduling frames; a backgrounded
+// or throttled tab may never schedule one at all. A poll armed in that
+// mode evaluates a few times, sees "not yet", and then simply never runs
+// again - which under load is the very moment the answer changes. It fails
+// as "waiting for function failed: timeout" against the harness's whole
+// 30-second budget, from a test that was in fact green: a flake, not a
+// finding. An explicit interval keeps asking regardless of what the
+// compositor is doing.
+func pollUntil(js string) chromedp.Action {
+	return chromedp.Poll(js, nil, chromedp.WithPollingInterval(e2ePollInterval))
 }
 
 // settleEffects gives Preact's hook effects time to run before the next

@@ -824,6 +824,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A verify result handed to a caller is no longer the memo's own copy
+  (#366).** #336's memo cloned the result it served from a cache HIT, but
+  the MISS path filed the very `*VerifyResult` it returned — so the caller
+  that actually ran the verify shared the stored entry, whole struct
+  included, and anything it wrote there (a renderer sorting the findings, a
+  repair path annotating them) silently became the next cached answer. The
+  memo now stores a deep copy on the way in as well as serving one on the
+  way out.
+
 - **The web UI no longer re-runs a full verify on every hydrate (#336).**
   Mission Control hydrates on each route change, job completion and profile
   switch, and every one of those ran the full verify tier — a source round
@@ -927,6 +936,28 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   $VAR)" by the CLI and by the web card. `lmm auth login --key-from-env`'s
   own report says `via: env` for the same reason: that IS the key it will
   send.
+
+- **The web UI's browser E2E suite no longer flakes on a wait that stopped
+  asking (#367).** Thirteen waits in the suite used `chromedp.Poll`'s
+  default `requestAnimationFrame` mode, so a headless page that had
+  finished animating — or a tab the machine had throttled under load —
+  could stop scheduling frames and the wait would simply never evaluate
+  again, failing as a 30-second timeout from a test that was in fact
+  green. They all poll on a timer now, through one harness helper.
+  `TestE2E_LibraryRow_ToggleAndMenu` additionally waits for the browser
+  (not just the service) to have a mutation's answer before issuing the
+  next one; see #370 for the SPA behaviour that made the overlap matter.
+
+- **A failed update puts back the stock file it displaced (#369).** When a
+  new version ships a file the old one did not, `lmm update` preserves
+  whatever the game had at that path before deploying over it. If the
+  update then failed part way — a file that would not link, a cancelled
+  run, a tracking write that would not land — the rollback removed lmm's
+  file again but left the preserved original in the store, so the path was
+  simply **empty** where the game's own file used to be. The rollback now
+  releases each such path the moment lmm's own file there is removed, the
+  same rule and the same ordering every other removal path already
+  follows — on all three link methods.
 
 - **An undeploy no longer deletes a file lmm did not put there (#350).**
   `Installer.Uninstall` undeployed every path the mod's CACHE ENTRY names,
