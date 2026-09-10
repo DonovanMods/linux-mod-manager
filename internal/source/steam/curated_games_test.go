@@ -1,6 +1,7 @@
 package steam
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -81,7 +82,7 @@ func TestKnownGames_WorkshopNative(t *testing.T) {
 			appID:    "2393970",
 			slug:     "human-host",
 			gameName: "Human Host",
-			modPath:  "BepInEx/plugins",
+			modPath:  "", // the game root: #358 normalises a plugin archive to a BepInEx/-rooted layout
 			sources:  map[string]string{"steamworkshop": "2393970"},
 		},
 	})
@@ -110,7 +111,7 @@ func TestKnownGames_NexusHeavy(t *testing.T) {
 			slug:     "valheim",
 			gameName: "Valheim",
 			nexusID:  "valheim",
-			modPath:  "BepInEx/plugins",
+			modPath:  "", // the game root: #358 normalises a plugin archive to a BepInEx/-rooted layout
 		},
 		{
 			name:     "7 days to die",
@@ -158,7 +159,7 @@ func TestKnownGames_NexusHeavy(t *testing.T) {
 			slug:     "planet-crafter",
 			gameName: "The Planet Crafter",
 			nexusID:  "planetcrafter",
-			modPath:  "BepInEx/plugins",
+			modPath:  "", // the game root: #358 normalises a plugin archive to a BepInEx/-rooted layout
 		},
 		{
 			name:     "tainted grail: the fall of avalon",
@@ -166,7 +167,7 @@ func TestKnownGames_NexusHeavy(t *testing.T) {
 			slug:     "tainted-grail-fall-of-avalon",
 			gameName: "Tainted Grail: The Fall of Avalon",
 			nexusID:  "taintedgrailthefallofavalon",
-			modPath:  "BepInEx/plugins",
+			modPath:  "", // the game root: #358 normalises a plugin archive to a BepInEx/-rooted layout
 		},
 	})
 }
@@ -184,9 +185,10 @@ func TestKnownGames_ValheimCarriesNoLoaderBlock(t *testing.T) {
 	require.NoError(t, err)
 	info, ok := games["892970"]
 	require.True(t, ok)
-	assert.Equal(t, "BepInEx/plugins", info.ModPath,
-		"the plugins folder is where a Valheim mod goes once BepInEx is installed; "+
-			"installing BepInEx itself is #359's job, not the known-games list's")
+	assert.Equal(t, "", info.ModPath,
+		"a BepInEx game's mod root is its install root (#358): the loader's own tree - "+
+			"plugins, patchers, config - hangs off BepInEx/ under it. Installing BepInEx "+
+			"itself is still #359's job, not the known-games list's")
 
 	// The gap marker with teeth. A field is where the loader block would
 	// land, so a field is what this watches for - by name, since #359 has
@@ -261,7 +263,7 @@ func TestKnownGames_LongTail(t *testing.T) {
 			slug:     "for-the-king",
 			gameName: "For The King",
 			nexusID:  "fortheking",
-			modPath:  "BepInEx/plugins",
+			modPath:  "", // the game root: #358 normalises a plugin archive to a BepInEx/-rooted layout
 		},
 		{
 			name:     "lego batman: legacy of the dark knight",
@@ -297,5 +299,35 @@ func TestKnownGames_DetectOnlyStayUncurated(t *testing.T) {
 		_, ok := games[tc.appID]
 		assert.Falsef(t, ok, "%s (%s) is curated, but it was left detect-only because %s",
 			tc.name, tc.appID, tc.why)
+	}
+}
+
+// TestKnownGames_EmptyModPathMeansTheInstallRoot pins what `mod_path: ""`
+// resolves to, because five #406 entries now depend on it (the BepInEx
+// games, #358) and Cyberpunk 2077 already did. The join lives in
+// DetectGames (steam.go): a curated entry's mod_path is joined onto the
+// install path, and an EMPTY one is the install path itself - which
+// core.GameFromDetected then writes to games.yaml verbatim as the game's
+// ModPath. Spelled as its own test so that changing the empty case into a
+// <install>/mods default (the rule for an UNCURATED row, applied by
+// core.GameSpecFromDetected) fails here rather than silently deploying a
+// BepInEx archive one level too deep.
+func TestKnownGames_EmptyModPathMeansTheInstallRoot(t *testing.T) {
+	sandboxEnv(t)
+	games, err := LoadKnownGames(t.TempDir())
+	require.NoError(t, err)
+
+	install := t.TempDir()
+	for _, appID := range []string{"892970", "1284190", "1466060", "527230", "2393970", "1091500"} {
+		info, ok := games[appID]
+		require.True(t, ok, "no known-games entry for app id %s", appID)
+		require.Empty(t, info.ModPath, "app %s is a game-root entry", appID)
+
+		modPath := install
+		if info.ModPath != "" {
+			modPath = filepath.Join(install, info.ModPath)
+		}
+		assert.Equal(t, install, modPath,
+			"app %s: an empty mod_path must resolve to the install root, not to a subdirectory", appID)
 	}
 }

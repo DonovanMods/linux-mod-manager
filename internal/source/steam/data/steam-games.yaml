@@ -77,17 +77,20 @@
 # Human Host - Unity/Mono survival game with Steam Workshop support on the
 # store page; the community's mods are BepInEx plugins, and both the in-game
 # mod browser and the community mod manager sync subscribed Workshop items
-# into the BepInEx plugins folder inside the game install. No NexusMods
+# into the loader's plugins folder inside the game install. No NexusMods
 # game page exists for it, so steamworkshop is the only source.
-# Installing the BepInEx loader itself is a prerequisite lmm does not
-# manage yet (#359); the path below is where mods go once it is there.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# Installing the BepInEx loader itself is a prerequisite lmm does not manage
+# yet (#359).
 # https://store.steampowered.com/app/2393970/Human_Host/
 # https://steamcommunity.com/app/2393970/workshop/
 # https://steamcommunity.com/sharedfiles/filedetails/?id=3740140784
 "2393970":
   slug: human-host
   name: Human Host
-  mod_path: BepInEx/plugins
+  mod_path: ""
   sources:
     steamworkshop: "2393970"
 
@@ -101,10 +104,13 @@
   name: Cyberpunk 2077
   nexus_id: cyberpunk2077
   mod_path: ""
-# Valheim - Unity/Mono; every mod is a BepInEx plugin dropped in
+# Valheim - Unity/Mono; every mod is a BepInEx plugin, landing in
 # <install>/BepInEx/plugins.
-# Installing the BepInEx loader itself is a prerequisite lmm does not
-# manage yet (#359); the path below is where mods go once it is there.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# Installing the BepInEx loader itself is a prerequisite lmm does not manage
+# yet (#359).
 # There is no loader block to put it in yet, which is what
 # TestKnownGames_ValheimCarriesNoLoaderBlock watches for.
 # https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/
@@ -113,7 +119,7 @@
   slug: valheim
   name: Valheim
   nexus_id: valheim
-  mod_path: BepInEx/plugins
+  mod_path: ""
 # 7 Days to Die - each mod is a folder under <install>/Mods.
 # https://www.nexusmods.com/7daystodie/articles/1507
 "251570":
@@ -157,27 +163,33 @@
   name: Subnautica 2
   nexus_id: subnautica2
   mod_path: Subnautica2/Content/Paks/LogicMods
-# The Planet Crafter - Unity/Mono; mods are BepInEx plugins in
+# The Planet Crafter - Unity/Mono; mods are BepInEx plugins, landing in
 # <install>/BepInEx/plugins.
-# Installing the BepInEx loader itself is a prerequisite lmm does not
-# manage yet (#359); the path below is where mods go once it is there.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# Installing the BepInEx loader itself is a prerequisite lmm does not manage
+# yet (#359).
 # https://www.nexusmods.com/planetcrafter/videos/1
 "1284190":
   slug: planet-crafter
   name: The Planet Crafter
   nexus_id: planetcrafter
-  mod_path: BepInEx/plugins
+  mod_path: ""
 # Tainted Grail: The Fall of Avalon - Unity; the Nexus page ships both a
 # Mono and an IL2CPP BepInEx pack, and either way plugins go in
 # <install>/BepInEx/plugins.
-# Installing the BepInEx loader itself is a prerequisite lmm does not
-# manage yet (#359); the path below is where mods go once it is there.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# Installing the BepInEx loader itself is a prerequisite lmm does not manage
+# yet (#359).
 # https://www.nexusmods.com/taintedgrailthefallofavalon/mods/50
 "1466060":
   slug: tainted-grail-fall-of-avalon
   name: "Tainted Grail: The Fall of Avalon"
   nexus_id: taintedgrailthefallofavalon
-  mod_path: BepInEx/plugins
+  mod_path: ""
 
 # --- #406 story S3: the long tail -------------------------------------------
 # StarRupture - Unreal Engine 5; pak/utoc/ucas bundles go in
@@ -231,17 +243,20 @@
   name: "Halo: Campaign Evolved"
   nexus_id: halocampaignevolved
   mod_path: Meteorite/Content/Paks/~mods
-# For The King - Unity/Mono; mods are BepInEx plugins in
+# For The King - Unity/Mono; mods are BepInEx plugins, landing in
 # <install>/BepInEx/plugins.
-# Installing the BepInEx loader itself is a prerequisite lmm does not
-# manage yet (#359); the path below is where mods go once it is there.
+# BepInEx content is GAME-ROOT-relative - a pack lays down BepInEx/ with
+# plugins/, patchers/ and config/ under it - so mod_path is "" (the install
+# root) and #358's normaliser rewrites a plugin archive to that layout.
+# Installing the BepInEx loader itself is a prerequisite lmm does not manage
+# yet (#359).
 # https://thunderstore.io/c/for-the-king/p/BepInEx/BepInExPack_ForTheKing/
 # https://www.nexusmods.com/fortheking/mods/3
 "527230":
   slug: for-the-king
   name: For The King
   nexus_id: fortheking
-  mod_path: BepInEx/plugins
+  mod_path: ""
 # LEGO Batman: Legacy of the Dark Knight - Unreal Engine 5, project
 # directory LEGOBatmanLotDK; pak mods go in
 # <install>/LEGOBatmanLotDK/Content/Paks/~mods.

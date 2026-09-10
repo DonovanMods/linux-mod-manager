@@ -399,17 +399,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#406).** Cyberpunk 2077, Valheim, 7 Days to Die, Grim Dawn, No Man's Sky,
   Satisfactory, Subnautica 2, The Planet Crafter and Tainted Grail: The Fall
   of Avalon are detected with their NexusMods game domain and the mod folder
-  their community documents already filled in — a BepInEx plugins folder, a
-  game-specific mods folder, an Unreal pak drop folder, or (Cyberpunk) the
-  game root, where a mod archive's own `archive/`, `bin/` and `r6/` trees
-  merge with the install's. Each entry in the shipped list carries the
-  public source its facts were read from. Installing BepInEx itself is still
-  yours to do; lmm does not manage loaders yet (#359).
+  their community documents already filled in — a game-specific mods folder,
+  an Unreal pak drop folder, or the game root, which is where both a
+  Cyberpunk mod (its own `archive/`, `bin/` and `r6/` trees merge with the
+  install's) and a BepInEx plugin (the loader's `BepInEx/` tree —
+  `plugins/`, `patchers/`, `config/` — hangs off the install root) belong.
+  Each entry in the shipped list carries the public source its facts were
+  read from. Installing BepInEx itself is still yours to do; lmm does not
+  manage loaders yet (#359).
 
 - **`lmm game detect` recognises Human Host (#406).** The first of the
   curated known-games entries this release adds: the game is detected with
-  its mod folder (`BepInEx/plugins`) and its Steam Workshop source id
-  already filled in, so adding it is one keystroke instead of answering
+  its mod folder (the game root, where the BepInEx loader's own tree lives)
+  and its Steam Workshop source id already filled in, so adding it is one
+  keystroke instead of answering
   `lmm game add`'s prompts by hand. Space Engineers and Space Engineers 2
   stay detect-only — the first loads local mods from `%APPDATA%`, outside
   the install directory a known-games `mod_path` is relative to, and the
