@@ -346,10 +346,18 @@ func DeleteGame(configDir string, gameID string) error {
 // ErrInvalidLoaderRuntime / ErrInvalidLoaderBootstrap). An unrecognised
 // KIND is not an error: kind is deliberately an open string so a second
 // loader costs nothing, and lmm's own rules simply do not fire for a kind
-// they do not know.
+// they do not know. An EMPTY kind is: it declares nothing while looking
+// like it should, and core.LoaderSpec.loader - the same field's other door,
+// from `lmm game edit --loader` and POST /api/v1/games - already refuses
+// the identical input naming loader.kind.
 func parseGameLoader(gameID string, cfg *GameLoaderYAML) (*domain.GameLoader, error) {
 	if cfg == nil {
 		return nil, nil
+	}
+	kind := strings.ToLower(strings.TrimSpace(cfg.Kind))
+	if kind == "" {
+		return nil, fmt.Errorf("%w: games.yaml: game %q: loader.kind %q (a loader kind is required; today lmm knows %s)",
+			domain.ErrInvalidLoaderKind, gameID, cfg.Kind, domain.LoaderKindBepInEx)
 	}
 	runtime, ok := domain.ParseLoaderRuntime(cfg.Runtime)
 	if !ok {
@@ -362,7 +370,7 @@ func parseGameLoader(gameID string, cfg *GameLoaderYAML) (*domain.GameLoader, er
 			domain.ErrInvalidLoaderBootstrap, gameID, cfg.Bootstrap, domain.ValidLoaderBootstraps)
 	}
 	return &domain.GameLoader{
-		Kind:      strings.ToLower(strings.TrimSpace(cfg.Kind)),
+		Kind:      kind,
 		Version:   strings.TrimSpace(cfg.Version),
 		Runtime:   runtime,
 		Bootstrap: bootstrap,

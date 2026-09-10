@@ -136,3 +136,27 @@ func TestSaveGameOmitsUnansweredLoaderFields(t *testing.T) {
 	assert.NotContains(t, string(raw), "bootstrap:")
 	assert.NotContains(t, string(raw), "version:")
 }
+
+// TestLoadGamesRefusesAnEmptyLoaderKind is review F8: a hand-written block
+// with a version and no kind loaded as a declaration that declares nothing -
+// IsBepInEx false, so no rule fires - and re-marshalled as `kind: ""`, while
+// core.LoaderSpec.loader refuses the identical input naming loader.kind.
+// Two doors into the same field must not give two answers.
+func TestLoadGamesRefusesAnEmptyLoaderKind(t *testing.T) {
+	for _, block := range []string{
+		"    loader:\n      version: 5.4.23.5\n",
+		"    loader:\n      kind: \"   \"\n",
+	} {
+		dir := t.TempDir()
+		install := filepath.Join(dir, "g")
+		yaml := "games:\n  g:\n    name: G\n    install_path: \"" + install + "\"\n" +
+			"    mod_path: \"" + install + "\"\n    sources:\n      nexusmods: g\n" + block
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "games.yaml"), []byte(yaml), 0o644))
+
+		_, err := config.LoadGames(dir)
+		require.Error(t, err, "block %q", block)
+		assert.ErrorIs(t, err, domain.ErrInvalidLoaderKind)
+		assert.Contains(t, err.Error(), `game "g"`)
+		assert.Contains(t, err.Error(), "loader.kind")
+	}
+}

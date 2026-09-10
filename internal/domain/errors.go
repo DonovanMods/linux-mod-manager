@@ -42,7 +42,15 @@ var (
 	// ErrInvalidLoaderBootstrap is ErrInvalidLoaderRuntime's counterpart
 	// for loader.bootstrap (ValidLoaderBootstraps).
 	ErrInvalidLoaderBootstrap = errors.New("invalid loader bootstrap")
-	ErrDependencyLoop         = errors.New("circular dependency detected")
+	// ErrInvalidLoaderKind flags a `loader:` block that names no kind
+	// (#359). Unlike runtime and bootstrap, kind is deliberately an OPEN
+	// string - an unrecognised loader is fine and simply fires none of
+	// lmm's rules - but an EMPTY one is a block that declares nothing while
+	// looking like it should, and every other door into the field
+	// (core.LoaderSpec, `lmm game edit --loader`, POST /api/v1/games)
+	// already refuses it.
+	ErrInvalidLoaderKind = errors.New("invalid loader kind")
+	ErrDependencyLoop    = errors.New("circular dependency detected")
 	// ErrExternalMod marks an operation refused because the mod is
 	// EXTERNAL: lmm tracks it, but another agent (today, the Steam client
 	// for a Workshop item) owns its files where they sit (#269). Deploy,
