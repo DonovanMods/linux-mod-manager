@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"gopkg.in/yaml.v3"
@@ -170,7 +169,7 @@ func loadGamesLocked(configDir string) (map[string]*domain.Game, error) {
 		// the game, so a games.yaml naming an adapter a future build ships
 		// fails with the registered set in front of the user rather than
 		// with a parse error here.
-		if cfg.Adapter != "" && !adapter.ValidName(cfg.Adapter) {
+		if cfg.Adapter != "" && !domain.ValidAdapterName(cfg.Adapter) {
 			return nil, fmt.Errorf("%w: games.yaml: game %q: adapter %q is not a valid adapter name (lowercase letters, digits and single interior hyphens)",
 				domain.ErrInvalidAdapter, id, cfg.Adapter)
 		}

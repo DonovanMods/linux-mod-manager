@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
@@ -455,7 +454,7 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 	}
 
 	adapterName := strings.TrimSpace(spec.Adapter)
-	if adapterName != "" && !adapter.ValidName(adapterName) {
+	if adapterName != "" && !domain.ValidAdapterName(adapterName) {
 		return nil, &GameSpecError{
 			Field: "adapter", Value: spec.Adapter,
 			Reason: "not a valid adapter name (lowercase letters, digits and single interior hyphens)",

@@ -2,7 +2,6 @@ package adapter
 
 import (
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -85,23 +84,4 @@ func (r *Registry) Resolve(name string) (GameAdapter, error) {
 func (r *Registry) Has(name string) bool {
 	_, ok := r.Get(name)
 	return ok
-}
-
-// ValidName reports whether s is syntactically a legal adapter name: a
-// non-empty lowercase slug of letters, digits and single interior hyphens.
-// It is a SYNTAX check only, deliberately ignorant of the registry, so
-// internal/storage/config can validate games.yaml without learning which
-// adapters this build ships (design §2, "validation splits by layer").
-func ValidName(s string) bool {
-	if s == "" || strings.HasPrefix(s, "-") || strings.HasSuffix(s, "-") {
-		return false
-	}
-	if strings.Contains(s, "--") {
-		return false
-	}
-	return !slices.ContainsFunc([]byte(s), func(c byte) bool {
-		lower := c >= 'a' && c <= 'z'
-		digit := c >= '0' && c <= '9'
-		return !lower && !digit && c != '-'
-	})
 }

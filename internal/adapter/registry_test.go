@@ -94,15 +94,6 @@ func TestRegistryResolve(t *testing.T) {
 	})
 }
 
-func TestValidName(t *testing.T) {
-	for _, ok := range []string{"generic-files", "icarus", "bepinex", "unity-loader-2"} {
-		assert.True(t, adapter.ValidName(ok), "%q should be a valid adapter name", ok)
-	}
-	for _, bad := range []string{"", "Icarus", "generic files", "-icarus", "icarus-", "generic--files", "icarus/1"} {
-		assert.False(t, adapter.ValidName(bad), "%q should not be a valid adapter name", bad)
-	}
-}
-
 func TestZeroLayoutIsTheIdentity(t *testing.T) {
 	var zero adapter.Layout
 	assert.False(t, zero.Applies())
