@@ -974,6 +974,22 @@ func newE2EFixtureWithDrillInModsAndALockedMod(t *testing.T) e2eFixture {
 	return f
 }
 
+// newE2EFixtureWithAVersionlessLockedMod locks fake/a while its profile ref
+// carries NO version - P2 review Nit 5's state, which a mod adopted or
+// imported without a version string and then locked lands in. SetModLock
+// sets Locked and only touches Version when given a non-empty one, and
+// core's LockedVersion is that ref field, so the document really does come
+// back locked: true with locked_version absent.
+func newE2EFixtureWithAVersionlessLockedMod(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInMods(t)
+	pm := f.Svc.NewProfileManager()
+	require.NoError(t, pm.UpsertMod(t.Context(), f.Game.ID, "default",
+		domain.ModReference{SourceID: "fake", ModID: "a"}))
+	require.NoError(t, pm.SetModLock(t.Context(), f.Game.ID, "default", "fake", "a", ""))
+	return f
+}
+
 // newE2EFixtureWithALockedModAndAnOfflineDetail is
 // newE2EFixtureWithDrillInModsAndALockedMod with the mod DETAIL endpoint
 // for fake/a faulted - P2 review Minor 4's scenario, and the one the full

@@ -7503,3 +7503,38 @@ func TestE2E_ALockedModStillRefusesRelinkWhenItsDetailIsOffline(t *testing.T) {
 	// whole point of the fixture.
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }
+
+// TestE2E_TheLockedHintOmitsAVersionTheProfileRefDoesNotCarry is P2 review
+// Nit 5, on top of issue 394.
+//
+// `locked: true` with no locked_version is reachable - SetModLock sets the
+// marker and only moves Version when given a non-empty one, and both
+// core.ModListing.LockedVersion and InstalledDetail.LockedVersion are
+// omitempty - so a mod adopted or imported without a version string and
+// then locked renders the hint's unguarded interpolation as "locked to .".
+// modpanel.js already guards the same pair, which is the codebase agreeing
+// the state exists.
+func TestE2E_TheLockedHintOmitsAVersionTheProfileRefDoesNotCarry(t *testing.T) {
+	f := newE2EFixtureWithAVersionlessLockedMod(t)
+
+	var relinkDisabled bool
+	var hint string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-testid="mod-page-locked-actions"]`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &relinkDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-testid="mod-page-locked-actions"]').textContent.replace(/\s+/g, " ").trim()`, &hint),
+	)
+
+	require.True(t, relinkDisabled,
+		"the lock still gates the action - only the sentence about it is at issue")
+	assert.NotContains(t, hint, "locked to .",
+		"an absent locked_version must not render as a version")
+	assert.Contains(t, hint, "This mod is locked.",
+		"it says the mod is locked, and stops there")
+	assert.Contains(t, hint, "lmm mod unlock fake:a",
+		"and still names the command that lifts it")
+
+	assert.Empty(t, f.BrowserErrors())
+}

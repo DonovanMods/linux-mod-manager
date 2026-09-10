@@ -280,7 +280,8 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
           class="mod-page__hint empty-state__hint"
           data-testid="mod-page-locked-actions"
         >
-          This mod is locked to ${lockedVersion}. Unlock it (${" "}
+          This mod is locked${lockedVersion ? ` to ${lockedVersion}` : ""}.
+          Unlock it (${" "}
           <span class="mono">lmm mod unlock ${sourceID}:${modID}</span>${" "})
           to re-link it.
         </p>`
@@ -556,7 +557,8 @@ function VersionsSection({
           class="mod-page__hint empty-state__hint"
           data-testid="mod-page-locked-rollback"
         >
-          Locked to ${lockedVersion} — unlock it (${" "}
+          Locked${lockedVersion ? ` to ${lockedVersion}` : ""} — unlock it
+          (${" "}
           <span class="mono">lmm mod unlock ${sourceID}:${modID}</span>${" "})
           to roll back.
         </p>`
