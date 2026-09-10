@@ -44,7 +44,8 @@ func TestNoTestReachesTheProductionAPI(t *testing.T) {
 // TestEveryTestBuildsTheSourceWithABaseURL extends the guard past a string
 // match to the shape that actually matters: an Options with no BaseURL
 // falls back to the production host, so every construction of this source
-// in any test in the module must name one.
+// in any test in the module must name one - qualified from another
+// package, or bare from one of this package's own internal tests.
 func TestEveryTestBuildsTheSourceWithABaseURL(t *testing.T) {
 	root := moduleRoot(t)
 	var offenders []string
@@ -66,17 +67,28 @@ func TestEveryTestBuildsTheSourceWithABaseURL(t *testing.T) {
 			return rerr
 		}
 		text := string(data)
-		for i := 0; ; {
-			at := strings.Index(text[i:], "thunderstore.New(")
-			if at < 0 {
-				break
+		// Two spellings, because this package has INTERNAL tests too: a
+		// test in `package thunderstore` constructs with a bare New(, which
+		// the qualified form below would never see. That second token is
+		// only looked for inside this package's own directory, where it can
+		// mean nothing else.
+		tokens := []string{"thunderstore.New("}
+		if filepath.Base(filepath.Dir(path)) == "thunderstore" {
+			tokens = append(tokens, "New(Options{")
+		}
+		for _, token := range tokens {
+			for i := 0; ; {
+				at := strings.Index(text[i:], token)
+				if at < 0 {
+					break
+				}
+				at += i
+				window := text[at:min(at+400, len(text))]
+				if !strings.Contains(window, "BaseURL") {
+					offenders = append(offenders, path)
+				}
+				i = at + 1
 			}
-			at += i
-			window := text[at:min(at+400, len(text))]
-			if !strings.Contains(window, "BaseURL") {
-				offenders = append(offenders, path)
-			}
-			i = at + 1
 		}
 		return nil
 	}))
