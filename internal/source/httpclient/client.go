@@ -221,15 +221,49 @@ func (c *Client) requestError(op, requestPath string, err error) error {
 	return fmt.Errorf("%s to %s: %w", op, requestPath, c.redactError(err))
 }
 
-// redact replaces the configured API key wherever it appears in s. It is
-// the belt to requestError's braces: an upstream error page is free to
-// echo the request back, and nothing this client returns may carry the
-// credential.
+// redact replaces the configured API key wherever it appears in s, in every
+// form that can reach a message - see keyForms. It is the belt to
+// requestError's braces: an upstream error page is free to echo the request
+// back, and nothing this client returns may carry the credential.
 func (c *Client) redact(s string) string {
 	if c.apiKey == "" {
 		return s
 	}
-	return strings.ReplaceAll(s, c.apiKey, redactedKey)
+	for _, form := range c.keyForms() {
+		s = strings.ReplaceAll(s, form, redactedKey)
+	}
+	return s
+}
+
+// keyForms are the encodings of the configured key that can appear in a
+// message: the raw value, and the url.QueryEscape form authURL actually
+// puts on the wire, when the two differ (W2 re-review, N1).
+//
+// The escaped form is the one a body-echoing upstream quotes back, so
+// matching only the raw value would walk straight past a key carrying a
+// space, "/", "+" or "=". A well-formed Steam Web API key is 32 hex
+// characters, for which QueryEscape is the identity; what this covers is
+// the malformed CANDIDATE a user pastes at `lmm auth login`, which is
+// validated live - against an upstream free to quote it - before it is
+// ever stored. QueryEscape is the only encoding to check because authURL
+// is the only place this client puts a key in a URL, and it puts it in the
+// QUERY; nothing here builds a path from the key.
+func (c *Client) keyForms() []string {
+	forms := []string{c.apiKey}
+	if esc := url.QueryEscape(c.apiKey); esc != c.apiKey {
+		forms = append(forms, esc)
+	}
+	return forms
+}
+
+// carriesKey reports whether s contains the key in any of keyForms.
+func (c *Client) carriesKey(s string) bool {
+	for _, form := range c.keyForms() {
+		if strings.Contains(s, form) {
+			return true
+		}
+	}
+	return false
 }
 
 // redactError is redact for an error, preserving the chain when there is
@@ -237,7 +271,7 @@ func (c *Client) redact(s string) string {
 // scrubbed message when there is — a wrapped error's text cannot be
 // rewritten any other way, and a leaked key outranks a preserved Unwrap.
 func (c *Client) redactError(err error) error {
-	if c.apiKey == "" || !strings.Contains(err.Error(), c.apiKey) {
+	if c.apiKey == "" || !c.carriesKey(err.Error()) {
 		return err
 	}
 	return errors.New(c.redact(err.Error()))
