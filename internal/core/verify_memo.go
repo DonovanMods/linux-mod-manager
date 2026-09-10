@@ -66,9 +66,9 @@ func (s *Service) dropVerifyMemo() {
 
 // verifyFingerprint is a cheap summary of everything a verify run reads
 // LOCALLY: the profile's mod refs (and their locks), the installed rows
-// (version, file ids, policy, deployed/enabled state), and a stat-only walk
-// of the game's deployed tree - each entry's path, size and modification
-// time.
+// (version, file ids, policy, deployed/enabled state), the deployed_files
+// checksum rows the run walks, and a stat-only walk of the game's deployed
+// tree - each entry's path, size and modification time.
 //
 // KNOWN LIMIT, and the reason VerifyOptions.Force exists: size+mtime is not
 // content. A file rewritten with the same length and its timestamp restored
@@ -123,6 +123,40 @@ func (s *Service) verifyFingerprint(ctx context.Context, game *domain.Game, prof
 		for _, ref := range refs {
 			_, _ = fmt.Fprintln(h, ref)
 		}
+	}
+
+	// The deployed_files checksum rows - verify's own FIRST read
+	// (GetFilesWithChecksums, verify.go) and the one input that can move
+	// the verdict without moving anything on disk. `lmm verify --fix`'s
+	// checksum backfill writes exactly these rows and touches neither the
+	// deployed tree, the profile, nor installed_mods, so nothing else here
+	// would notice it. In-process that is covered by the gate (the repair
+	// takes beginOp, which drops the memo); out of process it is not, and
+	// #317 makes "the CLI beside a running `lmm serve`" the sanctioned
+	// workflow rather than a warned-against one.
+	//
+	// The digest is over the rows themselves - (source, mod, file id,
+	// checksum), sorted, so DB order cannot change it - rather than over a
+	// table revision, because installed_mod_files carries no monotonic
+	// counter to read and adding one would be a schema migration for a
+	// fact the rows already state. It is one query, on a path that already
+	// makes two sibling DB reads, and it stays proportional to the profile
+	// rather than to the disk.
+	files, err := s.GetFilesWithChecksums(ctx, game.ID, profile)
+	if err != nil {
+		return "", fmt.Errorf("fingerprinting deployed files: %w", err)
+	}
+	frows := make([]string, 0, len(files))
+	for _, f := range files {
+		// "dbfile", not "file": the tree walk below already writes
+		// "file\x1f..." lines, and two record kinds sharing a prefix in
+		// one digest is how a crafted path becomes a collision.
+		frows = append(frows, fmt.Sprintf("dbfile\x1f%s\x1f%s\x1f%s\x1f%s",
+			f.SourceID, f.ModID, f.FileID, f.Checksum))
+	}
+	sort.Strings(frows)
+	for _, row := range frows {
+		_, _ = fmt.Fprintln(h, row)
 	}
 
 	if err := fingerprintTree(ctx, h, game.ModPath); err != nil {

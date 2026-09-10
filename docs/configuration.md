@@ -255,13 +255,17 @@ files and never contend.
 re-hydrates on every route change, job completion and profile switch, does not: core
 keeps the last verify answer per game, profile and tier, and re-uses it while a cheap
 fingerprint of what a run inspects is unchanged (#336). That fingerprint is the
-profile's mods and their locks, the installed rows, and a **stat-only** walk of the
-deployed tree — each file's path, size and modification time.
+profile's mods and their locks, the installed rows, the recorded file checksums a run
+compares against, and a **stat-only** walk of the deployed tree — each file's path,
+size and modification time.
 
 A re-used answer keeps the `checked_at` of the run that produced it and carries
 `cached: true`, which the card renders as "Unchanged since …". Every lmm mutation
 drops the memo, and the card's **Re-verify** (`GET /api/v1/health?force=1`) forces a
-real run.
+real run. The recorded checksums are in the fingerprint for the cross-process case:
+`lmm verify --fix` run from a terminal backfills them without touching the deployed
+tree, so a running `lmm serve` has nothing else to notice, and its Health card would
+otherwise keep reporting a warning that was repaired minutes ago.
 
 **The limit**, stated plainly: size and modification time are not content. A deployed
 file rewritten to the same length with its timestamp preserved — a restore from

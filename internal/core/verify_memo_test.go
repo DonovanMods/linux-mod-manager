@@ -145,3 +145,50 @@ func TestVerify_MemoNeverServesAFixAFilterOrASink(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, fixed.Cached, "a repair never answers from a memo")
 }
+
+// TestVerify_MemoMissesAfterAnOutOfProcessChecksumBackfill: the
+// deployed_files checksum rows are the FIRST thing a verify run reads
+// (GetFilesWithChecksums), and the only input that moves the verdict
+// without moving anything on disk. `lmm verify --fix`'s checksum backfill
+// writes exactly those rows and touches neither the deployed tree, the
+// profile nor installed_mods.
+//
+// In-process that is safe - the repair takes beginOp, which drops the memo
+// - but #317 makes "the CLI beside a running `lmm serve`" the sanctioned
+// workflow rather than a warned-against one, and a second process's write
+// reaches no beginOp of ours. Without the rows in the fingerprint the
+// Health card kept reporting a warning that had been repaired minutes ago,
+// indefinitely, until a mutation happened to land in the serve process or
+// the user pressed Re-verify.
+func TestVerify_MemoMissesAfterAnOutOfProcessChecksumBackfill(t *testing.T) {
+	cfgDir, dataDir, cacheDir := t.TempDir(), t.TempDir(), t.TempDir()
+	open := func() *core.Service {
+		svc, err := core.NewService(core.ServiceConfig{ConfigDir: cfgDir, DataDir: dataDir, CacheDir: cacheDir})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, svc.Close()) })
+		return svc
+	}
+
+	svc := open()
+	game := &domain.Game{ID: "test-game", ModPath: t.TempDir()}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+	_, err := svc.NewProfileManager().Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	// Seeded WITHOUT a checksum, which is the state `verify --fix` repairs:
+	// the local tier reports one no_checksum warning for it.
+	seedVerifyMod(t, svc, game, "src", "mod-ok", "Mod OK", "1.0", []string{"file-0"}, true)
+
+	first := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.False(t, first.Cached)
+	require.Equal(t, 1, first.Warnings, "the un-checksummed file is the warning this repair clears")
+	require.True(t, verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal}).Cached)
+
+	// The second process. Its own beginOp cannot reach our memo.
+	other := open()
+	require.NoError(t, other.SaveFileChecksum(context.Background(),
+		"src", "mod-ok", game.ID, "default", "file-0", "backfilled"))
+
+	after := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	assert.False(t, after.Cached, "a checksum backfill changes what verify reads, so it must invalidate the memo")
+	assert.Zero(t, after.Warnings, "and the repaired state is what the surface reports from then on")
+}

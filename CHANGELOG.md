@@ -660,8 +660,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It was correct and it was the one place a large install felt slow.
   `Service.Verify` now memoises its last answer per (game, profile, tier),
   keyed on a cheap fingerprint of what a run actually inspects: the
-  profile's mods and locks, the installed rows, and a stat-only walk (path,
-  size, modification time) of the deployed tree. An unchanged installation
+  profile's mods and locks, the installed rows, the recorded file checksums
+  a run compares against, and a stat-only walk (path, size, modification
+  time) of the deployed tree. The checksums are in there for the
+  cross-process case: `lmm verify --fix` typed in a terminal backfills them
+  and touches nothing else, so a running `lmm serve` would otherwise keep
+  reporting a warning that had already been repaired. An unchanged installation
   is answered from that memo with its original `checked_at` and an additive
   `cached: true`, which the Health card renders as "Unchanged since …".
   Every mutation drops the memo; a new `VerifyOptions.Force` (the CLI's

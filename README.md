@@ -1302,8 +1302,10 @@ single trusted user on their own machine:
   hydrate — and the web UI hydrates on every route change, job completion
   and profile switch — asks core for the same full verify tier the CLI
   runs. Core answers from the previous run when nothing it inspects has
-  moved: the profile's mods and locks, the installed rows, and a stat-only
-  walk (path, size, modification time) of the deployed tree. The card then
+  moved: the profile's mods and locks, the installed rows, the recorded
+  file checksums it compares against (so a `lmm verify --fix` typed in
+  another terminal is noticed), and a stat-only walk (path, size,
+  modification time) of the deployed tree. The card then
   says "Unchanged since …" instead of "Last verified …", and the document
   carries `cached: true` beside the original `checked_at`. **Any** lmm
   mutation drops the memo, and **Re-verify** (like `lmm verify` itself,
