@@ -1881,6 +1881,26 @@ func TestJSONGoldens(t *testing.T) {
 			"snapshot_delete_result",
 			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
 		},
+		{
+			// #359: the loader declaration as a frontend sends it - four
+			// unparsed strings, so a rejection can name the wire field.
+			"loader_spec",
+			core.LoaderSpec{Kind: "bepinex", Version: "5.4.23.5", Runtime: "mono", Bootstrap: "proton"},
+		},
+		{
+			// #359's plan-time precondition. The setup steps are DATA on the
+			// wire, which is what lets the web UI render the same sentences
+			// the terminal prints instead of carrying its own copy.
+			"loader_required_error",
+			core.LoaderRequiredError{
+				GameID: "lethal-company", Kind: "bepinex", ModName: "Skinwalkers",
+				Layout: "game-root-relative",
+				Setup: []string{
+					"Install BepInEx into the game directory yourself.",
+					"Record it: `lmm game edit lethal-company --loader bepinex`.",
+				},
+			},
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))

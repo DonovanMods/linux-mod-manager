@@ -1,0 +1,10 @@
+{
+  "game_id": "lethal-company",
+  "kind": "bepinex",
+  "mod_name": "Skinwalkers",
+  "layout": "game-root-relative",
+  "setup": [
+    "Install BepInEx into the game directory yourself.",
+    "Record it: `lmm game edit lethal-company --loader bepinex`."
+  ]
+}
