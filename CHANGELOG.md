@@ -212,6 +212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copied. Same plan preview and confirm step as **Add mods ▾ → Track Steam
   Workshop items…** — one flow, two entry points — and the card is offered
   only when the game actually maps that source.
+
 - **Steam Workshop tracking (#345, part of #269).** lmm can now track the
   Steam Workshop items you are already subscribed to. It reads Steam's own
   bookkeeping across every Steam library on the machine, records each

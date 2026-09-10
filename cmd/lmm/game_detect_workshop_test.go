@@ -35,9 +35,10 @@ func workshopDetectService(t *testing.T) *core.Service {
 	return svc
 }
 
-// workshopDetectScan is the shape the owner's machine produced: two curated
-// games already configured, one uncurated game with Workshop items, and one
-// plain uncurated game with nothing to say for itself.
+// workshopDetectScan is the shape the owner's machine produced: one curated
+// game, one uncurated game with Workshop items, and one plain uncurated game
+// with nothing to say for itself. None of them is configured - a test that
+// needs a configured row writes it itself.
 func workshopDetectScan(t *testing.T) []domain.DetectedGame {
 	t.Helper()
 	install := t.TempDir()

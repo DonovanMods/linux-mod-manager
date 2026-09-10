@@ -242,12 +242,12 @@ func detectedGameCandidate(ctx context.Context, cmd *cobra.Command, service *cor
 	if !jsonOutput {
 		cmd.Println("Scanning Steam libraries...")
 	}
-	scanLog, err := newCLILogger(logLevel, os.Stderr)
-	if err != nil {
-		return domain.DetectedGame{}, err
-	}
+	// The service's own logger, not a second one built from the same
+	// --log-level (#368 review nit 10): app.Open was handed exactly this
+	// logger. `lmm game detect` has to build one because its scan runs
+	// BEFORE the service is opened; this scan does not.
 	detected, warnings, err := app.DetectGames(ctx, service.ConfigDir(),
-		app.DetectOptions{IncludeUnknown: true, Logger: scanLog})
+		app.DetectOptions{IncludeUnknown: true, Logger: service.Logger()})
 	if err != nil {
 		return domain.DetectedGame{}, fmt.Errorf("detecting games: %w", err)
 	}
