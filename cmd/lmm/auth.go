@@ -171,7 +171,7 @@ func promptForSource(service *core.Service) (string, error) {
 	// for (#307 gave 'login' its --key-from-env/--key-stdin, not a
 	// --source). Naming the source directly is the way out for both.
 	if jsonOutput {
-		return "", confirmationRequiredVia("pass the source ID as a positional argument (e.g. lmm auth logout <source>)")
+		return "", confirmationRequiredVia(remedyNameAuthSource)
 	}
 
 	fmt.Println("Select a source to authenticate with:")
@@ -185,7 +185,7 @@ func promptForSource(service *core.Service) (string, error) {
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil && strings.TrimSpace(input) == "" {
-		return "", promptReadError(err, "pass the source ID as a positional argument (e.g. lmm auth logout <source>)")
+		return "", promptReadError(err, remedyNameAuthSource)
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))

@@ -96,6 +96,23 @@ func readPromptLineFrom(r io.Reader) (string, error) {
 	return strings.TrimSpace(strings.ToLower(line)), nil
 }
 
+// The remedy each interactive prompt names: the flag or argument that would
+// have answered it without a human. Each is used TWICE - once by the --json
+// envelope (confirmationRequiredVia) and once by the EOF rendering that has
+// to say the same thing (promptReadError, #385) - so they are constants
+// rather than a literal typed out at each site, and the two renderings
+// cannot drift apart (P1b review F9). cmd/lmm/prompt_remedy_test.go refuses
+// a literal at either call site.
+const (
+	// remedySelectSource answers resolveSource's source picker.
+	remedySelectSource = "pass -s/--source to select a mod source"
+	// remedyPickInstallMod answers `lmm install`'s search-result picker.
+	remedyPickInstallMod = "pass -y/--yes to auto-select the first result, or --id to install a specific mod directly"
+	// remedyNameAuthSource answers `lmm auth login`/`logout`'s source
+	// picker, which has no flag of its own - the source is positional.
+	remedyNameAuthSource = "pass the source ID as a positional argument (e.g. lmm auth logout <source>)"
+)
+
 // confirmationRequiredVia returns core.ErrConfirmationRequired augmented
 // with how, the specific flag or argument that would have answered this
 // particular prompt without one. Most prompts share the sentinel's own
@@ -191,7 +208,7 @@ func resolverFromService(svc *core.Service) func(string) string {
 // envelope names that flag as the way to decide the prompt non-interactively.
 func promptForGameSource(gameName string, sources []string, resolve func(string) string) (string, error) {
 	if jsonOutput {
-		return "", confirmationRequiredVia("pass -s/--source to select a mod source")
+		return "", confirmationRequiredVia(remedySelectSource)
 	}
 	if resolve == nil {
 		resolve = func(id string) string { return "" }
@@ -211,7 +228,7 @@ func promptForGameSource(gameName string, sources []string, resolve func(string)
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil && strings.TrimSpace(input) == "" {
-		return "", promptReadError(err, "pass -s/--source to select a mod source")
+		return "", promptReadError(err, remedySelectSource)
 	}
 
 	choice, err := strconv.Atoi(strings.TrimSpace(input))

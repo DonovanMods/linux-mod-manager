@@ -271,7 +271,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 	// to auto-pick the first has no other deciding flag - --id names a mod
 	// directly and skips search entirely, so it's the other way out.
 	if jsonOutput {
-		return nil, confirmationRequiredVia("pass -y/--yes to auto-select the first result, or --id to install a specific mod directly")
+		return nil, confirmationRequiredVia(remedyPickInstallMod)
 	}
 
 	// Interactive paginated selection
@@ -308,8 +308,9 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 		fmt.Printf("\nSelect mod(s) (e.g., 1 or 1,3,5 or 1-3) [1]: ")
 		input, err := reader.ReadString('\n')
 		if err != nil && strings.TrimSpace(input) == "" {
-			// Same remedy the --json path names just above (#385).
-			return nil, promptReadError(err, "pass -y/--yes to auto-select the first result, or --id to install a specific mod directly")
+			// The same constant the --json path names just above,
+			// which is what makes "the two cannot drift" true (#385).
+			return nil, promptReadError(err, remedyPickInstallMod)
 		}
 		input = strings.TrimSpace(input)
 
