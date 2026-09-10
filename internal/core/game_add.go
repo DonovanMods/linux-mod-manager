@@ -15,6 +15,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -408,6 +409,46 @@ func (s *Service) sourceIgnoresGameIdentifier(sourceID string) bool {
 	return source.IgnoresGameIdentifier(src)
 }
 
+// refuseEmptySourceIdentifiers refuses a source map that leaves a value
+// empty for a source that needs one - the WRITE half of Service.sourceGameID's
+// refusal (T1 re-review Minor 1), shared by the two paths that can write a
+// whole map at once: GameSpec.game (`lmm game add`, POST /api/v1/games) and
+// applyGameDetectLocked (`lmm init`, `lmm game detect`).
+//
+// identifierOptional is Service.sourceIgnoresGameIdentifier - the source's
+// own answer to "may this be blank". nil means no, which is what a caller
+// with no registry to ask must assume.
+//
+// Ids are visited in sorted order so a map with two offending entries names
+// the same one every time; an error a user sees twice must not change.
+func refuseEmptySourceIdentifiers(sources map[string]string, identifierOptional func(sourceID string) bool) error {
+	ids := slices.Sorted(maps.Keys(sources))
+	for _, id := range ids {
+		if strings.TrimSpace(sources[id]) != "" {
+			continue
+		}
+		if identifierOptional != nil && identifierOptional(id) {
+			continue
+		}
+		return emptyIdentifierRefusal(id)
+	}
+	return nil
+}
+
+// emptyIdentifierRefusal is the ONE refusal for a source mapped to an empty
+// game identifier, so `lmm game add`, `lmm game edit`, `lmm init` and both
+// HTTP routes word it identically and classify identically. The field is
+// "sources" so a form marks the offending ROW, and the sentinel is the same
+// one the read path reports, so a caller that branches on the class rather
+// than on the field sees no difference between the two halves.
+func emptyIdentifierRefusal(sourceID string) *GameSpecError {
+	return &GameSpecError{
+		Field: "sources", Value: sourceID,
+		Reason: "this source needs an identifier for the game",
+		Err:    source.ErrGameIdentifierInvalid,
+	}
+}
+
 // game validates the spec and builds the domain.Game AddGame persists.
 // Every rejection is a GameSpecError naming the wire field at fault.
 //
@@ -437,6 +478,16 @@ func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domai
 		sources[sourceID] = identifier
 	case len(sources) == 0:
 		return nil, newGameSpecError("source_id", "", "a mod source is required")
+	}
+	// EVERY entry, not only the explicit pair above (T1 re-review Minor 1).
+	// The switch asks about spec.SourceID and about nothing else, so a
+	// PREFILLED map - `lmm game add --from-detected`, POST /api/v1/games
+	// with from_steam_app_id, a direct AddGame caller - used to write
+	// `sources: {<source that needs one>: ""}` unchallenged. The read path
+	// refuses that state with the command that fixes it, which makes it
+	// survivable; this is what stops it existing.
+	if err := refuseEmptySourceIdentifiers(sources, identifierOptional); err != nil {
+		return nil, err
 	}
 
 	name := strings.TrimSpace(spec.Name)

@@ -635,6 +635,44 @@ func TestAPIGameAdd_FromSteamAppIDUnknownAppID(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "from_steam_app_id")
 }
 
+// TestAPIGameAdd_FromSteamAppIDRefusesAnEmptyCuratedIdentifier is the
+// third of the three prefill entry points (T1 re-review Minor 1). The body
+// carries no `sources` member at all, so nothing the caller sent is at
+// fault: the empty mapping comes from a known-games entry, and it must be
+// refused here rather than written and left to fail at the first search.
+//
+// 400 with the "sources" row named, exactly as any other rejected field, so
+// the setup form can say which source needs a value.
+func TestAPIGameAdd_FromSteamAppIDRefusesAnEmptyCuratedIdentifier(t *testing.T) {
+	s := newGamesServer(t)
+	fakeSteamApp(t, "526870", "Satisfactory", "Satisfactory")
+	writeKnownGamesOverride(t, s, `"526870":
+  slug: satisfactory
+  name: Satisfactory
+  mod_path: mods
+  sources:
+    nexusmods: ""
+`)
+
+	rec := doAPI(s, http.MethodPost, "/api/v1/games", `{"from_steam_app_id":"526870"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "sources")
+	assert.Contains(t, body, "nexusmods")
+
+	rec = doAPI(s, http.MethodGet, "/api/v1/games", "")
+	assert.Equal(t, "[]\n", rec.Body.String(), "the game must not be written at all")
+}
+
+// writeKnownGamesOverride drops a steam-games.yaml into the Service's own
+// config directory, which is where LoadKnownGames merges a user's entries
+// over the embedded catalog. It is the only way a curated entry with an
+// empty identifier exists at all: no shipped entry has one.
+func writeKnownGamesOverride(t *testing.T, s *Server, yaml string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(s.svc.ConfigDir(), "steam-games.yaml"), []byte(yaml), 0o644))
+}
+
 // fakeSteamWorkshopManifest writes a populated appworkshop_<appID>.acf next
 // to the fabricated library fakeSteamApp built, which is what makes
 // detection prefill `steamworkshop: <appID>` and stamp the item count

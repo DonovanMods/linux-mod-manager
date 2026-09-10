@@ -313,6 +313,15 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 	pm := s.NewProfileManager()
 	for _, g := range games {
 		game, err := GameFromDetected(g)
+		if err == nil {
+			// GameFromDetected is pure and has no registry to ask, so the
+			// per-source "may this be blank" question is asked HERE, where
+			// the Service can ask it (T1 re-review Minor 1). A known-games
+			// entry mapping a source that needs an identifier to "" is
+			// misconfigured, and #203's precedent for a misconfigured entry
+			// is to name it loudly rather than write it.
+			err = refuseEmptySourceIdentifiers(game.SourceIDs, s.sourceIgnoresGameIdentifier)
+		}
 		if err != nil {
 			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
 		}
