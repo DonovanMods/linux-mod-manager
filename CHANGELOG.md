@@ -234,13 +234,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The part lmm could not reconstruct any other way is now kept too. Whenever
   a deploy, or a profile override, would replace a file lmm did not put
   there — stock game content, or a file another tool left — the original is
-  copied to `$XDG_DATA_HOME/lmm/snapshots/<game>/originals/` **first, and
+  copied to `$XDG_DATA_HOME/lmm/snapshots/<game>/_originals/` **first, and
   once**: the first original wins, because the second write's "original" is
   lmm's own first write. lmm's own deployments are never stored (a symlink is
   not stock content, and a file the `deployed_files` table already
   attributes to a mod is reconstructible from the cache). A failed capture is
   a warning, never a refusal — a backup that blocks the operation it is
   protecting is worse than no backup.
+
+  The store is `_originals/` rather than `originals/` for a reason worth
+  knowing: a snapshot name becomes a file name in the directory above it,
+  and a snapshot may not start with `_`, so nothing you can type reaches
+  the one thing lmm cannot re-download. Names use letters, digits, `.`,
+  `_` and `-`.
 
   `lmm snapshot restore` is four stages in order: undeploy what is there,
   put every stored original back (checksum-verified — a stored copy that no

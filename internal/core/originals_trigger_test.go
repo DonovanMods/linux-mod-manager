@@ -62,12 +62,12 @@ func newOriginalsService(t *testing.T) (*core.Service, string) {
 	return svc, dataDir
 }
 
-// readOriginalsManifest decodes <dataDir>/snapshots/<gameID>/originals.json,
+// readOriginalsManifest decodes <dataDir>/snapshots/<gameID>/_originals/manifest.json,
 // treating an absent file as no rows (a game that never had anything
 // replaced).
 func readOriginalsManifest(t *testing.T, dataDir, gameID string) []originalRow {
 	t.Helper()
-	path := filepath.Join(dataDir, "snapshots", gameID, "originals.json")
+	path := filepath.Join(dataDir, "snapshots", gameID, "_originals", "manifest.json")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -82,7 +82,7 @@ func readOriginalsManifest(t *testing.T, dataDir, gameID string) []originalRow {
 
 func readStoredOriginal(t *testing.T, dataDir, gameID, root, rel string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dataDir, "snapshots", gameID, "originals", root, filepath.FromSlash(rel)))
+	data, err := os.ReadFile(filepath.Join(dataDir, "snapshots", gameID, "_originals", "files", root, filepath.FromSlash(rel)))
 	require.NoError(t, err)
 	return string(data)
 }

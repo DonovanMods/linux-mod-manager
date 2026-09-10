@@ -113,17 +113,85 @@ func TestCreateSnapshot_RefusesATakenName(t *testing.T) {
 	require.ErrorIs(t, err, core.ErrSnapshotExists)
 }
 
+// badSnapshotNames is the whole refusal set, shared by the create, delete
+// and API-route tests so the three cannot drift: what `snapshot create`
+// will not write, `snapshot delete` must not remove either.
+//
+// The reserved pair at the end is review finding 1: "originals" was the
+// manifest's own basename, so creating one overwrote it, the next capture
+// silently destroyed the snapshot document, and deleting it removed the
+// only index of every stock file lmm had replaced.
+var badSnapshotNames = []string{
+	"", "  ", "a/b", `a\b`, "..", "../escape", ".hidden", "_private",
+	"a b", "naughty;rm", "star*", "tilde~", "colon:name",
+	"originals", "ORIGINALS", "_originals",
+}
+
 func TestCreateSnapshot_RefusesANameThatIsNotAFileName(t *testing.T) {
-	svc, game, _ := newSnapshotFixture(t)
-	for _, bad := range []string{"", "  ", "a/b", `a\b`, "..", "../escape", ".hidden"} {
+	svc, game, dataDir := newSnapshotFixture(t)
+	for _, bad := range badSnapshotNames {
 		_, err := svc.CreateSnapshot(context.Background(), game, "default", bad)
 		require.ErrorIsf(t, err, core.ErrInvalidSnapshotName, "name %q must be refused", bad)
+	}
+	// Nothing landed in the game's snapshot directory - in particular no
+	// file named for the store.
+	entries, err := os.ReadDir(filepath.Join(dataDir, "snapshots", "g1"))
+	if err == nil {
+		for _, e := range entries {
+			assert.NotEqual(t, "originals.json", e.Name(), "a refused name must write nothing")
+		}
+	}
+}
+
+// TestDeleteSnapshot_CannotTouchTheOriginalsStore is the other half of
+// review finding 1: `lmm snapshot delete originals` reported success and
+// removed the manifest that is the ONLY index of the stock files lmm
+// replaced. The store now lives under _originals/, which no validated name
+// can reach, and the reserved name is refused outright.
+func TestDeleteSnapshot_CannotTouchTheOriginalsStore(t *testing.T) {
+	svc, game, dataDir := newSnapshotFixture(t)
+	_, err := svc.CreateSnapshot(context.Background(), game, "default", "keep")
+	require.NoError(t, err)
+
+	manifest := filepath.Join(dataDir, "snapshots", "g1", "_originals", "manifest.json")
+	require.FileExists(t, manifest, "the manifest lives OUTSIDE the snapshot-name namespace")
+
+	for _, bad := range badSnapshotNames {
+		_, err := svc.DeleteSnapshot(context.Background(), "g1", bad)
+		require.ErrorIsf(t, err, core.ErrInvalidSnapshotName, "delete %q must be refused", bad)
+	}
+	assert.FileExists(t, manifest, "the originals manifest must survive every delete")
+
+	// The store's directory is not deletable either, even though it IS a
+	// name in that directory: a snapshot document is a regular file.
+	_, err = svc.DeleteSnapshot(context.Background(), "g1", "keep")
+	require.NoError(t, err, "an ordinary snapshot still deletes")
+	assert.DirExists(t, filepath.Join(dataDir, "snapshots", "g1", "_originals"))
+}
+
+// TestSnapshotNames_TheAllowedSet is the positive half: the names both
+// frontends actually generate, and the ordinary ones a user types, must
+// keep working.
+func TestSnapshotNames_TheAllowedSet(t *testing.T) {
+	svc, game, _ := newSnapshotFixture(t)
+	names := []string{
+		"before-skse", "v1.2.3", "my_snapshot", "A1",
+		core.DefaultSnapshotName(time.Now()),
+		core.AutoSnapshotName(core.OpDeploy, time.Now()),
+		core.AutoSnapshotName(core.OpSwitch, time.Now()),
+		core.AutoSnapshotName(core.OpUpdate, time.Now()),
+	}
+	for _, ok := range names {
+		_, err := svc.CreateSnapshot(context.Background(), game, "default", ok)
+		require.NoErrorf(t, err, "name %q must be accepted", ok)
 	}
 }
 
 // TestListSnapshots_NewestFirstAndSkipsTheOriginalsManifest pins the two
 // things a listing has to get right: the order a user reads a backup list
-// in, and not mistaking the originals store's own manifest for a snapshot.
+// in, and not mistaking the originals store for a snapshot. Since review
+// finding 1 the store is a DIRECTORY (_originals/) rather than a sibling
+// originals.json, so the exclusion is structural rather than by name.
 func TestListSnapshots_NewestFirstAndSkipsTheOriginalsManifest(t *testing.T) {
 	svc, game, dataDir := newSnapshotFixture(t)
 
@@ -131,13 +199,14 @@ func TestListSnapshots_NewestFirstAndSkipsTheOriginalsManifest(t *testing.T) {
 		_, err := svc.CreateSnapshot(context.Background(), game, "default", name)
 		require.NoError(t, err)
 	}
-	// The store's manifest sits in the same directory.
-	assert.FileExists(t, filepath.Join(dataDir, "snapshots", "g1", "originals.json"))
+	// The store sits in the same directory, in its own subdirectory.
+	assert.DirExists(t, filepath.Join(dataDir, "snapshots", "g1", "_originals"))
+	assert.FileExists(t, filepath.Join(dataDir, "snapshots", "g1", "_originals", "manifest.json"))
 
 	listing, err := svc.ListSnapshots(context.Background(), "g1")
 	require.NoError(t, err)
 	assert.Equal(t, "g1", listing.GameID)
-	require.Len(t, listing.Snapshots, 3, "originals.json is the store's manifest, not a snapshot")
+	require.Len(t, listing.Snapshots, 3, "the _originals store is not a snapshot")
 	assert.Empty(t, listing.Warnings)
 
 	for i := 1; i < len(listing.Snapshots); i++ {

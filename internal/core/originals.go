@@ -29,13 +29,20 @@
 //   - ApplyProfileOverrides, immediately before it writes an override over
 //     a file in the game's install directory.
 //
-// LAYOUT. <DataDir>/snapshots/<game-id>/ holds originals/ (the stored
-// bytes) and originals.json (the manifest). The stored tree is split by
-// ROOT - originals/mod_path/... and originals/install_path/... - because
-// the two call sites above resolve their relative paths against DIFFERENT
-// directories (game.ModPath and game.InstallPath), and a single flat tree
-// would silently conflate "Data/a.esp" under one with "Data/a.esp" under
-// the other.
+// LAYOUT. The whole store lives under <DataDir>/snapshots/<game-id>/
+// _originals/ - manifest.json (the manifest) beside files/ (the stored
+// bytes). The leading underscore is load-bearing: snapshot documents are
+// <DataDir>/snapshots/<game-id>/<name>.json, and validSnapshotName refuses
+// a leading "_", so NO snapshot name can ever name a file in the store.
+// (Before review finding 1 the manifest was originals.json in that same
+// directory, which `snapshot create --name originals` overwrote and
+// `snapshot delete originals` removed. Nothing released has written either
+// path, so there is no migration.) The stored tree is split by ROOT -
+// files/mod_path/... and files/install_path/... - because the two call
+// sites above resolve their relative paths against DIFFERENT directories
+// (game.ModPath and game.InstallPath), and a single flat tree would
+// silently conflate "Data/a.esp" under one with "Data/a.esp" under the
+// other.
 //
 // FIRST ORIGINAL WINS. Capture is idempotent per (root, relative path): a
 // path already in the manifest is left alone. The second write's "original"
@@ -170,14 +177,25 @@ func newOriginalsStore(dataDir, gameID string, log *slog.Logger) *originalsStore
 	return &originalsStore{dir: snapshotsDirFor(dataDir, gameID), log: log}
 }
 
+// originalsStoreDirName is the store's own subdirectory of a game's
+// snapshot directory. It starts with "_" because validSnapshotName refuses
+// a leading underscore, which is what makes the store unreachable from the
+// snapshot-name namespace (review finding 1).
+const originalsStoreDirName = "_originals"
+
+// storeDir is the store's own directory, <DataDir>/snapshots/<game>/_originals.
+func (s *originalsStore) storeDir() string {
+	return filepath.Join(s.dir, originalsStoreDirName)
+}
+
 // manifestPath is where the manifest lives.
 func (s *originalsStore) manifestPath() string {
-	return filepath.Join(s.dir, "originals.json")
+	return filepath.Join(s.storeDir(), "manifest.json")
 }
 
 // storedPath is where a captured original's bytes live.
 func (s *originalsStore) storedPath(root OriginalRoot, relPath string) string {
-	return filepath.Join(s.dir, "originals", string(root), filepath.FromSlash(relPath))
+	return filepath.Join(s.storeDir(), "files", string(root), filepath.FromSlash(relPath))
 }
 
 // list returns the manifest, oldest capture first. A store that has never
@@ -214,14 +232,14 @@ func (s *originalsStore) read() (originalsManifest, error) {
 // that names originals whose bytes are not all there, or truncate one that
 // was complete.
 func (s *originalsStore) write(m originalsManifest) error {
-	if err := os.MkdirAll(s.dir, 0700); err != nil {
-		return fmt.Errorf("creating the snapshot directory %s: %w", s.dir, err)
+	if err := os.MkdirAll(s.storeDir(), 0700); err != nil {
+		return fmt.Errorf("creating the originals store directory %s: %w", s.storeDir(), err)
 	}
 	data, err := json.Marshal(m, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return fmt.Errorf("encoding the originals manifest: %w", err)
 	}
-	tmp, err := os.CreateTemp(s.dir, "originals-*.json")
+	tmp, err := os.CreateTemp(s.storeDir(), "manifest-*.json")
 	if err != nil {
 		return fmt.Errorf("creating a temporary originals manifest: %w", err)
 	}

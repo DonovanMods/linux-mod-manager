@@ -57,8 +57,8 @@ var ErrSnapshotExists = errors.New("snapshot already exists")
 var ErrInvalidSnapshotName = errors.New("invalid snapshot name")
 
 // snapshotFileExt is the extension every snapshot document carries, and
-// what ListSnapshots recognises a snapshot by - so the originals/ directory
-// and originals.json sitting beside them are never mistaken for one.
+// what ListSnapshots recognises a snapshot by - so the _originals/
+// directory sitting beside them is never mistaken for one.
 const snapshotFileExt = ".json"
 
 // Snapshot is one recorded point: everything needed to describe the
@@ -186,15 +186,48 @@ type SnapshotDeleteResult struct {
 	Deleted bool `json:"deleted"`
 }
 
-// validSnapshotName refuses a name that cannot be a single file name, and
-// returns the cleaned value otherwise.
+// reservedSnapshotNames are names no snapshot may take because lmm's own
+// files in the same directory answer to them (review finding 1).
+//
+// "_originals" is the store's directory and is ALREADY unreachable - a
+// validated name cannot start with "_" - so it is listed for the sake of
+// the message a user gets rather than for safety. "originals" is where the
+// manifest lived before finding 1 moved it; a name that once destroyed the
+// only copy of a user's stock files should stay refused rather than become
+// quietly available again.
+var reservedSnapshotNames = map[string]bool{
+	originalsStoreDirName: true,
+	"originals":           true,
+}
+
+// validSnapshotName refuses a name that cannot be a single file name, or
+// that names something lmm owns, and returns the cleaned value otherwise.
+//
+// The character set is an ALLOW-list - letters, digits, ".", "_" and "-" -
+// rather than a list of the separators that are known to be dangerous: a
+// snapshot name becomes a path segment, a URL segment (DELETE
+// /api/v1/snapshots/{name}) and a shell argument, and "everything except
+// what I thought of" is the wrong default for all three. A leading "." (a
+// dotfile, and the "." / ".." traversal pair) and a leading "_" (lmm's own
+// namespace) are refused on top of that.
 func validSnapshotName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return "", fmt.Errorf("%w: a name is required", ErrInvalidSnapshotName)
 	}
-	if strings.ContainsAny(trimmed, `/\`) || strings.Contains(trimmed, "..") || strings.HasPrefix(trimmed, ".") {
-		return "", fmt.Errorf("%w: %q must not contain path separators, %q, or start with %q", ErrInvalidSnapshotName, trimmed, "..", ".")
+	for _, r := range trimmed {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '.', r == '_', r == '-':
+		default:
+			return "", fmt.Errorf("%w: %q may use only letters, digits, %q, %q and %q", ErrInvalidSnapshotName, trimmed, ".", "_", "-")
+		}
+	}
+	if strings.HasPrefix(trimmed, ".") || strings.HasPrefix(trimmed, "_") {
+		return "", fmt.Errorf("%w: %q must not start with %q or %q", ErrInvalidSnapshotName, trimmed, ".", "_")
+	}
+	if reservedSnapshotNames[strings.ToLower(trimmed)] {
+		return "", fmt.Errorf("%w: %q is reserved for lmm's own store of the files it replaced", ErrInvalidSnapshotName, trimmed)
 	}
 	return trimmed, nil
 }
@@ -447,10 +480,10 @@ func (s *Service) ListSnapshots(ctx context.Context, gameID string) (*SnapshotLi
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), snapshotFileExt)
-		// originals.json is the store's manifest, not a snapshot.
-		if name == "originals" {
-			continue
-		}
+		// The originals store is a DIRECTORY (_originals/), skipped
+		// above, so a listing needs no name-based exclusion any more
+		// (review finding 1). A stray file that is not a snapshot
+		// document still becomes a warning rather than an error.
 		doc, err := s.LoadSnapshot(ctx, gameID, name)
 		if err != nil {
 			listing.Warnings = append(listing.Warnings, fmt.Sprintf("%s could not be read: %v", entry.Name(), err))
@@ -499,6 +532,21 @@ func (s *Service) DeleteSnapshot(ctx context.Context, gameID, name string) (*Sna
 		return nil, err
 	}
 	path := s.snapshotPath(gameID, clean)
+	// A snapshot document is a REGULAR FILE. Nothing else in the directory
+	// is deletable through this command - the originals store is a
+	// directory there, and a validated name cannot name it anyway (review
+	// finding 1) - so refuse rather than remove whatever happens to sit at
+	// the path.
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", ErrSnapshotNotFound, clean)
+		}
+		return nil, fmt.Errorf("reading the snapshot %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a snapshot document", ErrSnapshotNotFound, clean)
+	}
 	if err := os.Remove(path); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("%w: %s", ErrSnapshotNotFound, clean)

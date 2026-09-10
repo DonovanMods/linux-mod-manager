@@ -90,10 +90,33 @@ func TestAPISnapshotCreate_TakenNameIs409(t *testing.T) {
 func TestAPISnapshotCreate_IllegalNameIs400(t *testing.T) {
 	s, _, game := newFlowFixtureServer(t)
 
-	for _, name := range []string{"a/b", "..", ".hidden"} {
+	// The reserved names are review finding 1: over the wire as on the
+	// CLI, "originals" must not be creatable - it used to overwrite the
+	// manifest that indexes every stock file lmm replaced.
+	for _, name := range []string{"a/b", "..", ".hidden", "_private", "a b", "originals", "ORIGINALS", "_originals"} {
 		rec := doAPI(s, http.MethodPost, scoped("/api/v1/snapshots", game), `{"name":"`+name+`"}`)
 		assert.Equal(t, http.StatusBadRequest, rec.Code, "name %q: %s", name, rec.Body.String())
 	}
+}
+
+// TestAPISnapshotDelete_ReservedNameIs400AndKeepsTheStore is the route half
+// of review finding 1's delete: DELETE /api/v1/snapshots/originals reported
+// success and removed the originals manifest.
+func TestAPISnapshotDelete_ReservedNameIs400AndKeepsTheStore(t *testing.T) {
+	s, _, game := newFlowFixtureServer(t)
+	deployFixtureProfile(t, s, game)
+	rec := doAPI(s, http.MethodPost, scoped("/api/v1/snapshots", game), `{"name":"keep"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	for _, name := range []string{"originals", "ORIGINALS", "_originals", "_private", ".hidden"} {
+		rec := doAPI(s, http.MethodDelete, scoped("/api/v1/snapshots/"+name, game), "")
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "delete %q: %s", name, rec.Body.String())
+	}
+
+	// The one real snapshot is still listed, so nothing was collaterally
+	// removed by the refusals.
+	rec = doAPI(s, http.MethodGet, scoped("/api/v1/snapshots", game), "")
+	require.Len(t, decodeSnapshotListing(t, rec.Body.Bytes()).Snapshots, 1)
 }
 
 func TestAPISnapshotCreate_RejectsUnknownMembers(t *testing.T) {

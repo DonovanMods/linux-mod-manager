@@ -223,7 +223,7 @@ func TestPlanSnapshotRestore_MarksAnOriginalItCannotVouchFor(t *testing.T) {
 	require.NoError(t, err)
 
 	// Corrupt the stored original behind lmm's back.
-	stored := filepath.Join(dataDir, "snapshots", "g1", "originals", "mod_path", "Data", "shipped.esp")
+	stored := filepath.Join(dataDir, "snapshots", "g1", "_originals", "files", "mod_path", "Data", "shipped.esp")
 	require.NoError(t, os.WriteFile(stored, []byte("corrupted"), 0600))
 
 	plan, err := svc.PlanSnapshotRestore(ctx, game, "point")

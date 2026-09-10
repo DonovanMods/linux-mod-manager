@@ -36,7 +36,7 @@ kilobytes.
 The originals are the part lmm cannot reconstruct any other way. Whenever a
 deploy or a profile override would replace a file lmm did not put there -
 stock game content, or a file another tool left - the original is copied to
-$XDG_DATA_HOME/lmm/snapshots/<game>/originals/ first, once, and a restore
+$XDG_DATA_HOME/lmm/snapshots/<game>/_originals/ first, once, and a restore
 puts it back. Deleting a snapshot never deletes those; they are the only
 copy.
 

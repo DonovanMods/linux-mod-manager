@@ -192,8 +192,8 @@ Entries here are merged with the built-in list (overrides win). No rebuild neede
 | `<data>/downloads/`                        | Staging area for in-flight downloads and archive extraction             |
 | `<data>/key`                               | Token-encryption key (`0600`, created on first `auth login`)            |
 | `<data>/snapshots/<game-id>/<name>.json`   | One snapshot's record (`lmm snapshot`)                                  |
-| `<data>/snapshots/<game-id>/originals.json`| Manifest of the files lmm has replaced for that game                    |
-| `<data>/snapshots/<game-id>/originals/`    | The replaced files themselves, split by root (`mod_path`/`install_path`)|
+| `<data>/snapshots/<game-id>/_originals/manifest.json` | Manifest of the files lmm has replaced for that game          |
+| `<data>/snapshots/<game-id>/_originals/files/` | The replaced files themselves, split by root (`mod_path`/`install_path`) |
 
 ## Custom Sources
 

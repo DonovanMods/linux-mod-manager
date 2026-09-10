@@ -1872,7 +1872,7 @@ instant.
 **The originals store** is the part lmm cannot reconstruct any other way.
 Whenever a deploy, or a profile override, would replace a file lmm did not
 put there — stock game content, or a file another tool left — the original
-is copied to `~/.local/share/lmm/snapshots/<game>/originals/` **first, and
+is copied to `~/.local/share/lmm/snapshots/<game>/_originals/` **first, and
 once**: the first original wins, because the second write's "original" is
 lmm's own first write. `lmm snapshot restore` puts those back, checksum
 -verified. `lmm snapshot delete` never removes them; they are the only copy.
@@ -2011,16 +2011,16 @@ internal/
 
 lmm follows the XDG Base Directory specification. `--config` and `--data` override the resolved directories; `cache_path` in `config.yaml` overrides the cache.
 
-| Type                    | Path                                                                                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Config                  | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                                                                         |
-| Custom Sources          | `<config>/sources/*.yaml`                                                                                                                                  |
-| Database                | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                                                                          |
-| Credential key          | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login`                                                          |
-| Mod Cache               | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)                                                           |
-| Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                                                                           |
-| Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                                                                             |
-| Snapshots               | `<data>/snapshots/<game-id>/` — one `<name>.json` per snapshot, plus `originals/` and `originals.json` (the files lmm has replaced; the only copy of them) |
+| Type                    | Path                                                                                                                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Config                  | `$XDG_CONFIG_HOME/lmm/` (default `~/.config/lmm/`)                                                                                                                                                                                                                                    |
+| Custom Sources          | `<config>/sources/*.yaml`                                                                                                                                                                                                                                                             |
+| Database                | `$XDG_DATA_HOME/lmm/lmm.db` (default `~/.local/share/lmm/lmm.db`)                                                                                                                                                                                                                     |
+| Credential key          | `$XDG_DATA_HOME/lmm/key` (default `~/.local/share/lmm/key`) — 0600, created on first `auth login`                                                                                                                                                                                     |
+| Mod Cache               | `<data>/cache/` (default; not under `XDG_CACHE_HOME` — cached mods are expensive to re-download)                                                                                                                                                                                      |
+| Download Staging        | `<data>/downloads/` (in-flight downloads and archive extraction)                                                                                                                                                                                                                      |
+| Steam Workshop metadata | `<data>/cache/_steamworkshop/meta/` (cached item descriptions; safe to delete)                                                                                                                                                                                                        |
+| Snapshots               | `<data>/snapshots/<game-id>/` — one `<name>.json` per snapshot, plus `_originals/` (the files lmm has replaced; the only copy of them). A snapshot name may use letters, digits, `.`, `_` and `-`, and may not start with `.` or `_` — which is what keeps `_originals/` out of reach |
 
 **Precedence.** `--config`/`--data` win outright. Otherwise an `XDG_CONFIG_HOME`/`XDG_DATA_HOME` set to an **absolute** path decides, whether or not `$XDG_…/lmm` exists yet — setting the variable is an explicit instruction, and lmm never silently writes somewhere else (#297). Only when the variable is **unset** — or set to a relative path, which the XDG spec requires be ignored — does lmm fall back to the legacy `~/.config/lmm` / `~/.local/share/lmm`, which is the situation an install predating XDG support is in. If you set an XDG variable and want your existing data, move the directory to the new location (or point `--data`/`--config` at the old one).
 
