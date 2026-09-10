@@ -361,11 +361,26 @@ func initStepAuth(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 			cmd.Printf("  Skipped. ('lmm auth login %s' when you want it.)\n", id)
 			continue
 		}
-		// doAuthLogin is `lmm auth login <source>` itself: the source's own
-		// instructions, the key prompt, the live validation and the store,
-		// all unchanged. A failure here is reported and the loop continues -
-		// a mistyped key must not end the wizard.
-		if err := doAuthLogin(ctx, service, id); err != nil {
+		// The answer above was read without a newline of its own, and the
+		// instruction block that follows is the delegated flow's, printed
+		// on os.Stdout - so the separator goes to that same stream, or it
+		// would land somewhere else entirely in a redirect (#384).
+		fmt.Println()
+		// doAuthLoginIndented is `lmm auth login <source>` itself: the
+		// source's own instructions, the key prompt, the live validation
+		// and the store, all unchanged bar the wizard's own two-space
+		// indent. A failure here is reported and the loop continues - a
+		// mistyped key must not end the wizard.
+		err := doAuthLoginIndented(ctx, service, id, "  ")
+		switch {
+		case err == nil:
+		case errors.Is(err, errAPIKeyEmpty):
+			// The banner promised every step could be skipped by pressing
+			// Enter; at this one it used to answer with an error per
+			// configured source (#384). A bare Enter is a skip, worded
+			// like every other skip in the run.
+			cmd.Printf("  Skipped. ('lmm auth login %s' when you want it.)\n", id)
+		default:
 			cmd.Printf("  %s: %v\n", capable[id], err)
 			cmd.Printf("  ('lmm auth login %s' to try again.)\n", id)
 		}

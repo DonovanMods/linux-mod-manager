@@ -1433,6 +1433,17 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   is expired or revoked — a real problem — and stays a warning; searching
   the source directly with `-s` still reports it too.
 
+- **`lmm init` means it when it says a step can be skipped (#384).** The
+  wizard opens with "Every step can be skipped - press Enter to take the
+  default", then answered a bare Enter at the source step with
+  `Nexus Mods: API key cannot be empty` — one error per configured source,
+  for doing exactly what the banner said. An empty key in the wizard is now
+  a skip, worded like every other skip in the run; `lmm auth login`, where
+  you asked for the prompt, still reports it as an error. Two layout fixes
+  in the same block: the source's instruction text no longer runs on from
+  the `[Y/n]` answer, and it is indented under its step like everything
+  else the wizard prints.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
