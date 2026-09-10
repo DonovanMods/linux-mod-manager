@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steamworkshop"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/testutil"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -28,11 +31,31 @@ import (
 // steamworkshop source registered, so an uncurated row's prefilled source
 // map resolves. No network is reached: AddGame only asks the registry
 // whether the id exists.
+//
+// Built through testutil.WorkshopOptions, the one door
+// steamworkshop's own TestEveryTestOutsideThisPackageBuildsTheSourceThroughTheGuardedHelper
+// (#347) allows, which refuses an empty BaseURL - that would silently be
+// Valve's production Web API. The server it is pointed at fails the test if
+// anything asks it for anything, which is what "no network is reached"
+// above is worth asserting rather than claiming.
 func workshopDetectService(t *testing.T) *core.Service {
 	t.Helper()
 	svc := newGameDetectTestService(t)
-	svc.RegisterSource(steamworkshop.New(steamworkshop.Options{CacheDir: t.TempDir()}))
+	svc.RegisterSource(steamworkshop.New(testutil.WorkshopOptions(t, workshopDetectNoCallServer(t).URL)))
 	return svc
+}
+
+// workshopDetectNoCallServer stands in for Valve's Web API and fails the
+// test on any request: detection never fetches, it only asks the registry
+// whether the source id exists.
+func workshopDetectNoCallServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the detect flow reached the Steam Workshop API: %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 // workshopDetectScan is the shape the owner's machine produced: one curated
