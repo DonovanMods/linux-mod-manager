@@ -559,7 +559,17 @@ func (i *Installer) restoreOldFiles(oldCache *cache.Cache, game *domain.Game, ol
 		}
 		if err := i.linker.Undeploy(dstPath); err != nil {
 			errs = append(errs, fmt.Errorf("removing %s: %w", file, err))
+			continue
 		}
+		// #369, ruling (a) in the failure direction. This file is NEW-only:
+		// the replace deployed it over whatever was at the path, capturing
+		// the original first (replaceWithCaches' deploy loop). Removing it
+		// again is the same removal ruling (a) covers, so the original goes
+		// back here - after the Undeploy and only if it succeeded, exactly
+		// as Uninstall's own loop orders the pair. The oldSet branch above
+		// needs no release: it puts lmm's OWN file back at that path, so
+		// nothing lmm displaced there has been given up.
+		i.restoreReplacedOriginal(file, dstPath)
 	}
 
 	for j := len(removedOld) - 1; j >= 0; j-- {

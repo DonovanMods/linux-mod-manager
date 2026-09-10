@@ -937,6 +937,17 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   own report says `via: env` for the same reason: that IS the key it will
   send.
 
+- **A failed update puts back the stock file it displaced (#369).** When a
+  new version ships a file the old one did not, `lmm update` preserves
+  whatever the game had at that path before deploying over it. If the
+  update then failed part way — a file that would not link, a cancelled
+  run, a tracking write that would not land — the rollback removed lmm's
+  file again but left the preserved original in the store, so the path was
+  simply **empty** where the game's own file used to be. The rollback now
+  releases each such path the moment lmm's own file there is removed, the
+  same rule and the same ordering every other removal path already
+  follows — on all three link methods.
+
 - **An undeploy no longer deletes a file lmm did not put there (#350).**
   `Installer.Uninstall` undeployed every path the mod's CACHE ENTRY names,
   which is not the same as every path the mod actually put there — and the
