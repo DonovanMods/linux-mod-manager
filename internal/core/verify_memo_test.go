@@ -278,3 +278,27 @@ func assertExternalMissing(t *testing.T, result *core.VerifyResult, modID string
 	}
 	t.Fatalf("no finding for mod %q in %+v", modID, result.Findings)
 }
+
+// TestVerify_MemoMissDoesNotShareWhatItStores is #366, the miss-side twin of
+// TestVerify_MemoHitDoesNotShareItsFindingsSlice. The hit path hands out a
+// copy; the MISS path stored the very *VerifyResult it returned, so the
+// caller that RAN the verify held the memo's own entry - the whole struct,
+// not just the slice - and any mutation it made (a renderer sorting the
+// findings, a repair path annotating them, a caller stamping Cached) landed
+// in the next cached answer.
+func TestVerify_MemoMissDoesNotShareWhatItStores(t *testing.T) {
+	svc, game := newVerifyTestServiceWithFiles(t, 3)
+
+	first := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.False(t, first.Cached, "the first run is a real one")
+	require.NotEmpty(t, first.Findings)
+
+	// The caller that ran the verify writes to what it was handed.
+	first.Findings[0].Status = "clobbered"
+	first.Issues = 4242
+
+	hit := verifyOnce(t, svc, game, core.VerifyOptions{Tier: core.VerifyLocal})
+	require.True(t, hit.Cached, "nothing moved, so this is a memo hit")
+	assert.NotEqual(t, "clobbered", hit.Findings[0].Status, "the memo kept its own findings")
+	assert.NotEqual(t, 4242, hit.Issues, "and its own struct, not just the slice")
+}

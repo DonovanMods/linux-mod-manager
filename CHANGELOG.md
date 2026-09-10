@@ -824,6 +824,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A verify result handed to a caller is no longer the memo's own copy
+  (#366).** #336's memo cloned the result it served from a cache HIT, but
+  the MISS path filed the very `*VerifyResult` it returned — so the caller
+  that actually ran the verify shared the stored entry, whole struct
+  included, and anything it wrote there (a renderer sorting the findings, a
+  repair path annotating them) silently became the next cached answer. The
+  memo now stores a deep copy on the way in as well as serving one on the
+  way out.
+
 - **The web UI no longer re-runs a full verify on every hydrate (#336).**
   Mission Control hydrates on each route change, job completion and profile
   switch, and every one of those ran the full verify tier — a source round

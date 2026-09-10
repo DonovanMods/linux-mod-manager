@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -45,13 +46,33 @@ func (s *Service) verifyMemoLookup(key, fingerprint string) *VerifyResult {
 }
 
 // verifyMemoStore records result under key for this fingerprint.
+//
+// It stores a COPY (#366). The miss path used to file the very
+// *VerifyResult it was about to hand back, so the caller that ran the
+// verify shared the memo's entry - the whole struct, not just its slice -
+// and anything it wrote there (a renderer sorting the findings, a repair
+// path annotating them) became the next cached answer. The hit path
+// already copies on the way out; this is the same guarantee in the
+// other direction, and it costs one allocation per real run.
 func (s *Service) verifyMemoStore(key, fingerprint string, result *VerifyResult) {
 	s.verifyMemoMu.Lock()
 	defer s.verifyMemoMu.Unlock()
 	if s.verifyMemo == nil {
 		s.verifyMemo = map[string]verifyMemoEntry{}
 	}
-	s.verifyMemo[key] = verifyMemoEntry{fingerprint: fingerprint, result: result}
+	s.verifyMemo[key] = verifyMemoEntry{fingerprint: fingerprint, result: cloneVerifyResult(result)}
+}
+
+// cloneVerifyResult returns a VerifyResult that shares nothing with r.
+// Findings is the only reference-typed field on it, and VerifyFinding is
+// all scalars, so a struct copy plus one slice clone IS the deep copy.
+func cloneVerifyResult(r *VerifyResult) *VerifyResult {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	c.Findings = slices.Clone(r.Findings)
+	return &c
 }
 
 // dropVerifyMemo forgets every memoised verify answer. beginOp calls it, so
