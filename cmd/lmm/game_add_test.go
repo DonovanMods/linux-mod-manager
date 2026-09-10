@@ -679,6 +679,19 @@ func TestReportError_JSON_GameSpecError(t *testing.T) {
 // one installed app, and returns its install path. Detection tests must
 // never read the host's real library, so HOME and STEAM_ROOT are both
 // overridden (steam.FindSteamRoots reads exactly those two).
+// The uncurated-game stand-in for every test below that needs an installed
+// app with NO known-games entry. Fictional on purpose: these tests used to
+// borrow a real uncurated game (Satisfactory), so curating it (#406) turned
+// "an app lmm has never heard of" into "an app it has" - and five of them
+// failed with "no source is registered with that id", because the curated
+// entry's nexusmods prefill joined a service that only registers a fake.
+const (
+	uncuratedAppID = "9999990"
+	uncuratedName  = "Uncurated Example Game"
+	uncuratedDir   = "UncuratedExampleGame"
+	uncuratedSlug  = "uncurated-example-game"
+)
+
 func fakeSteamGame(t *testing.T, appID, name, installDir string) string {
 	t.Helper()
 	home := t.TempDir()
@@ -724,20 +737,20 @@ func TestDoGameAdd_FromDetected_KnownGameNeedsNothingElse(t *testing.T) {
 func TestDoGameAdd_FromDetected_UnknownGameWithExplicitSource(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
-	install := fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
-	gameAddFromDetected, gameAddSource, gameAddID = "526870", "acme-manual", "satisfactory"
+	install := fakeSteamGame(t, uncuratedAppID, uncuratedName, uncuratedDir)
+	gameAddFromDetected, gameAddSource, gameAddID = uncuratedAppID, "acme-manual", uncuratedSlug
 
 	cmd, _ := newGameAddCmd()
 	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
 
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
-	require.Contains(t, saved, "satisfactory")
-	g := saved["satisfactory"]
-	assert.Equal(t, "Satisfactory", g.Name)
+	require.Contains(t, saved, uncuratedSlug)
+	g := saved[uncuratedSlug]
+	assert.Equal(t, uncuratedName, g.Name)
 	assert.Equal(t, install, g.InstallPath)
 	assert.Equal(t, filepath.Join(install, "mods"), g.ModPath)
-	assert.Equal(t, map[string]string{"acme-manual": "satisfactory"}, g.SourceIDs)
+	assert.Equal(t, map[string]string{"acme-manual": uncuratedSlug}, g.SourceIDs)
 }
 
 // TestDoGameAdd_FromDetected_CatalogSearchesByGameName is the suggestion
@@ -749,24 +762,24 @@ func TestDoGameAdd_FromDetected_CatalogSearchesByGameName(t *testing.T) {
 	svc.RegisterSource(&mockGameAddCatalogSource{
 		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
 		entries: []source.GameEntry{
-			{ID: "1", Name: "Satisfactory Deluxe", Slug: "satisfactory-deluxe"},
-			{ID: "2", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+			{ID: "1", Name: "Uncurated Example Game Deluxe", Slug: "uncurated-example-game-deluxe"},
+			{ID: "2", Name: "Uncurated Example Game Redux", Slug: "uncurated-example-game-redux"},
 		},
 	})
-	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
-	gameAddFromDetected, gameAddSource = "526870", "acme"
+	fakeSteamGame(t, uncuratedAppID, uncuratedName, uncuratedDir)
+	gameAddFromDetected, gameAddSource = uncuratedAppID, "acme"
 
 	cmd, buf := newGameAddCmd()
 	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(strings.NewReader("1\n")), svc))
 
 	out := buf.String()
 	assert.Contains(t, out, "Found 2 game(s):")
-	assert.Contains(t, out, "Satisfactory Deluxe")
+	assert.Contains(t, out, "Uncurated Example Game Deluxe")
 
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
-	require.Contains(t, saved, "satisfactory")
-	assert.Equal(t, map[string]string{"acme": "1"}, saved["satisfactory"].SourceIDs)
+	require.Contains(t, saved, uncuratedSlug)
+	assert.Equal(t, map[string]string{"acme": "1"}, saved[uncuratedSlug].SourceIDs)
 }
 
 // TestDoGameAdd_FromDetected_CatalogSearchIsTheDocumentUnderJSON: with no
@@ -778,12 +791,12 @@ func TestDoGameAdd_FromDetected_CatalogSearchIsTheDocumentUnderJSON(t *testing.T
 	svc.RegisterSource(&mockGameAddCatalogSource{
 		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
 		entries: []source.GameEntry{
-			{ID: "1", Name: "Satisfactory Deluxe", Slug: "satisfactory-deluxe"},
-			{ID: "2", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+			{ID: "1", Name: "Uncurated Example Game Deluxe", Slug: "uncurated-example-game-deluxe"},
+			{ID: "2", Name: "Uncurated Example Game Redux", Slug: "uncurated-example-game-redux"},
 		},
 	})
-	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
-	gameAddFromDetected, gameAddSource = "526870", "acme"
+	fakeSteamGame(t, uncuratedAppID, uncuratedName, uncuratedDir)
+	gameAddFromDetected, gameAddSource = uncuratedAppID, "acme"
 	withJSONOutput(t)
 
 	cmd, _ := newGameAddCmd()
@@ -793,7 +806,7 @@ func TestDoGameAdd_FromDetected_CatalogSearchIsTheDocumentUnderJSON(t *testing.T
 
 	var report core.GameCatalogReport
 	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	assert.Equal(t, "Satisfactory", report.Query, "the search term is the detected game's own name")
+	assert.Equal(t, uncuratedName, report.Query, "the search term is the detected game's own name")
 	assert.Len(t, report.Matches, 2)
 
 	saved, err := config.LoadGames(configDir)
@@ -810,20 +823,20 @@ func TestDoGameAdd_FromDetected_CatalogExactNameIsTakenAutomatically(t *testing.
 	svc.RegisterSource(&mockGameAddCatalogSource{
 		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
 		entries: []source.GameEntry{
-			{ID: "77", Name: "Satisfactory", Slug: "satisfactory"},
-			{ID: "78", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+			{ID: "77", Name: uncuratedName, Slug: uncuratedSlug},
+			{ID: "78", Name: "Uncurated Example Game Redux", Slug: "uncurated-example-game-redux"},
 		},
 	})
-	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
-	gameAddFromDetected, gameAddSource = "526870", "acme"
+	fakeSteamGame(t, uncuratedAppID, uncuratedName, uncuratedDir)
+	gameAddFromDetected, gameAddSource = uncuratedAppID, "acme"
 
 	cmd, _ := newGameAddCmd()
 	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
 
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
-	require.Contains(t, saved, "satisfactory", "the detected game's own slug outranks the catalog entry's")
-	assert.Equal(t, map[string]string{"acme": "77"}, saved["satisfactory"].SourceIDs)
+	require.Contains(t, saved, uncuratedSlug, "the detected game's own slug outranks the catalog entry's")
+	assert.Equal(t, map[string]string{"acme": "77"}, saved[uncuratedSlug].SourceIDs)
 }
 
 // TestDoGameAdd_FromDetected_PickChoosesAmongMatches: --pick resolves the
@@ -833,20 +846,20 @@ func TestDoGameAdd_FromDetected_PickChoosesAmongMatches(t *testing.T) {
 	svc.RegisterSource(&mockGameAddCatalogSource{
 		mockGameAddSource: mockGameAddSource{id: "acme", name: "Acme"},
 		entries: []source.GameEntry{
-			{ID: "1", Name: "Satisfactory Deluxe", Slug: "satisfactory-deluxe"},
-			{ID: "2", Name: "Satisfactory Redux", Slug: "satisfactory-redux"},
+			{ID: "1", Name: "Uncurated Example Game Deluxe", Slug: "uncurated-example-game-deluxe"},
+			{ID: "2", Name: "Uncurated Example Game Redux", Slug: "uncurated-example-game-redux"},
 		},
 	})
-	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
-	gameAddFromDetected, gameAddSource, gameAddPick = "526870", "acme", 2
+	fakeSteamGame(t, uncuratedAppID, uncuratedName, uncuratedDir)
+	gameAddFromDetected, gameAddSource, gameAddPick = uncuratedAppID, "acme", 2
 
 	cmd, _ := newGameAddCmd()
 	require.NoError(t, doGameAdd(context.Background(), cmd, bufio.NewReader(poisonReader{t: t}), svc))
 
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
-	require.Contains(t, saved, "satisfactory")
-	assert.Equal(t, map[string]string{"acme": "2"}, saved["satisfactory"].SourceIDs)
+	require.Contains(t, saved, uncuratedSlug)
+	assert.Equal(t, map[string]string{"acme": "2"}, saved[uncuratedSlug].SourceIDs)
 }
 
 // TestDoGameAdd_FromDetected_OverridesWin: every existing flag still beats
@@ -854,10 +867,10 @@ func TestDoGameAdd_FromDetected_PickChoosesAmongMatches(t *testing.T) {
 func TestDoGameAdd_FromDetected_OverridesWin(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
-	install := fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	install := fakeSteamGame(t, uncuratedAppID, uncuratedName, uncuratedDir)
 	otherInstall, mods := t.TempDir(), t.TempDir()
-	gameAddFromDetected, gameAddSource, gameAddID = "526870", "acme-manual", "sf"
-	gameAddName, gameAddGameID = "My Satisfactory", "sf-modded"
+	gameAddFromDetected, gameAddSource, gameAddID = uncuratedAppID, "acme-manual", "sf"
+	gameAddName, gameAddGameID = "My Renamed Game", "renamed-game"
 	gameAddPath, gameAddModPath = otherInstall, mods
 
 	cmd, _ := newGameAddCmd()
@@ -865,9 +878,9 @@ func TestDoGameAdd_FromDetected_OverridesWin(t *testing.T) {
 
 	saved, err := config.LoadGames(configDir)
 	require.NoError(t, err)
-	require.Contains(t, saved, "sf-modded")
-	g := saved["sf-modded"]
-	assert.Equal(t, "My Satisfactory", g.Name)
+	require.Contains(t, saved, "renamed-game")
+	g := saved["renamed-game"]
+	assert.Equal(t, "My Renamed Game", g.Name)
 	assert.Equal(t, otherInstall, g.InstallPath)
 	assert.NotEqual(t, install, g.InstallPath)
 	assert.Equal(t, mods, g.ModPath)
@@ -878,7 +891,7 @@ func TestDoGameAdd_FromDetected_OverridesWin(t *testing.T) {
 func TestDoGameAdd_FromDetected_UnknownAppID(t *testing.T) {
 	svc := setupGameAddTest(t)
 	svc.RegisterSource(&mockGameAddSource{id: "acme-manual", name: "Acme Manual"})
-	fakeSteamGame(t, "526870", "Satisfactory", "Satisfactory")
+	fakeSteamGame(t, uncuratedAppID, uncuratedName, uncuratedDir)
 	gameAddFromDetected = "999999"
 
 	cmd, _ := newGameAddCmd()
