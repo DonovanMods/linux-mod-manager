@@ -227,6 +227,30 @@ func TestList_ShowsTheExternalMarkerAndADateNotAContentID(t *testing.T) {
 	assert.NotContains(t, out, "7987119735124793734")
 }
 
+// TestList_ExternalRowsReportNoLinkMethodOrDeployedFlag is #392: `lmm list
+// -v` rendered METHOD symlink and DEPLOYED yes for a row marked EXTERNAL,
+// but lmm never deploys or links one - it tracks the item where Steam put
+// it, and `import --workshop`'s own preamble says so. METHOD reads "-", like
+// LOCKED and CONVERT already do for a row the column does not apply to, and
+// DEPLOYED names who actually has it there.
+func TestList_ExternalRowsReportNoLinkMethodOrDeployedFlag(t *testing.T) {
+	svc, game, _, _ := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+
+	out := listVerbose(t, svc, game, false)
+
+	var externalRow string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "EXTERNAL") && !strings.Contains(line, "--------") {
+			externalRow = line
+		}
+	}
+	require.NotEmpty(t, externalRow, "the fixture must produce an EXTERNAL row")
+	assert.NotContains(t, externalRow, "symlink", "lmm links nothing for an external mod")
+	assert.Contains(t, externalRow, "Steam", "DEPLOYED names who has the files there")
+}
+
 func TestList_ExternalJSONGolden(t *testing.T) {
 	svc, game, _, steamDir := setupWorkshopCLI(t)
 	withWorkshopImportFlags(t, false, true)

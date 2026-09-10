@@ -166,6 +166,16 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 			if !mod.Deployed {
 				deployed = "no"
 			}
+			// #269/#392: lmm never links or deploys an external mod - it
+			// tracks the item where Steam put it, which `import --workshop`
+			// says in its own preamble. METHOD reads "-", the same way
+			// LOCKED and CONVERT already do for a column that does not apply
+			// to a row, and DEPLOYED names who does have the files there.
+			linkMethod := mod.LinkMethod.String()
+			if mod.External {
+				linkMethod = "-"
+				deployed = "Steam"
+			}
 			sourceDisplay := mod.SourceID
 			if mod.SourceID == domain.SourceLocal {
 				sourceDisplay = "(local)"
@@ -191,7 +201,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 					convert = "off"
 				}
 			}
-			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), version, truncate(author, 20), sourceDisplay, enabled, deployed, mod.LinkMethod.String(), policyToString(mod.UpdatePolicy), locked, convert)
+			row = fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), version, truncate(author, 20), sourceDisplay, enabled, deployed, linkMethod, policyToString(mod.UpdatePolicy), locked, convert)
 		} else {
 			row = fmt.Sprintf("%s\t%s\t%s\t%s", mod.ID, truncate(mod.Name, 40), version, truncate(author, 20))
 			if offState > 0 {

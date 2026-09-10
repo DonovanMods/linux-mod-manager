@@ -957,6 +957,11 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **`lmm list -v` no longer reports a link method for a Steam Workshop item
+  (#392).** External rows showed `METHOD symlink` and `DEPLOYED yes`, but lmm
+  never links or deploys one — it tracks the item where Steam put it. METHOD
+  reads `-`, matching LOCKED and CONVERT, and DEPLOYED reads `Steam`.
+
 - **A restore's counts add up, and it says what it left behind (#386).**
   `snapshot restore --dry-run` headed its list with "Will restore 3 mod(s)"
   and then printed five bullets — the count excluded the Steam Workshop items
