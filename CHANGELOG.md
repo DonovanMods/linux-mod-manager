@@ -957,6 +957,11 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **`lmm import --workshop` no longer reads as a failure and a success for
+  the same item (#393).** An item Steam could not describe printed
+  `! <name>: Steam does not describe this item…` and then `✓ <name>` on the
+  next line. The caveat is now folded into the outcome line it qualifies.
+
 - **`lmm list -v` no longer reports a link method for a Steam Workshop item
   (#392).** External rows showed `METHOD symlink` and `DEPLOYED yes`, but lmm
   never links or deploys one — it tracks the item where Steam put it. METHOD

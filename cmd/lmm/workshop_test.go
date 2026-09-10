@@ -227,6 +227,26 @@ func TestList_ShowsTheExternalMarkerAndADateNotAContentID(t *testing.T) {
 	assert.NotContains(t, out, "7987119735124793734")
 }
 
+// TestImportWorkshop_UnavailableItemReadsAsOneOutcome is #393: an item Steam
+// could not describe printed two adjacent lines - "! <name>: Steam does not
+// describe this item…" and then "✓ <name>" - which read as "failed", then
+// "succeeded", for one item that in fact succeeded. The caveat belongs on the
+// success line.
+func TestImportWorkshop_UnavailableItemReadsAsOneOutcome(t *testing.T) {
+	svc, game, src, _ := setupWorkshopCLI(t)
+	src.describe = nil // Steam describes nothing: every item is Unavailable
+	withWorkshopImportFlags(t, false, true)
+
+	out := captureStdout(t, func() error {
+		return runImportWorkshop(context.Background(), svc, game, "default")
+	})
+
+	assert.NotContains(t, out, "  ! ", "the caveat must not be its own line above the success")
+	assert.Contains(t, out, "  ✓ Workshop item 3617086610 (not described)",
+		"one line, saying both what happened and what lmm could not learn")
+	assert.Contains(t, out, "Tracked: 1")
+}
+
 // TestList_ExternalRowsReportNoLinkMethodOrDeployedFlag is #392: `lmm list
 // -v` rendered METHOD symlink and DEPLOYED yes for a row marked EXTERNAL,
 // but lmm never deploys or links one - it tracks the item where Steam put
