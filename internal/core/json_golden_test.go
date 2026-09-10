@@ -1494,6 +1494,25 @@ func TestJSONGoldens(t *testing.T) {
 				Warnings: []string{"steam library /mnt/games could not be read"},
 			},
 		},
+		{
+			// #350's originals-store manifest row, which is also what
+			// every snapshot document carries as "the originals in
+			// force". The deploy shape (a mod identity beside the op) -
+			// a profile override's row carries the same keys with
+			// source_id/mod_id omitted.
+			"original_file",
+			core.OriginalFile{
+				Root:         core.OriginalRootModPath,
+				RelativePath: "Data/shipped.esp",
+				SHA256:       "3f786850e387550fdab836ed7e6dc881de23001b1b4bd0e0e2a4a9d1d8d1a1f1",
+				Size:         4096,
+				CapturedAt:   fixedTime,
+				Op:           core.OriginalOpDeploy,
+				SourceID:     "nexusmods",
+				ModID:        "42",
+				Profile:      "default",
+			},
+		},
 	}
 
 	seen := make(map[string]bool, len(tests))

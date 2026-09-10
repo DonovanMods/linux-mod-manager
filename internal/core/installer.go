@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -21,6 +22,15 @@ type Installer struct {
 	linker linker.Linker
 	db     *db.DB // Optional: enables file tracking for conflict detection
 	log    *slog.Logger
+
+	// originals is #350's originals store, set by
+	// Service.getInstallerForProfile. Nil disables capture entirely, which
+	// is what keeps the white-box tests that build an Installer directly
+	// working unchanged. Every deploy in the product funnels through this
+	// type, which is why ONE field here covers the accepted-Overwrite
+	// install, the archive import and a compile game's merged artifact
+	// alike - see internal/core/originals.go's package comment.
+	originals *originalsStore
 }
 
 // NewInstaller creates a new installer
@@ -41,6 +51,52 @@ func (i *Installer) SetLogger(l *slog.Logger) {
 		l = slog.New(slog.DiscardHandler)
 	}
 	i.log = l
+}
+
+// setOriginals wires the originals store this Installer captures into
+// (#350). Unexported: an Installer is a core primitive, and the store is
+// resolved from the Service's data directory, never by a caller.
+func (i *Installer) setOriginals(store *originalsStore) { i.originals = store }
+
+// captureOriginal preserves whatever is at dstPath before a deploy
+// replaces it, when that file is one lmm does not own.
+//
+// "Does not own" is three cheap tests in order of cost: the destination
+// must exist (Lstat), it must be a REGULAR file (a symlink is lmm's own
+// deployment, or another manager's link - never stock content), and the
+// deployed_files table must not already attribute it to a mod in this
+// game and profile. The DB query only ever runs for a destination that is
+// already a real file, which on a normal deploy is nothing at all, so this
+// costs a stat per file and no more.
+//
+// A capture failure is logged at Warn and does NOT fail the deploy: a
+// backup that blocks the operation it exists to protect is worse than no
+// backup, and Warn reaches the user rather than vanishing into Debug.
+func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string, mod *domain.Mod) {
+	if i.originals == nil {
+		return
+	}
+	info, err := os.Lstat(dstPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	if i.db != nil {
+		owner, err := i.db.GetFileOwner(ctx, game.ID, profileName, relPath)
+		if err == nil && owner != nil {
+			return
+		}
+	}
+	row := OriginalFile{
+		Root: OriginalRootModPath, RelativePath: filepath.ToSlash(relPath),
+		Op: OriginalOpDeploy, Profile: profileName,
+	}
+	if mod != nil {
+		row.SourceID, row.ModID = mod.SourceID, mod.ID
+	}
+	if err := i.originals.capture(row, dstPath); err != nil {
+		i.log.Warn("could not preserve the file this deploy replaces; it will not be restorable from a snapshot",
+			"path", dstPath, "err", err)
+	}
 }
 
 // Install deploys a mod to the game directory. If DB tracking is enabled and a
@@ -69,6 +125,9 @@ func (i *Installer) Install(ctx context.Context, game *domain.Game, mod *domain.
 
 		srcPath := i.cache.GetFilePath(game.ID, mod.SourceID, mod.ID, mod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
+
+		// #350: preserve whatever is there before the deploy replaces it.
+		i.captureOriginal(ctx, game, profileName, file, dstPath, mod)
 
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			rollbackErr := rollbackDeploy(i.linker, game.ModPath, deployed)
@@ -230,6 +289,12 @@ func (i *Installer) replaceWithCaches(ctx context.Context, game *domain.Game, ol
 
 		srcPath := newCache.GetFilePath(game.ID, newMod.SourceID, newMod.ID, newMod.Version, file)
 		dstPath := filepath.Join(game.ModPath, file)
+		// #350: a replace can also land on a file lmm does not own - a
+		// new version whose file list grew into stock content. The
+		// obsolete-file loop above only ever removes paths the OLD
+		// deployment owned, and restoreOldFiles only ever puts lmm's own
+		// files back, so neither of those needs a capture.
+		i.captureOriginal(ctx, game, profileName, file, dstPath, newMod)
 		if err := i.linker.Deploy(srcPath, dstPath); err != nil {
 			cleanupErr := i.linker.Undeploy(dstPath)
 			rollbackFiles := append(append([]string(nil), replacedOrAdded...), file)

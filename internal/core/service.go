@@ -1704,6 +1704,9 @@ func (s *Service) getInstallerForProfile(ctx context.Context, game *domain.Game,
 func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *Installer {
 	installer := NewInstaller(s.GetGameCache(game), lnk, s.db)
 	installer.SetLogger(s.log)
+	// #350: every Installer this Service hands out captures into the
+	// game's originals store, so no flow has to remember to ask for it.
+	installer.setOriginals(s.originalsStoreFor(game.ID))
 	return installer
 }
 

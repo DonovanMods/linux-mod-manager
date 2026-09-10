@@ -74,7 +74,7 @@ const (
 	// DeployWarning fires wherever DeployProfile appends an entry to
 	// DeployResult.Warnings other than a DeployBeforeAllForced one: a
 	// failed install.after_each hook (ModName/ModID set), a failed
-	// install.after_all hook, or a failed ApplyProfileOverrides (neither
+	// install.after_all hook, or a failed applyProfileOverrides (neither
 	// has a mod in scope). The pre-extraction CLI printed the overrides
 	// warning immediately once computed, then its batched hook warnings
 	// (after_each in mod order, then after_all) right after - so

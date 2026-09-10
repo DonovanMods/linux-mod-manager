@@ -814,7 +814,7 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 	}
 
 	if profile, err := config.LoadProfile(s.configDir, game.ID, profileName); err == nil && len(profile.Overrides) > 0 {
-		if err := ApplyProfileOverrides(game, profile); err != nil {
+		if err := applyProfileOverrides(game, profile, s.originalsStoreFor(game.ID)); err != nil {
 			msg := fmt.Sprintf("applying profile overrides: %v", err)
 			result.Warnings = append(result.Warnings, msg)
 			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})

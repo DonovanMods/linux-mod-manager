@@ -849,7 +849,7 @@ exit 1`)
 
 // TestService_DeployProfile_AppliesProfileOverrides guards the final step of
 // doDeploy: profile.Overrides (INI tweaks etc.) are written into the game's
-// install directory via core.ApplyProfileOverrides after the deploy loop.
+// install directory via applyProfileOverrides after the deploy loop.
 func TestService_DeployProfile_AppliesProfileOverrides(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -1445,7 +1445,7 @@ func TestService_DeployProfile_OverridesWarningEmittedBeforeDeferredHookWarnings
 
 	profile, err := svc.NewProfileManager().Get(context.Background(), "g1", "default")
 	require.NoError(t, err)
-	// An absolute override path is rejected by ApplyProfileOverrides
+	// An absolute override path is rejected by applyProfileOverrides
 	// deterministically, with no filesystem trickery required.
 	profile.Overrides = map[string][]byte{"/etc/passwd": []byte("x")}
 	require.NoError(t, config.SaveProfile(svc.ConfigDir(), profile))
