@@ -150,13 +150,17 @@ lmm ships one adapter today; the ones that follow are added in the same
 tree, so `lmm game list` always names what this build actually has:
 
 ```bash
-lmm game list        # the ADAPTER column shows each game's
+lmm game list                           # the ADAPTER column names each game's
 lmm game add --adapter <name> ...
 lmm game edit <game> --adapter <name>   # "" clears it back to generic-files
 ```
 
-An adapter name this build does not ship is a load-time refusal naming the
-ones it does, rather than a silent downgrade to the default.
+An adapter name this build does not ship is refused, naming the ones it
+does, rather than silently downgraded to the default: `game add` and `game
+edit` refuse it as you type it, and a name already in `games.yaml` is
+refused when lmm resolves that game. Only the NAME's syntax is checked when
+`games.yaml` loads, so an unknown-but-well-formed name still lets every
+other game work.
 
 #### `adapter` and `deploy_mode: compile`
 
@@ -170,8 +174,10 @@ property of the *game*, which is what an adapter is for. So:
 - A game with `deploy_mode: compile` and no `adapter:` key keeps working
   with no change on your part; lmm derives the compiling adapter for it.
 - An explicit `adapter:` always wins over that derivation.
-- `deploy_mode: compile` together with an adapter that cannot compile is a
-  load-time error naming both keys.
+- An EXPLICIT `adapter:` that cannot compile, together with `deploy_mode:
+  compile`, is refused when lmm resolves the game, naming both keys. The
+  derivation above is never refused this way - it only ever picks an
+  adapter that can compile.
 - Nothing is rewritten when lmm saves `games.yaml`: a file you did not edit
   is written back as it was read.
 

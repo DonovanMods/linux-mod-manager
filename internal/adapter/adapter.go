@@ -23,9 +23,10 @@
 // internal/source already proves with CapabilityReporter, MergeCompiler and
 // WorkshopScanner - so no adapter pays for a capability it does not have
 // and core never imports a concrete adapter. Dispatch goes through this
-// package's nil-safe helpers (Normalize, Route, CheckPreconditions, Verify,
-// Guidance, Compiler), which is what lets a core seam be one unconditional
-// call instead of a type switch.
+// package's nil-safe helpers (Route, CheckPreconditions, Verify, Guidance,
+// Compiler), which is what lets a core seam be one unconditional call
+// instead of a type switch. NormalizeArchive needs no such helper: it is a
+// required method, so every adapter answers it.
 package adapter
 
 import (
@@ -37,7 +38,8 @@ import (
 )
 
 // GenericID is the adapter every game gets when games.yaml says nothing:
-// the identity, implemented by internal/adapter/generic. It is the config
+// the identity, implemented by Generic in this package (see identity.go
+// for why it does not live in a subpackage of its own). It is the config
 // spelling as well as the registry key, so an explicit `adapter:
 // generic-files` and an absent key resolve to the same adapter.
 const GenericID = "generic-files"
