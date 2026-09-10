@@ -238,6 +238,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **BepInEx plugin archives deploy correctly (#358).** BepInEx installs into
+  the game root, which lmm already expresses by pointing a game's
+  `mod_path` at its own `install_path` (the same absolute path twice — not
+  `mod_path: ""`, which is joined verbatim and deploys into whatever
+  directory lmm was run from). With that, the common plugin archive —
+  `BepInEx/plugins/Foo.dll` — deploys through the existing linker with no
+  new deploy rule at all. What lmm now does at ingest is normalise the
+  other real shapes: a package wrapped in a single directory
+  (`BepInExPack/BepInEx/…`) has that directory stripped, a BepInEx-relative
+  archive (a bare `plugins/`, `patchers/`, `monomod/` or `config/` root)
+  gains its `BepInEx/` prefix, a loose root `.dll` becomes
+  `BepInEx/plugins/<ModName>/`, and the `manifest.json`, `icon.png`,
+  `README.md` and `CHANGELOG.md` every Thunderstore package carries at its
+  root are dropped instead of being scattered into your game directory. An
+  archive that is BepInEx **itself** (it installs `BepInEx/core/`) is
+  refused as a mod, with the message that names the loader setup — the
+  loader is a per-game prerequisite that must survive a profile switch, not
+  a profile member. A layout lmm cannot place is reported, never guessed at.
+
+  The `BepInEx/` and wrapped shapes are recognised for any game, because an
+  archive that names the directory `BepInEx` is not plausibly anything else.
+  The two ambiguous shapes — a bare `plugins/` root and a bare `.dll` — need
+  the game to declare a loader (`--loader bepinex`, #359), so a mod for
+  another game rooted at `plugins/` keeps deploying exactly where it always
+  did.
+
+- **A mod's `BepInEx/config/**` files are seeded, not linked (#358).**
+  BepInEx writes its plugin configs on first run and you hand-edit them
+  afterwards, so a mod that ships one is offering a default. Those files are
+  now written into the game directory as **real files, copied only when
+  nothing is there already** — the same treatment a profile's own config
+  overrides get. Your edits are never overwritten by a later deploy, never
+  written back into the mod cache (where the next download would destroy
+  them and every profile sharing the entry would inherit them), and never
+  removed by an uninstall. Everything that is not config still deploys
+  through the game's link method.
+
 - **`POST /api/v1/jobs` now answers `id`, matching the rest of the job API
   (#400).** Starting a job answered `{"job_id"}` while `GET /api/v1/jobs`
   and `GET /api/v1/jobs/{id}` answered `{"id"}` — the same entity under two
