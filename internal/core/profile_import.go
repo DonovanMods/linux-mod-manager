@@ -41,10 +41,25 @@ type ImportPlan struct {
 	// installed at a DIFFERENT version than the imported profile records,
 	// scheduled for reinstall at the profile's version (downgrades included;
 	// each such ref also records the row being converged away from in
-	// priorVersions - only when that row belongs to THIS profile, since an
-	// import must never remove another profile's deployed files). Missing
-	// holds mods with no DB row anywhere. All four preserve profile.Mods'
-	// own order.
+	// priorVersions, whether that row belongs to THIS profile or to another
+	// one). Missing holds mods with no DB row anywhere. All four preserve
+	// profile.Mods' own order.
+	//
+	// The rule for a cross-profile drift entry, settled and implemented
+	// (P1a review F7 - this doc comment used to claim the opposite of the
+	// code): the deployed tree is GAME-GLOBAL, one directory shared by every
+	// profile, so a live older deployment of the very mod being installed is
+	// Replaced - its obsolete files removed - rather than installed
+	// alongside. Leaving them would put two versions of one mod in the game
+	// directory at once, which is the state Replace exists to prevent.
+	//
+	// Known consequence, not yet addressed: the OTHER profile's own
+	// installed_mods row still reads deployed = true over files this import
+	// removed, so `lmm verify` reports drift against a profile the user did
+	// not touch. Converging that row is a separate change (it is the same
+	// game-global-tree bookkeeping gap `profile switch` has), and reporting
+	// drift is a strictly better failure than silently serving a mixed
+	// deployment.
 	Installed       []domain.ModReference `json:"installed"`
 	AlreadyCached   []domain.ModReference `json:"already_cached"`
 	NeedsRedownload []domain.ModReference `json:"needs_redownload"`
