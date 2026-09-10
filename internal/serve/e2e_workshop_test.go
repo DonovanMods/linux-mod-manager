@@ -10,6 +10,8 @@ package serve_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -599,5 +601,97 @@ func TestE2E_Workshop_BatchUpdateExcludesTheExternalRow(t *testing.T) {
 		"a selection of external rows alone offers no update to apply")
 	assert.Equal(t, "Update 1 mod", title,
 		"the mixed selection plans only the row lmm can actually update")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// --- #368: the detect list's own Workshop surfaces ---
+
+// e2eWorkshopDetectFixture is a fake Steam root holding ONE uncurated app
+// with a populated appworkshop manifest - the shape #368 is about: nothing
+// in lmm's known-games list covers it, and the items Steam already
+// downloaded are the only thing saying it is moddable.
+type e2eWorkshopDetectFixture struct {
+	AppID string
+	Name  string
+	Slug  string
+}
+
+func writeE2EWorkshopDetectFixture(t *testing.T, configDir string) e2eWorkshopDetectFixture {
+	t.Helper()
+	const (
+		appID      = "1133870"
+		name       = "E2E Workshop Game"
+		installDir = "E2EWorkshopGame"
+		slug       = "e2e-workshop-game"
+	)
+	steamRoot := t.TempDir()
+	writeSteamAppManifest(t, steamRoot, appID, installDir, name)
+	t.Setenv("STEAM_ROOT", steamRoot)
+
+	workshop := filepath.Join(steamRoot, "steamapps", "workshop")
+	require.NoError(t, os.MkdirAll(workshop, 0o755))
+	acf := "\"AppWorkshop\"\n{\n\t\"appid\"\t\t\"" + appID + "\"\n\t\"WorkshopItemsInstalled\"\n\t{\n" +
+		"\t\t\"" + e2eWorkshopFileID + "\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"" + e2eWorkshopManifest + "\"\n\t\t}\n" +
+		"\t\t\"3512001122\"\n\t\t{\n\t\t\t\"manifest\"\t\t\"1122334455667788990\"\n\t\t}\n\t}\n}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(workshop, "appworkshop_"+appID+".acf"), []byte(acf), 0o644))
+
+	// An empty known-games override, so the embedded default list cannot
+	// claim this app id and turn the row curated.
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, "steam-games.yaml"), []byte("{}\n"), 0o644))
+	return e2eWorkshopDetectFixture{AppID: appID, Name: name, Slug: slug}
+}
+
+// TestE2E_FirstRunDetect_WorkshopBearingUncuratedGameIsListedAndAddable is
+// #368's web half, executed in a browser: the first-run detect list shows a
+// game whose only claim to being moddable is its Steam Workshop items - it
+// used to be filtered out entirely - says how many there are, and adds it
+// through the existing "Add with details…" prefill path with no source to
+// pick, because detection already mapped one.
+func TestE2E_FirstRunDetect_WorkshopBearingUncuratedGameIsListedAndAddable(t *testing.T) {
+	f := newE2EFixtureNoGames(t)
+	fixture := writeE2EWorkshopDetectFixture(t, f.Svc.ConfigDir())
+	// AddGame validates every id in the prefilled map against the registry.
+	f.Svc.RegisterSource(newFakeSource(e2eWorkshopSourceID))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.BaseURL+"/"),
+		chromedp.WaitVisible(`[data-testid="first-run-setup"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.setup-detect__row`, chromedp.ByQuery),
+	)
+
+	var rowCount int
+	var rowText string
+	f.runInBrowser(t,
+		chromedp.Evaluate(`document.querySelectorAll('.setup-detect__row').length`, &rowCount),
+		textContent(`.setup-detect__row`, &rowText),
+	)
+	require.Equal(t, 1, rowCount)
+	assert.Contains(t, rowText, fixture.Name)
+	assert.Contains(t, rowText, "Steam Workshop: 2 items",
+		"the count is what tells the user which row Workshop tracking is for")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-with-details"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-add-prefilled-sources"]`, chromedp.ByQuery),
+	)
+
+	var note string
+	f.runInBrowser(t, textContent(`[data-testid="setup-add-prefilled-sources"]`, &note))
+	assert.Contains(t, note, e2eWorkshopSourceID+": "+fixture.AppID)
+
+	var submitDisabled bool
+	f.runInBrowser(t, chromedp.Evaluate(`document.querySelector('[data-action="add-game"]').disabled`, &submitDisabled))
+	require.False(t, submitDisabled,
+		"detection already mapped a source, so there is nothing left to pick")
+
+	f.runInBrowser(t,
+		chromedp.Click(`[data-action="add-game"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-hydrated="true"].mission-control`, chromedp.ByQuery),
+	)
+
+	got, err := f.Svc.GetGame(fixture.Slug)
+	require.NoError(t, err)
+	assert.Equal(t, fixture.Name, got.Name)
+	assert.Equal(t, map[string]string{e2eWorkshopSourceID: fixture.AppID}, got.SourceIDs)
 	assert.Empty(t, f.BrowserErrors())
 }

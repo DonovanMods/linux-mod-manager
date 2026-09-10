@@ -844,6 +844,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--include-unknown` / `?all=1` still adds everything else. A
   `--no-workshop` scan lists exactly what it always did.
 
+  In the web UI, every detect row with Workshop items shows
+  `Steam Workshop: N items`, and an uncurated one can be added straight
+  through **Add with details…** with no source to pick — detection already
+  mapped `steamworkshop`, and being asked to choose one anyway meant
+  overruling a mapping that was already right.
+
 - **`lmm game detect`'s prompt accepts every row it prints (#368).** The
   uncurated rows were listed unnumbered with a hint to copy their Steam app
   id, and then the prompt read `[1-2/all/none]` and rejected that app id:

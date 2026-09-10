@@ -2605,6 +2605,18 @@ select {
   font-size: 0.85em;
 }
 
+/* Issue 368: the Workshop item count, beside the row it justifies. It must
+   never be the thing that truncates - it is the shortest and the most
+   load-bearing part of the row - so it keeps its natural width and the
+   path above goes on absorbing the overflow. Muted, like the path: it is
+   context for the name, not a second title. */
+.setup-detect__workshop {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 .setup-add {
   display: flex;
   flex-direction: column;
