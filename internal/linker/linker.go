@@ -60,6 +60,16 @@ func New(method domain.LinkMethod) Linker {
 // only, so the old sweep's fixpoint removed it too. (That was NOT true
 // before the symlink guard above - the far side of a symlink is not under
 // basePath, and filepath.Walk, which Lstats, never descended into one.)
+//
+// Strictly smaller cuts both ways, deliberately. lmm has several other
+// places that remove deployed files and have never called this - core's
+// convergeDeployedFiles, replaceWithCaches' obsolete-file loop,
+// restoreOldFiles/rollbackDeploy and the snapshot restore - and the old
+// whole-tree sweep used to tidy their leftovers away as a side effect of
+// the next unrelated uninstall or purge. It does not any more, so an empty
+// directory one of those leaves behind now persists. That is the trade:
+// leaving a stray empty directory is cosmetic, and removing a directory
+// the game shipped is not.
 func CleanupEmptyDirs(basePath string, removedFiles []string) {
 	if basePath == "" {
 		return
