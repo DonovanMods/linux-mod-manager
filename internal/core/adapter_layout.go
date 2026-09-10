@@ -61,7 +61,7 @@ func rewriteExtractedTree(root string, layout adapter.Layout, members []string) 
 	// a table that cannot be executed - colliding destinations, a chain, an
 	// escaping path - is refused with the staging tree untouched rather
 	// than half-applied.
-	if err := validateLayoutTable(layout, members, caseInsensitiveRoot(root, members)); err != nil {
+	if err := validateLayoutTable(root, layout, members, caseInsensitiveRoot(root, members)); err != nil {
 		return nil, err
 	}
 	kept := make([]string, 0, len(members))
@@ -127,9 +127,17 @@ func rewritePlannedPaths(layout adapter.Layout, paths []string) []string {
 	return slices.Compact(out)
 }
 
-// containedIn refuses a rewritten member that would land outside the cache
-// entry, naming the member that asked for it.
-func containedIn(kind, member, rel string) error {
+// containedIn refuses a rewritten member that would land outside root,
+// naming the member that asked for it.
+//
+// The lexical half (an absolute path, a leading "..") is not enough:
+// os.MkdirAll and os.Rename both FOLLOW symlinks, so a destination routed
+// through a link already in the staging tree - and an archive can carry
+// one, this is not only an adapter's doing - escapes the cache entry
+// without a single ".." in its path. So the destination's existing ancestry
+// is resolved with filepath.EvalSymlinks and re-checked, which is the
+// stronger guarantee the extractor's own sanitizePath already gives.
+func containedIn(root, kind, member, rel string) error {
 	refuse := func(reason string) error {
 		return &AdapterLayoutError{Kind: kind, Reason: reason, Dest: rel, Members: []string{member}}
 	}
@@ -140,7 +148,51 @@ func containedIn(kind, member, rel string) error {
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return refuse("destination escaping the cache entry")
 	}
+	ok, err := resolvesWithin(root, filepath.Dir(cleaned))
+	if err != nil {
+		return fmt.Errorf("resolving destination %q: %w", rel, err)
+	}
+	if !ok {
+		return refuse("destination escaping the cache entry through a symlink")
+	}
 	return nil
+}
+
+// resolvesWithin reports whether dir - a root-relative directory path that
+// need not exist yet - resolves to a location inside root once every
+// symlink in its EXISTING prefix is followed.
+//
+// Only the existing prefix can be resolved, because the rest is what
+// os.MkdirAll is about to create; anything MkdirAll creates lands inside
+// that prefix by construction, so resolving it is sufficient. The
+// destination's own final component is deliberately not resolved: os.Rename
+// replaces a symlink at the destination rather than writing through it.
+func resolvesWithin(root, dir string) (bool, error) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, err
+	}
+	current := realRoot
+	if dir != "." {
+		for _, part := range strings.Split(dir, string(filepath.Separator)) {
+			next := filepath.Join(current, part)
+			if _, lerr := os.Lstat(next); lerr != nil {
+				// The rest does not exist; MkdirAll will create it under
+				// current, which is already resolved.
+				break
+			}
+			resolved, rerr := filepath.EvalSymlinks(next)
+			if rerr != nil {
+				return false, rerr
+			}
+			current = resolved
+		}
+	}
+	within, err := filepath.Rel(realRoot, current)
+	if err != nil {
+		return false, err
+	}
+	return within == "." || (within != ".." && !strings.HasPrefix(within, ".."+string(filepath.Separator))), nil
 }
 
 // routeDeployables drops from files every member the game's adapter routes
@@ -281,7 +333,7 @@ func (e *AdapterLayoutError) Error() string {
 // Containment is checked here as well, for the same reason: an escaping
 // destination discovered halfway down the table would otherwise leave the
 // members before it already moved.
-func validateLayoutTable(layout adapter.Layout, members []string, caseInsensitive bool) error {
+func validateLayoutTable(root string, layout adapter.Layout, members []string, caseInsensitive bool) error {
 	sources := make(map[string]bool, len(members))
 	for _, m := range members {
 		sources[m] = true
@@ -295,7 +347,7 @@ func validateLayoutTable(layout adapter.Layout, members []string, caseInsensitiv
 		if !keep || dest == m {
 			continue
 		}
-		if err := containedIn(layout.Kind, m, dest); err != nil {
+		if err := containedIn(root, layout.Kind, m, dest); err != nil {
 			return err
 		}
 		// A destination that is some OTHER member's source is a chain: the

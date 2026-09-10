@@ -141,13 +141,53 @@ func TestValidateLayoutTableCaseOnlyCollision(t *testing.T) {
 	})
 	members := []string{"a.dll", "b.dll"}
 
-	require.NoError(t, validateLayoutTable(layout, members, false),
+	root := t.TempDir()
+	require.NoError(t, validateLayoutTable(root, layout, members, false),
 		"on a case-sensitive filesystem these are two distinct destinations")
 
-	err := validateLayoutTable(layout, members, true)
+	err := validateLayoutTable(root, layout, members, true)
 	require.Error(t, err)
 	var typed *AdapterLayoutError
 	require.ErrorAs(t, err, &typed)
 	assert.Contains(t, err.Error(), "a.dll")
 	assert.Contains(t, err.Error(), "b.dll")
+}
+
+// TestRewriteExtractedTreeRefusesASymlinkedEscape is I3's regression test.
+// containedIn was lexical only - it checked filepath.Clean for ".." and for
+// absoluteness - while os.MkdirAll and os.Rename both FOLLOW symlinks, so a
+// destination routed through a symlink already in the staging tree wrote
+// outside the cache entry with no error at all. The symlink need not come
+// from the adapter: an archive can carry one.
+func TestRewriteExtractedTreeRefusesASymlinkedEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.dll"), []byte("A"), 0o644))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "link")))
+
+	layout := adapter.NewLayout("hostile", map[string]string{"a.dll": "link/escaped.dll"})
+	_, err := rewriteExtractedTree(root, layout, []string{"a.dll"})
+
+	require.Error(t, err, "a destination that resolves outside the staging root must be refused")
+	var typed *AdapterLayoutError
+	require.ErrorAs(t, err, &typed)
+	assert.Contains(t, err.Error(), "escaping")
+	assert.NoFileExists(t, filepath.Join(outside, "escaped.dll"), "nothing may land outside the staging root")
+	assert.FileExists(t, filepath.Join(root, "a.dll"), "the refused member stays where the extractor put it")
+}
+
+// TestRewriteExtractedTreeAllowsAnInTreeSymlinkedDirectory is I3's other
+// half: resolving symlinks must refuse an ESCAPE, not every symlink. A link
+// that stays inside the staging root is a legal destination prefix.
+func TestRewriteExtractedTreeAllowsAnInTreeSymlinkedDirectory(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "real"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "link")))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.dll"), []byte("A"), 0o644))
+
+	layout := adapter.NewLayout("in-tree", map[string]string{"a.dll": "link/a.dll"})
+	got, err := rewriteExtractedTree(root, layout, []string{"a.dll"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"link/a.dll"}, got)
+	assert.FileExists(t, filepath.Join(root, "real", "a.dll"))
 }
