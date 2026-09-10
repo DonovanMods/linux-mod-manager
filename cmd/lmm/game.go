@@ -635,7 +635,9 @@ func detectedGamesNoun(listed []domain.DetectedGame) string {
 // list above" was not literally true for every spelling the selector takes.
 func printDetectedGameRow(cmd *cobra.Command, n int, g domain.DetectedGame, existingGames map[string]*domain.Game) {
 	marker := ""
-	if _, ok := existingGames[g.Slug]; ok {
+	// Not existingGames[g.Slug]: the same install path under a DIFFERENT id
+	// is the same game (#406 review F1), and core owns that rule.
+	if core.ConfiguredGameFor(existingGames, g) != nil {
 		marker = " " + colorGreen("[configured]")
 	}
 	appID := ""
@@ -722,7 +724,7 @@ func gameDetectSelectionIndices(line string, games []domain.DetectedGame, existi
 	var indices []int
 	if line == "all" || line == "a" {
 		for i, g := range games {
-			if _, ok := existingGames[g.Slug]; ok {
+			if core.ConfiguredGameFor(existingGames, g) != nil {
 				continue
 			}
 			if !g.Addable() {

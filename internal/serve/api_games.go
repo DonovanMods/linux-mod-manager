@@ -169,8 +169,9 @@ func (s *Server) handleAPIGameAdd(w http.ResponseWriter, r *http.Request) {
 		// Re-scans rather than trusting a client-supplied row, for the same
 		// reason POST /api/v1/games/detect does: the request names an app
 		// id, and the install path and source map behind it must come from
-		// the machine. core.GameSpecFromDetected then applies exactly the
-		// prefill `lmm game add --from-detected` applies.
+		// the machine. core.Service.PrefillGameSpecFromDetected then applies
+		// exactly the prefill `lmm game add --from-detected` applies,
+		// duplicate-install-path rule included (#406 review F1).
 		detected, _, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true, Logger: s.log})
 		if err != nil {
 			s.writeAPIError(w, http.StatusInternalServerError, err)
@@ -183,7 +184,10 @@ func (s *Server) handleAPIGameAdd(w http.ResponseWriter, r *http.Request) {
 			s.writeAPIError(w, gameAddErrorStatus(err), err)
 			return
 		}
-		spec = core.GameSpecFromDetected(candidate, spec)
+		if spec, err = s.svc.PrefillGameSpecFromDetected(candidate, spec); err != nil {
+			s.writeAPIError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 
 	entry, err := s.svc.AddGame(ctx, spec)

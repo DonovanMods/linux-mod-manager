@@ -75,7 +75,10 @@ func cloneDetectedLoader(loader *domain.GameLoader) *domain.GameLoader {
 // The rules, in the order a caller will care about them:
 //
 //   - Name, InstallPath, ID (from the candidate's slug) and DeployMode come
-//     from the candidate unless the caller supplied them.
+//     from the candidate unless the caller supplied them. A candidate whose
+//     install path games.yaml ALREADY configures keeps that game's id
+//     instead - but only through Service.PrefillGameSpecFromDetected, which
+//     is the seam both frontends call; this function stays pure.
 //   - ModPath comes from the candidate when detection knew one (a curated
 //     entry's mod_path, already joined onto the install path). An UNKNOWN
 //     candidate has none - detection deliberately refuses to guess - so
@@ -134,6 +137,73 @@ func GameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) GameSpec {
 		}
 	}
 	return spec
+}
+
+// ConfiguredGameFor resolves one detected candidate against the games.yaml
+// set (LoadGamesFromDisk's map, keyed by game id), returning the game that
+// ALREADY configures it, or nil.
+//
+// The id match is the obvious half: a candidate whose slug is a games.yaml
+// key is that game. The INSTALL-PATH match is what keeps a curation wave
+// from orphaning a game the user already has (#406 review F1). A curated
+// entry's slug is hand-written and need not equal the one
+// steam.deriveSlug produces from the Steam title - six of #406's entries
+// do not - so the game a user added from an UNCURATED row before the entry
+// existed sits in games.yaml under the derived id ("cyberpunk-2077") while
+// detection now offers the curated one ("cyberpunk2077"). Keyed on the slug
+// alone that reads as "not configured", and configuring it writes a SECOND
+// game at the same install path, with the first one's profiles, mods and
+// deployed links still on the old id. One installed directory is one game,
+// whatever it is called, so the path is what decides.
+//
+// Ties (two games.yaml entries at one install path - only reachable by
+// hand-editing) resolve to the lowest id, so the answer never depends on
+// map iteration order.
+func ConfiguredGameFor(existing map[string]*domain.Game, detected domain.DetectedGame) *domain.Game {
+	if game, ok := existing[detected.Slug]; ok {
+		return game
+	}
+	if detected.InstallPath == "" {
+		return nil
+	}
+	want := filepath.Clean(detected.InstallPath)
+	var match *domain.Game
+	for id, game := range existing {
+		if game == nil || game.InstallPath == "" || filepath.Clean(game.InstallPath) != want {
+			continue
+		}
+		if match == nil || id < match.ID {
+			match = game
+		}
+	}
+	return match
+}
+
+// PrefillGameSpecFromDetected is GameSpecFromDetected against the games the
+// user actually has - the seam `lmm game add --from-detected` and POST
+// /api/v1/games' from_steam_app_id both call, so neither frontend derives
+// an identity of its own.
+//
+// The only thing it adds to the pure prefill is F1's rule: when games.yaml
+// already configures this candidate's install path, the spec takes THAT
+// game's id rather than the candidate's slug. AddGame then refuses the
+// duplicate by name (ErrGameExists, naming the id the user has) instead of
+// writing a second game over the same directory. An id the CALLER supplied
+// (--game-id, the web form's game_id) always wins - a manual add naming its
+// own id is left exactly as it was.
+func (s *Service) PrefillGameSpecFromDetected(d domain.DetectedGame, overrides GameSpec) (GameSpec, error) {
+	spec := GameSpecFromDetected(d, overrides)
+	if overrides.ID != "" {
+		return spec, nil
+	}
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return spec, fmt.Errorf("loading games: %w", err)
+	}
+	if prior := ConfiguredGameFor(existing, d); prior != nil {
+		spec.ID = prior.ID
+	}
+	return spec, nil
 }
 
 // FindDetectedGame resolves a Steam app id against a scan - the value
@@ -214,11 +284,24 @@ func (s *Service) ApplyGameDetect(ctx context.Context, games []domain.DetectedGa
 // result as it goes, which is what lets a caller report exactly how far a
 // partial failure got.
 func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.DetectedGame, result *GameDetectResult) error {
+	existing, err := s.LoadGamesFromDisk()
+	if err != nil {
+		return fmt.Errorf("loading games: %w", err)
+	}
 	pm := s.NewProfileManager()
 	for _, g := range games {
 		game, err := GameFromDetected(g)
 		if err != nil {
 			return fmt.Errorf("converting detected game %s: %w", g.Slug, err)
+		}
+		// #406 review F1: this install path may already be a game under a
+		// different id - the one detection derived before the known-games
+		// entry named a nicer slug. Selecting the row is then the REPAIR of
+		// that game, applying the curated prefill to the id its profiles,
+		// mods and deployed links already hang off, rather than a second
+		// game over the same directory.
+		if prior := ConfiguredGameFor(existing, g); prior != nil {
+			game.ID = prior.ID
 		}
 
 		if err := s.saveGame(ctx, game); err != nil {
@@ -277,7 +360,11 @@ func (s *Service) ApplyDetectSelection(ctx context.Context, selected []domain.De
 		return applied, result, err
 	}
 	for _, g := range uncurated {
-		entry, err := s.addGameLocked(ctx, GameSpecFromDetected(g, GameSpec{}))
+		spec, err := s.PrefillGameSpecFromDetected(g, GameSpec{})
+		if err != nil {
+			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
+		}
+		entry, err := s.addGameLocked(ctx, spec)
 		if err != nil {
 			return applied, result, fmt.Errorf("adding detected game %s: %w", g.Slug, err)
 		}
@@ -362,7 +449,8 @@ type GameDetectListing struct {
 // GameDetectListing builds the pre-selection listing for an
 // already-detected set of games (app.DetectGames' output - core cannot
 // scan Steam itself without importing a concrete source, Ruling 8), marking
-// every row that games.yaml already holds.
+// every row that games.yaml already holds - by id OR by install path, see
+// ConfiguredGameFor.
 //
 // The configured check reads games.yaml FROM DISK (LoadGamesFromDisk)
 // rather than the Service's in-memory set, matching what `lmm game detect`
@@ -387,8 +475,7 @@ func (s *Service) GameDetectListing(ctx context.Context, games []domain.Detected
 		if g.Known {
 			index++
 		}
-		_, configured := existing[g.Slug]
-		entry := GameDetectEntry{DetectedGame: g, AlreadyConfigured: configured}
+		entry := GameDetectEntry{DetectedGame: g, AlreadyConfigured: ConfiguredGameFor(existing, g) != nil}
 		if g.Known {
 			entry.Index = index
 		}

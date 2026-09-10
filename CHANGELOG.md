@@ -1101,6 +1101,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   BepInEx installed but undeclared is told exactly that, with the command to
   declare it.
 
+- **`lmm game detect` recognises a game you already added under a different
+  id (#406).** A curated known-games entry names its own game id, which
+  need not match the one detection derived from the Steam title before that
+  entry existed — six of this release's new entries do not (Cyberpunk 2077,
+  No Man's Sky, The Planet Crafter, Tainted Grail, The Blood of Dawnwalker,
+  LEGO Batman). A game you had already added was therefore offered again as
+  a fresh add, and taking it wrote a **second** `games.yaml` game pointing
+  at the same install directory while your profiles, mods and deployed
+  links stayed on the first. lmm now treats one install directory as one
+  game whoever named it: the row is marked `[configured]`, selecting it
+  repairs the game you have rather than duplicating it, and
+  `lmm game add --from-detected` refuses by naming the id you already have
+  instead of adding a duplicate. `lmm game add` with an explicit id and
+  path is unchanged.
+
 - **Importing a profile no longer leaves two versions of one mod deployed
   (#404).** When a mod is installed under several profiles, the import picks
   whichever of their rows can answer "are these bytes already downloaded?" —

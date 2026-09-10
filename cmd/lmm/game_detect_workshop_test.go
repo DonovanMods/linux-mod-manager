@@ -62,15 +62,17 @@ func workshopDetectNoCallServer(t *testing.T) *httptest.Server {
 // game, one uncurated game with Workshop items, and one plain uncurated game
 // with nothing to say for itself. None of them is configured - a test that
 // needs a configured row writes it itself.
+// One directory per app, as Steam installs them: since #406 review F1 an
+// install path games.yaml already covers IS that game, so rows sharing one
+// path would be one game wearing three names.
 func workshopDetectScan(t *testing.T) []domain.DetectedGame {
 	t.Helper()
-	install := t.TempDir()
 	return []domain.DetectedGame{
 		{SteamAppID: "489830", Slug: "skyrim-se", Name: "Skyrim Special Edition",
-			InstallPath: install, NexusID: "skyrimspecialedition", Known: true},
+			InstallPath: t.TempDir(), NexusID: "skyrimspecialedition", Known: true},
 		{SteamAppID: "1133870", Slug: "space-engineers-2", Name: "Space Engineers 2",
-			InstallPath: install, Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30},
-		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: install},
+			InstallPath: t.TempDir(), Sources: map[string]string{"steamworkshop": "1133870"}, WorkshopItems: 30},
+		{SteamAppID: "526870", Slug: "satisfactory", Name: "Satisfactory", InstallPath: t.TempDir()},
 	}
 }
 

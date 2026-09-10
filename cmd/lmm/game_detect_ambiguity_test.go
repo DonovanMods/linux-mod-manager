@@ -28,23 +28,26 @@ import (
 // default profile) plus one uncurated Workshop-bearing row whose Steam app
 // id is "10" - the same digits as row 10's number, and printed right beside
 // it in the listing.
+//
+// One directory per app, as Steam installs them: since #406 review F1 an
+// install path games.yaml already covers IS that game, so eleven rows
+// sharing one path would all read as configured the moment row 10 is.
 func ambiguousDetectScan(t *testing.T) []domain.DetectedGame {
 	t.Helper()
-	install := t.TempDir()
 	scan := make([]domain.DetectedGame, 0, 11)
 	for i := 1; i <= 10; i++ {
 		scan = append(scan, domain.DetectedGame{
 			SteamAppID:  fmt.Sprintf("10000%d", i),
 			Slug:        fmt.Sprintf("curated-%d", i),
 			Name:        fmt.Sprintf("Curated %d", i),
-			InstallPath: install,
+			InstallPath: t.TempDir(),
 			NexusID:     fmt.Sprintf("curated%d", i),
 			Known:       true,
 		})
 	}
 	return append(scan, domain.DetectedGame{
 		SteamAppID: "10", Slug: "counter-strike", Name: "Counter-Strike",
-		InstallPath: install, Sources: map[string]string{"steamworkshop": "10"},
+		InstallPath: t.TempDir(), Sources: map[string]string{"steamworkshop": "10"},
 		WorkshopItems: 4,
 	})
 }
