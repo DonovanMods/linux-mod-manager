@@ -2367,6 +2367,22 @@ select {
   cursor: pointer;
 }
 
+/* The Steam Workshop collection input (issue 269 W2), the modal's second
+   import source. A column at every width: two text fields and a button in a
+   row would each be a few characters wide inside a modal, and the hint under
+   them is a full sentence. */
+.profiles-import__collection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+  margin-top: var(--space-3);
+}
+
+.profiles-import__collection input {
+  width: 100%;
+}
+
 /* ---------------------------------------------------------------------- */
 /* The uninstall-batch modal (issue 332): one UninstallPlanView per selected     */
 /* mod.                                                                     */
@@ -2695,6 +2711,18 @@ select {
    it. It is the only place the UI names the variable. */
 .setup-auth__env-var {
   white-space: nowrap;
+}
+
+/* The source's own setup steps (app.AuthSourceStatus.Instructions, issue
+   269 W2). Full row under the login controls, because it is a sentence or
+   two - a Steam Web API key's instructions carry the "never share it" rule -
+   and wrapping it into the flex row beside a ~190px field would set it in a
+   column two words wide. Uses .empty-state__hint's colour token; no literal
+   colour, per the no_hardcoded_color ratchet. */
+.setup-auth__instructions {
+  flex: 1 0 100%;
+  margin: var(--space-1) 0 0;
+  font-size: 0.9em;
 }
 
 .setup-auth__restart {

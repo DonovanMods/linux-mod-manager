@@ -272,6 +272,14 @@ type Fetcher interface {
 // optional-capability shape as LocalFileServer.
 type ExactFileSizer interface{ ExactFileSizes() bool }
 
+// ErrInvalidReference indicates a source could not make sense of a
+// user-supplied REFERENCE - a collection id or URL, today (#269 W2). It is
+// the caller's input being wrong, not the source failing, so a frontend
+// answers it as bad input (the HTTP 400 shape) rather than as an upstream
+// error, and core classifies it for a frontend that may not import this
+// package (core.IsBadCollectionRef).
+var ErrInvalidReference = errors.New("reference not recognised by this source")
+
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade
 // gracefully (hide the action, show a notice) rather than treat it as a failure.

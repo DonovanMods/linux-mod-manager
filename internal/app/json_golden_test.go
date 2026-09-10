@@ -100,6 +100,19 @@ func TestAppJSONGoldens(t *testing.T) {
 			AuthSourceStatus{ID: "nexusmods", Name: "NexusMods", Authenticated: true, Via: "stored", KeyFingerprint: goldenStoredFingerprint, CreatedAt: goldenStamp, UpdatedAt: goldenStamp},
 		},
 		{
+			// #269 W2: a row that is NOT authenticated, carrying the
+			// source's own setup steps. Instructions is the only field
+			// added since #356, and this is the row it exists for - a Steam
+			// Web API key's instructions carry the rule a user has to read
+			// before pasting one.
+			"auth_source_status_instructions",
+			AuthSourceStatus{
+				ID: "steamworkshop", Name: "Steam Workshop", EnvVar: "STEAM_WEB_API_KEY",
+				Instructions: "Get a free key at https://steamcommunity.com/dev/apikey. " +
+					"The key is personal and confidential — never share it, and never paste someone else's.",
+			},
+		},
+		{
 			"orphaned_token",
 			OrphanedToken{ID: "ghost-repo", Reason: "not_registered", KeyFingerprint: goldenOrphanFingerprint},
 		},

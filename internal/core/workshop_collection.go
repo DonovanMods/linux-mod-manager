@@ -21,6 +21,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -106,7 +107,7 @@ func (s *Service) PlanWorkshopCollectionImport(ctx context.Context, game *domain
 	}
 	resolver, ok := scanner.(source.CollectionResolver)
 	if !ok {
-		return nil, fmt.Errorf("source %q: does not resolve collections", sourceID)
+		return nil, fmt.Errorf("source %q: %w: it does not resolve collections", sourceID, source.ErrNotSupported)
 	}
 
 	collection, err := resolver.ResolveCollection(ctx, ref)
@@ -114,7 +115,7 @@ func (s *Service) PlanWorkshopCollectionImport(ctx context.Context, game *domain
 		return nil, err
 	}
 	if len(collection.ItemIDs) == 0 {
-		return nil, fmt.Errorf("collection %s: it lists no items", collection.ID)
+		return nil, fmt.Errorf("collection %s: %w: it lists no items", collection.ID, source.ErrInvalidReference)
 	}
 
 	name := strings.TrimSpace(profileName)
@@ -281,6 +282,21 @@ func slugify(text string) string {
 		}
 	}
 	return b.String()
+}
+
+// IsBadCollectionRef reports whether err is a collection import failing
+// because of the CALLER's input rather than the server's state: a reference
+// the source does not recognise, a collection Valve will not describe, a
+// game with no Steam Workshop mapping, or a source that cannot resolve
+// collections at all.
+//
+// It exists so a frontend can answer 400 without importing internal/source,
+// which internal/serve's own boundary ratchet forbids - the same shape
+// IsNoWorkshopSource already has.
+func IsBadCollectionRef(err error) bool {
+	return errors.Is(err, source.ErrInvalidReference) ||
+		errors.Is(err, source.ErrNotSupported) ||
+		IsNoWorkshopSource(err)
 }
 
 // stampRefDisplay fills in the two DISPLAY fields a bare

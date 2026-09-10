@@ -289,10 +289,35 @@ func (s *Server) handleAPISearch(w http.ResponseWriter, r *http.Request) {
 	report, err := s.svc.Search(r.Context(), sel.Game, sel.Profile, query,
 		core.SearchOptions{Limit: limit, Page: page, PageSize: pageSize, Category: category, SourceID: sourceID, Tags: tags})
 	if err != nil {
-		s.writeAPIError(w, http.StatusInternalServerError, err)
+		s.writeAPIError(w, searchErrorStatus(err), err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, report)
+}
+
+// searchErrorStatus classifies a search failure core returns UNWRAPPED for
+// exactly this purpose (core.Service.Search's own doc comment: "Source
+// failures are returned unwrapped so a caller can classify them").
+//
+// One of them is not the server failing at all: a source that needs a
+// credential the user has not supplied is 401, not 500. Since Tier 2 that
+// is the ORDINARY state of a Workshop-only game whose owner has not run
+// `lmm auth login steamworkshop` (#269 W2), and answering 500 told the SPA
+// "something broke" where the truthful answer is "get a key".
+//
+// domain.ErrAuthRequired only - this package may import no more than
+// app/core/domain (boundary_test.go), so source.ErrNotSupported is not a
+// sentinel it can name; core would have to classify that one, and no
+// surface needs it yet.
+//
+// Only the NAMED-source path and the all-sources-failed case reach here; an
+// aggregate search where some source worked reports the rest as
+// core.SearchReport.Warnings and answers 200.
+func searchErrorStatus(err error) int {
+	if errors.Is(err, domain.ErrAuthRequired) {
+		return http.StatusUnauthorized
+	}
+	return http.StatusInternalServerError
 }
 
 // parseOptionalIntParam reads name from r's query string: 0/true when

@@ -1,0 +1,7 @@
+{
+  "id": "steamworkshop",
+  "name": "Steam Workshop",
+  "authenticated": false,
+  "env_var": "STEAM_WEB_API_KEY",
+  "instructions": "Get a free key at https://steamcommunity.com/dev/apikey. The key is personal and confidential — never share it, and never paste someone else's."
+}

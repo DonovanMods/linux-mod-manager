@@ -81,16 +81,26 @@ func AuthCapableSources(svc *core.Service) []source.ModSource {
 // log in again" is the actionable part. It is never reported as shadowed:
 // a credential that cannot authenticate anything is not being outranked.
 type AuthSourceStatus struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Authenticated  bool      `json:"authenticated"`
-	Via            string    `json:"via,omitempty"`
-	EnvVar         string    `json:"env_var,omitempty"`
-	KeyMasked      string    `json:"key_masked,omitempty"`
-	KeyFingerprint string    `json:"key_fingerprint,omitempty"`
-	Unreadable     bool      `json:"unreadable,omitzero"`
-	CreatedAt      time.Time `json:"created_at,omitzero"`
-	UpdatedAt      time.Time `json:"updated_at,omitzero"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Authenticated  bool   `json:"authenticated"`
+	Via            string `json:"via,omitempty"`
+	EnvVar         string `json:"env_var,omitempty"`
+	KeyMasked      string `json:"key_masked,omitempty"`
+	KeyFingerprint string `json:"key_fingerprint,omitempty"`
+	Unreadable     bool   `json:"unreadable,omitzero"`
+	// Instructions is the source's own setup steps
+	// (source.AuthInstructionsProvider), the same text `lmm auth login`
+	// prints before its prompt. It is on the ROW rather than fetched
+	// separately because the web UI's key field and the CLI's prompt are
+	// the same moment in the same flow, and a user pasting a key needs to
+	// know where to get one and - for a Steam Web API key - that it is
+	// personal and must not be shared (#269 W2). Empty for a source that
+	// supplies none, which is every source that predates this field, so
+	// every existing document is byte-identical.
+	Instructions string    `json:"instructions,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitzero"`
+	UpdatedAt    time.Time `json:"updated_at,omitzero"`
 
 	// StoredKeyShadowed reports a usable stored token that is NOT the
 	// credential in use - Via is "env" and `lmm auth login` has also been
@@ -190,6 +200,9 @@ func AuthStatus(ctx context.Context, svc *core.Service) (*AuthStatusReport, erro
 
 		envKey := EnvKeyFor(src)
 		row := AuthSourceStatus{ID: id, Name: src.Name(), EnvVar: envKey}
+		if p, ok := src.(source.AuthInstructionsProvider); ok {
+			row.Instructions = p.AuthInstructions()
+		}
 		tok, hasRow := stored[id]
 		row.Unreadable = hasRow && !tok.Readable
 

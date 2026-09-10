@@ -235,6 +235,24 @@ function AuthSourceRow({ source, onChanged }) {
                     >or set <span class="mono">${source.env_var}</span></span
                   >`
                 }
+                ${
+                  // app.AuthSourceStatus.Instructions - the source's own
+                  // setup steps, the same text `lmm auth login` prints
+                  // before its prompt (issue 269 W2). Beside the field
+                  // rather than behind a link, because for a Steam Web API
+                  // key it carries a rule the user has to read before
+                  // pasting one: the key is personal, and pasting somebody
+                  // else's is both a ToU violation and their account at
+                  // risk. Plain TEXT, never markup - it is a source's own
+                  // string, and a custom source supplies it.
+                  source.instructions &&
+                  html`<p
+                    class="setup-auth__instructions empty-state__hint"
+                    data-testid=${`auth-instructions-${source.id}`}
+                  >
+                    ${source.instructions}
+                  </p>`
+                }
               </form>
             `
       }

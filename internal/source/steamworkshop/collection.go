@@ -59,7 +59,8 @@ type collectionResponse struct {
 func (s *Source) ResolveCollection(ctx context.Context, ref string) (source.Collection, error) {
 	id, ok := parseCollectionID(ref)
 	if !ok {
-		return source.Collection{}, fmt.Errorf("source %q: %q is not a Steam Workshop collection id or URL", sourceID, strings.TrimSpace(ref))
+		return source.Collection{}, fmt.Errorf("source %q: %w: %q is not a Steam Workshop collection id or URL",
+			sourceID, source.ErrInvalidReference, strings.TrimSpace(ref))
 	}
 
 	form := url.Values{}
@@ -70,12 +71,18 @@ func (s *Source) ResolveCollection(ctx context.Context, ref string) (source.Coll
 	if err := s.client.http.DoForm(ctx, collectionDetailsPath, form, &resp); err != nil {
 		return source.Collection{}, fmt.Errorf("source %q: resolving collection %s: %w", sourceID, id, err)
 	}
+	// A collection Valve will not describe is the REFERENCE being wrong from
+	// the caller's point of view, so both sentinels are carried:
+	// ErrItemUnavailable says what happened, ErrInvalidReference says whose
+	// fault it is.
 	if len(resp.Response.Collections) == 0 {
-		return source.Collection{}, fmt.Errorf("source %q: %w: collection %s", sourceID, ErrItemUnavailable, id)
+		return source.Collection{}, fmt.Errorf("source %q: %w: %w: collection %s",
+			sourceID, source.ErrInvalidReference, ErrItemUnavailable, id)
 	}
 	got := resp.Response.Collections[0]
 	if got.Result != 1 {
-		return source.Collection{}, fmt.Errorf("source %q: %w: collection %s (result %d)", sourceID, ErrItemUnavailable, id, got.Result)
+		return source.Collection{}, fmt.Errorf("source %q: %w: %w: collection %s (result %d)",
+			sourceID, source.ErrInvalidReference, ErrItemUnavailable, id, got.Result)
 	}
 
 	out := source.Collection{ID: id, URL: SourceURL(id)}
@@ -86,7 +93,8 @@ func (s *Source) ResolveCollection(ctx context.Context, ref string) (source.Coll
 		out.ItemIDs = append(out.ItemIDs, child.PublishedFileID)
 	}
 	if len(out.ItemIDs) == 0 {
-		return source.Collection{}, fmt.Errorf("source %q: collection %s: %w", sourceID, id, errEmptyCollection)
+		return source.Collection{}, fmt.Errorf("source %q: collection %s: %w: %w",
+			sourceID, id, source.ErrInvalidReference, errEmptyCollection)
 	}
 	// GetCollectionDetails carries no title of its own; the collection's
 	// NAME is an ordinary published file's, which the metadata endpoint
