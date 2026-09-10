@@ -1469,6 +1469,15 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   that would leave no usable game id is still refused, naming the
   identifier field.
 
+- **The scoped `lmm source list` says how many sources it left out (#395).**
+  With a game resolvable the list scopes to that game's sources, so a user
+  who had just written their first `sources/*.yaml` ran `lmm source list`,
+  did not see it, and had nothing on screen to say why. A one-line footer
+  now reports `N more registered source(s) not mapped to <game> — lmm
+source list --all` when there is more to show. `lmm game edit --help`
+  pointed at `lmm source list` for "every one, built-in or custom", which
+  is true only of `--all`; it now says so.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

@@ -729,3 +729,51 @@ func rowIDs(rows []app.SourceInfo) []string {
 	}
 	return ids
 }
+
+// TestSourceListCmd_ScopedViewSaysHowManyMoreExist is #395: a user who has
+// just written their first sources/*.yaml runs `lmm source list`, sees only
+// the sources mapped to the active game, and has nothing on screen to say
+// their new definition is registered but unmapped. The scoping is
+// documented in --help and --all exists; a one-line footer is what makes
+// either discoverable at the moment it matters.
+func TestSourceListCmd_ScopedViewSaysHowManyMoreExist(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "nexusmods")
+	gameID = "test-game"
+
+	out, err := runSourceCmd(t, "source", "list")
+	require.NoError(t, err)
+
+	// The registry holds the four built-ins plus my-directory; only
+	// nexusmods is mapped, so four are missing from this view.
+	assert.Contains(t, out, "4 more registered source(s) not mapped to test-game")
+	assert.Contains(t, out, "lmm source list --all")
+}
+
+// TestSourceListCmd_ScopedViewWithNothingMoreHasNoFooter keeps #395's
+// footer from becoming noise: a game mapped to every registered source has
+// nothing else to offer.
+func TestSourceListCmd_ScopedViewWithNothingMoreHasNoFooter(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "my-directory", "nexusmods", "curseforge", "icarus", "steamworkshop")
+	gameID = "test-game"
+
+	out, err := runSourceCmd(t, "source", "list")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "more registered source(s)")
+}
+
+// TestSourceListCmd_AllViewHasNoFooter: --all IS the full registry, so
+// there is nothing left to point at.
+func TestSourceListCmd_AllViewHasNoFooter(t *testing.T) {
+	resetSourceListGameFlags(t)
+	t.Cleanup(func() { resetSourceListGameFlags(t) })
+	setupSourceListGameTest(t, "nexusmods")
+	gameID = "test-game"
+
+	out, err := runSourceCmd(t, "source", "list", "--all")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "more registered source(s)")
+}

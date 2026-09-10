@@ -158,7 +158,27 @@ Examples:
 				// below, which IS checked.
 				_, _ = fmt.Fprintln(w, line+"\t"+info.ErrorMessage)
 			}
-			return w.Flush()
+			if err := w.Flush(); err != nil {
+				return err
+			}
+
+			// #395: the scoped view is silent about everything it left out,
+			// so a user who has just written their first sources/*.yaml
+			// sees a list their new definition is missing from with nothing
+			// to say why. One line, only when there IS something more, and
+			// only in the human view - the --json document is the rows.
+			if gameCtx != nil && !sourceAll {
+				full, err := app.SourceInfos(ctx, svc, gameCtx, true)
+				if err != nil {
+					return err
+				}
+				if more := len(full) - len(infos); more > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(),
+						"\n%d more registered source(s) not mapped to %s — lmm source list --all\n",
+						more, gameCtx.ID)
+				}
+			}
+			return nil
 		})
 	},
 }
