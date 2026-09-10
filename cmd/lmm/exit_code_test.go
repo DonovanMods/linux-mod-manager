@@ -79,6 +79,25 @@ func TestDeclinedConfirmationsAllExitTwo(t *testing.T) {
 			importForce = false
 			return doImport(context.Background(), &cobra.Command{}, svc, game, []string{archivePath})
 		}},
+		{"install with dependencies declined", func(t *testing.T) error {
+			svc, game, src := setupDoInstallTest(t)
+			installYes = false
+			src.AddMod(&domain.Mod{ID: "dep1", SourceID: "test-src", Name: "Dep One", Version: "1.0", GameID: "g1"},
+				[]domain.DownloadableFile{{ID: "dep-file", FileName: "dep1.esp", IsPrimary: true}})
+			src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1",
+				Dependencies: []domain.ModReference{{SourceID: "test-src", ModID: "dep1"}}},
+				[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+			return doInstall(context.Background(), svc, game, nil)
+		}},
+		{"install with a conflict declined", func(t *testing.T) error {
+			svc, game, src := setupDoInstallTest(t)
+			installYes = false
+			seedConflictingMod(t, svc, game)
+			src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+				[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+			src.AddDownload("main", []byte("mod1 content"))
+			return doInstall(context.Background(), svc, game, nil)
+		}},
 		{"import scan", func(t *testing.T) error {
 			svc, game := setupDoImportTest(t)
 			game.DeployMode = domain.DeployCopy

@@ -983,9 +983,13 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   2 from `purge` and `snapshot restore`, **1** from `import` (as
   `Error: import cancelled`) and **0** from `profile switch`, `profile apply`
   and `profile sync` — so `lmm profile switch p && echo switched` printed
-  "switched" over a switch that never happened. Every declined confirmation
-  now returns the one cancellation sentinel, and a table test measures the
-  exit code of each confirming command under a declining stdin. Separately, a
+  "switched" over a switch that never happened. Declining the same
+  conflict-overwrite prompt even exited **2** from `import <archive>` and
+  **1** from `install`. Every declined confirmation now returns the one
+  cancellation sentinel, and a table test measures the exit code of each
+  confirming command under a declining stdin. Declining a prompt prints
+  `Cancelled.` on **stderr** rather than stdout, so a `--json` consumer's
+  stdout stays one document. Separately, a
   locked-mod refusal from **`lmm update rollback`** exits non-zero in both
   output modes (it printed its refusal, or its `{"status":"skipped",
 "reason":"locked"}` document, and exited 0 — so
