@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -443,5 +444,59 @@ func TestClassifySteamcmd_AnchorsOnTheDownloadItemLine(t *testing.T) {
 			assert.False(t, errors.Is(err, domain.ErrWorkshopAnonymousRefused))
 			assert.False(t, errors.Is(err, domain.ErrWorkshopItemUnavailable))
 		})
+	}
+}
+
+// TestFetch_CancellingTheContextStopsTheRun covers the three things every
+// other Fetch test runs straight past: exec.CommandContext actually killing
+// steamcmd, the ctx.Err() branch, and the heartbeat goroutine's shutdown on
+// an ABORTED run rather than a clean one. The cancel comes from inside the
+// progress callback, which is where a user's Ctrl-C effectively lands.
+func TestFetch_CancellingTheContextStopsTheRun(t *testing.T) {
+	src, _ := newSteamcmdSource(t)
+	steamworkshop.SetHeartbeatForTest(t, 5*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var returned atomic.Bool
+	var ticks atomic.Int64
+	dest := t.TempDir()
+	_, err := src.Fetch(ctx, &domain.Mod{ID: "3000000005", GameID: "1133870"}, "3000000005", dest,
+		func(phase, _ string, _ int64) {
+			assert.False(t, returned.Load(), "a tick arrived after Fetch returned: the heartbeat outlived the run")
+			if phase == source.FetchPhaseProgress && ticks.Add(1) == 2 {
+				cancel()
+			}
+		})
+	returned.Store(true)
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, context.Canceled), "got %v", err)
+
+	var failure *domain.WorkshopFetchFailure
+	require.True(t, errors.As(err, &failure))
+	assert.Equal(t, "3000000005", failure.PublishedFileID)
+}
+
+// TestFetch_TheTimeoutBoundsAHungTool is steamcmdTimeout's own stated
+// purpose - stopping a hung tool holding core's mutation slot forever - as
+// a test rather than a comment.
+func TestFetch_TheTimeoutBoundsAHungTool(t *testing.T) {
+	src, _ := newSteamcmdSource(t)
+	steamworkshop.SetTimeoutForTest(t, 30*time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, ferr := fetchTo(t, src, "1133870", "3000000005")
+		done <- ferr
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, context.DeadlineExceeded), "got %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("Fetch outlived its own timeout")
 	}
 }

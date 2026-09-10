@@ -43,10 +43,6 @@ import (
 const (
 	// steamcmdTool is the binary lmm probes for and shells out to.
 	steamcmdTool = "steamcmd"
-	// steamcmdTimeout bounds one download. Workshop items reach several
-	// gigabytes, so this is generous by design; it exists to stop a hung
-	// tool holding a mutation slot forever, not to police slow networks.
-	steamcmdTimeout = 30 * time.Minute
 	// outputTailLimit caps how much of a failed tool's combined output is
 	// carried into the error, matching httpclient's errorBodyLimit
 	// convention for an untrusted body.
@@ -59,6 +55,12 @@ const (
 // are ticked out on a timer whether the tool says anything or not. It is a
 // var, not a const, only so a test can shorten it (export_test.go).
 var steamcmdHeartbeat = 15 * time.Second
+
+// steamcmdTimeout bounds one download. Workshop items reach several
+// gigabytes, so this is generous by design; it exists to stop a hung tool
+// holding a mutation slot forever, not to police slow networks. A var, not
+// a const, only so a test can shorten it (export_test.go).
+var steamcmdTimeout = 30 * time.Minute
 
 // steamcmdWaitDelay bounds cmd.Wait's I/O drain.
 //

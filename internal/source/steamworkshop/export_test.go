@@ -41,3 +41,12 @@ func SetWaitDelayForTest(t *testing.T, d time.Duration) {
 func ClassifySteamcmdForTest(appID, fileID, content, output string, runErr, contentErr error) error {
 	return classifySteamcmd(appID, fileID, content, output, runErr, contentErr)
 }
+
+// SetTimeoutForTest shortens the bound on one steamcmd run so a test can
+// take the timeout path - the branch that stops a hung tool from holding
+// core's single mutation slot - without waiting the production 30 minutes.
+func SetTimeoutForTest(t *testing.T, d time.Duration) {
+	previous := steamcmdTimeout
+	steamcmdTimeout = d
+	t.Cleanup(func() { steamcmdTimeout = previous })
+}
