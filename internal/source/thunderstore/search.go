@@ -283,11 +283,11 @@ func (s *Source) residentFor(community string, wm watermark) (*residentIndex, er
 	}
 	s.mu.Unlock()
 
-	rows, err := s.store.loadRows(community)
+	loaded, err := s.store.loadIndex(community)
 	if err != nil {
 		return nil, err
 	}
-	idx := newResidentIndex(wm.FetchedAt, rows)
+	idx := newResidentIndex(wm.FetchedAt, loaded.Rows)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

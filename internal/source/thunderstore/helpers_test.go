@@ -1,8 +1,10 @@
 package thunderstore_test
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -166,16 +168,32 @@ func indexDir(cacheDir, community string) string {
 	return filepath.Join(cacheDir, "_thunderstore", community)
 }
 
-// readIndexRows parses index.json as what it is on disk: an array of
-// fixed-shape arrays. Parsed here by hand rather than through the package's
-// own types, so the test pins the FORMAT and not just the round trip.
-func readIndexRows(t *testing.T, cacheDir, community string) [][]json.RawMessage {
+// readIndexFile parses index.json as what it is on disk: a schema, a
+// generation and an array of fixed-shape arrays. Parsed here by hand
+// rather than through the package's own types, so the test pins the FORMAT
+// and not just the round trip.
+func readIndexFile(t *testing.T, cacheDir, community string) struct {
+	Schema     int                 `json:"schema"`
+	Rows       [][]json.RawMessage `json:"rows"`
+	Generation string              `json:"generation"`
+} {
 	t.Helper()
+	var file struct {
+		Schema     int                 `json:"schema"`
+		Rows       [][]json.RawMessage `json:"rows"`
+		Generation string              `json:"generation"`
+	}
 	data, err := os.ReadFile(filepath.Join(indexDir(cacheDir, community), "index.json"))
 	require.NoError(t, err)
-	var rows [][]json.RawMessage
-	require.NoError(t, json.Unmarshal(data, &rows))
-	return rows
+	require.NoError(t, json.Unmarshal(data, &file))
+	return file
+}
+
+// readIndexRows is readIndexFile's row table, which is what most tests
+// want.
+func readIndexRows(t *testing.T, cacheDir, community string) [][]json.RawMessage {
+	t.Helper()
+	return readIndexFile(t, cacheDir, community).Rows
 }
 
 // rowString reads one field of an index row as a string.
@@ -204,4 +222,29 @@ func readWatermark(t *testing.T, cacheDir, community string) map[string]any {
 	var wm map[string]any
 	require.NoError(t, json.Unmarshal(data, &wm))
 	return wm
+}
+
+// syntheticDocument is a whole community document as bytes, with a knob on
+// how WIDE each record is. Two documents of the same package count and
+// different widths are what a test needs to prove that "the last row's
+// bytes fit inside the file" is not the same question as "these two files
+// are the same build".
+func syntheticDocument(packages, descriptionRepeats int) []byte {
+	description := strings.Repeat("A description of a length these actually run to. ", descriptionRepeats)
+	var buf bytes.Buffer
+	buf.WriteString("[")
+	for i := range packages {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+		fmt.Fprintf(&buf,
+			`{"name":"Mod%05d","full_name":"Owner%05d-Mod%05d","owner":"Owner%05d",`+
+				`"date_updated":"2026-09-0%dT10:00:00Z","is_deprecated":false,`+
+				`"categories":["Mods"],"versions":[{"version_number":"1.0.0",`+
+				`"description":%q,"dependencies":[],"date_created":"2026-01-01T00:00:00Z",`+
+				`"website_url":"","file_size":%d}]}`,
+			i, i, i, i, (i%9)+1, description, 1000+i)
+	}
+	buf.WriteString("]")
+	return buf.Bytes()
 }

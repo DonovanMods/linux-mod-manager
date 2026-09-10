@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The index-row field positions, written down once. index.json is an array
-// of fixed-shape arrays; these are what the shape MEANS.
+// The index-row field positions, written down once. index.json's "rows"
+// is an array of fixed-shape arrays; these are what the shape MEANS.
 const (
 	fieldFullName = iota
 	fieldDescription
@@ -52,7 +52,8 @@ func TestRefreshIndexBuildsTheSplitIndex(t *testing.T) {
 	wm := readWatermark(t, cacheDir, testCommunity)
 	assert.Equal(t, "Wed, 10 Sep 2026 12:00:00 GMT", wm["last_modified"])
 	assert.EqualValues(t, 12, wm["packages"])
-	assert.EqualValues(t, 1, wm["schema"])
+	assert.EqualValues(t, 2, wm["schema"])
+	assert.NotEmpty(t, wm["generation"], "the watermark names the build its data files carry")
 	assert.NotZero(t, wm["fetched_at"])
 
 	packages, err := os.ReadFile(filepath.Join(dir, "packages.jsonl"))

@@ -4,9 +4,21 @@
 //
 // Layout, under <CacheDir>/_thunderstore/<community>/:
 //
-//	index.json        the searchable projection + an offset table
-//	packages.jsonl    one full package record per line, byte-addressed by index.json
-//	watermark.json    {"last_modified", "fetched_at", "packages", "schema"}
+//	index.json        {"schema", "rows":[...], "generation"} - the searchable
+//	                  projection + an offset table
+//	packages.jsonl    one full package record per line, byte-addressed by
+//	                  index.json, ending in a {"generation"} trailer line
+//	watermark.json    {"last_modified", "fetched_at", "packages", "schema",
+//	                  "generation"}
+//
+// The GENERATION is what makes the three files one index rather than three
+// files (T1 review #2). It is the SHA-256 of the record stream, so it is a
+// pure function of the document indexed - a second build of the same
+// document is still byte-for-byte identical - and it appears in all three
+// files. index.json addresses THIS packages.jsonl only if the trailer at
+// the end of packages.jsonl names index.json's own generation and lies
+// exactly at the end of the file; anything else is a directory two builds
+// left behind, and reads as cold.
 //
 // The searchable projection is 2.6% of the decoded document (measured), so
 // a search loads a few megabytes rather than a few hundred, and the detail
@@ -15,8 +27,11 @@ package thunderstore
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"os"
 	"path/filepath"
 	"time"
@@ -26,7 +41,11 @@ const (
 	// indexSchema is the on-disk format version. A watermark written by a
 	// different schema reads as COLD: the files beside it may have any
 	// shape at all, and rebuilding costs one request.
-	indexSchema = 1
+	//
+	// 2 added the generation stamp (T1 review #2), which changed the shape
+	// of both data files: index.json gained its object wrapper and
+	// packages.jsonl its trailer line.
+	indexSchema = 2
 	// rootDirName is the cache root's subdirectory. The "_" prefix is
 	// unreachable as a game slug (core.DeriveGameID never emits one), so
 	// this tree can never collide with the game-scoped mod cache that
@@ -52,6 +71,21 @@ type watermark struct {
 	FetchedAt int64 `json:"fetched_at"`
 	Packages  int   `json:"packages"`
 	Schema    int   `json:"schema"`
+	// Generation is the build this watermark belongs to - the SHA-256 of
+	// the record stream, repeated in both data files. A watermark whose
+	// generation is not the one index.json carries belongs to a DIFFERENT
+	// build of this community, which is the state two processes committing
+	// at once used to leave behind.
+	Generation string `json:"generation"`
+}
+
+// indexFile is index.json: the row table plus the generation that says
+// which packages.jsonl those rows address. Written a row at a time by
+// builder (which is why nothing marshals this type), read whole.
+type indexFile struct {
+	Schema     int        `json:"schema"`
+	Rows       []indexRow `json:"rows"`
+	Generation string     `json:"generation"`
 }
 
 // indexRow is one row of index.json: everything a search needs, plus where
@@ -206,11 +240,17 @@ func (st *store) state(community string) (watermark, bool) {
 	return wm, true
 }
 
-// verify is state plus the check state is too hot to make: that
-// packages.jsonl is long enough to contain every byte range index.json
-// addresses. That is what catches a TRUNCATED file - a full disk, a killed
-// process, a half-restored backup - before a search reads a record that is
-// not there, and a short file reads as cold rather than as an index.
+// verify is state plus the check state is too hot to make: that the two
+// data files are the SAME BUILD, exactly.
+//
+// The size check this replaced ("packages.jsonl is long enough to contain
+// every byte range index.json addresses") catches a truncated file and
+// nothing else. Two builds of one community are close in size, so an
+// index.json left beside another build's packages.jsonl passed it while
+// every offset in it addressed another document (T1 review #2). The
+// generation is exact: it names the build, it appears in all three files,
+// and packages.jsonl's copy of it sits at a position only ITS OWN last row
+// can point at.
 //
 // Paid once per index generation per process (see Source.usable): the
 // resident copy that follows has already been read out of these same
@@ -220,51 +260,79 @@ func (st *store) verify(community string) (watermark, bool) {
 	if !ok {
 		return watermark{}, false
 	}
-	rows, err := st.loadRows(community)
+	idx, err := st.loadIndex(community)
 	if err != nil {
 		return watermark{}, false
 	}
-	if !rowsFitIn(rows, st.packagesSize(community)) {
+	if idx.Generation == "" || idx.Generation != wm.Generation {
+		return watermark{}, false
+	}
+	if !st.packagesCarry(community, idx) {
 		return watermark{}, false
 	}
 	return wm, true
 }
 
-// rowsFitIn reports whether every row's byte range lies inside a
-// packages.jsonl of size bytes.
-func rowsFitIn(rows []indexRow, size int64) bool {
-	if len(rows) == 0 {
-		return true
+// packagesCarry reports whether packages.jsonl is the file idx addresses:
+// its trailer names idx's generation AND begins exactly where idx's last
+// row ends AND runs to the end of the file.
+//
+// Three facts for one ReadAt, because the trailer's POSITION is as much
+// of the check as its content: a truncated file fails the size test, a
+// file from another build fails the generation test, and a file with an
+// extra or a missing record fails both by displacing the trailer.
+func (st *store) packagesCarry(community string, idx indexFile) bool {
+	at := int64(0)
+	if n := len(idx.Rows); n > 0 {
+		last := idx.Rows[n-1]
+		at = last.Offset + last.Length + 1
 	}
-	last := rows[len(rows)-1]
-	return last.Offset+last.Length <= size
-}
+	if at < 0 {
+		return false // a corrupt row table, whose offsets address nothing
+	}
 
-// packagesSize is packages.jsonl's size, or -1 when it cannot be read at
-// all - which no row can fit inside.
-func (st *store) packagesSize(community string) int64 {
-	info, err := os.Stat(filepath.Join(st.dir(community), packagesFileName))
+	trailer := packagesTrailer(idx.Generation)
+	path := filepath.Join(st.dir(community), packagesFileName)
+	info, err := os.Stat(path)
+	if err != nil || info.Size() != at+int64(len(trailer)) {
+		return false
+	}
+	file, err := os.Open(path)
 	if err != nil {
-		return -1
+		return false
 	}
-	return info.Size()
+	defer func() { _ = file.Close() }()
+
+	buf := make([]byte, len(trailer))
+	if _, err := file.ReadAt(buf, at); err != nil {
+		return false
+	}
+	return string(buf) == trailer
 }
 
-// loadRows reads index.json.
-func (st *store) loadRows(community string) ([]indexRow, error) {
+// packagesTrailer is the last line of packages.jsonl for generation: the
+// stamp that ties the file to one build. Fixed shape, so verify can read
+// it with one positioned read rather than scanning backwards for a
+// newline.
+func packagesTrailer(generation string) string {
+	return fmt.Sprintf("{\"generation\":%q}\n", generation)
+}
+
+// loadIndex reads index.json whole.
+func (st *store) loadIndex(community string) (indexFile, error) {
 	dir := st.dir(community)
 	if dir == "" {
-		return nil, fmt.Errorf("no cache directory configured")
+		return indexFile{}, fmt.Errorf("no cache directory configured")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, indexFileName))
 	if err != nil {
-		return nil, err
+		return indexFile{}, err
 	}
-	var rows []indexRow
-	if err := json.Unmarshal(data, &rows); err != nil {
-		return nil, fmt.Errorf("reading %s: %w", indexFileName, err)
+	var idx indexFile
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return indexFile{}, fmt.Errorf("reading %s: %w", indexFileName, err)
 	}
-	return rows, nil
+	return idx, nil
 }
 
 // footprint is the index's on-disk size, for the frontends that show what a
@@ -327,6 +395,12 @@ type builder struct {
 	offset   int64
 	count    int
 	closed   bool
+	// digest is fed exactly the record bytes packages.jsonl receives, and
+	// its sum is the build's generation. A HASH rather than a random id so
+	// that two builds of the same document still produce byte-identical
+	// files - idempotence is a property this index is tested for, and a
+	// random stamp would have thrown it away.
+	digest hash.Hash
 }
 
 func newBuilder(dir string) (*builder, error) {
@@ -352,8 +426,9 @@ func newBuilder(dir string) (*builder, error) {
 		index:    index,
 		pbuf:     bufio.NewWriterSize(packages, 256*1024),
 		ibuf:     bufio.NewWriterSize(index, 64*1024),
+		digest:   sha256.New(),
 	}
-	if _, err := b.ibuf.WriteString("["); err != nil {
+	if _, err := b.ibuf.WriteString(fmt.Sprintf(`{"schema":%d,"rows":[`, indexSchema)); err != nil {
 		b.abort()
 		return nil, fmt.Errorf("writing %s: %w", indexFileName, err)
 	}
@@ -373,6 +448,7 @@ func (b *builder) add(rec packageRecord, row indexRow) error {
 	if err := b.pbuf.WriteByte('\n'); err != nil {
 		return fmt.Errorf("writing %s: %w", rec.FullName, err)
 	}
+	_, _ = b.digest.Write(line) // hash.Hash never returns an error
 	row.Offset = b.offset
 	row.Length = int64(len(line))
 	b.offset += row.Length + 1
@@ -405,29 +481,34 @@ func (b *builder) add(rec packageRecord, row indexRow) error {
 // otherwise leave a directory that looks valid and reads garbage. Anything
 // that stops the process between 2 and 4 leaves a cold index - one wasted
 // refresh, never a wrong answer.
-func (b *builder) commit(wm watermark) error {
-	if _, err := b.ibuf.WriteString("]"); err != nil {
-		return fmt.Errorf("writing %s: %w", indexFileName, err)
+func (b *builder) commit(wm watermark) (watermark, error) {
+	generation := hex.EncodeToString(b.digest.Sum(nil))
+	if _, err := b.pbuf.WriteString(packagesTrailer(generation)); err != nil {
+		return wm, fmt.Errorf("writing %s: %w", packagesFileName, err)
+	}
+	if _, err := b.ibuf.WriteString(fmt.Sprintf(`],"generation":%q}`, generation)); err != nil {
+		return wm, fmt.Errorf("writing %s: %w", indexFileName, err)
 	}
 	if err := b.close(); err != nil {
-		return err
-	}
-
-	if err := os.Remove(filepath.Join(b.dir, watermarkFileName)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("invalidating %s: %w", watermarkFileName, err)
-	}
-	if err := os.Rename(b.packages.Name(), filepath.Join(b.dir, packagesFileName)); err != nil {
-		return fmt.Errorf("publishing %s: %w", packagesFileName, err)
-	}
-	if err := os.Rename(b.index.Name(), filepath.Join(b.dir, indexFileName)); err != nil {
-		return fmt.Errorf("publishing %s: %w", indexFileName, err)
+		return wm, err
 	}
 	wm.Schema = indexSchema
 	wm.Packages = b.count
-	if err := writeFileAtomic(filepath.Join(b.dir, watermarkFileName), mustMarshal(wm)); err != nil {
-		return fmt.Errorf("publishing %s: %w", watermarkFileName, err)
+	wm.Generation = generation
+
+	if err := os.Remove(filepath.Join(b.dir, watermarkFileName)); err != nil && !os.IsNotExist(err) {
+		return wm, fmt.Errorf("invalidating %s: %w", watermarkFileName, err)
 	}
-	return nil
+	if err := os.Rename(b.packages.Name(), filepath.Join(b.dir, packagesFileName)); err != nil {
+		return wm, fmt.Errorf("publishing %s: %w", packagesFileName, err)
+	}
+	if err := os.Rename(b.index.Name(), filepath.Join(b.dir, indexFileName)); err != nil {
+		return wm, fmt.Errorf("publishing %s: %w", indexFileName, err)
+	}
+	if err := writeFileAtomic(filepath.Join(b.dir, watermarkFileName), mustMarshal(wm)); err != nil {
+		return wm, fmt.Errorf("publishing %s: %w", watermarkFileName, err)
+	}
+	return wm, nil
 }
 
 // close flushes and closes both staging files.

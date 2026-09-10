@@ -130,6 +130,32 @@ func (s *Source) ensureIndex(ctx context.Context, community string, force bool, 
 	lock.Lock()
 	defer lock.Unlock()
 
+	// The warm path answers before any lock file is touched: an index
+	// inside its TTL is a pure read of three files, and making the most
+	// common call in the source contend with anything at all would be a
+	// cost paid on every query to fix a case that arises on a rebuild.
+	if current, usable := s.usable(community); usable && !force && s.now().Sub(time.Unix(current.FetchedAt, 0)) < indexTTL {
+		return current, true, nil
+	}
+
+	// From here a rebuild is possible, so the CROSS-PROCESS lock applies
+	// (T1 review #2): `lmm serve` and a `lmm search` in a terminal are two
+	// processes sharing one TTL, and two of their commits interleaving
+	// leaves one build's index.json addressing the other's packages.jsonl.
+	unlock, lockErr := s.store.lockCommunity(ctx, community)
+	if lockErr != nil {
+		if current, usable := s.usable(community); usable {
+			// Another lmm is rebuilding and we have a copy: serve it, and
+			// report the contention as the warning a stale index gets.
+			return current, true, lockErr
+		}
+		return watermark{}, false, indexUnavailable(community, lockErr)
+	}
+	defer unlock()
+
+	// Re-read UNDER the lock. The process we waited for has very likely
+	// just built exactly the index we were about to fetch, and the whole
+	// value of waiting is not downloading it a second time.
 	current, usable := s.usable(community)
 	if usable && !force && s.now().Sub(time.Unix(current.FetchedAt, 0)) < indexTTL {
 		return current, true, nil
@@ -225,12 +251,10 @@ func (s *Source) build(ctx context.Context, community string, resp *http.Respons
 		}
 	}
 
-	wm := watermark{LastModified: resp.Header.Get("Last-Modified"), FetchedAt: s.now().Unix()}
-	if err := b.commit(wm); err != nil {
+	wm, err := b.commit(watermark{LastModified: resp.Header.Get("Last-Modified"), FetchedAt: s.now().Unix()})
+	if err != nil {
 		return watermark{}, indexUnavailable(community, err)
 	}
-	wm.Schema = indexSchema
-	wm.Packages = b.count
 	s.dropResident(community)
 	return wm, nil
 }

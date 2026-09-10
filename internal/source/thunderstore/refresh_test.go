@@ -143,6 +143,84 @@ func TestATornRefreshReadsAsCold(t *testing.T) {
 	assert.NotZero(t, result.TotalCount)
 	requests, _, _, _ := srv.counts()
 	assert.Equal(t, 2, requests)
+
+	// T1 review #2: the case commit's ordering does NOT cover, because it
+	// is a rule about one process. Two lmm processes committing the same
+	// community can interleave so that one build's index.json ends up
+	// beside the OTHER build's packages.jsonl, under a watermark that
+	// belongs to the first:
+	//
+	//	P1: rm watermark        P1: rename packages.jsonl
+	//	P2: rm watermark (gone) P2: rename packages.jsonl   <- P2's file
+	//	P1: rename index.json                               <- P1's rows
+	//	P1: write watermark                                 <- P1's counts
+	//	P2: killed
+	//
+	// Every offset in that directory addresses another document, and the
+	// last row still FITS, so a size check reads it as a valid index. It
+	// has to read as cold.
+	t.Run("an index.json addressing another build's packages.jsonl", func(t *testing.T) {
+		short := buildCommunityIndex(t, syntheticDocument(20, 1))
+		long := buildCommunityIndex(t, syntheticDocument(20, 12))
+
+		// The control: each build on its own is a perfectly good index.
+		assert.True(t, indexIsPresent(t, short), "the short build alone is an index")
+		assert.True(t, indexIsPresent(t, long), "the long build alone is an index")
+
+		mixed := t.TempDir()
+		dir := indexDir(mixed, testCommunity)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		copyFile(t, filepath.Join(indexDir(short, testCommunity), "index.json"), filepath.Join(dir, "index.json"))
+		copyFile(t, filepath.Join(indexDir(long, testCommunity), "packages.jsonl"), filepath.Join(dir, "packages.jsonl"))
+		copyFile(t, filepath.Join(indexDir(short, testCommunity), "watermark.json"), filepath.Join(dir, "watermark.json"))
+
+		// The size check alone cannot see it: the wider build's file is
+		// LONGER, so every byte range the narrower build's rows address
+		// lies inside it.
+		shortSize := fileSize(t, filepath.Join(indexDir(short, testCommunity), "packages.jsonl"))
+		longSize := fileSize(t, filepath.Join(dir, "packages.jsonl"))
+		require.Greater(t, longSize, shortSize, "the mismatched file must be the longer one")
+
+		assert.False(t, indexIsPresent(t, mixed),
+			"a directory whose index.json addresses another build's packages.jsonl must read as COLD")
+	})
+}
+
+// buildCommunityIndex indexes doc into a fresh cache root and returns that
+// root, so a test can take the three files apart afterwards.
+func buildCommunityIndex(t *testing.T, doc []byte) string {
+	t.Helper()
+	srv := newIndexServer(t, doc)
+	src, cacheDir, _ := newSource(t, srv)
+	_, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)
+	require.NoError(t, err)
+	return cacheDir
+}
+
+// indexIsPresent asks a BRAND-NEW Source - one with no resident copy, i.e.
+// a fresh process - what is cached under cacheDir.
+func indexIsPresent(t *testing.T, cacheDir string) bool {
+	t.Helper()
+	src := thunderstore.New(thunderstore.Options{CacheDir: cacheDir, BaseURL: "http://127.0.0.1:1"})
+	status, err := src.IndexStatus(t.Context(), testCommunity)
+	require.NoError(t, err)
+	return status.Present
+}
+
+// copyFile copies one file, for assembling a directory by hand.
+func copyFile(t *testing.T, from, to string) {
+	t.Helper()
+	data, err := os.ReadFile(from)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(to, data, 0o644))
+}
+
+// fileSize is one file's size on disk.
+func fileSize(t *testing.T, path string) int64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	return info.Size()
 }
 
 // TestCorruptOrStaleOnDiskStatesReadAsCold covers the rest of the "either
