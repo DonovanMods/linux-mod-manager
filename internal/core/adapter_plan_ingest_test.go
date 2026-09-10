@@ -12,6 +12,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
@@ -171,4 +172,69 @@ func TestPlanImportArchive_AgreesWithIngestForANonCanonicalDestination(t *testin
 	slices.Sort(cached)
 	assert.Equal(t, plan.Files, cached,
 		"the plan's file list must equal what the ingest actually cached")
+}
+
+// memberRecorder keeps every Members slice the seam hands it, so the plan's
+// request and the ingest's can be compared as sequences rather than as sets.
+// Its Layout is the identity, so it changes nothing about the import.
+type memberRecorder struct {
+	mu    sync.Mutex
+	calls [][]string
+}
+
+func (*memberRecorder) ID() string    { return "member-recorder" }
+func (*memberRecorder) Label() string { return "Member recorder" }
+
+func (r *memberRecorder) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, slices.Clone(req.Members))
+	return adapter.Layout{}, nil
+}
+
+// take returns the calls recorded so far and clears the log.
+func (r *memberRecorder) take() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	calls := r.calls
+	r.calls = nil
+	return calls
+}
+
+// TestNormalizeRequestMembersAreSortedOnBothSides is R3's regression test:
+// the plan's members came from importDeployablePaths, which sorts the flat
+// path list, while the ingest's came from filepath.WalkDir, which is
+// directory-first. So an archive holding "a.txt" beside "a/b.txt" reached
+// the adapter as [a.txt a/b.txt] from the plan and [a/b.txt a.txt] from the
+// ingest, and an adapter whose Layout depends on order ("the first .dll is
+// the plugin") would lay the two halves out differently - the one invariant
+// this seam exists to guarantee.
+func TestNormalizeRequestMembersAreSortedOnBothSides(t *testing.T) {
+	rec := &memberRecorder{}
+	svc, game := newImportArchiveTestService(t)
+	svc.RegisterAdapter(rec)
+	game.Adapter = rec.ID()
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	archivePath := filepath.Join(t.TempDir(), "Flat-2.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{"a.txt": "A", "a/b.txt": "B"})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+	planCalls := rec.take()
+
+	_, err = svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
+	require.NoError(t, err)
+	ingestCalls := rec.take()
+
+	require.NotEmpty(t, planCalls, "the plan must ask the adapter to lay the archive out")
+	require.NotEmpty(t, ingestCalls, "and so must the ingest")
+
+	want := []string{"a.txt", "a/b.txt"}
+	for _, got := range planCalls {
+		assert.Equal(t, want, got, "the plan hands the adapter a sorted member list")
+	}
+	for _, got := range ingestCalls {
+		assert.Equal(t, want, got, "and the ingest hands it the same list in the same order")
+	}
 }

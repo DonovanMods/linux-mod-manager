@@ -84,10 +84,13 @@ type NormalizeRequest struct {
 	// that names a directory after the mod must tolerate that and fall
 	// back to a name it can derive from Members.
 	ModName string
-	// Members are the archive's members: SLASH-separated (core converts
-	// once, at the seam), archive-relative, files only. An adapter that
-	// string-matches a member can therefore write "BepInEx/config/"
-	// without caring what separator the host filesystem uses.
+	// Members are the archive's members: SLASH-separated, archive-relative,
+	// files only, and SORTED - core normalises once, at the seam. An
+	// adapter that string-matches a member can therefore write
+	// "BepInEx/config/" without caring what separator the host filesystem
+	// uses, and one whose rules depend on order ("the first .dll is the
+	// plugin") gets the same order from a plan and from the ingest that
+	// applies it, which the plan/ingest agreement property needs.
 	Members []string
 }
 

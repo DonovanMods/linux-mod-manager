@@ -40,20 +40,28 @@ func (s *Service) archiveLayout(game *domain.Game, modName string, members []str
 	return a.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: slashMembers(members)})
 }
 
-// slashMembers converts a member list to the slash-separated form
-// adapter.NormalizeRequest.Members and adapter.FileRouter.RouteFile are
-// both documented to receive (#411, M8).
+// slashMembers normalises a member list into the form
+// adapter.NormalizeRequest.Members and adapter.FileRouter.RouteFile are both
+// documented to receive: slash-separated (#411, M8) and SORTED (#411, R3).
 //
-// It is THE conversion point: core produces member lists with filepath.Rel
-// and filepath.WalkDir, which are OS-separated, and an adapter that
-// string-matches a member ("BepInEx/config/") must not have to care which
-// platform it is running on. Identical to its input on Linux, which is why
-// nothing caught the drift.
+// It is THE normalisation point, for both halves of the same reason. Core
+// produces member lists two ways - importDeployablePaths sorts a flat path
+// list for the plan, relativeFileMembers walks the tree directory-first for
+// the ingest - so an archive holding "a.txt" beside "a/b.txt" reached the
+// adapter as [a.txt a/b.txt] from one side and [a/b.txt a.txt] from the
+// other, and an adapter whose Layout depends on order would lay the two
+// halves out differently. Sorting here gives the two sides one order without
+// either caller having to know about the other. The slash conversion is the
+// same argument on the separator: an adapter that string-matches a member
+// ("BepInEx/config/") must not have to care which platform it runs on.
+//
+// It returns a new slice, so the caller's own listing keeps its order.
 func slashMembers(members []string) []string {
 	out := make([]string, len(members))
 	for i, m := range members {
 		out[i] = filepath.ToSlash(m)
 	}
+	slices.Sort(out)
 	return out
 }
 
