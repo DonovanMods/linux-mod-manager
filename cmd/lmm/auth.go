@@ -576,7 +576,10 @@ func readAPIKey(w io.Writer) (string, error) {
 	reader := bufio.NewReader(os.Stdin)
 	key, err := reader.ReadString('\n')
 	if err != nil {
-		return "", fmt.Errorf("reading input: %w", err)
+		// The same refusal acquireAPIKey's --json branch makes: a closed
+		// stdin cannot supply a key, and these two flags can. Reachable
+		// from `lmm init`, which drives this prompt too (P1b review F10).
+		return "", promptReadErrorAs(err, interactiveOnlyVia("pass --key-from-env or --key-stdin"))
 	}
 	return strings.TrimSpace(key), nil
 }

@@ -1026,7 +1026,10 @@ func readMultiSelectionLine(reader *bufio.Reader, prompt string, defaultChoice, 
 	fmt.Printf("\n%s (q to cancel) [%d]: ", prompt, defaultChoice)
 	input, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, false, fmt.Errorf("reading input: %w", err)
+		// The very sentinel the --json branch above returns: a closed
+		// stdin has no answer coming either, so both say the same thing
+		// (#385, P1b review F10).
+		return nil, false, promptReadErrorAs(err, core.ErrConfirmationRequired)
 	}
 
 	input = strings.TrimSpace(input)

@@ -62,6 +62,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking: `lmm mod edit`'s re-link flags are renamed to
+  `--to-source`/`--to-source-id`, and `-s` works again (#396).** `lmm mod`'s
+  persistent `-s/--source` means "which source this mod is in"; `mod edit`
+  declared a local `--source` meaning "re-link it to this source", which
+  replaced the group's flag outright — so `lmm mod edit alpha -s repo`
+  failed with `unknown shorthand flag: 's'`, and there was no way at all to
+  say which of two same-id mods to edit. The re-link target is renamed
+  (there is no `--source` alias: keeping one would re-create the
+  shadowing), and `mod edit` now uses `-s` to pick among same-id mods,
+  refusing with the candidate sources named when it is ambiguous instead of
+  silently editing whichever it found first.
+
+  `--source-id` fails loudly (`unknown flag`), but an old
+  `lmm mod edit <mod> --source <target>` cannot: it resolves to the
+  group's `-s/--source` and is read as a filter. When that filter matches
+  nothing, the error now names `--to-source` so the rename is visible
+  rather than reading as "no such mod".
+
 - **`lmm import` scan mode scores its source matches instead of taking the
   first hit (#27).** An untracked archive used to be adopted as whatever the
   first search-capable source returned first, so searching `skyui` could
@@ -1425,6 +1443,14 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   both renderings. A genuine stdin failure (anything other than EOF) still
   reports as `reading input: …`.
 
+  Every remaining prompt does the same: `lmm game add`'s source picker,
+  catalogue search, match picker, name/path and identifier prompts;
+  `lmm install`'s file picker; `lmm profile reorder -i`; and the piped-key
+  fallback in `lmm auth login` that `lmm init` also drives. Each now
+  answers a closed stdin with the flag or argument that supplies the
+  value — the same error its non-interactive path returns, built once and
+  shared, so the two cannot drift.
+
 - **A source you have never signed in to no longer warns on every search
   (#383).** `lmm init` maps `steamworkshop` from the Steam prefill, which is
   right — Tier 1 (tracking and updating the items the Steam client already
@@ -1498,28 +1524,10 @@ steamworkshop)`, and the web UI's own wording pointing at Setup →
   With a game resolvable the list scopes to that game's sources, so a user
   who had just written their first `sources/*.yaml` ran `lmm source list`,
   did not see it, and had nothing on screen to say why. A one-line footer
-  now reports `N more registered source(s) not mapped to <game> — lmm
-source list --all` when there is more to show. `lmm game edit --help`
+  now reports `N more registered source(s) not mapped to <game> —
+lmm source list --all` when there is more to show. `lmm game edit --help`
   pointed at `lmm source list` for "every one, built-in or custom", which
   is true only of `--all`; it now says so.
-
-- **`lmm mod edit`'s re-link flags are `--to-source`/`--to-source-id`, and
-  `-s` works again (#396).** `lmm mod`'s persistent `-s/--source` means
-  "which source this mod is in"; `mod edit` declared a local `--source`
-  meaning "re-link it to this source", which replaced the group's flag
-  outright — so `lmm mod edit alpha -s repo` failed with
-  `unknown shorthand flag: 's'`, and there was no way at all to say which
-  of two same-id mods to edit. The re-link target is renamed (there is no
-  `--source` alias: keeping one would re-create the shadowing), and
-  `mod edit` now uses `-s` to pick among same-id mods, refusing with the
-  candidate sources named when it is ambiguous instead of silently editing
-  whichever it found first.
-
-  `--source-id` fails loudly (`unknown flag`), but an old
-  `lmm mod edit <mod> --source <target>` cannot: it resolves to the
-  group's `-s/--source` and is read as a filter. When that filter matches
-  nothing, the error now names `--to-source` so the rename is visible
-  rather than reading as "no such mod".
 
 - **`lmm list` shows which mods are not live, without `-v` (#397).** The
   default view is ID / NAME / VERSION / AUTHOR, so a disabled, undeployed

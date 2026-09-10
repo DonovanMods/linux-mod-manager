@@ -124,6 +124,29 @@ func confirmationRequiredVia(how string) error {
 	return fmt.Errorf("%w: %s", core.ErrConfirmationRequired, how)
 }
 
+// interactiveOnlyVia returns core.ErrInteractiveOnly naming how - the flag
+// or argument that would have supplied this particular value without a
+// prompt. The counterpart to confirmationRequiredVia for a value (a name, a
+// path, an identifier) rather than a decision.
+func interactiveOnlyVia(how string) error {
+	return fmt.Errorf("%w: %s", core.ErrInteractiveOnly, how)
+}
+
+// promptReadErrorAs is promptReadError for a prompt whose non-interactive
+// path refuses with a specific error VALUE rather than a remedy sentence:
+// at EOF - stdin closed by a pipe, a redirect or Ctrl-D, so no answer is
+// ever coming - it returns that same error (#385, P1b review F10). Call
+// sites build the refusal once and hand it to both branches, so the two
+// renderings are one expression rather than two texts that happen to agree.
+// Any other read failure is a genuine stdin fault and keeps its
+// "reading input:" wrapper.
+func promptReadErrorAs(err, refusal error) error {
+	if errors.Is(err, io.EOF) {
+		return refusal
+	}
+	return fmt.Errorf("reading input: %w", err)
+}
+
 // promptReadError words a failed prompt read for a caller whose --json path
 // already names a remedy via confirmationRequiredVia.
 //
