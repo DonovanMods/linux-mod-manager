@@ -858,6 +858,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Workshop items prints `Steam Workshop: N items`, and the invalid-selection
   error now names what is accepted. `--json` is unchanged.
 
+- **A missing Steam library no longer prints as a warning on every scan
+  (#368).** `Warning: /data/Games/SteamLibrary/steamapps: open …: no such
+file or directory` came from a `libraryfolders.vdf` entry whose directory
+  is gone — an unplugged drive, or a library removed outside the Steam
+  client. It was honest, but it is Steam's bookkeeping, nothing lmm did,
+  and nothing the user can fix. It is now an **Info-level log line** naming
+  `libraryfolders.vdf` as what listed the missing directory (`--log-level
+info` to see it), said once per scan. A library that exists but cannot be
+  **read** — permissions, a broken mount — is a different fact and stays a
+  warning you see without asking.
+
 - **The web UI no longer re-runs a full verify on every hydrate (#336).**
   Mission Control hydrates on each route change, job completion and profile
   switch, and every one of those ran the full verify tier — a source round

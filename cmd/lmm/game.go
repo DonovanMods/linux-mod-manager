@@ -286,8 +286,14 @@ func runGameDetect(cmd *cobra.Command, args []string) error {
 	// this only lets doGameDetect tell "nothing installed at all" apart from
 	// "installed, but none of it is in the known-games list" so a plain scan
 	// with only the latter can say so instead of a flat "found nothing".
+	// The scan's LOGGER, not its warnings, is where a missing Steam library
+	// lands (#368): --log-level info shows it, a plain run does not.
+	scanLog, err := newCLILogger(logLevel, os.Stderr)
+	if err != nil {
+		return err
+	}
 	games, warnings, err := app.DetectGames(cmd.Context(), svcCfg.ConfigDir,
-		app.DetectOptions{IncludeUnknown: true, NoWorkshop: gameDetectNoWorkshop})
+		app.DetectOptions{IncludeUnknown: true, NoWorkshop: gameDetectNoWorkshop, Logger: scanLog})
 	if err != nil {
 		return fmt.Errorf("detecting games: %w", err)
 	}

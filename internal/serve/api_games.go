@@ -163,7 +163,7 @@ func (s *Server) handleAPIGameAdd(w http.ResponseWriter, r *http.Request) {
 		// id, and the install path and source map behind it must come from
 		// the machine. core.GameSpecFromDetected then applies exactly the
 		// prefill `lmm game add --from-detected` applies.
-		detected, _, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true})
+		detected, _, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true, Logger: s.log})
 		if err != nil {
 			s.writeAPIError(w, http.StatusInternalServerError, err)
 			return
@@ -304,7 +304,7 @@ func (s *Server) handleAPIGamesDetect(w http.ResponseWriter, r *http.Request) {
 	// with Steam Workshop items, and a narrow scan would never have
 	// produced that row for GameDetectListing to keep. ?all= still decides
 	// what is PUBLISHED, one line below.
-	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true})
+	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true, Logger: s.log})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return
@@ -363,7 +363,7 @@ func (s *Server) handleAPIGameDetectApply(w http.ResponseWriter, r *http.Request
 	// what it hit and where to go instead, and that is only possible if
 	// the scan saw the row at all. core.SelectDetectedGames enforces the
 	// rule; this handler only classifies it and names the other route.
-	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true})
+	detected, warnings, err := app.DetectGames(ctx, s.svc.ConfigDir(), app.DetectOptions{IncludeUnknown: true, Logger: s.log})
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

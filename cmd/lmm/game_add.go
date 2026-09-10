@@ -242,7 +242,12 @@ func detectedGameCandidate(ctx context.Context, cmd *cobra.Command, service *cor
 	if !jsonOutput {
 		cmd.Println("Scanning Steam libraries...")
 	}
-	detected, warnings, err := app.DetectGames(ctx, service.ConfigDir(), app.DetectOptions{IncludeUnknown: true})
+	scanLog, err := newCLILogger(logLevel, os.Stderr)
+	if err != nil {
+		return domain.DetectedGame{}, err
+	}
+	detected, warnings, err := app.DetectGames(ctx, service.ConfigDir(),
+		app.DetectOptions{IncludeUnknown: true, Logger: scanLog})
 	if err != nil {
 		return domain.DetectedGame{}, fmt.Errorf("detecting games: %w", err)
 	}
