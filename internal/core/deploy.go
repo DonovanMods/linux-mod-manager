@@ -933,6 +933,9 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 			return skip(fmt.Sprintf("cancelled: %v", err))
 		}
 		progressFn := func(e Event) {
+			if forwardFetchStep(e, scope, emit) {
+				return
+			}
 			d, ok := e.(DownloadEvent)
 			if !ok || d.TotalBytes <= 0 {
 				return

@@ -7089,3 +7089,84 @@ func TestE2E_SnapshotsCard_DeleteConfirmsInlineAndSaysWhatItKeeps(t *testing.T) 
 	assert.Empty(t, listing.Snapshots)
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_FetchPhasesReachTheScreenHumanized is issue 269 Tier 3's progress
+// claim, and it can only be checked in a browser: a source that fetches its
+// own files (steamcmd, in production) reports phases core carries as
+// workshop_fetch_started/progress/done, and the SPA's job readout must show
+// them as readable text rather than as the wire names - without any
+// SPA-side table of phases, which is what makes it safe for core to add
+// one (progress.js's humanizePhase).
+func TestE2E_FetchPhasesReachTheScreenHumanized(t *testing.T) {
+	f := newE2EFixtureWithAFetchingSource(t, nil)
+
+	var running string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "Fetched", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(searchResultRow("fake", e2eFetchModID), chromedp.ByQuery),
+		chromedp.Click(searchResultRow("fake", e2eFetchModID)+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		// Wait for a FETCH frame specifically, not merely for the job: the
+		// phase under test is one core only emits while the fetch runs.
+		chromedp.Poll(
+			`(document.querySelector('.job-progress__text')?.textContent ?? '').includes('Workshop fetch')`,
+			nil, chromedp.WithPollingInterval(50*time.Millisecond)),
+		textContent(`.job-progress__text`, &running),
+		chromedp.WaitVisible(searchResultRow("fake", e2eFetchModID)+` .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, running, "Workshop fetch", "the humanized phase reaches the screen")
+	assert.NotContains(t, running, "workshop_fetch", "the wire phase name must not")
+
+	_, err := os.Lstat(filepath.Join(f.Game.ModPath, "Mods", "fetched.pak"))
+	assert.NoError(t, err, "the fetched item deploys like any other mod")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered is issue
+// 269 Tier 3's error surface. A publisher that refuses anonymous downloads
+// is not a bug and not a dead end - there IS a way to get the item - so the
+// mod surface renders the reason from the failure's TYPED details, and
+// dismissing it puts the Install action straight back.
+func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing.T) {
+	f := newE2EFixtureWithAFetchingSource(t, &domain.WorkshopFetchFailure{
+		AppID: "431960", PublishedFileID: e2eFetchModID, Tool: "steamcmd",
+		Reason: "This game's publisher does not allow anonymous Workshop downloads. " +
+			"Subscribe to the item in the Steam client, then run `lmm import --workshop`.",
+		Err: domain.ErrWorkshopAnonymousRefused,
+	})
+
+	var explainer string
+	var installBackAfterDismiss bool
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.SendKeys(`.omnibar`, "Fetched", chromedp.ByQuery),
+		chromedp.Click(`.omnibar__fanout`, chromedp.ByQuery),
+		chromedp.WaitVisible(searchResultRow("fake", e2eFetchModID), chromedp.ByQuery),
+		chromedp.Click(searchResultRow("fake", e2eFetchModID)+" .search-result__install", chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="install"] .plan`, chromedp.ByQuery),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="failed"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress__explainer[data-explainer="steamcmd"]`, chromedp.ByQuery),
+		textContent(`.job-progress__explainer`, &explainer),
+		chromedp.Click(`.job-progress__dismiss`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.job-progress`, chromedp.ByQuery),
+		settleEffects(),
+		chromedp.Evaluate(
+			`!!document.querySelector(`+"`"+searchResultRow("fake", e2eFetchModID)+` .search-result__install`+"`"+`)`,
+			&installBackAfterDismiss),
+	)
+
+	assert.Contains(t, explainer, "does not allow anonymous Workshop downloads")
+	assert.Contains(t, explainer, "lmm import --workshop",
+		"the refusal must name the route that DOES work")
+	assert.True(t, installBackAfterDismiss, "dismissing the explainer puts the Install action back")
+	assert.Empty(t, f.BrowserErrors())
+}

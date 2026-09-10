@@ -666,6 +666,13 @@ func batchProgress(updates []domain.Update) func(core.Event) {
 			if verbose && !jsonOutput {
 				fmt.Println()
 			}
+		case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
+			// Not verbose-gated, unlike the download percentage above: a
+			// Fetcher's shell-out can run for twenty minutes, and the
+			// silence is the problem it exists to solve.
+			if !jsonOutput {
+				fmt.Printf("  %s\n", p.Detail)
+			}
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.UpdateNote:
@@ -879,6 +886,13 @@ func applyUpdate(ctx context.Context, service *core.Service, game *domain.Game, 
 		case core.UpdateDownloadDone:
 			if verbose && !jsonOutput {
 				fmt.Println()
+			}
+		case core.WorkshopFetchStarted, core.WorkshopFetchProgress, core.WorkshopFetchDone:
+			// Not verbose-gated, unlike the download percentage above: a
+			// Fetcher's shell-out can run for twenty minutes, and the
+			// silence is the problem it exists to solve.
+			if !jsonOutput {
+				fmt.Printf("  %s\n", p.Detail)
 			}
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)

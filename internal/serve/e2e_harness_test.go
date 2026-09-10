@@ -2211,3 +2211,104 @@ func newE2EFixtureWithATagCapableSource(t *testing.T) e2eFixture {
 	})
 	return newE2EFixtureFromSource(t, src)
 }
+
+// --- issue 269 Tier 3: a source that FETCHES instead of serving a URL ---
+
+// e2eFetchSource is a source.Fetcher over the search fixture: its
+// GetDownloadURL reports ErrNotSupported, so core falls back to Fetch, and
+// Fetch reports the generic fetch phases core maps onto WorkshopFetch*.
+//
+// It is a fake rather than the real steamworkshop source because what these
+// scenarios test is the BROWSER end of the chain - that a fetch's phases
+// reach the screen humanized, and that a fetch failure's typed details
+// render as an explainer the user can act on. Neither claim is about
+// steamcmd, and an E2E that shelled out to a tool would be testing the
+// harness. The source-side rules have their own tests (download_test.go).
+type e2eFetchSource struct {
+	*e2eSearchSource
+	// failure, when non-nil, is what Fetch returns instead of content -
+	// the anonymous-refusal shape the mod page must explain.
+	failure *domain.WorkshopFetchFailure
+	// tick is how long the fetch pauses between progress reports, so the
+	// browser has a frame to observe rather than a fetch that is over
+	// before the stream connects.
+	tick time.Duration
+}
+
+func (s *e2eFetchSource) GetDownloadURL(context.Context, *domain.Mod, string) (string, error) {
+	return "", fmt.Errorf("source %q: downloads: %w", s.ID(), source.ErrNotSupported)
+}
+
+func (s *e2eFetchSource) Fetch(ctx context.Context, mod *domain.Mod, fileID, destDir string, progress source.FetchProgressFunc) (string, error) {
+	progress(source.FetchPhaseStarted, "fetching item "+mod.ID, 0)
+	if s.failure != nil {
+		return "", s.failure
+	}
+	content := filepath.Join(destDir, "content", mod.ID)
+	if err := os.MkdirAll(filepath.Join(content, "Mods"), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(content, "Mods", "fetched.pak"), []byte("fetched "+fileID), 0o644); err != nil {
+		return "", err
+	}
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(s.tick):
+	}
+	progress(source.FetchPhaseProgress, "still downloading item "+mod.ID+" - 1.0 KiB on disk after 15s", 1024)
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-time.After(s.tick):
+	}
+	progress(source.FetchPhaseDone, "item "+mod.ID+" downloaded", 1024)
+	return content, nil
+}
+
+var _ source.Fetcher = (*e2eFetchSource)(nil)
+
+// e2eFetchModID names the one catalog entry the fetch scenarios install.
+const e2eFetchModID = "fetched"
+
+// newE2EFixtureWithAFetchingSource seeds a game whose only source retrieves
+// files itself. failure, when non-nil, makes every fetch fail with it.
+func newE2EFixtureWithAFetchingSource(t *testing.T, failure *domain.WorkshopFetchFailure) e2eSearchFixture {
+	t.Helper()
+	sandboxE2EEnv(t)
+
+	base := newE2ESearchSource(t, "fake")
+	base.addMod(e2eSearchSourceMod{
+		mod:   domain.Mod{ID: e2eFetchModID, SourceID: "fake", Name: "Fetched Mod", Version: "1.0"},
+		files: []domain.DownloadableFile{{ID: "f1", Name: "Main", FileName: "fetched", Version: "1.0", Category: "MAIN", IsPrimary: true}},
+	})
+	src := &e2eFetchSource{e2eSearchSource: base, failure: failure, tick: 250 * time.Millisecond}
+
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir(),
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	svc.RegisterSource(src)
+
+	game := &domain.Game{
+		ID: "g1", Name: "Fixture Game",
+		InstallPath: t.TempDir(), ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink,
+		SourceIDs: map[string]string{src.ID(): ""},
+	}
+	require.NoError(t, svc.SaveGame(t.Context(), game))
+	_, err = svc.NewProfileManager().Create(t.Context(), game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetDefaultGame(t.Context(), game.ID))
+
+	baseURL := startE2EServer(t, svc)
+	ctx, browserErrors := newE2EBrowser(t)
+	return e2eSearchFixture{
+		e2eFixture: e2eFixture{
+			Ctx: ctx, BaseURL: baseURL, Svc: svc, Game: game, Profile: "default",
+			BrowserErrors: browserErrors,
+		},
+		Src: base,
+	}
+}

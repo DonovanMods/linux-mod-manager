@@ -384,6 +384,9 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 					return result, err
 				}
 				progressFn := func(e Event) {
+					if forwardFetchStep(e, scope, emit) {
+						return
+					}
 					d, ok := e.(DownloadEvent)
 					if !ok || d.TotalBytes <= 0 {
 						return

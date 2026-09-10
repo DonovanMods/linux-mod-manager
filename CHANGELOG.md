@@ -223,8 +223,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if Steam no longer does), and uninstalled by removing lmm's tracking
   only. See the README's
   Steam Workshop section for what that does and does not cover; searching
-  the Workshop (needs a personal API key) and downloading items (needs
-  `steamcmd`) land in later units.
+  the Workshop (needs a personal API key) lands in its own unit.
+
+- **Download a Steam Workshop item so lmm manages it (#347, part of
+  #269).** `lmm install steamworkshop:<file id>` — and the same Install
+  action in `lmm serve` — now downloads a Workshop item into lmm's own
+  cache and deploys it like any other mod. Nothing about it is special
+  once the bytes are on disk: no `EXTERNAL` marker, and deploy, disable,
+  update, uninstall, conflict detection and load order all work normally.
+  A handful of old UGC-era items are still served at a plain URL, checked
+  against the exact byte count Valve reports; everything else goes through
+  **`steamcmd`, anonymously**, which lmm probes for at the moment you ask
+  and never bundles, never installs for you, and names with an install
+  link when it is missing. No Steam password, session or subscription
+  management is involved at any point, and steamcmd runs pinned to lmm's
+  own staging directory with an isolated `HOME` so it can neither find nor
+  write to your real Steam library.
+  Anonymous downloads are a **per-app opt-in** and cannot be detected in
+  advance — a refused item still describes itself perfectly — so when a
+  publisher has not opted in, lmm says so and names the route that does
+  work: subscribe in the Steam client, then `lmm import --workshop` to
+  track it in place. Downloads report progress as they run, from
+  steamcmd's own output and from lmm's own 15-second heartbeat, so a
+  multi-gigabyte item never sits silent.
 
 - **Snapshots: `lmm snapshot create|list|restore|delete` (#350).** The last
   unchecked item on the README's roadmap since v1. A snapshot is a named

@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# A stand-in for the real steamcmd, for tests only.
+#
+# lmm shells out to steamcmd for an anonymous Workshop download (#269 Tier
+# 3). No test may ever run the real one - it self-bootstraps ~200 MB, talks
+# to Valve, and (this is the trap the #268 spike found the hard way) will
+# happily write into the user's REAL Steam library if +force_install_dir is
+# not pinned. This script exists so every one of those rules is a test that
+# fails loudly rather than a comment nobody reads.
+#
+# It asserts, before printing anything:
+#   exit 3 - +force_install_dir was not passed at all
+#   exit 4 - +force_install_dir came AFTER +login, which is the order that
+#            let the real steamcmd resolve the user's library first
+#   exit 5 - HOME is not lmm's isolated steamcmd home
+#   exit 6 - the environment was FILTERED rather than BUILT: a variable lmm
+#            never sets survived, or an XDG_* points outside HOME
+#
+# It then switches on the published file id, reproducing the three outcomes
+# the spike observed against the live tool:
+#   3000000001 - success: progress lines, a success line, and a real
+#                content directory under the force_install_dir
+#   3000000002 - "(Failure)": the publisher does not allow anonymous
+#                downloads for this app
+#   3000000003 - "(Access Denied)": the item is delisted, deleted or private
+#   3000000005 - a SLOW success that prints no progress at all, for the
+#                heartbeat: it grows a file on disk and says nothing
+#   3000000004 - a SUCCESS whose log happens to contain the bare words
+#                "(Failure)" and "(Access Denied)" on unrelated lines
+#   3000000006 - a refusal that exits 0: steamcmd has been observed doing
+#                this, so the anchored marker has to beat the exit status
+#   3000000007 - a success that leaves a GRANDCHILD holding the inherited
+#                stdout pipe, the way steamcmd's re-exec and helper
+#                processes can: the script exits 0 but the pipe stays open
+#   3000000008 - a SLOW success that DOES print progress, so the output
+#                scanner and the heartbeat are both live at once
+#   anything else - a non-zero exit with no marker lmm recognises
+
+set -u
+
+force_dir=""
+appid=""
+fileid=""
+saw_login=0
+saw_force_after_login=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    +force_install_dir)
+      force_dir="${2:-}"
+      [ "$saw_login" -eq 1 ] && saw_force_after_login=1
+      shift 2
+      ;;
+    +login)
+      saw_login=1
+      shift 2
+      ;;
+    +workshop_download_item)
+      appid="${2:-}"
+      fileid="${3:-}"
+      shift 3
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$force_dir" ]; then
+  echo "FAKE STEAMCMD: +force_install_dir was not passed - the real tool would have written into the user's Steam library" >&2
+  exit 3
+fi
+
+if [ "$saw_force_after_login" -eq 1 ]; then
+  echo "FAKE STEAMCMD: +force_install_dir came after +login" >&2
+  exit 4
+fi
+
+# lmm's isolated home, per the design: <CacheDir>/_steamworkshop/steamcmd-home.
+# Anything else means the real one leaked in, which is how steamcmd finds the
+# user's real install.
+case "${HOME:-}" in
+  */_steamworkshop/steamcmd-home) ;;
+  *)
+    echo "FAKE STEAMCMD: HOME is ${HOME:-<unset>}, not lmm's isolated steamcmd home" >&2
+    exit 5
+    ;;
+esac
+
+# The environment must be BUILT, not filtered. That is the load-bearing
+# claim in steamcmdEnv's doc comment and in docs/security.md: nothing about
+# the user's real Steam install can leak in by being forgotten, because
+# nothing is inherited in the first place. `cmd.Env = append(os.Environ(),
+# "HOME="+home)` would satisfy the HOME check above while handing the tool
+# STEAM_ROOT, STEAM_COMPAT_*, and the user's four real XDG_* directories -
+# every route to the real library that pinning +force_install_dir closes.
+#
+# So: every variable present must be one lmm sets, or one this shell set
+# for itself. The tests deliberately set STEAM_ROOT in the PARENT.
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  case "$name" in
+    HOME | PATH | TERM | LANG) continue ;;
+    XDG_DATA_HOME | XDG_CONFIG_HOME | XDG_CACHE_HOME | XDG_STATE_HOME) continue ;;
+    PWD | OLDPWD | SHLVL | _) continue ;; # set by this shell, not by lmm
+  esac
+  echo "FAKE STEAMCMD: \$$name is set - the environment was filtered, not built" >&2
+  exit 6
+done <<EOF
+$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u)
+EOF
+
+# ...and the XDG directories lmm does set must live inside that HOME, or
+# the tool's caches and configs land somewhere the user did not agree to.
+for var in XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_STATE_HOME; do
+  eval "value=\${$var:-}"
+  case "$value" in
+    "$HOME"/*) ;;
+    *)
+      echo "FAKE STEAMCMD: \$$var is ${value:-<unset>}, not inside the isolated HOME" >&2
+      exit 6
+      ;;
+  esac
+done
+
+case "$fileid" in
+  3000000001)
+    echo "Redirecting stderr to '$HOME/Steam/logs/stderr.txt'"
+    echo "Logging directory: '$HOME/Steam/logs'"
+    echo "[  0%] Checking for available updates..."
+    echo " Update state (0x61) downloading, progress: 12.34 (1234 / 10000)"
+    echo " Update state (0x61) downloading, progress: 78.90 (7890 / 10000)"
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    printf 'workshop item %s\n' "$fileid" > "$content/mod.txt"
+    echo "Success. Downloaded item $fileid to \"$content\" (10000 bytes)"
+    exit 0
+    ;;
+  3000000005)
+    # A decoy for the tool's own ~200 MB self-bootstrap. It lives in HOME,
+    # which on the no-cache-dir fallback is INSIDE the staging directory -
+    # so a heartbeat that measured the whole staging tree would report it as
+    # bytes downloaded.
+    head -c 4096 /dev/zero > "$HOME/steamcmd-bootstrap.bin" 2>/dev/null || :
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    for _ in 1 2 3 4 5 6; do
+      printf '%s\n' "0123456789012345678901234567890123456789" >> "$content/mod.txt"
+      sleep 0.05
+    done
+    echo "Success. Downloaded item $fileid to \"$content\" (240 bytes)"
+    exit 0
+    ;;
+  3000000004)
+    # Real steamcmd prints "(Failure)" for any generic k_EResultFail, on
+    # steps that have nothing to do with the item's own download.
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Failed to install app '228980' (Failure)"
+    echo " Update state (0x61) downloading, progress: 78.90 (7890 / 10000)"
+    echo "Warning: a depot manifest was rejected (Access Denied)"
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    printf 'workshop item %s\n' "$fileid" > "$content/mod.txt"
+    echo "Success. Downloaded item $fileid to \"$content\" (10000 bytes)"
+    exit 0
+    ;;
+  3000000006)
+    # The refusal, but exiting 0 - the spike's observation that steamcmd's
+    # exit status is not a reliable signal. Nothing lands on disk.
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Download item $fileid failed (Failure)."
+    exit 0
+    ;;
+  3000000007)
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    printf 'workshop item %s\n' "$fileid" > "$content/mod.txt"
+    echo "Success. Downloaded item $fileid to \"$content\" (10000 bytes)"
+    # A grandchild that OUTLIVES this script with the inherited stdout still
+    # open. Without cmd.WaitDelay, cmd.Wait's copying goroutine never sees
+    # EOF and cmd.Run() never returns - past the timeout, past a Ctrl-C.
+    sleep 60 &
+    exit 0
+    ;;
+  3000000008)
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    i=0
+    while [ "$i" -lt 40 ]; do
+      i=$((i + 1))
+      printf '%s\n' "0123456789012345678901234567890123456789" >> "$content/mod.txt"
+      echo " Update state (0x61) downloading, progress: $i.00 ($i / 40)"
+      sleep 0.01
+    done
+    echo "Success. Downloaded item $fileid to \"$content\" (1640 bytes)"
+    exit 0
+    ;;
+  3000000002)
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Download item $fileid failed (Failure)."
+    exit 1
+    ;;
+  3000000003)
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Download item $fileid failed (Access Denied)."
+    exit 1
+    ;;
+  *)
+    echo "steamcmd: something went wrong that lmm has no name for"
+    exit 1
+    ;;
+esac

@@ -40,7 +40,12 @@ const maxIDsPerRequest = 100
 // private item returns while still appearing in a user's own ACF. It is
 // handled PER ITEM, never per response - one dead item in a batch of thirty
 // must not blind the other twenty-nine.
-var ErrItemUnavailable = errors.New("steam workshop item is unavailable (delisted, deleted or private)")
+//
+// It IS domain.ErrWorkshopItemUnavailable, not a second error that means
+// the same thing: steamcmd's "(Access Denied)" (Tier 3, steamcmd.go) and
+// this API result are one fact about the item, and a caller must not have
+// to know which route the answer came back by.
+var ErrItemUnavailable = domain.ErrWorkshopItemUnavailable
 
 // ErrMetadataUnavailable reports that Valve's API could not be reached at
 // all - a transport failure, an exhausted retry budget, or the circuit

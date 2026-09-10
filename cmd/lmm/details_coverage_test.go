@@ -33,7 +33,12 @@ var detailsCoverage = map[string]string{
 	"core.SnapshotRestorePartialError": "TestReportError_JSON_SnapshotRestorePartialError",
 	"core.SourceInUseError":            "TestReportError_JSON_SourceInUseError",
 	"core.TokenKeyError":               "TestReportError_JSON_TokenKeyError",
-	"sourceValidationError":            "TestReportError_JSON_SourceValidationError",
+	// #269 Tier 3's download failure: the anonymous refusal, the
+	// unavailable item, the missing steamcmd and the unclassified tool
+	// failure all reach --json (and the SPA's failed-job envelope) as one
+	// shape.
+	"core.WorkshopFetchError": "TestReportError_JSON_WorkshopFetchError",
+	"sourceValidationError":   "TestReportError_JSON_SourceValidationError",
 }
 
 // TestDetailsTypesAreCovered enforces detailsCoverage: every type found to

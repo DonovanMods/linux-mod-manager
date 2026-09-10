@@ -175,6 +175,76 @@ type BatchModDescriber interface {
 	DescribeMods(ctx context.Context, sourceGameID string, modIDs []string, refresh bool) ([]ModDescription, error)
 }
 
+// FetchProgressFunc reports one tick of a Fetcher's progress. phase is one
+// of the FetchPhase* constants below, detail a short human sentence the
+// frontend can print verbatim, and bytes the amount retrieved so far (0
+// when the fetch cannot say). It is always safe to call: core hands
+// Fetchers a non-nil function.
+//
+// Calls are SERIALIZED: a Fetcher must never deliver two ticks
+// concurrently, however many producers it has internally. Core forwards
+// each one straight into a core.EventSink, which is documented as being
+// called synchronously on the operation's goroutine, so a sink is entitled
+// to keep plain state - a spinner frame, a \r-overwrite length - with no
+// lock of its own.
+type FetchProgressFunc func(phase, detail string, bytes int64)
+
+// The FetchPhase* vocabulary a Fetcher reports progress in. It is
+// deliberately generic - a Fetcher describes the shape of its work, not
+// which flow asked for it - and core maps each one onto the DeployPhase
+// its own event stream carries.
+const (
+	// FetchPhaseStarted fires once, before any bytes move.
+	FetchPhaseStarted = "started"
+	// FetchPhaseProgress fires repeatedly while the fetch runs. A Fetcher
+	// whose underlying tool reports nothing must still tick on a timer:
+	// a silent multi-gigabyte download is the worst possible readout.
+	FetchPhaseProgress = "progress"
+	// FetchPhaseDone fires once, after the content is fully on disk.
+	FetchPhaseDone = "done"
+)
+
+// Fetcher is implemented by sources whose files cannot be retrieved by an
+// HTTP GET of a URL - today the Steam Workshop's anonymous steamcmd
+// shell-out (#269 Tier 3), which is a subprocess, not a URL.
+//
+// Core prefers GetDownloadURL and falls back to Fetch ONLY when the source
+// returns ErrNotSupported from it: a Fetcher that also serves URLs (the
+// Workshop's legacy file_url items do) keeps the ordinary download path,
+// with its retries, its progress ticks and its checksum verification.
+//
+// The contract. Core ENFORCES the returned-path rule and guarantees the
+// three it makes to the implementation; writing only inside destDir is the
+// implementation's own obligation, which core does not verify:
+//
+//   - destDir is created by CORE, under its own staging root, and is owned
+//     by core: the implementation writes into it and nothing else. Core
+//     removes it either way, so a failed fetch leaves nothing behind.
+//   - The returned path MUST be inside destDir (a file or a directory).
+//     Core REFUSES anything else, symlinks resolved on both sides, so a
+//     Fetcher never gains the ability to name an arbitrary path on disk -
+//     the same rule LocalFileServer's file:// gate applies to URLs (#300).
+//   - mod.GameID is the SOURCE's own game identifier (domain.Game.SourceIDs;
+//     for Steam Workshop, the decimal app id), already translated by core,
+//     exactly as GetMod receives it.
+//   - progress is never nil, and its calls are serialized - see
+//     FetchProgressFunc.
+type Fetcher interface {
+	Fetch(ctx context.Context, mod *domain.Mod, fileID, destDir string, progress FetchProgressFunc) (string, error)
+}
+
+// ExactFileSizer marks a source whose DownloadableFile.Size is an EXACT
+// byte count of the file that will be served, so core can verify a
+// completed download against it and fail loudly on a short or truncated
+// body (#269 Tier 3: Valve reports a Workshop item's file_size to the
+// byte, and the legacy file_url CDN has no checksum to check instead).
+//
+// Opt-in rather than universal because most sources' declared sizes are
+// advisory - rounded, stale, or absent - and turning those into a hard
+// install failure would break working installs for no gain. Same one-method
+// optional-capability shape as LocalFileServer.
+type ExactFileSizer interface{ ExactFileSizes() bool }
+
 // ErrNotSupported indicates a source does not support the requested operation.
 // Callers should branch with errors.Is(err, ErrNotSupported) and degrade
 // gracefully (hide the action, show a notice) rather than treat it as a failure.

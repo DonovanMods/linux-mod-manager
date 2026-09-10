@@ -51,3 +51,31 @@ export function nextStepFor(job) {
   }
   return null;
 }
+
+/**
+ * explainerFor returns the sentence a failed job's TYPED details say the
+ * user should read, or null when its details name none.
+ *
+ * Today that is issue 269 Tier 3's Steam Workshop download failure, which is
+ * identified by `published_file_id` - a key no other Details() shape has -
+ * rather than by matching on the message. That matters here more than
+ * anywhere: the four things this can be (the publisher refusing anonymous
+ * downloads, an item Steam will not serve, steamcmd not being installed,
+ * and a tool failure lmm has no name for) are one wire shape with four
+ * reasons in it, and the reason is written by core, once, for both
+ * frontends. The UI's whole job is to show it.
+ *
+ * `tool` is carried alongside so a missing-tool failure can say WHICH
+ * program the user has to install, and `outputTail` so an unclassified
+ * failure shows what the tool actually said - the same two extras the
+ * terminal prints under its own error line.
+ */
+export function explainerFor(job) {
+  const details = job?.error?.details;
+  if (!details || !details.published_file_id || !details.reason) return null;
+  return {
+    reason: details.reason,
+    tool: details.tool ?? "",
+    outputTail: details.output_tail ?? "",
+  };
+}

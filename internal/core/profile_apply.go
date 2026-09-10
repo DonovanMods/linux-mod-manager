@@ -515,6 +515,9 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 				downloadFailed := false
 				for _, file := range entry.Files {
 					progressFn := func(e Event) {
+						if forwardFetchStep(e, scope, emit) {
+							return
+						}
 						d, ok := e.(DownloadEvent)
 						if !ok || d.TotalBytes <= 0 {
 							return

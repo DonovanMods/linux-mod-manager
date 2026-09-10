@@ -41,12 +41,31 @@ var (
 	// act on, and doing them anyway would either lie about state or put the
 	// mod in the game twice. core.ExternalModError wraps it with the
 	// operation, the mod and the advice.
-	ErrExternalMod    = errors.New("mod is managed outside lmm")
-	ErrAuthRequired   = errors.New("authentication required")
-	ErrInvalidConfig  = errors.New("invalid configuration")
-	ErrFileConflict   = errors.New("file conflict detected")
-	ErrDownloadFailed = errors.New("download failed")
-	ErrLinkFailed     = errors.New("link operation failed")
+	ErrExternalMod = errors.New("mod is managed outside lmm")
+	// ErrWorkshopAnonymousRefused marks a Steam Workshop download the
+	// publisher does not allow anonymous steamcmd to perform (#269 Tier 3;
+	// steamcmd's own "(Failure)" marker). Verified refused for Wallpaper
+	// Engine; Space Engineers 1/2 and RimWorld allow it. It is not
+	// detectable from an item's metadata - a refused item still describes
+	// itself perfectly - so this is always probe-and-report, never a
+	// pre-flight promise. The user's way forward is Tier 1: subscribe in
+	// the Steam client, then `lmm import --workshop`.
+	ErrWorkshopAnonymousRefused = errors.New("steam refused an anonymous workshop download")
+	// ErrWorkshopItemUnavailable marks an item Steam will not serve or
+	// describe at all - delisted, deleted or private. It is the one
+	// identity behind both observations: steamcmd's "(Access Denied)" and
+	// the Web API's per-item `result: 9`.
+	ErrWorkshopItemUnavailable = errors.New("steam workshop item is unavailable (delisted, deleted or private)")
+	// ErrExternalToolMissing marks an operation that needs a system tool
+	// lmm deliberately does not vendor or auto-install (#269 Tier 3:
+	// steamcmd). The wrapping error carries the tool's name and the
+	// install hint.
+	ErrExternalToolMissing = errors.New("required external tool is not installed")
+	ErrAuthRequired        = errors.New("authentication required")
+	ErrInvalidConfig       = errors.New("invalid configuration")
+	ErrFileConflict        = errors.New("file conflict detected")
+	ErrDownloadFailed      = errors.New("download failed")
+	ErrLinkFailed          = errors.New("link operation failed")
 )
 
 // DeployError aggregates a primary failure with optional rollback / cleanup
@@ -109,3 +128,42 @@ func (e *DeployError) Unwrap() []error {
 	}
 	return out
 }
+
+// WorkshopFetchFailure is the detail a Steam Workshop download attaches to
+// a failure so a frontend can explain it rather than dump a tool's output
+// (#269 Tier 3).
+//
+// It lives in domain, not in the source package, because internal/core is
+// what turns it into the user-facing typed error (core.WorkshopFetchError,
+// which carries the --json `Details()` shape) and core must never import a
+// concrete source package. Err is one of the three sentinels above, or a
+// plain error when the tool failed in a way lmm has no name for.
+type WorkshopFetchFailure struct {
+	// AppID is the Steam app id the item belongs to.
+	AppID string
+	// PublishedFileID identifies the Workshop item.
+	PublishedFileID string
+	// Tool names the external program that ran, empty when none did.
+	Tool string
+	// Reason is the user-facing explanation, already phrased as advice.
+	Reason string
+	// OutputTail is the last few KiB of the tool's combined output, for a
+	// failure lmm could not classify. Empty otherwise.
+	OutputTail string
+	// Err is the sentinel this failure is an instance of.
+	Err error
+}
+
+// Error renders the reason, which is the sentence a user should read.
+func (e *WorkshopFetchFailure) Error() string {
+	if e.Reason != "" {
+		return e.Reason
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return "steam workshop download failed"
+}
+
+// Unwrap exposes the sentinel so errors.Is finds it.
+func (e *WorkshopFetchFailure) Unwrap() error { return e.Err }

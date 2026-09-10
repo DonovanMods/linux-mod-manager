@@ -27,7 +27,8 @@ type Options struct {
 	// http.DefaultClient, as every other source does.
 	HTTPClient *http.Client
 	// CacheDir is lmm's cache root (app.Paths.CacheDir). The metadata cache
-	// lives at <CacheDir>/_steamworkshop/meta/; the "_" prefix is
+	// lives at <CacheDir>/_steamworkshop/meta/ and steamcmd's isolated home
+	// at <CacheDir>/_steamworkshop/steamcmd-home/; the "_" prefix is
 	// unreachable as a game slug, so it cannot collide with the
 	// game-scoped mod cache that shares this root.
 	CacheDir string
@@ -47,14 +48,19 @@ type Options struct {
 
 // Source is the Steam Workshop ModSource (#269).
 //
-// Tier 1 (this unit) tracks items the Steam client already downloaded and
-// checks them for updates; it never downloads, deploys or removes content.
-// Search (Tier 2, bring-your-own key) and downloads (Tier 3, legacy
-// file_url or an anonymous steamcmd shell-out) land in later units and are
-// reported as unsupported until they do.
+// Tier 1 tracks items the Steam client already downloaded and checks them
+// for updates, without ever touching their files. Tier 3 (download.go,
+// steamcmd.go) adds downloads - the legacy file_url, or an anonymous
+// steamcmd shell-out - for an item lmm should manage its own copy of.
+// Search (Tier 2, bring-your-own key) lands in its own unit and is
+// reported as unsupported until it does.
 type Source struct {
 	client     *client
 	steamRoots []string
+	// cacheDir is lmm's cache root, kept for steamcmd's isolated home (see
+	// steamcmdHome). Empty means "no persistent home", which still works -
+	// see Fetch - it just re-pays the tool's bootstrap every run.
+	cacheDir string
 }
 
 var (
@@ -72,6 +78,7 @@ func New(opts Options) *Source {
 	return &Source{
 		client:     newClient(opts),
 		steamRoots: opts.SteamRoots,
+		cacheDir:   opts.CacheDir,
 	}
 }
 
@@ -113,18 +120,6 @@ func (s *Source) GetDependencies(ctx context.Context, mod *domain.Mod) ([]domain
 // Steam Web API key - Valve's QueryFiles endpoint returns 403 without one.
 func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.SearchResult, error) {
 	return source.SearchResult{}, fmt.Errorf("source %q: searching: %w", sourceID, source.ErrNotSupported)
-}
-
-// GetModFiles: unsupported until Tier 3 (#269 W3). A Tier-1 item's files
-// are already on disk and owned by Steam; lmm never enumerates them as
-// downloadable.
-func (s *Source) GetModFiles(ctx context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	return nil, fmt.Errorf("source %q: file listing: %w", sourceID, source.ErrNotSupported)
-}
-
-// GetDownloadURL: unsupported until Tier 3 (#269 W3).
-func (s *Source) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
-	return "", fmt.Errorf("source %q: downloads: %w", sourceID, source.ErrNotSupported)
 }
 
 // ScanWorkshopItems implements source.WorkshopScanner: it reads the Steam
