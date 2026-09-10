@@ -350,3 +350,48 @@ func TestSearchAllSources_CapabilityLessSourceIsNotAnAuthSkip(t *testing.T) {
 	assert.Equal(t, 0, res.AttemptedCount)
 	assert.Empty(t, res.SkippedUnauthenticated)
 }
+
+// envKeyedStubSource is a source holding a key it was handed at
+// registration - app.ResolveAPIKey wires LMM_<ID>_API_KEY into the source
+// itself and stores nothing in the database - so its own IsAuthenticated is
+// the only place that credential exists.
+type envKeyedStubSource struct{ *searchStubSource }
+
+func (e *envKeyedStubSource) IsAuthenticated() bool { return true }
+
+// TestSearchAllSources_EnvironmentKeyedSourceStillWarnsOnAuthFailure is
+// P1b review F2: the skip's own rule is "once a key IS stored, a refusal
+// means THAT key is expired or revoked", but the check asked the token
+// database only. A user whose key comes from the environment has supplied
+// one - it is just held by the source rather than by lmm - and a refusal
+// there is the same real problem, not a capability they never opted into.
+func TestSearchAllSources_EnvironmentKeyedSourceStillWarnsOnAuthFailure(t *testing.T) {
+	needsKey := &envKeyedStubSource{&searchStubSource{
+		id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired),
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": ""}, needsKey)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.Error(t, err, "the only source failed, and it was a real attempt")
+	require.Len(t, res.Warnings, 1)
+	assert.Equal(t, "needskey", res.Warnings[0].SourceID)
+	assert.ErrorIs(t, res.Warnings[0].Err, domain.ErrAuthRequired)
+	assert.Empty(t, res.SkippedUnauthenticated, "a key WAS supplied - this is not a sign-in skip")
+}
+
+// TestSearchAllSources_StoredKeyOutranksASourceThatHasNotSeenItYet keeps the
+// database half of F2's answer: `lmm serve` re-keys a source live but the
+// running instance only picks the key up on restart (api_auth.go's
+// restart_required), so a source can report itself unauthenticated moments
+// after the user stored a credential. Either signal means "a key was
+// supplied", so the refusal stays a warning rather than vanishing.
+func TestSearchAllSources_StoredKeyOutranksASourceThatHasNotSeenItYet(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": ""}, needsKey)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "needskey", "just-stored"))
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.Error(t, err)
+	require.Len(t, res.Warnings, 1)
+	assert.Empty(t, res.SkippedUnauthenticated)
+}

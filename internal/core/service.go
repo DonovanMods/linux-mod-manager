@@ -710,7 +710,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		if !source.CapabilitiesOf(src).Search {
 			continue // silent skip (design §5)
 		}
-		st.authenticated = s.IsSourceAuthenticated(ctx, sourceID)
+		st.authenticated = s.sourceHasCredential(ctx, src, sourceID)
 		st.attempted = true
 		st.active = true
 	}
@@ -2020,6 +2020,28 @@ func (s *Service) deleteSourceToken(ctx context.Context, sourceID string) error 
 func (s *Service) ListSourceTokens(ctx context.Context) ([]db.TokenInfo, error) {
 	infos, err := s.db.ListTokens(ctx)
 	return infos, asTokenKeyError(err)
+}
+
+// sourceHasCredential answers "has the user supplied a key for this source",
+// which is the question the auth-required search skip (#383) actually rests
+// on - a refusal from a source the user HAS keyed means that key is expired,
+// revoked or mistyped, and must stay a warning.
+//
+// Both places a credential can live are consulted (P1b review F2). The
+// source's own view covers a key that never reaches the token store at all:
+// app.ResolveAPIKey wires LMM_<ID>_API_KEY (and the built-ins' own env
+// names) straight into the source at registration, and asking the database
+// alone silently skipped exactly the expired-env-key case the rule exists
+// for. The store covers the opposite gap: `lmm serve` re-keys a source live
+// but the running instance only adopts it on restart (api_auth.go's
+// restart_required), so a just-stored key is in the database before it is in
+// the source. Either signal is a supplied credential; only neither is a
+// capability the user never opted into.
+func (s *Service) sourceHasCredential(ctx context.Context, src source.ModSource, sourceID string) bool {
+	if a, ok := src.(interface{ IsAuthenticated() bool }); ok && a.IsAuthenticated() {
+		return true
+	}
+	return s.IsSourceAuthenticated(ctx, sourceID)
 }
 
 // IsSourceAuthenticated checks if a source has a stored API token.

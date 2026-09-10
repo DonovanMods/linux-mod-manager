@@ -1445,6 +1445,12 @@ steamworkshop)`, and the web UI's own wording pointing at Setup →
   `skipped_unauthenticated` array on the search report, present only when
   something was skipped.
 
+  "Signed in" counts a key supplied through the environment
+  (`LMM_<ID>_API_KEY`, or a built-in's own variable), not just one stored
+  by `lmm auth login`: such a key never reaches lmm's token store, so an
+  expired or mistyped one would otherwise have been skipped silently
+  instead of reported.
+
 - **`lmm init` means it when it says a step can be skipped (#384).** The
   wizard opens with "Every step can be skipped - press Enter to take the
   default", then answered a bare Enter at the source step with
