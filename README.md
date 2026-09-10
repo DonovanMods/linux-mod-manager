@@ -1,20 +1,125 @@
 # lmm - Linux Mod Manager
 
-A mod manager for Linux for searching, installing, updating, and managing game mods from various sources — a CLI for scripting and daily driving, plus a local browser-based UI (`lmm serve`) for the same workflow.
+A native, terminal-first Linux mod manager focused on reproducible profiles,
+multiple mod sources, and scriptable game-mod deployment — with a local web UI
+over the same model.
+
+A profile is a declaration of the mods and versions a game should be running.
+`lmm` resolves that declaration against the sources you have configured, caches
+what it downloads, deploys it into the game directory by a method you choose,
+and can tell you at any point whether what is on disk still matches. Two
+frontends drive the same engine: a CLI built for scripting, and `lmm serve`, a
+local browser UI.
 
 ## Features
 
-- **Multi-Source Support**: Search, download, install mods from NexusMods and CurseForge
-- **Steam Workshop**: track the Workshop items you are already subscribed to, get told when Steam publishes an update, search the Workshop with your own free API key, import a collection as a profile, or download an item so lmm manages its own copy — see [Steam Workshop](#steam-workshop)
-- **Profile System**: Manage multiple mod configurations per game
-- **Update Management**: Check for updates with configurable policies (auto, notify, pinned)
-- **Version Locking**: Lock a mod's profile entry to an exact version, independent of update policy — see [Locking mods to a version](#locking-mods-to-a-version)
-- **Rollback Support**: Revert to previous mod versions when updates cause issues
-- **Flexible Deployment**: Symlink, hardlink, or copy mods to game directories
-- **Dependency Resolution**: Automatically fetches and installs mod dependencies
-- **Infinite-Scroll Search**: Browse a continuously loading result list with clean cancel support
-- **Local Web UI**: `lmm serve` — a single-page browser UI over the same database and profiles, with a JSON API and live progress via SSE — see [Web UI](#web-ui-lmm-serve)
-- **Pure Go**: No CGO required, easy cross-compilation
+### The model
+
+- **Profiles are desired state**: a profile records the mods, versions and load
+  order a game should be running, and `lmm profile apply` **converges** the
+  installation to it — installing what is missing, undeploying and disabling
+  what it no longer lists, and moving versions in either direction, downgrades
+  included
+- **Locks are enforced when converging**, not merely when checking.
+  `lmm mod lock` pins a build in the profile, it travels with
+  `lmm profile export`/`import`, and it holds through apply, deploy, update and
+  rollback — see [Locking mods to a version](#locking-mods-to-a-version)
+- **Verification reasons about provenance**: `lmm verify` checks the cache
+  against recorded checksums, the deployed tree against what the profile
+  actually provides, and each recorded version against its source. `--fix`
+  removes only the files lmm itself deployed — never a file it did not put
+  there — and it names a finding it will not attempt rather than guessing at
+  one; a locked mod's record is left alone on purpose
+- **Snapshots and an originals store**: lmm keeps the game files it displaces,
+  so `lmm snapshot create|list|restore|delete` can bring a game back to a
+  recorded arrangement — see [Snapshots](#snapshots)
+- **Sources are first-class, not hard-coded**: NexusMods, CurseForge, Steam
+  Workshop and Icarus are built in, and `directory`, `manifest` and `api`
+  sources are defined in YAML — with advertised capabilities, live validation
+  (`lmm source validate --probe`), their own authentication, and graceful
+  degradation where a capability is missing — see
+  [Custom Sources](#custom-sources)
+- **Steam Workshop, three ways**: track the items Steam already installed,
+  search the Workshop and import a collection as a profile, or download an item
+  so lmm manages its own copy — see [Steam Workshop](#steam-workshop)
+- **Update policies and rollback**: `auto`, `notify` (default) or `pinned` per
+  mod, with `lmm update rollback` to step back a version
+
+### Getting it onto disk
+
+- **Flexible deployment**: symlink, hardlink or copy, set globally, per game or
+  per profile
+- **Dependency resolution**: dependencies are fetched and installed in order,
+  with cycle detection (opt out with `--no-deps`)
+- **Conflict detection**: `lmm conflicts` names every contested file, its
+  contenders and the rule that decides the winner
+- **Two frontends, one core**: everything below is the CLI; `lmm serve` is a
+  single-page browser UI over the same database, profiles and JSON API, with
+  live progress over SSE — see [Web UI](#web-ui-lmm-serve)
+- **Scriptable**: `--json` prints exactly one document on stdout and nothing
+  else, and `/api/v1` returns those same documents — see
+  [JSON output](#json-output)
+- **Pure Go**: one static binary, no CGO, easy cross-compilation
+
+## Why lmm?
+
+Vortex, Limo and Mosaic are **GUI-first interactive mod managers**: you arrange
+your setup by hand, in an application, and the application holds the result.
+
+lmm is aimed at **reproducible, source-agnostic mod environments** — the setup
+is a document you can export, review, diff and re-apply, from a CLI or a web UI
+over the same model. If you have ever wanted your mod list to behave more like
+a package manifest than a pile of state managed by buttons, that is the pitch.
+
+The whole program is one pipeline:
+
+```text
+mod sources          NexusMods, CurseForge, Steam Workshop, Icarus,
+      ↓              plus directory / manifest / api sources you define
+normalized mod/version model
+      ↓              one Mod + version + file shape, whatever answered
+profile (desired state)
+      ↓              mods, versions, locks, load order — exportable YAML
+cache
+      ↓              one copy per source/mod/version, checksummed
+deployment strategy
+      ↓              symlink, hardlink or copy into the game directory
+game-specific adapter
+                     generic file deployment, or a real compile step
+                     (Icarus `.pak`/`.exmodz` merging) where a game needs one
+```
+
+**When to pick something else.** lmm has no FOMOD installer, no LOOT-style
+plugin or load-order semantics, and no Nexus Collections. For the Bethesda
+ecosystem — Skyrim, Fallout — those are table stakes, not extras, and
+[Limo](https://github.com/limo-app/limo) or Mosaic will serve you better today.
+Reach for lmm when you want your mod setup scripted, reproduced across
+machines, driven over SSH, or extended to a source nobody has written a client
+for.
+
+### Non-goals for 2.0
+
+These are deliberate omissions, tracked so they are not mistaken for oversights:
+
+- **FOMOD installers** — [#354](https://github.com/DonovanMods/linux-mod-manager/issues/354)
+- **LOOT-style plugin / load-order management** — [#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)
+- **Nexus Collections** — no tracking issue; a Steam Workshop collection
+  already imports as a profile, and the Nexus equivalent is not planned for 2.0
+- **BepInEx / Thunderstore support** — [#357](https://github.com/DonovanMods/linux-mod-manager/issues/357), post-2.0
+- **A conventional desktop GUI** — `lmm serve` is a thin frontend over the same
+  `core` package the CLI calls, not a second product. It ships no separate
+  build, no Node, no bundler and no config of its own, and it can do what the
+  CLI can do because it is the same code underneath.
+
+### Post-2.0 direction
+
+The Icarus support is the interesting one: lmm does not merely copy that game's
+archives, it converts prebuilt `.pak` mods, derives their changes against the
+current base game, merges them by profile precedence and regenerates the result
+when load order changes. Making that a **documented adapter seam** — so
+BepInEx, Unreal, Unity and the rest land without contaminating the generic
+core — is the direction after 2.0:
+[#353](https://github.com/DonovanMods/linux-mod-manager/issues/353).
 
 ## Installation
 
@@ -80,6 +185,10 @@ Requires Go 1.27 or later.
 go install github.com/DonovanMods/linux-mod-manager/v2/cmd/lmm@latest
 ```
 
+The module path carries the `/v2` suffix, so `@latest` resolves to the newest
+2.x release. Until the v2.0.0 tag is published, name the branch instead:
+`...@v2`.
+
 ### From Source
 
 ```bash
@@ -88,8 +197,9 @@ cd linux-mod-manager
 go build -o lmm ./cmd/lmm
 ```
 
-This checks out `main`, the v1.x line; to build v2 instead, run
-`git checkout v2.0.0` before `go build`.
+This checks out `main`, which still holds the v1.x line: the 2.0 work lives on
+the `v2` branch until the release merges it. Run `git checkout v2` before
+`go build` to build what this README describes.
 
 ### Shell completions
 
@@ -138,6 +248,20 @@ those, not a wizard.
 
 The rest of this section is the same setup done by hand, which is worth
 reading once even if you used `lmm init`.
+
+### `lmm serve` — the same first run in a browser
+
+```bash
+lmm serve
+# lmm serve listening on http://127.0.0.1:7420/
+```
+
+If you would rather click than type, `lmm serve` opens a local web UI on the
+same database and profiles, and with no games configured yet it opens on the
+same first-run flow: detect your Steam games and add them, sign in to each
+source, define a custom source if you need one, and adopt the mods already in
+the game folder. Everything the CLI does below is there too — see
+[Web UI](#web-ui-lmm-serve).
 
 ### Authentication
 
@@ -787,7 +911,7 @@ lmm source list
 
 Output:
 
-```
+```text
 ID            NAME                    TYPE       AUTH  CAPABILITIES                       ERROR
 nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth,versions
 donovan-mods  Donovan's 7D2D Modlets  directory  n/a   search,updates
@@ -801,7 +925,7 @@ lmm source list --all
 
 Output:
 
-```
+```text
 ID            NAME                    TYPE       AUTH  CAPABILITIES                       IN USE  ERROR
 nexusmods     Nexus Mods              built-in   yes   search,deps,updates,auth,versions  yes
 curseforge    CurseForge              built-in   yes   search,deps,updates,auth,versions  no
@@ -820,13 +944,13 @@ lmm source validate ~/.config/lmm/sources/my-source.yaml
 
 On success:
 
-```
+```text
 ~/.config/lmm/sources/my-source.yaml: valid (directory source "my-source")
 ```
 
 On error (exits with code 1):
 
-```
+```text
 Error: invalid definition: id "my-bad-source!" must match ^[a-z0-9-]+$
 ```
 
@@ -838,7 +962,7 @@ lmm source validate --probe ~/.config/lmm/sources/my-source.yaml
 
 For an `api` definition with no `search` endpoint (install-by-ID-only), pass `--id` with a known mod ID so `--probe` has something to call `get_mod` with. Captured against a local test definition (a `get_mod`-only `api` source pointed at a throwaway local server):
 
-```
+```text
 $ lmm source validate --probe --id 42 demo-api.yaml
 demo-api.yaml: valid (api source "demo-api")
 probe: ok — get_mod 42 returned "Cool Mod"
@@ -846,7 +970,7 @@ probe: ok — get_mod 42 returned "Cool Mod"
 
 Without `--id` on a search-less `api` definition, `--probe` fails with a clear message instead of silently doing nothing:
 
-```
+```text
 Error: probe: this definition has no search endpoint; provide a known mod id with --id to probe get_mod
 ```
 
@@ -894,6 +1018,7 @@ Error: probe: this definition has no search endpoint; provide a known mod id wit
    ```
 
 5. Search and install from it like any built-in source:
+
    ```bash
    lmm search bigger -g skyrim-se --source my-local-mods
    lmm install --source my-local-mods --id BiggerBackpack -g skyrim-se
@@ -1181,11 +1306,12 @@ is what `GET /api/v1/jobs` and `GET /api/v1/jobs/{id}` have always called it
 stream is a different thing and stays: there it names the job an event
 belongs to.)
 
-`{kind}` is one of fifteen, each the browser-side twin of a CLI command:
+`{kind}` is one of sixteen, each the browser-side twin of a CLI command:
 `deploy`, `install`, `uninstall`, `updates`, `rollback`, `switch`,
 `profile_apply`, `profile_import`, `profile_sync`, `purge`, `mod_relink`,
-`verify_fix`, `import_archive`, `adopt` and `snapshot_restore`. An unknown
-kind is a 400 whose details list the ones that exist. (`mod_relink` is
+`verify_fix`, `import_archive`, `adopt`, `workshop_adopt` and
+`snapshot_restore`. An unknown kind is a 400 whose details list the ones that
+exist. (`mod_relink` is
 `lmm mod edit`: it is named for the core flow it drives,
 `PlanRelinkMod`/`ApplyRelinkMod`.)
 
@@ -1370,6 +1496,12 @@ preview — and the job takes no options. Previewing without confirming IS
 the dry run. Its job runs the metadata backfill and the adoption together
 and reports both in one `core.AdoptResult` (`backfilled` alongside
 `adopted`/`skipped`/`failed`).
+
+`workshop_adopt` is `lmm import --workshop` as a plan kind: `POST
+/api/v1/plans/workshop_adopt` with `{"refresh"}` (the CLI's `--refresh`,
+bypassing the Workshop metadata cache) answers with `core.WorkshopAdoptPlan`
+— every subscribed item lmm does not already track — and the job takes no
+options at all, since the only choice this flow offers is made at plan time.
 
 (Enable/disable are an exception: with no options and nothing to preview,
 they skip the plan step entirely — `POST /api/v1/mods/{source}/{id}/enable`
@@ -1820,7 +1952,8 @@ lmm can **track** the Steam Workshop items you are already subscribed to, and **
 - **Conflict detection cannot see them.** `lmm conflicts` compares files deployed under the game's `mod_path`, and a Workshop item has none there. lmm cannot see inside a game's own Workshop loader.
 - **`lmm profile reorder` omits them.** Load order decides deploy precedence, and a tracked-only item deploys nothing, so any position it held would be inert.
 - **A snapshot records them; a restore leaves them alone.** lmm never captures a Workshop item into the [originals store](#snapshots) and holds no copy to put back, so `lmm snapshot restore` undeploys nothing for it and downloads nothing for it. An item Steam no longer has on disk is reported as a finding — the same judgement `lmm verify` makes — not a refusal.
-  **Downloading an item lmm manages itself.** `lmm install steamworkshop:<file id>` (and the same Install action in `lmm serve`) downloads a Workshop item into lmm's own cache and deploys it like any other mod. Nothing about it is special once the bytes are on disk: it appears in `lmm list` without the `EXTERNAL` marker, deploys, disables, updates and uninstalls normally, and takes part in conflict detection and load order.
+
+**Downloading an item lmm manages itself.** `lmm install steamworkshop:<file id>` (and the same Install action in `lmm serve`) downloads a Workshop item into lmm's own cache and deploys it like any other mod. Nothing about it is special once the bytes are on disk: it appears in `lmm list` without the `EXTERNAL` marker, deploys, disables, updates and uninstalls normally, and takes part in conflict detection and load order.
 
 lmm gets the bytes one of two ways, and neither needs your Steam password:
 
@@ -1868,7 +2001,7 @@ Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop
 
 `lmm search <query>` queries every source configured for the game concurrently by default — there's no prompt to pick one first, even when several sources are mapped. Results carry a `SOURCE` column so you can tell which source found each mod:
 
-```
+```text
 $ lmm search bigger --game skyrim-se
 ID                  NAME             AUTHOR   VERSION  SOURCE
 --                  ----             ------   -------  ------
@@ -1877,13 +2010,13 @@ BiggerBackpack-2.1  Bigger Backpack  donovan  2.1      donovan-mods
 
 If one source fails, its failure is reported as a warning on stderr and the other sources' results are still returned — a flaky manifest URL doesn't hide results from a source that responded:
 
-```
+```text
 warning: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
 ```
 
 Only when **every** configured source fails does the command return an error, which names each source's failure:
 
-```
+```text
 Error: search failed: all 1 source(s) failed: source my-repo: source "my-repo": reading manifest /opt/mods/my-repo.yaml: open /opt/mods/my-repo.yaml: no such file or directory
 ```
 
@@ -1897,7 +2030,7 @@ lmm search bigger --game skyrim-se --source donovan-mods
 
 A source that doesn't support searching (e.g. an `api` source defined without a `search` endpoint — see [API Sources](#api-sources)) is silently skipped when aggregating, but targeting it directly with `--source` reports a clear notice instead of a generic error:
 
-```
+```text
 Error: source "demo-api" does not support searching; install by ID instead: lmm install --source demo-api --id <mod-id>
 ```
 
@@ -1911,7 +2044,7 @@ Once a key **is** stored (or supplied through `LMM_<ID>_API_KEY` or a built-in's
 
 A game with no configured sources at all fails fast with a diagnostic instead of an empty result:
 
-```
+```text
 Error: no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml
 ```
 
@@ -2049,76 +2182,63 @@ CONVERSION FAILED is read straight from the merged pak's stored fingerprint — 
 
 ## Architecture
 
+The pipeline above is the design; this is where each stage lives. Everything
+that decides anything is in `internal/core`, and the two frontends — the CLI
+and `lmm serve` — are thin adapters over it: they parse input, call core, and
+render what comes back. Neither reaches past core, and core never calls back
+into either (a mutation that needs an answer mid-flight returns a typed error
+the caller answers by re-running with a different option).
+
 ```text
-cmd/lmm/                  # CLI entry point (Cobra); imports exactly app/core/domain/source/serve (enforced)
+cmd/lmm/                  # CLI entry point (Cobra); imports exactly app/core/domain/source/serve (enforced by a test)
 internal/
 ├── app/                  # Composition root: app.Open resolves paths (XDG), prepares dirs, opens core, registers sources
-├── domain/               # Core types (Mod, Profile, Game)
-├── source/               # Mod source abstraction
-│   ├── nexusmods/        # NexusMods API client
+├── domain/               # Core types (Mod, InstalledMod, Game, Profile) — no external dependencies
+├── source/               # The ModSource interface and its implementations
+│   ├── nexusmods/        # NexusMods GraphQL client
 │   ├── curseforge/       # CurseForge API client
+│   ├── steamworkshop/    # Steam Workshop: track subscribed items, search, collections, anonymous steamcmd download
+│   ├── icarus/           # Icarus: its mod catalog, plus the .pak/.exmodz merge compiler
 │   ├── custom/           # User-defined sources (directory, manifest, api)
-│   ├── steam/            # Steam library scanning (for 'lmm game detect')
-│   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirects)
+│   ├── steam/            # Steam library scanning (for `lmm game detect`)
+│   └── httpclient/       # Shared HTTP client (timeouts, size caps, redirect rules)
 ├── storage/
-│   ├── db/               # SQLite storage
-│   ├── config/           # YAML configuration
-│   └── cache/            # Mod file cache
-├── linker/               # Deployment strategies
-├── serve/                # `lmm serve`: the SPA (spa/ + vendor/) + /api/v1 JSON + SSE over core.Service (imports only app/core/domain; see Web UI above)
-└── core/                 # Business logic orchestration (flat package, 49 files); frontends never reach past it
-    ├── service.go         # Service facade: construction, ServiceConfig, the query/mutation concurrency contract
-    ├── ops.go             # beginOp: the Service's single mutation-serialization slot
-    ├── plan.go            # ErrStalePlan + installedSnapshot: the freshness precondition every Apply re-checks
-    ├── errors.go          # Typed errors a frontend branches on: ConflictError, ErrConfirmationRequired, ErrInteractiveOnly
-    ├── events.go          # EventSink wire envelope + the Op/EventType/FlowPhase vocabulary
-    ├── queries.go         # Read-only query types: ModList, StatusReport, SearchReport, GameListEntry, VerifyReport
-    ├── moddetail.go       # ModDetail: mod metadata + local install state for `lmm mod show` (#86)
-    ├── settings.go        # SettingsResult: `lmm game set-default`/`clear-default`'s --json document
-    ├── phases.go          # DeployPhase vocabulary shared by deploy/switch/apply progress events
-    ├── hooks.go           # HookContext/HookResult + hook script execution (runHook)
-    ├── hooks_resolve.go   # Resolves a flow's merged game/profile hook config into a HookRunner
-    ├── selection.go       # File-selection policy: filter/sort by category, primary-file pick, sameFileIDSet
-    ├── resolve.go         # ResolveVersionFiles: version -> file matching against a source's file list
-    ├── conflicts.go       # File-conflict detection: ConflictModRef/ConflictReport for `lmm conflicts`
-    ├── converge.go        # convergeDeployedFiles: remove-only reconciliation of deployed state (#168/#212)
-    ├── deployable.go      # deployableFiles: the deploy-direction file resolver (#210)
-    ├── overrides.go       # ApplyProfileOverrides: profile config-override files written to the game dir
-    ├── merged_pak.go      # DeployCompile merged-artifact sync (singleton synthetic mod per game/profile, #197)
-    ├── downloader.go      # HTTP downloads with retry/backoff + checksum verification
-    ├── extractor.go       # Archive extraction (.zip native, .7z/.rar via system tools)
-    ├── dependencies.go    # DependencyResolver: mod dependency ordering + cycle detection
-    ├── filename_parser.go # NexusMods-style filename parsing (name/mod ID/version)
-    ├── changelog.go       # CleanChangelog: strips HTML markup from changelog text for terminal display
-    ├── staging.go         # Staging directory resolution for in-flight downloads/extraction
-    ├── installer.go       # Installer: low-level cache/link/DB engine behind install & update flows
-    ├── importer.go        # Importer: low-level cache/extract engine behind the archive-import flow
-    ├── updater.go         # Updater: source-registry update-check primitives (CheckUpdates)
-    │
-    ├── install.go         # install flow: PlanInstall/ApplyInstall (`lmm install`)
-    ├── deploy.go          # deploy flow: DeployOptions/PlanDeploy/ApplyDeploy/DeployProfile (`lmm deploy`)
-    ├── uninstall.go       # uninstall flow: PlanUninstall/UninstallMod (`lmm uninstall`)
-    ├── purge.go           # purge flow: the shared purgeSpec/purgeMods loop + PurgeProfile (`lmm purge`)
-    ├── update.go          # update flow: PlanUpdate/ApplyUpdate (`lmm update`)
-    ├── rollback.go        # rollback flow: PlanRollback/ApplyRollback (`lmm update rollback`)
-    ├── switch.go          # profile-switch flow: PlanProfileSwitch/ApplyProfileSwitch (`lmm profile switch`)
-    ├── profile_apply.go   # profile-apply flow: PlanProfileApply/ApplyProfileApply (`lmm profile apply`)
-    ├── profile_sync.go    # profile-sync flow: PlanProfileSync/ApplyProfileSync (`lmm profile sync`)
-    ├── profile_import.go  # profile-import flow: ImportPlan/PlanImport/ApplyImport (`lmm profile import`)
-    ├── profile_reorder.go # profile-reorder flow: ReorderProfileMods/ResolveReorder (`lmm profile reorder`)
-    ├── profile.go         # ProfileManager: ctx-threaded profile CRUD (Ruling 11) + ProfileResult
-    ├── adopt.go           # adopt flow: ScanLocal/PlanAdopt/ApplyAdopt (`lmm import` scan mode)
-    ├── import_archive.go  # archive-import flow: PlanImportArchive/ApplyImportArchive (`lmm import <archive>`)
-    ├── archive_listing.go # archive listing + the member normalisation plan and ingest share
-    ├── game_detect.go     # game-detect flow: GameFromDetected/GameSpecFromDetected/ApplyGameDetect (`lmm game detect`)
-    ├── mod_toggle.go      # mod enable/disable flow: EnableMod/DisableMod
-    ├── mod_edit.go        # mod-edit flow: PlanRelinkMod/ApplyRelinkMod (`lmm mod edit`)
-    ├── mod_settings.go    # mod lock/unlock/set-update/convert flows -> ModSettingResult
-    ├── mod_files.go       # `lmm mod files`: ModFileEntry/ModFilesReport
-    ├── verify.go          # verify engine: VerifyTier/VerifyResult (`lmm verify`)
-    ├── verify_helpers.go  # verify engine internals: retained-source / mismatch detection
-    └── verify_repair.go   # verify --fix repair actions: redownload, checksum backfill
+│   ├── db/               # SQLite (mod metadata, encrypted auth tokens) — pure Go, no CGO
+│   ├── config/           # YAML: config.yaml, games.yaml, profiles
+│   └── cache/            # The central mod file cache
+├── linker/               # Deployment strategies: symlink, hardlink, copy
+├── serve/                # `lmm serve`: the SPA (spa/ + vendor/) + /api/v1 JSON + SSE over core.Service
+└── core/                 # Every decision lmm makes (one flat package; frontends never reach past it)
 ```
+
+Inside `core`, one file per concern:
+
+- **The facade and its contracts** — `service.go` (construction and the
+  query/mutation concurrency contract), `ops.go`/`oplock.go` (the single
+  mutation slot, in-process and across processes), `plan.go` (the freshness
+  precondition every Apply re-checks), `errors.go` (the typed errors a
+  frontend branches on), `events.go` (the progress vocabulary both frontends
+  render), `jsonwire.go` and `queries.go` (the documents `--json` and
+  `/api/v1` return).
+- **One file per flow**, named for the command that drives it — most a
+  `Plan…`/`Apply…` pair, a few (the toggles and the settings writes) a single
+  gated call, because there is nothing to preview: `install.go`, `deploy.go`,
+  `uninstall.go`, `update.go`, `rollback.go`, `purge.go`, `switch.go`, `profile_apply.go`,
+  `profile_sync.go`, `profile_import.go`, `profile_reorder.go`, `adopt.go`,
+  `import_archive.go`, `mod_edit.go`, `mod_toggle.go`, `mod_settings.go`,
+  `game_add.go`, `game_detect.go`, `game_edit.go`, `snapshot.go`,
+  `snapshot_restore.go`, `workshop_adopt.go`, `workshop_collection.go`,
+  `verify.go`.
+- **The engines the flows share** — `downloader.go`, `extractor.go`,
+  `installer.go`, `importer.go`, `updater.go`, `dependencies.go`,
+  `resolve.go`, `selection.go`, `conflicts.go`, `converge.go`,
+  `deployable.go`, `overrides.go`, `originals.go`, `staging.go`, `fetch.go`,
+  `hooks.go`, and `merged_pak.go` (the Icarus compile step).
+
+`cmd/lmm` may import only `internal/{app,core,domain,source,serve}`, and
+`internal/serve` only `internal/{app,core,domain}` — both enforced by tests
+that read the packages' real imports, so a new dependency either belongs in
+that list or the logic that wanted it moves into core.
 
 ## File Locations
 
@@ -2150,17 +2270,54 @@ The mod cache location can be customized via `cache_path` in `config.yaml`. Sett
 
 ## Roadmap
 
-- [x] NexusMods authentication and downloads
-- [x] Update management with policies and rollback
-- [x] Default game setting (avoid --game on every command)
-- [x] Mod dependency detection from NexusMods
+Everything below shipped. The full entry for each — what changed and why — is
+in [CHANGELOG.md](CHANGELOG.md); the 2.0 line is under `[Unreleased]` until the
+release is cut.
+
+### The model
+
+- [x] Profiles as desired state, converged by `lmm profile apply` (downgrades included)
+- [x] Version locking, enforced when converging and carried by `profile export`/`import`
+- [x] Update policies (`auto`, `notify`, `pinned`) and `lmm update rollback`
+- [x] Mod file verification with provenance-aware `--fix` repair
 - [x] Conflict detection (file conflicts, circular dependency warnings)
-- [x] Mod file verification (checksums, --fix re-download)
 - [x] Automatic dependency installation (opt out with `--no-deps`)
+- [x] Snapshots — `lmm snapshot create|list|restore|delete`, over an originals store ([#350](https://github.com/DonovanMods/linux-mod-manager/issues/350))
+
+### Sources
+
+- [x] NexusMods authentication and downloads
 - [x] CurseForge integration
+- [x] User-defined `directory`, `manifest` and `api` sources, with capabilities and live validation
 - [x] Additional first-party built-in sources beyond NexusMods/CurseForge (Icarus)
-- [ ] Game auto-detection beyond Steam (Lutris, Heroic, Flatpak)
-- [x] Backup and restore (`lmm snapshot`)
+- [x] Steam Workshop: tracking, search, collection import, and anonymous download ([#269](https://github.com/DonovanMods/linux-mod-manager/issues/269))
+
+### Interfaces and packaging
+
+- [x] Default game setting (avoid `--game` on every command)
+- [x] `lmm serve` — a local web UI over the same core, with `/api/v1` and SSE
+- [x] `lmm init` — a guided first run ([#351](https://github.com/DonovanMods/linux-mod-manager/issues/351))
+- [x] Encrypted credential storage ([#79](https://github.com/DonovanMods/linux-mod-manager/issues/79))
+- [x] Packaging: AUR, `.deb`, `.rpm`, `.apk` ([#352](https://github.com/DonovanMods/linux-mod-manager/issues/352))
+
+### After 2.0
+
+- [ ] A documented game-adapter seam — deploy mode, compile and verify — so
+      BepInEx, Unreal and Unity land without touching the generic core
+      ([#353](https://github.com/DonovanMods/linux-mod-manager/issues/353))
+- [ ] BepInEx support ([#357](https://github.com/DonovanMods/linux-mod-manager/issues/357))
+
+Game auto-detection beyond Steam (Lutris, Heroic, Flatpak) was considered and
+declined ([#89](https://github.com/DonovanMods/linux-mod-manager/issues/89)):
+Steam detection works because Steam has one documented on-disk layout, and the
+other launchers each need their own parser against an unstable private schema,
+to save one step of a command most people run once per machine. `lmm game add
+--path` adds any of them by hand today. The issue will be reopened if a
+specific launcher draws real demand. FOMOD
+([#354](https://github.com/DonovanMods/linux-mod-manager/issues/354)) and
+LOOT-style load-order management
+([#355](https://github.com/DonovanMods/linux-mod-manager/issues/355)) are
+[non-goals for 2.0](#non-goals-for-20), not backlog.
 
 ## Development
 
@@ -2180,7 +2337,7 @@ go build -o lmm ./cmd/lmm
 
 `make build` (or `make`) is the preferred way to build a working binary: it
 stamps `git describe --tags --dirty` into the binary, so `lmm --version` on
-a dev build self-identifies as e.g. `1.29.0 (dev: v1.29.0-2-g140e3c6-dirty)`
+a dev build self-identifies as e.g. `2.0.0 (dev: v2.0.0-2-g140e3c6-dirty)`
 instead of silently claiming the last released version. A plain
 `go build`/`go test` (no ldflags) behaves exactly like a clean release build.
 
