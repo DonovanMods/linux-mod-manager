@@ -313,3 +313,28 @@ func TestFetch_HeartbeatsWhileTheToolSaysNothing(t *testing.T) {
 	assert.Contains(t, beats[len(beats)-1], "after")
 	assert.Greater(t, beatBytes[len(beatBytes)-1], int64(0), "the heartbeat reports bytes on disk")
 }
+
+// TestFetch_ProgressDeliveryIsSerialized pins source.FetchProgressFunc's
+// contract at the one Fetcher that has two producers: the output scanner
+// and the heartbeat both report while steamcmd runs, and core forwards
+// every tick straight into a core.EventSink, whose own doc comment
+// promises delivery "synchronously on the operation's goroutine".
+//
+// The sink below is deliberately UNSYNCHRONISED - that is the whole point.
+// A sink is entitled to keep plain state (a spinner frame, a \r-overwrite
+// length), so if this Fetcher can deliver two ticks at once, -race says so
+// here rather than in `lmm install` on a user's machine.
+func TestFetch_ProgressDeliveryIsSerialized(t *testing.T) {
+	src, _ := newSteamcmdSource(t)
+	steamworkshop.SetHeartbeatForTest(t, time.Millisecond)
+
+	var ticks []string
+	dest := t.TempDir()
+	_, err := src.Fetch(context.Background(), &domain.Mod{ID: "3000000008", GameID: "1133870"}, "3000000008", dest,
+		func(_, detail string, _ int64) { ticks = append(ticks, detail) })
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, ticks)
+	assert.True(t, strings.Contains(strings.Join(ticks, "\n"), "still downloading item 3000000008"),
+		"the heartbeat must be live alongside the scanner for this test to mean anything: %v", ticks)
+}

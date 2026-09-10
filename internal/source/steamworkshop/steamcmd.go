@@ -162,6 +162,20 @@ func (s *Source) runSteamcmd(ctx context.Context, home, destDir, appID, fileID s
 	cmd.Env = steamcmdEnv(home)
 	cmd.Dir = home
 
+	// Two goroutines below report progress - the output scanner and the
+	// heartbeat - and source.FetchProgressFunc promises the caller they
+	// never arrive at once: core forwards each tick straight into an
+	// EventSink, which is documented as being called synchronously on the
+	// operation's goroutine. One mutex here is what makes that promise
+	// true, so a sink may keep plain state (a spinner frame, a
+	// \r-overwrite length) without a lock of its own.
+	var reportMu sync.Mutex
+	report := func(phase, detail string, bytes int64) {
+		reportMu.Lock()
+		defer reportMu.Unlock()
+		progress(phase, detail, bytes)
+	}
+
 	collector := &outputCollector{}
 	reader, writer := io.Pipe()
 	cmd.Stdout, cmd.Stderr = writer, writer
@@ -180,14 +194,22 @@ func (s *Source) runSteamcmd(ctx context.Context, home, destDir, appID, fileID s
 				if len(m) > 2 && m[2] != "" {
 					done, _ = strconv.ParseInt(m[2], 10, 64)
 				}
-				progress(source.FetchPhaseProgress, strings.TrimSpace(line), done)
+				report(source.FetchPhaseProgress, strings.TrimSpace(line), done)
 			}
 		}
 		_, _ = io.Copy(io.Discard, reader)
 	}()
 
+	// The heartbeat stops on exactly two events, both of which are certain
+	// to happen: stopHeartbeat is closed by a defer that runs on EVERY
+	// return path, and ctx is done on a timeout or a cancel. Neither
+	// depends on cmd.Run() returning promptly.
 	started := time.Now()
 	stopHeartbeat := make(chan struct{})
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(func() { close(stopHeartbeat) }) }
+	defer stop()
+
 	var beat sync.WaitGroup
 	beat.Add(1)
 	go func() {
@@ -198,9 +220,11 @@ func (s *Source) runSteamcmd(ctx context.Context, home, destDir, appID, fileID s
 			select {
 			case <-stopHeartbeat:
 				return
+			case <-ctx.Done():
+				return
 			case <-ticker.C:
 				bytes := dirSize(destDir)
-				progress(source.FetchPhaseProgress,
+				report(source.FetchPhaseProgress,
 					fmt.Sprintf("still downloading item %s - %s on disk after %s",
 						fileID, humanBytes(bytes), time.Since(started).Round(time.Second)),
 					bytes)
@@ -209,7 +233,7 @@ func (s *Source) runSteamcmd(ctx context.Context, home, destDir, appID, fileID s
 	}()
 
 	runErr := cmd.Run()
-	close(stopHeartbeat)
+	stop()
 	beat.Wait()
 	_ = writer.Close()
 	wg.Wait()

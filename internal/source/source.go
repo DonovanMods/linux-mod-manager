@@ -180,6 +180,13 @@ type BatchModDescriber interface {
 // frontend can print verbatim, and bytes the amount retrieved so far (0
 // when the fetch cannot say). It is always safe to call: core hands
 // Fetchers a non-nil function.
+//
+// Calls are SERIALIZED: a Fetcher must never deliver two ticks
+// concurrently, however many producers it has internally. Core forwards
+// each one straight into a core.EventSink, which is documented as being
+// called synchronously on the operation's goroutine, so a sink is entitled
+// to keep plain state - a spinner frame, a \r-overwrite length - with no
+// lock of its own.
 type FetchProgressFunc func(phase, detail string, bytes int64)
 
 // The FetchPhase* vocabulary a Fetcher reports progress in. It is
