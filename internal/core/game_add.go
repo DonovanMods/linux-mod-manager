@@ -356,22 +356,27 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 }
 
 // sourceIgnoresGameIdentifier reports whether sourceID's registered source
-// has no searchable game catalogue - the same test SearchGameCatalog makes
-// before answering ErrNoGameCatalog, and the condition under which an empty
-// identifier is a legitimate mapping rather than a missing value (#387).
+// says the value a game maps it to addresses nothing - the condition under
+// which an empty identifier is a legitimate mapping rather than a missing
+// value (#387).
 //
 // `lmm game edit --source localmods=` has always written one, and the
 // README documents it ("directory sources ignore this value"); `game add`
 // was the odd one out, demanding a value for a source that has nothing to
-// look it up in. An unregistered id answers false and is refused by
-// addGameLocked's own registration check a few lines later.
+// address with it.
+//
+// The question is asked of the SOURCE, not of whether it offers a game
+// catalogue (P1b review F5): NexusMods and Steam Workshop offer none either,
+// and their mapped value is a real, required game slug/appid - accepting an
+// empty one there writes a mapping that fails at first use. An unregistered
+// id answers false and is refused by addGameLocked's own registration check
+// a few lines later.
 func (s *Service) sourceIgnoresGameIdentifier(sourceID string) bool {
 	src, err := s.GetSource(sourceID)
 	if err != nil {
 		return false
 	}
-	_, hasCatalog := src.(source.GameCatalog)
-	return !hasCatalog
+	return source.IgnoresGameIdentifier(src)
 }
 
 // game validates the spec and builds the domain.Game AddGame persists.

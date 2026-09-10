@@ -63,7 +63,9 @@ source directly via --id - for NexusMods, the slug from its URL (e.g.
 https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
 A source that has no identifier to give - a directory source ignores the
 mapped value entirely - may be left empty: press Enter at the prompt, or
-pass --id "", and give --game-id so the entry still has a key.
+pass --id "", and give --game-id so the entry still has a key. Only such a
+source is offered that: NexusMods and Steam Workshop have no catalog
+either, but their mapped value is a real game slug/appid and is required.
 
 The LOCAL games.yaml key defaults to a slug derived from the catalog
 match (the catalog path) or from --id (the manual path); --game-id sets
@@ -435,13 +437,19 @@ func resolveGameAddManual(cmd *cobra.Command, reader *bufio.Reader, selected sou
 			return err
 		}
 	}
-	// Optional, not required: a source with no catalogue may have nothing
-	// to look an identifier up in at all - the README's directory sources
-	// "ignore this value", and `lmm game edit --source localmods=` has
-	// always written it empty. core decides whether THIS source may take
-	// an empty mapping, and still refuses the add when the result leaves
-	// no usable game id (#387).
-	if err := optionalGameAddValue(cmd, reader, selected.Name()+" identifier (Enter if it has none): ", &spec.Identifier); err != nil {
+	// Optional only where the SOURCE says so: a directory source ignores
+	// the value entirely - the README's own words, and what
+	// `lmm game edit --source localmods=` has always written - while
+	// NexusMods and Steam Workshop have no catalogue either and still need
+	// a real game slug/appid. Offering "Enter if it has none" there invited
+	// a `nexusmods: ""` mapping that fails at first use (P1b review F5).
+	// core applies the same rule to the value that arrives, and still
+	// refuses the add when the result leaves no usable game id (#387).
+	if source.IgnoresGameIdentifier(selected) {
+		if err := optionalGameAddValue(cmd, reader, selected.Name()+" identifier (Enter if it has none): ", &spec.Identifier); err != nil {
+			return err
+		}
+	} else if err := missingGameAddValue(cmd, reader, selected.Name()+" identifier: ", "--id", &spec.Identifier); err != nil {
 		return err
 	}
 	cmd.Printf("\nConfiguring %s...\n", spec.Name)

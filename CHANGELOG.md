@@ -1481,10 +1481,14 @@ steamworkshop)`, and the web UI's own wording pointing at Setup →
   written it empty — but `game add` printed "Local Mods has no searchable
   game catalog; enter this game's identifier with Local Mods directly" and
   then refused the empty answer with `Error: id is required`. Pressing
-  Enter (or passing `--id ""`) is now accepted for any source with no
-  searchable catalogue, provided `--game-id` gives the entry a key; a
-  source that HAS a catalogue still requires the identifier, and an add
-  that would leave no usable game id is still refused, naming the
+  Enter (or passing `--id ""`) is now accepted for a source that says the
+  mapped value addresses nothing — a directory or manifest source, or an
+  `api` source whose endpoints never interpolate `{game_id}` — provided
+  `--game-id` gives the entry a key. Every other source still requires the
+  identifier, including the ones with no catalogue to pick it from:
+  NexusMods' game slug and Steam Workshop's appid are real, required
+  values, and neither the prompt nor `--id ""` will write them empty. An
+  add that would leave no usable game id is still refused, naming the
   identifier field.
 
 - **The scoped `lmm source list` says how many sources it left out (#395).**
