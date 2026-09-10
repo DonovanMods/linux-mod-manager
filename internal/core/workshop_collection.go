@@ -255,8 +255,18 @@ func collectionProfileName(collection source.Collection) string {
 	if slug := slugify(collection.Name); slug != "" {
 		return slug
 	}
-	return "workshop-collection-" + collection.ID
+	return slugify("workshop-collection-" + collection.ID)
 }
+
+// maxProfileSlug bounds a derived profile name. A title is chosen by a
+// stranger on the internet and becomes a FILE NAME under
+// $XDG_CONFIG_HOME; without a cap a 300-character title fails at the
+// filesystem ("file name too long") instead of with lmm's own message, and
+// a 4 KiB one would be a 4 KiB path component (W2 review, Minor 10). 64 is
+// comfortably inside every filesystem's per-component limit once the
+// ".yaml" suffix is added, and long enough that no reasonable title is
+// truncated at all.
+const maxProfileSlug = 64
 
 // slugify lowercases text and replaces every run of characters that are not
 // ASCII letters or digits with a single dash, trimming dashes at both ends.
@@ -281,7 +291,25 @@ func slugify(text string) string {
 			dash = true
 		}
 	}
-	return b.String()
+	return capSlug(b.String())
+}
+
+// capSlug bounds slug at maxProfileSlug, trimming back to a dash boundary
+// so the result ends on a whole word rather than mid-word - unless the cut
+// already landed on one, or there is no dash to fall back to (one
+// unbroken run of characters is simply cut).
+func capSlug(slug string) string {
+	if len(slug) <= maxProfileSlug {
+		return slug
+	}
+	clean := slug[maxProfileSlug] == '-'
+	slug = slug[:maxProfileSlug]
+	if !clean {
+		if i := strings.LastIndexByte(slug, '-'); i > 0 {
+			slug = slug[:i]
+		}
+	}
+	return strings.Trim(slug, "-")
 }
 
 // IsBadCollectionRef reports whether err is a collection import failing

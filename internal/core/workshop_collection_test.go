@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -132,6 +133,55 @@ func TestPlanWorkshopCollectionImport_AnUnnamedCollectionFallsBackToItsID(t *tes
 	plan, err := svc.PlanWorkshopCollectionImport(context.Background(), game, "", "2500900001")
 	require.NoError(t, err)
 	assert.Equal(t, "workshop-collection-2500900001", plan.Profile.Name)
+}
+
+// TestPlanWorkshopCollectionImport_AHostileTitleCannotShapeTheProfileName
+// is the adversarial half of the naming rule (W2 review, Minor 10). A
+// collection title is chosen by a stranger on the internet and becomes a
+// FILE NAME under $XDG_CONFIG_HOME, so every one of these has to come out
+// the far side as a bounded, single-segment, dash-and-alphanumeric slug —
+// or as the id fallback when nothing usable survives.
+func TestPlanWorkshopCollectionImport_AHostileTitleCannotShapeTheProfileName(t *testing.T) {
+	for name, tc := range map[string]struct{ title, want string }{
+		"traversal":           {"../../etc/passwd", "etc-passwd"},
+		"windows traversal":   {`..\..\windows\system32`, "windows-system32"},
+		"absolute path":       {"/etc/shadow", "etc-shadow"},
+		"dot segments only":   {"../..", "workshop-collection-2500900001"},
+		"nul and control":     {"ships\x00\x1b[31m", "ships-31m"},
+		"leading dot":         {".hidden", "hidden"},
+		"yaml-ish":            {"a: b\n- c", "a-b-c"},
+		"non-latin only":      {"貨物船", "workshop-collection-2500900001"},
+		"punctuation only":    {"!!! ???", "workshop-collection-2500900001"},
+		"very long":           {strings.Repeat("cargo ", 200), strings.Repeat("cargo-", 9) + "cargo"},
+		"long unbroken":       {strings.Repeat("x", 500), strings.Repeat("x", 64)},
+		"cap lands on a dash": {strings.Repeat("ab-", 40), strings.TrimSuffix(strings.Repeat("ab-", 21), "-")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, game, src := newCollectionService(t)
+			src.collection = source.Collection{
+				ID: "2500900001", Name: tc.title, ItemIDs: []string{"3617086610"},
+			}
+
+			plan, err := svc.PlanWorkshopCollectionImport(context.Background(), game, "", "2500900001")
+			require.NoError(t, err)
+
+			got := plan.Profile.Name
+			assert.Equal(t, tc.want, got)
+			assert.LessOrEqual(t, len(got), 64, "a profile name is bounded")
+			assert.NotContains(t, got, "..")
+			assert.NotContains(t, got, "/")
+			assert.NotContains(t, got, `\`)
+			assert.Regexp(t, `^[a-z0-9][a-z0-9-]*$`, got, "traversal-safe by construction")
+
+			// The name is not merely well-formed: the profile it produces
+			// must actually save, which is what proves it is a legal path
+			// segment rather than one that fails at the filesystem.
+			result, err := svc.ApplyWorkshopCollectionImport(context.Background(), game, plan,
+				core.ProfileImportOptions{}, nil)
+			require.NoError(t, err)
+			assert.Equal(t, got, result.ProfileName)
+		})
+	}
 }
 
 func TestPlanWorkshopCollectionImport_NoWorkshopSourceForTheGame(t *testing.T) {
