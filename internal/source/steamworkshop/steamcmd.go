@@ -73,13 +73,27 @@ var steamcmdHeartbeat = 15 * time.Second
 // shorten it (export_test.go).
 var steamcmdWaitDelay = 30 * time.Second
 
-// The markers steamcmd prints for the two failures that mean something
-// specific. They are matched on the OUTPUT rather than on the exit code
-// because steamcmd's exit status is not a reliable signal of either.
+// The two results steamcmd names in its own download-item error line, and
+// the only two failures lmm claims to understand.
+//
+// They are read off the OUTPUT rather than the exit code because steamcmd's
+// exit status is not a reliable signal of either - it has been observed
+// exiting 0 on a refused download. They are also read ONLY from the item's
+// own line (see refusalLine): "(Failure)" is steamcmd's rendering of any
+// generic k_EResultFail and appears on unrelated steps - a failed
+// redistributable, a rejected depot manifest - where it means nothing about
+// this download.
 const (
-	markerAnonymousRefused = "(Failure)"
-	markerAccessDenied     = "(Access Denied)"
+	markerAnonymousRefused = "Failure"
+	markerAccessDenied     = "Access Denied"
 )
+
+// refusalLine is the spike's exact observed line, e.g.
+// `ERROR! Download item 3000000002 failed (Failure).` - anchored to the
+// item's own download so a stray parenthetical elsewhere in a multi-megabyte
+// log cannot be mistaken for a verdict on it.
+var refusalLine = regexp.MustCompile(`ERROR!\s+Download item\s+\S+\s+failed\s+\(` +
+	`(` + regexp.QuoteMeta(markerAnonymousRefused) + `|` + regexp.QuoteMeta(markerAccessDenied) + `)\)`)
 
 // ReasonAnonymousRefused is what lmm tells a user whose download the
 // publisher does not allow anonymously. It is the Tier-1 fallback the
@@ -140,19 +154,16 @@ func (s *Source) Fetch(ctx context.Context, mod *domain.Mod, fileID, destDir str
 	progress(source.FetchPhaseStarted, fmt.Sprintf("fetching Workshop item %s with steamcmd", fileID), 0)
 
 	output, runErr := s.runSteamcmd(ctx, home, destDir, appID, fileID, progress)
-	if failure := classifySteamcmd(appID, fileID, output, runErr); failure != nil {
+
+	// What actually happened is decided by the exit status and the item on
+	// disk, in that order - never by what the log happens to contain. See
+	// classifySteamcmd.
+	content := filepath.Join(destDir, "steamapps", "workshop", "content", appID, fileID)
+	_, contentErr := os.Stat(content)
+	if failure := classifySteamcmd(appID, fileID, content, output, runErr, contentErr); failure != nil {
 		return "", failure
 	}
 
-	content := filepath.Join(destDir, "steamapps", "workshop", "content", appID, fileID)
-	if _, err := os.Stat(content); err != nil {
-		return "", &domain.WorkshopFetchFailure{
-			AppID: appID, PublishedFileID: fileID, Tool: steamcmdTool,
-			Reason:     "steamcmd reported no error but downloaded nothing.",
-			OutputTail: tail(output),
-			Err:        fmt.Errorf("no content at %s: %w", content, err),
-		}
-	}
 	progress(source.FetchPhaseDone, fmt.Sprintf("Workshop item %s downloaded", fileID), dirSize(content))
 	return content, nil
 }
@@ -315,26 +326,45 @@ func (s *Source) steamcmdHome(destDir string) (string, error) {
 	return home, nil
 }
 
-// classifySteamcmd turns one run's output and exit status into the typed
-// failure a frontend explains, or nil when the run succeeded.
+// classifySteamcmd turns one run into the typed failure a frontend
+// explains, or nil when it succeeded. runErr is what cmd.Run returned;
+// contentErr is the os.Stat of the directory the item should have landed
+// in.
 //
-// The named markers are checked BEFORE the exit status, and regardless of
-// it: steamcmd has been observed exiting 0 on a refused download, so the
-// output is the authority on what happened and the exit code only decides
-// whether an unrecognised run failed.
-func classifySteamcmd(appID, fileID, output string, runErr error) error {
-	switch {
-	case strings.Contains(output, markerAnonymousRefused):
-		return &domain.WorkshopFetchFailure{
-			AppID: appID, PublishedFileID: fileID, Tool: steamcmdTool,
-			Reason: ReasonAnonymousRefused, Err: domain.ErrWorkshopAnonymousRefused,
+// The order matters, and it is: exit status and content on disk FIRST, the
+// log's markers only on the failure branch.
+//
+//   - A run that exited cleanly and left the item on disk succeeded. No
+//     amount of "(Failure)" elsewhere in the log can overturn two facts
+//     lmm can check directly, and steamcmd prints that parenthetical for
+//     any generic k_EResultFail on steps unrelated to this download.
+//   - Once the run HAS failed, the item's own error line is the authority,
+//     whatever the exit status - steamcmd has been observed exiting 0 on a
+//     refused download, which is the only reason the exit code alone is
+//     not enough.
+//   - Anything else is reported honestly as unclassified, carrying the
+//     output tail rather than a guessed diagnosis.
+func classifySteamcmd(appID, fileID, content, output string, runErr, contentErr error) error {
+	if runErr == nil && contentErr == nil {
+		return nil
+	}
+
+	if m := refusalLine.FindStringSubmatch(output); m != nil {
+		switch m[1] {
+		case markerAnonymousRefused:
+			return &domain.WorkshopFetchFailure{
+				AppID: appID, PublishedFileID: fileID, Tool: steamcmdTool,
+				Reason: ReasonAnonymousRefused, Err: domain.ErrWorkshopAnonymousRefused,
+			}
+		case markerAccessDenied:
+			return &domain.WorkshopFetchFailure{
+				AppID: appID, PublishedFileID: fileID, Tool: steamcmdTool,
+				Reason: ReasonItemUnavailable, Err: domain.ErrWorkshopItemUnavailable,
+			}
 		}
-	case strings.Contains(output, markerAccessDenied):
-		return &domain.WorkshopFetchFailure{
-			AppID: appID, PublishedFileID: fileID, Tool: steamcmdTool,
-			Reason: ReasonItemUnavailable, Err: domain.ErrWorkshopItemUnavailable,
-		}
-	case runErr != nil:
+	}
+
+	if runErr != nil {
 		return &domain.WorkshopFetchFailure{
 			AppID: appID, PublishedFileID: fileID, Tool: steamcmdTool,
 			Reason:     fmt.Sprintf("steamcmd failed to download item %s.", fileID),
@@ -342,7 +372,13 @@ func classifySteamcmd(appID, fileID, output string, runErr error) error {
 			Err:        runErr,
 		}
 	}
-	return nil
+
+	return &domain.WorkshopFetchFailure{
+		AppID: appID, PublishedFileID: fileID, Tool: steamcmdTool,
+		Reason:     "steamcmd reported no error but downloaded nothing.",
+		OutputTail: tail(output),
+		Err:        fmt.Errorf("no content at %s: %w", content, contentErr),
+	}
 }
 
 // outputCollector keeps the tail of a tool's output without holding all of

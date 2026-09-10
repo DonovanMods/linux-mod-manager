@@ -23,6 +23,10 @@
 #   3000000003 - "(Access Denied)": the item is delisted, deleted or private
 #   3000000005 - a SLOW success that prints no progress at all, for the
 #                heartbeat: it grows a file on disk and says nothing
+#   3000000004 - a SUCCESS whose log happens to contain the bare words
+#                "(Failure)" and "(Access Denied)" on unrelated lines
+#   3000000006 - a refusal that exits 0: steamcmd has been observed doing
+#                this, so the anchored marker has to beat the exit status
 #   3000000007 - a success that leaves a GRANDCHILD holding the inherited
 #                stdout pipe, the way steamcmd's re-exec and helper
 #                processes can: the script exits 0 but the pipe stays open
@@ -102,6 +106,26 @@ case "$fileid" in
       sleep 0.05
     done
     echo "Success. Downloaded item $fileid to \"$content\" (240 bytes)"
+    exit 0
+    ;;
+  3000000004)
+    # Real steamcmd prints "(Failure)" for any generic k_EResultFail, on
+    # steps that have nothing to do with the item's own download.
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Failed to install app '228980' (Failure)"
+    echo " Update state (0x61) downloading, progress: 78.90 (7890 / 10000)"
+    echo "Warning: a depot manifest was rejected (Access Denied)"
+    content="$force_dir/steamapps/workshop/content/$appid/$fileid"
+    mkdir -p "$content"
+    printf 'workshop item %s\n' "$fileid" > "$content/mod.txt"
+    echo "Success. Downloaded item $fileid to \"$content\" (10000 bytes)"
+    exit 0
+    ;;
+  3000000006)
+    # The refusal, but exiting 0 - the spike's observation that steamcmd's
+    # exit status is not a reliable signal. Nothing lands on disk.
+    echo "Connecting anonymously to Steam Public...OK"
+    echo "ERROR! Download item $fileid failed (Failure)."
     exit 0
     ;;
   3000000007)

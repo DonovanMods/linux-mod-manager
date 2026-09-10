@@ -34,3 +34,10 @@ func SetWaitDelayForTest(t *testing.T, d time.Duration) {
 	steamcmdWaitDelay = d
 	t.Cleanup(func() { steamcmdWaitDelay = previous })
 }
+
+// ClassifySteamcmdForTest exposes the run classifier so its decision table
+// - exit status, content on disk, and what the log happens to contain -
+// can be exercised directly, without a fake tool per combination.
+func ClassifySteamcmdForTest(appID, fileID, content, output string, runErr, contentErr error) error {
+	return classifySteamcmd(appID, fileID, content, output, runErr, contentErr)
+}

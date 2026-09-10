@@ -371,3 +371,77 @@ func TestFetch_AGrandchildHoldingThePipeCannotOutliveTheWaitDelay(t *testing.T) 
 	require.NoError(t, err, "the item downloaded; only a leftover grandchild held the pipe")
 	assert.FileExists(t, filepath.Join(path, "mod.txt"))
 }
+
+// TestFetch_AStrayFailureWordInASuccessfulRunIsNotARefusal is the
+// classifier's ordering rule from the other side. steamcmd prints
+// "(Failure)" for any generic k_EResultFail - a failed redistributable, a
+// rejected depot manifest, a transient login retry - so matching it as a
+// bare substring anywhere in the output turns a working download into the
+// most dead-end diagnosis lmm has: "this publisher does not allow
+// anonymous downloads, use the Steam client". The exit status and the item
+// on disk are the authority; the markers only get a say on the failure
+// branch.
+func TestFetch_AStrayFailureWordInASuccessfulRunIsNotARefusal(t *testing.T) {
+	src, _ := newSteamcmdSource(t)
+
+	_, path, err := fetchTo(t, src, "1133870", "3000000004")
+	require.NoError(t, err, "a run that exited 0 and left the item on disk succeeded")
+	assert.FileExists(t, filepath.Join(path, "mod.txt"))
+}
+
+// TestFetch_ARefusalThatExitsZeroIsStillARefusal keeps the other half of
+// the rule: on the failure branch the anchored marker beats the exit
+// status, because steamcmd has been observed exiting 0 on a refused
+// download.
+func TestFetch_ARefusalThatExitsZeroIsStillARefusal(t *testing.T) {
+	src, _ := newSteamcmdSource(t)
+
+	_, _, err := fetchTo(t, src, "431960", "3000000006")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, domain.ErrWorkshopAnonymousRefused),
+		"an exit status of 0 must not hide the item's own refusal line")
+}
+
+// TestClassifySteamcmd_AnchorsOnTheDownloadItemLine tables the four
+// combinations of exit status, content on disk and log text that decide
+// what lmm tells the user, against the spike's exact observed line.
+func TestClassifySteamcmd_AnchorsOnTheDownloadItemLine(t *testing.T) {
+	const refusal = `ERROR! Download item 3000000002 failed (Failure).`
+	const denied = `ERROR! Download item 3000000003 failed (Access Denied).`
+	const stray = "ERROR! Failed to install app '228980' (Failure)\nWarning: rejected (Access Denied)"
+
+	for _, tc := range []struct {
+		name        string
+		output      string
+		exited      error
+		contentErr  error
+		wantErr     error
+		wantNoError bool
+	}{
+		{name: "clean exit with content", output: "Success.", wantNoError: true},
+		{name: "stray markers on a clean exit with content", output: stray, wantNoError: true},
+		{name: "refusal line, nonzero exit", output: refusal, exited: errors.New("exit 1"),
+			contentErr: os.ErrNotExist, wantErr: domain.ErrWorkshopAnonymousRefused},
+		{name: "refusal line, zero exit, nothing on disk", output: refusal,
+			contentErr: os.ErrNotExist, wantErr: domain.ErrWorkshopAnonymousRefused},
+		{name: "access denied line", output: denied, exited: errors.New("exit 1"),
+			contentErr: os.ErrNotExist, wantErr: domain.ErrWorkshopItemUnavailable},
+		{name: "stray markers on a FAILED run stay unclassified", output: stray,
+			exited: errors.New("exit 1"), contentErr: os.ErrNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := steamworkshop.ClassifySteamcmdForTest("1133870", "3000000002", "/c", tc.output, tc.exited, tc.contentErr)
+			if tc.wantNoError {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			if tc.wantErr != nil {
+				assert.True(t, errors.Is(err, tc.wantErr), "got %v", err)
+				return
+			}
+			assert.False(t, errors.Is(err, domain.ErrWorkshopAnonymousRefused))
+			assert.False(t, errors.Is(err, domain.ErrWorkshopItemUnavailable))
+		})
+	}
+}
