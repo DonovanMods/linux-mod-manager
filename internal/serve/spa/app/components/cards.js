@@ -442,13 +442,26 @@ function notInstalledCount(state, mods) {
  * what `lmm profile sync` brings to zero, where notInstalledCount is what
  * `lmm profile apply` does - the two commands are mirror images, and so are
  * the two numbers. Under-counts for exactly the reason its twin does, and
- * in the same safe direction: a missing prompt, never a false one. */
-function notListedCount(state, mods) {
+ * in the same safe direction: a missing prompt, never a false one.
+ *
+ * DISABLED rows are excluded (issue 378). /api/v1/mods lists every
+ * installed row; the profile YAML's load order carries only enabled ones,
+ * and core's own PlanProfileSync builds its "to add" bucket from mods
+ * "enabled in the DB but absent from the profile". Subtracting the two
+ * unfiltered made one disabled mod into one phantom entry, and broke the
+ * invariant the paragraph above states in the WRONG direction: the card
+ * claimed drift, offered a Sync, and the Sync's own plan came back
+ * no_changes - the same "already in sync" the CLI reported at that moment.
+ *
+ * Exported for the browser unit test that pins exactly that
+ * (TestNotListedCount_IgnoresDisabledRows); nothing else imports it. */
+export function notListedCount(state, mods) {
   const summary = (state?.status?.profiles ?? []).find(
     (p) => p.name === state?.route?.profile,
   );
   if (!summary) return 0;
-  return Math.max(0, (mods?.mods?.length ?? 0) - summary.mod_count);
+  const enabled = (mods?.mods ?? []).filter((m) => m.enabled).length;
+  return Math.max(0, enabled - summary.mod_count);
 }
 
 /** ProfileCard is the design's third attention state (issue 334): the

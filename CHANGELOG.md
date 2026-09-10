@@ -861,6 +861,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI's Profile card no longer counts disabled mods as missing
+  from the load order (#378).** A profile's load order carries only enabled
+  mods, but the card compared it against every installed row — so one
+  disabled mod produced a **Profile (1)** card claiming "1 installed mod is
+  not in this profile's load order", offering a **Sync…** whose own plan
+  then came back with nothing to do. `lmm profile sync --dry-run` said
+  "already in sync" for the same state. Disabled rows are now excluded, so
+  the card is silent unless something is genuinely unlisted.
+
 - **The web UI's API-key instructions are no longer cut off (#377).** On
   **Setup → Authentication**, each source's setup steps — where to get the
   key, and for the Steam Web API key the rule that pasting someone else's is

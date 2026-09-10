@@ -7178,3 +7178,60 @@ func TestE2E_FetchRefusalRendersItsExplainerAndKeepsTheInstallOffered(t *testing
 	assert.True(t, installBackAfterDismiss, "dismissing the explainer puts the Install action back")
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestNotListedCount_IgnoresDisabledRows is issue 378. The Profile card is
+// a subtraction of two documents rather than a plan: GET /api/v1/mods
+// lists EVERY installed row, disabled ones included, while
+// ProfileSummary.mod_count is the profile YAML's load order, which carries
+// only enabled mods (core's PlanProfileSync builds ToAdd from mods
+// "enabled in the DB but absent from the profile"). So one disabled mod
+// produced one phantom "not in this profile's load order" - the card
+// claimed drift, offered a Sync, and the Sync's own plan came back
+// no_changes, which is also what `lmm profile sync --dry-run` said at the
+// same moment.
+//
+// cards.js has no DOM in this function, so it is exercised directly here
+// through a dynamic import in a real browser, the same module Mission
+// Control runs - the pattern TestSortRows_RecentToleratesMissingInstalledAt
+// established.
+func TestNotListedCount_IgnoresDisabledRows(t *testing.T) {
+	f := newE2EFixture(t)
+
+	var counts []float64
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`(async () => {
+			const { notListedCount } = await import("/static/app/components/cards.js");
+			const state = {
+				route: { profile: "default" },
+				status: { profiles: [{ name: "default", mod_count: 1 }] },
+			};
+			const oneEnabledOneDisabled = { mods: [
+				{ key: "fake:a", enabled: true },
+				{ key: "fake:b", enabled: false },
+			] };
+			const twoEnabled = { mods: [
+				{ key: "fake:a", enabled: true },
+				{ key: "fake:b", enabled: true },
+			] };
+			const onlyDisabled = { mods: [{ key: "fake:b", enabled: false }] };
+			return [
+				notListedCount(state, oneEnabledOneDisabled),
+				notListedCount(state, twoEnabled),
+				notListedCount(state, onlyDisabled),
+			];
+		})()`, &counts, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+
+	require.Len(t, counts, 3)
+	assert.Equal(t, float64(0), counts[0],
+		"a disabled installed mod is not 'missing from the load order' - the profile YAML never carries one")
+	assert.Equal(t, float64(1), counts[1],
+		"a genuinely unlisted ENABLED mod is still counted, which is what the card exists to say")
+	assert.Equal(t, float64(0), counts[2],
+		"and the count never goes negative when the profile lists more than is enabled")
+	assert.Empty(t, f.BrowserErrors())
+}
