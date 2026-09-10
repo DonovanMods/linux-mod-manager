@@ -305,9 +305,14 @@ func loaderStatusWarnings(status *LoaderStatus) []string {
 // its directory or has left a log there, or the directory carries a marker
 // DetectLoaderTarget recognised.
 //
-// It decides whether a surface shows the loader report at all, and it lives
-// here rather than in each frontend so `lmm game show` and the web game
-// page's warning cannot disagree. False means "not a loader game as far as
+// It is a Go predicate with no wire member, and it decides two things: the
+// unanswered-bootstrap WARNING this file appends (so every surface reading
+// LoaderStatus - `lmm game show`, GET /api/v1/games/{id}, the web loader
+// panel - stops advising `--loader-bootstrap` for a game that needs no
+// loader at the same moment), and whether `lmm game show` prints the loader
+// section at all. It does NOT gate the web panel: that renders on the
+// user's explicit "Edit loader..." click, and a panel someone asked for
+// needs no relevance test. False means "not a loader game as far as
 // anything can tell": say nothing, rather than print a section of unknowns
 // followed by BepInEx setup advice.
 //
