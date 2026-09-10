@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -331,4 +332,47 @@ func TestInit_AuthInstructionsAreIndentedAndOnTheirOwnLine(t *testing.T) {
 	assert.Contains(t, delegated, "  Enter the API key for acme-mods.\n")
 	assert.Contains(t, delegated, "  Enter API key: ")
 	assert.NotContains(t, delegated, "  \n", "a blank line inside the block keeps no trailing indent")
+}
+
+// TestInit_NextStepsBlockIsAligned is #389: the first four lines
+// interpolated the --game scope and padded around it, while the `lmm serve`
+// line carried hard-coded padding - so its description sat six columns out
+// with a default game set, and ~17 columns further out without one.
+func TestInit_NextStepsBlockIsAligned(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		setDefault bool
+	}{
+		{"with a default game", true},
+		{"without one", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := setupInitTest(t)
+			seedInitGame(t, svc)
+			input := "n\nn\n"
+			if tc.setDefault {
+				require.NoError(t, svc.SetDefaultGame(context.Background(), "g1"))
+			} else {
+				input = "n\nn\nn\n" // one more: decline the default-game prompt
+			}
+
+			out := runInitWith(t, svc, input)
+
+			_, block, ok := strings.Cut(out, "Done. What next:\n")
+			require.True(t, ok, "the closing block is missing from:\n%s", out)
+
+			// A run of two or more spaces separates the command from what
+			// it does; the descriptions themselves are single-spaced, so
+			// the LAST such run on a line is where the description starts.
+			gap := regexp.MustCompile(` {2,}`)
+			columns := map[int]bool{}
+			for _, line := range strings.Split(strings.TrimRight(block, "\n"), "\n") {
+				require.True(t, strings.HasPrefix(line, "  lmm "), "unexpected line %q", line)
+				runs := gap.FindAllStringIndex(line[2:], -1)
+				require.NotEmpty(t, runs, "no gap between command and description in %q", line)
+				columns[2+runs[len(runs)-1][1]] = true
+			}
+			require.Len(t, columns, 1, "every description must start in the same column, got:\n%s", block)
+		})
+	}
 }

@@ -1444,6 +1444,12 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   the `[Y/n]` answer, and it is indented under its step like everything
   else the wizard prints.
 
+- **`lmm init`'s closing "What next" block lines up (#389).** The first four
+  commands interpolated ` --game <game-id>` and padded around it while the
+  `lmm serve` line carried hard-coded spacing, so its description sat six
+  columns out with a default game set and about seventeen without one. The
+  block is now built as pairs and padded to the widest command.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

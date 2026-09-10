@@ -460,13 +460,29 @@ func printInitNextSteps(cmd *cobra.Command, defaultGame string) {
 	if defaultGame == "" {
 		scope = " --game <game-id>"
 	}
+	// Built as pairs and padded to the widest command, rather than with
+	// per-line padding: the first four carry `scope` and the last does not,
+	// so any hard-coded spacing is wrong for at least one of the two
+	// layouts, and was (#389).
+	next := []struct{ command, does string }{
+		{"lmm search <term>" + scope, "find a mod"},
+		{"lmm install <mod-id>" + scope, "install one"},
+		{"lmm deploy" + scope, "put your mods in the game directory"},
+		{"lmm snapshot create" + scope, "record a point you can come back to"},
+		{"lmm serve", "the same thing in a browser"},
+	}
+	width := 0
+	for _, n := range next {
+		if len(n.command) > width {
+			width = len(n.command)
+		}
+	}
+
 	cmd.Println()
 	cmd.Println("Done. What next:")
-	cmd.Printf("  lmm search <term>%s      find a mod\n", scope)
-	cmd.Printf("  lmm install <mod-id>%s   install one\n", scope)
-	cmd.Printf("  lmm deploy%s             put your mods in the game directory\n", scope)
-	cmd.Printf("  lmm snapshot create%s    record a point you can come back to\n", scope)
-	cmd.Println("  lmm serve                    the same thing in a browser")
+	for _, n := range next {
+		cmd.Printf("  %-*s   %s\n", width, n.command, n.does)
+	}
 }
 
 // askInitYes prints a yes/no prompt and reads the answer, with def as the
