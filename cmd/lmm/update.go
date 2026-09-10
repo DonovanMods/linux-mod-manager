@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -300,7 +301,11 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 	updates, checkErr := service.CheckGameUpdates(ctx, game, profileName, installed, sink, core.UpdateCheckOptions{Refresh: updateRefresh})
 	if checkErr != nil {
 		if errors.Is(checkErr, domain.ErrAuthRequired) {
-			return authPromptError(updateSource)
+			// The bulk path has no -s/--source of its own since #375, so
+			// the remedy names the source whose check actually refused
+			// (P1a review F3); the flag is the fallback for the single-mod
+			// path, which does read it.
+			return authPromptError(cmp.Or(core.AuthRequiredSource(checkErr), updateSource))
 		}
 		// Surface warning but continue to show partial updates - under
 		// --json the same message already reaches the document via

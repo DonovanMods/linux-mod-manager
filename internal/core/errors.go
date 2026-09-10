@@ -283,3 +283,43 @@ func ResolveInstalledByID(rows []domain.InstalledMod, modID, profileName, flag s
 		return nil, &AmbiguousModError{ModID: modID, Profile: profileName, Sources: sources, Flag: flag}
 	}
 }
+
+// SourceAuthError names the source whose update check failed for want of
+// credentials, so a caller can print a remedy naming THAT source
+// (P1a review F3).
+//
+// A bulk `lmm update` walks every source a profile's mods come from and has
+// no single source of its own - #375 removed the -s/--source prompt from
+// that path precisely because it never used the answer. Its auth handler
+// went on printing that unset flag, producing "run 'lmm auth login ' to
+// authenticate": an uncopyable command, on exactly the unattended path #375
+// set out to unblock. The check knows which source refused, so it says so.
+//
+// It wraps rather than replaces: errors.Is(err, domain.ErrAuthRequired)
+// still answers true, and Error() is worded identically to the plain
+// "source %s: %v" wrap every other source failure gets, so nothing that
+// merely prints the error changes. No Details(): it is a diagnostic a
+// frontend reads a field off, not a document the --json envelope carries.
+type SourceAuthError struct {
+	// SourceID is the source that needs authenticating.
+	SourceID string
+	// Err is the underlying failure, which wraps domain.ErrAuthRequired.
+	Err error
+}
+
+// Error reads exactly as the generic per-source wrap it replaces.
+func (e *SourceAuthError) Error() string { return fmt.Sprintf("source %s: %v", e.SourceID, e.Err) }
+
+// Unwrap keeps errors.Is(err, domain.ErrAuthRequired) true through the wrap.
+func (e *SourceAuthError) Unwrap() error { return e.Err }
+
+// AuthRequiredSource reports the source id of the first SourceAuthError in
+// err's tree, or "" when there is none - the read half of SourceAuthError,
+// for a caller holding the joined multi-source error CheckUpdates returns.
+func AuthRequiredSource(err error) string {
+	var authErr *SourceAuthError
+	if errors.As(err, &authErr) {
+		return authErr.SourceID
+	}
+	return ""
+}

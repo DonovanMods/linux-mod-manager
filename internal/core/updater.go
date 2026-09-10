@@ -125,7 +125,7 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 		}
 		allUpdates = append(allUpdates, updates...)
 		if err != nil {
-			checkErrs = append(checkErrs, fmt.Errorf("source %s: %w", sourceID, err))
+			checkErrs = append(checkErrs, wrapSourceCheckError(sourceID, err))
 		}
 	}
 
@@ -133,6 +133,18 @@ func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed
 		return allUpdates, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
 	}
 	return allUpdates, nil
+}
+
+// wrapSourceCheckError attributes a source's check failure to that source.
+// An auth failure keeps the source id as DATA (*SourceAuthError), so a
+// caller can name it in the remedy it prints; everything else is the plain
+// wrap it always was. Both read the same, so nothing that merely prints the
+// error changes - see SourceAuthError's doc comment.
+func wrapSourceCheckError(sourceID string, err error) error {
+	if errors.Is(err, domain.ErrAuthRequired) {
+		return &SourceAuthError{SourceID: sourceID, Err: err}
+	}
+	return fmt.Errorf("source %s: %w", sourceID, err)
 }
 
 // UpdateCheckOptions tunes an update check.

@@ -889,3 +889,33 @@ func TestDoUpdate_JSON_TwoSources_NoGlobalCounterLeak(t *testing.T) {
 	assert.NotContains(t, stdout, "global_index", "no live-event field leaks into the report document")
 	assert.NotContains(t, stdout, "global_total", "no live-event field leaks into the report document")
 }
+
+// TestDoUpdate_BulkAuthRequired_NamesTheSource is P1a review finding F3: a
+// regression #375 introduced. Moving resolveSource into the single-mod
+// branch left the bulk path's auth handler reading an `updateSource` nothing
+// assigns, so the remedy sentence read "run 'lmm auth login ' to
+// authenticate" - an uncopyable command, on exactly the non-interactive path
+// #375 set out to unblock (a cron `lmm update` whose key expired).
+//
+// The source that actually needs authenticating is the one whose check
+// failed, which is what the message must name.
+func TestDoUpdate_BulkAuthRequired_NamesTheSource(t *testing.T) {
+	svc, game, src := setupDoUpdateTest(t)
+	src.authRequired = true
+	// The bulk path: no args, and no -s/--source, exactly as `lmm update`
+	// runs unattended since #375.
+	updateSource = ""
+	seedInstalledForUpdate(t, svc, game, "test-src", "mod1", "Mod One", "1.0", []string{"old-1"},
+		map[string][]byte{"mod1-old.esp": []byte("old-content")})
+
+	var err error
+	_, _ = captureStdoutErr(t, func() error {
+		err = doUpdate(context.Background(), svc, game, nil)
+		return nil
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "authentication required")
+	assert.Contains(t, err.Error(), "lmm auth login test-src",
+		"the remedy must name the source whose check failed, not the unset flag")
+}

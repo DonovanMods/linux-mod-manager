@@ -1028,7 +1028,9 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   that genuinely uses it. That refusal also named three flags, two of which
   `lmm update` does not have: a prompt whose remedy is a specific flag now
   says only that ("confirmation required: pass -s/--source to select a mod
-  source").
+  source"). And when a bulk check does fail for want of credentials, the
+  remedy names the source that refused — with no flag to read, it used to
+  print `run 'lmm auth login ' to authenticate`.
 
 - **A bare mod ID that names two mods is refused, not guessed (#373).** Mod
   IDs are unique only WITHIN a source, so the same ID can name a different
