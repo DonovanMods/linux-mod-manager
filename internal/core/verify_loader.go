@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -329,9 +330,17 @@ func loaderUnlinkedRefusal(fixing bool) string {
 // present at their deploy path, in cache-listing order.
 //
 // A cache entry that cannot be listed yields nothing: the per-file walk owns
-// that failure and reporting it twice would be noise.
+// that failure and reporting it twice would be noise. The same tolerance
+// covers a game whose adapter will not resolve (#353): adapterPass already
+// reports that as its own skipped row, and answering this question through
+// the identity routing - which is what every adapter U1 ships does anyway -
+// is better than reporting nothing.
 func (r *verifyRun) unlinkedLoaderFiles(mod *domain.InstalledMod) []string {
-	files, err := deployableFiles(r.svc.GetGameCache(r.game), r.game.ID, mod.SourceID, mod.ID, mod.Version)
+	gameAdapter, err := r.svc.AdapterFor(r.game)
+	if err != nil {
+		gameAdapter = adapter.Generic{}
+	}
+	files, err := deployableFiles(r.svc.GetGameCache(r.game), gameAdapter, r.game, mod.SourceID, mod.ID, mod.Version)
 	if err != nil {
 		return nil
 	}

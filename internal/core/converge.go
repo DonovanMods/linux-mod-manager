@@ -108,6 +108,11 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 	}
 
 	gameCache := s.GetGameCache(game)
+	// #353: one adapter resolution for the whole sweep (see conflicts.go).
+	gameAdapter, err := s.AdapterFor(game)
+	if err != nil {
+		return nil, err
+	}
 
 	// provided is the union of every installed mod's current deployable set
 	// (#210's resolver - the same provenance source deploy itself uses),
@@ -123,7 +128,7 @@ func (s *Service) convergeDeployedFiles(ctx context.Context, game *domain.Game, 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		files, err := deployableFiles(gameCache, game.ID, m.SourceID, m.ID, m.Version)
+		files, err := deployableFiles(gameCache, gameAdapter, game, m.SourceID, m.ID, m.Version)
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				unknownProvenance[domain.ModKey(m.SourceID, m.ID)] = true

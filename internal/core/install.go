@@ -2115,12 +2115,15 @@ func (s *Service) fillPrimaryCache(ctx context.Context, game *domain.Game, plan 
 		downloadCache = txn.staged
 	}
 
-	// Resolve the source to check MergeCompiler capability for .pak gating (#221)
+	// Resolve the source to check MergeCompiler capability for .pak gating
+	// (#221). Since #353 the GAME's adapter answers first; the source
+	// type-assertion is compilerForSource's temporary fallback, deleted in
+	// U2 (#412).
 	src, err := s.GetSource(plan.SourceID)
 	if err != nil {
 		return st, fmt.Errorf("resolving source %q: %w", plan.SourceID, err)
 	}
-	mc, isMergeCompiler := src.(source.MergeCompiler)
+	mc, isMergeCompiler := s.compilerForSource(game, src)
 
 	// Cache-first guard (2026-08-29 ruling), the same one ApplyProfileSwitch
 	// and ApplyProfileImport already use (#96/#138): HasFileIDs - the

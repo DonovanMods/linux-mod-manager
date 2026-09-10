@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/linker"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -62,6 +63,16 @@ type ServiceConfig struct {
 	// in-process semaphore exactly as it was - which is what a test
 	// constructing a Service for one temp directory wants.
 	OpLockPath string
+
+	// Adapters is the game-adapter registry (#353). Nil means
+	// adapter.NewRegistry(), which already holds the built-in
+	// generic-files identity - so a Service built without the composition
+	// root resolves the same identity the product does, and every existing
+	// caller keeps working untouched.
+	//
+	// The composition root (internal/app) registers only NAMED adapters on
+	// top of that default; core never imports a concrete adapter package.
+	Adapters *adapter.Registry
 }
 
 // DownloadModResult contains the outcome of downloading a mod file
@@ -90,6 +101,10 @@ type Service struct {
 	db       *db.DB
 	cache    *cache.Cache
 	registry *source.Registry
+	// adapters is the game-adapter registry (#353). Never nil: NewService
+	// substitutes adapter.NewRegistry() for a nil ServiceConfig.Adapters,
+	// so AdapterFor always has at least the built-in identity to resolve.
+	adapters *adapter.Registry
 	gamesMu  sync.RWMutex
 	games    map[string]*domain.Game
 	// gamesStat fingerprints the games.yaml the snapshot above was loaded
@@ -173,6 +188,11 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		return nil, fmt.Errorf("loading games: %w", err)
 	}
 
+	adapters := cfg.Adapters
+	if adapters == nil {
+		adapters = adapter.NewRegistry()
+	}
+
 	modCache := cache.New(cfg.CacheDir)
 	modCache.SetLogger(log)
 	downloader := NewDownloader(nil)
@@ -183,6 +203,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 		db:         database,
 		cache:      modCache,
 		registry:   source.NewRegistry(),
+		adapters:   adapters,
 		games:      games,
 		gamesStat:  gamesStat,
 		opSem:      make(chan struct{}, 1),
@@ -239,6 +260,91 @@ func (s *Service) logger() *slog.Logger {
 		return discardLogger
 	}
 	return s.log
+}
+
+// RegisterAdapter adds a game adapter to the registry (#353). The
+// composition root calls it; nothing else does - core never constructs a
+// concrete adapter, and the built-in generic-files identity is already
+// registered by adapter.NewRegistry.
+func (s *Service) RegisterAdapter(a adapter.GameAdapter) {
+	s.adapterRegistry().Register(a)
+}
+
+// defaultAdapters is the registry a Service built as a bare literal reads
+// from - internal white-box tests that construct &Service{} directly rather
+// than through NewService. It holds exactly what NewRegistry holds, the
+// built-in generic-files identity, and nothing registers into it: same
+// nil-tolerance idiom as logger() and for the same reason, a zero Service
+// must behave, not panic.
+var defaultAdapters = adapter.NewRegistry()
+
+// adapterRegistry returns this Service's adapter registry, substituting the
+// shared identity-only default for a Service that never had one.
+func (s *Service) adapterRegistry() *adapter.Registry {
+	if s.adapters == nil {
+		return defaultAdapters
+	}
+	return s.adapters
+}
+
+// ListAdapters returns the registered adapter IDs, sorted. It is what a
+// frontend validates `--adapter` against and what an interactive prompt
+// offers, which is why cmd/lmm's import allow-list does not need to grow an
+// internal/adapter entry (design §4).
+func (s *Service) ListAdapters() []string {
+	return s.adapterRegistry().Names()
+}
+
+// AdapterName is the adapter game SELECTS, after the one derivation #353's
+// migration performs: `deploy_mode: compile` with no `adapter:` key means
+// the icarus adapter (design §2, OQ1 - kept for 2.0 so every existing
+// Icarus games.yaml keeps working with no user action).
+//
+// The derivation fires only once an icarus adapter is REGISTERED. U1
+// registers none, so a compile game resolves to the identity and keeps
+// taking the source-based compile path below; U2 (#412) registers the
+// adapter and the derivation goes live with no change here.
+//
+// An explicit `adapter:` always wins, and the value is never written back
+// to games.yaml - domain.Game.Adapter stays what the user typed.
+func (s *Service) AdapterName(game *domain.Game) string {
+	if game.Adapter != "" {
+		return game.Adapter
+	}
+	if game.DeployMode == domain.DeployCompile && s.adapterRegistry().Has(icarusAdapterID) {
+		return icarusAdapterID
+	}
+	return adapter.GenericID
+}
+
+// icarusAdapterID is the adapter `deploy_mode: compile` migrates to. It is
+// a NAME, not an import: core must never depend on the concrete adapter
+// package (design §4).
+const icarusAdapterID = "icarus"
+
+// AdapterFor resolves game's adapter, failing loud when the configured name
+// is not registered - the existence check design §2 assigns to this layer,
+// because the registry lives here and internal/storage/config must not
+// learn it.
+//
+// It also enforces the one composition rule `deploy_mode` and `adapter:`
+// have: an EXPLICIT adapter that cannot compile is refused for a compile
+// game, naming both keys and the fix. The derived case cannot hit it (the
+// derivation only fires for an adapter that exists, and the icarus adapter
+// compiles by construction), so a compile game with no adapter key is
+// accepted exactly as it always was.
+func (s *Service) AdapterFor(game *domain.Game) (adapter.GameAdapter, error) {
+	a, err := s.adapterRegistry().Resolve(s.AdapterName(game))
+	if err != nil {
+		return nil, fmt.Errorf("game %q: %w", game.ID, err)
+	}
+	if game.Adapter != "" && game.DeployMode == domain.DeployCompile {
+		if _, ok := adapter.Compiler(a); !ok {
+			return nil, fmt.Errorf("game %q sets deploy_mode: compile but adapter %q cannot compile; set an adapter that can (%s) or drop deploy_mode: compile",
+				game.ID, game.Adapter, strings.Join(s.adapterRegistry().Names(), ", "))
+		}
+	}
+	return a, nil
 }
 
 // RegisterSource adds a mod source to the registry
@@ -355,6 +461,14 @@ func (s *Service) SourcesForGame(gameID string) ([]source.ModSource, error) {
 // both fail loud instead of letting an .exmodz import silently skip
 // validation.
 func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompiler, error) {
+	// #353: the ADAPTER answers "can this game compile" first - one game,
+	// one adapter, zero ambiguity - and only when it has no such
+	// capability does the pre-#353 source walk below run.
+	if game, ok := s.game(gameID); ok {
+		if mc, found, err := s.adapterCompiler(game); err != nil || found {
+			return mc, err
+		}
+	}
 	srcs, err := s.SourcesForGame(gameID)
 	if err != nil {
 		return nil, err
@@ -368,6 +482,42 @@ func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompile
 	return soleMergeCompiler(gameID, compilers)
 }
 
+// adapterCompiler is #353's answer to "can this game compile, and with
+// what": the game's adapter, if it implements adapter.MergeCompiler. found
+// is false when the adapter has no compile capability, which is every
+// generic-files game.
+//
+// It replaces "walk the game's sources looking for one that implements
+// MergeCompiler" - a question that made compilation a property of where the
+// bytes came from, so an Icarus .pak downloaded from NexusMods could not
+// compile. The two resolvers below and soleMergeCompiler are DELETED in U2
+// (#412), when the Icarus implementation moves behind the adapter; until
+// then they are the fallback that keeps U1 byte-identical.
+func (s *Service) adapterCompiler(game *domain.Game) (adapter.MergeCompiler, bool, error) {
+	a, err := s.AdapterFor(game)
+	if err != nil {
+		return nil, false, err
+	}
+	mc, ok := adapter.Compiler(a)
+	return mc, ok, nil
+}
+
+// compilerForSource is the DOWNLOAD path's compile-capability question,
+// which is per-archive rather than per-game: a file is served by a specific
+// source, and #221 I1 deliberately lets a raw artifact from a
+// non-compiling source fall through to the legacy extract path instead of
+// hard-erroring.
+//
+// #353 asks the adapter first for the same reason adapterCompiler does; the
+// source type-assertion is the temporary fallback U2 (#412) removes.
+func (s *Service) compilerForSource(game *domain.Game, src source.ModSource) (source.MergeCompiler, bool) {
+	if mc, found, err := s.adapterCompiler(game); err == nil && found {
+		return mc, true
+	}
+	mc, ok := src.(source.MergeCompiler)
+	return mc, ok
+}
+
 // mergeCompilerForGame is mergeCompilerSourceForGame for callers that
 // already hold the *domain.Game (#256): it resolves against the game
 // struct's own source map instead of re-looking the game up in s.games, so
@@ -375,6 +525,10 @@ func (s *Service) mergeCompilerSourceForGame(gameID string) (source.MergeCompile
 // working for a game value that was never registered with the service (a
 // distinction only tests exercise today). Same 0/1/many contract.
 func (s *Service) mergeCompilerForGame(game *domain.Game) (source.MergeCompiler, error) {
+	// #353: the adapter first - see adapterCompiler.
+	if mc, found, err := s.adapterCompiler(game); err != nil || found {
+		return mc, err
+	}
 	var compilers []source.MergeCompiler
 	for id := range game.SourceIDs {
 		src, err := s.registry.Get(id)
@@ -1137,7 +1291,7 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	// before #221 - rather than hard-erroring the whole download. Unlike a
 	// .exmodz file, which has no other valid interpretation and so still
 	// hard-errors when src lacks MergeCompiler (see the !ok check below).
-	mc, isMergeCompiler := src.(source.MergeCompiler)
+	mc, isMergeCompiler := s.compilerForSource(game, src)
 	convertEligiblePak := isMergeCompiler && isConvertEligibleArtifact(game, mc, safeFileName)
 	if game.DeployMode == domain.DeployCompile && (s.isNativeMergeFile(game, mc, safeFileName) || convertEligiblePak) {
 		if !isMergeCompiler {
@@ -1529,6 +1683,16 @@ func (s *Service) extractIntoStaging(ctx context.Context, game *domain.Game, mod
 	}
 	for _, w := range layout.warnings() {
 		s.logger().Warn(w, "mod", mod.Name, "game", game.ID)
+	}
+
+	// #353: the game's adapter gets its say on the archive's layout HERE,
+	// against the pristine directory that holds exactly this archive's
+	// members - the only point at which "what did this archive contribute"
+	// is still an answerable question. It runs AFTER #358's normalisation,
+	// the same order the import path uses. A generic-files game gets the
+	// identity Layout and nothing is touched.
+	if err := s.rewriteStagedExtract(game, extractPath); err != nil {
+		return nil, err
 	}
 
 	var members []string
@@ -1956,6 +2120,14 @@ func (s *Service) newInstallerWithLinker(game *domain.Game, lnk linker.Linker) *
 	// #350: every Installer this Service hands out captures into the
 	// game's originals store, so no flow has to remember to ask for it.
 	installer.setOriginals(s.originalsStoreFor(game.ID))
+	// #353: and every Installer routes its deployable files through the
+	// game's adapter. A resolution failure is reported by the flow's own
+	// AdapterFor call (every flow that reaches an Installer makes one);
+	// keeping the identity here avoids a second, quieter failure channel
+	// for the same fault.
+	if a, err := s.AdapterFor(game); err == nil {
+		installer.setAdapter(a)
+	}
 	return installer
 }
 

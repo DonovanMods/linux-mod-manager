@@ -395,6 +395,14 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 		}
 	}
 
+	// #353: one adapter resolution for the whole plan, so a games.yaml
+	// naming an adapter this build does not ship fails the plan rather
+	// than each mod row.
+	planAdapter, err := s.AdapterFor(game)
+	if err != nil {
+		return nil, err
+	}
+
 	classes := s.classifyCompileDeployMods(ctx, game, profileName, modsToDeploy)
 	for _, mod := range modsToDeploy {
 		entry := DeployPlanMod{
@@ -434,7 +442,7 @@ func (s *Service) planDeploy(ctx context.Context, game *domain.Game, profileName
 			plan.Mods = append(plan.Mods, entry)
 			continue
 		}
-		link, err := deployableFilesFromListing(gameCache, game.ID, mod.SourceID, mod.ID, mod.Version, files)
+		link, err := deployableFilesFromListing(gameCache, planAdapter, game, mod.SourceID, mod.ID, mod.Version, files)
 		if err != nil {
 			s.logger().Warn("resolving deployable files failed while planning a deploy",
 				"game_id", game.ID, "profile", profileName, "mod", domain.ModKey(mod.SourceID, mod.ID), "err", err)
@@ -873,6 +881,16 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 			result.Warnings = append(result.Warnings, msg)
 			emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 		}
+	}
+
+	// #353: the adapter's copy-once files land beside the profile's own
+	// overrides, with the same semantics and at the same moment. A warning,
+	// not a failure, for the reason the overrides above are: the mods are
+	// already deployed.
+	if err := s.applyAdapterCopyOnce(game, modsToDeploy); err != nil {
+		msg := fmt.Sprintf("applying adapter files: %v", err)
+		result.Warnings = append(result.Warnings, msg)
+		emit(WarningEvent{Scope: Scope{Op: OpDeploy}, Phase: DeployWarning, Message: msg})
 	}
 
 	if syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName); syncErr != nil {

@@ -3,10 +3,12 @@ package core
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
@@ -66,6 +68,66 @@ func applyProfileOverrides(game *domain.Game, profile *domain.Profile, originals
 		}
 	}
 	return nil
+}
+
+// applyAdapterCopyOnce writes the RouteCopyOnce files of the mods just
+// deployed into the game directory (#353).
+//
+// It is applyProfileOverrides' semantics reused rather than reinvented,
+// which is the design's decision 4: a real file, copied on FIRST deploy,
+// never overwritten, and never entered into deployed_files. The reason is
+// identical - the user hand-edits the file after the game's first run, and
+// a symlink would push that edit back into the shared cache entry, where it
+// would leak into every profile using the same mod version.
+//
+// Nothing routes RouteCopyOnce in U1 (no adapter shipped here implements
+// FileRouter), so this returns immediately for every game today. It is
+// wired now, with the seam, because the rule "core owns every side effect"
+// is only true if the side effect exists in core before an adapter asks for
+// it (design §3 U1's call-site table).
+func (s *Service) applyAdapterCopyOnce(game *domain.Game, mods []*domain.InstalledMod) error {
+	a, err := s.AdapterFor(game)
+	if err != nil {
+		return err
+	}
+	if _, routes := a.(adapter.FileRouter); !routes {
+		return nil
+	}
+	gameCache := s.GetGameCache(game)
+	for _, mod := range mods {
+		if mod.External {
+			continue // lmm never owns an external mod's bytes
+		}
+		files, err := gameCache.ListFiles(game.ID, mod.SourceID, mod.ID, mod.Version)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("listing cache files for %s: %w", domain.ModKey(mod.SourceID, mod.ID), err)
+		}
+		versionDir := gameCache.ModPath(game.ID, mod.SourceID, mod.ID, mod.Version)
+		for _, rel := range adapterCopyOnceFiles(a, game, files) {
+			if err := copyOnce(filepath.Join(versionDir, filepath.FromSlash(rel)), filepath.Join(game.ModPath, filepath.FromSlash(rel))); err != nil {
+				return fmt.Errorf("writing %s for %s: %w", rel, domain.ModKey(mod.SourceID, mod.ID), err)
+			}
+		}
+	}
+	return nil
+}
+
+// copyOnce copies src to dst unless dst already exists. An existing
+// destination is left EXACTLY as it is - that is the whole point of the
+// route - and is not an error.
+func copyOnce(src, dst string) error {
+	if _, err := os.Lstat(dst); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	return copyFileStreaming(src, dst)
 }
 
 // captureOverriddenOriginal preserves the game file an override is about to
