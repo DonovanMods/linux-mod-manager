@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,6 +23,10 @@ import (
 // surfacing it. Sources can return verbose HTML on outages; 10 KiB is plenty
 // for an actionable error message and bounds memory use.
 const errorBodyLimit = 10 * 1024
+
+// redactedKey stands in for the configured API key wherever a message would
+// otherwise carry it.
+const redactedKey = "[redacted]"
 
 // Options configures a Client. BaseURL, AuthLabel, and ONE of AuthHeader /
 // AuthQueryParam are required and validated by New (which panics on
@@ -149,7 +154,7 @@ func (c *Client) DoJSONBody(ctx context.Context, method, path string, body, resu
 
 	req, err := http.NewRequestWithContext(ctx, method, c.authURL(path), reader)
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		return c.requestError("creating request", path, err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -172,7 +177,7 @@ func (c *Client) DoForm(ctx context.Context, path string, form url.Values, resul
 	body := form.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.authURL(path), strings.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		return c.requestError("creating request", path, err)
 	}
 	c.applyAuthHeader(req)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -197,6 +202,47 @@ func (c *Client) authURL(path string) string {
 	return full + sep + url.QueryEscape(c.authQueryParam) + "=" + url.QueryEscape(c.apiKey)
 }
 
+// requestError reports a failure that never produced a response, naming the
+// caller-supplied PATH rather than the resolved URL.
+//
+// net/http reports both an unparseable URL and a transport failure as a
+// *url.Error whose Error() embeds the RESOLVED url — which, for a
+// query-parameter auth client (Steam's Web API, #269), carries the user's
+// API key. That message is printed to the terminal, written into
+// `lmm serve`'s error envelope and pasted into bug reports, so the URL is
+// dropped here rather than at each of the dozens of call sites downstream
+// (W2 review, Critical 1). Unwrapping to the inner error keeps
+// errors.Is/errors.As working for every caller that classifies on it.
+func (c *Client) requestError(op, requestPath string, err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	return fmt.Errorf("%s to %s: %w", op, requestPath, c.redactError(err))
+}
+
+// redact replaces the configured API key wherever it appears in s. It is
+// the belt to requestError's braces: an upstream error page is free to
+// echo the request back, and nothing this client returns may carry the
+// credential.
+func (c *Client) redact(s string) string {
+	if c.apiKey == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, c.apiKey, redactedKey)
+}
+
+// redactError is redact for an error, preserving the chain when there is
+// nothing to redact (the overwhelmingly common case) and flattening it to a
+// scrubbed message when there is — a wrapped error's text cannot be
+// rewritten any other way, and a leaked key outranks a preserved Unwrap.
+func (c *Client) redactError(err error) error {
+	if c.apiKey == "" || !strings.Contains(err.Error(), c.apiKey) {
+		return err
+	}
+	return errors.New(c.redact(err.Error()))
+}
+
 // applyAuthHeader sets the auth header when the client is configured for
 // header auth and a key is set. A query-parameter client never sends one.
 func (c *Client) applyAuthHeader(req *http.Request) {
@@ -212,7 +258,7 @@ func (c *Client) applyAuthHeader(req *http.Request) {
 func (c *Client) do(req *http.Request, requestPath string, result any) (err error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
+		return c.requestError("executing request", requestPath, err)
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); err == nil && cerr != nil {
@@ -228,6 +274,11 @@ func (c *Client) do(req *http.Request, requestPath string, result any) (err erro
 		if readErr != nil {
 			return fmt.Errorf("API error (status %d); reading body: %w", resp.StatusCode, readErr)
 		}
+		// Redacted before the mapper, not after: a mapper is free to
+		// interpolate the body into its own message (CurseForge's 403 does),
+		// and an upstream error page that echoes the request back is exactly
+		// how a key reaches a terminal.
+		errBody = []byte(c.redact(string(errBody)))
 		if c.errorMapper != nil {
 			if mapped := c.errorMapper(resp.StatusCode, errBody, requestPath); mapped != nil {
 				return mapped
