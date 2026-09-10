@@ -88,6 +88,31 @@ func (d *DB) GetFileOwner(ctx context.Context, gameID, profileName, relativePath
 	return &owner, nil
 }
 
+// AnyProfileOwnsFile reports whether ANY profile of gameID has a
+// deployed-file record for relativePath.
+//
+// GetFileOwner is scoped to a game AND a profile, which is right for
+// "whose file is this in the deployment I am changing" but wrong for
+// "did lmm put this here at all" (#350 review minor 7): with `lmm deploy
+// -p B` over a copy/hardlink deployment made under profile A, A's own file
+// looked foreign to B - stored as an "original", so a later restore would
+// have written a mod's bytes back as if they were stock content.
+func (d *DB) AnyProfileOwnsFile(ctx context.Context, gameID, relativePath string) (bool, error) {
+	var one int
+	err := d.QueryRowContext(ctx, `
+		SELECT 1 FROM deployed_files
+		WHERE game_id = ? AND relative_path = ?
+		LIMIT 1
+	`, gameID, relativePath).Scan(&one)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("checking file ownership: %w", err)
+	}
+	return true, nil
+}
+
 // DeleteDeployedFiles removes all deployed file records for a specific mod.
 func (d *DB) DeleteDeployedFiles(ctx context.Context, gameID, profileName, sourceID, modID string) error {
 	_, err := d.ExecContext(ctx, `

@@ -839,13 +839,14 @@ const (
 
 	// --- snapshot restore (#350) ---
 	//
-	// A restore is three stages, and each one is worth naming because a
-	// user watching it needs to know which of them is running: the purge
-	// emits the DeployPurging/PurgeMod* family through the shared purge
-	// loop, the originals stage emits the three phases below, and the
-	// convergence emits the Switch* family through the profile-apply
-	// engine. The two bracketing phases here are what tell those three
-	// stages apart in one stream. ---
+	// A restore is five stages - purge, originals, the profile document,
+	// the convergence, the deploy - and the three that SHOW anything are
+	// worth naming, because a user watching it needs to know which is
+	// running: the purge emits the DeployPurging/PurgeMod* family through
+	// the shared purge loop, the originals stage emits the three phases
+	// below, and the convergence and deploy emit the Switch*/Deploy*
+	// families through the profile-apply engine and deployProfile. The two
+	// bracketing phases here are what tell them apart in one stream. ---
 
 	// SnapshotRestoringOriginals fires once, before the first original is
 	// written. Total is how many will be attempted; Index/ModName are

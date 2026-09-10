@@ -21,7 +21,8 @@ package main
 //   - IT IS INTERACTIVE-ONLY. Under --json (or with no terminal to read)
 //     it refuses with core.ErrInteractiveOnly and PRINTS THE EQUIVALENT
 //     COMMANDS, because a scripted caller does not want a wizard - it
-//     wants the four commands this wizard would have run.
+//     wants the five commands this wizard would have run
+//     (initEquivalentCommands).
 //
 // One consequence of delegating rather than reimplementing is worth
 // writing down: the wizard's OWN prompts read the *bufio.Reader it is
@@ -34,6 +35,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -514,7 +516,10 @@ func initChoice(line string, count int) int {
 // rather than something going wrong - the one error the wizard reports as
 // a plain "nothing happened".
 func isInitCancellation(err error) bool {
-	return err != nil && (err == ErrCancelled || strings.Contains(err.Error(), ErrCancelled.Error()))
+	// errors.Is, not ==, and no string fallback: the string test happened
+	// to cover wrapping, but errors.Is is the rule everywhere else in this
+	// tree and makes the fallback unnecessary (#351 review minor 9).
+	return errors.Is(err, ErrCancelled)
 }
 
 // gameLabelList renders configured games as "Name (id), Name (id)".

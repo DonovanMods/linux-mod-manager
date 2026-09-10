@@ -208,7 +208,7 @@ equivalent already exists in a better form:
   (`/setup`: games → sources/auth → adopt), which is why it is a judgment entry rather than a
   parity hole: both walk the same four core flows in the same order, each in its own modality's
   idiom (a sequence of prompts; a tabbed panel you can revisit). Neither is a capability the other
-  lacks. `lmm init` refuses under `--json` with `ErrInteractiveOnly` and prints the four
+  lacks. `lmm init` refuses under `--json` with `ErrInteractiveOnly` and prints the five
   equivalent commands, which is the scripted path.
 
 **Bidirectional since #350** — `lmm snapshot` is on both sides from the day it shipped, and is

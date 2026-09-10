@@ -519,3 +519,36 @@ func TestUninstall_PutsBackTheFileItReplaced(t *testing.T) {
 	assert.Empty(t, readOriginalsManifest(t, dataDir, "g1"),
 		"the row goes once the original is back in place: lmm no longer holds the only copy")
 }
+
+// TestDeploy_DoesNotPreserveAnotherProfilesOwnFile is #350 review minor 7.
+// Ownership was asked profile-scoped (db.GetFileOwner takes game AND
+// profile), so `lmm deploy -p B` over a copy/hardlink deployment made under
+// profile A saw A's own regular file as foreign: it was stored as an
+// "original", and a later restore would have written a mod's bytes back as
+// if they were stock content. The capture decision is game-scoped now.
+func TestDeploy_DoesNotPreserveAnotherProfilesOwnFile(t *testing.T) {
+	svc, dataDir := newOriginalsService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	// Profile A deploys a real (copied) file and owns it.
+	seedNamedInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", true,
+		map[string][]byte{"Data/shared.esp": []byte("A's version")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.0")
+	_, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(gameDir, "Data", "shared.esp"))
+
+	// Profile B deploys a DIFFERENT mod over the same path.
+	seedInstalledModInProfile(t, svc, game, "other", "src", "m2", "Mod Two", "1.0",
+		map[string][]byte{"Data/shared.esp": []byte("B's version")})
+	_, err = svc.DeployProfile(context.Background(), game, "other", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+
+	assert.Empty(t, readOriginalsManifest(t, dataDir, "g1"),
+		"another profile's own deployment is not stock content")
+}

@@ -64,10 +64,10 @@ func (i *Installer) setOriginals(store *originalsStore) { i.originals = store }
 // "Does not own" is three cheap tests in order of cost: the destination
 // must exist (Lstat), it must be a REGULAR file (a symlink is lmm's own
 // deployment, or another manager's link - never stock content), and the
-// deployed_files table must not already attribute it to a mod in this
-// game and profile. The DB query only ever runs for a destination that is
-// already a real file, which on a normal deploy is nothing at all, so this
-// costs a stat per file and no more.
+// deployed_files table must not already attribute it to a mod in this GAME
+// (any profile - minor 7). The DB query only ever runs for a destination
+// that is already a real file, which on a normal deploy is nothing at all,
+// so this costs a stat per file and no more.
 //
 // A capture failure does NOT fail the deploy - a backup that blocks the
 // operation it exists to protect is worse than no backup - but it is not
@@ -83,8 +83,12 @@ func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, prof
 		return
 	}
 	if i.db != nil {
-		owner, err := i.db.GetFileOwner(ctx, game.ID, profileName, relPath)
-		if err == nil && owner != nil {
+		// Game-scoped, not profile-scoped (#350 review minor 7): the
+		// question here is "did lmm put this here at all", and `lmm deploy
+		// -p B` over a copy deployment made under profile A must not treat
+		// A's own file as stock content.
+		owned, err := i.db.AnyProfileOwnsFile(ctx, game.ID, filepath.ToSlash(relPath))
+		if err == nil && owned {
 			return
 		}
 	}

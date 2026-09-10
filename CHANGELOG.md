@@ -933,10 +933,10 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   which now names `install_path` (the value that is actually missing).
 
 - **A credential scrub that runs out of time says which file and what to do
-  (#79).** The 45-second budget's own exit returned a bare `context
-deadline exceeded`, dropping the database path and the "close any other
-  lmm process and run the command again" remedy that every other scrub
-  failure carries. Both exits now share one message.
+  (#79).** The 45-second budget's own exit returned a bare
+  `context deadline exceeded`, dropping the database path and the "close
+  any other lmm process and run the command again" remedy that every other
+  scrub failure carries. Both exits now share one message.
 
 - **NexusMods `--tag` and `--category` work again (#337, #343).** The
   GraphQL client still sent `tagNames` and `categoryId`, neither of which
