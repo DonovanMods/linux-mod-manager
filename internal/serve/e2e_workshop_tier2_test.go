@@ -157,11 +157,19 @@ func TestE2E_WorkshopTier2_SetupAuthOffersTheKeyFieldAndItsInstructions(t *testi
 	assert.Empty(t, f.BrowserErrors())
 }
 
-// TestE2E_WorkshopTier2_UnkeyedSearchSaysAuthenticationIsRequired: Search is
+// TestE2E_WorkshopTier2_UnkeyedSearchIsSkippedNotWarnedAbout: Search is
 // declared unconditionally, so the source IS searched; without a key Valve
-// refuses, core hands the failure back as a per-source warning, and the page
-// renders it rather than an empty result that reads as "no such mod".
-func TestE2E_WorkshopTier2_UnkeyedSearchSaysAuthenticationIsRequired(t *testing.T) {
+// refuses. #383 settled what the page does with that. A source the user has
+// NEVER signed in to is a capability they have not opted into - `lmm init`
+// maps steamworkshop from the Steam prefill because Tier 1 is keyless - so
+// warning about it would put a permanent block above every result list.
+// It is left out silently, exactly as a source with no search capability
+// already is, and the Setup page's Authentication card is where the
+// capability stays discoverable.
+//
+// The keyed half is below: once a credential IS stored, a refusal means
+// THAT key is expired or revoked, and the page says so.
+func TestE2E_WorkshopTier2_UnkeyedSearchIsSkippedNotWarnedAbout(t *testing.T) {
 	f := newE2EWorkshopTier2Fixture(t, domain.ErrAuthRequired)
 	// A SECOND source on the same game, which searches fine. That is the
 	// realistic shape (a Workshop game usually has NexusMods or CurseForge
@@ -185,9 +193,37 @@ func TestE2E_WorkshopTier2_UnkeyedSearchSaysAuthenticationIsRequired(t *testing.
 		chromedp.Evaluate(`document.querySelector(".search-page").textContent;`, &page),
 	)
 	assert.Contains(t, page, "Cargo Crate", "the source that worked still answers")
+	assert.NotContains(t, page, "authentication required",
+		"a source the user never signed in to is skipped, not warned about (#383)")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_WorkshopTier2_KeyedSearchThatIsRefusedStillWarns is #383's other
+// half at the same surface: with a credential stored, an authentication
+// failure is a problem with THAT key - expired, revoked, mistyped - and
+// silence would hide it.
+func TestE2E_WorkshopTier2_KeyedSearchThatIsRefusedStillWarns(t *testing.T) {
+	f := newE2EWorkshopTier2Fixture(t, domain.ErrAuthRequired)
+	require.NoError(t, f.Svc.SaveSourceToken(t.Context(), e2eWorkshopSourceID, "a-stored-key"))
+
+	other := newFakeSource("other")
+	other.addMod(fakeSourceMod{Mod: domain.Mod{
+		ID: "o1", SourceID: "other", Name: "Cargo Crate", Version: "1.0",
+	}})
+	f.Svc.RegisterSource(other)
+	f.Game.SourceIDs["other"] = ""
+	require.NoError(t, f.Svc.SaveGame(t.Context(), f.Game))
+
+	var page string
+	f.runInBrowser(t,
+		chromedp.Navigate(workshopSearchPath(f, "cargo")),
+		chromedp.WaitVisible(`.search-page[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelector(".search-page").textContent;`, &page),
+	)
+	assert.Contains(t, page, "Cargo Crate", "the source that worked still answers")
 	assert.Contains(t, page, "authentication required",
-		"and the one that needs a key says so, rather than being silently absent")
-	assert.Contains(t, page, "steamworkshop")
+		"a stored key that is refused is a real problem and stays visible")
+	assert.Contains(t, page, e2eWorkshopSourceID)
 	assert.Empty(t, f.BrowserErrors())
 }
 
