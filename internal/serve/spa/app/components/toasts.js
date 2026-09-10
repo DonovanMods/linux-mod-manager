@@ -13,6 +13,7 @@
 
 import { html } from "../render.js";
 import { navigate, contextPath } from "../router.js";
+import { codeSpans } from "../errortext.js";
 
 /**
  * Toasts renders the store's toast list, newest at the bottom.
@@ -51,7 +52,7 @@ export function Toasts({ toasts, route, onDismiss, actions }) {
           >
             <div class="toast__body">
               <p class="toast__title">${toast.title}</p>
-              ${toast.detail && html`<p class="toast__detail">${toast.detail}</p>`}
+              ${toast.detail && html`<p class="toast__detail">${codeSpans(toast.detail)}</p>`}
               ${
                 toast.action &&
                 typeof actions?.[toast.action] === "function" &&

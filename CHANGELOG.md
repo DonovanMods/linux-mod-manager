@@ -877,6 +877,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI sets a quoted command as code instead of showing raw
+  backticks (#402).** core writes one error message for both frontends, and
+  it is written for a terminal — "Steam Web API key required (run \`lmm auth
+  login steamworkshop\`)". In a browser those backticks were literal grave
+  accents the reader had to discard mentally, on the search page, which is a
+  first-run surface. What they enclose is now set in the monospace face the
+  rest of the UI uses for commands, on the search page's warnings and errors
+  and on toast details. Nothing else is parsed — it is not markdown — and an
+  unpaired backtick is left exactly as it was written.
+
 - **The web UI no longer offers Re-link… on a locked mod (#394).** `lmm mod
 edit --source/--source-id` refuses a locked mod and tells you to unlock it
   first; the full mod page offered the button anyway, so the only way to

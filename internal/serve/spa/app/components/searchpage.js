@@ -22,6 +22,7 @@ import { workshopCollectionRef } from "../workshopcollection.js";
 import { SourceResultsList } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
 import { AwayBar } from "./awaybar.js";
+import { codeSpans } from "../errortext.js";
 
 // See tagsSupported below.
 const TAG_CAPABLE_SOURCES = new Set(["nexusmods"]);
@@ -99,7 +100,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
     return html`
       ${header}
       <main id="main" class="app-main search-page">
-        <p class="app-error">Couldn't search: ${searchPage.error}</p>
+        <p class="app-error">Couldn't search: ${codeSpans(searchPage.error)}</p>
         <${CollectionOffer} collectionRef=${collectionRef} actions=${actions} />
       </main>
     `;
