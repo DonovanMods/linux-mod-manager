@@ -4,13 +4,22 @@
 // already installed, needing a redownload, or missing entirely.
 
 import { html } from "../render.js";
+import { displayVersion } from "../version.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 
 /** refLabel names a domain.ModReference - it carries no display name of its
  * own (domain.ModReference's own fields: source_id, mod_id, version,
- * file_ids, locked), so "source:mod" @ version is the honest rendering. */
+ * file_ids, locked), so "source:mod" @ version is the honest rendering.
+ *
+ * The version goes through displayVersion, never raw: since issue 365 the
+ * ref carries `external` and `updated_at` for exactly this reason - an
+ * imported profile can name a Steam Workshop item, whose version field is a
+ * 19-digit content id no human-facing surface may print (issue 269's
+ * approval note). An external ref with no recorded date renders the helper's
+ * em dash. */
 function refLabel(ref) {
-  const at = ref.version ? ` @ ${ref.version}` : "";
+  const shown = displayVersion(ref);
+  const at = shown ? ` @ ${shown}` : "";
   return `${ref.source_id}:${ref.mod_id}${at}`;
 }
 

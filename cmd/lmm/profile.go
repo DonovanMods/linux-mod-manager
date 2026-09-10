@@ -103,9 +103,9 @@ Examples:
 }
 
 var profileImportCmd = &cobra.Command{
-	Use:   "import <file>",
+	Use:   "import [file]",
 	Short: "Import a profile",
-	Long: `Import a profile from a YAML file.
+	Long: `Import a profile from a YAML file, or from a Steam Workshop collection.
 
 Missing mods are downloaded and installed automatically, after a
 confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
@@ -113,12 +113,22 @@ confirmation prompt; pass -y/--yes to skip the prompt and answer yes. Use
 nothing. Use --force to overwrite an existing profile with the same name
 instead of failing.
 
+--workshop-collection takes a Steam Workshop collection id or the URL of
+its page, and imports the collection AS a profile: a collection is a mod
+list, which is what a profile is. It needs no API key. Items you are
+already subscribed to (and have tracked with 'lmm import --workshop') are
+recorded as installed; the rest are listed with what to do about them -
+lmm cannot download a Workshop item you are not subscribed to. The profile
+is named after the collection unless you name it with --as.
+
 Examples:
   lmm profile import survival.yaml --game skyrim-se
   lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
-  lmm profile import survival.yaml --game skyrim-se --force`,
-	Args: cobra.ExactArgs(1),
+  lmm profile import survival.yaml --game skyrim-se --force
+  lmm profile import --workshop-collection 2500900001 --game space-engineers-2
+  lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runProfileImport,
 }
 
@@ -185,17 +195,19 @@ Examples:
 }
 
 var (
-	profileImportForce     bool
-	profileImportNoInstall bool
-	profileImportYes       bool
-	profileApplyYes        bool
-	profileApplyDryRun     bool
-	profileSwitchYes       bool
-	profileSwitchDryRun    bool
-	profileSyncYes         bool
-	profileSyncDryRun      bool
-	profileReorderProfile  string
-	profileReorderInteract bool
+	profileImportForce      bool
+	profileImportNoInstall  bool
+	profileImportYes        bool
+	profileImportCollection string
+	profileImportAs         string
+	profileApplyYes         bool
+	profileApplyDryRun      bool
+	profileSwitchYes        bool
+	profileSwitchDryRun     bool
+	profileSyncYes          bool
+	profileSyncDryRun       bool
+	profileReorderProfile   string
+	profileReorderInteract  bool
 )
 
 func init() {
@@ -215,6 +227,10 @@ func init() {
 	profileSwitchCmd.Flags().BoolVar(&profileSwitchDryRun, "dry-run", false, "print what the switch would do without changing anything")
 
 	// Import flags
+	profileImportCmd.Flags().StringVar(&profileImportCollection, "workshop-collection", "",
+		"import a Steam Workshop collection (its id, or the URL of its page) instead of a file")
+	profileImportCmd.Flags().StringVar(&profileImportAs, "as", "",
+		"name the imported profile (--workshop-collection only; a file names its own profile)")
 	profileImportCmd.Flags().BoolVar(&profileImportForce, "force", false, "overwrite existing profile")
 	profileImportCmd.Flags().BoolVar(&profileImportNoInstall, "no-install", false, "skip installing missing mods")
 	profileImportCmd.Flags().BoolVarP(&profileImportYes, "yes", "y", false, "auto-confirm downloading/installing missing mods")
@@ -602,7 +618,43 @@ func doProfileExport(ctx context.Context, service *core.Service, game *domain.Ga
 	return nil
 }
 
+// importRefLine renders one bucket entry of a core.ImportPlan.
+//
+// The version goes through displayModVersion, never raw (#365): an imported
+// profile document can name a Steam Workshop item, whose Version is the
+// 19-digit content id, and since #365 core stamps the ref's own external /
+// updated_at so this line can say the revision date instead. A ref with
+// neither prints no version at all rather than a bare "v".
+func importRefLine(ref domain.ModReference) string {
+	shown := displayModVersion(ref.External, ref.Version, ref.UpdatedAt)
+	if shown == "" || shown == "-" {
+		return fmt.Sprintf("%s:%s", ref.SourceID, ref.ModID)
+	}
+	if ref.External {
+		return fmt.Sprintf("%s:%s (%s)", ref.SourceID, ref.ModID, shown)
+	}
+	return fmt.Sprintf("%s:%s v%s", ref.SourceID, ref.ModID, shown)
+}
+
 func runProfileImport(cmd *cobra.Command, args []string) error {
+	// #269 W2: --workshop-collection is a second INPUT to the same flow,
+	// mutually exclusive with a file - a collection is not a document on
+	// disk, and taking both would leave lmm guessing which one the user
+	// meant.
+	if profileImportCollection != "" {
+		if len(args) > 0 {
+			return fmt.Errorf("--workshop-collection imports a Steam Workshop collection; it cannot also take a file path")
+		}
+		return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
+			return doProfileImportCollection(ctx, service, game)
+		})
+	}
+	if len(args) == 0 {
+		return fmt.Errorf("a profile file is required (or use --workshop-collection <id|url>)")
+	}
+	if profileImportAs != "" {
+		return fmt.Errorf("--as names a profile imported from a Steam Workshop collection; a profile FILE names its own profile")
+	}
 	filePath := args[0]
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -611,6 +663,77 @@ func runProfileImport(cmd *cobra.Command, args []string) error {
 	return withGameService(cmd, func(ctx context.Context, service *core.Service, game *domain.Game) error {
 		return doProfileImport(ctx, service, game, data)
 	})
+}
+
+// doProfileImportCollection renders `lmm profile import
+// --workshop-collection` (#269 W2).
+//
+// The engine is core.PlanWorkshopCollectionImport /
+// ApplyWorkshopCollectionImport - which is the ordinary import flow with the
+// collection resolved into a profile document in front of it. This function
+// only prints: the collection, what each item means for this machine, and
+// the result.
+//
+// There is no "download and install?" prompt, because there is nothing to
+// answer: core forces NoInstall for a collection import until Tier 3 lands
+// the download path, and every un-subscribed item already carries the one
+// sentence that resolves it.
+func doProfileImportCollection(ctx context.Context, service *core.Service, game *domain.Game) error {
+	plan, err := service.PlanWorkshopCollectionImport(ctx, game, profileImportAs, profileImportCollection)
+	if err != nil {
+		return err
+	}
+	c := plan.WorkshopCollection
+
+	if !jsonOutput {
+		name := c.Name
+		if name == "" {
+			name = "Collection " + c.CollectionID
+		}
+		fmt.Printf("Importing collection: %s\n", name)
+		if c.URL != "" {
+			fmt.Printf("  %s\n", c.URL)
+		}
+		fmt.Printf("\nFound %d item(s); importing as profile %q.\n", len(c.Items), c.ProfileName)
+		for _, item := range c.Items {
+			label := item.Name
+			if label == "" {
+				label = "Workshop item " + item.FileID
+			}
+			if item.Tracked {
+				fmt.Printf("  ✓ %s\n", label)
+				continue
+			}
+			fmt.Printf("  ↓ %s — %s\n", label, item.Note)
+		}
+		if plan.Exists {
+			fmt.Printf("\nA profile named %q already exists.\n", c.ProfileName)
+		}
+	}
+
+	progress := func(e core.Event) {
+		p, ok := lineOf(e)
+		if !ok {
+			return
+		}
+		if p.Phase == core.ImportSaved {
+			fmt.Printf("\n✓ Imported profile: %s\n", p.ModName)
+		}
+	}
+
+	result, err := service.ApplyWorkshopCollectionImport(ctx, game, plan,
+		core.ProfileImportOptions{Force: profileImportForce}, quietSink(progress))
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return emitJSON(result)
+	}
+	for _, note := range result.Notes {
+		fmt.Printf("  %s\n", note)
+	}
+	fmt.Printf("\nUse 'lmm profile switch %s' to make it active.\n", result.ProfileName)
+	return nil
 }
 
 // doProfileImport owns preview-printing, the "Download and install mods?"
@@ -648,13 +771,13 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		if len(plan.NeedsRedownload) > 0 {
 			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
 			for _, ref := range plan.NeedsRedownload {
-				fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+				fmt.Printf("    - %s\n", importRefLine(ref))
 			}
 		}
 		if len(plan.Missing) > 0 {
 			fmt.Printf("  ↓ %d need to be downloaded:\n", len(plan.Missing))
 			for _, ref := range plan.Missing {
-				fmt.Printf("    - %s:%s v%s\n", ref.SourceID, ref.ModID, ref.Version)
+				fmt.Printf("    - %s\n", importRefLine(ref))
 			}
 		}
 	}

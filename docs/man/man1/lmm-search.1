@@ -24,7 +24,10 @@ Use --category and --tag to filter results; support varies by source.
 NexusMods only. Custom sources (directory/manifest/API) ignore both.
 The values each source accepts are source-specific: NexusMods takes the
 category NAME as it spells it ("Armour") and a tag name; CurseForge takes
-a numeric category id.
+a numeric category id. Steam Workshop treats both as REQUIRED TAGS - the
+Workshop has no category concept distinct from tags - and needs your own
+Steam Web API key ('lmm auth login steamworkshop'); without one it reports
+that authentication is required.
 
 .PP
 Examples:

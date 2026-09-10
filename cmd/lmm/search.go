@@ -38,7 +38,10 @@ Use --category and --tag to filter results; support varies by source.
 NexusMods only. Custom sources (directory/manifest/API) ignore both.
 The values each source accepts are source-specific: NexusMods takes the
 category NAME as it spells it ("Armour") and a tag name; CurseForge takes
-a numeric category id.
+a numeric category id. Steam Workshop treats both as REQUIRED TAGS - the
+Workshop has no category concept distinct from tags - and needs your own
+Steam Web API key ('lmm auth login steamworkshop'); without one it reports
+that authentication is required.
 
 Examples:
   lmm search skyui --game skyrim-se
@@ -249,7 +252,12 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 			mod.ID,
 			truncate(mod.Name, 40),
 			truncate(mod.Author, 20),
-			mod.Version,
+			// displayModVersion, never the raw field: since Tier 2 (#269
+			// W2) a hit can be a Steam Workshop item, whose Version is the
+			// 19-digit content id. core.SearchHit.External is stamped for
+			// exactly this - a catalog document has no installed row to
+			// read the fact from.
+			displayModVersion(mod.External, mod.Version, mod.UpdatedAt),
 			mod.SourceID,
 			installedMark,
 		); err != nil {

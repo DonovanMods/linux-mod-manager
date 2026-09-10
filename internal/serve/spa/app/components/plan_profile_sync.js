@@ -15,6 +15,7 @@
 // `lmm profile sync` itself does.
 
 import { html } from "../render.js";
+import { displayVersion } from "../version.js";
 
 /** refKey is the plan's own map key for a ModReference. */
 function refKey(ref) {
@@ -30,12 +31,17 @@ function RefList({ heading, refs, names, testID }) {
       <ul class="plan__mods" data-testid=${testID}>
         ${refs.map((ref) => {
           const key = refKey(ref);
+          // displayVersion, never the raw field: since issue 365 a sync
+          // bucket's refs carry `external` and `updated_at`, because a
+          // Steam Workshop item's version is a 19-digit content id no
+          // human-facing surface may print (issue 269's approval note).
+          const shown = displayVersion(ref);
           return html`
             <li key=${key} class="plan__mod">
               <span class="plan__mod-name">${names?.[key] ?? key}</span>${" "}
               ${
                 // htm-ws-ok: the ${" "} above already carries the gap.
-                ref.version && html`<span class="mono">${ref.version}</span>`
+                shown && html`<span class="mono">${shown}</span>`
               }
             </li>
           `;

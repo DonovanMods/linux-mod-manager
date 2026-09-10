@@ -11,6 +11,7 @@
 // rather than leaving a failed source silently uncounted.
 
 import { html } from "../render.js";
+import { displayVersion } from "../version.js";
 import { navigate } from "../router.js";
 import { InlineJob } from "./jobprogress.js";
 
@@ -42,8 +43,15 @@ function formatDownloads(n) {
 }
 
 /** SourceResultRow renders one core.SearchHit: name, version, source badge,
- * author, and an inline Install control - or "Installed" when the hit
- * already is (SearchHit.Installed). Install opens the confirm-plan
+ * author, and an inline Install control.
+ *
+ * The version goes through displayVersion: since Tier 2 (issue 269 W2) a hit
+ * can be a Steam Workshop item, whose version field is the 19-digit content
+ * id - which is why core.SearchHit carries its own `external` flag, a
+ * catalog document having no installed row to read one from.
+ *
+ * The control reads "Installed" when the hit already is
+ * (SearchHit.Installed). Install opens the confirm-plan
  * framework's install modal (plan_install.js), the same pipeline every
  * other mutation in this application uses; nothing here mutates directly.
  *
@@ -78,7 +86,7 @@ export function SourceResultRow({ hit, state, actions, detailed }) {
         >
           ${hit.name}
         </button>
-        <span class="mono search-result__version">${hit.version}</span>
+        <span class="mono search-result__version">${displayVersion(hit)}</span>
         <span class="badge search-result__source" title="Source"
           >${hit.source_id}</span
         >
