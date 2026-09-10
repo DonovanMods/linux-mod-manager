@@ -921,6 +921,13 @@ lmm serve --addr 127.0.0.1:8080
 lmm serve --no-open
 ```
 
+The CLI stays usable while it runs, and the two agree: `lmm serve` re-reads
+`games.yaml` whenever it changes, so a game you add, edit or remove with
+`lmm game add`/`edit` in another terminal shows up in the browser on the
+next request — no restart. Stored credentials are the one exception: a key
+saved after the server started needs a restart before the server can use
+it, and the Setup page says so when that happens.
+
 It is a single-page application: one small shell, then everything happens
 in place. It needs JavaScript and a current desktop browser (there is no
 small-screen layout — the CLI is the fallback, and it does everything the

@@ -861,6 +861,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web UI now sees games the CLI adds, edits or removes while it is
+  running (#376).** `lmm serve` read `games.yaml` once, at startup, so a
+  game added by `lmm game add`, a source mapping changed by `lmm game edit`
+  and a game removed from the file were all invisible to the running server
+  — the browser kept being offered the game set the process booted with. The
+  delete direction was the worse half: a game you had removed stayed
+  plannable in the web UI, and the next write the web UI made put it back.
+  Every `/api/v1` request now re-reads `games.yaml` when the file has moved
+  since it was last read (one `stat` when it has not), so the two frontends
+  agree without a restart. A `games.yaml` edited into something that no
+  longer parses leaves the running server on the last good game set and
+  logs the problem, rather than emptying the chooser.
+
 - **Two overlapping reloads of the same web UI slice no longer commit out of
   order (#370).** The SPA already dropped an answer fetched for a route the
   user had left, but nothing fenced one load of a slice against another load
