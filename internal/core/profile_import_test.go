@@ -1123,3 +1123,43 @@ func TestPlanImport_CrossProfileMod_ClassificationIgnoresProfileOrder(t *testing
 		})
 	}
 }
+
+// TestPlanImport_CrossProfileMod_PartialCacheEntryIsNotAlreadyCached is P1a
+// review finding F6: the cross-profile branch classified on bare Exists,
+// while ApplyImport's own install loop uses HasFileIDs for the stated reason
+// that "a version directory can exist yet be only PARTIALLY populated by a
+// broken-off download run". A partial entry therefore reached
+// importCachedMod, which deployed whatever happened to be on disk and wrote
+// a row claiming the FULL FileIDs set and deployed = true - a new way to
+// record a lie. It belongs in NeedsRedownload, where the loop re-fetches it.
+func TestPlanImport_CrossProfileMod_PartialCacheEntryIsNotAlreadyCached(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	// The row records two files; only one ever finished downloading, so only
+	// its completion marker is on disk.
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "one.esp", []byte("1")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"one.esp"}))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"f1", "f2"},
+	}))
+
+	profile := &domain.Profile{Name: "imported", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "alpha", Version: "1.0.0"}}}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	assert.Empty(t, plan.AlreadyCached, "a half-populated cache entry is not 'already downloaded'")
+	require.Len(t, plan.NeedsRedownload, 1, "it must be re-fetched, like every other incomplete entry")
+}

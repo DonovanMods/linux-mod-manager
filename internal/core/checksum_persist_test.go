@@ -20,6 +20,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -198,7 +199,12 @@ func TestProfileImport_CrossProfileMod_CopiesTheChecksum(t *testing.T) {
 	_, err := pm.Create(context.Background(), game.ID, "default")
 	require.NoError(t, err)
 
-	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "src", "alpha", "1.0.0", "alpha.esp", []byte("a")))
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "alpha.esp", []byte("a")))
+	// The completion marker a real download leaves: without it the entry is
+	// only partially populated and belongs in NeedsRedownload (F6).
+	require.NoError(t, cache.MarkFileCompleteWithMembers(
+		gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"alpha.esp"}))
 	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
 		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
 		ProfileName:  "default",

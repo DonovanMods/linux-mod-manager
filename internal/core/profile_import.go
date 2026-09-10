@@ -223,9 +223,17 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		}
 
 		candidates := elsewhereRows[key]
-		im := pickImportRow(candidates, ref, func(row domain.InstalledMod) bool {
-			return gameCache.Exists(game.ID, ref.SourceID, ref.ModID, row.Version)
-		})
+		// The cross-profile branch asks the SAME question ApplyImport's own
+		// install loop asks (:501) and must therefore ask it the same way
+		// (P1a review F6): HasFileIDs, not bare Exists, because a version
+		// directory can exist yet be only PARTIALLY populated by a
+		// broken-off download run. Classified on Exists, such an entry
+		// reached importCachedMod, which deployed whatever was on disk and
+		// wrote a row claiming the whole FileIDs set and deployed = true.
+		cached := func(row domain.InstalledMod) bool {
+			return gameCache.HasFileIDs(game.ID, ref.SourceID, ref.ModID, row.Version, row.FileIDs)
+		}
+		im := pickImportRow(candidates, ref, cached)
 		if len(candidates) > 0 {
 			pickedElsewhere[key] = im
 		}
@@ -249,7 +257,7 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 				priorVersions = make(map[string]domain.InstalledMod)
 			}
 			priorVersions[key] = im
-		case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, im.Version):
+		case cached(im):
 			// #371: the bytes are here - install this profile's own row
 			// from the cache entry rather than calling it "installed" and
 			// writing nothing.
