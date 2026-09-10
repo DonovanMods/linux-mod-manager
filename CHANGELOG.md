@@ -1153,6 +1153,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of adding a duplicate. `lmm game add` with an explicit id and
   path is unchanged.
 
+  A repair **says what it kept**: where the curated entry's `deploy_mode`
+  is not the one on your entry, yours stays and lmm tells you the catalog
+  disagrees, so a game you deliberately set to `extract` does not quietly
+  become a game you think is `compile`. `lmm game detect` prints it on
+  stderr and the web UI raises it as a notice, and both name the id that
+  was actually written — the one you already had, not the curated slug the
+  row was listed under, which is the one id a repair does not create.
+
 - **Importing a profile no longer leaves two versions of one mod deployed
   (#404).** When a mod is installed under several profiles, the import picks
   whichever of their rows can answer "are these bytes already downloaded?" —

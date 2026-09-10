@@ -374,11 +374,15 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 // and _ExplicitRowFormResolvesACollision from a hand-edited one). A title
 // is a label; the fields above it in this comment change what lmm DOES
 // with the game's files, which is why those are the user's.
-// It returns a notice - empty when there is nothing to say - for a kept
-// field the catalog disagrees with. Keeping the user's choice and telling
-// them nothing would trade one silent surprise for another: a game curated
-// as `compile` that they added by hand at `extract` goes on deploying the
-// way they set it, and now they can see that the catalog says otherwise.
+// It returns a notice - empty when there is nothing to say - when the kept
+// `deploy_mode` is not the one the catalog names. deploy_mode is the only
+// field compared, because it is the only behavioural field a curated entry
+// carries an opinion about: `convert_paks` is the other behavioural field
+// kept, and no curated entry sets it, so there is nothing to disagree with.
+// Keeping the user's choice and telling them nothing would trade one silent
+// surprise for another: a game curated as `compile` that they added by hand
+// at `extract` goes on deploying the way they set it, and now they can see
+// that the catalog says otherwise.
 func repairedGame(prior, detected *domain.Game) (*domain.Game, string) {
 	repaired := *prior
 	repaired.Name = detected.Name

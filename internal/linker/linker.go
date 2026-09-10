@@ -52,14 +52,21 @@ func New(method domain.LinkMethod) Linker {
 // euro-truck-simulator-2, call-of-duty-black-ops-6) that made every
 // uninstall and every purge sweep the game's own empty directories away,
 // including the ones its loaders expect to exist (CET's bin/x64/plugins,
-// redscript's r6/scripts, archive/pc/mod, tools/redmod/mods). Steam's
-// verify-integrity does not restore an empty directory, so it did not heal
-// on its own. Bounding the walk to what lmm removed is strictly smaller
-// behaviour for every game: every directory this removes is empty, strictly
-// under basePath, and reachable from basePath through real directories
-// only, so the old sweep's fixpoint removed it too. (That was NOT true
-// before the symlink guard above - the far side of a symlink is not under
-// basePath, and filepath.Walk, which Lstats, never descended into one.)
+// redscript's r6/scripts and r6/tweaks, archive/pc/mod,
+// tools/redmod/mods). Steam's verify-integrity does not restore an empty
+// directory, so it did not heal on its own. Bounding the walk to what lmm
+// removed is smaller behaviour for every game: every directory this removes
+// is empty, strictly under basePath, and reachable from basePath through
+// real directories only, so the old sweep's fixpoint removed it too.
+//
+// Two exceptions to "smaller", neither of them a new harm class. The far
+// side of a symlink is not under basePath and filepath.Walk, which Lstats,
+// never descended into one - so the symlink guard above is not narrowing
+// anything the old sweep did. And when basePath ITSELF is a symlink the old
+// sweep removed NOTHING at all (Walk Lstats its own root), while this prunes
+// normally inside it - deliberate, because a Steam library on a symlinked
+// mount must still be tidied, and the bound is the same removal chain as
+// everywhere else.
 //
 // Strictly smaller cuts both ways, deliberately. lmm has several other
 // places that remove deployed files and have never called this - core's

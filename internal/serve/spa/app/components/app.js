@@ -222,7 +222,7 @@ export function App({ state, onThemeChange, actions }) {
     </header>
     <main id="main" class="app-main">
       ${error && html`<p class="app-error">${error}</p>`}
-      <${GameChooser} games=${state.games} />
+      <${GameChooser} games=${state.games} actions=${actions} />
     </main>
     ${overlays}
   `;

@@ -462,10 +462,26 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 		return emitJSON(result)
 	}
 	for _, w := range applyWarnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s\n", w)
+		// cmd.PrintErrf, not fmt.Fprintf(cmd.ErrOrStderr(), …): cobra's own
+		// wrapper writes to the same stream and returns nothing, so there is
+		// no error to discard. The unchecked Fprintf this replaces is the
+		// shape the linter flags the moment the file is touched.
+		cmd.PrintErrf("Warning: %s\n", w)
 	}
 	for i := range result.Profiles {
-		cmd.Printf("Added: %s (%s)\n", applied[i].Name, applied[i].Slug)
+		// result.Saved[i], not applied[i].Slug: a REPAIR writes the prior
+		// entry's id, not the curated slug the row was detected under, and
+		// those are exactly the case where the two differ. Printing the slug
+		// named a game games.yaml does not contain - one line below the
+		// notice naming the real one - and `lmm mod list --game <slug>`
+		// would fail.
+		//
+		// The indexes line up for every index this loop reaches: both halves
+		// of ApplyDetectSelection append Saved then Profiles in the same
+		// iteration, so len(Saved) >= len(Profiles) and Saved[i] is the game
+		// Profiles[i] belongs to. The SPA already reads result.saved for the
+		// same reason (gamechooser.js).
+		cmd.Printf("Added: %s (%s)\n", applied[i].Name, result.Saved[i])
 	}
 	return applyErr
 }

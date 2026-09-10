@@ -19,13 +19,13 @@ import { resolveGamePath } from "../navigation.js";
 import { GameDetectSection, GameAddForm } from "./gameadd.js";
 import { SetupSources } from "./setupsources.js";
 
-export function GameChooser({ games }) {
+export function GameChooser({ games, actions }) {
   if (games === null) {
     return html`<p class="app-booting">Loading your games…</p>`;
   }
 
   if (games.length === 0) {
-    return html`<${FirstRunSetup} />`;
+    return html`<${FirstRunSetup} actions=${actions} />`;
   }
 
   return html`
@@ -67,7 +67,7 @@ function GameCard({ game }) {
  * A game landing from either flow navigates straight to its Mission
  * Control - there is nothing else to configure before the library has
  * something to show. */
-function FirstRunSetup() {
+function FirstRunSetup({ actions }) {
   // Bumped whenever the custom-source section below changes the registry,
   // and handed to the game form as its refreshKey: the form fetches the
   // source list once on mount, so a source defined right here would
@@ -105,6 +105,7 @@ function FirstRunSetup() {
       </p>
       <div class="setup-page__sections">
         <${GameDetectSection}
+          actions=${actions}
           onAdded=${onDetected}
           onAddWithDetails=${setDetected}
         />
