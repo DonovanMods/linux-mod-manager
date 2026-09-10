@@ -382,6 +382,13 @@ func TestApplySnapshotRestore_RestoreIsIdempotent(t *testing.T) {
 // since core.Load runs once at construction.
 func newRestoreFixtureWithConfig(t *testing.T, configYAML string) (*core.Service, *domain.Game, string) {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
 	configDir, dataDir := t.TempDir(), t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(configYAML), 0644))
 

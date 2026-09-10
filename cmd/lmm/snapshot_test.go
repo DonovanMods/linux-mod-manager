@@ -25,6 +25,18 @@ import (
 // file, resets the snapshot flags, and returns both.
 func setupSnapshotTest(t *testing.T) (*core.Service, *domain.Game) {
 	t.Helper()
+	// HOME and every XDG variable, sandboxed: nothing in this file should
+	// be able to reach the developer's real config, data or credentials,
+	// even by a path resolved somewhere this test does not look.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("NEXUSMODS_API_KEY", "")
+	t.Setenv("CURSEFORGE_API_KEY", "")
+
 	configDir = t.TempDir()
 	dataDir = t.TempDir()
 	gameDir := t.TempDir()

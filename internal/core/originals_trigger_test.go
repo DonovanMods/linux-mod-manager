@@ -42,6 +42,17 @@ type originalRow struct {
 // t.TempDir() does not expose.
 func newOriginalsService(t *testing.T) (*core.Service, string) {
 	t.Helper()
+	// HOME and every XDG variable, sandboxed: the originals store and the
+	// snapshot documents built on it resolve real paths, and nothing here
+	// should be able to reach the developer's own config or data even by a
+	// path this test does not itself name.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
 	dataDir := t.TempDir()
 	svc, err := core.NewService(core.ServiceConfig{
 		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
