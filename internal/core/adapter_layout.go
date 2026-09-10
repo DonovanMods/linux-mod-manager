@@ -46,12 +46,23 @@ func (s *Service) archiveLayout(game *domain.Game, modName string, members []str
 // The identity Layout returns members unchanged and touches nothing, so the
 // only game that pays for this is one whose adapter actually has an opinion.
 //
-// A rewritten path is refused if it escapes root, exactly as the extractor
-// refuses an escaping archive member: an adapter is in-tree code, but the
-// containment rule is core's to enforce because the write is core's.
+// The whole table is validated first (validateLayoutTable): a rewritten path
+// that escapes root is refused exactly as the extractor refuses an escaping
+// archive member, and so is a table whose renames would destroy one
+// another. An adapter is in-tree code, but the containment rule and the
+// executability rule are core's to enforce, because the write is core's -
+// and enforcing them up front is what makes a refusal leave the staging
+// tree byte-identical.
 func rewriteExtractedTree(root string, layout adapter.Layout, members []string) ([]string, error) {
 	if !layout.Applies() {
 		return members, nil
+	}
+	// #411 (I2/I3): the WHOLE table is checked before the first rename, so
+	// a table that cannot be executed - colliding destinations, a chain, an
+	// escaping path - is refused with the staging tree untouched rather
+	// than half-applied.
+	if err := validateLayoutTable(layout, members, caseInsensitiveRoot(root, members)); err != nil {
+		return nil, err
 	}
 	kept := make([]string, 0, len(members))
 	// vacated is every member this table moved away or dropped, spelled as
@@ -72,9 +83,6 @@ func rewriteExtractedTree(root string, layout adapter.Layout, members []string) 
 		if dest == m {
 			kept = append(kept, m)
 			continue
-		}
-		if err := containedIn(root, dest); err != nil {
-			return nil, err
 		}
 		dst := filepath.Join(root, filepath.FromSlash(dest))
 		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
@@ -119,14 +127,18 @@ func rewritePlannedPaths(layout adapter.Layout, paths []string) []string {
 	return slices.Compact(out)
 }
 
-// containedIn refuses a rewritten member that would land outside root.
-func containedIn(root, rel string) error {
+// containedIn refuses a rewritten member that would land outside the cache
+// entry, naming the member that asked for it.
+func containedIn(kind, member, rel string) error {
+	refuse := func(reason string) error {
+		return &AdapterLayoutError{Kind: kind, Reason: reason, Dest: rel, Members: []string{member}}
+	}
 	if rel == "" || filepath.IsAbs(filepath.FromSlash(rel)) {
-		return fmt.Errorf("adapter layout produced an unusable path %q", rel)
+		return refuse("unusable destination path")
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(rel))
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("adapter layout produced a path escaping the cache entry: %q", rel)
+		return refuse("destination escaping the cache entry")
 	}
 	return nil
 }
@@ -216,4 +228,150 @@ func (i *Importer) rewriteExtracted(game *domain.Game, modName, root string) err
 	}
 	_, err = rewriteExtractedTree(root, layout, members)
 	return err
+}
+
+// AdapterLayoutError reports an adapter Layout that core refused to
+// EXECUTE - a table whose renames cannot all be performed without one of
+// them destroying another's file.
+//
+// It is raised before a single rename runs, so a refused layout always
+// leaves the staging tree exactly as the extractor left it. An adapter is
+// in-tree code, so this is a bug in the adapter rather than bad user input;
+// it is a typed error because a frontend should be able to say WHICH
+// members contend rather than print a wall of paths.
+type AdapterLayoutError struct {
+	// Kind is the Layout's own diagnostic label ("game-root-relative"),
+	// so a refusal names the rule that produced the table.
+	Kind string
+	// Reason is the rule the table broke, in words: "destinations
+	// collide", "rewrite chain - a destination is another member's
+	// source", "destination escaping the cache entry", or "unusable
+	// destination path".
+	Reason string
+	// Dest is the destination path the offending members contend for.
+	Dest string
+	// Members are the offending member paths, sorted.
+	Members []string
+}
+
+// Error renders the refusal, naming the rule, the members and the
+// destination they contend for.
+func (e *AdapterLayoutError) Error() string {
+	return fmt.Sprintf("adapter layout %q: %s: %s -> %q",
+		e.Kind, e.Reason, strings.Join(e.Members, ", "), e.Dest)
+}
+
+// validateLayoutTable checks the WHOLE rewrite table before rewriteExtractedTree
+// performs its first rename, so a table that cannot be executed is refused
+// rather than half-applied (#411, I2/I3).
+//
+// Three rules, each of which a member-by-member os.Rename loop silently got
+// wrong:
+//
+//   - two members may not share a destination - the second rename clobbers
+//     the first, and sorting the surviving members hides the loss;
+//   - a destination may not be another member's SOURCE - "A->B, B->C"
+//     destroys B's bytes and leaves C holding A's, which is worse than
+//     loss because the resulting paths look right;
+//   - when the staging filesystem is case-insensitive, two destinations
+//     differing only in case are the same file, so they collide too. On
+//     ext4 they are two distinct files and the table is executable, which
+//     is why the caller probes rather than assuming.
+//
+// Containment is checked here as well, for the same reason: an escaping
+// destination discovered halfway down the table would otherwise leave the
+// members before it already moved.
+func validateLayoutTable(layout adapter.Layout, members []string, caseInsensitive bool) error {
+	sources := make(map[string]bool, len(members))
+	for _, m := range members {
+		sources[m] = true
+	}
+
+	// dest -> the members claiming it, in member order.
+	claims := make(map[string][]string, len(members))
+	var order []string
+	for _, m := range members {
+		dest, keep := layout.Rewrite(m)
+		if !keep || dest == m {
+			continue
+		}
+		if err := containedIn(layout.Kind, m, dest); err != nil {
+			return err
+		}
+		// A destination that is some OTHER member's source is a chain: the
+		// rename overwrites a file this same table is still going to read.
+		if sources[dest] && dest != m {
+			return &AdapterLayoutError{
+				Kind:    layout.Kind,
+				Reason:  "rewrite chain - a destination is another member's source",
+				Dest:    dest,
+				Members: sortedPair(m, dest),
+			}
+		}
+		key := dest
+		if caseInsensitive {
+			key = strings.ToLower(dest)
+		}
+		if _, seen := claims[key]; !seen {
+			order = append(order, key)
+		}
+		claims[key] = append(claims[key], m)
+	}
+
+	for _, key := range order {
+		claimants := claims[key]
+		if len(claimants) < 2 {
+			continue
+		}
+		reason := "destinations collide"
+		if caseInsensitive {
+			reason = "destinations collide (the staging filesystem is case-insensitive)"
+		}
+		claimed := slices.Clone(claimants)
+		slices.Sort(claimed)
+		dest, _ := layout.Rewrite(claimants[0])
+		return &AdapterLayoutError{
+			Kind:    layout.Kind,
+			Reason:  reason,
+			Dest:    dest,
+			Members: claimed,
+		}
+	}
+	return nil
+}
+
+// sortedPair returns a and b sorted, for an error message whose member list
+// does not depend on map iteration order.
+func sortedPair(a, b string) []string {
+	pair := []string{a, b}
+	slices.Sort(pair)
+	return pair
+}
+
+// caseInsensitiveRoot reports whether root's filesystem folds case, probed
+// READ-ONLY against a member that is already on disk: a case-flipped name
+// that stats to the very same file is the definition of a case-insensitive
+// filesystem. A member with no cased letter, or a flipped name that resolves
+// to a DIFFERENT file (two genuinely distinct members on ext4), answers
+// false.
+func caseInsensitiveRoot(root string, members []string) bool {
+	for _, m := range members {
+		flipped := strings.ToUpper(m)
+		if flipped == m {
+			flipped = strings.ToLower(m)
+		}
+		if flipped == m {
+			continue
+		}
+		self, err := os.Lstat(filepath.Join(root, filepath.FromSlash(m)))
+		if err != nil {
+			continue
+		}
+		other, err := os.Lstat(filepath.Join(root, filepath.FromSlash(flipped)))
+		if err != nil {
+			return false
+		}
+		return os.SameFile(self, other)
+	}
+	return false
 }
