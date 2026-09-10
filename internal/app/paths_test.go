@@ -210,3 +210,26 @@ func TestResolvePaths_ExplicitDirsDoNotRequireHome(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, Paths{ConfigDir: cfg, DataDir: data, CacheDir: filepath.Join(data, "cache")}, got)
 }
+
+// TestResolvePaths_AbsoluteXDGValuesDoNotRequireHome is review N7, the
+// sibling of #277 one layer down: an environment that names both base
+// directories absolutely has said everything lmm needs, and #297's whole
+// point is that such a value decides. resolveBaseDir computed the legacy
+// path first, so it called os.UserHomeDir on a directory it was never
+// going to use - and a service account or container with XDG_DATA_HOME
+// set and no HOME failed to start.
+func TestResolvePaths_AbsoluteXDGValuesDoNotRequireHome(t *testing.T) {
+	cfg := t.TempDir()
+	data := t.TempDir()
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("XDG_DATA_HOME", data)
+
+	got, err := ResolvePaths(Options{})
+	require.NoError(t, err, "an absolute XDG value is the whole answer; $HOME is not consulted")
+	assert.Equal(t, Paths{
+		ConfigDir: filepath.Join(cfg, "lmm"),
+		DataDir:   filepath.Join(data, "lmm"),
+		CacheDir:  filepath.Join(data, "lmm", "cache"),
+	}, got)
+}

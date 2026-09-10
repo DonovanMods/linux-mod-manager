@@ -104,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which is the case an install predating XDG support is actually in.
   `--config`/`--data` are unchanged and still beat both. Move the
   directory (or pass `--data`/`--config`) to keep existing data after
-  setting an XDG variable.
+  setting an XDG variable. Resolving an absolute XDG value no longer consults `$HOME` at all, so a container or service account that sets `XDG_DATA_HOME` and leaves `HOME` unset starts (it used to fail on a legacy path it was never going to read).
 
 - **`lmm search --limit N` fills against a source that reports its page
   cap (#361).** #109's paging loop stops a source that could not honour the

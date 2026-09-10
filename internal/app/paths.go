@@ -95,21 +95,25 @@ func xdgValueIsAuthoritative(value string) bool {
 //
 // An absolute XDG value wins outright, whether or not that directory exists
 // yet (xdgValueIsAuthoritative, #297). The legacy fallback - use
-// $HOME/<legacyRel>/lmm when it exists - therefore applies only when the
-// variable is unset or relative, which is the case an install that predates
-// XDG support is actually in: it never set the variable. $HOME is consulted
-// only on this path, so a caller that supplies both directories explicitly
-// never needs it (#277).
+// $HOME/<legacyRel>/lmm - therefore applies only when the variable is unset
+// or relative, which is the case an install that predates XDG support is
+// actually in: it never set the variable.
+//
+// The variable is consulted BEFORE $HOME, so an environment that names the
+// directory absolutely needs no home directory at all - a service account
+// or a container with XDG_DATA_HOME set and HOME unset is fully specified,
+// and failing it over a legacy path nobody was going to read contradicts
+// #297 (review N7). $HOME is likewise not needed by a caller that supplies
+// both directories explicitly, which never reaches here (#277).
 func resolveBaseDir(envVar, legacyRel string) (string, error) {
+	if base := os.Getenv(envVar); xdgValueIsAuthoritative(base) {
+		return filepath.Join(base, appDirName), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
-	legacy := filepath.Join(home, legacyRel, appDirName)
-	if base := os.Getenv(envVar); xdgValueIsAuthoritative(base) {
-		return filepath.Join(base, appDirName), nil
-	}
-	return legacy, nil
+	return filepath.Join(home, legacyRel, appDirName), nil
 }
 
 // opLockFileName is the advisory lock file every lmm mutation takes,
