@@ -1019,6 +1019,10 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	result.Changelog = upd.Changelog
 	result.Status = UpdateUpdated
 
+	// Review finding 5: an update deploys over whatever is at the path, so
+	// a capture it could not take is reported here, on the same channel.
+	s.takeCaptureWarnings(game.ID, OpUpdate, UpdateWarning, &result.Warnings, emit)
+
 	// #197 postsmoke fix: also emit UpdateWarning - appending to
 	// result.Warnings alone is not loud enough, since applyUpdate
 	// (cmd/lmm/update.go) discards ApplyUpdate's result entirely

@@ -88,5 +88,7 @@ func captureOverriddenOriginal(originals *originalsStore, profileName, rel, dest
 	}, dest); err != nil {
 		originals.log.Warn("could not preserve the game file this profile override replaces; it will not be restorable from a snapshot",
 			"path", dest, "err", err)
+		originals.noteFailure(fmt.Sprintf(
+			"could not preserve %s before writing a profile override over it; it will not be restorable from a snapshot: %v", dest, err))
 	}
 }

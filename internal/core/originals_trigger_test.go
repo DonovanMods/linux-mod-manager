@@ -11,10 +11,12 @@ package core_test
 // a key being renamed.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -402,4 +404,69 @@ func TestReplace_LeavesAFileLmmDoesNotOwnAlone(t *testing.T) {
 	data, err = os.ReadFile(mine)
 	require.NoError(t, err)
 	assert.Equal(t, "v2", string(data), "lmm's own file is still replaced by the new version")
+}
+
+// TestDeploy_AFailedCaptureIsVisibleAtDefaultVerbosity is review finding 5.
+// A capture failure is the moment lmm is about to overwrite an
+// irreplaceable file and could not preserve it - a full disk, a permission
+// problem on the store, a manifest it cannot parse. It was reported with
+// log.Warn only, and `lmm`'s default --log-level is "off" (cmd/lmm's
+// newCLILogger returns a discarding handler for it), so the user learned
+// about it at the restore that could not put the file back.
+//
+// It is now on both always-on channels: ServiceConfig.WarnWriter, and the
+// deploy result's Warnings (which the CLI and the SPA surface
+// unconditionally, as a WarningEvent).
+func TestDeploy_AFailedCaptureIsVisibleAtDefaultVerbosity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+
+	var warned bytes.Buffer
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+		WarnWriter: &warned,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	gameDir := t.TempDir()
+	game := &domain.Game{
+		ID: "g1", Name: "Game", ModPath: gameDir,
+		LinkMethod: domain.LinkCopy, LinkMethodExplicit: true,
+	}
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	stock := filepath.Join(gameDir, "Data", "shipped.esp")
+	require.NoError(t, os.MkdirAll(filepath.Dir(stock), 0755))
+	require.NoError(t, os.WriteFile(stock, []byte("as the game shipped"), 0644))
+
+	// The store cannot be written: its own directory is a FILE.
+	storeDir := filepath.Join(dataDir, "snapshots", "g1", "_originals")
+	require.NoError(t, os.MkdirAll(filepath.Dir(storeDir), 0755))
+	require.NoError(t, os.WriteFile(storeDir, []byte("not a directory"), 0644))
+
+	seedNamedInstalledMod(t, svc, game, "src", "m1", "Mod One", "1.0", true,
+		map[string][]byte{"Data/shipped.esp": []byte("the mod's version")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "m1", "1.0")
+
+	var warnings []string
+	result, err := svc.DeployProfile(context.Background(), game, "default", core.DeployOptions{},
+		func(e core.Event) {
+			if w, ok := e.(core.WarningEvent); ok {
+				warnings = append(warnings, w.Message)
+			}
+		})
+	require.NoError(t, err, "a failed capture is a warning, never a refusal")
+
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "could not preserve",
+		"the deploy result must name the file it could not preserve")
+	assert.Contains(t, strings.Join(warnings, "\n"), "could not preserve",
+		"and it must reach a live progress stream as a WarningEvent")
+	assert.Contains(t, warned.String(), "could not preserve",
+		"and the always-on user channel, since the CLI's default log level discards logs")
 }

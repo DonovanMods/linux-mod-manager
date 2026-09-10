@@ -1876,6 +1876,11 @@ is copied to `~/.local/share/lmm/snapshots/<game>/_originals/` **first, and
 once**: the first original wins, because the second write's "original" is
 lmm's own first write. `lmm snapshot restore` puts those back, checksum
 -verified. `lmm snapshot delete` never removes them; they are the only copy.
+A capture that **fails** — a full disk, a permission problem on the store —
+never blocks the operation, but it is printed as a warning on stderr and
+carried on the operation's result at any `--log-level`, because the moment
+lmm cannot preserve an irreplaceable file is not one to discover at the
+restore that cannot put it back.
 
 **A restore is five stages**, in this order: the current deployment is
 undeployed, every stored original goes back, the recorded profile is

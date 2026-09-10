@@ -157,6 +157,18 @@ type originalsStore struct {
 	dir string // <DataDir>/snapshots/<game-id>
 	log *slog.Logger
 	mu  sync.Mutex
+
+	// warn is ServiceConfig.WarnWriter: the always-on user-facing channel
+	// (review finding 5). A capture failure is the moment lmm is about to
+	// overwrite an irreplaceable file and could not preserve it, and the
+	// CLI's default --log-level is "off" - so the diagnostic logger alone
+	// meant no output at all until the restore that could not put the file
+	// back. nil is silent, which is what the white-box tests get.
+	warn io.Writer
+	// failures collects one line per capture that could not be taken since
+	// the last drain, so the flow that is running can put them on its
+	// result's Warnings as well (takeFailures).
+	failures []string
 }
 
 // snapshotsDirFor returns a game's snapshot directory,
@@ -169,12 +181,37 @@ func snapshotsDirFor(dataDir, gameID string) string {
 
 // newOriginalsStore returns the store for gameID under dataDir. Nothing is
 // created here: a game that never has a file replaced never grows a
-// directory. A nil logger discards.
-func newOriginalsStore(dataDir, gameID string, log *slog.Logger) *originalsStore {
+// directory. A nil logger discards; a nil warn writer is silent.
+func newOriginalsStore(dataDir, gameID string, log *slog.Logger, warn io.Writer) *originalsStore {
 	if log == nil {
 		log = discardLogger
 	}
-	return &originalsStore{dir: snapshotsDirFor(dataDir, gameID), log: log}
+	return &originalsStore{dir: snapshotsDirFor(dataDir, gameID), log: log, warn: warn}
+}
+
+// noteFailure records a capture that could not be taken: onto the always-on
+// user channel immediately, and onto the pending list for whichever flow
+// drains it next (review finding 5).
+//
+// Non-fatal, still - a backup that blocks the operation it exists to
+// protect is worse than no backup - but never silent.
+func (s *originalsStore) noteFailure(msg string) {
+	s.mu.Lock()
+	s.failures = append(s.failures, msg)
+	s.mu.Unlock()
+	if s.warn != nil {
+		fmt.Fprintf(s.warn, "warning: %s\n", msg) //nolint:errcheck // best effort; a warning that cannot be printed is not worth failing a deploy for
+	}
+}
+
+// takeFailures drains the pending capture failures, so a flow can put them
+// on its own result's Warnings.
+func (s *originalsStore) takeFailures() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.failures
+	s.failures = nil
+	return out
 }
 
 // originalsStoreDirName is the store's own subdirectory of a game's
@@ -394,7 +431,39 @@ func (s *Service) originalsStoreFor(gameID string) *originalsStore {
 	if s == nil || s.dataDir == "" {
 		return nil
 	}
-	return newOriginalsStore(s.dataDir, gameID, s.logger())
+	// MEMOISED per game. Two callers in one flow - the Installer's deploy
+	// loop and applyProfileOverrides - must share a store, or a capture
+	// failure recorded by one would not be drained by the other (review
+	// finding 5). It also means "first original wins" is serialized by one
+	// mutex per game rather than one per call.
+	s.originalsMu.Lock()
+	defer s.originalsMu.Unlock()
+	if store, ok := s.originalsStores[gameID]; ok {
+		return store
+	}
+	store := newOriginalsStore(s.dataDir, gameID, s.logger(), s.warnWriter)
+	if s.originalsStores == nil {
+		s.originalsStores = map[string]*originalsStore{}
+	}
+	s.originalsStores[gameID] = store
+	return store
+}
+
+// takeCaptureWarnings drains gameID's pending capture failures onto
+// warnings and emits one WarningEvent each, so a failed capture is visible
+// at DEFAULT verbosity in every frontend (review finding 5). No-op when
+// there is no store or nothing failed.
+func (s *Service) takeCaptureWarnings(gameID string, op Op, phase DeployPhase, warnings *[]string, emit func(Event)) {
+	store := s.originalsStoreFor(gameID)
+	if store == nil {
+		return
+	}
+	for _, msg := range store.takeFailures() {
+		*warnings = append(*warnings, msg)
+		if emit != nil {
+			emit(WarningEvent{Scope: Scope{Op: op}, Phase: phase, Message: msg})
+		}
+	}
 }
 
 // restore writes a stored original back to absPath, verifying the stored

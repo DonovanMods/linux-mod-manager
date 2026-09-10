@@ -23,7 +23,7 @@ func writeFileT(t *testing.T, path, content string) {
 
 func TestOriginalsStore_CapturesTheBytesAndTheRow(t *testing.T) {
 	dataDir, gameDir := t.TempDir(), t.TempDir()
-	store := newOriginalsStore(dataDir, "skyrim-se", nil)
+	store := newOriginalsStore(dataDir, "skyrim-se", nil, nil)
 
 	stock := filepath.Join(gameDir, "Data", "stock.esp")
 	writeFileT(t, stock, "as shipped")
@@ -62,7 +62,7 @@ func TestOriginalsStore_CapturesTheBytesAndTheRow(t *testing.T) {
 // stock bytes.
 func TestOriginalsStore_FirstOriginalWins(t *testing.T) {
 	dataDir, gameDir := t.TempDir(), t.TempDir()
-	store := newOriginalsStore(dataDir, "skyrim-se", nil)
+	store := newOriginalsStore(dataDir, "skyrim-se", nil, nil)
 	target := filepath.Join(gameDir, "a.esp")
 
 	writeFileT(t, target, "the real original")
@@ -92,7 +92,7 @@ func TestOriginalsStore_FirstOriginalWins(t *testing.T) {
 // files.
 func TestOriginalsStore_TheTwoRootsDoNotCollide(t *testing.T) {
 	dataDir, dirA, dirB := t.TempDir(), t.TempDir(), t.TempDir()
-	store := newOriginalsStore(dataDir, "skyrim-se", nil)
+	store := newOriginalsStore(dataDir, "skyrim-se", nil, nil)
 
 	underMods := filepath.Join(dirA, "Data", "same.ini")
 	underInstall := filepath.Join(dirB, "Data", "same.ini")
@@ -120,7 +120,7 @@ func TestOriginalsStore_TheTwoRootsDoNotCollide(t *testing.T) {
 
 func TestOriginalsStore_NothingToCaptureIsNotAnError(t *testing.T) {
 	dataDir, gameDir := t.TempDir(), t.TempDir()
-	store := newOriginalsStore(dataDir, "skyrim-se", nil)
+	store := newOriginalsStore(dataDir, "skyrim-se", nil, nil)
 
 	t.Run("absent destination", func(t *testing.T) {
 		require.NoError(t, store.capture(OriginalFile{
@@ -158,7 +158,7 @@ func TestOriginalsStore_NothingToCaptureIsNotAnError(t *testing.T) {
 // would be a write outside the game directory.
 func TestOriginalsStore_RefusesAnEscapingPath(t *testing.T) {
 	dataDir, gameDir := t.TempDir(), t.TempDir()
-	store := newOriginalsStore(dataDir, "skyrim-se", nil)
+	store := newOriginalsStore(dataDir, "skyrim-se", nil, nil)
 	victim := filepath.Join(gameDir, "x")
 	writeFileT(t, victim, "x")
 
@@ -173,7 +173,7 @@ func TestOriginalsStore_RefusesAnEscapingPath(t *testing.T) {
 // TestOriginalsStore_ListSurvivesAMissingManifest pins that a game which
 // never had a file replaced is a normal state.
 func TestOriginalsStore_ListSurvivesAMissingManifest(t *testing.T) {
-	rows, err := newOriginalsStore(t.TempDir(), "skyrim-se", nil).list()
+	rows, err := newOriginalsStore(t.TempDir(), "skyrim-se", nil, nil).list()
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }
@@ -183,7 +183,7 @@ func TestOriginalsStore_ListSurvivesAMissingManifest(t *testing.T) {
 // next capture as "not captured yet" and overwritten, losing the original.
 func TestOriginalsStore_AFailedManifestWriteLeavesNoOrphanBytes(t *testing.T) {
 	dataDir, gameDir := t.TempDir(), t.TempDir()
-	store := newOriginalsStore(dataDir, "skyrim-se", nil)
+	store := newOriginalsStore(dataDir, "skyrim-se", nil, nil)
 	target := filepath.Join(gameDir, "a.esp")
 	writeFileT(t, target, "original")
 

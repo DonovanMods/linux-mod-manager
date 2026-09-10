@@ -867,6 +867,12 @@ func (s *Service) deployProfile(ctx context.Context, game *domain.Game, profileN
 		s.recordMergeOutcome(ctx, game, profileName, OpDeploy, result, emit)
 	}
 
+	// Review finding 5: any capture the deploy loop or the overrides above
+	// could not take becomes a result warning here - visible at default
+	// verbosity, in the CLI and in the SPA, rather than only in a log the
+	// default --log-level discards.
+	s.takeCaptureWarnings(game.ID, OpDeploy, DeployWarning, &result.Warnings, emit)
+
 	for _, w := range deferredWarnings {
 		emit(w)
 	}

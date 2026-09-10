@@ -1515,6 +1515,11 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 // the sync's non-fatal warnings stay ordinary InstallWarnings, which every
 // frontend prints identically.
 func (s *Service) syncMergedPakAfterInstall(ctx context.Context, game *domain.Game, profileName string, result *InstallResult, emit func(Event)) {
+	// Review finding 5: an accepted Overwrite is one of the two capture
+	// triggers, and every ApplyInstall path ends here - so this is where a
+	// capture the install could not take becomes a visible warning.
+	s.takeCaptureWarnings(game.ID, OpInstall, InstallWarning, &result.Warnings, emit)
+
 	syncWarnings, syncErr := s.syncMergedPak(ctx, game, profileName)
 	if syncErr != nil {
 		result.Warnings = append(result.Warnings, fmt.Sprintf("syncing merged pak: %v", syncErr))

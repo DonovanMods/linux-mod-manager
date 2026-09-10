@@ -240,7 +240,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not stock content, and a file the `deployed_files` table already
   attributes to a mod is reconstructible from the cache). A failed capture is
   a warning, never a refusal — a backup that blocks the operation it is
-  protecting is worse than no backup.
+  protecting is worse than no backup — but it is a warning you actually
+  SEE: it is printed on stderr and carried on the operation's result, at
+  any `--log-level`, because the moment lmm cannot preserve an
+  irreplaceable file is not one to find out about at the restore that
+  cannot put it back.
 
   The store is `_originals/` rather than `originals/` for a reason worth
   knowing: a snapshot name becomes a file name in the directory above it,

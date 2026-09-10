@@ -69,9 +69,11 @@ func (i *Installer) setOriginals(store *originalsStore) { i.originals = store }
 // already a real file, which on a normal deploy is nothing at all, so this
 // costs a stat per file and no more.
 //
-// A capture failure is logged at Warn and does NOT fail the deploy: a
-// backup that blocks the operation it exists to protect is worse than no
-// backup, and Warn reaches the user rather than vanishing into Debug.
+// A capture failure does NOT fail the deploy - a backup that blocks the
+// operation it exists to protect is worse than no backup - but it is not
+// silent either: the store records it on the always-on user channel and on
+// the pending list the running flow drains onto its result's Warnings
+// (review finding 5; the diagnostic Warn line stays for the log).
 func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, profileName, relPath, dstPath string, mod *domain.Mod) {
 	if i.originals == nil {
 		return
@@ -96,6 +98,8 @@ func (i *Installer) captureOriginal(ctx context.Context, game *domain.Game, prof
 	if err := i.originals.capture(row, dstPath); err != nil {
 		i.log.Warn("could not preserve the file this deploy replaces; it will not be restorable from a snapshot",
 			"path", dstPath, "err", err)
+		i.originals.noteFailure(fmt.Sprintf(
+			"could not preserve %s before replacing it; it will not be restorable from a snapshot: %v", dstPath, err))
 	}
 }
 
