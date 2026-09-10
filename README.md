@@ -1319,7 +1319,8 @@ single trusted user on their own machine:
   CLI or `serve` — takes an advisory `flock` on `<data dir>/.oplock` for as
   long as it holds the in-process mutation slot, so a `lmm deploy` typed
   while a `serve` job is mid-deploy cannot interleave its file operations
-  with it. The second one waits up to two seconds and then refuses, naming
+  with it. That is every lmm mutation, not only the ones that touch the
+  game directory — `lmm auth login` during a long deploy is refused too. The second one waits up to two seconds and then refuses, naming
   the holder: `another lmm operation is in progress (pid 4242, since
 2026-09-09T12:00:00Z)` — under `--json`, with `pid` and `started_at` in
   the error envelope's `details`. Reads never take the lock, so `lmm list`,

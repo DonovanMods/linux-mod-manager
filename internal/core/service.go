@@ -49,8 +49,11 @@ type ServiceConfig struct {
 	// channel: diagnostics go to Logger.
 	WarnWriter io.Writer
 	// OpLockPath is the advisory lock file every MUTATION takes, so a CLI
-	// mutation and a running `lmm serve` cannot interleave their deploy-tree
-	// work on one installation (#317). Supplied by the caller rather than
+	// mutation and a running `lmm serve` cannot interleave their work on
+	// one installation (#317). EVERY mutation, not only the ones that
+	// touch the game directory: a token write, a game or profile edit and
+	// a source-definition save all take it too, so `lmm auth login` typed
+	// during a long deploy is refused rather than queued. Supplied by the caller rather than
 	// derived here: core resolves no paths of its own, and internal/app is
 	// the one place that knows where an installation lives (it passes
 	// <DataDir>/.oplock).
@@ -570,9 +573,10 @@ func sourceIsPageable(res source.SearchResult, pageSize int) bool {
 //
 // Three guards keep it from re-introducing the stride finding 1 removed:
 //
-//   - Only on the source's FIRST round (cursor == page 0 of this search),
-//     where the rows fetched so far are exactly [0, len) and the next
-//     cursor is unambiguous.
+//   - Only on the source's FIRST round - page 0, with the cursor still on
+//     it - where the rows fetched so far are exactly [0, len) and the next
+//     cursor is unambiguous. The caller checks both halves rather than
+//     inferring page 0 from the paging loop's own entry condition.
 //   - Only a size SMALLER than the one requested - a source answering with
 //     a bigger page than it was asked for is not clamping.
 //   - Only when the rows returned match the size claimed. A source that
@@ -708,7 +712,15 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					st.err = err
 					return nil // never abort the group: siblings keep searching
 				}
-				firstRound := st.cursor == page
+				// page == 0 is not redundant with the cursor test: it is
+				// what makes it MEAN "first round". paging is only true
+				// when the caller started at page 0 (see rounds above), so
+				// the two agree today - but the guard below rests on "the
+				// rows fetched so far are exactly [0, len)", which is a
+				// claim about page 0, not about the cursor. Stating both
+				// keeps the precondition local to the code that needs it
+				// rather than two frames away (#361, review N10).
+				firstRound := page == 0 && st.cursor == page
 				st.succeeded = true
 				st.mods = append(st.mods, res.Mods...)
 				st.total = res.TotalCount

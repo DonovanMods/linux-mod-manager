@@ -231,7 +231,13 @@ func (n *scrubNotice) waiting() {
 		return
 	}
 	n.started = true
-	_, _ = fmt.Fprintf(n.w, "lmm: waiting for another lmm process to release the database (up to %s)...\n", scrubBudget) //nolint:errcheck // best-effort notice
+	// Says what it is waiting FOR, not just that it is waiting: #317's
+	// mutation lock produces a similar-sounding "another lmm operation is
+	// in progress", and the two are different problems with different
+	// remedies. This one is a one-time upgrade of the credential store
+	// blocked on the DATABASE; that one is a mutation blocked on another
+	// mutation.
+	_, _ = fmt.Fprintf(n.w, "lmm: waiting for another lmm process to finish with the database (re-encrypting stored credentials, up to %s)...\n", scrubBudget) //nolint:errcheck // best-effort notice
 }
 
 // resolved closes the pair on success.

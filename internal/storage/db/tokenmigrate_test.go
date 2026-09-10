@@ -501,8 +501,11 @@ func TestOpen_AContendedScrubSaysSoWhileItWaits(t *testing.T) {
 	_, err := OpenWithOptions(dbPath, Options{KeyPath: keyPath, WarnWriter: &contendedNotices, Logger: contendedLog})
 	require.Error(t, err)
 
-	assert.Contains(t, contendedNotices.String(), "waiting for another lmm process to release the database",
+	assert.Contains(t, contendedNotices.String(), "waiting for another lmm process to finish with the database",
 		"the stall must be explained on the always-on channel while it happens")
+	assert.Contains(t, contendedNotices.String(), "re-encrypting stored credentials",
+		"and must say what it is waiting FOR: #317's mutation lock produces a similar-sounding "+
+			"refusal, and the two are different problems")
 	assert.Contains(t, contendedNotices.String(), scrubBudget.String(), "and must name the cap it will wait up to")
 	assert.Contains(t, contendedNotices.String(), "gave up waiting", "and must close the pair when it gives up")
 	assert.Contains(t, logs.String(), "the database is in use", "the diagnostic record is kept too, at Warn")

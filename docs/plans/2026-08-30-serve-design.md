@@ -157,7 +157,10 @@ running CLI mutations while a serve operation is in flight").
 `core.ServiceConfig.OpLockPath`, since core resolves no paths of its own — inside the
 same slot, released with it (the Ruling 16 pairing is unchanged). Contention waits a
 bounded 2s and then fails with `core.OperationInProgressError`, naming the holder's
-pid and start time on both frontends. Reads never take the lock.
+pid and start time on both frontends (`409 Conflict` over HTTP, on the job routes
+and the single-step write routes alike). Reads never take the lock. The scope is
+every `beginOp`'d mutation, not only the deploy-tree ones: a token write, a game or
+profile edit and a source-definition save contend too.
 
 ## Small core/cmd additions this epic makes (each a plan task)
 

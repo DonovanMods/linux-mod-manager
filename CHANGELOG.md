@@ -675,6 +675,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and mtime are not content, so a file rewritten at the same size with its
   timestamp preserved is not noticed until a mutation or a forced run.
 
+- The startup notice for the one-time credential re-encryption (#79) now
+  says what it is waiting for — `waiting for another lmm process to finish
+with the database (re-encrypting stored credentials, up to 30s)` — so it
+  cannot be mistaken for #317's `another lmm operation is in progress`,
+  which is a different wait with a different remedy.
+
 - **Two lmm processes can no longer interleave their mutations (#317).**
   Within one process `beginOp` serialized every mutation; across processes
   — a CLI command typed while `lmm serve` was mid-job, or two CLIs — only
@@ -689,7 +695,10 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   `pid`/`started_at` in the `--json` error envelope's `details` and in
   `lmm serve`'s, where it answers `409 Conflict` — a refusal that a retry
   clears, on the job routes and the single-step write routes alike — and
-  never `500`. Reads never take the lock. The lock lives in the open
+  never `500`. The scope is every mutation, not only the ones that touch
+  the game directory: a token write, a game or profile edit and a
+  source-definition save contend too, so `lmm auth login` typed during a
+  long deploy is refused rather than queued. Reads never take the lock. The lock lives in the open
   descriptor, so a killed lmm leaves nothing stale behind. This resolves
   the cross-process caveat `docs/plans/2026-08-30-serve-design.md`
   documented.

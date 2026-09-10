@@ -232,8 +232,11 @@ Enter choice (1-2):
 
 Every lmm **mutation** — a CLI command or a `lmm serve` job — takes an advisory
 `flock` on `<data>/.oplock` while it runs, so two lmm processes pointed at the same
-data directory cannot interleave their deploy-tree work (#317). A second mutation
-waits up to two seconds and then refuses, naming the holder:
+data directory cannot interleave their work (#317). **Every** mutation, not only the
+ones that touch the game directory: storing or removing an API key, adding or editing
+a game, profile changes and saving a source definition all take it too, so
+`lmm auth login` typed during a long `serve` deploy is refused rather than queued.
+A second mutation waits up to two seconds and then refuses, naming the holder:
 
 ```text
 another lmm operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)
@@ -248,6 +251,14 @@ kernel drops it the moment the process exits — a killed or crashed lmm never l
 a stale lock to clear by hand, and the file itself can be deleted safely when no lmm
 is running. Two installations (different `--data` directories) have separate lock
 files and never contend.
+
+**Two different waits, and how to tell them apart.** The refusal above is about a
+*mutation* and comes from a command that had already started. A message at STARTUP —
+`lmm: waiting for another lmm process to finish with the database (re-encrypting
+stored credentials, up to 30s)…` — is a different thing: it is the one-time
+credential re-encryption (#79) waiting for the database itself, before any mutation
+lock is involved. The first says "another lmm is doing something right now"; the
+second says "another lmm still has the database open while this one upgrades it".
 
 ## The verify memo
 
