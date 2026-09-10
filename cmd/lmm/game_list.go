@@ -18,7 +18,7 @@ var gameListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List configured games",
 	Long: `List every game configured in games.yaml: ID, name, install path, mod
-path, deploy mode, and configured sources. The default game (see 'lmm game
+path, adapter, deploy mode, and configured sources. The default game (see 'lmm game
 show-default') is marked "(default)" next to its ID.
 
 Examples:
@@ -78,8 +78,8 @@ func doGameList(cmd *cobra.Command, service *core.Service) error {
 				convertPaksStr = "on"
 			}
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, g.Name, g.InstallPath, g.ModPath, g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			id, g.Name, g.InstallPath, g.ModPath, formatGameAdapter(g.Adapter), g.DeployMode.String(), convertPaksStr, formatGameSources(g.SourceIDs)); err != nil {
 			return fmt.Errorf("writing row: %w", err)
 		}
 	}
