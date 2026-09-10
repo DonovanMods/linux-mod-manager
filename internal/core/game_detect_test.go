@@ -888,3 +888,40 @@ func TestConfiguredGameFor_TieBreaksOnTheLowestID(t *testing.T) {
 		require.Equal(t, "alpha-game", match.ID)
 	}
 }
+
+// TestApplyGameDetect_TwoRowsAtOneInstallPathBuildOnEachOther is the
+// re-review's nit 3. applyGameDetectLocked loads the games.yaml set ONCE,
+// before the loop, so two rows resolving to the same prior game each
+// repaired the stale copy and the second silently discarded what the first
+// had written. Steam cannot produce that shape - one app id, one
+// steamapps/common directory - but the loop is no longer a sequence of
+// whole-entry replacements (see repairedGame), so "the last one wins" is
+// now a way to lose data rather than merely a redundant write.
+func TestApplyGameDetect_TwoRowsAtOneInstallPathBuildOnEachOther(t *testing.T) {
+	configDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	install := t.TempDir()
+	require.NoError(t, config.SaveGame(configDir, &domain.Game{
+		ID: "the-game", Name: "The Game", InstallPath: install, ModPath: install,
+		SourceIDs: map[string]string{"nexusmods": "thegame"},
+	}))
+
+	_, err = svc.ApplyGameDetect(context.Background(), []domain.DetectedGame{
+		{SteamAppID: "1", Slug: "the-game-a", Name: "The Game", InstallPath: install,
+			ModPath: install, Sources: map[string]string{"curseforge": "111"}, Known: true},
+		{SteamAppID: "2", Slug: "the-game-b", Name: "The Game", InstallPath: install,
+			ModPath: install, Sources: map[string]string{"steamworkshop": "222"}, Known: true},
+	})
+	require.NoError(t, err)
+
+	saved, err := svc.LoadGamesFromDisk()
+	require.NoError(t, err)
+	require.Contains(t, saved, "the-game")
+	assert.Equal(t, map[string]string{"nexusmods": "thegame", "curseforge": "111", "steamworkshop": "222"},
+		saved["the-game"].SourceIDs, "the second row repairs what the first one wrote, not a stale copy of it")
+}

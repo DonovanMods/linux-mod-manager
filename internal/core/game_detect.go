@@ -329,6 +329,12 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 		if err := s.saveGame(ctx, game); err != nil {
 			return fmt.Errorf("saving game %s: %w", game.ID, err)
 		}
+		// The set was loaded once, before the loop; keep it current so a
+		// LATER row resolving to this same game repairs what was just
+		// written rather than a stale copy of it. Steam cannot hand over
+		// two rows at one install path, but a repair is an edit now, and
+		// editing a stale copy loses whatever the earlier row added.
+		existing[game.ID] = game
 		result.Saved = append(result.Saved, game.ID)
 
 		if _, err := pm.CreateOrResetDefaultAfterGameSave(ctx, game.ID); err != nil {
