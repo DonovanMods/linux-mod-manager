@@ -14,6 +14,7 @@ package core_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -235,4 +236,119 @@ func TestProfileImport_CrossProfileMod_CopiesTheChecksum(t *testing.T) {
 	require.Len(t, files, 1)
 	assert.Equal(t, "deadbeef", files[0].Checksum,
 		"the same bytes must carry the same checksum in both profiles")
+}
+
+// TestProfileImport_CrossProfileMod_NoChecksumToCopy_IsHonestlyEmpty is the
+// other half of the branch above (P1a re-review N3): the source row carries
+// no checksum of its own - a legacy install, or a source that hashes nothing.
+// There is nothing to copy, so the new row lands with an empty checksum and
+// the import says nothing about it. Honest emptiness is a real state and must
+// not be dressed up as either a phantom checksum or a warning.
+func TestProfileImport_CrossProfileMod_NoChecksumToCopy_IsHonestlyEmpty(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "alpha.esp", []byte("a")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(
+		gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"alpha.esp"}))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+	}))
+	// Deliberately NO SaveFileChecksum: that is the whole fixture.
+
+	profile := &domain.Profile{Name: "imported", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "alpha", Version: "1.0.0"}}}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.AlreadyCached, 1)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Installed, "warnings: %v", result.Warnings)
+	assert.Empty(t, result.Warnings, "a row with nothing to copy is not a failure")
+
+	files, err := svc.GetFilesWithChecksums(context.Background(), game.ID, "imported")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	assert.Empty(t, files[0].Checksum, "no checksum existed to copy, so none may be invented")
+}
+
+// TestProfileImport_CrossProfileMod_ChecksumReadFailure_IsReported is P1a
+// re-review N2: the copy loop read `if err != nil || checksum == ""` and
+// treated both as "nothing to copy". They are not the same thing -
+// GetFileChecksum answers ("", nil) for a row that simply has no checksum, so
+// a non-nil error is a genuine DB failure. Swallowed, it writes an
+// unverifiable row and says nothing, while the WRITE half of the same copy
+// (recordFileChecksums) warns about its own failures.
+//
+// The failure is injected by renaming the column out from under the read -
+// the same second-connection trick installBlockingTrigger uses, and the
+// narrowest way to make one SELECT fail while the flow's writes (which never
+// name that column) carry on.
+func TestProfileImport_CrossProfileMod_ChecksumReadFailure_IsReported(t *testing.T) {
+	dataDir := t.TempDir()
+	svc, err := core.NewService(core.ServiceConfig{
+		ConfigDir: t.TempDir(), DataDir: dataDir, CacheDir: t.TempDir(),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	pm := svc.NewProfileManager()
+	_, err = pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	gameCache := svc.GetGameCache(game)
+	require.NoError(t, gameCache.Store(game.ID, "src", "alpha", "1.0.0", "alpha.esp", []byte("a")))
+	require.NoError(t, cache.MarkFileCompleteWithMembers(
+		gameCache.ModPath(game.ID, "src", "alpha", "1.0.0"), "f1", []string{"alpha.esp"}))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "alpha", SourceID: "src", Name: "Alpha", Version: "1.0.0", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      []string{"f1"},
+	}))
+
+	profile := &domain.Profile{Name: "imported", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "src", ModID: "alpha", Version: "1.0.0"}}}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.AlreadyCached, 1)
+
+	breakChecksumColumn(t, filepath.Join(dataDir, "lmm.db"))
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed, "the files are installed either way - a checksum is not the install")
+	require.NotEmpty(t, result.Warnings, "a failed READ must be reported, exactly as a failed write is")
+	assert.Contains(t, result.Warnings[0], "f1", "the warning names the file whose checksum could not be read")
+}
+
+// breakChecksumColumn renames installed_mod_files.checksum out from under the
+// service's own connection, so every read of it fails while the inserts that
+// flow performs (which name the other five columns explicitly) keep working.
+func breakChecksumColumn(t *testing.T, dbPath string) {
+	t.Helper()
+	conn, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	_, err = conn.Exec(`ALTER TABLE installed_mod_files RENAME COLUMN checksum TO checksum_gone`)
+	require.NoError(t, err)
 }

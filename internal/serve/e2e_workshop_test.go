@@ -900,3 +900,67 @@ func TestE2E_Workshop_TheEnabledCheckboxIsDisabledOnAnExternalRow(t *testing.T) 
 
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// newE2EWorkshopFixtureTrackedElsewhere is newE2EWorkshopFixture with the
+// tracking row moved to a SECOND profile, leaving "default" listing the item
+// with no row of its own - the one state that puts an EXTERNAL entry in
+// core.ProfileApplyPlan.ToInstall (internal/core/profile_apply.go's pass 2
+// resolves it from externalRowsElsewhere and never from a source).
+func newE2EWorkshopFixtureTrackedElsewhere(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EWorkshopFixture(t)
+
+	_, err := f.Svc.NewProfileManager().Create(t.Context(), f.Game.ID, "steam")
+	require.NoError(t, err)
+
+	row, err := f.Svc.GetInstalledMod(t.Context(), e2eWorkshopSourceID, e2eWorkshopFileID, f.Game.ID, "default")
+	require.NoError(t, err)
+	require.NoError(t, f.Svc.DeleteInstalledMod(t.Context(), e2eWorkshopSourceID, e2eWorkshopFileID, f.Game.ID, "default"))
+	row.ProfileName = "steam"
+	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), row))
+	return f
+}
+
+// TestE2E_Workshop_ProfileApplyPlanShowsTheTrackedItemAsTracked closes P1a
+// re-review N4. plan_profile_apply.js#installVersion branches on
+// entry.external and hands the ref to the shared displayVersion helper, and
+// the version-display ratchet's registry says so in prose - but no RUNNING
+// test ever took that branch: the profile-apply scenario drives a managed
+// entry only, and these browser tests are the only thing that executes the
+// SPA at all. A branch nothing executes is a claim, not a covered path.
+//
+// The item is tracked under another profile, so "default" lists it with
+// nothing installed behind it: the apply's job is to copy the tracking row,
+// not to fetch a mod Steam already owns. What the preview must show is the
+// item's REVISION DATE where a version goes - never Steam's 19-digit content
+// id (issue 269's version DISPLAY rule).
+func TestE2E_Workshop_ProfileApplyPlanShowsTheTrackedItemAsTracked(t *testing.T) {
+	f := newE2EWorkshopFixtureTrackedElsewhere(t)
+
+	var body string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.HomePath()),
+		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.card--profile`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="apply-profile"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="profile_apply"] .plan`, chromedp.ByQuery),
+		textContent(`.modal[data-kind="profile_apply"]`, &body),
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	assert.Contains(t, body, "Sample Workshop Item")
+	assert.Contains(t, body, "tracked - Steam already has it")
+	assert.Contains(t, body, e2eWorkshopRevisionDate,
+		"an external entry shows the item's revision date where a version goes")
+	assert.NotContains(t, body, e2eWorkshopManifest,
+		"the version DISPLAY rule: no human surface prints Steam's content id as a version")
+
+	// The end state, not merely the preview: the apply copied the tracking
+	// row rather than fetching anything.
+	row, err := f.Svc.GetInstalledMod(t.Context(), e2eWorkshopSourceID, e2eWorkshopFileID, f.Game.ID, "default")
+	require.NoError(t, err)
+	assert.True(t, row.External, "the copied row must stay external")
+	assert.Empty(t, f.BrowserErrors())
+}

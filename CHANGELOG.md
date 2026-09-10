@@ -895,6 +895,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Importing a profile no longer leaves two versions of one mod deployed
+  (#404).** When a mod is installed under several profiles, the import picks
+  whichever of their rows can answer "are these bytes already downloaded?" —
+  and it used the same row to answer a second, unrelated question: "is an
+  older version of this mod live in the game directory?". Where the two
+  disagreed — one profile listing the version your document names but with
+  its cache gone, another holding an older version that is actually deployed
+  — the import installed the new version _alongside_ the old one instead of
+  replacing it, and the game read two versions of one mod at once. What is on
+  disk is now answered by every profile's row rather than by whichever one
+  the download decision happened to pick, and it is answered for a mod
+  installed straight from the cache too, not only for one that has to be
+  re-fetched.
+
+  A second, older half of the same fault is closed with it, and it affected
+  **`lmm profile switch` as well**: on a game deployed with `copy` or
+  `hardlink`, removing the obsolete version's files was skipped outright
+  whenever the live deployment belonged to a _different_ profile, because lmm
+  asked "is this file mine?" of the profile it was acting as rather than of
+  the game. A copied or hardlinked file is a real file, so it looked like
+  content lmm had never put there and was left alone — leaving both versions
+  live even when the replacement was correctly planned. (Under the default
+  `symlink` method the question was never reached, which is why this went
+  unnoticed.) That question is now asked of the whole game: a file **any** of
+  its profiles deployed is lmm's own to replace, while a file none of them
+  deployed — the game's own content — is still preserved and never deleted,
+  exactly as before.
+
 - **The web UI sets a quoted command as code instead of showing raw
   backticks (#402).** core writes one error message for both frontends, and
   it is written for a terminal — "Steam Web API key required (run \`lmm auth
