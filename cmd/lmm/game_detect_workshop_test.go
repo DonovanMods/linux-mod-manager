@@ -173,6 +173,41 @@ func TestDoGameDetect_InvalidSelectionNamesWhatIsAccepted(t *testing.T) {
 	assert.Contains(t, err.Error(), "none")
 }
 
+// TestDoGameDetect_InvalidSelectionOffersOnlyWhatResolves pins #368 review
+// Minor 7: typing the app id of a game that IS installed but is hidden by
+// the default listing got "use a row number 1-2, a Steam app id, all, or
+// none" - naming the spelling the user just used as accepted, which reads as
+// a bug in lmm rather than as "that row is not on this list".
+func TestDoGameDetect_InvalidSelectionOffersOnlyWhatResolves(t *testing.T) {
+	configDir = t.TempDir()
+	svc := workshopDetectService(t)
+	cmd, _ := newDetectCmd(t)
+
+	err := doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("526870\n")), svc, workshopDetectScan(t), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "a Steam app id from the list above",
+		"only a LISTED row's app id resolves")
+	assert.Contains(t, err.Error(), "--include-unknown",
+		"and the flag that would list the row the user just named")
+}
+
+// TestDoGameDetect_InvalidSelectionUnderIncludeUnknownDropsTheFlagHint: with
+// the flag already given, every installed game is on the list, so there is
+// no "rest" to point at - the selection is simply not a row.
+func TestDoGameDetect_InvalidSelectionUnderIncludeUnknownDropsTheFlagHint(t *testing.T) {
+	configDir = t.TempDir()
+	svc := workshopDetectService(t)
+	cmd, _ := newDetectCmd(t)
+	gameDetectIncludeUnknown = true
+
+	err := doGameDetect(context.Background(), cmd,
+		bufio.NewReader(strings.NewReader("999999\n")), svc, workshopDetectScan(t), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "a Steam app id from the list above")
+	assert.NotContains(t, err.Error(), "--include-unknown")
+}
+
 // TestDoGameDetect_AllIncludesAnUncuratedWorkshopRow: "all" means every
 // listed row that is not already configured, and a Workshop-bearing row is
 // listed AND addable - detection filled in its source map.

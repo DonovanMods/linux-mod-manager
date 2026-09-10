@@ -884,6 +884,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
   Steam app id 10.
 
+- **A rejected detect selection now offers only what would have worked
+  (#368).** Typing the Steam app id of a game that IS installed but is hidden
+  by the default listing answered `invalid selection: "526870" (use a row
+number 1-2, a Steam app id, all, or none)` — naming the spelling just used
+  as accepted. It now says a Steam app id **from the list above**, and names
+  `--include-unknown` as the flag that would list the row.
+
 - **The Setup page's Steam Workshop card no longer butts against the card
   above it (#348).** The Adopt panel is the first place in the web UI to show
   two cards in one panel, and nothing put space between them, so the "Steam

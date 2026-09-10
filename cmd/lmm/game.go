@@ -881,6 +881,20 @@ func gameDetectAddableRow(part string, n int, games []domain.DetectedGame) (int,
 
 // gameDetectInvalidSelection is the one "that is not on this list" refusal,
 // shared by every spelling so they cannot drift apart.
+//
+// It offers only what actually resolves (#368 review Minor 7): a LISTED
+// row's app id. The old wording named "a Steam app id" flatly, so a user who
+// typed the app id of a game that is installed but hidden by the default
+// listing was told the spelling they had just used was accepted - which
+// reads as a bug in lmm rather than as "that row is not on this list". When
+// the listing was narrow, the flag that widens it is the way forward, so it
+// is named; with --include-unknown already given there is no "rest" left to
+// point at.
 func gameDetectInvalidSelection(part string, games []domain.DetectedGame) error {
-	return fmt.Errorf("invalid selection: %q (use a row number 1-%d, a Steam app id, all, or none)", part, len(games))
+	hint := ""
+	if !gameDetectIncludeUnknown {
+		hint = " (pass --include-unknown to list the rest)"
+	}
+	return fmt.Errorf("invalid selection: %q (use a row number 1-%d or a Steam app id from the list above, all, or none)%s",
+		part, len(games), hint)
 }
