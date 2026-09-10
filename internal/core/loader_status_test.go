@@ -60,6 +60,34 @@ func TestDetectLoaderTarget(t *testing.T) {
 		}
 	}
 
+	// Review F13: with markers for both, the answer used to be whichever
+	// name os.ReadDir returned first - lexical sort deciding which BepInEx
+	// build and which launch option a user is told to use. It is decided by
+	// EVIDENCE now: UnityPlayer.so/.dll are Unity's own runtime and beat the
+	// generic extension heuristics, and native wins a genuine tie because a
+	// depot shipping both is one whose Linux build is what actually runs.
+	t.Run("the specific markers beat the generic extension heuristics", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			files []string
+			want  domain.LoaderBootstrap
+		}{
+			{"UnityPlayer.so beside a .exe", []string{"UnityPlayer.so", "Game.exe"}, domain.LoaderBootstrapNative},
+			{"UnityPlayer.dll beside a .x86_64", []string{"UnityPlayer.dll", "Game.x86_64"}, domain.LoaderBootstrapProton},
+			{"both runtimes: native wins", []string{"UnityPlayer.so", "UnityPlayer.dll"}, domain.LoaderBootstrapNative},
+			{"both launchers: native wins", []string{"Game.x86_64", "Game.exe"}, domain.LoaderBootstrapNative},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				root := t.TempDir()
+				for _, f := range tc.files {
+					require.NoError(t, os.WriteFile(filepath.Join(root, f), []byte("x"), 0o644))
+				}
+				_, gotBootstrap := core.DetectLoaderTarget(root)
+				assert.Equal(t, tc.want, gotBootstrap)
+			})
+		}
+	})
+
 	t.Run("no markers is unknown, never a guess", func(t *testing.T) {
 		gotRuntime, gotBootstrap := core.DetectLoaderTarget(t.TempDir())
 		assert.Equal(t, domain.LoaderRuntimeUnknown, gotRuntime)

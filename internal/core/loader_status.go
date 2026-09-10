@@ -101,6 +101,20 @@ func BepInExLaunchOption(bootstrap domain.LoaderBootstrap) string {
 //     Linux runs under Proton or Wine - so it needs the winhttp proxy rather
 //     than run_bepinex.sh.
 //
+// Two markers can disagree, and the tie is broken by EVIDENCE rather than by
+// whichever name os.ReadDir happened to return first (which made lexical
+// sort decide which BepInEx build a user was told to install):
+//
+//  1. UnityPlayer.so / UnityPlayer.dll win. They ARE Unity's runtime, so
+//     their presence is a statement about the build; .x86_64 and .exe are
+//     ordinary extensions that anything may carry.
+//  2. Otherwise the launcher extensions decide.
+//  3. NATIVE wins a genuine tie at either level. A depot shipping both
+//     builds is one whose Linux build is what actually runs on Linux, and
+//     run_bepinex.sh is also the recoverable mistake of the two: it fails
+//     visibly, while the winhttp override on a native build silently loads
+//     nothing.
+//
 // Either answer may be Unknown, which is the honest result for a directory
 // with no markers, a game that is not Unity, or a path that does not exist -
 // never a guess, because a guess here sends the user to the wrong BepInEx
@@ -115,7 +129,9 @@ func DetectLoaderTarget(installPath string) (domain.LoaderRuntime, domain.Loader
 	}
 
 	runtime := domain.LoaderRuntimeUnknown
-	bootstrap := domain.LoaderBootstrapUnknown
+	// The whole directory is read before the bootstrap is decided, so the
+	// answer does not depend on directory order.
+	var unityNative, unityWindows, launcherNative, launcherWindows bool
 	for _, e := range entries {
 		name := e.Name()
 		switch {
@@ -123,13 +139,27 @@ func DetectLoaderTarget(installPath string) (domain.LoaderRuntime, domain.Loader
 			if runtime == domain.LoaderRuntimeUnknown {
 				runtime = detectUnityRuntime(filepath.Join(installPath, name))
 			}
-		case bootstrap != domain.LoaderBootstrapUnknown:
-			// Already answered; the loop still runs for the _Data directory.
-		case strings.EqualFold(name, "UnityPlayer.so"), strings.HasSuffix(name, ".x86_64"), strings.HasSuffix(name, ".x86"):
-			bootstrap = domain.LoaderBootstrapNative
-		case strings.EqualFold(name, "UnityPlayer.dll"), strings.EqualFold(filepath.Ext(name), ".exe"):
-			bootstrap = domain.LoaderBootstrapProton
+		case strings.EqualFold(name, "UnityPlayer.so"):
+			unityNative = true
+		case strings.EqualFold(name, "UnityPlayer.dll"):
+			unityWindows = true
+		case strings.HasSuffix(name, ".x86_64"), strings.HasSuffix(name, ".x86"):
+			launcherNative = true
+		case strings.EqualFold(filepath.Ext(name), ".exe"):
+			launcherWindows = true
 		}
+	}
+
+	bootstrap := domain.LoaderBootstrapUnknown
+	switch {
+	case unityNative:
+		bootstrap = domain.LoaderBootstrapNative
+	case unityWindows:
+		bootstrap = domain.LoaderBootstrapProton
+	case launcherNative:
+		bootstrap = domain.LoaderBootstrapNative
+	case launcherWindows:
+		bootstrap = domain.LoaderBootstrapProton
 	}
 	return runtime, bootstrap
 }
