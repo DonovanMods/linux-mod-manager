@@ -352,6 +352,21 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 			}
 		}
 	}
+	// #353/#411 (I6): the adapter's EXISTENCE, checked in the same place
+	// and for the same reason as a source's - spec.game() validates only
+	// its syntax, so without this a serve caller could park a game naming
+	// an adapter this build does not ship, and every flow on it would then
+	// fail at resolve time with nothing the form could mark. The CLI's own
+	// pre-check (cmd/lmm/adapter_flag.go) stays for its friendlier
+	// message, but it is no longer the only thing enforcing this.
+	if game.Adapter != "" {
+		if _, err := s.adapterRegistry().Resolve(game.Adapter); err != nil {
+			return nil, &GameSpecError{
+				Field: "adapter", Value: game.Adapter,
+				Reason: err.Error(), Err: err,
+			}
+		}
+	}
 	if _, exists := s.game(game.ID); exists {
 		return nil, fmt.Errorf("%w: %s", ErrGameExists, game.ID)
 	}
