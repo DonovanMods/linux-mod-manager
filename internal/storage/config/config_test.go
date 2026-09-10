@@ -18,7 +18,9 @@ func TestLoadConfig_DefaultValues(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, domain.LinkSymlink, cfg.DefaultLinkMethod)
-	assert.Equal(t, "vim", cfg.Keybindings)
+	// No default for a key v2 ignores: Load used to apply "vim", which is
+	// how a fresh config.yaml ended up with it written in (#390).
+	assert.Empty(t, cfg.Keybindings)
 }
 
 func TestLoadConfig_FromFile(t *testing.T) {
@@ -438,4 +440,43 @@ games:
 	assert.NotContains(t, game.ModPath, "~")
 	assert.Equal(t, filepath.Join(home, "games/test"), game.InstallPath)
 	assert.Equal(t, filepath.Join(home, "games/test/mods"), game.ModPath)
+}
+
+// TestConfigSave_OmitsDeadAndEmptyKeys is #390's regression: a config.yaml
+// that lmm creates for a brand-new user used to be written with
+// `keybindings: vim` - a setting for the removed TUI, which v2 ignores -
+// and an empty `cache_path: ""`. Tolerating the key on the way IN is the
+// documented compatibility contract; emitting it into a file that never
+// had it is not.
+func TestConfigSave_OmitsDeadAndEmptyKeys(t *testing.T) {
+	dir := t.TempDir()
+
+	// Exactly what a first run does: Load with no file on disk, then Save.
+	cfg, err := config.Load(dir)
+	require.NoError(t, err)
+	require.NoError(t, cfg.Save(dir))
+
+	written, err := os.ReadFile(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(written), "keybindings",
+		"a fresh config.yaml must not be written with a setting v2 ignores")
+	assert.NotContains(t, string(written), "cache_path",
+		"an unset cache_path is the default, not something to write out")
+	assert.Contains(t, string(written), "default_link_method",
+		"the live settings are still written")
+}
+
+// TestLoadConfig_StillParsesKeybindings is the other half of #390: dropping
+// the key from what Save writes must not make an older config.yaml that
+// sets it fail to load.
+func TestLoadConfig_StillParsesKeybindings(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"),
+		[]byte("keybindings: vim\ndefault_game: skyrim-se\n"), 0644))
+
+	cfg, err := config.Load(dir)
+	require.NoError(t, err)
+	assert.Equal(t, "skyrim-se", cfg.DefaultGame)
+	assert.Equal(t, "vim", cfg.Keybindings)
 }

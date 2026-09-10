@@ -1388,6 +1388,13 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   anywhere. The job now runs `make test-race`, so the gate and `make check`
   share one timeout.
 
+- **A config.yaml lmm creates no longer contains settings v2 does not have
+  (#390).** A first run wrote `keybindings: vim` — a key reserved for the
+  TUI v2 removed, which nothing reads — and an empty `cache_path: ""`.
+  Both keys still _parse_ (an existing config.yaml that sets `keybindings`
+  loads and round-trips exactly as before, which is the documented
+  compatibility contract), but neither is written out when it is unset.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes
