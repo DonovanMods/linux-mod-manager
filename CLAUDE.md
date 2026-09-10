@@ -27,7 +27,7 @@ Read these global guidance files before starting any development work:
 
 ## Project Overview
 
-**lmm** (Linux Mod Manager) is a terminal-based mod manager for Linux that provides a command-line interface for searching, installing, updating, and managing game mods from various sources. NexusMods and CurseForge ship as built-in sources, and user-defined custom sources (directory, manifest, api) extend that further without writing code — see the README's Custom Sources section.
+**lmm** (Linux Mod Manager) is a native, terminal-first Linux mod manager focused on reproducible profiles, multiple mod sources, and scriptable game-mod deployment — with a local web UI (`lmm serve`) over the same model. A profile is desired state: `lmm profile apply` converges the installation to it, downgrades included, and locks are enforced at converge time. NexusMods, CurseForge, Steam Workshop and Icarus ship as built-in sources, and user-defined custom sources (directory, manifest, api) extend that further without writing code — see the README's Custom Sources section. FOMOD, LOOT-style load-order management and Nexus Collections are explicit non-goals for 2.0 (#354, #355); the post-2.0 direction is a formal game-adapter seam (#353).
 
 ## Build Commands
 
