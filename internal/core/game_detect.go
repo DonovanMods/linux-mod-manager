@@ -357,13 +357,22 @@ func (s *Service) applyGameDetectLocked(ctx context.Context, games []domain.Dete
 // re-add of it.
 //
 // It therefore starts from the game on disk and overwrites only what
-// detection genuinely owns: where the game is installed, where its mods go,
-// and the source ids the curated entry names (added to the user's map, not
-// swapped for it). Anything domain.Game grows later - a loader or adapter
-// block (#353/#358) - is preserved by construction rather than by
-// remembering to list it here.
+// detection genuinely owns: the display name, where the game is installed,
+// where its mods go, and the source ids the curated entry names (added to
+// the user's map, not swapped for it). Anything domain.Game grows later -
+// a loader or adapter block (#353/#358) - is preserved by construction
+// rather than by remembering to list it here.
+//
+// The NAME is detection's on purpose, and pinned as such: refreshing a
+// stale title from the curated entry is a documented part of the repair
+// (cmd/lmm's TestDoGameDetect_ExplicitSelectionRepairsConfiguredGame and
+// _SelectFlagSelectsExplicitIndices both start from a "Stale Name" entry,
+// and _ExplicitRowFormResolvesACollision from a hand-edited one). A title
+// is a label; the fields above it in this comment change what lmm DOES
+// with the game's files, which is why those are the user's.
 func repairedGame(prior, detected *domain.Game) *domain.Game {
 	repaired := *prior
+	repaired.Name = detected.Name
 	repaired.InstallPath = detected.InstallPath
 	repaired.ModPath = detected.ModPath
 

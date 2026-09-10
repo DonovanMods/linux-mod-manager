@@ -798,14 +798,15 @@ func TestApplyGameDetect_RepairKeepsTheFieldsDetectionDoesNotOwn(t *testing.T) {
 	require.Contains(t, saved, "cyberpunk-2077")
 	got := saved["cyberpunk-2077"]
 
-	// What detection owns.
+	// What detection owns. The display name is deliberately among them -
+	// refreshing a stale title is part of the repair, and cmd/lmm pins it.
+	assert.Equal(t, "Cyberpunk 2077", got.Name)
 	assert.Equal(t, install, got.InstallPath)
 	assert.Equal(t, install, got.ModPath, "the curated mod path is the point of the repair")
 	assert.Equal(t, "cyberpunk2077", got.SourceIDs["nexusmods"], "the curated source mapping is applied")
 
 	// What it does not.
 	assert.Equal(t, "7777", got.SourceIDs["curseforge"], "a source the user added is not detection's to drop")
-	assert.Equal(t, "Cyberpunk (my copy)", got.Name)
 	assert.Equal(t, domain.LinkHardlink, got.LinkMethod)
 	assert.True(t, got.LinkMethodExplicit)
 	assert.Equal(t, customised.CachePath, got.CachePath)
