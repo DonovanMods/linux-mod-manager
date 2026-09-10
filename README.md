@@ -596,10 +596,14 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   wrapper is stripped), and BepInEx-relative (a bare `plugins/`,
   `patchers/`, `monomod/` or `config/` root, which gains its `BepInEx/`
   prefix). A loose `.dll` at the archive root becomes
-  `BepInEx/plugins/<ModName>/`. The `manifest.json`, `icon.png`,
-  `README.md` and `CHANGELOG.md` every Thunderstore package carries at its
-  root are metadata and are dropped, not scattered into your game
-  directory. A layout lmm does not recognise is reported, never guessed at.
+  `BepInEx/plugins/<ModName>/`. The package metadata every Thunderstore
+  archive carries — a `manifest`, an `icon`, a `readme`, a `changelog` or a
+  `license`, whatever extension it is spelled with — is dropped, not
+  scattered into your game directory. That drop runs both before and after
+  the wrapper strip, so a package that keeps its metadata _inside_ the
+  wrapper — which is how Thunderstore builds one — does not deliver four
+  files into your Steam install directory. A layout lmm does not recognise
+  is reported, never guessed at.
 
   The `BepInEx/`-rooted and wrapped shapes are recognised for any game. The
   two ambiguous ones — a bare `plugins/` root and a bare `.dll` — need the
@@ -650,6 +654,14 @@ lmm game edit lethal-company --loader ""   # remove the declaration
   launch option wrong instead of finding out from a mod that mysteriously
   does nothing. Only the last check is `--fix`-able (it re-deploys the mod);
   the others report and point at the setup.
+
+- **Keeps the download when it refuses one.** A plugin archive installed
+  into a game that declares no loader is refused at ingest, which is the
+  earliest point the archive's shape is knowable — but the downloaded file
+  is kept, so the retry after `lmm game edit <game> --loader bepinex` does
+  not fetch it again. Only this refusal keeps anything: a checksum
+  mismatch or a truncated download means the bytes are suspect, and those
+  are discarded as before.
 
 #### What lmm never does
 
@@ -2348,7 +2360,8 @@ With `--fix`, verify also REMOVES stale lmm-deployed files and dangling lmm-cach
 - **? ModName - VERSION UNVERIFIABLE** - None of the recorded file ID(s) are listed by the source anymore; not repaired by `--fix` (reinstall the mod instead).
 
 For a game with a `loader:` block (see [BepInEx (Unity
-games)](#bepinex-unity-games)), verify adds five loader checks:
+games)](#bepinex-unity-games)), verify adds a loader tier — five checks,
+reporting six statuses:
 
 - **LOADER MISSING** — the game declares a loader and its preloader
   (`BepInEx/core/BepInEx.Preloader.dll`) is not in the install directory.

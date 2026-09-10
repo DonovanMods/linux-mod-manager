@@ -249,9 +249,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`BepInExPack/BepInEx/…`) has that directory stripped, a BepInEx-relative
   archive (a bare `plugins/`, `patchers/`, `monomod/` or `config/` root)
   gains its `BepInEx/` prefix, a loose root `.dll` becomes
-  `BepInEx/plugins/<ModName>/`, and the `manifest.json`, `icon.png`,
-  `README.md` and `CHANGELOG.md` every Thunderstore package carries at its
-  root are dropped instead of being scattered into your game directory. An
+  `BepInEx/plugins/<ModName>/`, and the package metadata every Thunderstore
+  archive carries — a `manifest`, an `icon`, a `readme`, a `changelog` or a
+  `license`, whatever extension it is spelled with, at the archive root or
+  inside the wrapper — is dropped instead of being scattered into your game
+  directory. An
   archive that is BepInEx **itself** (it installs `BepInEx/core/`) is
   refused as a mod, with the message that names the loader setup — the
   loader is a per-game prerequisite that must survive a profile switch, not
@@ -290,13 +292,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   apply — the archive normaliser's two ambiguous shapes (#358), the refusal
   below, and the verify checks below.
 
+- **The Steam known-games catalog can declare a game's mod loader (#416).**
+  A curated entry gains an optional `loader:` block (`kind`, and optionally
+  `version`), which `lmm game detect`, `lmm game add --from-detected` and
+  `POST /api/v1/games/detect` write into `games.yaml` — so a curated BepInEx
+  game arrives configured rather than needing `lmm game edit --loader
+bepinex` before its first plugin will install. `runtime` and `bootstrap`
+  are deliberately not part of it: they are facts about _your_ copy of the
+  game, which `lmm game show` reads off the install directory. No entry in
+  the shipped catalog declares one yet.
+
 - **A plugin will not be deployed into a game that has no loader (#359).**
   A BepInEx-shaped archive installed into a game declaring no loader now
   fails at plan time with the setup steps — install the right build, record
   it with `lmm game edit --loader`, then check it — instead of putting a DLL
   somewhere nothing will load it from and reporting success. The steps travel
   as data, so `lmm install`, `lmm install --json` and the web UI's failed job
-  all show the same three sentences.
+  all show the same three sentences. A download that was already fetched
+  before the refusal is **kept**, so the retry after you record the loader
+  does not download it again — which on a free NexusMods account would mean
+  a second trip through the browser.
 
 - **`lmm game show <game-id>` (#359).** Everything lmm knows about one game:
   its paths, its sources, and — for a game with a loader — whether the
@@ -1001,6 +1016,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   omits the section rather than failing the command (#87).
 
 ### Fixed
+
+- **`lmm game show` no longer offers BepInEx advice for games that have
+  nothing to do with a mod loader (#359).** Every game printed a "Mod
+  loader" section — `Declared: none`, `Runtime: unknown`, `Bootstrap:
+unknown` — followed by a warning telling you to set
+  `--loader-bootstrap`. The section is now shown only for a game that
+  declares a loader or whose install directory carries a marker lmm
+  recognises, and `GET /api/v1/games/{id}` gates its warning the same way.
 
 - **Importing a profile no longer leaves two versions of one mod deployed
   (#404).** When a mod is installed under several profiles, the import picks
