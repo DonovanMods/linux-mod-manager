@@ -33,7 +33,16 @@ var (
 	// ErrInvalidDeployMode is ErrInvalidLinkMethod's counterpart for
 	// deploy_mode; see ValidDeployModes for the recognized names (#172).
 	ErrInvalidDeployMode = errors.New("invalid deploy mode")
-	ErrDependencyLoop    = errors.New("circular dependency detected")
+	// ErrInvalidLoaderRuntime flags a loader.runtime value that is neither
+	// empty nor one of ValidLoaderRuntimes (#359). Same contract as the two
+	// above: a games.yaml LOAD fails naming the game, the value and the
+	// valid set, rather than silently defaulting a game into verifying
+	// against the wrong BepInEx build forever.
+	ErrInvalidLoaderRuntime = errors.New("invalid loader runtime")
+	// ErrInvalidLoaderBootstrap is ErrInvalidLoaderRuntime's counterpart
+	// for loader.bootstrap (ValidLoaderBootstraps).
+	ErrInvalidLoaderBootstrap = errors.New("invalid loader bootstrap")
+	ErrDependencyLoop         = errors.New("circular dependency detected")
 	// ErrExternalMod marks an operation refused because the mod is
 	// EXTERNAL: lmm tracks it, but another agent (today, the Steam client
 	// for a Workshop item) owns its files where they sit (#269). Deploy,
