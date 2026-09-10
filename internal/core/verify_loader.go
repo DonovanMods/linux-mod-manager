@@ -5,15 +5,24 @@
 // (VerifyTier) and the repair vocabulary (--fix), so this adds findings to an
 // existing engine rather than a second one.
 //
-// Its shape follows from what lmm does and does not do about a loader. lmm
-// does not install BepInEx and does not write the Steam launch option (see
-// loader_status.go), so NONE of the checks here is --fix-able and each says
-// so in the engine's own voice. The one loader-related check that IS
-// repairable - every enabled plugin's files actually linked under
-// BepInEx/plugins/ - needs nothing added at all: those files are ordinary
-// deployed members, so the per-file walk already reports a missing one and
-// --fix's existing redownload/relink repair already fixes it. Adding a
-// second, loader-scoped copy of that check would report the same file twice.
+// Its shape follows from what lmm does and does not do about a loader: FOUR
+// checks report and ONE repairs.
+//
+// The four that only report - loader missing, version drift, an incomplete
+// bootstrap, and a loader that has never run - are about the loader
+// INSTALLATION, which lmm deliberately does not install and whose Steam
+// launch option it deliberately does not write (see loader_status.go). There
+// is nothing for --fix to attempt, and each says so in the engine's own
+// voice (notFixableLoader).
+//
+// The fifth, loaderPluginLinkCheck, is repairable and is the reason the tier
+// is worth having beyond diagnostics: a mod whose files are all gone from
+// BepInEx/plugins/ is invisible to the per-file walk (which asks about the
+// CACHE) and to convergeDeployedFiles (which is remove-only), yet it is
+// exactly the state that makes every plugin silently stop working. Its
+// repair is the ordinary idempotent Installer.Install, not a bespoke
+// re-link, so the profile's link method and the deployed-files bookkeeping
+// stay the deploy path's own.
 package core
 
 import (
@@ -27,9 +36,11 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
-// notFixableLoader is the reason every finding in this tier carries: lmm
+// notFixableLoader is the reason the tier's four REPORTING findings carry -
+// loader missing, version drift, incomplete bootstrap, never ran: lmm
 // deliberately does not install the loader or write the launch option, so
-// there is no repair for --fix to attempt.
+// there is no repair for --fix to attempt. loaderPluginLinkCheck, the fifth
+// check, is repairable and carries loaderUnlinkedRefusal instead.
 const notFixableLoader = "lmm does not install the mod loader or write Steam launch options, so there is nothing for --fix to do here - the remedy is the setup `lmm game show` prints"
 
 // loaderPass reports what is wrong with a loader-declaring game's loader, in
@@ -349,6 +360,14 @@ func (r *verifyRun) repairUnlinkedLoaderFiles(mod *domain.InstalledMod, count in
 		}, r.profile)
 	}
 	if err != nil {
+		// The row's reason was written before the attempt ("this --fix run
+		// already re-deployed this mod") and has just stopped being true.
+		// Correct it in place rather than leaving the one sentence a user
+		// reads asserting a re-deploy that did not happen - resolveLast's
+		// own rule, applied to a repair that failed instead of one that
+		// was refused.
+		last := &r.result.Findings[len(r.result.Findings)-1]
+		last.FixableReason = fmt.Sprintf("this --fix run could not re-deploy %s: %v", mod.Name, err)
 		r.emitEv(VerifyEvent{Kind: VerifyEvRepairDetail, Detail: fmt.Sprintf("--fix could not re-deploy %s: %v", mod.Name, err)})
 		return
 	}

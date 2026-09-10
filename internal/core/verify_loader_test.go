@@ -272,3 +272,42 @@ func TestVerify_LoaderTier_ADeletedSeededConfigIsNotAFinding(t *testing.T) {
 	assert.Nil(t, findingWithStatus(res.Result, "loader_plugin_unlinked"),
 		"statuses were %v", findingStatuses(res.Result))
 }
+
+// TestVerify_LoaderTier_AFailedRepairDoesNotClaimItRedeployed is review F6's
+// second half: on a --fix run the row's reason is "this --fix run already
+// re-deployed this mod", which is set BEFORE the repair is attempted. When
+// the repair fails, the row stays an issue while asserting a re-deploy that
+// did not happen - the one sentence a user reads to decide what to do next.
+func TestVerify_LoaderTier_AFailedRepairDoesNotClaimItRedeployed(t *testing.T) {
+	svc, game := newVerifyLoaderService(t, &domain.GameLoader{
+		Kind: domain.LoaderKindBepInEx, Bootstrap: domain.LoaderBootstrapNative,
+	})
+	bepinexInstall(t, game.InstallPath, "5.4.23.5", domain.LoaderBootstrapNative, time.Now())
+
+	archivePath := filepath.Join(t.TempDir(), "Thing-1.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"BepInEx/plugins/Thing.dll": "assembly",
+		"manifest.json":             "{}",
+	})
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	// The plugin directory is replaced by a regular FILE, so the mod's
+	// files are gone (the check fires) and the re-deploy cannot recreate
+	// the directory it needs (the repair fails).
+	plugins := filepath.Join(game.ModPath, "BepInEx", "plugins")
+	require.NoError(t, os.RemoveAll(plugins))
+	require.NoError(t, os.WriteFile(plugins, []byte("not a directory"), 0o644))
+
+	res, err := svc.VerifyReport(context.Background(), game, "default",
+		core.VerifyOptions{Fix: true, Force: true}, nil)
+	require.NoError(t, err)
+
+	f := findingWithStatus(res.Result, "loader_plugin_unlinked")
+	require.NotNil(t, f, "statuses were %v", findingStatuses(res.Result))
+	assert.NotContains(t, f.FixableReason, "already re-deployed",
+		"the repair failed, so the row must not claim it re-deployed the mod")
+	assert.Contains(t, f.FixableReason, "could not re-deploy",
+		"and it must say what actually happened")
+}
