@@ -76,9 +76,11 @@ number or a game's Steam app id - the app id does not shift when the
 listing widens. A game already configured (present in games.yaml) is
 marked "[configured]" and is excluded from the default "all" selection,
 since it needs no re-offering - but it stays listed, and you can still
-name it explicitly to re-add/repair it (this replays the same games.yaml
-+ default-profile overwrite 'lmm game add' always performs, so a repair
-also resets the default profile's mod list). Each added game gets a
+name a CURATED one explicitly to re-add/repair it (this replays the same
+games.yaml + default-profile overwrite 'lmm game add' always performs, so
+a repair also resets the default profile's mod list). An already-
+configured UNCURATED row is refused instead of overwritten - change it
+with 'lmm game edit'. Each added game gets a
 source mapping, the symlink link method, and an empty default profile;
 edit games.yaml afterwards for anything more specific, including the
 NexusMods slug if none was detected.
@@ -464,6 +466,14 @@ func doGameDetect(ctx context.Context, cmd *cobra.Command, reader *bufio.Reader,
 // It returns the rows it attempted, in the order their outcomes land in
 // result (curated first, then uncurated - not the order they were typed),
 // so the caller can name each added game beside its result row.
+//
+// The two halves differ on ONE thing, deliberately: naming an
+// already-configured CURATED row is the documented repair path and
+// overwrites, while AddGame refuses a duplicate id with ErrGameExists
+// rather than destroying an existing game's default profile from a
+// surface that says "add" (its own doc comment records that choice). So
+// re-selecting a configured uncurated row reports that it already exists;
+// `lmm game edit` is what changes one.
 func applyDetectSelection(ctx context.Context, service *core.Service, selected []domain.DetectedGame) ([]domain.DetectedGame, *core.GameDetectResult, error) {
 	curated, uncurated := splitDetectedGames(selected)
 	applied := append(append([]domain.DetectedGame(nil), curated...), uncurated...)
