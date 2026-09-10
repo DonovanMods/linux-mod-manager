@@ -71,7 +71,15 @@ type NormalizeRequest struct {
 	// loader block it carries. Never mutated by an adapter.
 	Game *domain.Game
 	// ModName is the mod's name, for adapters that name a directory after
-	// the mod. May be empty when the ingest has not derived one yet.
+	// the mod.
+	//
+	// On the archive-import path it is derived from the archive's own
+	// shape BEFORE any rewrite, and the plan and the ingest derive it the
+	// same way, so an adapter that consults it lays the same tree out on
+	// both sides. It is EMPTY on the download path, where the mod's name
+	// comes from its source rather than from the archive - an adapter
+	// that names a directory after the mod must tolerate that and fall
+	// back to a name it can derive from Members.
 	ModName string
 	// Members are the archive's members: slash-separated,
 	// archive-relative, files only.

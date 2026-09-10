@@ -1,0 +1,128 @@
+package core_test
+
+// The plan/ingest agreement property for the adapter seam (#411, I1).
+//
+// PlanImportArchive and the ingest each ask the game's adapter to lay the
+// archive out. They can only be trusted to agree if they hand it the SAME
+// request - so this file drives both halves over every archive shape in the
+// identity proof's corpus, with the identity adapter AND with an adapter
+// whose Layout is a function of NormalizeRequest.ModName.
+
+import (
+	"context"
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// planIngestCorpus is internal/adapter/identity_test.go's importCorpus,
+// minus the shapes an extract-mode import cannot carry: an empty archive
+// has nothing to plan, and the single-file compile shapes are a compile
+// game's business, not this seam's.
+var planIngestCorpus = map[string][]string{
+	"sole top-level directory": {"MyMod/a.esp", "MyMod/b.esp", "MyMod/sub/b.txt"},
+	"flat root":                {"a.esp", "readme.txt"},
+	"bethesda data root":       {"Data/mod.esp", "Data/meshes/test.nif", "Data/game.ini"},
+	"loader rooted":            {"BepInEx/core/plugin.dll", "BepInEx/config/plugin.cfg"},
+	"bare plugins root":        {"plugins/mod.dll"},
+	"nested only":              {"aaa/b.txt", "aaa/d.txt"},
+	"single compile artifact":  {"MyMod_P.pak"},
+	"native merge source":      {"MyMod.exmodz"},
+	"no directory at all":      {"single.txt"},
+}
+
+// byNameStub renames every member under a directory named after the mod, so
+// its Layout is a pure function of NormalizeRequest.ModName. The identity
+// adapter cannot catch a ModName disagreement; this can.
+type byNameStub struct{}
+
+func (byNameStub) ID() string    { return "by-name" }
+func (byNameStub) Label() string { return "By name" }
+
+func (byNameStub) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, error) {
+	rewrites := make(map[string]string, len(req.Members))
+	for _, m := range req.Members {
+		rewrites[m] = "by-name/" + req.ModName + "/" + filepath.Base(m)
+	}
+	return adapter.NewLayout("by-name", rewrites), nil
+}
+
+// TestPlanImportArchive_AgreesWithIngestForEveryShape is I1's regression
+// test: the plan built its Layout request from importedModName (the mod's
+// DERIVED name, "Flat-2.0") while the ingest built its own from the archive
+// filename ("Flat-2.0.zip"), so an adapter that names a directory after the
+// mod planned a path the ingest never created.
+func TestPlanImportArchive_AgreesWithIngestForEveryShape(t *testing.T) {
+	for _, ad := range []adapter.GameAdapter{adapter.Generic{}, byNameStub{}} {
+		t.Run(ad.ID(), func(t *testing.T) {
+			for name, members := range planIngestCorpus {
+				t.Run(name, func(t *testing.T) {
+					svc, game := newImportArchiveTestService(t)
+					svc.RegisterAdapter(ad)
+					game.Adapter = ad.ID()
+					require.NoError(t, svc.SaveGame(context.Background(), game))
+
+					files := make(map[string]string, len(members))
+					for _, m := range members {
+						files[m] = "content of " + m
+					}
+					archivePath := filepath.Join(t.TempDir(), "Flat-2.0.zip")
+					createImportTestZip(t, archivePath, files)
+
+					plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+					require.NoError(t, err)
+
+					result, err := svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
+					require.NoError(t, err)
+
+					cached, err := svc.GetGameCache(game).ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+					require.NoError(t, err)
+					slices.Sort(cached)
+					if cached == nil {
+						cached = []string{}
+					}
+					assert.Equal(t, plan.Files, cached,
+						"the plan's file list must equal what the ingest actually cached")
+					assert.Equal(t, plan.Mod.Name, result.Mod.Name,
+						"the plan and the ingest must derive the same mod name")
+				})
+			}
+		})
+	}
+}
+
+// TestImportArchive_ModNameIsDerivedBeforeTheRewrite pins WHICH derivation
+// both halves share: the name is read off the archive's own shape, before
+// the adapter moves anything, so an adapter that consults ModName never
+// sees a name that depends on its own output.
+func TestImportArchive_ModNameIsDerivedBeforeTheRewrite(t *testing.T) {
+	svc, game := newImportArchiveTestService(t)
+	svc.RegisterAdapter(byNameStub{})
+	game.Adapter = "by-name"
+	require.NoError(t, svc.SaveGame(context.Background(), game))
+
+	archivePath := filepath.Join(t.TempDir(), "Flat-2.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{"named.txt": "x"})
+
+	plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+	require.NoError(t, err)
+
+	// "Flat-2.0", the archive base name - NOT "Flat-2.0.zip", and not
+	// "by-name", the wrapper the adapter itself introduces.
+	assert.Equal(t, "Flat-2.0", plan.Mod.Name)
+	assert.Equal(t, []string{"by-name/Flat-2.0/named.txt"}, plan.Files)
+
+	result, err := svc.ApplyImportArchive(context.Background(), game, "default", plan, core.ImportArchiveOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Flat-2.0", result.Mod.Name)
+
+	cached, err := svc.GetGameCache(game).ListFiles(game.ID, result.Mod.SourceID, result.Mod.ID, result.Mod.Version)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"by-name/Flat-2.0/named.txt"}, cached)
+}

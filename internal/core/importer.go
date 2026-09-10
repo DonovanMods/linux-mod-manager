@@ -311,10 +311,18 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, fmt.Errorf("extracting archive: %w", err)
 		}
 
-		// Detect mod name from extracted content, BEFORE the BepInEx
-		// normalisation below: a normalised shape-A tree has BepInEx as its
-		// sole top-level directory, and DetectModName's "one top-level
-		// directory names the mod" rule would name every plugin "BepInEx".
+		// #314/#353: the mod name is derived ONCE, off the archive's own
+		// shape, BEFORE the BepInEx normalisation and BEFORE the adapter is
+		// allowed to move anything - the same rule (modNameFromMembers) and
+		// the same pre-rewrite content PlanImportArchive derives from, so
+		// the plan and this ingest name the mod identically and hand
+		// NormalizeArchive the same ModName. Deriving it after either
+		// rewrite would make the name a function of that rewrite's own
+		// output, which is both circular for an adapter that consults
+		// ModName and a plan/ingest disagreement (I1). A normalised shape-A
+		// tree has BepInEx as its sole top-level directory, and
+		// DetectModName's "one top-level directory names the mod" rule
+		// would otherwise name every plugin "BepInEx".
 		modName = DetectModName(extractedPath, filename)
 
 		// #358: the archive-root normaliser. It runs against the PRISTINE
@@ -347,7 +355,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		// uses, which is what keeps plan and ingest agreeing: the adapter
 		// always sees the member list the plan showed it. A generic-files
 		// game gets the identity Layout and nothing moves.
-		if err := i.rewriteExtracted(game, filename, extractedPath); err != nil {
+		if err := i.rewriteExtracted(game, modName, extractedPath); err != nil {
 			return nil, err
 		}
 

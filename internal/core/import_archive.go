@@ -346,7 +346,9 @@ func (s *Service) PlanImportArchive(ctx context.Context, game *domain.Game, prof
 	if err != nil {
 		return nil, err
 	}
-	// #353: the plan and the ingest share ONE Layout, so a plan can never
+	// #353: the plan and the ingest share ONE Layout AND one derivation of
+	// its inputs - the same member list and the same mod name, read off the
+	// archive before either side rewrites anything - so a plan can never
 	// promise a path the ingest places somewhere else. An extract-mode
 	// import is the only kind whose members an adapter has a say over - a
 	// retained merge source and a copied artifact are single files under
