@@ -361,6 +361,13 @@ func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game
 	}
 
 	fmt.Printf("\nWill undeploy %d mod(s).\n", len(plan.ToPurge)+len(plan.ToPurgeActive))
+	if len(plan.External) > 0 {
+		// #269: named, not counted into the line above - lmm undeploys none
+		// of them, and a preview that said it would is a promise it never
+		// keeps.
+		fmt.Printf("%d Steam Workshop item(s) are left alone: %s\n",
+			len(plan.External), strings.Join(plan.External, ", "))
+	}
 
 	restorable, unavailable := 0, 0
 	for _, o := range plan.Originals {
@@ -380,16 +387,33 @@ func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game
 		}
 	}
 
-	fmt.Printf("Will restore %d mod(s) at their recorded versions:\n", len(plan.Mods)-len(plan.Refusals))
+	restorableMods := 0
+	for _, m := range plan.Mods {
+		if m.Error == "" && !m.External {
+			restorableMods++
+		}
+	}
+	fmt.Printf("Will restore %d mod(s) at their recorded versions:\n", restorableMods)
 	for _, m := range plan.Mods {
 		if m.Error != "" {
 			continue
 		}
-		cached := ""
-		if !m.Cached {
-			cached = " (will download)"
+		// #269: an external row is listed so the preview accounts for the
+		// whole profile, with what lmm will do to it - nothing - said in
+		// place of the "(will download)" it would otherwise imply. Its
+		// version goes through displayModVersion because Steam's is a
+		// 19-digit content id.
+		detail := ""
+		switch {
+		case m.External && m.ExternalMissing:
+			detail = " (Steam Workshop item - Steam no longer has it on disk)"
+		case m.External:
+			detail = " (Steam Workshop item - left as Steam has it)"
+		case !m.Cached:
+			detail = " (will download)"
 		}
-		fmt.Printf("  - %s %s%s\n", snapshotModLabel(m.Name, m.SourceID, m.ModID), m.Version, cached)
+		fmt.Printf("  - %s %s%s\n", snapshotModLabel(m.Name, m.SourceID, m.ModID),
+			displayModVersion(m.External, m.Version, m.UpdatedAt), detail)
 	}
 	if plan.ProfileChanged {
 		fmt.Printf("\nThe profile %s will be rewritten from the snapshot.\n", plan.Profile)

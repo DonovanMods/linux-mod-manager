@@ -103,6 +103,27 @@ type SnapshotRestoreMod struct {
 	// one is a REFUSAL: the restore will not install it, will not pretend
 	// it did, and the result names it.
 	Error string `json:"error,omitempty"`
+
+	// External marks a row whose files Steam owns (#269). lmm never
+	// downloaded, deployed or cached it, so a restore neither fetches nor
+	// writes anything for it: the item is already where the game reads it,
+	// whatever the snapshot says. The row is still listed - the snapshot
+	// recorded it, and a preview that silently dropped it would understate
+	// what the profile contains - with Cached false and Error empty,
+	// because "not cached" here does not mean "will be downloaded".
+	External bool `json:"external,omitzero"`
+	// ExternalMissing is set when an External row's recorded Steam
+	// directory is no longer on disk - the item has been unsubscribed since
+	// the snapshot. It is a FINDING, not a refusal: lmm cannot put a Steam
+	// subscription back and never promised to, so the restore proceeds and
+	// says what it could not account for. Same judgement `lmm verify` makes
+	// (externalContentPresent).
+	ExternalMissing bool `json:"external_missing,omitzero"`
+	// UpdatedAt is the recorded revision timestamp, carried so a renderer
+	// can put a DATE where an external row's version would otherwise print
+	// Steam's 19-digit content id - issue 269's approval note, via
+	// spa/app/version.js#displayVersion and cmd/lmm's displayModVersion.
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // SnapshotRestorePlan is what `lmm snapshot restore --dry-run` prints and
@@ -117,7 +138,7 @@ type SnapshotRestorePlan struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// ToPurge is what is deployed NOW and will be undeployed first, in
-	// GetInstalledMods' order.
+	// GetInstalledMods' order. EXTERNAL mods are not in it - see External.
 	ToPurge []domain.InstalledMod `json:"to_purge"`
 
 	// ActiveProfile is the game's ACTIVE profile when it is not the
@@ -134,8 +155,17 @@ type SnapshotRestorePlan struct {
 
 	// ToPurgeActive is the active profile's installed set, undeployed
 	// before the restore's own stages so the game directory holds only what
-	// the snapshot describes. Empty when no switch is involved.
+	// the snapshot describes. Empty when no switch is involved. EXTERNAL
+	// mods are not in it either.
 	ToPurgeActive []domain.InstalledMod `json:"to_purge_active,omitempty"`
+
+	// External names every EXTERNAL mod (#269) in either purge set - the
+	// Steam Workshop items a restore leaves entirely alone. Kept out of
+	// ToPurge/ToPurgeActive and listed here for the same reason PurgePlan
+	// does it (internal/core/purge.go): a preview that counted them under
+	// "will be undeployed" would promise a removal lmm never performs.
+	// Names, deduplicated, snapshot profile first.
+	External []string `json:"external,omitempty"`
 
 	// Originals is every file the snapshot recorded as replaced, each with
 	// the verdict on whether it can go back.
@@ -291,10 +321,18 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		return nil, fmt.Errorf("getting installed mods: %w", err)
 	}
 
+	// #269: the external half of the profile is set aside here, exactly as
+	// PlanPurge does it - a Workshop item is not undeployed, so it must not
+	// be previewed as one. The freshness snapshot below is still taken over
+	// the FULL set: Ruling 5 is about whether the world moved, and an
+	// external row appearing or vanishing absolutely is a move.
+	toPurge, external := partitionExternal(installed)
+
 	plan := &SnapshotRestorePlan{
 		GameID: game.ID, Profile: profileName,
 		Snapshot: doc.Name, CreatedAt: doc.CreatedAt,
-		ToPurge:  installed,
+		ToPurge:  toPurge,
+		External: external,
 		snapshot: snapshotOf(installed),
 		doc:      doc,
 	}
@@ -306,8 +344,10 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 	// profile with nothing installed.
 	if active, err := s.NewProfileManager().GetDefault(ctx, game.ID); err == nil && active != nil && active.Name != profileName {
 		activeMods, _ := s.GetInstalledMods(ctx, game.ID, active.Name)
+		activeToPurge, activeExternal := partitionExternal(activeMods)
 		plan.ActiveProfile = active.Name
-		plan.ToPurgeActive = activeMods
+		plan.ToPurgeActive = activeToPurge
+		plan.External = appendUnseen(plan.External, activeExternal)
 	}
 
 	// The store's CURRENT manifest, not the snapshot's recorded list - see
@@ -345,12 +385,29 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		key := domain.ModKey(ref.SourceID, ref.ModID)
 		row := SnapshotRestoreMod{SourceID: ref.SourceID, ModID: ref.ModID, Version: ref.Version}
-		if im, ok := recorded[domain.ModKey(ref.SourceID, ref.ModID)]; ok {
+		if im, ok := recorded[key]; ok {
 			row.Name = im.Name
 			if row.Version == "" {
 				row.Version = im.Version
 			}
+		}
+
+		// #269: an EXTERNAL row short-circuits everything below it. Steam
+		// owns its files where they sit, so there is nothing to fetch and
+		// nothing to deploy - and resolving it against its source would ask
+		// a Tier-1 Workshop source for a file list it does not serve
+		// (source.ErrNotSupported), turning a perfectly restorable snapshot
+		// into a preview full of refusals for mods the restore was never
+		// going to touch. The one fact worth previewing is whether Steam
+		// still has the item on disk, which is a FINDING, not a refusal.
+		if im, ok := externalRecord(recorded, installedByKey, key); ok {
+			row.External = true
+			row.UpdatedAt = im.UpdatedAt
+			row.ExternalMissing = !externalContentPresent(im.ExternalPath)
+			plan.Mods = append(plan.Mods, row)
+			continue
 		}
 
 		// A mod that is ALREADY installed at the snapshot's version, with
@@ -359,7 +416,7 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		// make an offline restore of a game nothing had changed report
 		// every mod as unrestorable, and would cost a network round trip
 		// per mod for a plan that is going to do nothing.
-		if im, ok := installedByKey[domain.ModKey(ref.SourceID, ref.ModID)]; ok &&
+		if im, ok := installedByKey[key]; ok &&
 			(row.Version == "" || im.Version == row.Version) &&
 			gameCache.Exists(game.ID, im.SourceID, im.ID, im.Version) {
 			row.Cached = true
@@ -400,6 +457,45 @@ func recordedModsByKey(doc *Snapshot) map[string]domain.InstalledMod {
 		byKey[domain.ModKey(im.SourceID, im.ID)] = im
 	}
 	return byKey
+}
+
+// externalRecord answers "is this mod one Steam owns" for a restore, and
+// returns the row that says so.
+//
+// The SNAPSHOT's record wins: a restore's target state is what the snapshot
+// says, and its ExternalPath is the directory that snapshot recorded. The
+// live installed row is the fallback, for the one case the snapshot cannot
+// speak to - a mod adopted from the Workshop AFTER the snapshot was taken.
+// Treating that as external too is the conservative direction: the wrong
+// answer there would have lmm download and deploy a second copy of
+// something Steam already loads, which is exactly what
+// CheckExternalInstallExclusivity exists to prevent.
+func externalRecord(recorded, installed map[string]domain.InstalledMod, key string) (domain.InstalledMod, bool) {
+	if im, ok := recorded[key]; ok && im.External {
+		return im, true
+	}
+	if im, ok := installed[key]; ok && im.External {
+		return im, true
+	}
+	return domain.InstalledMod{}, false
+}
+
+// appendUnseen appends the entries of add that dst does not already hold,
+// preserving order. The restore's External list spans two profiles and a
+// game-global Workshop item is legitimately in both.
+func appendUnseen(dst, add []string) []string {
+	seen := make(map[string]bool, len(dst))
+	for _, v := range dst {
+		seen[v] = true
+	}
+	for _, v := range add {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		dst = append(dst, v)
+	}
+	return dst
 }
 
 // profileDiffersFromSnapshot reports whether the profile on disk differs
@@ -575,6 +671,15 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	// what the snapshot recorded as off.
 	s.restoreRecordedEnablement(ctx, game, doc, result, note)
 
+	// --- 4c. the external mods the restore cannot account for ------------
+	// #269: a Workshop item is Steam's. The restore neither purged nor
+	// deployed it, and its row is still tracked - so the ONE thing left to
+	// say is whether Steam still has the item on disk. It is a FINDING and
+	// not a refusal: lmm cannot put a subscription back and never claimed
+	// it would, so the restore proceeds and names what it could not
+	// account for, exactly as `lmm verify`'s external_missing does.
+	s.reportMissingExternals(ctx, plan, warn)
+
 	// --- 5. deploy -------------------------------------------------------
 	// The purge in stage 1 left every row enabled but not deployed, which
 	// the convergence has nothing to say about - so without this the
@@ -600,6 +705,38 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	// --- 6. the DB settings a profile document cannot express ------------
 	s.restoreRecordedSettings(ctx, game, doc, note)
 	return result, nil
+}
+
+// reportMissingExternals emits one warning per external mod whose recorded
+// Steam directory is no longer there.
+//
+// Re-checked here rather than trusted from the plan: the plan's own
+// ExternalMissing is what the user was SHOWN before approving, and this is
+// what is true at the moment the restore ran. They agree in every ordinary
+// case, and when they do not, the later reading is the one a result should
+// carry. It costs one stat per external mod.
+func (s *Service) reportMissingExternals(ctx context.Context, plan *SnapshotRestorePlan, warn func(string)) {
+	doc := plan.doc
+	byKey := recordedModsByKey(doc)
+	for _, row := range plan.Mods {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if !row.External {
+			continue
+		}
+		im, ok := byKey[domain.ModKey(row.SourceID, row.ModID)]
+		if !ok || externalContentPresent(im.ExternalPath) {
+			continue
+		}
+		name := row.Name
+		if name == "" {
+			name = row.ModID
+		}
+		warn(fmt.Sprintf(
+			"%s is a Steam Workshop item and Steam no longer has it at %s - lmm never held a copy, so it cannot put it back; re-subscribe in the Steam client",
+			name, im.ExternalPath))
+	}
 }
 
 // purgeForRestore runs the shared purge loop over one profile's mod set,

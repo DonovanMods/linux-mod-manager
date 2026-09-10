@@ -18,6 +18,7 @@
 import { html } from "../render.js";
 import { PlanAdvanced, PlanOption, ApplyOption } from "./planoptions.js";
 import { relativeTime } from "../relativetime.js";
+import { displayVersion } from "../version.js";
 
 /** SnapshotRestorePlanView renders core.SnapshotRestorePlan
  * (internal/core/snapshot_restore.go). */
@@ -28,9 +29,14 @@ export function SnapshotRestorePlanView({ plan, modal, actions }) {
   const mods = plan.mods ?? [];
   const refusals = plan.refusals ?? [];
 
+  const external = plan.external ?? [];
   const restorable = originals.filter((o) => o.status === "restorable");
   const unavailable = originals.filter((o) => o.status !== "restorable");
-  const restoring = mods.filter((m) => !m.error);
+  const listed = mods.filter((m) => !m.error);
+  // issue 269: an external row is LISTED but not restored - Steam owns its
+  // files, so the count that says what the restore will bring back must not
+  // include it, while the list below still accounts for the whole profile.
+  const restoring = listed.filter((m) => !m.external);
 
   // ONE string, not adjacent interpolations (htm collapses the whitespace
   // between them).
@@ -71,6 +77,16 @@ export function SnapshotRestorePlanView({ plan, modal, actions }) {
       </p>
 
       ${
+        // issue 269: named rather than counted above, because lmm undeploys
+        // none of them - core.PurgePlan's "Left alone" section, same rule.
+        external.length > 0 &&
+        html`
+          <p class="plan__note" data-testid="restore-external">
+            ${`${external.length} Steam Workshop item${external.length === 1 ? "" : "s"} stay${external.length === 1 ? "s" : ""} exactly as Steam has ${external.length === 1 ? "it" : "them"}: ${external.join(", ")}.`}
+          </p>
+        `
+      }
+      ${
         // The listing is game-scoped, so the snapshot on screen may have
         // been taken under another profile. A restore puts back which
         // profile was active too (review finding 2), and that is the part
@@ -103,23 +119,31 @@ export function SnapshotRestorePlanView({ plan, modal, actions }) {
         `
       }
       ${
-        restoring.length > 0 &&
+        listed.length > 0 &&
         html`
           <section class="plan__section">
-            <h3 class="plan__heading">${`Mods (${restoring.length})`}</h3>
+            <h3 class="plan__heading">${`Mods (${listed.length})`}</h3>
             <ul class="plan__mods">
-              ${restoring.map(
+              ${listed.map(
                 (m) => html`
                   <li key=${`${m.source_id}/${m.mod_id}`} class="plan__mod">
                     <span class="plan__mod-name"
                       >${m.name || `${m.source_id}:${m.mod_id}`}</span
                     >
-                    <span class="mono">${m.version}</span>${" "}
+                    <span class="mono">${displayVersion(m)}</span>${" "}
                     ${
-                      !m.cached &&
-                      html`<span class="plan__mod-detail"
-                        >will be downloaded again</span
-                      >`
+                      m.external
+                        ? html`<span class="plan__mod-detail"
+                            >${
+                              m.external_missing
+                                ? "Steam Workshop item - Steam no longer has it on disk"
+                                : "Steam Workshop item - left as Steam has it"
+                            }</span
+                          >`
+                        : !m.cached &&
+                          html`<span class="plan__mod-detail"
+                            >will be downloaded again</span
+                          >`
                     }
                   </li>
                 `,

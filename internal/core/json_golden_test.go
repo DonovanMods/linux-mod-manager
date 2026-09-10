@@ -1641,6 +1641,31 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #269 x #350: the restore's account of a Steam Workshop item.
+			// ToPurge is EMPTY and external names it - the same split
+			// purge_plan_external pins - and the Mods row carries
+			// external/updated_at with Cached FALSE and no Error, because
+			// "not cached" here must not read as "will be downloaded".
+			// external_missing is the second row: the item was unsubscribed
+			// after the snapshot, which is a finding, not a refusal, so
+			// refusals stays absent.
+			"snapshot_restore_plan_external",
+			core.SnapshotRestorePlan{
+				GameID: "skyrim-se", Profile: "default",
+				Snapshot: "before-tweaks", CreatedAt: fixedTime,
+				ToPurge:   []domain.InstalledMod{},
+				External:  []string{"Workshop Item", "Gone Workshop Item"},
+				Originals: []core.SnapshotRestoreOriginal{},
+				Mods: []core.SnapshotRestoreMod{{
+					SourceID: "steamworkshop", ModID: "3617086610", Name: "Workshop Item",
+					Version: "7987119735124793734", External: true, UpdatedAt: fixedTime,
+				}, {
+					SourceID: "steamworkshop", ModID: "3617086611", Name: "Gone Workshop Item",
+					Version: "7987119735124793735", External: true, ExternalMissing: true,
+				}},
+			},
+		},
+		{
 			"snapshot_restore_original",
 			core.SnapshotRestoreOriginal{
 				Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",

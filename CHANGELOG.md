@@ -218,7 +218,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EXTERNAL — counted and listed everywhere, refused by deploy, enable,
   disable, update-apply, rollback and re-link, skipped by purge and by a
   profile switch, absent from conflict detection and from the reorder
-  list, and uninstalled by removing lmm's tracking only. See the README's
+  list, never stored in the originals store or brought back by a snapshot
+  restore (which records it, leaves it exactly as Steam has it, and says so
+  if Steam no longer does), and uninstalled by removing lmm's tracking
+  only. See the README's
   Steam Workshop section for what that does and does not cover; searching
   the Workshop (needs a personal API key) and downloading items (needs
   `steamcmd`) land in later units.

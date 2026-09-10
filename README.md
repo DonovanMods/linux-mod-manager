@@ -1797,6 +1797,7 @@ lmm can **track** the Steam Workshop items you are already subscribed to. It rea
 - **Profile switches do not change what Steam has on disk.** A Workshop item is game-global; lmm profiles are not. `lmm profile switch` / `apply` leave such items exactly as they are and say so once. Managing which items are active is the Steam client's job.
 - **Conflict detection cannot see them.** `lmm conflicts` compares files deployed under the game's `mod_path`, and a Workshop item has none there. lmm cannot see inside a game's own Workshop loader.
 - **`lmm profile reorder` omits them.** Load order decides deploy precedence, and a tracked-only item deploys nothing, so any position it held would be inert.
+- **A snapshot records them; a restore leaves them alone.** lmm never captures a Workshop item into the [originals store](#snapshots) and holds no copy to put back, so `lmm snapshot restore` undeploys nothing for it and downloads nothing for it. An item Steam no longer has on disk is reported as a finding — the same judgement `lmm verify` makes — not a refusal.
 - **Search and downloading are not in this tier.** Searching the Workshop needs a personal Steam Web API key, and downloading items needs `steamcmd`; both land in later units.
 
 Steam Workshop metadata is cached under `$XDG_DATA_HOME/lmm/cache/_steamworkshop/meta/` — six hours for an item Valve describes, one hour for one it refuses. The directory is safe to delete at any time; `--refresh` bypasses it for one run.
@@ -1910,6 +1911,15 @@ snapshot's profile the active one again. Both the `--dry-run` preview and
 the web UI's confirm dialog say so before anything is touched, and the
 safety snapshot records the profile you were on, so the way back is a
 restore of that.
+
+**Steam Workshop items are recorded, never restored.** A snapshot lists the
+Workshop items the profile tracked, so the preview accounts for the whole
+profile — but lmm holds no copy of one and never deploys it, so a restore
+undeploys nothing for it, downloads nothing for it, and leaves its files
+exactly where Steam put them. If Steam no longer has an item on disk (you
+unsubscribed it after the snapshot), the preview and the result both say
+so; it is a finding, not a refusal, because lmm never promised to put a
+Steam subscription back. See [Steam Workshop](#steam-workshop).
 
 **Automatic snapshots** are opt-in. Set `auto_snapshot: true` in
 `config.yaml` and lmm records one before every deploy, profile switch and
