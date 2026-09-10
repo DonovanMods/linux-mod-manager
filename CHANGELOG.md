@@ -1395,6 +1395,15 @@ operation is in progress (pid 4242, since 2026-09-09T12:00:00Z)`, with
   loads and round-trips exactly as before, which is the documented
   compatibility contract), but neither is written out when it is unset.
 
+- **An absent version or author no longer leaves a dangling label (#398).**
+  A mod whose source reports no version printed as `✓ Installed: alpha v`,
+  and one with no author as `Selected: StockOverride v1.0.0 by ` — lines
+  that read as truncated rather than as "this mod has no version". The
+  label now goes with the value across `lmm install`'s search picker,
+  its Selected/Installed lines, the per-mod batch progress line, the
+  dependency tree, and `lmm import`'s scan summary (`(local, v)` →
+  `(local)`).
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

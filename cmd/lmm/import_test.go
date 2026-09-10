@@ -144,7 +144,9 @@ func TestRunImportScan_SummaryTag_NoMatch_ShowsPlainLocalNotLocalHash(t *testing
 	})
 
 	require.NoError(t, err)
-	assert.Contains(t, out, "(local, v", "an unmatched mod must show a plain \"local\" tag")
+	// No ", v…": this fixture's filename carries no version, and an empty
+	// one is omitted rather than rendered as a dangling "v" (#398).
+	assert.Contains(t, out, "(local)", "an unmatched mod must show a plain \"local\" tag")
 	assert.NotContains(t, out, "local #", "an unmatched mod must not be tagged with a fake source ID like \"local #<id>\"")
 }
 

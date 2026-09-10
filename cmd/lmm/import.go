@@ -508,7 +508,13 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 				if r.MatchedSource != "" && r.MatchedSource != domain.SourceLocal {
 					sourceTag = fmt.Sprintf("%s #%s", r.MatchedSource, r.Mod.ID)
 				}
-				fmt.Printf("  - %s (%s, v%s)\n", r.Mod.Name, sourceTag, r.Mod.Version)
+				// ", v1.0" when there is a version, nothing at all when
+				// there isn't: a scanned archive lmm could not read a
+				// version out of used to render as "(local, v)" (#398).
+				if v := displayVersionSuffix(r.Mod.Version); v != "" {
+					sourceTag += "," + v
+				}
+				fmt.Printf("  - %s (%s)\n", r.Mod.Name, sourceTag)
 			} else {
 				fmt.Printf("  - %s (unknown)\n", r.FileName)
 			}

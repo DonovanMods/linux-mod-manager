@@ -120,3 +120,25 @@ func sourceIsWorkshop(svc *core.Service, sourceID string) bool {
 	_, ok := src.(source.WorkshopScanner)
 	return ok
 }
+
+// displayVersionSuffix renders " v<version>" for a line that appends a
+// version to a name, and the empty string when there is no version to
+// append (#398). "✓ Installed: alpha v" reads as a line that got cut off,
+// not as "this mod has no version" - the label belongs to the value, so it
+// goes when the value is absent.
+func displayVersionSuffix(version string) string {
+	if version == "" {
+		return ""
+	}
+	return " v" + version
+}
+
+// displayAuthorSuffix is displayVersionSuffix's twin for " by <author>":
+// "Selected: StockOverride v1.0.0 by " left a dangling "by" for any source
+// that does not report an author.
+func displayAuthorSuffix(author string) string {
+	if author == "" {
+		return ""
+	}
+	return " by " + author
+}

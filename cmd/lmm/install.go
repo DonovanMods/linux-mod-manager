@@ -286,7 +286,7 @@ func searchAndSelectMods(ctx context.Context, service *core.Service, gameID, sou
 			if installedIDs[m.ID] {
 				installedMark = " [installed]"
 			}
-			fmt.Printf("  [%d] %s v%s by %s (ID: %s)%s\n", i+1, m.Name, m.Version, m.Author, m.ID, installedMark)
+			fmt.Printf("  [%d] %s%s%s (ID: %s)%s\n", i+1, m.Name, displayVersionSuffix(m.Version), displayAuthorSuffix(m.Author), m.ID, installedMark)
 		}
 
 		hasMore := false
@@ -542,7 +542,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 	// Every human-facing line below is suppressed under --json: the run
 	// emits exactly one document (Ruling 15).
 	if !jsonOutput {
-		fmt.Printf("\nSelected: %s v%s by %s\n", mod.Name, mod.Version, mod.Author)
+		fmt.Printf("\nSelected: %s%s%s\n", mod.Name, displayVersionSuffix(mod.Version), displayAuthorSuffix(mod.Author))
 
 		if !installNoDeps && mod.SourceID != domain.SourceLocal {
 			fmt.Println("\nResolving dependencies...")
@@ -786,7 +786,7 @@ func doInstall(ctx context.Context, service *core.Service, game *domain.Game, ar
 		return emitJSON(result)
 	}
 
-	fmt.Printf("\n✓ Installed: %s v%s\n", mod.Name, mod.Version)
+	fmt.Printf("\n✓ Installed: %s%s\n", mod.Name, displayVersionSuffix(mod.Version))
 	// #197 postsmoke UX fix: a DeployCompile ".exmodz" mod deploys zero
 	// files of its own by design (validate+retain only - it participates
 	// in the profile's shared merged pak instead, synced separately
@@ -883,7 +883,7 @@ func doInstallBatch(ctx context.Context, service *core.Service, game *domain.Gam
 		case core.InstallBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.InstallDepInstalling:
-			fmt.Printf("\n[%d/%d] Installing: %s v%s\n", p.Index, p.Total, p.ModName, p.ModVersion)
+			fmt.Printf("\n[%d/%d] Installing: %s%s\n", p.Index, p.Total, p.ModName, displayVersionSuffix(p.ModVersion))
 		case core.InstallDepReinstalling:
 			fmt.Printf("  Removing previous installation...\n")
 		case core.InstallDepFileSelected:
@@ -1127,7 +1127,7 @@ func installMultipleMods(ctx context.Context, service *core.Service, game *domai
 		case core.InstallBeforeAllForced:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
 		case core.InstallDepInstalling:
-			fmt.Printf("\n[%d/%d] Installing: %s v%s\n", p.Index, p.Total, p.ModName, p.ModVersion)
+			fmt.Printf("\n[%d/%d] Installing: %s%s\n", p.Index, p.Total, p.ModName, displayVersionSuffix(p.ModVersion))
 		case core.InstallDepReinstalling:
 			fmt.Printf("  Removing previous installation...\n")
 		case core.InstallDepFileSelected:
@@ -1307,10 +1307,10 @@ func showInstallPlan(plan *core.InstallPlan) {
 	fmt.Printf("\nDependency tree (install order):\n")
 	i := 1
 	for _, dep := range plan.Dependencies {
-		fmt.Printf("  %d. %s v%s (ID: %s) [dependency]\n", i, dep.Name, dep.Version, dep.ID)
+		fmt.Printf("  %d. %s%s (ID: %s) [dependency]\n", i, dep.Name, displayVersionSuffix(dep.Version), dep.ID)
 		i++
 	}
-	fmt.Printf("  %d. %s v%s (ID: %s) [target]\n", i, plan.Mod.Name, plan.Mod.Version, plan.Mod.ID)
+	fmt.Printf("  %d. %s%s (ID: %s) [target]\n", i, plan.Mod.Name, displayVersionSuffix(plan.Mod.Version), plan.Mod.ID)
 
 	if plan.CycleDetected {
 		fmt.Fprintf(os.Stderr, "\n⚠ Warning: Circular dependency detected among dependencies; install order is best-effort.\n")
