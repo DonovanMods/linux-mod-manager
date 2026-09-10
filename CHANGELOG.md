@@ -258,6 +258,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refused as a mod, with the message that names the loader setup — the
   loader is a per-game prerequisite that must survive a profile switch, not
   a profile member. A layout lmm cannot place is reported, never guessed at.
+  The `BepInEx` directory name and the directories BepInEx itself owns
+  under it (`core`, `plugins`, `patchers`, `monomod`, `config`, `cache`)
+  are recognised in any letter case and written in their canonical
+  spelling, so a `bepinex/Core/` pack is still refused as the loader and a
+  `PLUGINS/` root still lands in `BepInEx/plugins/`.
 
   The `BepInEx/` and wrapped shapes are recognised for any game, because an
   archive that names the directory `BepInEx` is not plausibly anything else.
