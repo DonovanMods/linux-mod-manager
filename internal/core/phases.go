@@ -870,6 +870,20 @@ const (
 	SnapshotNote
 	// SnapshotWarning is an unconditional diagnostic from a restore.
 	SnapshotWarning
+
+	// WorkshopFetchStarted fires once when a source.Fetcher takes over a
+	// download core cannot perform with an HTTP GET (#269 Tier 3: the
+	// anonymous steamcmd shell-out). Detail names what is being fetched.
+	WorkshopFetchStarted
+	// WorkshopFetchProgress fires repeatedly while such a fetch runs -
+	// from whatever the tool itself prints AND from lmm's own timed
+	// heartbeat, so a tool that says nothing for twenty minutes still
+	// produces a moving readout. Detail carries the elapsed time and the
+	// bytes on disk.
+	WorkshopFetchProgress
+	// WorkshopFetchDone fires once, after the fetched content is fully on
+	// disk and before it is ingested into the cache.
+	WorkshopFetchDone
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -916,6 +930,9 @@ var deployPhaseNames = [...]string{
 	SnapshotRestoringOriginals: "snapshot_restoring_originals", SnapshotOriginalRestored: "snapshot_original_restored",
 	SnapshotOriginalSkipped: "snapshot_original_skipped", SnapshotConverging: "snapshot_converging",
 	SnapshotNote: "snapshot_note", SnapshotWarning: "snapshot_warning",
+
+	WorkshopFetchStarted: "workshop_fetch_started", WorkshopFetchProgress: "workshop_fetch_progress",
+	WorkshopFetchDone: "workshop_fetch_done",
 }
 
 // String returns the phase's wire name.

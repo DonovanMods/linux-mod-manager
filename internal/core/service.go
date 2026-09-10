@@ -955,7 +955,17 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 
 	url, err := src.GetDownloadURL(ctx, mod, file.ID)
 	if err != nil {
-		return nil, fmt.Errorf("getting download URL: %w", err)
+		// A source that cannot serve a URL at all may still be able to
+		// FETCH the file itself (#269 Tier 3: a steamcmd shell-out is a
+		// subprocess, not a URL). The fallback is gated on the source
+		// saying exactly that - ErrNotSupported - so a real failure from a
+		// source that also implements Fetcher (a 500, a bad key) still
+		// fails here instead of quietly taking a different route.
+		fetcher, isFetcher := src.(source.Fetcher)
+		if !isFetcher || !errors.Is(err, source.ErrNotSupported) {
+			return nil, fmt.Errorf("getting download URL: %w", err)
+		}
+		return s.fetchModToCache(ctx, gameCache, fetcher, sourceID, game, mod, file, sink)
 	}
 
 	if localPath, ok := strings.CutPrefix(url, "file://"); ok {
@@ -1002,6 +1012,18 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	if file.SHA256 != "" && !strings.EqualFold(downloadResult.SHA256, file.SHA256) {
 		return nil, fmt.Errorf("verifying download of %s: sha256 mismatch: source declares %s, downloaded file is %s",
 			file.FileName, file.SHA256, downloadResult.SHA256)
+	}
+
+	// A source.ExactFileSizer declares its sizes to the byte, so a body
+	// that does not match one is a truncated or wrong file - the only
+	// integrity check available on a CDN that publishes no checksum (#269
+	// Tier 3's legacy file_url items). The partial is removed here rather
+	// than left for the deferred staging teardown, so the failure itself
+	// leaves nothing behind.
+	if es, ok := src.(source.ExactFileSizer); ok && es.ExactFileSizes() && file.Size > 0 && downloadResult.Size != file.Size {
+		_ = os.Remove(downloadResult.Path)
+		return nil, fmt.Errorf("verifying download of %s: size mismatch: source declares %d bytes, downloaded file is %d",
+			file.FileName, file.Size, downloadResult.Size)
 	}
 
 	// Extract to cache location
