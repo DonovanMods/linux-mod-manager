@@ -7533,8 +7533,9 @@ func TestE2E_TheLockedHintOmitsAVersionTheProfileRefDoesNotCarry(t *testing.T) {
 		"an absent locked_version must not render as a version")
 	assert.Contains(t, hint, "This mod is locked.",
 		"it says the mod is locked, and stops there")
-	assert.Contains(t, hint, "lmm mod unlock fake:a",
-		"and still names the command that lifts it")
+	assert.Contains(t, hint, "(lmm mod unlock fake:a)",
+		"and still names the command that lifts it, inside its parentheses "+
+			"rather than spaced away from them (P2 review Nit 6)")
 
 	assert.Empty(t, f.BrowserErrors())
 }
