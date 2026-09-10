@@ -1877,11 +1877,13 @@ once**: the first original wins, because the second write's "original" is
 lmm's own first write. `lmm snapshot restore` puts those back, checksum
 -verified. `lmm snapshot delete` never removes them; they are the only copy.
 
-**A restore is four stages**, in this order: the current deployment is
+**A restore is five stages**, in this order: the current deployment is
 undeployed, every stored original goes back, the recorded profile is
-written, and the mods it lists are installed at their recorded versions and
-deployed — downgrades included, re-downloading anything the cache no longer
-has. A version the source can no longer serve is reported as a **refusal, in
+written (and made the active one), the mods it lists are installed at their
+recorded versions — downgrades included, re-downloading anything the cache
+no longer has — and the ones the snapshot recorded as **enabled** are
+deployed. A mod that was disabled when the snapshot was taken comes back
+disabled, with none of its files on disk. A version the source can no longer serve is reported as a **refusal, in
 the preview, before anything is touched**; it is never a quiet partial
 restore. A snapshot of the **current** state is taken first, so a restore is
 itself reversible (`--no-safety-snapshot` to skip that).

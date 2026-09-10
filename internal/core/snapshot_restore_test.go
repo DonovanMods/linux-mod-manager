@@ -475,3 +475,56 @@ func TestApplySnapshotRestore_CarriesTheProfileSwitch(t *testing.T) {
 	assert.FileExists(t, filepath.Join(game.ModPath, "Data", "keeper.esp"),
 		"and the snapshot's own mods must be deployed")
 }
+
+// TestApplySnapshotRestore_ADisabledModComesBackDisabledAndUndeployed is
+// review finding 3. domain.ModReference carries no enabled flag, so the
+// snapshot's profile document lists a disabled mod like any other;
+// PlanProfileApply therefore re-enabled it, the deploy stage put its files
+// on disk, and the recorded enabled=false was written back afterwards with
+// nothing undeployed - a wrong restore AND exactly the enabled=false,
+// deployed=true desync #183's self-heal exists to clean up.
+func TestApplySnapshotRestore_ADisabledModComesBackDisabledAndUndeployed(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+
+	// A second mod, disabled before the snapshot is taken.
+	seedNamedInstalledMod(t, svc, game, "src", "sleeper", "Sleeper", "1.0", true,
+		map[string][]byte{"Data/sleeper.esp": []byte("sleeper v1")})
+	seedProfileWithMod(t, svc, "g1", "default", "src", "sleeper", "1.0")
+	_, err := svc.DisableMod(ctx, game, "default", "src", "sleeper")
+	require.NoError(t, err)
+	require.NoFileExists(t, filepath.Join(game.ModPath, "Data", "sleeper.esp"))
+
+	_, err = svc.CreateSnapshot(ctx, game, "default", "sleeper-off")
+	require.NoError(t, err)
+
+	// Turn it on again, so the restore has something to undo.
+	_, err = svc.EnableMod(ctx, game, "default", "src", "sleeper")
+	require.NoError(t, err)
+	_, err = svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(game.ModPath, "Data", "sleeper.esp"))
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "sleeper-off")
+	require.NoError(t, err)
+	_, err = svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.NoError(t, err)
+
+	mods, err := svc.GetInstalledMods(ctx, game.ID, "default")
+	require.NoError(t, err)
+	byID := map[string]domain.InstalledMod{}
+	for _, m := range mods {
+		byID[m.ID] = m
+	}
+	sleeper, ok := byID["sleeper"]
+	require.True(t, ok)
+	assert.False(t, sleeper.Enabled, "the snapshot recorded it disabled")
+	assert.False(t, sleeper.Deployed, "and a disabled mod is not deployed")
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "Data", "sleeper.esp"),
+		"the disabled mod's file must NOT be on disk after a restore")
+
+	keeper, ok := byID["keeper"]
+	require.True(t, ok)
+	assert.True(t, keeper.Enabled, "and the enabled one is unaffected")
+	assert.FileExists(t, filepath.Join(game.ModPath, "Data", "keeper.esp"))
+}

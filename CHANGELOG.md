@@ -248,11 +248,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the one thing lmm cannot re-download. Names use letters, digits, `.`,
   `_` and `-`.
 
-  `lmm snapshot restore` is four stages in order: undeploy what is there,
+  `lmm snapshot restore` is five stages in order: undeploy what is there,
   put every stored original back (checksum-verified — a stored copy that no
-  longer matches is refused rather than written), write the recorded profile,
-  then install the mods it lists at their recorded versions and deploy them —
+  longer matches is refused rather than written), write the recorded profile
+  and make it the active one, install the mods it lists at their recorded
+  versions, and deploy the ones the snapshot recorded as enabled —
   downgrades included, re-downloading anything the cache no longer has. A
+  mod that was DISABLED when the snapshot was taken comes back disabled,
+  with none of its files on disk. A
   version the source can no longer serve is a **refusal named in the
   preview, before anything is touched**; it is never a quiet partial
   restore, and a restore that fails partway reports how far it got. A

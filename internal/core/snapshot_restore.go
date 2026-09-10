@@ -564,6 +564,17 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 		}
 	}
 
+	// --- 4b. the recorded enabled/disabled state -------------------------
+	// BEFORE the deploy, not after it (review finding 3). A profile
+	// document has no enabled flag - domain.ModReference carries none - so
+	// stage 4's convergence re-enables every mod it lists. Applied after
+	// the deploy, the flag would say "disabled" over files that were on
+	// disk: a wrong restore, and exactly the enabled=false/deployed=true
+	// desync #183's self-heal exists to clean up. Applied here, nothing is
+	// deployed yet, so it costs a DB write and the deploy simply skips
+	// what the snapshot recorded as off.
+	s.restoreRecordedEnablement(ctx, game, doc, result, note)
+
 	// --- 5. deploy -------------------------------------------------------
 	// The purge in stage 1 left every row enabled but not deployed, which
 	// the convergence has nothing to say about - so without this the
@@ -739,6 +750,9 @@ func (s *Service) writeSnapshotProfile(gameID string, doc *Snapshot) error {
 
 // restoreRecordedSettings puts back the per-mod database state a profile
 // document cannot express: the update policy and the pak-conversion flag.
+// The enabled flag used to be here too; review finding 3 moved it earlier,
+// to restoreRecordedEnablement, because it is about DEPLOYMENT rather than
+// settings and so cannot be applied after the files are already on disk.
 //
 // Best-effort by design. These are settings, not deployment: a policy that
 // could not be written is worth a note, but it is not a reason to report a
@@ -763,10 +777,46 @@ func (s *Service) restoreRecordedSettings(ctx context.Context, game *domain.Game
 				note(fmt.Sprintf("could not restore the pak-conversion setting for %s: %v", recorded.Name, err))
 			}
 		}
-		if current.Enabled != recorded.Enabled {
-			if err := s.setModEnabled(ctx, recorded.SourceID, recorded.ID, game.ID, doc.Profile, recorded.Enabled); err != nil {
-				note(fmt.Sprintf("could not restore the enabled state for %s: %v", recorded.Name, err))
-			}
+	}
+}
+
+// restoreRecordedEnablement puts back each mod's recorded enabled flag,
+// between the convergence and the deploy.
+//
+// A DISABLE goes through disableMod rather than the bare setModEnabled
+// setter, so the flag and the deployment stay in step (#183): at this point
+// in the restore nothing is deployed, so it is the cheap path through the
+// same code an ordinary `lmm mod disable` takes, and it clears the deployed
+// flag the purge left behind as well. An ENABLE is only the flag - stage 5
+// is what deploys it, and calling enableMod here would deploy it twice.
+//
+// Best-effort, like the settings beside it: a flag that could not be
+// written is a note, not a reason to report a restore that put every file
+// back as a failure.
+func (s *Service) restoreRecordedEnablement(ctx context.Context, game *domain.Game, doc *Snapshot, result *SnapshotRestoreResult, note func(string)) {
+	for _, recorded := range doc.Installed {
+		if err := ctx.Err(); err != nil {
+			return
 		}
+		current, err := s.db.GetInstalledMod(ctx, recorded.SourceID, recorded.ID, game.ID, doc.Profile)
+		if err != nil || current == nil {
+			continue
+		}
+		if current.Enabled == recorded.Enabled {
+			continue
+		}
+		if recorded.Enabled {
+			if err := s.setModEnabled(ctx, recorded.SourceID, recorded.ID, game.ID, doc.Profile, true); err != nil {
+				note(fmt.Sprintf("could not restore the enabled state for %s: %v", recorded.Name, err))
+				continue
+			}
+			result.Enabled++
+			continue
+		}
+		if _, err := s.disableMod(ctx, game, doc.Profile, recorded.SourceID, recorded.ID); err != nil {
+			note(fmt.Sprintf("could not restore the disabled state for %s: %v", recorded.Name, err))
+			continue
+		}
+		result.Disabled++
 	}
 }
