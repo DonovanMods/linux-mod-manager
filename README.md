@@ -1902,7 +1902,7 @@ Error: source "demo-api" does not support searching; install by ID instead: lmm 
 
 A source that **can** search but that you have never signed in to is skipped the same way, rather than warned about on every query: `lmm init` maps `steamworkshop` from a Steam scan because tracking and updating Workshop items needs no key, while searching the Workshop does. The skip is still reported — a search that comes back empty names what it left out and how to fix it — it just isn't a failure:
 
-```
+```text
 steamworkshop was skipped: not signed in (run: lmm auth login steamworkshop).
 ```
 
