@@ -101,6 +101,14 @@ const bepinexDirName = "BepInEx"
 // configuration (see isBepInExConfigMember).
 var bepinexRootDirs = []string{"plugins", "patchers", "monomod", "config"}
 
+// bepinexOwnedDirs are every directory BepInEx itself owns under BepInEx/:
+// the shape-B roots above, plus the two the loader keeps for itself - core
+// (the framework's own assemblies, which the framework refusal turns on) and
+// cache. bepinexCanonicalRoot folds these as well as the BepInEx/ directory
+// above them, because the rules below it compare a TWO-segment prefix and
+// the loader reads all of them at a fixed spelling.
+var bepinexOwnedDirs = append([]string{"core", "cache"}, bepinexRootDirs...)
+
 // bepinexMetadataStems are the root FILES a Thunderstore package carries and
 // lmm must never deploy: they describe the package to the website, and
 // deploying them scatters a manifest.json and an icon.png into the game root
@@ -278,7 +286,7 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 	// worst outcome available - the loader lands under lmm's deployed-files
 	// bookkeeping and the next profile switch removes it.
 	for _, m := range stripped {
-		if strings.HasPrefix(prefix+m, bepinexDirName+"/core/") {
+		if strings.HasPrefix(bepinexCanonicalRoot(prefix+m), bepinexDirName+"/core/") {
 			return nil, fmt.Errorf("%w: it installs BepInEx/core/, which lmm configures per game as a loader rather than tracking as a profile member - install BepInEx into the game directory yourself and declare it with `lmm game edit <game> --loader bepinex` (`lmm game show <game>` then prints the launch option to paste)", ErrBepInExFrameworkPack)
 		}
 	}
@@ -292,7 +300,10 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 	// letting one member silently overwrite another at deploy time.
 	taken := make(map[string]string, len(stripped))
 	for i, m := range origins {
-		dest := prefix + stripped[i]
+		// Canonicalised once more with the prefix ON: a shape-B root
+		// spelled `Config/` only becomes a BepInEx-owned path here, and it
+		// is this path isBepInExConfigMember and the deploy both read.
+		dest := bepinexCanonicalRoot(prefix + stripped[i])
 		if prev, dup := taken[dest]; dup {
 			return nil, fmt.Errorf("normalising the BepInEx layout of %s: members %q and %q both deploy to %q", modName, prev, m, dest)
 		}
@@ -319,17 +330,35 @@ func isBepInExMetadata(member string) bool {
 	return false
 }
 
-// bepinexCanonicalRoot rewrites a member's leading BepInEx directory to the
-// project's own spelling, so a case-variant archive deploys where the loader
-// actually looks and every rule below it (the shape-A test, the framework
-// refusal, isBepInExConfigMember) can go on comparing exactly.
+// bepinexCanonicalRoot rewrites a member's leading BepInEx directory - AND
+// the directory BepInEx owns immediately below it - to the project's own
+// spelling, so a case-variant archive deploys where the loader actually
+// looks and every rule below it (the shape-A test, the framework refusal,
+// isBepInExConfigMember) can go on comparing exactly.
 //
-// Only the FIRST segment: a plugin's own `bepinex/` subdirectory deeper in
-// the tree is that plugin's business.
+// Both segments, not just the first: the framework refusal and
+// isBepInExConfigMember each test a TWO-segment prefix, so folding only the
+// first left `BepInEx/Core/` classified as an ordinary plugin archive and
+// installed as a mod, and left a `BepInEx/Config/` file deployed as a
+// symlink into the cache (re-review R1/R2). A safety refusal reached by a
+// one-character difference is not a safety refusal.
+//
+// No deeper than that: what a plugin names its own subdirectories under
+// BepInEx/plugins/Foo/ is that plugin's business, and so is a directory
+// under BepInEx/ that BepInEx does not own.
 func bepinexCanonicalRoot(member string) string {
 	name, rest, nested := strings.Cut(member, "/")
-	if !nested || name == bepinexDirName || !strings.EqualFold(name, bepinexDirName) {
+	if !nested || !strings.EqualFold(name, bepinexDirName) {
 		return member
+	}
+	sub, tail, deeper := strings.Cut(rest, "/")
+	for _, dir := range bepinexOwnedDirs {
+		if strings.EqualFold(sub, dir) {
+			if deeper {
+				return bepinexDirName + "/" + dir + "/" + tail
+			}
+			return bepinexDirName + "/" + dir
+		}
 	}
 	return bepinexDirName + "/" + rest
 }

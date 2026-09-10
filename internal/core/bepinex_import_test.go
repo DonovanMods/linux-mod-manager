@@ -2,8 +2,10 @@ package core_test
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -326,4 +328,99 @@ func TestImportArchive_BepInEx_WrappedPackageDropsTheMetadataInsideTheWrapper(t 
 				"%s is package metadata and must never reach the game root", metadata)
 		}
 	})
+}
+
+// TestImportArchive_BepInEx_FrameworkPackIsRefusedInEverySpelling is
+// re-review R1 end to end, on the game state that has no second line of
+// defence: a DECLARED one. On an undeclared game #359's LoaderRequiredError
+// intercepts a framework pack first, so the hole was invisible there; on a
+// declared game a pack spelling the loader directory `BepInEx/Core/` was
+// installed AS A MOD - the preloader, winhttp.dll and doorstop_config.ini
+// all entered into deployed_files, where the next profile switch, uninstall
+// or purge tears the loader out from under every plugin, and winhttp.dll
+// deployed as a symlink into a cache a prune may empty.
+func TestImportArchive_BepInEx_FrameworkPackIsRefusedInEverySpelling(t *testing.T) {
+	for _, spelling := range []string{"core", "Core", "CORE"} {
+		t.Run(spelling, func(t *testing.T) {
+			svc, game := newBepInExDeclaredService(t)
+
+			archivePath := filepath.Join(t.TempDir(), "BepInExPack-5.4.2305.zip")
+			createImportTestZip(t, archivePath, map[string]string{
+				"BepInExPack/BepInEx/" + spelling + "/BepInEx.Preloader.dll": "preloader",
+				"BepInExPack/winhttp.dll":                                    "proxy",
+				"BepInExPack/doorstop_config.ini":                            "[General]\n",
+				"manifest.json":                                              "{}",
+			})
+
+			_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+				core.ImportArchiveOptions{Force: true}, nil)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, core.ErrBepInExFrameworkPack)
+
+			mods, listErr := svc.ListMods(context.Background(), game, "default")
+			require.NoError(t, listErr)
+			assert.Empty(t, mods.Mods, "a refused framework pack installs no mod, so nothing enters deployed_files")
+
+			assert.Empty(t, gameTreeForTest(t, game.InstallPath), "and nothing reaches the game directory")
+		})
+	}
+}
+
+// TestImportArchive_BepInEx_CaseVariantShapeBSeedsARealConfig is re-review
+// R2: a shape-B root spelled `Plugins/` and `Config/` used to keep the
+// archive's own spelling on the way through the BepInEx/ prefix, so the
+// plugin deployed to BepInEx/Plugins/ (where the loader never looks on a
+// case-sensitive filesystem) and the config missed isBepInExConfigMember
+// entirely - seeding the user's hand-edited .cfg as a symlink into lmm's
+// cache, which is exactly what #358 (b) exists to prevent.
+func TestImportArchive_BepInEx_CaseVariantShapeBSeedsARealConfig(t *testing.T) {
+	svc, game := newBepInExDeclaredService(t)
+
+	archivePath := filepath.Join(t.TempDir(), "Cased-1.0.0.zip")
+	createImportTestZip(t, archivePath, map[string]string{
+		"Plugins/Cfg.dll": "assembly",
+		"Config/cfg.cfg":  "[General]\nEnabled = true\n",
+		"manifest.json":   "{}",
+	})
+
+	_, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+		core.ImportArchiveOptions{Force: true}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"BepInEx/config/cfg.cfg", "BepInEx/plugins/Cfg.dll"},
+		gameTreeForTest(t, game.InstallPath),
+		"a case-variant root deploys to the paths the loader actually reads")
+
+	info, err := os.Lstat(filepath.Join(game.InstallPath, "BepInEx", "config", "cfg.cfg"))
+	require.NoError(t, err)
+	assert.True(t, info.Mode().IsRegular(), "a seeded config is a real file, never a link into the cache")
+
+	dllInfo, err := os.Lstat(filepath.Join(game.InstallPath, "BepInEx", "plugins", "Cfg.dll"))
+	require.NoError(t, err)
+	assert.Equal(t, os.ModeSymlink, dllInfo.Mode()&os.ModeSymlink,
+		"everything that is NOT config still deploys through the game's link method")
+}
+
+// gameTreeForTest lists every FILE under root, slash-separated and relative
+// to it, sorted - the "what actually reached the game directory" assertion
+// the two tests above are both about.
+func gameTreeForTest(t *testing.T, root string) []string {
+	t.Helper()
+	var found []string
+	require.NoError(t, filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, p)
+		if relErr != nil {
+			return relErr
+		}
+		found = append(found, filepath.ToSlash(rel))
+		return nil
+	}))
+	sort.Strings(found)
+	return found
 }

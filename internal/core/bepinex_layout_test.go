@@ -232,6 +232,17 @@ func TestBepInExLayout_FrameworkPackIsRefused(t *testing.T) {
 		// every plugin. That is exactly what this refusal exists to
 		// prevent, so it cannot be case-dependent.
 		{"bepinex/core/BepInEx.Preloader.dll", "winhttp.dll"},
+		// Re-review R1: F4 folded the FIRST segment only, so `core` was
+		// still compared exactly and a pack spelling it `Core/` was
+		// classified as an ordinary plugin archive and installed - the
+		// preloader, winhttp.dll and doorstop_config.ini all under
+		// deployed_files. BepInEx owns the directory names below its own,
+		// so lmm folds those too.
+		{"BepInEx/Core/BepInEx.Preloader.dll", "winhttp.dll"},
+		{"BepInEx/CORE/BepInEx.Preloader.dll", "winhttp.dll"},
+		{"BEPINEX/Core/BepInEx.Preloader.dll", "winhttp.dll"},
+		{"BepInExPack/BepInEx/Core/BepInEx.Preloader.dll", "BepInExPack/winhttp.dll", "manifest.json"},
+		{"BepInExPack/BepInEx/CORE/BepInEx.Preloader.dll", "BepInExPack/winhttp.dll", "manifest.json"},
 	} {
 		layout, err := bepinexNormalise(members, "BepInExPack", false)
 		assert.Nil(t, layout)
@@ -271,4 +282,52 @@ func TestBepInExConfigSeedMember(t *testing.T) {
 	assert.False(t, isBepInExConfigMember("BepInEx/plugins/thing.dll"))
 	assert.False(t, isBepInExConfigMember("BepInEx/config"))
 	assert.False(t, isBepInExConfigMember("config/thing.cfg"))
+}
+
+// TestBepInExLayout_CanonicalisesBepInExsOwnSubdirectories is re-review
+// R1/R2: BepInEx reads FIXED paths (BepInEx/plugins, BepInEx/config), so a
+// Windows-authored archive spelling one of them `Plugins/` or `Config/`
+// deploys somewhere the loader never looks - and, for config, somewhere
+// isBepInExConfigMember does not recognise, which turned #358 (b)'s seeded
+// real file back into a symlink into the cache.
+func TestBepInExLayout_CanonicalisesBepInExsOwnSubdirectories(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members []string
+		want    map[string]string
+	}{
+		{
+			name:    "shape A: a case-variant subdirectory takes BepInEx's spelling",
+			members: []string{"BepInEx/Plugins/A.dll", "BepInEx/Config/a.cfg", "BepInEx/PATCHERS/p.dll"},
+			want: map[string]string{
+				"BepInEx/Plugins/A.dll":  "BepInEx/plugins/A.dll",
+				"BepInEx/Config/a.cfg":   "BepInEx/config/a.cfg",
+				"BepInEx/PATCHERS/p.dll": "BepInEx/patchers/p.dll",
+			},
+		},
+		{
+			name:    "shape B: the prefix path is canonicalised too, not just the stripped half",
+			members: []string{"Plugins/Cfg.dll", "Config/cfg.cfg"},
+			want: map[string]string{
+				"Plugins/Cfg.dll": "BepInEx/plugins/Cfg.dll",
+				"Config/cfg.cfg":  "BepInEx/config/cfg.cfg",
+			},
+		},
+		{
+			name:    "a directory BepInEx does not own keeps the archive's spelling",
+			members: []string{"BepInEx/Custom/thing.dat"},
+			want:    map[string]string{"BepInEx/Custom/thing.dat": "BepInEx/Custom/thing.dat"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			layout, err := bepinexNormalise(tc.members, "Mod", true)
+			require.NoError(t, err)
+			require.True(t, layout.Applies())
+			for member, want := range tc.want {
+				dest, kept := layout.Rewrite(member)
+				assert.True(t, kept, "member %q must be kept", member)
+				assert.Equal(t, want, dest)
+			}
+		})
+	}
 }
