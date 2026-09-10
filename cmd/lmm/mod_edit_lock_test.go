@@ -275,3 +275,25 @@ func TestREADMEDoesNotNameTheRenamedRelinkFlags(t *testing.T) {
 	assert.Contains(t, text, "`--to-source`/`--to-source-id` re-linking",
 		"the lock caveat must name the flags that actually re-link")
 }
+
+// TestDoModEdit_ZeroMatchesForASourceFilterNamesTheRelinkFlag is P1b review
+// F4. Of the two flags #396 removed, --source-id fails loudly ("unknown
+// flag"); --source does not - it resolves to the mod group's persistent
+// -s/--source, which means the opposite thing. So the old
+// `lmm mod edit alpha --source curseforge` is silently reinterpreted as a
+// filter and reports "not found ... for source curseforge", a message that
+// says nothing about the rename. There is deliberately no alias (the
+// shadowing IS #396's defect), so the 0-match branch carries the pointer.
+func TestDoModEdit_ZeroMatchesForASourceFilterNamesTheRelinkFlag(t *testing.T) {
+	svc, game, _ := setupDoModEditTest(t)
+	seedLockableMod(t, svc, game, "a", "Mod A", "1.0")
+	modSource = "curseforge" // the mod is in "src", so this filters it out
+
+	editName = "Renamed"
+	err := doModEdit(context.Background(), svc, game, "a")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "curseforge")
+	assert.Contains(t, err.Error(), "--to-source",
+		"a user who typed the pre-#396 --source must be told which flag re-links")
+}

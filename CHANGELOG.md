@@ -1508,6 +1508,12 @@ source list --all` when there is more to show. `lmm game edit --help`
   candidate sources named when it is ambiguous instead of silently editing
   whichever it found first.
 
+  `--source-id` fails loudly (`unknown flag`), but an old
+  `lmm mod edit <mod> --source <target>` cannot: it resolves to the
+  group's `-s/--source` and is read as a filter. When that filter matches
+  nothing, the error now names `--to-source` so the rename is visible
+  rather than reading as "no such mod".
+
 - **`lmm list` shows which mods are not live, without `-v` (#397).** The
   default view is ID / NAME / VERSION / AUTHOR, so a disabled, undeployed
   mod rendered identically to a working one and the header count included

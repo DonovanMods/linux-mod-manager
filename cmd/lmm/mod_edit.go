@@ -105,7 +105,15 @@ func doModEdit(ctx context.Context, service *core.Service, game *domain.Game, cu
 	switch len(matches) {
 	case 0:
 		if modSource != "" {
-			return fmt.Errorf("mod %s not found in profile %s for source %s", currentID, profileName, modSource)
+			// The remedy is named here because -s is also where a
+			// pre-#396 `--source <target>` re-link now lands: the flag was
+			// removed with no alias (an alias would re-create the
+			// shadowing that IS the defect), and the group's persistent
+			// -s/--source it falls through to means the opposite thing, so
+			// the run reads as "no such mod" with nothing about the rename
+			// (P1b review F4).
+			return fmt.Errorf("mod %s not found in profile %s for source %s; to re-link it to another source use --to-source",
+				currentID, profileName, modSource)
 		}
 		return fmt.Errorf("mod %s not found in profile %s", currentID, profileName)
 	case 1:
