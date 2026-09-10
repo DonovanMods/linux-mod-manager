@@ -494,7 +494,20 @@ func e2eProxyTransport(t *testing.T) *http.Transport {
 // address instead, which the backend would otherwise reject.
 func startE2EServerWithFailingPath(t *testing.T, svc *core.Service, failPath string) (baseURL string, setFailing func(bool)) {
 	t.Helper()
-	backend := startE2EServer(t, svc)
+	return startE2EFailingPathProxy(t, startE2EServer(t, svc), failPath)
+}
+
+// startE2EFailingPathProxy is the half of startE2EServerWithFailingPath
+// that layers the fault onto an ALREADY-RUNNING server, so a fixture that
+// built its own (newE2EFixtureWithDrillInMods and friends) can be given a
+// failing path by reassigning its BaseURL - the same shape
+// startE2EProxyDelayingProfileReads uses.
+//
+// failPath is a http.ServeMux pattern, so a path without a trailing slash
+// matches EXACTLY that path: "/api/v1/mods/fake/a" faults the mod detail
+// while "/api/v1/mods", the library listing, still reaches the real server.
+func startE2EFailingPathProxy(t *testing.T, backend, failPath string) (baseURL string, setFailing func(bool)) {
+	t.Helper()
 
 	backendURL, err := url.Parse(backend)
 	require.NoError(t, err)
@@ -958,6 +971,19 @@ func newE2EFixtureWithDrillInModsAndALockedMod(t *testing.T) e2eFixture {
 	t.Helper()
 	f := newE2EFixtureWithDrillInMods(t)
 	require.NoError(t, f.Svc.NewProfileManager().SetModLock(t.Context(), f.Game.ID, "default", "fake", "a", "1.0"))
+	return f
+}
+
+// newE2EFixtureWithALockedModAndAnOfflineDetail is
+// newE2EFixtureWithDrillInModsAndALockedMod with the mod DETAIL endpoint
+// for fake/a faulted - P2 review Minor 4's scenario, and the one the full
+// mod page's own "reads the LIBRARY listing first" comment is written for.
+// The library listing still answers, so the page has a locked row and no
+// live ModDetail: a source that is offline, rate-limited or simply down.
+func newE2EFixtureWithALockedModAndAnOfflineDetail(t *testing.T) e2eFixture {
+	t.Helper()
+	f := newE2EFixtureWithDrillInModsAndALockedMod(t)
+	f.BaseURL, _ = startE2EFailingPathProxy(t, f.BaseURL, "/api/v1/mods/fake/a")
 	return f
 }
 

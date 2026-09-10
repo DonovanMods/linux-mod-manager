@@ -7460,3 +7460,46 @@ func TestE2E_TheRouteAnnouncerSurvivesTheChooserBoundary(t *testing.T) {
 
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// TestE2E_ALockedModStillRefusesRelinkWhenItsDetailIsOffline is P2 review
+// Minor 4, on top of issue 394.
+//
+// The full mod page reads the lock/policy pair off the LIBRARY listing and
+// falls back to the live ModDetail, and the file says why: core.ModListing
+// carries locked, locked_version and update_policy without asking the
+// source anything, so a mod whose source is offline still gets working
+// controls. The new Re-link gate read only the ModDetail half, so the exact
+// degradation the rule exists for put Re-link... back on a locked mod - the
+// state #394 exists to close, and the one core refuses server-side.
+func TestE2E_ALockedModStillRefusesRelinkWhenItsDetailIsOffline(t *testing.T) {
+	f := newE2EFixtureWithALockedModAndAnOfflineDetail(t)
+
+	var relinkDisabled bool
+	var relinkTitle, hint, meta string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.ModPagePath("fake", "a")),
+		chromedp.WaitVisible(`[data-action="relink"]`, chromedp.ByQuery),
+		settleEffects(),
+		// The premise, read off the page rather than assumed: the meta
+		// line's " - locked" suffix comes from ModDetail alone, so its
+		// absence is this page running WITHOUT the detail document.
+		chromedp.Evaluate(`document.querySelector(".mod-page__meta").textContent`, &meta),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').disabled`, &relinkDisabled),
+		chromedp.Evaluate(`document.querySelector('[data-action="relink"]').title`, &relinkTitle),
+		chromedp.Evaluate(`(document.querySelector('[data-testid="mod-page-locked-actions"]')?.textContent ?? "")`, &hint),
+	)
+
+	require.NotContains(t, meta, "locked",
+		"the detail fetch must really have failed, or this test measures the happy path")
+
+	assert.True(t, relinkDisabled,
+		"a locked mod refuses a re-link whether or not its source answered")
+	assert.Contains(t, relinkTitle, "Unlock")
+	assert.Contains(t, hint, "lmm mod unlock fake:a",
+		"and the remedy must still be readable, since a disabled button gets no hover")
+
+	// assertNoUncaughtErrors rather than Empty: the deliberate 500 on the
+	// detail endpoint is a network entry the browser reports, and it is the
+	// whole point of the fixture.
+	assertNoUncaughtErrors(t, f.BrowserErrors())
+}
