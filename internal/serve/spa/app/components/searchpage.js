@@ -45,7 +45,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   const report = matches ? searchPage.report : null;
   const hits = report?.mods ?? [];
   const facets = matches ? searchPage.facets : null;
-  // #383 (F1): the sources that CAN search but were left out for want of a
+  // Issue 383 (F1): the sources that CAN search but were left out for want of a
   // key. Reported apart from warnings and attempted_count, so the notice
   // below has to consult it rather than reading attempted_count 0 as "this
   // game has nothing that searches".

@@ -41,7 +41,7 @@ export function OmnibarResults({ omnibarSearch, query, state, actions }) {
   const report = omnibarSearch.report;
   const hits = report.mods ?? [];
   const warnings = report.warnings ?? [];
-  // #383 (F1), the same rule the dedicated search page applies: a source
+  // Issue 383 (F1), the same rule the dedicated search page applies: a source
   // skipped for want of a key is named once, and never reported as a game
   // with nothing that can search.
   const skippedNotice = skippedSignInNotice(report.skipped_unauthenticated);

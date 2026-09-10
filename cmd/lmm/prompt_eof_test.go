@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
-	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
 	"github.com/stretchr/testify/assert"
@@ -83,26 +82,6 @@ func TestReadMultiSelectionLine_EOFIsTheConfirmationSentinel(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "EOF")
 	assert.ErrorIs(t, err, core.ErrConfirmationRequired)
-}
-
-// TestPromptReorderFrom_EOFNamesThePositionalForm covers `lmm profile
-// reorder -i` with nothing piped in: the same command takes the order as
-// mod ID arguments, which is the way out.
-func TestPromptReorderFrom_EOFNamesThePositionalForm(t *testing.T) {
-	refs := []domain.ModReference{
-		{SourceID: "src", ModID: "a"}, {SourceID: "src", ModID: "b"},
-	}
-
-	var err error
-	captureStdout(t, func() error {
-		_, err = promptReorderFrom(strings.NewReader(""), "default", refs, map[string]string{})
-		return nil
-	})
-
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "EOF")
-	assert.ErrorIs(t, err, core.ErrInteractiveOnly)
-	assert.Contains(t, err.Error(), "mod ID")
 }
 
 // TestReadAPIKey_EOFNamesTheKeyFlags covers the piped-stdin fallback in

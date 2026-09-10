@@ -138,6 +138,12 @@ func TestPromptReorderFrom_QCancels(t *testing.T) {
 // TestPromptReorderFrom_UnusableStdinFailsCleanly is #254's own open
 // question answered: -i with nothing to read must fail, not hang and not
 // half-read.
+//
+// It used to pin the wording as "reading input: EOF" - an implementation
+// detail with no way forward, which is #385's defect (P1b review F10).
+// What it pins now is that the same failure names the way out: `reorder`
+// takes the order as mod ID arguments, so a piped `-i` is answered with
+// that rather than with the read error.
 func TestPromptReorderFrom_UnusableStdinFailsCleanly(t *testing.T) {
 	refs := []domain.ModReference{{SourceID: "src1", ModID: "alpha"}}
 	var err error
@@ -146,7 +152,9 @@ func TestPromptReorderFrom_UnusableStdinFailsCleanly(t *testing.T) {
 		return nil
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "reading input")
+	assert.NotContains(t, err.Error(), "EOF")
+	assert.ErrorIs(t, err, core.ErrInteractiveOnly)
+	assert.Contains(t, err.Error(), "mod ID")
 }
 
 // TestDoProfileReorder_InteractiveWritesTheTypedOrder is the acceptance
