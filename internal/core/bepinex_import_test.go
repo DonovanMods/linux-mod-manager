@@ -276,3 +276,54 @@ func TestPlanImportArchive_BepInEx_UnrecognisedLayoutWarnsOnThePlan(t *testing.T
 	assert.Equal(t, []string{filepath.Join("Data", "StreamingAssets", "thing.bundle")}, plan.Files,
 		"an unrecognised layout is previewed exactly as the archive lists it")
 }
+
+// TestImportArchive_BepInEx_WrappedPackageDropsTheMetadataInsideTheWrapper is
+// the review's F1 shape, and it is the shape Thunderstore actually produces:
+// a wrapper directory containing BOTH BepInEx/ and the package metadata.
+// Metadata outside the wrapper (the two tests above) is not a layout any real
+// package has - a Thunderstore zip either has metadata at the root and no
+// wrapper, or a wrapper containing the metadata.
+//
+// For a BepInEx game mod_path IS the game root, so a manifest.json that
+// survives the strip lands in the Steam install directory. The plan and the
+// ingest are asserted member-for-member on the same archive, because the whole
+// contract is that a preview promises the layout the deploy produces.
+func TestImportArchive_BepInEx_WrappedPackageDropsTheMetadataInsideTheWrapper(t *testing.T) {
+	members := map[string]string{
+		"SomePack/BepInEx/plugins/Thing.dll": "assembly",
+		"SomePack/manifest.json":             `{"name":"SomePack"}`,
+		"SomePack/icon.png":                  "png",
+		"SomePack/README.md":                 "# SomePack",
+		"SomePack/CHANGELOG.md":              "## 1.0.0",
+	}
+	want := []string{filepath.Join("BepInEx", "plugins", "Thing.dll")}
+
+	t.Run("the plan previews only the payload", func(t *testing.T) {
+		svc, game := newBepInExDeclaredService(t)
+		archivePath := filepath.Join(t.TempDir(), "SomePack-1.0.0.zip")
+		createImportTestZip(t, archivePath, members)
+
+		plan, err := svc.PlanImportArchive(context.Background(), game, "default", archivePath, core.ImportArchiveOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, want, plan.Files)
+	})
+
+	t.Run("the archive ingest deploys only the payload", func(t *testing.T) {
+		svc, game := newBepInExDeclaredService(t)
+		archivePath := filepath.Join(t.TempDir(), "SomePack-1.0.0.zip")
+		createImportTestZip(t, archivePath, members)
+
+		result, err := svc.ImportArchive(context.Background(), game, "default", archivePath,
+			core.ImportArchiveOptions{Force: true}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 1, result.Deployed, "the plugin assembly is the only deployable member")
+
+		_, err = os.Lstat(filepath.Join(game.InstallPath, "BepInEx", "plugins", "Thing.dll"))
+		require.NoError(t, err)
+		for _, metadata := range []string{"manifest.json", "icon.png", "README.md", "CHANGELOG.md"} {
+			_, err := os.Lstat(filepath.Join(game.InstallPath, metadata))
+			assert.True(t, os.IsNotExist(err),
+				"%s is package metadata and must never reach the game root", metadata)
+		}
+	})
+}

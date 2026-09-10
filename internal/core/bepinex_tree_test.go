@@ -66,6 +66,18 @@ func TestNormalizeBepInExTree_RewritesEachShapeInPlace(t *testing.T) {
 			want:    []string{"BepInEx/config/thing.cfg", "BepInEx/plugins/Thing.dll"},
 		},
 		{
+			// The real wrapped shape: the metadata is INSIDE the wrapper,
+			// so the drop has to run again after the strip or all four
+			// files land in the game root (review F1).
+			name: "shape C drops the metadata the wrapper contained",
+			members: []string{
+				"SomePack/BepInEx/plugins/Thing.dll",
+				"SomePack/manifest.json", "SomePack/icon.png",
+				"SomePack/README.md", "SomePack/CHANGELOG.md",
+			},
+			want: []string{"BepInEx/plugins/Thing.dll"},
+		},
+		{
 			name:           "shape B gains the BepInEx/ prefix for a declared game",
 			members:        []string{"patchers/HookGen/HookGenPatcher.dll", "config/HookGenPatcher.cfg", "manifest.json"},
 			loaderDeclared: true,

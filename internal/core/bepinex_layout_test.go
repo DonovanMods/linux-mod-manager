@@ -91,6 +91,24 @@ func TestBepInExLayout_TheThreeObservedShapes(t *testing.T) {
 			},
 		},
 		{
+			// How Thunderstore ACTUALLY builds a wrapped package: the
+			// metadata is inside the wrapper, not beside it, so it only
+			// becomes root metadata once the wrapper comes off. A drop
+			// that runs before the strip never sees it, and the four
+			// files ride into the game ROOT of every game the plugin is
+			// installed into (review F1).
+			name: "shape C as Thunderstore builds it: the metadata is INSIDE the wrapper",
+			members: []string{
+				"SomePack/BepInEx/plugins/Thing.dll",
+				"SomePack/manifest.json", "SomePack/icon.png",
+				"SomePack/README.md", "SomePack/CHANGELOG.md",
+			},
+			wantShape: bepinexShapeWrapped,
+			wantPaths: map[string]string{
+				"SomePack/BepInEx/plugins/Thing.dll": "BepInEx/plugins/Thing.dll",
+			},
+		},
+		{
 			name:      "a loose root .dll becomes a plugin under its own directory",
 			members:   []string{"CoolMod.dll", "manifest.json", "README.md"},
 			wantShape: bepinexShapePlugin,

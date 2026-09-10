@@ -202,6 +202,29 @@ func bepinexNormalise(members []string, modName string, loaderDeclared bool) (*b
 		stripped[i] = strings.TrimPrefix(m, strip)
 	}
 
+	// Step 2b: drop the metadata AGAIN, now against the stripped paths.
+	// Step 1's pass is still necessary - the wrapper probe needs a single
+	// root entry, which root metadata would defeat - but it is not
+	// sufficient: a real Thunderstore wrapped package carries manifest.json,
+	// icon.png, README.md and CHANGELOG.md INSIDE the wrapper (that is how
+	// the site builds one), so they are not root metadata until the strip
+	// has happened. Dropping only before it promoted all four to the root of
+	// the deploy paths, and for a BepInEx game mod_path IS the game root -
+	// so they landed in the Steam install directory of every game a wrapped
+	// plugin was installed into.
+	if wrapped {
+		keptPayload := payload[:0]
+		keptStripped := stripped[:0]
+		for i, s := range stripped {
+			if isBepInExMetadata(s) {
+				continue
+			}
+			keptPayload = append(keptPayload, payload[i])
+			keptStripped = append(keptStripped, s)
+		}
+		payload, stripped = keptPayload, keptStripped
+	}
+
 	// Step 3: classify what the (possibly stripped) root now holds.
 	prefix := ""
 	switch {
