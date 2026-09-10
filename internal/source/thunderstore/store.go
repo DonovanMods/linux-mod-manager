@@ -534,6 +534,16 @@ func (b *builder) close() error {
 		if err := f.buf.Flush(); err != nil {
 			return fmt.Errorf("flushing %s: %w", f.name, err)
 		}
+		// Synced BEFORE the rename that publishes it (T1 review nit 14).
+		// Flushing moves the bytes out of this process and no further: a
+		// power loss between the rename and the platter would publish a
+		// watermark over a packages.jsonl whose tail never landed, which
+		// is the one interruption class the commit ORDERING cannot cover -
+		// and this file's doc comment claims every interruption reads as
+		// cold.
+		if err := f.file.Sync(); err != nil {
+			return fmt.Errorf("syncing %s: %w", f.name, err)
+		}
 		if err := f.file.Close(); err != nil {
 			return fmt.Errorf("closing %s: %w", f.name, err)
 		}
@@ -563,6 +573,15 @@ func stageFile(dir, pattern string, data []byte) (string, error) {
 		_ = tmp.Close()
 		_ = os.Remove(name)
 		return "", fmt.Errorf("writing %s: %w", name, err)
+	}
+	// Synced before the caller renames it into place, for builder.close's
+	// reason (T1 review nit 14): the watermark is what makes an index
+	// valid, and a valid watermark whose own bytes never reached the disk
+	// is the state this whole file exists to make unreachable.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return "", fmt.Errorf("syncing %s: %w", name, err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(name)
