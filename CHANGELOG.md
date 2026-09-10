@@ -1457,6 +1457,18 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   out `lmm serve`, which is a frontend over the same engine rather than an
   extra. "Terminal-based mod manager" was, by 2.0, half the story.
 
+- **`lmm game add` accepts an empty identifier for a source that has none
+  (#387).** A directory source ignores the value `games.yaml` maps it to —
+  the README says so, and `lmm game edit --source localmods=` has always
+  written it empty — but `game add` printed "Local Mods has no searchable
+  game catalog; enter this game's identifier with Local Mods directly" and
+  then refused the empty answer with `Error: id is required`. Pressing
+  Enter (or passing `--id ""`) is now accepted for any source with no
+  searchable catalogue, provided `--game-id` gives the entry a key; a
+  source that HAS a catalogue still requires the identifier, and an add
+  that would leave no usable game id is still refused, naming the
+  identifier field.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

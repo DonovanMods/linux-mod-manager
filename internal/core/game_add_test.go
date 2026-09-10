@@ -745,3 +745,39 @@ func TestSelectDetectedGames_RefusesUnknown(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, "skyrim-se", got[0].Slug)
 }
+
+// TestAddGame_CatalogLessSourceTakesAnEmptyIdentifier is #387. `lmm game
+// edit --source localmods=` has always written an empty mapping, and the
+// README documents it ("directory sources ignore this value"), but AddGame
+// demanded one for every source - including the ones with nothing to look
+// it up in. It is accepted when the source declares no searchable game
+// catalogue, which is the same condition that produces the "no searchable
+// game catalog" message the CLI prints just above the prompt.
+func TestAddGame_CatalogLessSourceTakesAnEmptyIdentifier(t *testing.T) {
+	svc := newGameAddService(t)
+	install := t.TempDir()
+
+	entry, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "nexusmods", Identifier: "", ID: "testgame",
+		Name: "Test Game", InstallPath: install,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "testgame", entry.ID)
+	assert.Equal(t, map[string]string{"nexusmods": ""}, entry.SourceIDs)
+}
+
+// TestAddGame_CatalogSourceStillRequiresAnIdentifier is the other half: a
+// source WITH a catalogue has something to name, and an empty identifier
+// there is a value the caller left out rather than one the source ignores.
+func TestAddGame_CatalogSourceStillRequiresAnIdentifier(t *testing.T) {
+	svc := newGameAddService(t)
+
+	_, err := svc.AddGame(context.Background(), core.GameSpec{
+		SourceID: "curseforge", Identifier: "", ID: "testgame",
+		Name: "Test Game", InstallPath: t.TempDir(),
+	})
+	require.Error(t, err)
+	var specErr *core.GameSpecError
+	require.ErrorAs(t, err, &specErr)
+	assert.Equal(t, "identifier", specErr.Field)
+}

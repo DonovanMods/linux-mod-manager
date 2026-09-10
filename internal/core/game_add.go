@@ -295,7 +295,7 @@ func (s *Service) AddGame(ctx context.Context, spec GameSpec) (*GameListEntry, e
 // covers the whole selection (#368 review Minor 8). Every rule below is
 // AddGame's; the only difference is who took the slot.
 func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEntry, error) {
-	game, err := spec.game()
+	game, err := spec.game(s.sourceIgnoresGameIdentifier)
 	if err != nil {
 		return nil, err
 	}
@@ -355,9 +355,33 @@ func (s *Service) addGameLocked(ctx context.Context, spec GameSpec) (*GameListEn
 	return &entry, nil
 }
 
+// sourceIgnoresGameIdentifier reports whether sourceID's registered source
+// has no searchable game catalogue - the same test SearchGameCatalog makes
+// before answering ErrNoGameCatalog, and the condition under which an empty
+// identifier is a legitimate mapping rather than a missing value (#387).
+//
+// `lmm game edit --source localmods=` has always written one, and the
+// README documents it ("directory sources ignore this value"); `game add`
+// was the odd one out, demanding a value for a source that has nothing to
+// look it up in. An unregistered id answers false and is refused by
+// addGameLocked's own registration check a few lines later.
+func (s *Service) sourceIgnoresGameIdentifier(sourceID string) bool {
+	src, err := s.GetSource(sourceID)
+	if err != nil {
+		return false
+	}
+	_, hasCatalog := src.(source.GameCatalog)
+	return !hasCatalog
+}
+
 // game validates the spec and builds the domain.Game AddGame persists.
 // Every rejection is a GameSpecError naming the wire field at fault.
-func (spec GameSpec) game() (*domain.Game, error) {
+//
+// identifierOptional answers "may this source's mapped value be empty" -
+// see Service.sourceIgnoresGameIdentifier, the only implementation. A nil
+// func means no: an identifier is required for every source, which is what
+// a caller with no registry to ask should assume.
+func (spec GameSpec) game(identifierOptional func(sourceID string) bool) (*domain.Game, error) {
 	// The game's source map: a prefilled Sources map (a curated
 	// known-games entry, #206) is the base, and an explicit
 	// SourceID/Identifier is layered on top - so naming a source for an
@@ -373,7 +397,7 @@ func (spec GameSpec) game() (*domain.Game, error) {
 	}
 	switch {
 	case sourceID != "":
-		if identifier == "" {
+		if identifier == "" && (identifierOptional == nil || !identifierOptional(sourceID)) {
 			return nil, newGameSpecError("identifier", spec.Identifier, "the game's identifier with that source is required")
 		}
 		sources[sourceID] = identifier
@@ -401,9 +425,12 @@ func (spec GameSpec) game() (*domain.Game, error) {
 	field := "game_id"
 	if spec.ID == "" {
 		gameID, field = DeriveGameID(identifier), "identifier"
-		if identifier == "" {
+		if identifier == "" && sourceID == "" {
 			// A Sources-only spec has no identifier to derive from, so the
-			// missing value is the id itself.
+			// missing value is the id itself. With a SourceID named, the
+			// identifier IS the value the caller left out - and stays the
+			// field the SPA's form marks - even for a source that would
+			// have accepted an empty one had a game id come with it (#387).
 			field = "game_id"
 		}
 	}

@@ -61,6 +61,9 @@ first and choose second. All other registered sources (NexusMods today;
 any custom source without a catalog) take the game's identifier with that
 source directly via --id - for NexusMods, the slug from its URL (e.g.
 https://www.nexusmods.com/skyrimspecialedition -> skyrimspecialedition).
+A source that has no identifier to give - a directory source ignores the
+mapped value entirely - may be left empty: press Enter at the prompt, or
+pass --id "", and give --game-id so the entry still has a key.
 
 The LOCAL games.yaml key defaults to a slug derived from the catalog
 match (the catalog path) or from --id (the manual path); --game-id sets
@@ -414,7 +417,11 @@ func applyGameCatalogMatch(cmd *cobra.Command, match core.GameCatalogMatch, spec
 // catalog: --id when given, otherwise the display name and identifier
 // prompts, in the order the pre-#307 flow used them.
 func resolveGameAddManual(cmd *cobra.Command, reader *bufio.Reader, selected source.ModSource, spec *core.GameSpec) error {
-	if gameAddID != "" {
+	// Changed("id") as well as a non-empty value, so `--id ""` is an
+	// explicit "this source has nothing to map" and reaches core rather
+	// than falling through to the prompt (or, under --json, to a refusal
+	// naming the flag that was in fact passed) - #387.
+	if gameAddID != "" || cmd.Flags().Changed("id") {
 		spec.Identifier = gameAddID
 		return nil
 	}
@@ -428,7 +435,13 @@ func resolveGameAddManual(cmd *cobra.Command, reader *bufio.Reader, selected sou
 			return err
 		}
 	}
-	if err := missingGameAddValue(cmd, reader, selected.Name()+" identifier: ", "--id", &spec.Identifier); err != nil {
+	// Optional, not required: a source with no catalogue may have nothing
+	// to look an identifier up in at all - the README's directory sources
+	// "ignore this value", and `lmm game edit --source localmods=` has
+	// always written it empty. core decides whether THIS source may take
+	// an empty mapping, and still refuses the add when the result leaves
+	// no usable game id (#387).
+	if err := optionalGameAddValue(cmd, reader, selected.Name()+" identifier (Enter if it has none): ", &spec.Identifier); err != nil {
 		return err
 	}
 	cmd.Printf("\nConfiguring %s...\n", spec.Name)
@@ -481,6 +494,24 @@ func missingGameAddValue(cmd *cobra.Command, reader *bufio.Reader, prompt, flag 
 	if *out == "" {
 		return fmt.Errorf("%s is required", strings.TrimPrefix(flag, "--"))
 	}
+	return nil
+}
+
+// optionalGameAddValue is missingGameAddValue for a value an empty answer
+// is a legitimate answer to: it prompts and stores whatever comes back,
+// including nothing (#387). Under --json it reads nothing at all
+// (Ruling 2) and leaves the value as the caller had it - every current
+// caller has already handled the flag that supplies it.
+func optionalGameAddValue(cmd *cobra.Command, reader *bufio.Reader, prompt string, out *string) error {
+	if jsonOutput {
+		return nil
+	}
+	cmd.Print(prompt)
+	line, err := reader.ReadString('\n')
+	if err != nil && strings.TrimSpace(line) == "" {
+		return fmt.Errorf("reading input: %w", err)
+	}
+	*out = strings.TrimSpace(line)
 	return nil
 }
 
