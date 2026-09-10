@@ -306,6 +306,33 @@ func TestRewriteExtractedTreeAllowsAnInTreeSymlinkedDirectory(t *testing.T) {
 	assert.FileExists(t, filepath.Join(root, "real", "a.dll"))
 }
 
+// TestRewriteExtractedTreeRefusesADanglingSymlinkedAncestor is R4's
+// regression test: resolvesWithin calls filepath.EvalSymlinks on each
+// EXISTING component of a destination's ancestry, and a symlink whose target
+// does not exist makes that call fail - so the rewrite came back with a raw
+// lstat error instead of a refusal a frontend can explain. Refusing is the
+// right outcome (os.MkdirAll cannot write through a dangling link either);
+// the type and the wording were wrong. Reachable through the .7z/.rar path,
+// which shells out and can restore a symlink the native zip extractor never
+// writes.
+func TestRewriteExtractedTreeRefusesADanglingSymlinkedAncestor(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.dll"), []byte("A"), 0o644))
+	require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "nope"), filepath.Join(root, "link")))
+
+	layout := adapter.NewLayout("hostile", map[string]string{"a.dll": "link/escaped.dll"})
+	_, err := rewriteExtractedTree(root, layout, []string{"a.dll"})
+
+	require.Error(t, err)
+	var typed *AdapterLayoutError
+	require.ErrorAs(t, err, &typed,
+		"an unresolvable ancestor must raise the typed containment refusal, not a raw I/O error")
+	assert.Equal(t, "link/escaped.dll", typed.Dest)
+	assert.Equal(t, []string{"a.dll"}, typed.Members, "the refusal must name the member that asked for it")
+	assert.NotContains(t, err.Error(), "lstat", "and must not leak the syscall")
+	assert.FileExists(t, filepath.Join(root, "a.dll"), "the refused member stays where the extractor put it")
+}
+
 // TestCopyOnceNeverLeavesAPartialFile is M1's regression test: copyOnce
 // used to O_TRUNC the destination and stream into it, so a kill, a full
 // disk or an I/O error mid-copy left a truncated file that copy-once's own

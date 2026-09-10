@@ -17,6 +17,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -313,6 +314,13 @@ func containedIn(root, kind, member, rel string) error {
 		return refuse("destination escaping the cache entry")
 	}
 	ok, err := resolvesWithin(root, filepath.Dir(cleaned))
+	if errors.Is(err, errUnresolvableAncestor) {
+		// A dangling link is not provably an escape, but it is provably
+		// not writable-through - os.MkdirAll fails on it too - so it is a
+		// refusal, and a refusal is a typed error naming the member rather
+		// than a leaked lstat (#411, R4).
+		return refuse("destination routed through a symlink that cannot be resolved")
+	}
 	if err != nil {
 		return fmt.Errorf("resolving destination %q: %w", rel, err)
 	}
@@ -321,6 +329,14 @@ func containedIn(root, kind, member, rel string) error {
 	}
 	return nil
 }
+
+// errUnresolvableAncestor reports that a component of a destination's
+// existing ancestry is a symlink whose target cannot be resolved - a
+// dangling link the .7z/.rar extractor restored from the archive. It is a
+// sentinel rather than a refusal of its own so that resolvesWithin stays a
+// pure containment question and containedIn keeps sole ownership of the
+// AdapterLayoutError vocabulary.
+var errUnresolvableAncestor = errors.New("destination ancestry contains an unresolvable symlink")
 
 // resolvesWithin reports whether dir - a root-relative directory path that
 // need not exist yet - resolves to a location inside root once every
@@ -340,13 +356,17 @@ func resolvesWithin(root, dir string) (bool, error) {
 	if dir != "." {
 		for _, part := range strings.Split(dir, string(filepath.Separator)) {
 			next := filepath.Join(current, part)
-			if _, lerr := os.Lstat(next); lerr != nil {
+			info, lerr := os.Lstat(next)
+			if lerr != nil {
 				// The rest does not exist; MkdirAll will create it under
 				// current, which is already resolved.
 				break
 			}
 			resolved, rerr := filepath.EvalSymlinks(next)
 			if rerr != nil {
+				if info.Mode()&os.ModeSymlink != 0 {
+					return false, errUnresolvableAncestor
+				}
 				return false, rerr
 			}
 			current = resolved
@@ -465,8 +485,10 @@ type AdapterLayoutError struct {
 	Kind string
 	// Reason is the rule the table broke, in words: "destinations
 	// collide", "rewrite chain - a destination is another member's
-	// source", "destination escaping the cache entry", or "unusable
-	// destination path".
+	// source", "destination escaping the cache entry", "destination
+	// escaping the cache entry through a symlink", "destination routed
+	// through a symlink that cannot be resolved", or "unusable destination
+	// path".
 	Reason string
 	// Dest is the destination path the offending members contend for.
 	Dest string
