@@ -1070,8 +1070,15 @@ func (s *Service) downloadModToCache(ctx context.Context, gameCache *cache.Cache
 	// An earlier ingest of this exact file may have been refused for a
 	// reason the user answers by reconfiguring the GAME (#359's loader
 	// precondition), in which case the bytes were kept and there is nothing
-	// to fetch (retained_download.go). Everything below is unchanged either
-	// way, integrity checks included.
+	// to fetch (retained_download.go). Everything below runs unchanged
+	// either way - but note WHAT the checks below then check: a reuse
+	// rebuilds DownloadResult from the retention's sidecar, so the SHA256
+	// and exact-size comparisons are against the values the original
+	// download RECORDED, not a re-hash of the retained file. That is
+	// deliberate rather than an oversight: the sidecar is written last
+	// (storeRetainedDownload), so a retention interrupted mid-move has no
+	// sidecar at all and reuseRetainedDownload rejects it outright instead
+	// of trusting a truncated archive.
 	// Whichever branch below reaches the cache, the retained copy is dead
 	// weight once it does - so the drop is deferred on success rather than
 	// written after one of the three commits. Written after the extract
