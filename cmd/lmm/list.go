@@ -128,14 +128,7 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 		// not the 19-digit Steam content id its Version field carries - that
 		// id is the item's version identity, and no human-facing surface
 		// prints it as a version (the design's approval note).
-		version := mod.Version
-		if mod.External {
-			if d := workshopRevisionDate(mod.UpdatedAt.Unix()); d != "" {
-				version = d
-			} else {
-				version = "-"
-			}
-		}
+		version := displayModVersion(mod.External, mod.Version, mod.UpdatedAt)
 		var row string
 		if verbose {
 			enabled := "yes"
@@ -152,7 +145,16 @@ func doList(ctx context.Context, cmd *cobra.Command, service *core.Service, game
 			}
 			locked := "-"
 			if mod.Locked {
-				locked = mod.LockedVersion
+				// The same rule the VERSION column above follows, and for a
+				// stronger reason: a lock target has no date to fall back on
+				// (displayLockTarget), so an external row says only THAT it
+				// is locked. Without this the two columns of one row
+				// disagreed - a date on the left, the content id on the right.
+				if target := displayLockTarget(mod.External, mod.LockedVersion); target != "" {
+					locked = mod.LockedVersion
+				} else {
+					locked = "yes"
+				}
 			}
 			convert := "-"
 			if mod.ConvertPaks != nil {

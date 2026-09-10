@@ -54,6 +54,57 @@ func displayRevision(updatedAt time.Time) string {
 	return "revision of unknown"
 }
 
+// displayModVersion is the version text for one MOD - a core.ModListing row,
+// a domain.InstalledMod, or anything else carrying the same three facts.
+// (Not to be confused with computeDisplayVersion in root.go, which renders
+// lmm's OWN build version for `lmm --version`.)
+//
+// For an EXTERNAL mod it is the item's revision date (domain.Mod.UpdatedAt,
+// which the Workshop source stamps from Steam's own time_updated), falling
+// back to the tables' own "-" when the row carries none: a blank cell under a
+// heading reads as a rendering bug, while "-" says the document has no date,
+// which is a real state. For every other mod it is the version verbatim,
+// which is what every surface did before this rule existed.
+func displayModVersion(external bool, version string, updatedAt time.Time) string {
+	if !external {
+		return version
+	}
+	if d := workshopRevisionDate(updatedAt.Unix()); d != "" {
+		return d
+	}
+	return "-"
+}
+
+// displayUpdateTarget is displayModVersion's other half: the text for the version
+// an update would move the mod TO.
+//
+// A Workshop update's target is another 19-digit content id, and lmm has no
+// date for a revision it has not seen, so "newer" is the whole of what it can
+// truthfully say about it - which is also all a user can act on, since Steam
+// applies the update itself either way.
+func displayUpdateTarget(external bool, newVersion string) string {
+	if external {
+		return "newer"
+	}
+	return newVersion
+}
+
+// displayLockTarget renders a lock or pin TARGET as a human reads it: "v1.2.3"
+// for an ordinary mod, and the EMPTY STRING for an external one.
+//
+// Unlike displayModVersion there is no date to substitute here. A lock names one
+// specific revision, and for a Workshop item that revision's only name is the
+// content id - so the honest rendering is to say the mod is locked and stop,
+// which is exactly what the SPA's modrows.js#lockedNote settled on. A caller
+// wording a line words it without the target; a caller filling a table column
+// says "yes".
+func displayLockTarget(external bool, version string) string {
+	if external {
+		return ""
+	}
+	return "v" + version
+}
+
 // sourceIsWorkshop reports whether sourceID's registered source is the
 // workshop-capable one, by the same capability test core itself uses
 // (Service.workshopSourceFor asks for source.WorkshopScanner rather than

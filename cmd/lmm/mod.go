@@ -258,8 +258,11 @@ func doModSetUpdate(ctx context.Context, service *core.Service, game *domain.Gam
 	}
 
 	fmt.Printf("%s %s update policy: %s", colorGreen("✓"), result.Mod.Name, policyStr)
-	if modSetPin {
-		fmt.Printf(" (v%s)", result.Mod.Version)
+	// #269: a pin's target is the installed version, which for a Workshop
+	// item is the 19-digit content id - so an external mod is reported as
+	// pinned and nothing more (version_display.go).
+	if pinTarget := displayLockTarget(result.Mod.External, result.Mod.Version); modSetPin && pinTarget != "" {
+		fmt.Printf(" (%s)", pinTarget)
 	}
 	fmt.Println()
 
@@ -361,12 +364,20 @@ func doModLock(ctx context.Context, service *core.Service, game *domain.Game, mo
 		return emitJSON(result)
 	}
 
-	fmt.Printf("%s %s locked at v%s\n", colorGreen("✓"), result.Mod.Name, target)
-	// Locking is a metadata write, not a deploy (design decision): when the
-	// target differs from what is actually installed, the game directory
-	// won't match the lock until convergence, so say so.
-	if target != result.Mod.Version {
-		fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", result.Mod.Version)
+	// #269: the same rule `mod show`'s Lock line reads. Unreachable for a
+	// Workshop item today - the capability gate above refuses it, since the
+	// source reports Versions:false - and spelled once here anyway so a
+	// source that later CAN resolve versions cannot reintroduce the shape.
+	if lockTarget := displayLockTarget(result.Mod.External, target); lockTarget != "" {
+		fmt.Printf("%s %s locked at %s\n", colorGreen("✓"), result.Mod.Name, lockTarget)
+		// Locking is a metadata write, not a deploy (design decision): when
+		// the target differs from what is actually installed, the game
+		// directory won't match the lock until convergence, so say so.
+		if target != result.Mod.Version {
+			fmt.Printf("Installed version is v%s — run 'lmm profile apply' (or 'lmm deploy') to converge.\n", result.Mod.Version)
+		}
+	} else {
+		fmt.Printf("%s %s locked\n", colorGreen("✓"), result.Mod.Name)
 	}
 
 	return nil
@@ -750,13 +761,21 @@ func doModShow(ctx context.Context, svc *core.Service, game *domain.Game, modID 
 		}
 		fmt.Printf("  Update policy: %s\n", policyDisplay)
 		if installedInfo.Locked {
-			lockLine := "locked at v" + installedInfo.LockedVersion
-			// Locking is a metadata write, not a deploy (same #97 design
-			// decision doModLock's own convergence hint follows): only say
-			// so when the lock's target actually differs from what's
-			// installed.
-			if installedInfo.LockedVersion != installedInfo.Version {
-				lockLine += " — run 'lmm profile apply' to converge"
+			// #269: an external mod's lock TARGET is the content id, so the
+			// line says only that it is locked (version_display.go). The
+			// converge hint goes with it: it compares two content ids, and
+			// the run it recommends is one `profile apply` deliberately
+			// skips for this mod.
+			lockLine := "locked"
+			if target := displayLockTarget(installedInfo.External, installedInfo.LockedVersion); target != "" {
+				lockLine += " at " + target
+				// Locking is a metadata write, not a deploy (same #97 design
+				// decision doModLock's own convergence hint follows): only say
+				// so when the lock's target actually differs from what's
+				// installed.
+				if installedInfo.LockedVersion != installedInfo.Version {
+					lockLine += " — run 'lmm profile apply' to converge"
+				}
 			}
 			fmt.Printf("  Lock: %s\n", colorYellow(lockLine))
 		} else {

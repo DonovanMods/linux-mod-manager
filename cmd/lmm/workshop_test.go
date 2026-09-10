@@ -545,3 +545,84 @@ func TestModShow_HeaderShowsTheRevisionDateNotTheContentID(t *testing.T) {
 		assert.NotContains(t, out, "Installed:")
 	})
 }
+
+// TestModShowAndList_ALockedExternalModNeverNamesTheContentID is the CLI half
+// of the SPA modrows.js#lockedNote rule. Nothing refuses `lmm mod lock` for a
+// Workshop item, so its lock TARGET is the content id, and "locked at
+// v7987119735124793734" is the forbidden shape with a "v" in front of it.
+// `list -v` had already fixed its VERSION column and left LOCKED raw, so one
+// row disagreed with itself.
+func TestModShowAndList_ALockedExternalModNeverNamesTheContentID(t *testing.T) {
+	svc, game, _, _ := setupWorkshopCLI(t)
+	withWorkshopImportFlags(t, false, true)
+	require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+	_, err := svc.SetModLock(context.Background(), "steamworkshop", "3617086610",
+		game.ID, "default", "7987119735124793734")
+	require.NoError(t, err)
+
+	old := modProfile
+	modProfile = "default"
+	t.Cleanup(func() { modProfile = old })
+
+	show := captureStdout(t, func() error {
+		return doModShow(context.Background(), svc, game, "3617086610")
+	})
+	assert.NotContains(t, show, "locked at v7987119735124793734", "mod show's Lock: line")
+	assert.Contains(t, show, "Lock: locked")
+	assert.NotContains(t, show, "run 'lmm profile apply' to converge",
+		"the converge hint compares two content ids, and `profile apply` deliberately skips this mod")
+
+	list := listVerbose(t, svc, game, false)
+	assert.NotContains(t, list, "7987119735124793734", "list -v's LOCKED column")
+	assert.Contains(t, list, "EXTERNAL")
+}
+
+// TestModLockAndPin_NeverEchoTheContentIDBack is the other half of the same
+// rule: the two commands that PUT a Workshop item into that state print their
+// own confirmation lines, and both wrapped the target in "v%s".
+func TestModLockAndPin_NeverEchoTheContentIDBack(t *testing.T) {
+	const contentID = "7987119735124793734"
+
+	setup := func(t *testing.T) (*core.Service, *domain.Game) {
+		t.Helper()
+		svc, game, _, _ := setupWorkshopCLI(t)
+		withWorkshopImportFlags(t, false, true)
+		require.NoError(t, runImportWorkshopQuiet(t, svc, game))
+		old := modProfile
+		modProfile = "default"
+		t.Cleanup(func() { modProfile = old })
+		return svc, game
+	}
+
+	// `lmm mod lock` never reaches its own wording for a Workshop item: the
+	// source reports Versions:false, and doModLock's static capability gate
+	// refuses on that BEFORE any lock is written. Pinned here so the gate
+	// cannot be relaxed without someone re-reading doModLock's wording, which
+	// goes through displayLockTarget for exactly that day (the reachable way
+	// into a locked external row is core.SetModLock direct - what
+	// TestModShowAndList_... above and `lmm serve`'s lock route both do).
+	t.Run("mod lock is refused before it can word anything", func(t *testing.T) {
+		svc, game := setup(t)
+		out := captureStdout(t, func() error {
+			err := doModLock(context.Background(), svc, game, "3617086610", "")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "cannot resolve versions")
+			assert.NotContains(t, err.Error(), contentID)
+			return nil
+		})
+		assert.NotContains(t, out, contentID)
+	})
+
+	t.Run("mod set-update --pin", func(t *testing.T) {
+		svc, game := setup(t)
+		oldPin := modSetPin
+		modSetPin = true
+		t.Cleanup(func() { modSetPin = oldPin })
+
+		out := captureStdout(t, func() error {
+			return doModSetUpdate(context.Background(), svc, game, "3617086610")
+		})
+		assert.NotContains(t, out, contentID)
+		assert.Contains(t, out, "pinned")
+	})
+}

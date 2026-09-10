@@ -536,17 +536,13 @@ func printUpdateTable(updates, autoUpdates []domain.Update) error {
 		case strings.HasSuffix(policyStr, " ✓"):
 			policyStr = colorGreen(policyStr)
 		}
-		current, available := update.InstalledMod.Version, update.NewVersion
-		if update.InstalledMod.External {
-			// A 19-digit Steam content id is the item's version IDENTITY,
-			// never something to print as a version (the design's approval
-			// note): the table shows dates instead.
-			current = workshopRevisionDate(update.InstalledMod.UpdatedAt.Unix())
-			if current == "" {
-				current = "-"
-			}
-			available = "newer"
-		}
+		// A 19-digit Steam content id is the item's version IDENTITY, never
+		// something to print as a version (the design's approval note): the
+		// table shows the revision date, and "newer" for a target lmm has no
+		// date for at all (version_display.go).
+		external := update.InstalledMod.External
+		current := displayModVersion(external, update.InstalledMod.Version, update.InstalledMod.UpdatedAt)
+		available := displayUpdateTarget(external, update.NewVersion)
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			truncate(update.InstalledMod.Name, 40),
 			current,
