@@ -1627,6 +1627,11 @@ func statGamesFile(configDir string) gamesFileState {
 // empty a running server's chooser. The caller decides how loudly to say
 // so.
 //
+// A reload that actually happened invalidates the verify memo, which
+// beginOp would otherwise have done: this is the one path that can move a
+// game's ModPath under a live Service, and the memo does not fingerprint
+// the game record. An unchanged file costs nothing.
+//
 // The mtime/size fingerprint is deliberately cheap rather than exact. A
 // rewrite that preserves both - same byte count, same nanosecond - is
 // missed; nothing lmm itself writes can do that, and the alternative (a
@@ -1645,6 +1650,23 @@ func (s *Service) ReloadGames() (bool, error) {
 	}
 	s.games = games
 	s.gamesStat = current
+
+	// A real reload can move a game's ModPath/InstallPath, and the verify
+	// memo cannot see that: its key is (game, profile, tier) and its
+	// fingerprint walks game.ModPath without ever hashing the game record,
+	// so a repoint onto a directory that fingerprints the same - "both
+	// empty", the usual state right after one - would keep serving the
+	// previous directory's verdict (P2 review Minor 3).
+	//
+	// Every other path that changes core's picture of an installation drops
+	// the memo at beginOp; this one cannot take beginOp (see above), so it
+	// drops it here, and only when a reload ACTUALLY happened. The unchanged
+	// case is the common one - internal/serve calls this once per request -
+	// and it must stay free.
+	//
+	// Lock order: nothing takes gamesMu while holding verifyMemoMu, so
+	// taking verifyMemoMu under gamesMu cannot invert.
+	s.dropVerifyMemo()
 	return true, nil
 }
 
