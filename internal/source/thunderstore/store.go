@@ -434,7 +434,7 @@ func newBuilder(dir string) (*builder, error) {
 		ibuf:     bufio.NewWriterSize(index, 64*1024),
 		digest:   sha256.New(),
 	}
-	if _, err := b.ibuf.WriteString(fmt.Sprintf(`{"schema":%d,"rows":[`, indexSchema)); err != nil {
+	if _, err := fmt.Fprintf(b.ibuf, `{"schema":%d,"rows":[`, indexSchema); err != nil {
 		b.abort()
 		return nil, fmt.Errorf("writing %s: %w", indexFileName, err)
 	}
@@ -492,7 +492,7 @@ func (b *builder) commit(wm watermark) (watermark, error) {
 	if _, err := b.pbuf.WriteString(packagesTrailer(generation)); err != nil {
 		return wm, fmt.Errorf("writing %s: %w", packagesFileName, err)
 	}
-	if _, err := b.ibuf.WriteString(fmt.Sprintf(`],"generation":%q}`, generation)); err != nil {
+	if _, err := fmt.Fprintf(b.ibuf, `],"generation":%q}`, generation); err != nil {
 		return wm, fmt.Errorf("writing %s: %w", indexFileName, err)
 	}
 	if err := b.close(); err != nil {
