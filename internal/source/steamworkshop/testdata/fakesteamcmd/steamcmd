@@ -13,6 +13,8 @@
 #   exit 4 - +force_install_dir came AFTER +login, which is the order that
 #            let the real steamcmd resolve the user's library first
 #   exit 5 - HOME is not lmm's isolated steamcmd home
+#   exit 6 - the environment was FILTERED rather than BUILT: a variable lmm
+#            never sets survived, or an XDG_* points outside HOME
 #
 # It then switches on the published file id, reproducing the three outcomes
 # the spike observed against the live tool:
@@ -84,6 +86,42 @@ case "${HOME:-}" in
     exit 5
     ;;
 esac
+
+# The environment must be BUILT, not filtered. That is the load-bearing
+# claim in steamcmdEnv's doc comment and in docs/security.md: nothing about
+# the user's real Steam install can leak in by being forgotten, because
+# nothing is inherited in the first place. `cmd.Env = append(os.Environ(),
+# "HOME="+home)` would satisfy the HOME check above while handing the tool
+# STEAM_ROOT, STEAM_COMPAT_*, and the user's four real XDG_* directories -
+# every route to the real library that pinning +force_install_dir closes.
+#
+# So: every variable present must be one lmm sets, or one this shell set
+# for itself. The tests deliberately set STEAM_ROOT in the PARENT.
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  case "$name" in
+    HOME | PATH | TERM | LANG) continue ;;
+    XDG_DATA_HOME | XDG_CONFIG_HOME | XDG_CACHE_HOME | XDG_STATE_HOME) continue ;;
+    PWD | OLDPWD | SHLVL | _) continue ;; # set by this shell, not by lmm
+  esac
+  echo "FAKE STEAMCMD: \$$name is set - the environment was filtered, not built" >&2
+  exit 6
+done <<EOF
+$(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u)
+EOF
+
+# ...and the XDG directories lmm does set must live inside that HOME, or
+# the tool's caches and configs land somewhere the user did not agree to.
+for var in XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_STATE_HOME; do
+  eval "value=\${$var:-}"
+  case "$value" in
+    "$HOME"/*) ;;
+    *)
+      echo "FAKE STEAMCMD: \$$var is ${value:-<unset>}, not inside the isolated HOME" >&2
+      exit 6
+      ;;
+  esac
+done
 
 case "$fileid" in
   3000000001)
