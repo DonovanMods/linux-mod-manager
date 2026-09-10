@@ -31,3 +31,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The AUR deploy key. When the secret is not configured GitHub
+          # substitutes an empty string, which .goreleaser.yaml's
+          # aurs[0].skip_upload reads as "skip": the release still publishes
+          # the tarballs and the deb/rpm/apk, it just does not push to the AUR.
+          AUR_KEY: ${{ secrets.AUR_KEY }}
