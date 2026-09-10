@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/httpclient"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/thunderstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -468,4 +469,50 @@ func TestAnOversizedDocumentFailsRatherThanFillingTheDisk(t *testing.T) {
 		assert.NotContains(t, e.Name(), ".packages-", "no staging file may be left behind")
 		assert.NotContains(t, e.Name(), ".index-", "no staging file may be left behind")
 	}
+}
+
+// TestADocumentExactlyOneByteOverTheCapIsRefused is the cap at its own
+// boundary, through the consumer that made it inexact (#409, T1 re-review
+// nit 3).
+//
+// The streaming decode stops at the document's closing "]", so a document
+// of exactly cap+1 bytes used to finish BEFORE the read that would have
+// reported the overrun - and a whole, correct index was built out of a body
+// the cap was supposed to refuse. Nothing was unsafe about it (the
+// LimitReader still bounded what reached disk), but "the cap is exact" and
+// "the cap is exact from cap+2 up" are different claims, and only one of
+// them is worth writing down. The control below is the other half: exactly
+// AT the cap must still build, or the fix would have moved the boundary
+// rather than sharpened it.
+func TestADocumentExactlyOneByteOverTheCapIsRefused(t *testing.T) {
+	sandboxEnv(t)
+	doc := fixtureDocument(t)
+	srv := newIndexServer(t, doc)
+
+	t.Run("one byte over", func(t *testing.T) {
+		cacheDir := t.TempDir()
+		src := thunderstore.New(thunderstore.Options{
+			CacheDir: cacheDir, BaseURL: srv.URL, MaxIndexBytes: int64(len(doc)) - 1,
+		})
+		_, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)
+		require.Error(t, err, "a document past the cap must not build an index")
+		assert.ErrorIs(t, err, thunderstore.ErrIndexUnavailable)
+		assert.ErrorIs(t, err, httpclient.ErrResponseTooLarge,
+			"the cause must say WHICH failure it was, not just that the index is unavailable")
+
+		status, err := src.IndexStatus(t.Context(), testCommunity)
+		require.NoError(t, err)
+		assert.False(t, status.Present, "nothing may be committed")
+	})
+
+	t.Run("exactly at the cap", func(t *testing.T) {
+		cacheDir := t.TempDir()
+		src := thunderstore.New(thunderstore.Options{
+			CacheDir: cacheDir, BaseURL: srv.URL, MaxIndexBytes: int64(len(doc)),
+		})
+		status, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)
+		require.NoError(t, err, "exactly at the cap is not over it")
+		assert.True(t, status.Present)
+		assert.Positive(t, status.Packages)
+	})
 }
