@@ -1900,13 +1900,21 @@ A source that doesn't support searching (e.g. an `api` source defined without a 
 Error: source "demo-api" does not support searching; install by ID instead: lmm install --source demo-api --id <mod-id>
 ```
 
+A source that **can** search but that you have never signed in to is skipped the same way, rather than warned about on every query: `lmm init` maps `steamworkshop` from a Steam scan because tracking and updating Workshop items needs no key, while searching the Workshop does. The skip is still reported — a search that comes back empty names what it left out and how to fix it — it just isn't a failure:
+
+```
+steamworkshop was skipped: not signed in (run: lmm auth login steamworkshop).
+```
+
+Once a key **is** stored (or supplied through `LMM_<ID>_API_KEY` or a built-in's own variable), an authentication failure means that key is expired or revoked — a real problem — and is reported as a warning like any other source failure. Targeting the source directly with `--source` always reports it.
+
 A game with no configured sources at all fails fast with a diagnostic instead of an empty result:
 
 ```
 Error: no mod sources configured for Skyrim Special Edition; add sources with 'lmm game add' or edit games.yaml
 ```
 
-`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`, each entry `{source_id, error}`.
+`--json search` includes the same per-source failures as a `"warnings"` array alongside `"mods"`, each entry `{source_id, error}`, and names any source skipped for want of a credential in `"skipped_unauthenticated"` (present only when there is one).
 
 ### Update check behavior
 

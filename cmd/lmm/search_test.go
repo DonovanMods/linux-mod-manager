@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
@@ -541,4 +544,29 @@ func TestDoSearch_OnlySourceUnauthenticated_JSON_CarriesTheSkipAndKeepsStdoutCle
 	assert.Empty(t, out.Warnings)
 	assert.Contains(t, stderr, "not signed in")
 	assert.NotContains(t, stderr, "support searching")
+}
+
+// TestREADMESearchSectionDocumentsTheSignInSkip is P1b review F6: #383
+// changed what an all-sources search does with a source the user has never
+// signed in to, and the wave updated `lmm search --help` and lmm-search.1
+// but not the README - which is where the Search behaviour is actually
+// written down, and which still described the no-capability skip as the
+// only silent skip there is.
+func TestREADMESearchSectionDocumentsTheSignInSkip(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	require.NoError(t, err)
+
+	const start = "A source that doesn't support searching"
+	const end = "### Update check behavior"
+	from := strings.Index(string(readme), start)
+	require.Positive(t, from, "the Search section's skip paragraph moved or was renamed")
+	to := strings.Index(string(readme), end)
+	require.Greater(t, to, from)
+	section := string(readme)[from:to]
+
+	assert.Contains(t, section, "not signed in",
+		"the sign-in skip is a Search behaviour and belongs where Search is documented")
+	assert.Contains(t, section, "lmm auth login")
+	assert.Contains(t, section, "skipped_unauthenticated",
+		"--json's own half of the same fact")
 }

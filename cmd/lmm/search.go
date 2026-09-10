@@ -43,7 +43,8 @@ a numeric category id. Steam Workshop treats both as REQUIRED TAGS - the
 Workshop has no category concept distinct from tags - and needs your own
 Steam Web API key ('lmm auth login steamworkshop'). A source you have not
 signed in to is left out of an all-sources search rather than warned about
-on every query ('lmm source list' shows which sources need a key);
+on every query ('lmm source list' shows which sources need a key); a search
+that finds nothing names what it skipped and the login command, and
 searching it directly with '-s' still reports that authentication is
 required.
 
