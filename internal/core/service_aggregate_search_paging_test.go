@@ -19,6 +19,11 @@ import (
 // source is exhausted, instead of returning whatever one page happened to
 // hold. See searchAllSources' doc comment for when the loop engages.
 
+// It IGNORES the per-game mapped identifier, like searchStubSource and for
+// its reason: the catalog it answers from does not depend on the game id,
+// which is what lets the fixtures map it with an empty value (T1 review
+// #3 - core refuses an empty mapping for a source that does NOT say so).
+//
 // pagingStubSource is a searchable source with a fixed catalog and a
 // SERVER-SIDE page cap: it never returns more than cap mods per page no
 // matter how large a pageSize is requested - exactly the shape #109
@@ -77,9 +82,10 @@ func (p *pagingStubSource) requestedPages() []int {
 	return append([]int(nil), p.pages...)
 }
 
-func (p *pagingStubSource) ID() string      { return p.id }
-func (p *pagingStubSource) Name() string    { return p.id }
-func (p *pagingStubSource) AuthURL() string { return "" }
+func (p *pagingStubSource) ID() string                  { return p.id }
+func (p *pagingStubSource) Name() string                { return p.id }
+func (p *pagingStubSource) IgnoresGameIdentifier() bool { return true }
+func (p *pagingStubSource) AuthURL() string             { return "" }
 func (p *pagingStubSource) ExchangeToken(context.Context, string) (*source.Token, error) {
 	return nil, nil
 }

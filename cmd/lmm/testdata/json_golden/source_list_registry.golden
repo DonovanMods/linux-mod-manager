@@ -45,5 +45,14 @@
       "updates",
       "auth"
     ]
+  },
+  {
+    "id": "thunderstore",
+    "name": "Thunderstore",
+    "type": "built-in",
+    "auth": "none",
+    "capabilities": [
+      "search"
+    ]
   }
 ]

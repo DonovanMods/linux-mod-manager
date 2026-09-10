@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -177,6 +179,12 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 	}
 
+	// A source that answers Search from a LOCAL index builds that index on
+	// the first search, which is a one-time wait of a few seconds with
+	// nothing on screen to explain it (#360 §2.7). The notice goes to
+	// STDERR so `--json` keeps its one-document-on-stdout invariant.
+	indexed := noteColdIndexes(ctx, service, game, opts.SourceID)
+
 	// core.Search owns the search itself, the merge across sources and the
 	// installed-mod join; this command only classifies the failure and
 	// renders what came back.
@@ -196,6 +204,8 @@ func doSearch(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 		return fmt.Errorf("search failed: %w", err)
 	}
+
+	indexed()
 
 	for _, w := range report.Warnings {
 		fmt.Fprintf(os.Stderr, "warning: source %s: %v\n", w.SourceID, w.Err)
@@ -323,4 +333,66 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// noteColdIndexes announces the one-time index build a local-index source
+// (#360: Thunderstore) performs inside its first Search, and returns the
+// function that reports what it produced once the search is back.
+//
+// Both lines go to STDERR: `lmm search --json` promises exactly one
+// document on stdout (the `update --json` invariant), and a progress notice
+// is not that document. A STALE index prints nothing - its refresh is a
+// conditional request that costs nothing worth explaining.
+//
+// Every failure here is silent by design. This is a courtesy notice around
+// a search that is about to happen anyway; a source that cannot answer
+// what it has cached must not turn `lmm search` into an error.
+func noteColdIndexes(ctx context.Context, service *core.Service, game *domain.Game, sourceID string) func() {
+	var cold []string
+	for _, id := range searchedSourceIDs(game, sourceID) {
+		status, err := service.SourceIndexStatus(ctx, id, game.ID)
+		if err != nil || status == nil || status.Present {
+			continue // no index surface, or one that is already built
+		}
+		fmt.Fprintf(os.Stderr, "Building the %s index for %s (one-time)...\n", sourceName(service, id), status.Game)
+		cold = append(cold, id)
+	}
+	if len(cold) == 0 {
+		return func() {}
+	}
+
+	started := time.Now()
+	return func() {
+		elapsed := time.Since(started).Round(100 * time.Millisecond)
+		for _, id := range cold {
+			status, err := service.SourceIndexStatus(ctx, id, game.ID)
+			if err != nil || status == nil || !status.Present {
+				continue // the build failed; the search's own error says so
+			}
+			fmt.Fprintf(os.Stderr, "Indexed %d packages in %s.\n", status.Packages, elapsed)
+		}
+	}
+}
+
+// searchedSourceIDs names the sources this search will actually ask, in a
+// stable order: the one named by --source, or every source the game maps.
+func searchedSourceIDs(game *domain.Game, sourceID string) []string {
+	if sourceID != "" {
+		return []string{sourceID}
+	}
+	ids := make([]string, 0, len(game.SourceIDs))
+	for id := range game.SourceIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// sourceName is a source's display name, falling back to its id - this is
+// notice text, not a place to fail.
+func sourceName(service *core.Service, id string) string {
+	if src, err := service.GetSource(id); err == nil {
+		return src.Name()
+	}
+	return id
 }

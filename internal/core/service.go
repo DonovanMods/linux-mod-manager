@@ -302,13 +302,9 @@ func (s *Service) SearchMods(ctx context.Context, sourceID, gameID, query string
 		return source.SearchResult{}, err
 	}
 
-	sourceGameID := gameID
-	if game, ok := s.game(gameID); ok {
-		// An empty mapping (e.g. directory sources: `donovan-mods: ""`) means
-		// "this source applies to any game" — it must not blank out the ID.
-		if id, ok := game.SourceIDs[sourceID]; ok && id != "" {
-			sourceGameID = id
-		}
+	sourceGameID, err := s.sourceGameID(src, gameID)
+	if err != nil {
+		return source.SearchResult{}, err
 	}
 
 	return src.Search(ctx, source.SearchQuery{

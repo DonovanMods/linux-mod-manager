@@ -453,6 +453,29 @@ func TestJSONGoldens(t *testing.T) {
 			core.SettingsResult{DefaultGame: "skyrim-se"},
 		},
 		{
+			// #360: the read half of the local-index surface. Game is the
+			// SOURCE's own game id - a Thunderstore community slug - since
+			// that is what identifies the index on disk.
+			"index_status",
+			core.IndexStatus{
+				Source: "thunderstore", Game: "lethal-company", Present: true,
+				Packages: 50707, FetchedAt: fixedTime, Bytes: 239075328, Stale: true,
+			},
+		},
+		{
+			// #360: and the write half. Status is what the refresh DID,
+			// Changed whether the index the user searches is now different -
+			// a forced rebuild producing an identical index is "built" and
+			// unchanged, which is the answer to "did refreshing help?".
+			"index_report",
+			core.IndexReport{
+				Source: "thunderstore", Game: "lethal-company",
+				Status: core.IndexStatusStale, Changed: false,
+				Packages: 50707, Bytes: 239075328, DurationMS: 4137,
+				Warnings: []string{"source \"thunderstore\": the lethal-company index could not be built: connection refused"},
+			},
+		},
+		{
 			// #294 (Ruling 5): the install loop's UpsertMod refusal is a
 			// Warning now (no "Warning: " prefix baked in - the caller
 			// renders one), ahead of the end-of-apply merged-pak

@@ -17,6 +17,7 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/icarus"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/nexusmods"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steamworkshop"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/thunderstore"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
@@ -28,8 +29,10 @@ const icarusFirestoreProjectID = "projectdaedalus-fb09f"
 // sources share one key pipeline.
 //
 // Each factory is handed the resolved Paths: steamworkshop (#269) needs the
-// cache root for its metadata cache (<CacheDir>/_steamworkshop/meta/), the
-// only built-in that needs anything from the environment beyond a key.
+// cache root for its metadata cache (<CacheDir>/_steamworkshop/meta/) and
+// thunderstore (#360) for its community index
+// (<CacheDir>/_thunderstore/<community>/) - the two built-ins that need
+// anything from the environment beyond a key.
 var builtinSourceFactories = []func(Paths) source.ModSource{
 	func(Paths) source.ModSource { return nexusmods.New(nil, "") },
 	func(Paths) source.ModSource { return curseforge.New(nil, "") },
@@ -37,12 +40,15 @@ var builtinSourceFactories = []func(Paths) source.ModSource{
 	func(p Paths) source.ModSource {
 		return steamworkshop.New(steamworkshop.Options{CacheDir: p.CacheDir})
 	},
+	func(p Paths) source.ModSource {
+		return thunderstore.New(thunderstore.Options{CacheDir: p.CacheDir})
+	},
 }
 
 // builtinSourceIDs names every source builtinSourceFactories builds, written
 // down so a check can ask "is this one registered" without constructing it.
 // TestBuiltinSourceIDsMatchTheFactories keeps the two in step.
-var builtinSourceIDs = []string{"nexusmods", "curseforge", "icarus", "steamworkshop"}
+var builtinSourceIDs = []string{"nexusmods", "curseforge", "icarus", "steamworkshop", "thunderstore"}
 
 // registerSources registers the built-in sources followed by every custom
 // source definition under <ConfigDir>/sources. Built-ins register first, so a

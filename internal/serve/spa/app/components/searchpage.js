@@ -25,7 +25,7 @@ import { AwayBar } from "./awaybar.js";
 import { codeSpans } from "../errortext.js";
 
 // See tagsSupported below.
-const TAG_CAPABLE_SOURCES = new Set(["nexusmods"]);
+const TAG_CAPABLE_SOURCES = new Set(["nexusmods", "thunderstore"]);
 
 export function SearchPage({ state, route, onThemeChange, actions }) {
   // Hooks run unconditionally, before any of the branches below return -
@@ -67,6 +67,13 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   // reason `lmm search --tag`'s own help says support varies. Kept narrow
   // deliberately: showing the filter where it does nothing is the failure
   // mode worth avoiding.
+  //
+  // thunderstore is in it because it DOES honour tags (issue 408 review nit
+  // 13): SearchQuery.Tags and SearchQuery.Category both filter the same
+  // Thunderstore categories, ANDed, which is exactly what `lmm search --tag`
+  // does against it. Leaving it out made the README's "--category and --tag
+  // both filter Thunderstore's own categories" true of the CLI and false of
+  // the web UI.
   const tagsSupported = Object.keys(state?.status?.source_ids ?? {}).some(
     (id) => TAG_CAPABLE_SOURCES.has(id),
   );

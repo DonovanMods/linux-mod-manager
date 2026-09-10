@@ -47,9 +47,11 @@ import (
 //
 // An EMPTY map is refused: a game that maps no source can neither search
 // nor install, and the only way to reach that state is to remove the last
-// entry - a footgun, not a use case. An empty IDENTIFIER is fine (a
-// directory source keyed by nothing else is exactly how the fixtures and
-// several custom sources are configured); it is trimmed, like the id.
+// entry - a footgun, not a use case. An empty IDENTIFIER is refused for
+// any source that says it needs one, and accepted for the sources that say
+// they do not (a directory source keyed by nothing else is exactly how the
+// fixtures and several custom sources are configured); either way it is
+// trimmed, like the id.
 func (s *Service) UpdateGameSources(ctx context.Context, gameID string, sources map[string]string) (*GameListEntry, error) {
 	release, err := s.beginOp(ctx)
 	if err != nil {
@@ -122,7 +124,17 @@ func (s *Service) validatedSourceMap(sources map[string]string) (map[string]stri
 		if _, dup := cleaned[trimmed]; dup {
 			return nil, newGameSpecError("sources", trimmed, "duplicate source id after trimming whitespace")
 		}
-		cleaned[trimmed] = strings.TrimSpace(sources[id])
+		identifier := strings.TrimSpace(sources[id])
+		// T1 review #3: the same question AddGame asks, on the only other
+		// way into games.yaml. A source that does not declare its mapped
+		// value meaningless REQUIRES one, and writing an empty mapping for
+		// it produces a game that fails at first use - or worse, for a
+		// source that keeps a local index, one that quietly indexes a
+		// community the user never named.
+		if identifier == "" && !s.sourceIgnoresGameIdentifier(trimmed) {
+			return nil, newGameSpecError("sources", trimmed, "this source needs an identifier for the game")
+		}
+		cleaned[trimmed] = identifier
 	}
 	return cleaned, nil
 }

@@ -320,11 +320,31 @@ func searchErrorStatus(err error) int {
 	return http.StatusInternalServerError
 }
 
+// maxPagingParam bounds every numeric paging parameter this endpoint
+// accepts (T1 review #1). A page, a page size and a limit all count ROWS,
+// and no catalogue lmm can search holds a billion of them - Thunderstore's
+// largest community, the biggest single document any source serves, is
+// 50,707 packages - so a value above this is not a request, it is
+// malformed input.
+//
+// The bound exists because these values are forwarded to a SOURCE, and a
+// source that paginates locally rather than handing the number to a remote
+// API does arithmetic with it: thunderstore's (page-1)*pageSize overflowed
+// int at ?page=9223372036854775807 and sliced a negative index, panicking
+// the request. That source clamps for itself now; this is the rule for
+// every source that will ever be written, applied where the untrusted
+// value actually enters.
+const maxPagingParam = 1_000_000_000
+
 // parseOptionalIntParam reads name from r's query string: 0/true when
-// absent, the parsed value/true when present and numeric, or 0/false (the
-// 400 envelope already written) when present but not. Shared by every
+// absent, the parsed value/true when present and in range, or 0/false (the
+// 400 envelope already written) when present and not. Shared by every
 // ?limit=/?page=/?page_size= parse on this endpoint so the three agree on
 // what "bad input" means.
+//
+// Out of range is the same class of bad input as non-numeric, and answers
+// the same way: negative counts nothing, and a value past maxPagingParam
+// counts more rows than any source has.
 func (s *Server) parseOptionalIntParam(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -333,6 +353,11 @@ func (s *Server) parseOptionalIntParam(w http.ResponseWriter, r *http.Request, n
 	n, err := strconv.Atoi(raw)
 	if err != nil {
 		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf("invalid query parameter %q: %w", name, err))
+		return 0, false
+	}
+	if n < 0 || n > maxPagingParam {
+		s.writeAPIError(w, http.StatusBadRequest, fmt.Errorf(
+			"invalid query parameter %q: %d is out of range (0-%d)", name, n, maxPagingParam))
 		return 0, false
 	}
 	return n, true

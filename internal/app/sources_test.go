@@ -639,3 +639,33 @@ func TestSourceInfos_UnregisteredBuiltinInUse_RendersAnErrorRow(t *testing.T) {
 		assert.Contains(t, errRow.ErrorMessage, "not registered")
 	}
 }
+
+// TestThunderstoreRegistersKeyless pins #360's headline: Thunderstore is
+// the first built-in that needs no credential at all, and the auth surfaces
+// must report that as "none" rather than as an unauthenticated source the
+// user could fix by signing in.
+func TestThunderstoreRegistersKeyless(t *testing.T) {
+	svc := newTestService(t)
+	p := Paths{ConfigDir: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+
+	var warn bytes.Buffer
+	registerSources(t.Context(), svc, p, &warn)
+	assert.Empty(t, warn.String())
+
+	src, err := svc.GetSource("thunderstore")
+	require.NoError(t, err)
+	assert.Equal(t, "Thunderstore", src.Name())
+	assert.Equal(t, "built-in", source.TypeLabelOf(src))
+
+	caps := source.CapabilitiesOf(src)
+	assert.False(t, caps.Auth, "there is no Thunderstore credential to hold")
+	assert.True(t, caps.Search)
+
+	assert.Equal(t, AuthNone, authState(src),
+		"an auth-less source reports none, not unauthenticated")
+
+	// The seam a frontend type-asserts for, so the index surface can exist
+	// at all.
+	_, ok := src.(source.LocalIndexSource)
+	assert.True(t, ok, "Thunderstore answers Search from a local index")
+}

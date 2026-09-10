@@ -318,10 +318,7 @@ func (c *Client) do(req *http.Request, requestPath string, result any) (err erro
 				return mapped
 			}
 		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("%w: %s API key required", domain.ErrAuthRequired, c.authLabel)
-		}
-		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(errBody))
+		return c.statusError(resp.StatusCode, errBody)
 	}
 
 	// 204 No Content has no body to decode; treat as success.
@@ -355,4 +352,16 @@ func (c *Client) do(req *http.Request, requestPath string, result any) (err erro
 		return fmt.Errorf("decoding response: %w", err)
 	}
 	return nil
+}
+
+// statusError is the default non-2xx mapping every request method shares
+// once the ErrorMapper has declined it: 401 means the source wants a
+// credential, anything else surfaces the status and the (already capped and
+// redacted) body. Extracted so DoStream reports failures identically to
+// DoJSON rather than growing a second error contract (#360).
+func (c *Client) statusError(status int, body []byte) error {
+	if status == http.StatusUnauthorized {
+		return fmt.Errorf("%w: %s API key required", domain.ErrAuthRequired, c.authLabel)
+	}
+	return fmt.Errorf("API error (status %d): %s", status, string(body))
 }

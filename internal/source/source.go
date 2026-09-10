@@ -505,3 +505,68 @@ type MergeFailure struct {
 	ModRef string
 	Reason string
 }
+
+// IndexStatus describes a source's local search index for one game (#360).
+// The zero value means "no index here", which is what a source with nothing
+// on disk reports.
+type IndexStatus struct {
+	GameID    string    // the source's own game id (a Thunderstore community slug)
+	Present   bool      // an index is on disk and usable
+	Packages  int       // how many packages it holds
+	FetchedAt time.Time // when the copy on disk was last confirmed current
+	Bytes     int64     // on-disk footprint
+	Stale     bool      // present, but past its TTL
+}
+
+// IndexProgressFunc reports one tick while an index is being built. phase is
+// one of the FetchPhase* constants above, detail a short human sentence the
+// frontend can print verbatim, and bytes the amount retrieved so far (0 when
+// the source cannot say).
+//
+// Same serialization contract as FetchProgressFunc: an implementation must
+// never deliver two ticks concurrently, because core forwards each one
+// straight into a core.EventSink, which is called synchronously on the
+// operation's goroutine. It is always safe to call - core hands
+// implementations a non-nil function.
+type IndexProgressFunc func(phase, detail string, bytes int64)
+
+// LocalIndexSource is implemented by sources that answer Search from a
+// locally cached index rather than a remote query (#360: Thunderstore
+// publishes one unpaginated document per community and no per-query search
+// endpoint at all, so "search Thunderstore" means "search a local copy").
+//
+// Same optional-capability pattern as WorkshopScanner: core type-asserts for
+// it, so internal/core never imports a concrete source package. sourceGameID
+// is the source's own game identifier from domain.Game.SourceIDs, already
+// translated by core.
+//
+// The index is the source's own business: Search builds and refreshes it as
+// needed, and this seam exists for the two things a frontend wants on top -
+// SHOWING what is cached, and rebuilding it on demand. Both are READS as far
+// as the Service's query/mutation contract is concerned when they happen
+// inside Search: an index build must never take the mutation slot.
+//
+// The one rule a caller cannot guess: RefreshIndex may return a non-nil
+// error ALONGSIDE a Present status. That is a refresh that failed over an
+// index which is still usable - the caller serves the stale copy and reports
+// the failure as a warning, never as a dead source. An error with a status
+// that is not Present is a real failure.
+type LocalIndexSource interface {
+	IndexStatus(ctx context.Context, sourceGameID string) (IndexStatus, error)
+	RefreshIndex(ctx context.Context, sourceGameID string, force bool, progress IndexProgressFunc) (IndexStatus, error)
+}
+
+// ErrIndexUnavailable reports that a LocalIndexSource has no usable index on
+// disk and could not build one - the fetch failed, or what is cached is
+// unreadable. Distinct from a search that found nothing: lmm could not ask.
+// Lives here rather than in the concrete source so core can classify it
+// without importing the package (the ErrInvalidReference precedent).
+var ErrIndexUnavailable = errors.New("source index is unavailable")
+
+// ErrGameIdentifierInvalid reports that a game's per-source mapped value
+// (games.yaml's `sources: {<id>: <value>}`) is missing or malformed for a
+// source that requires one - the counterpart to GameIdentifierIgnorer, which
+// marks the sources for which an empty value is legitimate. It is the user's
+// configuration being wrong, not the source failing, so a frontend answers
+// it as bad input (the HTTP 400 shape).
+var ErrGameIdentifierInvalid = errors.New("the game's identifier for this source is missing or malformed")

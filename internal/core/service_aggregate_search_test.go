@@ -14,6 +14,14 @@ import (
 )
 
 // searchStubSource is a minimal ModSource whose Search returns canned data.
+//
+// It IGNORES the per-game mapped identifier, which is both true of it - the
+// canned result does not depend on the game id, only gotGame records it -
+// and what lets every fixture below map it with an empty value the way a
+// directory source is mapped. A source that does NOT say so requires the
+// value (source.IgnoresGameIdentifier, #387 / T1 review #3), and core
+// refuses an empty mapping for one rather than substituting lmm's own game
+// id; these stubs are not that kind of source.
 type searchStubSource struct {
 	id      string
 	caps    *source.Capabilities // nil = no CapabilityReporter (assumed fully capable)
@@ -22,9 +30,10 @@ type searchStubSource struct {
 	gotGame string // records the GameID the source was queried with
 }
 
-func (s *searchStubSource) ID() string      { return s.id }
-func (s *searchStubSource) Name() string    { return s.id }
-func (s *searchStubSource) AuthURL() string { return "" }
+func (s *searchStubSource) ID() string                  { return s.id }
+func (s *searchStubSource) IgnoresGameIdentifier() bool { return true }
+func (s *searchStubSource) Name() string                { return s.id }
+func (s *searchStubSource) AuthURL() string             { return "" }
 func (s *searchStubSource) ExchangeToken(context.Context, string) (*source.Token, error) {
 	return nil, nil
 }

@@ -116,6 +116,13 @@ const fixtureSourceID = "fake"
 // visible failure rather than a silent live call.
 type fixtureSource struct{}
 
+// The fixtures map this source with an EMPTY identifier, which is a
+// legitimate configuration only for a source that says its mapped value
+// addresses nothing - true of every double here, whose answers are canned
+// (issue 408 review #3: core refuses an empty mapping for a source that
+// does NOT say so).
+func (*fixtureSource) IgnoresGameIdentifier() bool { return true }
+
 func (*fixtureSource) ID() string      { return fixtureSourceID }
 func (*fixtureSource) Name() string    { return "Fixture Source" }
 func (*fixtureSource) AuthURL() string { return "" }

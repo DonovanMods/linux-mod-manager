@@ -16,6 +16,11 @@ import (
 // so search's results table has both an installed and a not-installed row.
 type twoModSource struct{ id string }
 
+// twoModSource ignores the per-game mapped identifier: its two canned
+// mods do not depend on the game id, which is what lets the fixture map
+// it with an empty value (T1 review #3).
+func (s *twoModSource) IgnoresGameIdentifier() bool { return true }
+
 func (s *twoModSource) ID() string      { return s.id }
 func (s *twoModSource) Name() string    { return s.id }
 func (s *twoModSource) AuthURL() string { return "" }
