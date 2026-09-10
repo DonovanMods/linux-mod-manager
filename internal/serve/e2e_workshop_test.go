@@ -287,7 +287,7 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="deploy"]`),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="deploy"]`, &body),
 	)
@@ -307,7 +307,7 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="deploy"]`),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll('.modal select[name="deploy-mod"] option'))
