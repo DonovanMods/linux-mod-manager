@@ -957,6 +957,21 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **Declining a prompt exits 2, whichever command asked (#382).** `lmm --help`
+  documents exit code 2 as "cancelled by the user", but the same "no" exited
+  2 from `purge` and `snapshot restore`, **1** from `import` (as
+  `Error: import cancelled`) and **0** from `profile switch`, `profile apply`
+  and `profile sync` — so `lmm profile switch p && echo switched` printed
+  "switched" over a switch that never happened. Every declined confirmation
+  now returns the one cancellation sentinel, and a table test measures the
+  exit code of each confirming command under a declining stdin. Separately, a
+  locked-mod refusal from **`lmm update rollback`** exits non-zero in both
+  output modes (it printed its refusal, or its `{"status":"skipped",
+"reason":"locked"}` document, and exited 0 — so
+  `lmm update rollback X && echo restored` printed "restored"). Not changed:
+  `lmm uninstall` still performs its delete with no confirmation prompt at
+  all — adding one is a behaviour change in its own right.
+
 - **`lmm source list` can no longer claim a source `install` cannot find
   (#381).** A built-in source that failed to register was invisible: the one
   skip path in the registration pipeline reports through a writer

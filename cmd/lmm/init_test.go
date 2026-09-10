@@ -255,18 +255,16 @@ func seedInitGame(t *testing.T, svc *core.Service) *domain.Game {
 }
 
 // TestIsInitCancellation_CoversTheDelegatedFlowsDeclines is #351 review
-// minor 9, and the correction to its premise: errors.Is is now the primary
-// test, but the string fallback stays because runImportScan's declined
-// confirm returns a bare fmt.Errorf("import cancelled") rather than the
-// shared sentinel - pinned deliberately by
-// TestRunImportScan_ConfirmDecline_ReturnsPlainCancelledError_NotErrCancelled.
-// Without it a user's "no" to the import step reads as a failure.
+// minor 9, and the correction to its premise: errors.Is is the primary test,
+// and since #382 every delegated flow's decline IS the shared sentinel. The
+// string fallback stays as a backstop for a flow that words its own decline;
+// without it a user's "no" to the import step would read as a failure.
 func TestIsInitCancellation_CoversTheDelegatedFlowsDeclines(t *testing.T) {
 	assert.True(t, isInitCancellation(ErrCancelled), "the sentinel itself")
 	assert.True(t, isInitCancellation(fmt.Errorf("running the step: %w", ErrCancelled)),
 		"a wrapped sentinel - what errors.Is is for")
 	assert.True(t, isInitCancellation(errors.New("import cancelled")),
-		"runImportScan's own decline, which is deliberately NOT the sentinel")
+		"a hand-worded decline, which the string backstop still covers")
 	assert.True(t, isInitCancellation(context.Canceled), "and a real ctrl-c")
 
 	assert.False(t, isInitCancellation(nil))

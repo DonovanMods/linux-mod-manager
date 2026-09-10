@@ -247,17 +247,22 @@ func TestDoProfileSwitch_PrintsPlanAndPrompts_ProceedDeclined_NoMutations(t *tes
 	seedDeployableMod(t, svc, game, "disable-me", "Disable Me", "disable.esp")
 
 	var out string
+	var declineErr error
 	withStdin(t, "n\n", func() {
 		out = captureStdout(t, func() error {
-			return doProfileSwitch(context.Background(), svc, game, "target")
+			declineErr = doProfileSwitch(context.Background(), svc, game, "target")
+			return nil
 		})
 	})
+	// #382: a declined confirmation is the shared cancellation sentinel, so
+	// Execute exits 2 and prints "Cancelled." on stderr - this used to
+	// return nil, i.e. exit 0 over a switch that never happened.
+	require.ErrorIs(t, declineErr, ErrCancelled)
 
 	assert.Contains(t, out, "Switching to profile: target\n\n")
 	assert.Contains(t, out, "Will disable 1 mod(s):\n")
 	assert.Contains(t, out, "  - Disable Me (disable-me)\n")
 	assert.Contains(t, out, "\nProceed? [Y/n]: ")
-	assert.Contains(t, out, "Cancelled.\n")
 
 	def, err := pm.GetDefault(context.Background(), game.ID)
 	require.NoError(t, err)
@@ -934,7 +939,12 @@ func TestDoProfileApply_VersionDrift_SchedulesReinstall(t *testing.T) {
 	var out string
 	withStdin(t, "n\n", func() {
 		out = captureStdout(t, func() error {
-			return doProfileApply(context.Background(), svc, game, nil)
+			// #382: a declined prompt is ErrCancelled (exit 2) - the plan
+			// print above it is what this test is about.
+			if err := doProfileApply(context.Background(), svc, game, nil); !errors.Is(err, ErrCancelled) {
+				return err
+			}
+			return nil
 		})
 	})
 

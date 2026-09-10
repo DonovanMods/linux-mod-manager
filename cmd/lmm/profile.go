@@ -551,8 +551,11 @@ func doProfileSwitch(ctx context.Context, service *core.Service, game *domain.Ga
 			return err
 		}
 		if input != "" && input != "y" && input != "yes" {
-			fmt.Println("Cancelled.")
-			return nil
+			// #382: exit 2, like every other declined confirmation - this
+			// used to print "Cancelled." and exit 0, so `lmm profile switch
+			// p && echo switched` printed "switched" over a switch that
+			// never happened. Execute prints the notice.
+			return ErrCancelled
 		}
 	}
 
@@ -1015,8 +1018,11 @@ func doProfileSync(ctx context.Context, service *core.Service, game *domain.Game
 			return err
 		}
 		if input != "" && input != "y" && input != "yes" {
-			fmt.Println("Cancelled.")
-			return nil
+			// #382: exit 2, like every other declined confirmation - this
+			// used to print "Cancelled." and exit 0, so `lmm profile switch
+			// p && echo switched` printed "switched" over a switch that
+			// never happened. Execute prints the notice.
+			return ErrCancelled
 		}
 	}
 
@@ -1330,8 +1336,11 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 			return err
 		}
 		if input != "" && input != "y" && input != "yes" {
-			fmt.Println("Cancelled.")
-			return nil
+			// #382: exit 2, like every other declined confirmation - this
+			// used to print "Cancelled." and exit 0, so `lmm profile switch
+			// p && echo switched` printed "switched" over a switch that
+			// never happened. Execute prints the notice.
+			return ErrCancelled
 		}
 	}
 

@@ -135,7 +135,8 @@ mod ID is installed from more than one source in the profile, use
 --json prints the rollback document (see 'lmm update --help') with status
 "rolled_back", or status "skipped" with reason "locked" when the mod is
 locked (unlock to roll back; moving the lock does not help, since this
-gate refuses whatever version is locked).
+gate refuses whatever version is locked). A locked refusal exits non-zero
+in both output modes: nothing was rolled back.
 
 Examples:
   lmm update rollback 12345 --game skyrim-se
@@ -995,6 +996,13 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	// as a skip (nil error / "skipped"+"locked" document) like the update
 	// path does, and names both remedy commands instead of surfacing the
 	// core gate's raw error.
+	// #382: a refusal exits non-zero. It used to `return nil`, so
+	// `lmm update rollback X && echo restored` printed "restored" over a
+	// rollback that never happened - and `--json`'s {"status":"skipped",
+	// "reason":"locked"} came with exit 0 too. ErrReported: both branches
+	// below have already said what happened, in their own output format, so
+	// Execute must exit 1 without printing a second thing (which under
+	// --json would be a second document on stdout).
 	if plan.Locked {
 		if jsonOutput {
 			// Nothing was written, so nothing changed - but Mod.Version is
@@ -1002,14 +1010,17 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 			// doc comment, on every branch including this refusal one (final
 			// review, Important #4 / #302): here that's the same value as
 			// ToVersion below, since core never applies past this refusal.
-			return emitJSON(&core.RollbackResult{
+			if err := emitJSON(&core.RollbackResult{
 				Mod:         domain.ModReference{SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID, Version: plan.ToVersion, Locked: true},
 				ModName:     plan.Mod.Name,
 				FromVersion: plan.FromVersion,
 				ToVersion:   plan.ToVersion,
 				Status:      core.UpdateSkipped,
 				Reason:      "locked",
-			})
+			}); err != nil {
+				return err
+			}
+			return ErrReported
 		}
 		// #294 (Ruling 5): RollbackPlan.Refusal, the same canonical text
 		// applySingleUpdate's locked branch prints - it carries -s/-p on
@@ -1019,7 +1030,7 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		// refuses on the lock alone).
 		fmt.Printf("Rollback available: %s → %s\n", plan.FromVersion, plan.ToVersion)
 		fmt.Println(plan.Refusal)
-		return nil
+		return ErrReported
 	}
 
 	if !jsonOutput {

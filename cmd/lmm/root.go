@@ -317,12 +317,40 @@ func Execute() {
 
 	rawArgs = os.Args[1:]
 	if err := runRoot(ctx); err != nil {
-		if errors.Is(err, ErrCancelled) || errors.Is(err, context.Canceled) {
+		switch exitCodeFor(err) {
+		case exitCancelled:
 			printCancelledNotice(os.Stderr, jsonOutput)
-			os.Exit(2)
+			os.Exit(exitCancelled)
+		default:
+			reportError(err)
+			os.Exit(exitError)
 		}
-		reportError(err)
-		os.Exit(1)
+	}
+}
+
+// lmm's documented exit codes - `lmm --help`'s EXIT CODES block.
+const (
+	exitOK        = 0
+	exitError     = 1
+	exitCancelled = 2
+)
+
+// exitCodeFor maps a command's returned error onto those codes. Execute is
+// its only production caller; it is a function so the contract `lmm --help`
+// states can be tested directly (#382), where measuring the real process's
+// exit status would mean building a binary per case.
+//
+// A declined confirmation is exit 2 wherever it happens, which is what every
+// prompt site returning ErrCancelled buys: before #382 the same "no" exited
+// 0 from `profile switch`, 1 from `import` and 2 from `purge`.
+func exitCodeFor(err error) int {
+	switch {
+	case err == nil:
+		return exitOK
+	case errors.Is(err, ErrCancelled), errors.Is(err, context.Canceled):
+		return exitCancelled
+	default:
+		return exitError
 	}
 }
 

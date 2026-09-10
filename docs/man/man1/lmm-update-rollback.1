@@ -21,7 +21,8 @@ mod ID is installed from more than one source in the profile, use
 --json prints the rollback document (see 'lmm update --help') with status
 "rolled_back", or status "skipped" with reason "locked" when the mod is
 locked (unlock to roll back; moving the lock does not help, since this
-gate refuses whatever version is locked).
+gate refuses whatever version is locked). A locked refusal exits non-zero
+in both output modes: nothing was rolled back.
 
 .PP
 Examples:

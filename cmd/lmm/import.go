@@ -259,7 +259,10 @@ func doImport(ctx context.Context, cmd *cobra.Command, service *core.Service, ga
 			return readErr
 		}
 		if !proceed {
-			return fmt.Errorf("import cancelled")
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
 		}
 		opts.AcceptConflicts = true
 	}
@@ -542,7 +545,10 @@ func runImportScan(cmd *cobra.Command, game *domain.Game, service *core.Service,
 			return err
 		}
 		if input != "y" && input != "yes" {
-			return fmt.Errorf("import cancelled")
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
 		}
 	}
 
@@ -627,7 +633,10 @@ func runImportWorkshop(ctx context.Context, service *core.Service, game *domain.
 			return err
 		}
 		if input != "y" && input != "yes" {
-			return fmt.Errorf("import cancelled")
+			// #382: the shared cancellation sentinel, so a declined
+			// import exits 2 like a declined purge - it used to be a bare
+			// error, reported as "Error: import cancelled" with exit 1.
+			return ErrCancelled
 		}
 	}
 
