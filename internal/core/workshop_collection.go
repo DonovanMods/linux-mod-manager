@@ -170,8 +170,15 @@ func (s *Service) PlanWorkshopCollectionImport(ctx context.Context, game *domain
 // with the first is how a preview ends up contradicting what it is
 // previewing.
 func (s *Service) describeCollection(ctx context.Context, game *domain.Game, collection source.Collection, sourceID, profileName string, plan *ImportPlan) *WorkshopCollection {
-	tracked := make(map[string]bool, len(plan.Installed))
+	// Both buckets mean "lmm already has a row for this item": Installed is
+	// a row in the profile being imported into, AlreadyCached (#371) one
+	// under any other profile of the same game. Tracked is a game-wide fact
+	// about a Steam item, so either answers it.
+	tracked := make(map[string]bool, len(plan.Installed)+len(plan.AlreadyCached))
 	for _, ref := range plan.Installed {
+		tracked[ref.ModID] = true
+	}
+	for _, ref := range plan.AlreadyCached {
 		tracked[ref.ModID] = true
 	}
 

@@ -1054,8 +1054,9 @@ func TestJSONGoldens(t *testing.T) {
 		},
 		{
 			// Missing is deliberately left nil to pin that a nil slice
-			// marshals as "[]", not "null" - Installed/NeedsRedownload
-			// (also non-omitempty) each carry an entry instead.
+			// marshals as "[]", not "null" - Installed/AlreadyCached/
+			// NeedsRedownload (also non-omitempty) each carry an entry
+			// instead.
 			"import_plan",
 			core.ImportPlan{
 				Profile: &domain.Profile{
@@ -1063,7 +1064,11 @@ func TestJSONGoldens(t *testing.T) {
 					Mods:       []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
 					LinkMethod: domain.LinkSymlink,
 				},
-				Installed:       []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
+				Installed: []domain.ModReference{{SourceID: "nexusmods", ModID: "42", Version: "1.2.3"}},
+				// #371: a mod installed under some OTHER profile - its bytes
+				// are cached, so this import writes the row without
+				// downloading anything.
+				AlreadyCached:   []domain.ModReference{{SourceID: "nexusmods", ModID: "13", Version: "2.0.0"}},
 				NeedsRedownload: []domain.ModReference{{SourceID: "nexusmods", ModID: "7", Version: "1.0.0"}},
 				Missing:         nil,
 				Exists:          true,

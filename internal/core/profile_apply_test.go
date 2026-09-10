@@ -628,3 +628,50 @@ func TestApplyProfileApply_StalePlan(t *testing.T) {
 	_, err = svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
 	require.ErrorIs(t, err, core.ErrStalePlan)
 }
+
+// TestPlanProfileApply_ExternalRefIsRecordedNotFetched pins #371's fourth
+// case for `lmm profile apply`: a profile that names a Steam Workshop item
+// lmm already tracks (under another profile - the row is game-wide in
+// everything but its profile key) must RECORD that external row here, never
+// try to install it. Fetching one either fails outright (a delisted item) or,
+// with a live item, downloads a copy over what Steam manages - silently
+// changing what the profile means.
+func TestPlanProfileApply_ExternalRefIsRecordedNotFetched(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	_, err = pm.Create(context.Background(), game.ID, "shared")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "111000111", SourceID: "steamworkshop", Name: "Workshop item 111000111", Version: "9876543210", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		External:     true,
+		ExternalPath: "/steam/workshop/content/1/111000111",
+	}))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "shared",
+		domain.ModReference{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}))
+
+	// No source is registered: an external entry must never reach one.
+	plan, err := svc.PlanProfileApply(context.Background(), game, "shared")
+	require.NoError(t, err)
+	require.Len(t, plan.ToInstall, 1)
+	assert.True(t, plan.ToInstall[0].External, "a tracked Steam item is recorded, not installed")
+	assert.Empty(t, plan.ToInstall[0].Error, "an external entry must not be resolved against a source")
+
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result.Failed)
+	assert.Equal(t, 1, result.Installed)
+
+	row, err := svc.GetInstalledMod(context.Background(), "steamworkshop", "111000111", game.ID, "shared")
+	require.NoError(t, err)
+	assert.True(t, row.External)
+	assert.Equal(t, "/steam/workshop/content/1/111000111", row.ExternalPath)
+}

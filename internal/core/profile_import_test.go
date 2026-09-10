@@ -32,11 +32,12 @@ import (
 )
 
 // TestPlanImportCategorizes guards PlanImport's pure categorization step
-// (doProfileImport :416-459): a mod already installed AND cached is
-// "Installed", a mod with a DB row but no cache entry is "NeedsRedownload",
-// and a mod with no DB row anywhere is "Missing" - including the
-// cross-profile scan (:428-438), which must find an installed mod even when
-// it lives under a DIFFERENT profile than the one being imported into.
+// (doProfileImport :416-459): a mod with a DB row but no cache entry is
+// "NeedsRedownload", and a mod with no DB row anywhere is "Missing" -
+// including the cross-profile scan (:428-438), which must find an installed
+// mod even when it lives under a DIFFERENT profile than the one being
+// imported into. Since #371 such a cross-profile hit is "AlreadyCached" (its
+// bytes are here; this profile still needs its own row), not "Installed".
 func TestPlanImportCategorizes(t *testing.T) {
 	svc := newFlowsTestService(t)
 	gameDir := t.TempDir()
@@ -75,8 +76,9 @@ func TestPlanImportCategorizes(t *testing.T) {
 	plan, err := svc.PlanImport(context.Background(), game, data)
 	require.NoError(t, err)
 
-	require.Len(t, plan.Installed, 1)
-	assert.Equal(t, "installed-mod", plan.Installed[0].ModID)
+	require.Len(t, plan.AlreadyCached, 1)
+	assert.Equal(t, "installed-mod", plan.AlreadyCached[0].ModID)
+	assert.Empty(t, plan.Installed, "#371: a row under another profile is not a row in this one")
 	require.Len(t, plan.NeedsRedownload, 1)
 	assert.Equal(t, "redownload-mod", plan.NeedsRedownload[0].ModID)
 	require.Len(t, plan.Missing, 1)
@@ -692,9 +694,13 @@ func TestPlanImport_VersionDrift_SchedulesReinstall(t *testing.T) {
 	require.Len(t, plan.NeedsRedownload, 1, "the version-drifted mod must be scheduled for reinstall at the profile's version")
 	assert.Equal(t, "drifted-mod", plan.NeedsRedownload[0].ModID)
 	assert.Equal(t, "1.0", plan.NeedsRedownload[0].Version, "the reinstall must target the imported profile's version, not the installed one")
-	require.Len(t, plan.Installed, 2, "same-version and unpinned refs keep the pre-#138 classification")
-	assert.Equal(t, "same-mod", plan.Installed[0].ModID)
-	assert.Equal(t, "unpinned-mod", plan.Installed[1].ModID)
+	// #371: all three live under "other", not the profile being imported
+	// into, so the two non-drifted ones are AlreadyCached (a row to write
+	// from cache) rather than Installed (nothing to do).
+	require.Len(t, plan.AlreadyCached, 2, "same-version and unpinned refs keep the pre-#138 classification")
+	assert.Equal(t, "same-mod", plan.AlreadyCached[0].ModID)
+	assert.Equal(t, "unpinned-mod", plan.AlreadyCached[1].ModID)
+	assert.Empty(t, plan.Installed)
 	assert.Empty(t, plan.Missing)
 }
 
@@ -894,4 +900,159 @@ func TestApplyImportCtxCancelled(t *testing.T) {
 	assert.NoError(t, err, "mod1 must have completed before cancellation")
 	_, err = svc.GetInstalledMod(context.Background(), "src", "mod2", "g1", "target")
 	assert.Error(t, err, "mod2 must never have been attempted once ctx was cancelled")
+}
+
+// --- #371: the imported profile gets its OWN installed_mods rows ---
+
+// TestPlanImport_InstalledUnderAnotherProfile_IsAlreadyCached pins the
+// classification half of #371. installed_mods is keyed by profile, so a row
+// belonging to "default" says nothing about whether "imported" has the mod:
+// the cross-profile scan answers "are the bytes already downloaded", never
+// "does THIS profile have it". Such a ref belongs in AlreadyCached (a row to
+// write, from cache, with no download), and Installed is reserved for rows
+// already in the profile being imported into.
+func TestPlanImport_InstalledUnderAnotherProfile_IsAlreadyCached(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	// mine: installed and cached under the profile being imported INTO.
+	seedInstalledModUnderProfile(t, svc, game, "imported", "src", "mine", "Mine", "1.0", true,
+		map[string][]byte{"mine.esp": []byte("m")})
+	// theirs: installed and cached, but only under "default".
+	seedInstalledModUnderProfile(t, svc, game, "default", "src", "theirs", "Theirs", "1.0", true,
+		map[string][]byte{"theirs.esp": []byte("t")})
+
+	profile := &domain.Profile{
+		Name: "imported", GameID: game.ID,
+		Mods: []domain.ModReference{
+			{SourceID: "src", ModID: "mine", Version: "1.0"},
+			{SourceID: "src", ModID: "theirs", Version: "1.0"},
+		},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+
+	require.Len(t, plan.Installed, 1, "only a row in the TARGET profile is already installed")
+	assert.Equal(t, "mine", plan.Installed[0].ModID)
+	require.Len(t, plan.AlreadyCached, 1, "a row from another profile needs its own row here")
+	assert.Equal(t, "theirs", plan.AlreadyCached[0].ModID)
+	assert.Empty(t, plan.Missing)
+	assert.Empty(t, plan.NeedsRedownload)
+}
+
+// TestApplyImport_CrossProfileMod_GetsARowAndSurvivesSync is the review's
+// exact reproduction for #371, end to end: every mod of the imported profile
+// is installed only under "default", so the pre-fix plan called all of them
+// "already installed", ApplyImport wrote nothing, and `profile sync` then
+// removed every ref the import had just written.
+//
+// No source is registered at all: an AlreadyCached entry must install from
+// the existing cache entry without ever reaching the network (a re-download
+// is what the cross-profile scan exists to avoid).
+func TestApplyImport_CrossProfileMod_GetsARowAndSurvivesSync(t *testing.T) {
+	svc := newFlowsTestService(t)
+	gameDir := t.TempDir()
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: gameDir, LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	seedInstalledModUnderProfile(t, svc, game, "default", "src", "alpha", "Alpha Overhaul", "2.0.0", true,
+		map[string][]byte{"alpha.esp": []byte("a")})
+	seedInstalledModUnderProfile(t, svc, game, "default", "src", "beta", "Beta Library", "2.0.0", true,
+		map[string][]byte{"beta.esp": []byte("b")})
+
+	profile := &domain.Profile{
+		Name: "imported", GameID: game.ID,
+		Mods: []domain.ModReference{
+			{SourceID: "src", ModID: "alpha", Version: "2.0.0"},
+			{SourceID: "src", ModID: "beta", Version: "2.0.0"},
+		},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.AlreadyCached, 2)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Installed)
+	assert.Equal(t, 0, result.Failed)
+
+	rows, err := svc.GetInstalledMods(context.Background(), game.ID, "imported")
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "the imported profile must have its own installed_mods rows")
+	for _, im := range rows {
+		assert.True(t, im.Enabled, "%s must be enabled in the imported profile", im.ID)
+		assert.Equal(t, "2.0.0", im.Version)
+	}
+
+	// The files the profile names are deployed, so the profile is not empty
+	// on disk either.
+	for _, name := range []string{"alpha.esp", "beta.esp"} {
+		_, err := os.Lstat(filepath.Join(gameDir, name))
+		assert.NoError(t, err, "%s must be deployed", name)
+	}
+
+	// The sibling command that resolves this drift in the other direction
+	// must now find nothing to do - pre-fix it proposed removing every ref.
+	syncPlan, err := svc.PlanProfileSync(context.Background(), game, "imported")
+	require.NoError(t, err)
+	assert.Empty(t, syncPlan.ToRemove, "profile sync must not propose erasing the imported refs")
+	assert.True(t, syncPlan.NoChanges, "the imported profile must already match the DB")
+}
+
+// TestApplyImport_CrossProfileExternalMod_IsRecordedNotFetched covers #371's
+// fourth case: a Steam Workshop item Steam itself installed. It has no cache
+// entry and nothing to download - the imported profile simply needs the same
+// EXTERNAL row, copied. Fetching it would either fail (a delisted item) or,
+// worse, replace a Steam-managed item with an lmm-managed copy.
+func TestApplyImport_CrossProfileExternalMod_IsRecordedNotFetched(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "111000111", SourceID: "steamworkshop", Name: "Workshop item 111000111", Version: "9876543210", GameID: game.ID},
+		ProfileName:  "default",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		Deployed:     true,
+		External:     true,
+		ExternalPath: "/steam/workshop/content/1/111000111",
+	}))
+
+	profile := &domain.Profile{
+		Name: "imported", GameID: game.ID,
+		Mods: []domain.ModReference{{SourceID: "steamworkshop", ModID: "111000111", Version: "9876543210"}},
+	}
+	data, err := config.ExportProfile(profile)
+	require.NoError(t, err)
+
+	plan, err := svc.PlanImport(context.Background(), game, data)
+	require.NoError(t, err)
+	require.Len(t, plan.AlreadyCached, 1)
+
+	result, err := svc.ApplyImport(context.Background(), game, plan, core.ProfileImportOptions{Install: true}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Installed)
+	assert.Equal(t, 0, result.Failed, "an external row is copied, never fetched")
+
+	row, err := svc.GetInstalledMod(context.Background(), "steamworkshop", "111000111", game.ID, "imported")
+	require.NoError(t, err)
+	assert.True(t, row.External, "the copied row must stay external")
+	assert.Equal(t, "/steam/workshop/content/1/111000111", row.ExternalPath)
 }

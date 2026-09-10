@@ -957,6 +957,27 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **`profile import` gives the imported profile its own mods (#371).** A mod
+  already installed under some OTHER profile was classified "already
+  installed", and the import wrote nothing for it — leaving a profile whose
+  YAML listed N mods and whose database held none. `lmm list` showed nothing,
+  `status` reported "3 mod(s)" and "Installed Mods: 0" on one screen, and
+  `profile sync` — offered right alongside Apply, and unconditionally in the
+  web UI's Profile card — then proposed erasing every ref the import had just
+  written. That cross-profile hit answers "are the bytes downloaded", which
+  is the right question for whether to DOWNLOAD and the wrong one for whether
+  this profile has the mod, so the two are now separate: such a mod is listed
+  as already downloaded and installed into the profile from the cache entry
+  that is already there — no fetch and no download — while "already
+  installed" is reserved for rows the profile being imported into genuinely
+  has. `ImportPlan` gains an additive `already_cached` bucket, and both
+  frontends offer those mods as pending work rather than reporting a clean
+  success over an empty profile. A tracked Steam Workshop item is copied as
+  the tracking row it is, never fetched; `profile apply` learned the same
+  rule, so a profile naming a Workshop item lmm already tracks records it
+  instead of failing on a delisted one — or, worse, downloading an
+  lmm-managed copy over what Steam manages.
+
 - **Two overlapping reloads of the same web UI slice no longer commit out of
   order (#370).** The SPA already dropped an answer fetched for a route the
   user had left, but nothing fenced one load of a slice against another load

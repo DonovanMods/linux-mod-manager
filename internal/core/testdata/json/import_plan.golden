@@ -40,6 +40,14 @@
       "locked": false
     }
   ],
+  "already_cached": [
+    {
+      "source_id": "nexusmods",
+      "mod_id": "13",
+      "version": "2.0.0",
+      "locked": false
+    }
+  ],
   "needs_redownload": [
     {
       "source_id": "nexusmods",

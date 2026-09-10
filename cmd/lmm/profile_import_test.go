@@ -95,10 +95,40 @@ func stripDownloadProgress(out string) string {
 
 // TestDoProfileImport_AllInstalled_PrintsSummaryAndSkipsInstallStep pins the
 // "all-installed" path: every mod in the profile is already installed AND
-// cached, so toDownload is empty - doProfileImport must never prompt, never
-// print the download-skip message (guarded by `if len(toDownload) > 0`), and
-// return nil after just the summary + save lines.
+// cached UNDER THE PROFILE BEING IMPORTED INTO, so there is nothing pending -
+// doProfileImport must never prompt, never print the download-skip message
+// (guarded by `if pendingCount > 0`), and return nil after just the summary +
+// save lines.
 func TestDoProfileImport_AllInstalled_PrintsSummaryAndSkipsInstallStep(t *testing.T) {
+	svc, game, src := setupDoProfileImportTest(t)
+	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
+
+	require.NoError(t, svc.GetGameCache(game).Store(game.ID, "test-src", "mod1", "1.0", "mod1.esp", []byte("cached")))
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod:          domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
+		ProfileName:  "target",
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+
+	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
+
+	out := captureStdout(t, func() error {
+		return doProfileImport(context.Background(), svc, game, data)
+	})
+
+	assert.Equal(t, "Importing profile: target\n\nFound 1 mod(s) in profile.\n  ✓ 1 already installed\n\n✓ Imported profile: target\n", out)
+}
+
+// TestDoProfileImport_InstalledUnderAnotherProfile_AddsItToThisOne is #371 at
+// the CLI: the mod is installed and cached under "default", so importing
+// "target" used to print "1 already installed" and write nothing at all -
+// leaving a profile whose YAML listed a mod its DB had no row for. It is
+// pending work now, offered as such and installed from the cache entry that
+// is already there: the source has NO download registered, so a re-download
+// would fail the import outright.
+func TestDoProfileImport_InstalledUnderAnotherProfile_AddsItToThisOne(t *testing.T) {
 	svc, game, src := setupDoProfileImportTest(t)
 	src.AddMod(&domain.Mod{ID: "mod1", SourceID: "test-src", Name: "Mod One", Version: "1.0", GameID: "g1"},
 		[]domain.DownloadableFile{{ID: "main", FileName: "mod1.esp", IsPrimary: true}})
@@ -121,11 +151,19 @@ func TestDoProfileImport_AllInstalled_PrintsSummaryAndSkipsInstallStep(t *testin
 
 	data := buildImportProfileData(t, "g1", "target", []domain.ModReference{{SourceID: "test-src", ModID: "mod1", Version: "1.0"}})
 
+	profileImportYes = true
+	t.Cleanup(func() { profileImportYes = false })
+
 	out := captureStdout(t, func() error {
 		return doProfileImport(context.Background(), svc, game, data)
 	})
 
-	assert.Equal(t, "Importing profile: target\n\nFound 1 mod(s) in profile.\n  ✓ 1 already installed\n\n✓ Imported profile: target\n", out)
+	assert.Contains(t, out, "  + 1 already downloaded, will be added to this profile:")
+	assert.Contains(t, out, "Installed: 1")
+
+	row, err := svc.GetInstalledMod(context.Background(), "test-src", "mod1", "g1", "target")
+	require.NoError(t, err)
+	assert.True(t, row.Enabled, "the imported profile must own an enabled row of its own")
 }
 
 // TestDoProfileImport_NeedsRedownload_ReinstallsUsingStoredFileIDs pins the

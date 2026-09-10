@@ -778,10 +778,19 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 	// is the run's whole output (Ruling 15).
 	if !jsonOutput {
 		fmt.Printf("Importing profile: %s\n\n", plan.Profile.Name)
-		totalMods := len(plan.Installed) + len(plan.NeedsRedownload) + len(plan.Missing)
+		totalMods := len(plan.Installed) + len(plan.AlreadyCached) + len(plan.NeedsRedownload) + len(plan.Missing)
 		fmt.Printf("Found %d mod(s) in profile.\n", totalMods)
 		if len(plan.Installed) > 0 {
 			fmt.Printf("  ✓ %d already installed\n", len(plan.Installed))
+		}
+		// #371: these are installed under ANOTHER profile - the bytes are
+		// here, but this profile still needs its own rows, so they are
+		// pending work, not "already installed".
+		if len(plan.AlreadyCached) > 0 {
+			fmt.Printf("  + %d already downloaded, will be added to this profile:\n", len(plan.AlreadyCached))
+			for _, ref := range plan.AlreadyCached {
+				fmt.Printf("    - %s\n", importRefLine(ref))
+			}
 		}
 		if len(plan.NeedsRedownload) > 0 {
 			fmt.Printf("  ⚠ %d cache missing, need re-download:\n", len(plan.NeedsRedownload))
@@ -797,12 +806,14 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	}
 
-	toDownloadCount := len(plan.NeedsRedownload) + len(plan.Missing)
+	// #371: AlreadyCached counts as pending too - it is installed, just not
+	// downloaded, and declining leaves the profile without those rows.
+	pendingCount := len(plan.AlreadyCached) + len(plan.NeedsRedownload) + len(plan.Missing)
 
 	declined := false
 
 	opts := core.ProfileImportOptions{Force: profileImportForce, NoInstall: profileImportNoInstall}
-	if toDownloadCount > 0 && !profileImportNoInstall {
+	if pendingCount > 0 && !profileImportNoInstall {
 		if profileImportYes {
 			opts.Install = true
 		} else {
@@ -893,7 +904,7 @@ func doProfileImport(ctx context.Context, service *core.Service, game *domain.Ga
 		}
 	case declined:
 		// The decline message was already printed at the prompt above.
-	case toDownloadCount == 0:
+	case pendingCount == 0:
 		// Nothing to install - the pre-extraction CLI's early-out never
 		// printed anything further in this case either.
 	default:

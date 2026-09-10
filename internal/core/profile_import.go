@@ -21,20 +21,32 @@ type ImportPlan struct {
 	// print and ApplyImport's own save step.
 	Profile *domain.Profile `json:"profile,omitempty"`
 
-	// Installed holds every profile mod already installed (a DB row exists)
-	// at the profile's own version (or with no version recorded in the
-	// profile at all) AND cached at that exact version - nothing to do for
-	// these. NeedsRedownload holds mods that must be re-fetched: a DB row
-	// with no matching cache entry (installed somewhere, cache gone), or -
-	// #138's convergence case, mirroring PlanProfileSwitch's #96 drift case -
-	// a row installed at a DIFFERENT version than the imported profile
-	// records, scheduled for reinstall at the profile's version (downgrades
-	// included; each such ref also records the row being converged away from
-	// in priorVersions). Missing holds mods with no DB row anywhere (checked
-	// across EVERY saved profile for the game, not just the one being
-	// imported into - doProfileImport's cross-profile scan, :428-438). All
-	// three preserve profile.Mods' own order.
+	// Installed holds every profile mod already installed IN THE PROFILE
+	// BEING IMPORTED INTO (a DB row exists for that profile) at the
+	// profile's own version (or with no version recorded in the profile at
+	// all) AND cached at that exact version - nothing to do for these.
+	//
+	// AlreadyCached holds mods installed under some OTHER saved profile of
+	// the same game (the cross-profile scan below): the bytes are already
+	// downloaded, but installed_mods is keyed by profile, so this profile
+	// still needs its own row (#371). ApplyImport installs these from the
+	// existing cache entry - no fetch, no download, no network at all - and
+	// records the row and the profile ref exactly as a fresh install would.
+	// An EXTERNAL row (a Steam Workshop item Steam itself installed) lands
+	// here too: it has nothing to install, so its row is simply copied.
+	//
+	// NeedsRedownload holds mods that must be re-fetched: a DB row with no
+	// matching cache entry (installed somewhere, cache gone), or - #138's
+	// convergence case, mirroring PlanProfileSwitch's #96 drift case - a row
+	// installed at a DIFFERENT version than the imported profile records,
+	// scheduled for reinstall at the profile's version (downgrades included;
+	// each such ref also records the row being converged away from in
+	// priorVersions - only when that row belongs to THIS profile, since an
+	// import must never remove another profile's deployed files). Missing
+	// holds mods with no DB row anywhere. All four preserve profile.Mods'
+	// own order.
 	Installed       []domain.ModReference `json:"installed"`
+	AlreadyCached   []domain.ModReference `json:"already_cached"`
 	NeedsRedownload []domain.ModReference `json:"needs_redownload"`
 	Missing         []domain.ModReference `json:"missing"`
 
@@ -70,6 +82,15 @@ type ImportPlan struct {
 	// PlanProfileSwitch's drift case applies.
 	storedFileIDs map[string][]string
 
+	// cachedRows maps domain.ModKey keys (for AlreadyCached entries only) to
+	// the installed row this profile's own row is built from - the row
+	// belonging to whichever other profile already has the mod (#371).
+	// ApplyImport needs the whole row: its Mod (name/version, so nothing has
+	// to be fetched to write the row), its FileIDs, and - for an external
+	// row - External/ExternalPath. Private, like storedFileIDs: pure
+	// plan-to-apply plumbing no preview renders.
+	cachedRows map[string]domain.InstalledMod
+
 	// priorVersions maps domain.ModKey keys (for NeedsRedownload's #138
 	// version-drift entries only) to the installed row being converged AWAY
 	// from - the import twin of SwitchPlan.PriorVersions (see its doc
@@ -104,73 +125,119 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 	_, existErr := pm.Get(ctx, game.ID, profile.Name)
 	exists := existErr == nil
 
-	// installedData keeps each mod key's full installed row (doProfileImport
-	// tracked only Version/FileIDs), needed to (a) check the cache at the
-	// RIGHT version, (b) preserve the redownload FileIDs rule above, and
-	// (c) record the prior row a #138 version-drift entry converges away
-	// from (priorVersions needs the whole Mod for Installer.Replace).
+	// targetRows keeps each mod key's full installed row FOR THE PROFILE
+	// BEING IMPORTED INTO (doProfileImport tracked only Version/FileIDs),
+	// needed to (a) check the cache at the RIGHT version, (b) preserve the
+	// redownload FileIDs rule above, and (c) record the prior row a #138
+	// version-drift entry converges away from (priorVersions needs the whole
+	// Mod for Installer.Replace).
 	installedMods, _ := s.GetInstalledMods(ctx, game.ID, profile.Name)
 	// Ruling 5: record the installed set this plan is being computed
 	// against, so ApplyImport can refuse it once profile.Name's has moved on
 	// - snapshotOf reuses installedMods rather than re-querying (see its own
 	// doc comment).
 	snapshot := snapshotOf(installedMods)
-	installedData := make(map[string]domain.InstalledMod)
+	targetRows := make(map[string]domain.InstalledMod)
 	for _, im := range installedMods {
 		key := domain.ModKey(im.SourceID, im.ID)
-		installedData[key] = im
+		targetRows[key] = im
 	}
 
 	// Cross-profile scan (:428-438): a mod installed under some OTHER saved
-	// profile still counts as "installed", not "missing". Errors from List/
-	// GetInstalledMods are ignored, matching doProfileImport exactly (a
-	// missing/unreadable profile simply contributes nothing).
+	// profile has its bytes downloaded already - which answers "does this
+	// need fetching", and NOT "does this profile have it" (#371):
+	// installed_mods is keyed by profile, so such a row leaves the profile
+	// being imported into with nothing at all. Kept separate from targetRows
+	// for exactly that reason. Errors from List/GetInstalledMods are
+	// ignored, matching doProfileImport exactly (a missing/unreadable
+	// profile simply contributes nothing).
+	elsewhereRows := make(map[string]domain.InstalledMod)
 	allProfiles, _ := pm.List(ctx, game.ID)
 	for _, p := range allProfiles {
+		if p.Name == profile.Name {
+			continue
+		}
 		mods, _ := s.GetInstalledMods(ctx, game.ID, p.Name)
 		for _, im := range mods {
 			key := domain.ModKey(im.SourceID, im.ID)
-			if _, exists := installedData[key]; !exists {
-				installedData[key] = im
+			if _, inTarget := targetRows[key]; inTarget {
+				continue
+			}
+			if _, seen := elsewhereRows[key]; !seen {
+				elsewhereRows[key] = im
 			}
 		}
 	}
 
-	var installed, needsRedownload, missing []domain.ModReference
+	var installed, alreadyCached, needsRedownload, missing []domain.ModReference
 	storedFileIDs := make(map[string][]string)
-	var priorVersions map[string]domain.InstalledMod // #138 - see ImportPlan.priorVersions
+	cachedRows := make(map[string]domain.InstalledMod) // #371 - see ImportPlan.cachedRows
+	var priorVersions map[string]domain.InstalledMod   // #138 - see ImportPlan.priorVersions
 	gameCache := s.GetGameCache(game)
 	for _, ref := range profile.Mods {
 		key := domain.ModKey(ref.SourceID, ref.ModID)
-		im, inDB := installedData[key]
+
+		if im, inTarget := targetRows[key]; inTarget {
+			switch {
+			case im.External:
+				// #269: an EXTERNAL row is a Steam Workshop item Steam
+				// itself installed. There is no cache entry to look for and
+				// nothing to re-download - it is simply present - and its
+				// Version is a content id that would send the #138 drift
+				// branch below into a reinstall lmm has no way to perform.
+				// "Already installed" is the whole truth about it.
+				installed = append(installed, ref)
+			case ref.Version != "" && im.Version != ref.Version:
+				// #138 convergence, mirroring PlanProfileSwitch's #96 drift
+				// case: the imported profile names a different version than
+				// the installed row - reinstall at the profile's version
+				// (downgrades included). ref is passed as-is: its own
+				// FileIDs (if any) describe the TARGET version; the
+				// installed row's describe the wrong one (so no
+				// storedFileIDs entry). The installed row itself is recorded
+				// in priorVersions so ApplyImport's install loop can Replace
+				// a live older deployment instead of installing over it.
+				needsRedownload = append(needsRedownload, ref)
+				if priorVersions == nil {
+					priorVersions = make(map[string]domain.InstalledMod)
+				}
+				priorVersions[key] = im
+			case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, im.Version):
+				installed = append(installed, ref)
+			default:
+				needsRedownload = append(needsRedownload, ref)
+				storedFileIDs[key] = im.FileIDs
+			}
+			continue
+		}
+
+		im, elsewhere := elsewhereRows[key]
 		switch {
-		case !inDB:
+		case !elsewhere:
 			missing = append(missing, ref)
 		case im.External:
-			// #269: an EXTERNAL row is a Steam Workshop item Steam itself
-			// installed. There is no cache entry to look for and nothing to
-			// re-download - it is simply present - and its Version is a
-			// content id that would send the #138 drift branch below into a
-			// reinstall lmm has no way to perform. "Already installed" is
-			// the whole truth about it.
-			installed = append(installed, ref)
+			// #371/#269: nothing to fetch and nothing to deploy - this
+			// profile needs the same tracking row, copied.
+			alreadyCached = append(alreadyCached, ref)
+			cachedRows[key] = im
 		case ref.Version != "" && im.Version != ref.Version:
-			// #138 convergence, mirroring PlanProfileSwitch's #96 drift
-			// case: the imported profile names a different version than the
-			// installed row - reinstall at the profile's version (downgrades
-			// included). ref is passed as-is: its own FileIDs (if any)
-			// describe the TARGET version; the installed row's describe the
-			// wrong one (so no storedFileIDs entry). The installed row
-			// itself is recorded in priorVersions so ApplyImport's install
-			// loop can Replace a live older deployment instead of
-			// installing over it.
+			// The other profile holds a DIFFERENT version, so this
+			// profile's own version still has to be fetched - #138's
+			// convergence, with the same priorVersions record as the
+			// same-profile case above: the deployed tree is game-global, so
+			// a live older deployment of this very mod is REPLACED (its
+			// obsolete files removed) rather than installed alongside.
 			needsRedownload = append(needsRedownload, ref)
 			if priorVersions == nil {
 				priorVersions = make(map[string]domain.InstalledMod)
 			}
 			priorVersions[key] = im
 		case gameCache.Exists(game.ID, ref.SourceID, ref.ModID, im.Version):
-			installed = append(installed, ref)
+			// #371: the bytes are here - install this profile's own row
+			// from the cache entry rather than calling it "installed" and
+			// writing nothing.
+			alreadyCached = append(alreadyCached, ref)
+			cachedRows[key] = im
 		default:
 			needsRedownload = append(needsRedownload, ref)
 			storedFileIDs[key] = im.FileIDs
@@ -179,19 +246,29 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 
 	// #365: stamp the display facts every bucket's renderer needs, so no
 	// surface has to print a Workshop content id where a version goes.
-	s.stampRefDisplay(installed, installedData)
-	s.stampRefDisplay(needsRedownload, installedData)
-	s.stampRefDisplay(missing, installedData)
-	s.stampRefDisplay(profile.Mods, installedData)
+	displayRows := make(map[string]domain.InstalledMod, len(targetRows)+len(elsewhereRows))
+	for k, im := range elsewhereRows {
+		displayRows[k] = im
+	}
+	for k, im := range targetRows {
+		displayRows[k] = im
+	}
+	s.stampRefDisplay(installed, displayRows)
+	s.stampRefDisplay(alreadyCached, displayRows)
+	s.stampRefDisplay(needsRedownload, displayRows)
+	s.stampRefDisplay(missing, displayRows)
+	s.stampRefDisplay(profile.Mods, displayRows)
 
 	return &ImportPlan{
 		Profile:         profile,
 		Installed:       installed,
+		AlreadyCached:   alreadyCached,
 		NeedsRedownload: needsRedownload,
 		Missing:         missing,
 		Exists:          exists,
 		data:            data,
 		storedFileIDs:   storedFileIDs,
+		cachedRows:      cachedRows,
 		priorVersions:   priorVersions,
 		snapshot:        snapshot,
 	}, nil
@@ -313,15 +390,18 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	result.ProfileName = profile.Name
 	emit(StepEvent{Scope: Scope{Op: OpImport, ModName: profile.Name}, Phase: ImportSaved})
 
-	toDownload := make([]domain.ModReference, 0, len(plan.NeedsRedownload)+len(plan.Missing))
-	toDownload = append(toDownload, plan.NeedsRedownload...)
-	toDownload = append(toDownload, plan.Missing...)
+	// #371: AlreadyCached leads, since those install straight from the cache
+	// entry another profile already has - no fetch, no download.
+	toInstall := make([]domain.ModReference, 0, len(plan.AlreadyCached)+len(plan.NeedsRedownload)+len(plan.Missing))
+	toInstall = append(toInstall, plan.AlreadyCached...)
+	toInstall = append(toInstall, plan.NeedsRedownload...)
+	toInstall = append(toInstall, plan.Missing...)
 
-	if len(toDownload) == 0 {
+	if len(toInstall) == 0 {
 		return result, nil
 	}
 	if opts.NoInstall || !opts.Install {
-		result.Skipped = len(toDownload)
+		result.Skipped = len(toInstall)
 		return result, nil
 	}
 
@@ -329,10 +409,10 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	if err != nil {
 		return result, err
 	}
-	total := len(toDownload)
+	total := len(toInstall)
 	emit(StepEvent{Scope: Scope{Op: OpImport, Total: total}, Phase: ImportInstalling})
 
-	for idx, ref := range toDownload {
+	for idx, ref := range toInstall {
 		// Task 6 item d (cancel-then-drain): checked between mods, never
 		// mid-file-operation - see DeployProfile/ApplyProfileSwitch's
 		// identical check.
@@ -350,6 +430,28 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 				SourceID: ref.SourceID, ModID: ref.ModID, Name: scope.ModName, Reason: reason,
 			})
 			emit(ModEvent{Scope: scope, Phase: ImportModFailed, Detail: reason})
+		}
+
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+
+		// #371: a mod another profile already has needs this profile's own
+		// row, built from that row and its cache entry. Deliberately ahead
+		// of every source call below: an already-downloaded mod must not be
+		// re-fetched, and an EXTERNAL one (Steam's own item) has no source
+		// call that would even succeed.
+		if row, ok := plan.cachedRows[key]; ok {
+			scope.ModName = row.Name
+			modRef, err := s.importCachedMod(ctx, game, profile.Name, installer, row)
+			if err != nil {
+				fail(err.Error())
+				continue
+			}
+			if cerr := s.recordImportedRef(ctx, pm, game.ID, profile.Name, modRef, scope, result, emit); cerr != nil {
+				return result, cerr
+			}
+			result.Installed++
+			emit(ModEvent{Scope: scope, Phase: ImportModInstalled})
+			continue
 		}
 
 		mod, err := s.GetMod(ctx, ref.SourceID, game.ID, ref.ModID)
@@ -373,7 +475,6 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		// redownload, or the imported profile's own FileIDs for a fresh
 		// install (:541-552's rule; see ImportPlan.storedFileIDs' doc
 		// comment for why this can't just be ref.FileIDs uniformly).
-		key := domain.ModKey(ref.SourceID, ref.ModID)
 		var fileIDsToUse []string
 		if stored, ok := plan.storedFileIDs[key]; ok {
 			fileIDsToUse = stored
@@ -464,19 +565,8 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 		}
 
 		modRef := domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: downloadedFileIDs}
-		// Ruling 16 (A): the DB row and the deployment are already in
-		// place, so the profile ref that completes them is written even
-		// under a cancelled ctx; the cancellation then ends the run before
-		// result.Installed counts this mod or the next one is touched.
-		if err := completeProfileWrite(ctx, func(ctx context.Context) error {
-			return pm.UpsertMod(ctx, game.ID, profile.Name, modRef)
-		}); err != nil {
-			if cerr := ctx.Err(); cerr != nil {
-				return result, cerr
-			}
-			msg := fmt.Sprintf("Warning: could not update profile: %v", err)
-			result.Notes = append(result.Notes, msg)
-			emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
+		if cerr := s.recordImportedRef(ctx, pm, game.ID, profile.Name, modRef, scope, result, emit); cerr != nil {
+			return result, cerr
 		}
 
 		result.Installed++
@@ -500,4 +590,69 @@ func (s *Service) applyImport(ctx context.Context, game *domain.Game, plan *Impo
 	}
 
 	return result, nil
+}
+
+// importCachedMod writes profileName's own installed_mods row for a mod that
+// is already installed under some OTHER saved profile of the same game
+// (#371's AlreadyCached bucket). row is that other profile's row: it carries
+// everything this one needs, so nothing is fetched and nothing is downloaded
+// - the deploy reads the cache entry the plan already confirmed.
+//
+// An EXTERNAL row is copied without deploying anything: Steam put the item
+// where the game reads it, and lmm only tracks it (see PlanImport's own
+// external branch). Returns the profile ref the caller records.
+func (s *Service) importCachedMod(ctx context.Context, game *domain.Game, profileName string, installer *Installer, row domain.InstalledMod) (domain.ModReference, error) {
+	mod := row.Mod
+	// Normalize GameID to the lmm game (see ApplyProfileSwitch's own
+	// identical save site for why).
+	mod.GameID = game.ID
+
+	if !row.External {
+		if err := installer.Install(ctx, game, &mod, profileName); err != nil {
+			return domain.ModReference{}, fmt.Errorf("deploy failed: %v", err)
+		}
+	}
+
+	installedMod := &domain.InstalledMod{
+		Mod:          mod,
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+		FileIDs:      row.FileIDs,
+		Deployed:     true, // installer.Install just succeeded, or Steam has it
+		External:     row.External,
+		ExternalPath: row.ExternalPath,
+	}
+	if err := s.saveInstalledMod(ctx, installedMod); err != nil {
+		return domain.ModReference{}, fmt.Errorf("save failed: %v", err)
+	}
+
+	return domain.ModReference{SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version, FileIDs: row.FileIDs}, nil
+}
+
+// recordImportedRef writes the profile ref completing an installed row the
+// import loop just saved, turning a refusal into the flow's --verbose-gated
+// note (ProfileImportResult.Notes + ImportNote).
+//
+// Ruling 16 (A): the DB row and the deployment are already in place, so the
+// profile ref that completes them is written even under a cancelled ctx
+// (completeProfileWrite). A write that FAILED under a cancelled ctx failed
+// because of the cancellation, so it is returned - fatal to the loop - rather
+// than swallowed into a note; anything else is the note. A write that
+// SUCCEEDED returns nil whatever the ctx says, so the caller counts the mod
+// it genuinely finished and stops at its next top-of-loop check.
+func (s *Service) recordImportedRef(ctx context.Context, pm *ProfileManager, gameID, profileName string, ref domain.ModReference, scope Scope, result *ProfileImportResult, emit func(Event)) error {
+	err := completeProfileWrite(ctx, func(ctx context.Context) error {
+		return pm.UpsertMod(ctx, gameID, profileName, ref)
+	})
+	if err == nil {
+		return nil
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	msg := fmt.Sprintf("Warning: could not update profile: %v", err)
+	result.Notes = append(result.Notes, msg)
+	emit(StepEvent{Scope: scope, Phase: ImportNote, Detail: msg})
+	return nil
 }
