@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -362,4 +364,64 @@ func repeat(s string, n int) string {
 		out = append(out, s...)
 	}
 	return string(out)
+}
+
+// TestACancelledBuildIsClassifiableAsACancellation is T1 review #5.
+// indexUnavailable wrapped its cause with %v, so the cause was flattened
+// into text and only the sentinel joined the chain. Cancellation lands
+// inside dec.Decode as often as it lands on the per-package ctx.Err()
+// check - Decode wins on any package larger than one read - and a caller
+// that cannot tell a closed browser tab from a dead upstream logs a 502
+// for a user who simply navigated away.
+func TestACancelledBuildIsClassifiableAsACancellation(t *testing.T) {
+	sandboxEnv(t)
+
+	// The server stalls in the MIDDLE of a package, so the decoder is
+	// blocked inside Decode - not sitting on the loop's own ctx.Err()
+	// guard between two packages - when the cancellation arrives.
+	stalled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", "Wed, 10 Sep 2026 12:00:00 GMT")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"name":"Mod0","full_name":"Owner-Mod0","owner":"Owner",`))
+		w.(http.Flusher).Flush()
+		close(stalled)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+
+	src := thunderstore.New(thunderstore.Options{CacheDir: t.TempDir(), BaseURL: srv.URL})
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		<-stalled
+		cancel()
+	}()
+
+	_, err := src.RefreshIndex(ctx, testCommunity, false, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled,
+		"a cancelled build must be classifiable as a cancellation, not only as an unavailable index")
+}
+
+// TestAFailedBuildKeepsItsCauseInTheChain is the other half of the same
+// wrap: a build that fails for a reason that is NOT a cancellation is
+// still ErrIndexUnavailable, and its cause is still reachable with
+// errors.Is rather than only readable in the sentence.
+func TestAFailedBuildKeepsItsCauseInTheChain(t *testing.T) {
+	sandboxEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Last-Modified", "Wed, 10 Sep 2026 12:00:00 GMT")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"name":"Mod0","versions":"not an array"}]`))
+	}))
+	t.Cleanup(srv.Close)
+
+	src := thunderstore.New(thunderstore.Options{CacheDir: t.TempDir(), BaseURL: srv.URL})
+	_, err := src.RefreshIndex(t.Context(), testCommunity, false, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, thunderstore.ErrIndexUnavailable)
+	assert.NotErrorIs(t, err, context.Canceled)
+
+	var typeErr *json.UnmarshalTypeError
+	assert.ErrorAs(t, err, &typeErr, "the decode failure must stay in the chain, not be flattened to text")
 }

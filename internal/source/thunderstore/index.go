@@ -241,6 +241,15 @@ func (s *Source) build(ctx context.Context, community string, resp *http.Respons
 		}
 		var p wirePackage
 		if err := dec.Decode(&p); err != nil {
+			// A cancellation that lands INSIDE Decode - which it does on
+			// any package larger than one read - is a cancellation, not an
+			// index that could not be built (T1 review #5). Reported
+			// exactly as the loop's own guard above reports it, so a
+			// closed browser tab and a dead upstream are never the same
+			// error.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return watermark{}, ctxErr
+			}
 			return watermark{}, indexUnavailable(community, fmt.Errorf("decoding package %d: %w", n+1, err))
 		}
 		rec, row := project(p)
@@ -333,8 +342,14 @@ func (s *Source) communityLock(community string) *sync.Mutex {
 }
 
 // indexUnavailable wraps a failure that leaves the caller with no index.
+//
+// BOTH verbs are %w (T1 review #5): the sentinel is what a frontend
+// branches on, and the cause is what tells a maintainer - or a test -
+// which failure it actually was. Flattening the cause to text with %v left
+// callers unable to tell an unreachable upstream from an unwritable cache
+// directory without matching on a sentence.
 func indexUnavailable(community string, err error) error {
-	return fmt.Errorf("source %q: the %s index could not be built: %v: %w", sourceID, community, err, ErrIndexUnavailable)
+	return fmt.Errorf("source %q: the %s index could not be built: %w: %w", sourceID, community, err, ErrIndexUnavailable)
 }
 
 // countingReader counts the bytes actually pulled off the wire, for the
