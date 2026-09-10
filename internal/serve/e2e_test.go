@@ -7363,7 +7363,11 @@ func TestE2E_EveryRouteNamesItselfInTheTitleAndAnnouncesTheChange(t *testing.T) 
 	assert.Contains(t, searchTitle, "alpha", "search names what was searched for")
 	assert.Contains(t, setupTitle, "Setup")
 
-	require.NotNil(t, homeRegion.Live, "a route announcer must exist on every route")
+	// NotEmpty, not NotNil (P2 review Nit 7): Live is a string, so NotNil
+	// was unconditionally true - an absent announcer makes regionJS evaluate
+	// to JSON null, which unmarshals into the struct as a no-op and leaves
+	// Live == "".
+	require.NotEmpty(t, homeRegion.Live, "a route announcer must exist on every route")
 	assert.Equal(t, "polite", homeRegion.Live,
 		"a route change interrupts nothing - it is announced politely")
 	assert.False(t, homeRegion.Visible,
