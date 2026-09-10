@@ -211,6 +211,42 @@ func TestDoModEdit_AmbiguousModIDNamesTheSourceFlag(t *testing.T) {
 	assert.Contains(t, err.Error(), "-s/--source")
 	assert.Contains(t, err.Error(), "src")
 	assert.Contains(t, err.Error(), "other")
+
+	// #373: and it is the SHARED refusal `uninstall` and `update` give, not
+	// a message worded a third time here - which is what puts the candidate
+	// list in the --json envelope's details (see
+	// TestReportError_JSON_AmbiguousModError below).
+	var ambiguous *core.AmbiguousModError
+	require.ErrorAs(t, err, &ambiguous)
+	assert.Equal(t, []string{"other", "src"}, ambiguous.Sources, "sorted, so the message is install-order independent")
+	assert.Equal(t, "-s/--source", ambiguous.Flag)
+}
+
+// TestReportError_JSON_AmbiguousModError pins core.AmbiguousModError's wire
+// shape in the --json error envelope (details_coverage_test.go's entry for
+// it): a scripting caller gets the candidate sources and the flag that
+// resolves them as data, not by parsing the sentence.
+func TestReportError_JSON_AmbiguousModError(t *testing.T) {
+	withJSONOutput(t)
+
+	err := &core.AmbiguousModError{
+		ModID: "alpha", Profile: "default",
+		Sources: []string{"localmods", "repo"}, Flag: "-s/--source",
+	}
+	out := captureStdout(t, func() error { reportError(err); return nil })
+
+	assert.Equal(t, "{\n"+
+		"  \"error\": \"mod alpha is in profile default under multiple sources (localmods, repo); retry with -s/--source to choose\",\n"+
+		"  \"details\": {\n"+
+		"    \"mod_id\": \"alpha\",\n"+
+		"    \"profile\": \"default\",\n"+
+		"    \"sources\": [\n"+
+		"      \"localmods\",\n"+
+		"      \"repo\"\n"+
+		"    ],\n"+
+		"    \"flag\": \"-s/--source\"\n"+
+		"  }\n"+
+		"}\n", out)
 }
 
 // TestDoModEdit_SourceFlagPicksAmongSameIDMods is the resolution: with -s

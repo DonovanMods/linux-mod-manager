@@ -21,6 +21,9 @@ import (
 // and a type with no entry here (or an entry naming a test function that no
 // longer exists) fails the build.
 var detailsCoverage = map[string]string{
+	// #373's ambiguous bare mod ID: the candidate sources reach the
+	// envelope as data, not only as the sentence.
+	"core.AmbiguousModError":      "TestReportError_JSON_AmbiguousModError",
 	"core.ConflictError":          "TestReportError_JSON_ConflictError",
 	"core.ExternalModError":       "TestReportError_JSON_ExternalModError",
 	"core.GameDetectPartialError": "TestDoGameDetect_JSON_PartialApplyFailure_EnvelopeNamesPersistedGames",

@@ -1560,6 +1560,18 @@ func TestJSONGoldens(t *testing.T) {
 			core.GameSourceInUseError{SourceID: "nexusmods", GameID: "skyrim-se", Count: 1, Mods: []string{"nexusmods:m1"}},
 		},
 		{
+			// #373: a bare mod ID that matched more than one source. Caveat
+			// is populated here because `update` alone adds one; the
+			// uninstall/mod-edit refusals omit it (omitempty).
+			"ambiguous_mod_error",
+			core.AmbiguousModError{
+				ModID: "alpha", Profile: "default",
+				Sources: []string{"localmods", "repo"},
+				Flag:    "--source",
+				Caveat:  "(local mods cannot be update-checked)",
+			},
+		},
+		{
 			// #79: the credential a frontend cannot read and the action
 			// that fixes it. Sources is present because a single damaged
 			// row names only itself - a key-file-level failure (missing,

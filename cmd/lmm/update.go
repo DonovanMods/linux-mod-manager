@@ -248,6 +248,9 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				return fmt.Errorf("mod %s in profile %s belongs to source %q, not %q; retry with --source %s",
 					modID, profileName, candidates[0].SourceID, updateSource, candidates[0].SourceID)
 			default:
+				// #373: the same refusal `uninstall` and `mod edit` now
+				// give, through the one shared core error - with the local
+				// caveat this command alone has to add.
 				sources := make([]string, 0, len(candidates))
 				hasLocal := false
 				for _, c := range candidates {
@@ -262,10 +265,12 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 				// (nexusmods vs curseforge) it is noise.
 				caveat := ""
 				if hasLocal {
-					caveat = " (local mods cannot be update-checked)"
+					caveat = "(local mods cannot be update-checked)"
 				}
-				return fmt.Errorf("mod %s is in profile %s under multiple sources (%s); retry with --source to choose%s",
-					modID, profileName, strings.Join(sources, ", "), caveat)
+				return &core.AmbiguousModError{
+					ModID: modID, Profile: profileName, Sources: sources,
+					Flag: "--source", Caveat: caveat,
+				}
 			}
 		}
 

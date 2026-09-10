@@ -957,6 +957,20 @@ edit --source/--source-id` refuses a locked mod and tells you to unlock it
   longer parses leaves the running server on the last good game set and
   logs the problem, rather than emptying the chooser.
 
+- **A bare mod ID that names two mods is refused, not guessed (#373).** Mod
+  IDs are unique only WITHIN a source, so the same ID can name a different
+  mod in each source a game maps. `lmm uninstall <id>` and
+  `lmm mod edit <id>` took the first match across sources with no warning —
+  uninstall deleting the game-directory files and the cache entry of a mod
+  the user never named, and `mod edit` rewriting one, silently. Both now
+  collect every candidate and refuse when there is more than one, naming the
+  sources and the flag that chooses (`--json`: an additive `details` object
+  with `mod_id`, `profile`, `sources` and `flag`). `lmm update` already did
+  this; its block is now the shared one. For `lmm mod edit` the flag that
+  refusal names is the mod group's own **`-s/--source`** — which says which
+  source the mod you are editing is IN, the opposite end of the move from
+  `--to-source`/`--to-source-id` (#396).
+
 - **A file lmm just downloaded is no longer reported as having no checksum
   (#372).** `install` computed and stored each downloaded file's checksum,
   but `update`, `deploy`'s cache-miss redownload, `profile apply`, `profile

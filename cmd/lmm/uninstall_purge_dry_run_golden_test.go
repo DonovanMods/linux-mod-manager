@@ -175,7 +175,10 @@ func TestUninstallDryRunGoldens(t *testing.T) {
 			seedDeployableMod(t, fx.svc, fx.game, "b", "Mod B", "b.esp")
 			return fx
 		}},
-		{"bare_id_first_match_verbose", func(t *testing.T) dryRunGoldenFixture {
+		// #373: the same bare ID under two sources. Taking the first match
+		// would delete files and a cache entry for a mod the user did not
+		// name, so the plan refuses and names the flag that chooses.
+		{"bare_id_ambiguous_refuses", func(t *testing.T) dryRunGoldenFixture {
 			fx := setupUninstallDryRun(t, "a")
 			seedSecondSourceMod(t, fx.svc, fx.game, "other", "a", "Other A", "other-a.esp")
 			setVerboseForTest(t, true)

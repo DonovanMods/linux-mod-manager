@@ -9,6 +9,8 @@ package core
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/db"
@@ -215,4 +217,69 @@ func asTokenKeyError(err error) error {
 		out.Sources = []string{keyErr.SourceID}
 	}
 	return out
+}
+
+// AmbiguousModError reports that a bare mod ID matched more than one
+// installed mod (#373). Mod IDs are unique only WITHIN a source, so the same
+// ID can name a different mod in each source a game maps; a command that
+// silently took the first match would rename - or, for uninstall, delete the
+// files and cache entry of - a mod the user never named.
+//
+// Flag is the option that resolves it, worded as the command spells it
+// (`-s/--source` for `uninstall`, `update` and `mod edit`), and Caveat is an
+// optional trailing
+// note a command adds about its own candidates (e.g. that a local mod cannot
+// be update-checked). Sources is sorted, so the message is the same
+// regardless of install order.
+//
+// It follows this file's convention: Details() any puts the whole thing in
+// the --json error envelope's "details" (Ruling 3), so a scripting caller
+// gets the candidate list as data rather than by parsing the sentence.
+type AmbiguousModError struct {
+	ModID   string   `json:"mod_id"`
+	Profile string   `json:"profile"`
+	Sources []string `json:"sources"`
+	Flag    string   `json:"flag"`
+	Caveat  string   `json:"caveat,omitempty"`
+}
+
+// Error names every candidate source and the flag that chooses between them.
+func (e *AmbiguousModError) Error() string {
+	caveat := ""
+	if e.Caveat != "" {
+		caveat = " " + e.Caveat
+	}
+	return fmt.Sprintf("mod %s is in profile %s under multiple sources (%s); retry with %s to choose%s",
+		e.ModID, e.Profile, strings.Join(e.Sources, ", "), e.Flag, caveat)
+}
+
+// Details implements the --json error envelope's extension point.
+func (e *AmbiguousModError) Details() any { return e }
+
+// ResolveInstalledByID finds the single installed mod carrying modID among
+// rows, refusing rather than guessing when more than one does (#373).
+//
+// flag names the option that disambiguates, since each command spells it
+// differently. A caller that already knows the source must look the row up
+// directly instead - this is the bare-ID path.
+func ResolveInstalledByID(rows []domain.InstalledMod, modID, profileName, flag string) (*domain.InstalledMod, error) {
+	var candidates []*domain.InstalledMod
+	for i := range rows {
+		if rows[i].ID == modID {
+			candidates = append(candidates, &rows[i])
+		}
+	}
+	switch len(candidates) {
+	case 0:
+		return nil, fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+	case 1:
+		return candidates[0], nil
+	default:
+		sources := make([]string, 0, len(candidates))
+		for _, c := range candidates {
+			sources = append(sources, c.SourceID)
+		}
+		sort.Strings(sources) // deterministic regardless of install order
+		return nil, &AmbiguousModError{ModID: modID, Profile: profileName, Sources: sources, Flag: flag}
+	}
 }

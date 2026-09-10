@@ -103,14 +103,12 @@ func (s *Service) PlanUninstall(ctx context.Context, game *domain.Game, profileN
 			return nil, fmt.Errorf("listing installed mods: %w", err)
 		}
 		installed = all
-		for i := range all {
-			if all[i].ID == modID {
-				mod = &all[i]
-				break
-			}
-		}
-		if mod == nil {
-			return nil, fmt.Errorf("mod %s not found in profile %s", modID, profileName)
+		// #373: refuse a bare ID that matches more than one source rather
+		// than taking the first match - an uninstall DELETES files and a
+		// cache entry, so guessing wrong is not recoverable by re-running it
+		// with the flag.
+		if mod, err = ResolveInstalledByID(all, modID, profileName, "-s/--source"); err != nil {
+			return nil, err
 		}
 	}
 
