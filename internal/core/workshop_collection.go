@@ -30,10 +30,27 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 )
 
+// WorkshopCollectionImportResult is the ONE document `lmm profile import
+// --workshop-collection --json` writes: the collection alongside the
+// import's own result.
+//
+// Both halves are needed and neither subsumes the other.
+// ProfileImportResult counts what happened (installed / failed / skipped)
+// and knows nothing about which items they were; WorkshopCollection carries
+// the per-item `tracked` / `note` / `url` data, which for this flow is the
+// only machine-readable form of the remedy a script would act on. Emitting
+// the result alone dropped it entirely (W2 review, Minor 6). A wrapper is
+// what the one-document-on-stdout invariant allows.
+type WorkshopCollectionImportResult struct {
+	Collection *WorkshopCollection  `json:"collection"`
+	Result     *ProfileImportResult `json:"result"`
+}
+
 // WorkshopCollection is the document describing one resolved collection and
-// what importing it would mean for this machine - the `--json` shape of
-// `lmm profile import --workshop-collection`, and what the SPA's import
-// modal renders above the ordinary import preview.
+// what importing it would mean for this machine - the collection half of
+// `lmm profile import --workshop-collection --json`
+// (WorkshopCollectionImportResult), and what the SPA's import modal renders
+// in place of the ordinary import preview.
 //
 // It rides on ImportPlan (ImportPlan.WorkshopCollection) rather than being
 // returned separately, so a frontend that holds a plan holds the whole

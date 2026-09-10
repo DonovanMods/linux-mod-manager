@@ -733,7 +733,10 @@ func doProfileImportCollection(ctx context.Context, service *core.Service, game 
 		return err
 	}
 	if jsonOutput {
-		return emitJSON(result)
+		// The collection AND the result: the counts alone say nothing about
+		// WHICH items need subscribing, and that per-item remedy is the
+		// only part of this flow a script can act on (#346, W2 Minor 6).
+		return emitJSON(&core.WorkshopCollectionImportResult{Collection: c, Result: result})
 	}
 	for _, note := range result.Notes {
 		fmt.Printf("  %s\n", note)

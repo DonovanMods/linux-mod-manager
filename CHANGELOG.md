@@ -257,7 +257,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   yet fetch an item you are not subscribed to. A Workshop item is
   game-global, so such a profile is a record of what the collection
   contains rather than a set you switch on and off; a switch to it deploys
-  nothing. In `lmm serve` the same input is in the Profiles modal, and
+  nothing. `--json` emits one document carrying both halves,
+  `core.WorkshopCollectionImportResult`: the `collection` (with each item's
+  `tracked` / `note` / `url`) and the import's own `result`. In `lmm serve` the same input is in the Profiles modal, and
   pasting a collection link into the search box offers the import directly.
 
 - **Download a Steam Workshop item so lmm manages it (#347, part of

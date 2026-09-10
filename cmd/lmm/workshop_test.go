@@ -29,6 +29,9 @@ import (
 type cliWorkshopSource struct {
 	scan     source.WorkshopScan
 	describe []source.ModDescription
+	// collection is what ResolveCollection answers (#346). Zero value means
+	// "no such collection".
+	collection source.Collection
 }
 
 func (s *cliWorkshopSource) ID() string   { return "steamworkshop" }
@@ -78,6 +81,16 @@ func (s *cliWorkshopSource) CheckUpdates(context.Context, []domain.InstalledMod)
 
 func (s *cliWorkshopSource) ScanWorkshopItems(context.Context, string) (source.WorkshopScan, error) {
 	return s.scan, nil
+}
+
+// ResolveCollection is the CLI half of #346's collection import. Unset (no
+// item ids) it refuses the way the real source refuses a reference Valve
+// will not describe.
+func (s *cliWorkshopSource) ResolveCollection(context.Context, string) (source.Collection, error) {
+	if len(s.collection.ItemIDs) == 0 {
+		return source.Collection{}, source.ErrInvalidReference
+	}
+	return s.collection, nil
 }
 
 func (s *cliWorkshopSource) DescribeMods(_ context.Context, _ string, ids []string, _ bool) ([]source.ModDescription, error) {

@@ -1183,10 +1183,12 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
-			// #269 W2: the collection document `lmm profile import
-			// --workshop-collection` renders and rides on ImportPlan. One
-			// item of each kind - already adopted from a Steam subscription,
-			// and one the user has to subscribe to first.
+			// #269 W2: the collection document. It rides on ImportPlan
+			// (below) and is the `collection` half of the combined
+			// --workshop-collection --json document
+			// (workshop_collection_import_result). One item of each kind -
+			// already adopted from a Steam subscription, and one the user
+			// has to subscribe to first.
 			"workshop_collection",
 			core.WorkshopCollection{
 				SourceID:     "steamworkshop",
@@ -1266,6 +1268,39 @@ func TestJSONGoldens(t *testing.T) {
 				ProfileName: "cargo-ships",
 				Skipped:     1,
 				Notes:       []string{"1 item(s) are not subscribed: subscribe in Steam and re-run `lmm import --workshop`"},
+			},
+		},
+		{
+			// The whole `lmm profile import --workshop-collection --json`
+			// document (W2 review, Minor 6): the result's counts say what
+			// happened, and the collection beside them says to WHICH items -
+			// the per-item note being the only machine-readable form of the
+			// remedy. Emitting the result alone dropped all of it.
+			"workshop_collection_import_result",
+			core.WorkshopCollectionImportResult{
+				Collection: &core.WorkshopCollection{
+					SourceID: "steamworkshop", CollectionID: "2500900001", Name: "Cargo Ships",
+					URL:    "https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001",
+					GameID: "space-engineers-2", ProfileName: "cargo-ships",
+					Items: []core.WorkshopCollectionItem{
+						{
+							FileID: "3617086610", Name: "Sample Workshop Item",
+							URL:     "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+							Tracked: true,
+						},
+						{
+							FileID: "3512001122", Name: "Second Workshop Item",
+							URL:  "https://steamcommunity.com/sharedfiles/filedetails/?id=3512001122",
+							Note: "subscribe in Steam and re-run `lmm import --workshop`",
+						},
+					},
+					Tracked: 1, NotSubscribed: 1,
+				},
+				Result: &core.ProfileImportResult{
+					ProfileName: "cargo-ships",
+					Skipped:     1,
+					Notes:       []string{"1 item(s) are not subscribed: subscribe in Steam and re-run `lmm import --workshop`"},
+				},
 			},
 		},
 		{
