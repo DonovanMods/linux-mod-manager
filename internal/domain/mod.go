@@ -119,6 +119,28 @@ type ModReference struct {
 	Version  string   `yaml:"version" json:"version,omitempty"`             // The installed-version record (#94/#96): always stamped by installs, moved by updates, converged to by deploy. When Locked, also the lock's target.
 	FileIDs  []string `yaml:"file_ids,omitempty" json:"file_ids,omitempty"` // Source-specific file IDs that were installed
 	Locked   bool     `yaml:"locked,omitempty" json:"locked,omitempty"`     // #97 lock marker: lmm update refuses this mod; Version is the lock's target. Set/cleared only by lock/unlock; survives UpsertMod (in-place update) and export/import.
+
+	// External and UpdatedAt are DISPLAY facts a plan document carries so a
+	// renderer never has to print Version raw (#365, part of #269).
+	//
+	// A Steam Workshop item's Version is Steam's 19-digit content id - its
+	// version IDENTITY, and not a version anybody can read - so no
+	// human-facing surface may print it (issue 269's approval note). The
+	// listing documents solved that with domain.InstalledMod.External plus
+	// the mod's UpdatedAt; the PLAN documents (core.ProfileSyncPlan,
+	// core.ImportPlan, core.SwitchPlan.ToInstall, ...) are bare
+	// ModReferences, which carried neither, so their renderers had no way to
+	// tell an external ref from a managed one and printed the content id.
+	//
+	// They are marked `yaml:"-"`: a profile FILE records what to install,
+	// not how to draw it, so an export is byte-identical to every export
+	// made before this and an import fills them in from the world it is
+	// being imported into. In JSON they are omitzero, so every document that
+	// does not carry one is byte-identical too. Core stamps them (see
+	// Service.stampRefDisplay); nothing else may - a ref a caller built by
+	// hand simply renders as it always did.
+	External  bool      `yaml:"-" json:"external,omitzero"`
+	UpdatedAt time.Time `yaml:"-" json:"updated_at,omitzero"`
 }
 
 // Mod represents a mod from any source

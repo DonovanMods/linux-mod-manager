@@ -446,6 +446,19 @@ func (s *Service) GameStatus(ctx context.Context, game *domain.Game) (*GameStatu
 type SearchHit struct {
 	domain.Mod
 	Installed bool `json:"installed"`
+
+	// External marks a hit whose source is the workshop-capable one (#269
+	// W2). It is a DISPLAY fact, exactly as domain.ModReference's twin is:
+	// a Steam Workshop item's Version is the 19-digit content id, which no
+	// human-facing surface may print as a version (issue 269's approval
+	// note), and a catalog document - unlike an installed row - has no
+	// External of its own to branch on. With it, every search renderer runs
+	// the hit through the same displayVersion/displayModVersion helper as
+	// every other surface, and shows domain.Mod.UpdatedAt instead.
+	//
+	// Additive and omitzero, so a search over any other source is
+	// byte-identical.
+	External bool `json:"external,omitzero"`
 }
 
 // SearchOptions narrows a Search.
@@ -587,9 +600,23 @@ func (s *Service) Search(ctx context.Context, game *domain.Game, profileName, qu
 	for _, im := range installed {
 		installedKeys[domain.ModKey(im.SourceID, im.ID)] = true
 	}
+	// One capability lookup per SOURCE, not per hit: an aggregate search
+	// returns one page from each of the game's sources, and asking the
+	// registry the same question thirty times over would be the same answer
+	// thirty times.
+	workshopSources := make(map[string]bool, 2)
 	report.Mods = make([]SearchHit, len(visible))
 	for i, mod := range visible {
-		report.Mods[i] = SearchHit{Mod: mod, Installed: installedKeys[domain.ModKey(mod.SourceID, mod.ID)]}
+		isExternal, known := workshopSources[mod.SourceID]
+		if !known {
+			isExternal = s.sourceIsWorkshop(mod.SourceID)
+			workshopSources[mod.SourceID] = isExternal
+		}
+		report.Mods[i] = SearchHit{
+			Mod:       mod,
+			Installed: installedKeys[domain.ModKey(mod.SourceID, mod.ID)],
+			External:  isExternal,
+		}
 	}
 	return report, nil
 }

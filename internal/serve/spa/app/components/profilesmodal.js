@@ -417,6 +417,76 @@ function ImportProfileForm({ actions, close }) {
         />
       </label>
       ${error && html`<p class="modal__error">${error}</p>`}
+      <${ImportCollectionForm} actions=${actions} close=${close} />
     </div>
+  `;
+}
+
+/** ImportCollectionForm is the profiles modal's SECOND import input (issue
+ * 269 W2): a Steam Workshop collection, by id or by the URL of its page.
+ *
+ * It is an import rather than a search facet because a collection IS a mod
+ * list, which is what a profile is - surfacing it among search hits would
+ * produce a row nobody can install as a unit. The reference is forwarded to
+ * the server verbatim: the SOURCE decides what it recognises, and a second
+ * parser here could only disagree with it.
+ *
+ * It needs no API key. Resolving a collection is one of Valve's keyless
+ * endpoints, so this works for a user who has never run `lmm auth login
+ * steamworkshop` - which the hint says, because the field sitting under a
+ * Setup page full of key prompts otherwise implies the opposite. */
+export function ImportCollectionForm({ actions, close }) {
+  const [ref, setRef] = useState("");
+  const [name, setName] = useState("");
+
+  async function submit(e) {
+    e.preventDefault();
+    const collection = ref.trim();
+    if (!collection) return;
+    close();
+    await actions.openPlan({
+      kind: "profile_import",
+      origin: "profile-import-collection",
+      title: "Import Steam Workshop collection",
+      confirmLabel: "Import",
+      options: {
+        workshop_collection: collection,
+        ...(name.trim() ? { profile_name: name.trim() } : {}),
+      },
+    });
+  }
+
+  return html`
+    <form class="profiles-import__collection" onSubmit=${submit}>
+      <h4 class="plan__heading">Steam Workshop collection</h4>
+      <input
+        type="text"
+        aria-label="Steam Workshop collection id or URL"
+        placeholder="Collection id or URL"
+        data-testid="collection-ref"
+        value=${ref}
+        onInput=${(e) => setRef(e.currentTarget.value)}
+      />
+      <input
+        type="text"
+        aria-label="Name for the imported profile"
+        placeholder="Profile name (optional)"
+        data-testid="collection-profile-name"
+        value=${name}
+        onInput=${(e) => setName(e.currentTarget.value)}
+      />
+      <button
+        type="submit"
+        class="button button--small button--primary"
+        disabled=${!ref.trim()}
+      >
+        Import collection
+      </button>
+      <p class="empty-state__hint">
+        No API key needed. The profile records the collection's list: items you
+        are already subscribed to are marked as such, and the rest are listed
+        with what to do about them.
+      </p>
+    </form>
   `;
 }

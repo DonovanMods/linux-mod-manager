@@ -38,6 +38,14 @@ type ImportPlan struct {
 	NeedsRedownload []domain.ModReference `json:"needs_redownload"`
 	Missing         []domain.ModReference `json:"missing"`
 
+	// WorkshopCollection describes the Steam Workshop collection this plan
+	// was built from, when it was built from one
+	// (Service.PlanWorkshopCollectionImport, #269 W2): what the collection
+	// is, and what importing it means item by item. Nil - and absent from
+	// the document - for every ordinary file import, which is what keeps
+	// this addition byte-identical for every existing golden.
+	WorkshopCollection *WorkshopCollection `json:"workshop_collection,omitempty"`
+
 	// Exists reports whether a profile with this name is already saved for
 	// the game - purely informational (e.g. so a caller can warn before even
 	// attempting the save); ApplyImport does not consult it, instead letting
@@ -138,6 +146,14 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 		switch {
 		case !inDB:
 			missing = append(missing, ref)
+		case im.External:
+			// #269: an EXTERNAL row is a Steam Workshop item Steam itself
+			// installed. There is no cache entry to look for and nothing to
+			// re-download - it is simply present - and its Version is a
+			// content id that would send the #138 drift branch below into a
+			// reinstall lmm has no way to perform. "Already installed" is
+			// the whole truth about it.
+			installed = append(installed, ref)
 		case ref.Version != "" && im.Version != ref.Version:
 			// #138 convergence, mirroring PlanProfileSwitch's #96 drift
 			// case: the imported profile names a different version than the
@@ -160,6 +176,13 @@ func (s *Service) PlanImport(ctx context.Context, game *domain.Game, data []byte
 			storedFileIDs[key] = im.FileIDs
 		}
 	}
+
+	// #365: stamp the display facts every bucket's renderer needs, so no
+	// surface has to print a Workshop content id where a version goes.
+	s.stampRefDisplay(installed, installedData)
+	s.stampRefDisplay(needsRedownload, installedData)
+	s.stampRefDisplay(missing, installedData)
+	s.stampRefDisplay(profile.Mods, installedData)
 
 	return &ImportPlan{
 		Profile:         profile,

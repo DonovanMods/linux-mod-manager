@@ -22,6 +22,7 @@ import (
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/core"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source/steam"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/config"
 
@@ -641,6 +642,41 @@ func TestJSONGolden_ProfileImport(t *testing.T) {
 		return doProfileImport(context.Background(), svc, game, data)
 	})
 	assertJSONCLIGolden(t, "profile_import_result", out)
+}
+
+// TestJSONGolden_ProfileImportWorkshopCollection pins the COMBINED document
+// (#346, W2 review Minor 6). `--workshop-collection --json` used to emit
+// ProfileImportResult alone, which counts what happened and says nothing
+// about which items - dropping the per-item tracked/note/url data that is
+// the only machine-readable form of the "subscribe in Steam" remedy.
+func TestJSONGolden_ProfileImportWorkshopCollection(t *testing.T) {
+	svc, game, src, steamDir := setupWorkshopCLI(t)
+	// One item already adopted by `lmm import --workshop`, so the document
+	// carries a row of each kind: tracked, and needing a subscription.
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{ID: "3617086610", SourceID: "steamworkshop",
+			Name: "Sample Workshop Item", GameID: game.ID},
+		ProfileName:  "default",
+		Enabled:      true,
+		External:     true,
+		ExternalPath: steamDir,
+	}))
+	src.collection = source.Collection{
+		ID:   "2500900001",
+		Name: "Cargo Ships",
+		URL:  "https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001",
+		// One item the fixture describes and one it does not: the second is
+		// what carries the note, and its empty name pins the bare-file-id
+		// fallback a renderer has to cope with.
+		ItemIDs: []string{"3617086610", "3512001122"},
+	}
+	restore := setImportFlags(t, "2500900001", "")
+	defer restore()
+
+	out := runJSONCommand(t, func() error {
+		return doProfileImportCollection(context.Background(), svc, game)
+	})
+	assertJSONCLIGolden(t, "profile_import_workshop_collection", out)
 }
 
 // --- the new profile --dry-run flags, plain text ---

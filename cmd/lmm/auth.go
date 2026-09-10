@@ -23,8 +23,8 @@ var authCmd = &cobra.Command{
 	Short: "Manage authentication for mod sources",
 	Long: `Manage authentication credentials for mod sources.
 
-NexusMods and CurseForge are validated live against the source's API when
-you log in. Any other registered source that declares auth support (a
+NexusMods, CurseForge and Steam Workshop are validated live against the
+source's API when you log in. Any other registered source that declares auth support (a
 custom source with auth enabled in its definition - see 'lmm source
 --help') also accepts a stored API key; it is simply stored and exercised
 on first use, since custom sources have no generic validation endpoint.
@@ -51,11 +51,13 @@ first use, since there is no generic way to validate it live.
 Built-in sources:
   - nexusmods
   - curseforge
+  - steamworkshop
 
 Examples:
   lmm auth login                # Interactive selection (all auth-capable sources)
   lmm auth login nexusmods      # Authenticate with NexusMods
   lmm auth login curseforge     # Authenticate with CurseForge
+  lmm auth login steamworkshop  # Store your own Steam Web API key
   lmm auth login my-custom-src  # Store a key for a registered custom source
 
 For NexusMods:
@@ -67,6 +69,15 @@ For CurseForge:
   1. Visit https://console.curseforge.com/
   2. Create a project and generate an API key
   3. Copy your API key
+
+For Steam Workshop:
+  1. Visit https://steamcommunity.com/dev/apikey
+  2. Request a key (it is free)
+  3. Copy it, and keep it to yourself - a Steam Web API key is personal
+     and confidential. Never share it, and never paste someone else's.
+  The key is only needed for SEARCH. Tracking the items you are already
+  subscribed to ('lmm import --workshop') and importing a collection need
+  no key at all. lmm also reads STEAM_WEB_API_KEY from the environment.
 
 For a custom source, either enter the key at the prompt, or skip login
 entirely and set an environment variable instead: LMM_MYSOURCE_API_KEY

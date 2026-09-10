@@ -235,6 +235,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Steam Workshop section for what that does and does not cover; searching
   the Workshop (needs a personal API key) lands in its own unit.
 
+- **Steam Workshop search and collections (#346, part of #269).** Searching
+  the Workshop is now supported, behind **your own** free Steam Web API key
+  (<https://steamcommunity.com/dev/apikey>): `lmm auth login steamworkshop`
+  stores it — encrypted at rest, like every other source's — or export
+  `STEAM_WEB_API_KEY`, the name every other Steam tool already uses. The key
+  is personal and confidential; lmm ships none, shares none, and says so at
+  the prompt and beside the web UI's key field. Without one, a Workshop
+  search reports that authentication is required rather than returning
+  nothing, and every other Workshop feature keeps working keyless.
+  `--category` and `--tag` are both sent as required tags (the Workshop has
+  no category concept distinct from tags), and results are cached for five
+  minutes.
+
+  **A Workshop collection imports as a profile**, because a collection _is_
+  a mod list: `lmm profile import --workshop-collection <id|url>`, with
+  `--as` to name the result. It needs no API key. The profile RECORDS the
+  collection's list: items you already track are marked as such, every
+  other item is listed with what to do about it — subscribe in Steam, then
+  run `lmm import --workshop` — and nothing is downloaded: the import
+  records the list. A Workshop item is
+  game-global, so such a profile is a record of what the collection
+  contains rather than a set you switch on and off; a switch to it deploys
+  nothing. `--json` emits one document carrying both halves,
+  `core.WorkshopCollectionImportResult`: the `collection` (with each item's
+  `tracked` / `note` / `url`) and the import's own `result`. In `lmm serve` the same input is in the Profiles modal, and
+  pasting a collection link into the search box offers the import directly.
+
 - **Download a Steam Workshop item so lmm manages it (#347, part of
   #269).** `lmm install steamworkshop:<file id>` — and the same Install
   action in `lmm serve` — now downloads a Workshop item into lmm's own
@@ -851,6 +878,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads joined the same rule: it committed whatever came back, so two
   clicks landed in arrival order and an answer that arrived after you had
   moved to another mod was written onto that one's page.
+
+- **No surface prints a Steam Workshop content id where a version goes
+  (#365, part of #269).** The profile-sync and profile-import plan previews
+  render bare mod references, which carried neither an external marker nor a
+  date, so a Steam Workshop item reaching either bucket showed its 19-digit
+  content id as its version — on both frontends. Those references now carry
+  the two display facts (additive, and absent from a profile file, so no
+  export changes), and every renderer reads the shared version helper. The
+  same rule reached the surface search itself opened: a Workshop search hit
+  shows the item's revision date, not the content id.
+
+- **The library's row menu no longer offers "Re-link…" for a Steam Workshop
+  item (#365).** The full mod page has hidden it since tracking shipped —
+  there is no link to move, and the operation is refused — so the row's menu
+  and the row's own page disagreed about what the row could do.
+
+- **A search that needs an API key you have not supplied is no longer
+  reported by `lmm serve` as a server error (#346).** `GET /api/v1/search`
+  answered 500 when the only source configured for the game needed a
+  credential, which is the ordinary state of a Workshop-only game before you
+  run `lmm auth login steamworkshop`. It answers 401 with the reason, and
+  the web UI says "authentication required".
 
 - **A verify result handed to a caller is no longer the memo's own copy
   (#366).** #336's memo cloned the result it served from a cache HIT, but

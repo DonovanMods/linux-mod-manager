@@ -39,17 +39,35 @@ func init() {
 }
 
 // profileImportPlanRequest is POST /api/v1/plans/profile_import's request
-// body: the exported profile document, verbatim, as text. The profile's
-// NAME is not a parameter - it is inside the document, which is what makes
-// an export portable.
+// body: EITHER the exported profile document, verbatim as text, or a Steam
+// Workshop collection reference (#269 W2).
+//
+// For a document the profile's NAME is not a parameter - it is inside the
+// document, which is what makes an export portable. A collection carries no
+// such name, so ProfileName may supply one; empty derives it from the
+// collection's own title, exactly as `lmm profile import --as` does.
 type profileImportPlanRequest struct {
-	Data string `json:"data"`
+	Data string `json:"data,omitzero"`
+	// WorkshopCollection is a collection id or the URL of its page,
+	// forwarded to core verbatim: the SOURCE owns what it recognises, and a
+	// second parser here could only disagree with it.
+	WorkshopCollection string `json:"workshop_collection,omitzero"`
+	ProfileName        string `json:"profile_name,omitzero"`
 }
 
-// validate implements validatingOptions.
+// validate implements validatingOptions. The two inputs are mutually
+// exclusive: with both, the server would be guessing which one the caller
+// meant, and the CLI refuses the same combination.
 func (r *profileImportPlanRequest) validate() error {
-	if r.Data == "" {
-		return errors.New(`"data" is required`)
+	switch {
+	case r.Data == "" && r.WorkshopCollection == "":
+		return errors.New(`"data" or "workshop_collection" is required`)
+	case r.Data != "" && r.WorkshopCollection != "":
+		return errors.New(`"data" and "workshop_collection" are mutually exclusive`)
+	case r.Data == "" && r.ProfileName == "":
+		return nil
+	case r.Data != "" && r.ProfileName != "":
+		return errors.New(`"profile_name" applies to "workshop_collection" only - a profile document names its own profile`)
 	}
 	return nil
 }
@@ -89,6 +107,10 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 	req, ok := opts.(profileImportPlanRequest)
 	if !ok {
 		return nil, nil, fmt.Errorf("profile import plan: unexpected options type %T", opts)
+	}
+
+	if req.WorkshopCollection != "" {
+		return planWorkshopCollectionImport(ctx, s, sel, req)
 	}
 
 	// Parse first, so a document that is not a profile export at all is
@@ -134,6 +156,25 @@ func planProfileImportKind(ctx context.Context, s *Server, sel selection, opts a
 	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
 }
 
+// planWorkshopCollectionImport is the collection half of the same plan
+// kind. It produces the SAME core.ImportPlan - with WorkshopCollection
+// attached - so the confirm modal, the job, and the apply path below are
+// the ones profile import already had.
+//
+// A reference the source cannot parse, and a game with no Steam Workshop
+// mapping, are both the CALLER's input being wrong rather than the server
+// failing, so both answer 400 with the message core produced.
+func planWorkshopCollectionImport(ctx context.Context, s *Server, sel selection, req profileImportPlanRequest) (any, any, error) {
+	plan, err := s.svc.PlanWorkshopCollectionImport(ctx, sel.Game, req.ProfileName, req.WorkshopCollection)
+	if err != nil {
+		if core.IsBadCollectionRef(err) {
+			return nil, nil, fmt.Errorf("%w: %w", errBadPlanRequest, err)
+		}
+		return nil, nil, err
+	}
+	return plan, &pendingProfileImport{Game: sel.Game, Plan: plan}, nil
+}
+
 // applyProfileImportKind implements planKind.Apply for "profile_import".
 func applyProfileImportKind(ctx context.Context, s *Server, pending, opts any, sink core.EventSink) (any, error) {
 	p, ok := pending.(*pendingProfileImport)
@@ -143,6 +184,13 @@ func applyProfileImportKind(ctx context.Context, s *Server, pending, opts any, s
 	req, ok := opts.(profileImportApplyRequest)
 	if !ok {
 		return nil, fmt.Errorf("profile import apply: unexpected options type %T", opts)
+	}
+	// A collection plan takes core's collection apply, which forces
+	// NoInstall: lmm cannot fetch a Workshop item the user is not
+	// subscribed to until Tier 3 (#347), and that rule belongs in core so
+	// both frontends inherit it rather than in whichever one remembered.
+	if p.Plan.WorkshopCollection != nil {
+		return s.svc.ApplyWorkshopCollectionImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
 	}
 	return s.svc.ApplyImport(ctx, p.Game, p.Plan, req.importOptions(), sink)
 }

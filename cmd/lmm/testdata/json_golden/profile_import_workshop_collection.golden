@@ -1,0 +1,33 @@
+{
+  "collection": {
+    "source_id": "steamworkshop",
+    "collection_id": "2500900001",
+    "name": "Cargo Ships",
+    "url": "https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001",
+    "game_id": "g1",
+    "profile_name": "cargo-ships",
+    "items": [
+      {
+        "file_id": "3617086610",
+        "name": "Sample Workshop Item",
+        "url": "https://steamcommunity.com/sharedfiles/filedetails/?id=3617086610",
+        "tracked": true
+      },
+      {
+        "file_id": "3512001122",
+        "note": "subscribe in Steam and re-run `lmm import --workshop`"
+      }
+    ],
+    "tracked": 1,
+    "not_subscribed": 1
+  },
+  "result": {
+    "profile_name": "cargo-ships",
+    "installed": 0,
+    "failed": 0,
+    "skipped": 1,
+    "notes": [
+      "1 item(s) are not subscribed: subscribe in Steam and re-run `lmm import --workshop`"
+    ]
+  }
+}

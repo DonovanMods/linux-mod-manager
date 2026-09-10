@@ -1914,7 +1914,18 @@ func TestE2E_FullModPage_RendersFilesAndVersions(t *testing.T) {
 	assert.Contains(t, filesBody, "Files")
 	assert.Contains(t, filesBody, "Versions")
 
-	f.runInBrowser(t, textContent(`.mod-page`, &versionsBody))
+	f.runInBrowser(t,
+		// VersionsSection starts in its own "Loading versions…" state -
+		// modPage.versions is fetched separately from the page's primary
+		// ModFiles read - and the `.mod-page__table` waited on above is the
+		// FILES table, so it is visible while the versions fetch is still in
+		// flight. Polling the section out of that state is what waits the
+		// fetch out; without it this read raced the fetch and, under the
+		// load of a full -race package run, lost. Same idiom, same reason,
+		// as the rollback scenario above.
+		pollUntil(`!document.querySelector(".mod-page").textContent.includes("Loading versions\u2026")`),
+		textContent(`.mod-page`, &versionsBody),
+	)
 	assert.Contains(t, versionsBody, "1.0")
 	assert.Contains(t, versionsBody, "2.0")
 	assert.Contains(t, versionsBody, "installed")

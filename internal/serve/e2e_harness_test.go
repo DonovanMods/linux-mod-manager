@@ -1753,6 +1753,41 @@ func pollUntil(js string) chromedp.Action {
 	return chromedp.Poll(js, nil, chromedp.WithPollingInterval(e2ePollInterval))
 }
 
+// clickWhenSettled clicks sel only once its BOX HAS STOPPED MOVING - the
+// same box twice in a row, e2ePollInterval apart - and it is how a click on
+// a control in the app bar has to be spelled.
+//
+// chromedp.Click resolves the node, measures its box, and then dispatches a
+// mouse event at those COORDINATES. Anything that re-lays-out the row in
+// between sends the event to whatever now occupies the old spot, and a
+// click nobody handled looks exactly like a click nobody made: no error, no
+// console entry, just a modal that never opens and a wait that burns the
+// harness's whole budget. The app bar does re-lay-out after hydration - the
+// deploy indicator resolves from empty to "N changes undeployed" and pushes
+// everything after it right - which is a ~76px shift straight across the
+// Deploy button.
+//
+// It bites on the SECOND visit to a route in one test, not the first: a
+// warm module cache hydrates in ~70ms rather than ~200ms, which lands the
+// click inside the window instead of after it. Diagnosed by recording the
+// button's box either side of a failing click - x moved 391 -> 468, and a
+// listener attached to the button counted zero clicks.
+func clickWhenSettled(sel string) chromedp.Action {
+	return chromedp.Tasks{
+		pollUntil(fmt.Sprintf(`(() => {
+			const el = document.querySelector(%q);
+			window.__settledBoxes = window.__settledBoxes || {};
+			if (!el) { delete window.__settledBoxes[%q]; return false; }
+			const r = el.getBoundingClientRect();
+			const key = [r.x, r.y, r.width, r.height].map(Math.round).join(",");
+			const settled = window.__settledBoxes[%q] === key;
+			window.__settledBoxes[%q] = key;
+			return settled;
+		})()`, sel, sel, sel, sel)),
+		chromedp.Click(sel, chromedp.ByQuery),
+	}
+}
+
 // settleEffects gives Preact's hook effects time to run before the next
 // action depends on one having been attached.
 //

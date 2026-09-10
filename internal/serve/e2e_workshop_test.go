@@ -62,6 +62,10 @@ func (s *e2eWorkshopSource) DescribeMods(_ context.Context, _ string, ids []stri
 			Mod: domain.Mod{
 				ID: id, SourceID: e2eWorkshopSourceID, Name: "Sample Workshop Item",
 				Author: "76561198000000000",
+				// The real source answers a SourceURL here, and the
+				// collection plan's per-item list links to it (W2 review,
+				// Important 3) - core never builds one itself.
+				SourceURL: "https://steamcommunity.com/sharedfiles/filedetails/?id=" + id,
 			},
 		})
 	}
@@ -283,7 +287,7 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="deploy"]`),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		textContent(`.modal[data-kind="deploy"]`, &body),
 	)
@@ -303,7 +307,7 @@ func TestE2E_Workshop_DeployPlanShowsTheExternalRowAsUntouched(t *testing.T) {
 	f.runInBrowser(t,
 		chromedp.Navigate(f.HomePath()),
 		chromedp.WaitVisible(`.mission-control[data-hydrated="true"]`, chromedp.ByQuery),
-		chromedp.Click(`[data-action="deploy"]`, chromedp.ByQuery),
+		clickWhenSettled(`[data-action="deploy"]`),
 		chromedp.WaitVisible(`.modal[data-kind="deploy"] .plan`, chromedp.ByQuery),
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll('.modal select[name="deploy-mod"] option'))

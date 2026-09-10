@@ -18,6 +18,7 @@
 
 import { html, useMemo, useState } from "../render.js";
 import { contextPath } from "../router.js";
+import { workshopCollectionRef } from "../workshopcollection.js";
 import { SourceResultsList } from "./searchresults.js";
 import { ModPanel } from "./modpanel.js";
 import { AwayBar } from "./awaybar.js";
@@ -36,6 +37,9 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
 
   const searchPage = state.searchPage;
   const query = (route.q ?? "").trim();
+  // A pasted Workshop link is not a search term, and searching for it finds
+  // nothing. Offer what the user actually meant (issue 269 W2).
+  const collectionRef = workshopCollectionRef(query);
   const matches = searchPage && searchPage.query === query;
   const report = matches ? searchPage.report : null;
   const hits = report?.mods ?? [];
@@ -96,6 +100,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
       ${header}
       <main id="main" class="app-main search-page">
         <p class="app-error">Couldn't search: ${searchPage.error}</p>
+        <${CollectionOffer} collectionRef=${collectionRef} actions=${actions} />
       </main>
     `;
   }
@@ -110,6 +115,7 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
   return html`
     ${header}
     <main id="main" class="app-main search-page" data-hydrated="true">
+      <${CollectionOffer} collectionRef=${collectionRef} actions=${actions} />
       <div class="search-page__toolbar">
         <h1 class="section-header">
           Results for “${searchPage.query}” — ${pageSummary}
@@ -249,4 +255,38 @@ export function SearchPage({ state, route, onThemeChange, actions }) {
  * browsing, not navigate away from the search page entirely. */
 function searchPagePath(home, query) {
   return `${home}/search?q=${encodeURIComponent(query)}`;
+}
+
+/** CollectionOffer is the search page's answer to a pasted Steam Workshop
+ * collection link: the search itself will find nothing for it, so this
+ * offers the import that link is actually good for.
+ *
+ * It renders on the ERROR branch too, and that is the point - a search for
+ * a URL against a Workshop source with no key answers "authentication
+ * required", which is precisely the moment a user most needs to be told
+ * that importing the collection needs no key at all.
+ *
+ * Renders nothing when the query is not a Workshop link. */
+function CollectionOffer({ collectionRef, actions }) {
+  if (!collectionRef) return null;
+  return html`
+    <p class="plan__note" data-testid="collection-offer">
+      That looks like a Steam Workshop link.${" "}
+      <button
+        type="button"
+        class="button button--small button--primary"
+        onClick=${() =>
+          actions.openPlan({
+            kind: "profile_import",
+            origin: "profile-import-collection",
+            title: "Import Steam Workshop collection",
+            confirmLabel: "Import",
+            options: { workshop_collection: collectionRef },
+          })}
+      >
+        Import it as a profile</button
+      >${" "}
+      <span class="empty-state__hint">No API key needed.</span>
+    </p>
+  `;
 }

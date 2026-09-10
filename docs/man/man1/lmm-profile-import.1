@@ -6,11 +6,11 @@ lmm-profile-import - Import a profile
 
 
 .SH SYNOPSIS
-\fBlmm profile import <file> [flags]\fP
+\fBlmm profile import [file] [flags]\fP
 
 
 .SH DESCRIPTION
-Import a profile from a YAML file.
+Import a profile from a YAML file, or from a Steam Workshop collection.
 
 .PP
 Missing mods are downloaded and installed automatically, after a
@@ -20,14 +20,36 @@ nothing. Use --force to overwrite an existing profile with the same name
 instead of failing.
 
 .PP
+--workshop-collection takes a Steam Workshop collection id or the URL of
+its page, and imports the collection AS a profile: a collection is a mod
+list, which is what a profile is. It needs no API key. The profile RECORDS
+the list: items you are already subscribed to (and have tracked with 'lmm
+import --workshop') are marked as such, and the rest are listed with what
+to do about them - lmm cannot download a Workshop item you are not
+subscribed to. The profile is named after the collection unless you name
+it with --as.
+
+.PP
+A Workshop item is game-global: Steam has it on disk and the game loads it
+whichever profile is active. So switching to a collection profile deploys
+nothing, and the profile is a record of what the collection contains
+rather than a set you turn on and off.
+
+.PP
 Examples:
   lmm profile import survival.yaml --game skyrim-se
   lmm profile import survival.yaml --game skyrim-se --yes
   lmm profile import survival.yaml --game skyrim-se --no-install
   lmm profile import survival.yaml --game skyrim-se --force
+  lmm profile import --workshop-collection 2500900001 --game space-engineers-2
+  lmm profile import --workshop-collection https://steamcommunity.com/sharedfiles/filedetails/?id=2500900001 --as ships
 
 
 .SH OPTIONS
+\fB--as\fP=""
+	name the imported profile (--workshop-collection only; a file names its own profile)
+
+.PP
 \fB--force\fP[=false]
 	overwrite existing profile
 
@@ -38,6 +60,10 @@ Examples:
 .PP
 \fB--no-install\fP[=false]
 	skip installing missing mods
+
+.PP
+\fB--workshop-collection\fP=""
+	import a Steam Workshop collection (its id, or the URL of its page) instead of a file
 
 .PP
 \fB-y\fP, \fB--yes\fP[=false]

@@ -322,23 +322,32 @@ export function Library({
             ${row.convert_paks ? "Disable pak conversion" : "Enable pak conversion"}
           </button>`
         }
-        <button
-          type="button"
-          class="row-menu__item"
-          data-action="relink"
-          onClick=${() => {
-            setMenuKey(null);
-            actions.openPlan({
-              kind: "mod_relink",
-              origin: origin("relink"),
-              title: `Re-link ${row.name}`,
-              confirmLabel: "Re-link",
-              options: { mod_id: row.id, source_id: row.source_id },
-            });
-          }}
-        >
-          Re-link…
-        </button>
+        ${
+          // issue 365 (b): an EXTERNAL row has no link to move - Steam owns
+          // the item where it sits, and core refuses the relink outright
+          // (core.ExternalModError). The full mod page has hidden this
+          // action since Tier 1 for exactly that reason; this menu still
+          // offered it, so the row's own menu and its page disagreed about
+          // what the row could do.
+          !row.external &&
+          html`<button
+            type="button"
+            class="row-menu__item"
+            data-action="relink"
+            onClick=${() => {
+              setMenuKey(null);
+              actions.openPlan({
+                kind: "mod_relink",
+                origin: origin("relink"),
+                title: `Re-link ${row.name}`,
+                confirmLabel: "Re-link",
+                options: { mod_id: row.id, source_id: row.source_id },
+              });
+            }}
+          >
+            Re-link…
+          </button>`
+        }
         <button
           type="button"
           class="row-menu__item"
