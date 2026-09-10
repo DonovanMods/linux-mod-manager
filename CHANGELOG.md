@@ -1421,6 +1421,18 @@ alpha < /dev/null`, the scripted/cron case the exit-code table exists for
   both renderings. A genuine stdin failure (anything other than EOF) still
   reports as `reading input: …`.
 
+- **A source you have never signed in to no longer warns on every search
+  (#383).** `lmm init` maps `steamworkshop` from the Steam prefill, which is
+  right — Tier 1 (tracking and updating the items the Steam client already
+  has) needs no key at all — but Tier 2 SEARCH does, so a default setup
+  printed `warning: source steamworkshop: authentication required: …` above
+  every `lmm search` result and rendered the same string as an orange block
+  in the web UI's results list. An unauthenticated source is now left out of
+  an all-sources search the way a source with no search capability already
+  is. Once a credential IS stored, an authentication failure means that key
+  is expired or revoked — a real problem — and stays a warning; searching
+  the source directly with `-s` still reports it too.
+
 ## [2.0.0] - 2026-08-30
 
 ### v2 migration notes

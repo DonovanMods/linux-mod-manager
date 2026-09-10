@@ -498,6 +498,10 @@ type searchSourceState struct {
 	// of the Track C review added - when the source could not honour the
 	// page size it was asked for, so its next offset would skip rows.
 	active bool
+	// authenticated is whether the user has stored a credential for this
+	// source. Read once, up front, so the auth-required skip below (#383)
+	// costs one DB read per source rather than one per goroutine per round.
+	authenticated bool
 	// hasMore is "this source might still hold results we did not fetch",
 	// which is NOT the same question as active: a source that clamped the
 	// requested page size has more AND cannot be paged for it. Exhausted is
@@ -690,6 +694,7 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 		if !source.CapabilitiesOf(src).Search {
 			continue // silent skip (design §5)
 		}
+		st.authenticated = s.IsSourceAuthenticated(ctx, sourceID)
 		st.attempted = true
 		st.active = true
 	}
@@ -724,6 +729,22 @@ func (s *Service) searchAllSources(ctx context.Context, gameID, query, category 
 					st.active = false
 					if errors.Is(err, source.ErrNotSupported) && !st.succeeded {
 						st.attempted = false // runtime capability gap: silent skip, not a warning
+						return nil
+					}
+					// #383: a source the user has never signed in to is a
+					// capability they have not opted into, not a failure of
+					// this search - `lmm init` maps steamworkshop from the
+					// ACF prefill (correctly: #269's Tier 1 needs no key),
+					// and warning about Tier 2's missing key on every single
+					// query made the most-used command in the tool carry a
+					// permanent notice. Skipped exactly like the capability
+					// gap above; `lmm source list`'s AUTH column and the
+					// Setup page are where the capability is discoverable.
+					// Once a credential IS stored, an auth failure means
+					// THAT key is expired or revoked, which is a real
+					// problem and stays a warning.
+					if errors.Is(err, domain.ErrAuthRequired) && !st.succeeded && !st.authenticated {
+						st.attempted = false
 						return nil
 					}
 					st.err = err

@@ -40,8 +40,11 @@ The values each source accepts are source-specific: NexusMods takes the
 category NAME as it spells it ("Armour") and a tag name; CurseForge takes
 a numeric category id. Steam Workshop treats both as REQUIRED TAGS - the
 Workshop has no category concept distinct from tags - and needs your own
-Steam Web API key ('lmm auth login steamworkshop'); without one it reports
-that authentication is required.
+Steam Web API key ('lmm auth login steamworkshop'). A source you have not
+signed in to is left out of an all-sources search rather than warned about
+on every query ('lmm source list' shows which sources need a key);
+searching it directly with '-s' still reports that authentication is
+required.
 
 Examples:
   lmm search skyui --game skyrim-se

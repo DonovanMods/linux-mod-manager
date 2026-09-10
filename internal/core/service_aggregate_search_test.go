@@ -255,3 +255,46 @@ func TestSearchAllSourcesAttemptedCountReflectsRealAttempts(t *testing.T) {
 	assert.Equal(t, 1, res.AttemptedCount)
 	assert.Empty(t, res.Mods)
 }
+
+// TestSearchAllSources_UnauthenticatedSourceIsSkippedSilently is #383.
+// `lmm init` maps steamworkshop from the ACF prefill, which is correct -
+// #269's Tier 1 needs no key at all - but Tier 2 SEARCH does, so every
+// `lmm search` against that game printed
+// "warning: source steamworkshop: authentication required: …". A capability
+// the user has not opted into is not a failure of this search, and the
+// warning appeared on the single most-used command, forever. It is skipped
+// the way a source with no Search capability already is; `lmm source list`'s
+// AUTH column and the Setup page still say the capability exists.
+func TestSearchAllSources_UnauthenticatedSourceIsSkippedSilently(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	open := &searchStubSource{id: "repo", result: source.SearchResult{
+		Mods: mods("repo", "alpha"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": "", "repo": ""}, needsKey, open)
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, res.Warnings, "a source the user never signed in to is a silent skip")
+	require.Len(t, res.Mods, 1)
+	assert.Equal(t, "alpha", res.Mods[0].ID)
+	assert.Equal(t, 1, res.AttemptedCount, "the skipped source was never really attempted")
+}
+
+// TestSearchAllSources_AuthenticatedSourceStillWarnsOnAuthFailure is the
+// other half of #383: once the user HAS stored a credential, an
+// authentication failure is a real problem with their key - an expired or
+// revoked one - and stays a warning. Silence there would hide it.
+func TestSearchAllSources_AuthenticatedSourceStillWarnsOnAuthFailure(t *testing.T) {
+	needsKey := &searchStubSource{id: "needskey", err: fmt.Errorf("source needskey: %w", domain.ErrAuthRequired)}
+	open := &searchStubSource{id: "repo", result: source.SearchResult{
+		Mods: mods("repo", "alpha"), TotalCount: 1,
+	}}
+	svc, game := newAggregateTestService(t, map[string]string{"needskey": "", "repo": ""}, needsKey, open)
+	require.NoError(t, svc.SaveSourceToken(context.Background(), "needskey", "a-stored-key"))
+
+	res, err := svc.SearchAllSourcesForTest(context.Background(), game.ID, "alpha", "", nil, 0, 10, 0)
+	require.NoError(t, err)
+	require.Len(t, res.Warnings, 1)
+	assert.Equal(t, "needskey", res.Warnings[0].SourceID)
+	assert.ErrorIs(t, res.Warnings[0].Err, domain.ErrAuthRequired)
+}
