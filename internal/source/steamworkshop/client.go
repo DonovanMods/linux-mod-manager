@@ -228,7 +228,25 @@ func (d itemDetails) describedText() string {
 // available reports whether Valve actually described this item. `result: 1`
 // is success; anything else (the spike observed 9) means "no such file, as
 // far as this API is concerned".
+//
+// This is the GetPublishedFileDetails rule, where the #268 spike
+// live-observed both values. Search has its own — see searchable.
 func (d itemDetails) available() bool { return d.Result == 1 }
+
+// searchable is available's QueryFiles counterpart, and it is deliberately
+// the LOOSER of the two: a row is kept unless Valve explicitly marks it
+// failed.
+//
+// The difference is a difference in evidence, not in taste. The spike
+// never obtained a successful QueryFiles body at all — keyless QueryFiles
+// is a guaranteed 403 — so that `result` is present on every row of a
+// keyed search is an assumption no observation supports. Requiring it
+// would mean that if Valve omits the field, every hit decodes to
+// `Result: 0`, every hit is discarded, and `lmm search --source
+// steamworkshop` returns an empty page while reporting a total of 137 —
+// a total, silent failure of the feature, visible in no test and only in
+// a live keyed run (W2 review, Important 4).
+func (d itemDetails) searchable() bool { return d.Result == 0 || d.Result == 1 }
 
 // detailsResponse is GetPublishedFileDetails' envelope.
 type detailsResponse struct {

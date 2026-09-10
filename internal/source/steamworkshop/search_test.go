@@ -93,6 +93,29 @@ func TestSearch_MapsResultsExactlyAsGetModDoes(t *testing.T) {
 	assert.Equal(t, int64(5678), m.Downloads)
 }
 
+// TestSearch_KeepsARowValveDoesNotExplicitlyMarkFailed pins the one
+// difference between the two endpoints' row filters (W2 review, Important
+// 4). GetPublishedFileDetails' `result` was live-observed by the #268
+// spike; QueryFiles' was NEVER observed — the spike only ever got a 403
+// from that endpoint, so the hand-authored fixture's `result: 1` on every
+// row confirmed the fixture, not Valve. Requiring it would silently
+// discard every hit if Valve omits the field, turning the unit's headline
+// feature into an empty page with a non-zero total.
+func TestSearch_KeepsARowValveDoesNotExplicitlyMarkFailed(t *testing.T) {
+	fx := serveRoutes(t, reply{file: "queryfiles_result_variants.json"})
+	src := keyedSource(t, fx.srv.URL, nil)
+
+	res, err := src.Search(context.Background(), source.SearchQuery{GameID: "1133870"})
+	require.NoError(t, err)
+
+	require.Len(t, res.Mods, 2, "an absent result is a success; only an explicit non-1 is a failure")
+	assert.Equal(t, "3617086610", res.Mods[0].ID, "result: 1")
+	assert.Equal(t, "3512001122", res.Mods[1].ID, "no result field at all")
+	for _, m := range res.Mods {
+		assert.NotEqual(t, "2900001111", m.ID, "result: 9 is Valve saying no such file")
+	}
+}
+
 func TestSearch_CachesTheNormalisedQueryForFiveMinutes(t *testing.T) {
 	fx := serveRoutes(t, reply{file: "queryfiles_page1.json"})
 	clock := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)

@@ -179,7 +179,7 @@ func (s *Source) Search(ctx context.Context, query source.SearchQuery) (source.S
 		PageSize:   pageSizeOf(query),
 	}
 	for _, d := range resp.Response.Details {
-		if d.PublishedFileID == "" || !d.available() {
+		if d.PublishedFileID == "" || !d.searchable() {
 			continue
 		}
 		result.Mods = append(result.Mods, modFromDetails(d, query.GameID))
