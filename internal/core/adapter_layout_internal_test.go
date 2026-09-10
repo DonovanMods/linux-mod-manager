@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -233,4 +234,55 @@ func TestApplyAdapterCopyOnceRefusesAnEscapingMember(t *testing.T) {
 	within, err := copyOnceDest(filepath.Join(outside, "game"), "BepInEx/config/mod.cfg")
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(outside, "game", "BepInEx", "config", "mod.cfg"), within)
+}
+
+// TestAdapterMembersAreSlashSeparated pins M8's contract: Members and
+// RouteFile's rel are documented slash-separated, and core produced both
+// with filepath.Rel / filepath.WalkDir, which are OS-separated.
+//
+// On Linux the two forms are the same string, so this cannot be a
+// behavioural RED here and is not claimed to be one - it is a latent trap
+// for an adapter that string-matches a member, closed by converting ONCE
+// at the seam. What is pinned is that the conversion point exists and that
+// all three seam entry points route through it, so a future change that
+// hands an adapter a raw filepath value fails here rather than on someone
+// else's filesystem.
+func TestAdapterMembersAreSlashSeparated(t *testing.T) {
+	assert.Equal(t, []string{"BepInEx/config/mod.cfg"},
+		slashMembers([]string{filepath.FromSlash("BepInEx/config/mod.cfg")}))
+	assert.Equal(t, []string{`a\b`}, slashMembers([]string{filepath.ToSlash(`a\b`)}),
+		"conversion is ToSlash, applied to core's own paths - it never rewrites a member's bytes on Linux")
+
+	var sawNormalize, sawRoute []string
+	stub := recordingRouter{
+		onNormalize: func(members []string) { sawNormalize = members },
+		onRoute:     func(rel string) { sawRoute = append(sawRoute, rel) },
+	}
+	game := &domain.Game{ID: "g"}
+	osJoined := filepath.Join("BepInEx", "config", "mod.cfg")
+
+	_, err := stub.NormalizeArchive(adapter.NormalizeRequest{Game: game, Members: slashMembers([]string{osJoined})})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"BepInEx/config/mod.cfg"}, sawNormalize)
+
+	routeDeployables(stub, game, []string{osJoined})
+	adapterCopyOnceFiles(stub, game, []string{osJoined})
+	assert.Equal(t, []string{"BepInEx/config/mod.cfg", "BepInEx/config/mod.cfg"}, sawRoute)
+}
+
+// recordingRouter records exactly what the seam hands an adapter.
+type recordingRouter struct {
+	onNormalize func([]string)
+	onRoute     func(string)
+}
+
+func (recordingRouter) ID() string    { return "recorder" }
+func (recordingRouter) Label() string { return "Recorder" }
+func (r recordingRouter) NormalizeArchive(req adapter.NormalizeRequest) (adapter.Layout, error) {
+	r.onNormalize(req.Members)
+	return adapter.Layout{}, nil
+}
+func (r recordingRouter) RouteFile(_ *domain.Game, rel string) adapter.FileRoute {
+	r.onRoute(rel)
+	return adapter.RouteLink
 }

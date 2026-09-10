@@ -36,7 +36,24 @@ func (s *Service) archiveLayout(game *domain.Game, modName string, members []str
 	if err != nil {
 		return adapter.Layout{}, err
 	}
-	return a.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: members})
+	return a.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: slashMembers(members)})
+}
+
+// slashMembers converts a member list to the slash-separated form
+// adapter.NormalizeRequest.Members and adapter.FileRouter.RouteFile are
+// both documented to receive (#411, M8).
+//
+// It is THE conversion point: core produces member lists with filepath.Rel
+// and filepath.WalkDir, which are OS-separated, and an adapter that
+// string-matches a member ("BepInEx/config/") must not have to care which
+// platform it is running on. Identical to its input on Linux, which is why
+// nothing caught the drift.
+func slashMembers(members []string) []string {
+	out := make([]string, len(members))
+	for i, m := range members {
+		out[i] = filepath.ToSlash(m)
+	}
+	return out
 }
 
 // rewriteExtractedTree applies layout to the ALREADY-EXTRACTED tree at root,
@@ -209,7 +226,9 @@ func routeDeployables(a adapter.GameAdapter, game *domain.Game, files []string) 
 	}
 	out := make([]string, 0, len(files))
 	for _, f := range files {
-		if rt.RouteFile(game, f) == adapter.RouteLink {
+		// The adapter is asked in slash form (M8); the value KEPT is the
+		// caller's own, because it goes on to a filepath.Join.
+		if rt.RouteFile(game, filepath.ToSlash(f)) == adapter.RouteLink {
 			out = append(out, f)
 		}
 	}
@@ -227,7 +246,7 @@ func adapterCopyOnceFiles(a adapter.GameAdapter, game *domain.Game, files []stri
 	}
 	var out []string
 	for _, f := range files {
-		if rt.RouteFile(game, f) == adapter.RouteCopyOnce {
+		if rt.RouteFile(game, filepath.ToSlash(f)) == adapter.RouteCopyOnce {
 			out = append(out, f)
 		}
 	}
@@ -246,6 +265,7 @@ func (s *Service) rewriteStagedExtract(game *domain.Game, root string) error {
 	if err != nil {
 		return fmt.Errorf("listing extracted members: %w", err)
 	}
+	members = slashMembers(members)
 	layout, err := s.archiveLayout(game, "", members)
 	if err != nil {
 		return err
@@ -271,6 +291,7 @@ func (i *Importer) rewriteExtracted(game *domain.Game, modName, root string) err
 	if err != nil {
 		return fmt.Errorf("listing extracted members: %w", err)
 	}
+	members = slashMembers(members)
 	layout, err := i.adapter.NormalizeArchive(adapter.NormalizeRequest{Game: game, ModName: modName, Members: members})
 	if err != nil {
 		return fmt.Errorf("laying out %s: %w", modName, err)

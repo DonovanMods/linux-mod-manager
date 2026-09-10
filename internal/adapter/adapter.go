@@ -83,8 +83,10 @@ type NormalizeRequest struct {
 	// that names a directory after the mod must tolerate that and fall
 	// back to a name it can derive from Members.
 	ModName string
-	// Members are the archive's members: slash-separated,
-	// archive-relative, files only.
+	// Members are the archive's members: SLASH-separated (core converts
+	// once, at the seam), archive-relative, files only. An adapter that
+	// string-matches a member can therefore write "BepInEx/config/"
+	// without caring what separator the host filesystem uses.
 	Members []string
 }
 
@@ -186,7 +188,10 @@ func (r FileRoute) String() string {
 // behaviour exactly.
 type FileRouter interface {
 	// RouteFile classifies one cache-entry-relative file of a mod being
-	// deployed into g.
+	// deployed into g. rel is SLASH-separated, like
+	// NormalizeRequest.Members and for the same reason: core converts
+	// once, at the seam, so an adapter's own path rules are written one
+	// way.
 	RouteFile(g *domain.Game, rel string) FileRoute
 }
 
