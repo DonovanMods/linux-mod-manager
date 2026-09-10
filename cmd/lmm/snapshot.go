@@ -345,6 +345,13 @@ func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game
 	fmt.Printf("Restore %s to snapshot %s (taken %s)\n",
 		game.Name, plan.Snapshot, plan.CreatedAt.Local().Format("2006-01-02 15:04"))
 	fmt.Printf("Profile: %s\n", plan.Profile)
+	if plan.ActiveProfile != "" {
+		// The restore carries the switch (review finding 2), so say so
+		// BEFORE the counts: it is the part of the plan a user reading
+		// "restore" would not otherwise expect.
+		fmt.Printf("The active profile will change from %s to %s, and %d of its mod(s) will be undeployed.\n",
+			plan.ActiveProfile, plan.Profile, len(plan.ToPurgeActive))
+	}
 
 	if len(plan.Refusals) > 0 {
 		fmt.Printf("\n%d mod(s) CANNOT be restored:\n", len(plan.Refusals))
@@ -353,7 +360,7 @@ func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game
 		}
 	}
 
-	fmt.Printf("\nWill undeploy %d mod(s).\n", len(plan.ToPurge))
+	fmt.Printf("\nWill undeploy %d mod(s).\n", len(plan.ToPurge)+len(plan.ToPurgeActive))
 
 	restorable, unavailable := 0, 0
 	for _, o := range plan.Originals {
@@ -395,6 +402,9 @@ func renderSnapshotRestorePlan(plan *core.SnapshotRestorePlan, game *domain.Game
 // whole feature exists to avoid.
 func renderSnapshotRestoreResult(result *core.SnapshotRestoreResult) {
 	fmt.Printf("\nRestored %s.\n", result.Snapshot)
+	if result.SwitchedFrom != "" {
+		fmt.Printf("  Active profile: %s (was %s)\n", result.Profile, result.SwitchedFrom)
+	}
 	fmt.Printf("  Undeployed: %d\n", result.Purged)
 	fmt.Printf("  Originals put back: %d\n", result.OriginalsRestored)
 	fmt.Printf("  Installed: %d, replaced: %d, deployed: %d\n", result.Installed, result.Replaced, result.Deployed)

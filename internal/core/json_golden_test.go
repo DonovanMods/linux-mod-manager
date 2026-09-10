@@ -1605,6 +1605,16 @@ func TestJSONGoldens(t *testing.T) {
 					InstalledAt: fixedTime, Enabled: true, Deployed: true,
 					LinkMethod: domain.LinkSymlink,
 				}},
+				// Review finding 2: the restore also carries the switch
+				// back to the snapshot's profile, so the plan says which
+				// profile it is switching away from and what that costs.
+				ActiveProfile: "survival",
+				ToPurgeActive: []domain.InstalledMod{{
+					Mod:         jsonGoldenMod,
+					ProfileName: "survival", UpdatePolicy: domain.UpdateNotify,
+					InstalledAt: fixedTime, Enabled: true, Deployed: true,
+					LinkMethod: domain.LinkSymlink,
+				}},
 				Originals: []core.SnapshotRestoreOriginal{{
 					Root: core.OriginalRootModPath, RelativePath: "Data/shipped.esp",
 					Status: core.SnapshotOriginalRestorable,
@@ -1648,6 +1658,7 @@ func TestJSONGoldens(t *testing.T) {
 			"snapshot_restore_result",
 			core.SnapshotRestoreResult{
 				Snapshot: "before-tweaks", Profile: "default",
+				SwitchedFrom:      "survival",
 				SafetySnapshot:    "auto-snapshot_restore-20260827-120000",
 				Purged:            4,
 				OriginalsRestored: 2,

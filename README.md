@@ -1886,6 +1886,15 @@ the preview, before anything is touched**; it is never a quiet partial
 restore. A snapshot of the **current** state is taken first, so a restore is
 itself reversible (`--no-safety-snapshot` to skip that).
 
+**A restore also puts back which profile was active.** Snapshots are listed
+per game, not per profile — the snapshot you want back is often the one you
+took before switching away — so restoring a snapshot taken under another
+profile undeploys the currently active profile first and makes the
+snapshot's profile the active one again. Both the `--dry-run` preview and
+the web UI's confirm dialog say so before anything is touched, and the
+safety snapshot records the profile you were on, so the way back is a
+restore of that.
+
 **Automatic snapshots** are opt-in. Set `auto_snapshot: true` in
 `config.yaml` and lmm records one before every deploy, profile switch and
 update, named `auto-<op>-<timestamp>`. Off by default because hashing a

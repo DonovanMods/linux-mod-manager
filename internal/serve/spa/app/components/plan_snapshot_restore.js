@@ -23,6 +23,7 @@ import { relativeTime } from "../relativetime.js";
  * (internal/core/snapshot_restore.go). */
 export function SnapshotRestorePlanView({ plan, modal, actions }) {
   const toPurge = plan.to_purge ?? [];
+  const toPurgeActive = plan.to_purge_active ?? [];
   const originals = plan.originals ?? [];
   const mods = plan.mods ?? [];
   const refusals = plan.refusals ?? [];
@@ -66,9 +67,21 @@ export function SnapshotRestorePlanView({ plan, modal, actions }) {
       }
 
       <p class="plan__note plan__note--warn">
-        ${`This undeploys ${toPurge.length} mod${toPurge.length === 1 ? "" : "s"}, puts back ${restorable.length} stored original${restorable.length === 1 ? "" : "s"}, and restores ${restoring.length} mod${restoring.length === 1 ? "" : "s"} at their recorded versions.`}
+        ${`This undeploys ${toPurge.length + toPurgeActive.length} mod${toPurge.length + toPurgeActive.length === 1 ? "" : "s"}, puts back ${restorable.length} stored original${restorable.length === 1 ? "" : "s"}, and restores ${restoring.length} mod${restoring.length === 1 ? "" : "s"} at their recorded versions.`}
       </p>
 
+      ${
+        // The listing is game-scoped, so the snapshot on screen may have
+        // been taken under another profile. A restore puts back which
+        // profile was active too (review finding 2), and that is the part
+        // of the plan the word "restore" does not lead a reader to expect.
+        plan.active_profile &&
+        html`
+          <p class="plan__note plan__note--warn" data-testid="restore-switch">
+            ${`This also switches the active profile from ${plan.active_profile} back to ${plan.profile}, undeploying its ${toPurgeActive.length} mod${toPurgeActive.length === 1 ? "" : "s"}.`}
+          </p>
+        `
+      }
       ${
         unavailable.length > 0 &&
         html`

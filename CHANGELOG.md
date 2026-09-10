@@ -259,6 +259,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot of the CURRENT state is taken first, so a restore is itself
   reversible (`--no-safety-snapshot` to skip that).
 
+  A restore puts back **which profile was active**, too. The listing is
+  per game rather than per profile — the snapshot you want back is often
+  the one you took before switching away — so restoring a snapshot taken
+  under another profile undeploys the profile that is active now and makes
+  the snapshot's own the active one again, rather than deploying one
+  profile's mods on top of another's. The preview and the web UI's confirm
+  dialog both say so first, and the safety snapshot records the profile you
+  were on.
+
   `--dry-run` prints the whole plan and changes nothing. `--json` on each
   subcommand emits `core.SnapshotResult` / `core.SnapshotListing` /
   `core.SnapshotRestoreResult` (or `core.SnapshotRestorePlan` under

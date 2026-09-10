@@ -409,3 +409,69 @@ func newRestoreFixtureWithConfig(t *testing.T, configYAML string) (*core.Service
 	seedProfileWithMod(t, svc, "g1", "default", "src", "keeper", "1.0")
 	return svc, game, dataDir
 }
+
+// seedInstalledModInProfile is seedNamedInstalledMod for a profile other
+// than "default" - the two-profile fixture review finding 2 needs.
+func seedInstalledModInProfile(t *testing.T, svc *core.Service, game *domain.Game, profileName, sourceID, modID, name, version string, files map[string][]byte) {
+	t.Helper()
+	gameCache := svc.GetGameCache(game)
+	for path, content := range files {
+		require.NoError(t, gameCache.Store(game.ID, sourceID, modID, version, path, content))
+	}
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: domain.Mod{
+			ID: modID, SourceID: sourceID, Name: name, Version: version, GameID: game.ID,
+		},
+		ProfileName:  profileName,
+		UpdatePolicy: domain.UpdateNotify,
+		Enabled:      true,
+	}))
+	seedProfileWithMod(t, svc, game.ID, profileName, sourceID, modID, version)
+}
+
+// TestApplySnapshotRestore_CarriesTheProfileSwitch is review finding 2: a
+// restore of a snapshot taken under a NON-ACTIVE profile used to purge that
+// profile's installed set (nothing of which was on disk) and then deploy it
+// ON TOP of whatever the active profile had deployed - two profiles' files
+// in the game directory at once, with the other one still nominally active.
+//
+// A restore says "put this game back to the state this snapshot records",
+// and that state includes which profile is the active one, so the restore
+// carries the switch: the active profile is undeployed first and the
+// snapshot's profile becomes the default.
+func TestApplySnapshotRestore_CarriesTheProfileSwitch(t *testing.T) {
+	svc, game, _ := newRestoreFixture(t)
+	ctx := context.Background()
+	pm := svc.NewProfileManager()
+
+	// The snapshot is taken under "default", which is active now.
+	_, err := svc.CreateSnapshot(ctx, game, "default", "under-default")
+	require.NoError(t, err)
+
+	// Switch to "other", whose one mod deploys a file of its own.
+	seedInstalledModInProfile(t, svc, game, "other", "src", "otherling", "Otherling", "1.0",
+		map[string][]byte{"Data/other.esp": []byte("other v1")})
+	require.NoError(t, pm.SetDefault(ctx, game.ID, "other"))
+	_, err = svc.DeployProfile(ctx, game, "other", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(game.ModPath, "Data", "other.esp"))
+
+	plan, err := svc.PlanSnapshotRestore(ctx, game, "under-default")
+	require.NoError(t, err)
+	assert.Equal(t, "other", plan.ActiveProfile,
+		"the plan must SAY that the restore changes the active profile")
+	require.Len(t, plan.ToPurgeActive, 1, "and what it will undeploy to get there")
+
+	result, err := svc.ApplySnapshotRestore(ctx, game, plan, core.SnapshotRestoreOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "other", result.SwitchedFrom)
+
+	active, err := pm.GetDefault(ctx, game.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "default", active.Name, "the snapshot's profile is the active one after its restore")
+
+	assert.NoFileExists(t, filepath.Join(game.ModPath, "Data", "other.esp"),
+		"the other profile's deployment must not survive a restore of a different profile")
+	assert.FileExists(t, filepath.Join(game.ModPath, "Data", "keeper.esp"),
+		"and the snapshot's own mods must be deployed")
+}

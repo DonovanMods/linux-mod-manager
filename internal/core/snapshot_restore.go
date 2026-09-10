@@ -120,6 +120,23 @@ type SnapshotRestorePlan struct {
 	// GetInstalledMods' order.
 	ToPurge []domain.InstalledMod `json:"to_purge"`
 
+	// ActiveProfile is the game's ACTIVE profile when it is not the
+	// snapshot's own, empty otherwise - so a preview can say "this also
+	// switches you back to <profile>" before anything is touched.
+	//
+	// Review finding 2: the snapshots listing is deliberately game-scoped,
+	// so a user on profile B is shown profile A's snapshots. A restore that
+	// only purged A (nothing of which was on disk) and then deployed A left
+	// TWO profiles' files in the game directory with B still nominally
+	// active. A snapshot records which profile was active, so the restore
+	// puts that back too.
+	ActiveProfile string `json:"active_profile,omitempty"`
+
+	// ToPurgeActive is the active profile's installed set, undeployed
+	// before the restore's own stages so the game directory holds only what
+	// the snapshot describes. Empty when no switch is involved.
+	ToPurgeActive []domain.InstalledMod `json:"to_purge_active,omitempty"`
+
 	// Originals is every file the snapshot recorded as replaced, each with
 	// the verdict on whether it can go back.
 	Originals []SnapshotRestoreOriginal `json:"originals"`
@@ -177,7 +194,14 @@ type SnapshotRestoreResult struct {
 	// also a Warnings entry).
 	SafetySnapshot string `json:"safety_snapshot,omitempty"`
 
-	// Purged is how many mods were undeployed.
+	// SwitchedFrom names the profile that was active before the restore,
+	// when the restore had to switch away from it (review finding 2).
+	// Empty when the snapshot's profile was already the active one.
+	SwitchedFrom string `json:"switched_from,omitempty"`
+
+	// Purged is how many mods were undeployed. It counts BOTH the
+	// snapshot profile's set and, when the restore carries a switch, the
+	// profile it switched away from.
 	Purged int `json:"purged"`
 	// OriginalsRestored is how many replaced files were put back.
 	OriginalsRestored int `json:"originals_restored"`
@@ -273,6 +297,17 @@ func (s *Service) PlanSnapshotRestore(ctx context.Context, game *domain.Game, na
 		ToPurge:  installed,
 		snapshot: snapshotOf(installed),
 		doc:      doc,
+	}
+
+	// Review finding 2: if another profile is active, its deployment is
+	// part of what stands between the game directory and the recorded
+	// state, so it is planned as well. An unreadable/absent default is not
+	// an error - it means "default", which is either this profile or a
+	// profile with nothing installed.
+	if active, err := s.NewProfileManager().GetDefault(ctx, game.ID); err == nil && active != nil && active.Name != profileName {
+		activeMods, _ := s.GetInstalledMods(ctx, game.ID, active.Name)
+		plan.ActiveProfile = active.Name
+		plan.ToPurgeActive = activeMods
 	}
 
 	// The store's CURRENT manifest, not the snapshot's recorded list - see
@@ -439,9 +474,16 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	}
 
 	// A restore discards the present state on purpose, so the way back
-	// from it is on by default rather than opt-in.
+	// from it is on by default rather than opt-in. It records the ACTIVE
+	// profile, not the snapshot's: "the current state" is what is deployed
+	// and which profile is selected, so restoring the safety copy is what
+	// puts BOTH back (review finding 2).
 	if !opts.NoSafetySnapshot {
-		safety, err := s.createSnapshot(ctx, game, plan.Profile, AutoSnapshotName(OpSnapshotRestore, time.Now()), true)
+		safetyProfile := plan.Profile
+		if plan.ActiveProfile != "" {
+			safetyProfile = plan.ActiveProfile
+		}
+		safety, err := s.createSnapshot(ctx, game, safetyProfile, AutoSnapshotName(OpSnapshotRestore, time.Now()), true)
 		if err != nil {
 			warn(fmt.Sprintf("could not record a snapshot of the current state before restoring: %v", err))
 		} else {
@@ -451,9 +493,27 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	}
 
 	// --- 1. purge --------------------------------------------------------
+	// The ACTIVE profile first, when the restore is switching away from it
+	// (review finding 2): its files are on disk and the snapshot does not
+	// describe them, so leaving them would end the restore with two
+	// profiles deployed at once.
+	if plan.ActiveProfile != "" {
+		result.SwitchedFrom = plan.ActiveProfile
+		if len(plan.ToPurgeActive) > 0 {
+			purge, err := s.purgeForRestore(ctx, game, plan.ActiveProfile, plan.ToPurgeActive, opts, emit)
+			result.Purged += purge.Purged
+			result.Notes = append(result.Notes, purge.Notes...)
+			result.Warnings = append(result.Warnings, purge.Warnings...)
+			result.Refused = append(result.Refused, purge.Skipped...)
+			if err != nil {
+				return result, partial(fmt.Errorf("undeploying the active profile %s: %w", plan.ActiveProfile, err))
+			}
+		}
+		note(fmt.Sprintf("the active profile changes from %s to %s", plan.ActiveProfile, plan.Profile))
+	}
 	if len(plan.ToPurge) > 0 {
-		purge, err := s.purgeForRestore(ctx, game, plan, opts, emit)
-		result.Purged = purge.Purged
+		purge, err := s.purgeForRestore(ctx, game, plan.Profile, plan.ToPurge, opts, emit)
+		result.Purged += purge.Purged
 		result.Notes = append(result.Notes, purge.Notes...)
 		result.Warnings = append(result.Warnings, purge.Warnings...)
 		result.Refused = append(result.Refused, purge.Skipped...)
@@ -470,6 +530,14 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	// --- 3. the profile document ----------------------------------------
 	if err := s.writeSnapshotProfile(game.ID, doc); err != nil {
 		return result, partial(err)
+	}
+	// And, when the restore carries a switch, WHICH profile is active -
+	// through ProfileManager.SetDefault, the same call `lmm profile switch`
+	// ends with, so the flag is cleared on every other profile exactly once.
+	if plan.ActiveProfile != "" {
+		if err := s.NewProfileManager().SetDefault(ctx, game.ID, plan.Profile); err != nil {
+			return result, partial(fmt.Errorf("making %s the active profile again: %w", plan.Profile, err))
+		}
 	}
 
 	// --- 4. converge -----------------------------------------------------
@@ -523,17 +591,22 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 	return result, nil
 }
 
-// purgeForRestore runs the shared purge loop over the plan's own mod set,
+// purgeForRestore runs the shared purge loop over one profile's mod set,
 // stamped with this flow's Op so a live stream can tell a restore's purge
 // from `lmm purge`.
+//
+// It takes the profile and the mods explicitly because a restore may purge
+// TWO sets: the profile it is switching away from, then the snapshot's own
+// (review finding 2). Hooks are resolved per profile, so each set runs the
+// hooks its own profile configures.
 //
 // Uninstall is deliberately FALSE: the rows and profile entries are about
 // to be rewritten by the convergence, and deleting them here would throw
 // away the very state (lock, policy, previous version) the restore is
 // putting back.
-func (s *Service) purgeForRestore(ctx context.Context, game *domain.Game, plan *SnapshotRestorePlan, opts SnapshotRestoreOptions, emit func(Event)) (*PurgeResult, error) {
+func (s *Service) purgeForRestore(ctx context.Context, game *domain.Game, profileName string, mods []domain.InstalledMod, opts SnapshotRestoreOptions, emit func(Event)) (*PurgeResult, error) {
 	result := &PurgeResult{}
-	hooks, err := s.resolvedHooks(ctx, game, plan.Profile)
+	hooks, err := s.resolvedHooks(ctx, game, profileName)
 	if err != nil {
 		return result, err
 	}
@@ -541,7 +614,7 @@ func (s *Service) purgeForRestore(ctx context.Context, game *domain.Game, plan *
 	if err != nil {
 		return result, err
 	}
-	err = s.purgeMods(ctx, game, plan.Profile, plan.ToPurge, purgeSpec{
+	err = s.purgeMods(ctx, game, profileName, mods, purgeSpec{
 		op:      OpSnapshotRestore,
 		hooks:   hooks,
 		runner:  runner,

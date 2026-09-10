@@ -2,6 +2,7 @@
   "snapshot": "before-tweaks",
   "profile": "default",
   "safety_snapshot": "auto-snapshot_restore-20260827-120000",
+  "switched_from": "survival",
   "purged": 4,
   "originals_restored": 2,
   "originals_skipped": [
