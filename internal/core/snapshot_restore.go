@@ -676,18 +676,22 @@ func (s *Service) applySnapshotRestore(ctx context.Context, game *domain.Game, p
 		return result, partial(fmt.Errorf("planning the convergence back to %s: %w", plan.Snapshot, err))
 	}
 	if !applyPlan.NoChanges {
+		applyResult, err := s.applyProfileApply(ctx, game, applyPlan, ProfileApplyOptions{}, sink)
 		// #386: ToDisable is exactly "installed and enabled here, but the
 		// restored profile does not list it" - the rows the restore leaves
-		// behind. Recorded before the apply, which reports only a count.
-		for i := range applyPlan.ToDisable {
-			im := &applyPlan.ToDisable[i]
-			result.LeftInstalled = append(result.LeftInstalled, InstalledRef{
-				SourceID: im.SourceID, ModID: im.ID, Name: im.Name, Version: im.Version,
-				Reason: "not listed in the restored profile; its download is kept",
-			})
-		}
-		applyResult, err := s.applyProfileApply(ctx, game, applyPlan, ProfileApplyOptions{}, sink)
+		// behind. Recorded AFTER the apply and bounded by what it says it
+		// disabled (P1a review F9): the disable loop walks ToDisable in
+		// order and counts one per mod, so a restore that stopped part-way
+		// - a cancellation between mods - names what it left behind rather
+		// than every candidate it never reached.
 		if applyResult != nil {
+			for i := 0; i < len(applyPlan.ToDisable) && i < applyResult.Disabled; i++ {
+				im := &applyPlan.ToDisable[i]
+				result.LeftInstalled = append(result.LeftInstalled, InstalledRef{
+					SourceID: im.SourceID, ModID: im.ID, Name: im.Name, Version: im.Version,
+					Reason: "not listed in the restored profile; its download is kept",
+				})
+			}
 			result.Disabled, result.Enabled = applyResult.Disabled, applyResult.Enabled
 			result.Installed, result.Replaced = applyResult.Installed, applyResult.Replaced
 			result.Refused = append(result.Refused, applyResult.Failed...)
