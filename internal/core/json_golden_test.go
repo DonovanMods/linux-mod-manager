@@ -1882,6 +1882,25 @@ func TestJSONGoldens(t *testing.T) {
 			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
 		},
 		{
+			// #359 unit 3: the loader report `lmm game show` prints and the
+			// web game page renders. It carries the declared AND the detected
+			// answer, so a disagreement is visible on the wire rather than
+			// resolved away.
+			"loader_status",
+			core.LoaderStatus{
+				GameID: "valheim",
+				Declared: &domain.GameLoader{
+					Kind: domain.LoaderKindBepInEx, Version: "5.4.23.5",
+					Bootstrap: domain.LoaderBootstrapProton,
+				},
+				DetectedRuntime: domain.LoaderRuntimeMono, DetectedBootstrap: domain.LoaderBootstrapProton,
+				EffectiveRuntime: domain.LoaderRuntimeMono, EffectiveBootstrap: domain.LoaderBootstrapProton,
+				LaunchOption: core.BepInExLaunchOptionProton,
+				Installed:    true,
+				LoadedAt:     "2026-08-27T12:00:00Z",
+			},
+		},
+		{
 			// #359: the loader declaration as a frontend sends it - four
 			// unparsed strings, so a rejection can name the wire field.
 			"loader_spec",
