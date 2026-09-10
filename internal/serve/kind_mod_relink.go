@@ -41,11 +41,12 @@ func init() {
 type modRelinkPlanRequest struct {
 	// ModID and SourceID name the mod as it is installed TODAY. ModID is
 	// required; SourceID picks which source's copy when the same id is
-	// installed from more than one, exactly as `lmm mod edit`'s
-	// --current-source does (#373 split that from --source, which sets the
-	// mod's NEW source). An empty SourceID does not fall back to a first
-	// match: it fails the GetInstalledMod lookup, so a caller that has more
-	// than one candidate must name one.
+	// installed from more than one, exactly as `lmm mod edit`'s own
+	// -s/--source does (#373's refusal, #396's flag: --to-source/
+	// --to-source-id are the other end of the move, the mod's NEW source).
+	// An empty SourceID does not fall back to a first match: it fails the
+	// GetInstalledMod lookup, so a caller that has more than one candidate
+	// must name one.
 	ModID    string `json:"mod_id"`
 	SourceID string `json:"source_id,omitzero"`
 	// NewSourceID and NewModID are `lmm mod edit --to-source/--to-source-id`:
