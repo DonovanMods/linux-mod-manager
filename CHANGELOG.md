@@ -203,6 +203,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-run Setup offers a Steam Workshop scan (#348).** The Setup page's
+  **Adopt** section — where you land straight after first-run detect, asking
+  "what do I already have?" — now shows a second card for a game mapped to
+  the `steamworkshop` source: **Scan Steam Workshop…** reads what the Steam
+  client has already downloaded and offers to track the items lmm doesn't
+  know about yet. It is a pure local read; nothing is downloaded, moved or
+  copied. Same plan preview and confirm step as **Add mods ▾ → Track Steam
+  Workshop items…** — one flow, two entry points — and the card is offered
+  only when the game actually maps that source.
 - **Steam Workshop tracking (#345, part of #269).** lmm can now track the
   Steam Workshop items you are already subscribed to. It reads Steam's own
   bookkeeping across every Steam library on the machine, records each

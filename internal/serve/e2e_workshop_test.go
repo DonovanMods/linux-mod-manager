@@ -695,3 +695,79 @@ func TestE2E_FirstRunDetect_WorkshopBearingUncuratedGameIsListedAndAddable(t *te
 	assert.Equal(t, map[string]string{e2eWorkshopSourceID: fixture.AppID}, got.SourceIDs)
 	assert.Empty(t, f.BrowserErrors())
 }
+
+// --- #348: the first-run Setup page's Workshop adopt card ---
+
+// TestE2E_SetupAdopt_WorkshopCardTracksSubscribedItems is #348 (design Q3):
+// the Setup page's Adopt section - where a user lands straight after
+// first-run detect, asking "what do I already have?" - offers a second card
+// for a game mapped to the steamworkshop source, and confirming it records
+// the subscribed items as EXTERNAL mods. It is the same plan kind, renderer
+// and confirm modal the library's Add mods ▾ menu opens: one flow, two entry
+// points.
+func TestE2E_SetupAdopt_WorkshopCardTracksSubscribedItems(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	// A second, untracked item: the fixture's first one is already tracked,
+	// so without this the plan would have nothing to do and the assertion
+	// below could not tell "adopted" from "was already there".
+	const untrackedFileID = "3512001122"
+	src, err := f.Svc.GetSource(e2eWorkshopSourceID)
+	require.NoError(t, err)
+	ws, ok := src.(*e2eWorkshopSource)
+	require.True(t, ok)
+	steamDir := t.TempDir()
+	ws.scan.Items = append(ws.scan.Items, domain.WorkshopItem{
+		FileID: untrackedFileID, Path: steamDir,
+		Manifest: "1122334455667788990", TimeUpdated: 1758000000,
+	})
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("adopt")),
+		chromedp.WaitVisible(`[data-testid="setup-workshop-adopt"]`, chromedp.ByQuery),
+		chromedp.Click(`[data-action="plan-workshop-adopt"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal[data-kind="workshop_adopt"] .plan--workshop-adopt`, chromedp.ByQuery),
+	)
+
+	var preview string
+	f.runInBrowser(t, textContent(`.plan--workshop-adopt`, &preview))
+	assert.Contains(t, preview, "To track (1)")
+	assert.Contains(t, preview, "never moves, copies or deletes their files")
+
+	f.runInBrowser(t,
+		chromedp.Click(`.modal [data-action="confirm"]`, chromedp.ByQuery),
+		chromedp.WaitNotPresent(`.modal`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-workshop-adopt"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+
+	installed, err := f.Svc.GetInstalledMods(t.Context(), f.Game.ID, "default")
+	require.NoError(t, err)
+	var adopted *domain.InstalledMod
+	for i, im := range installed {
+		if im.ID == untrackedFileID {
+			adopted = &installed[i]
+		}
+	}
+	require.NotNil(t, adopted, "the subscribed item must now be a tracked installed mod")
+	assert.True(t, adopted.External, "an adopted Workshop item is EXTERNAL - lmm tracks it, Steam owns it")
+	assert.Equal(t, steamDir, adopted.ExternalPath)
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupAdopt_NoWorkshopCardWithoutTheMapping: the card is offered
+// from one fact - the game maps the steamworkshop source - because the plan
+// endpoint answers 400 for a game that does not, and a control that can
+// only fail is worse than no control.
+func TestE2E_SetupAdopt_NoWorkshopCardWithoutTheMapping(t *testing.T) {
+	f := newE2EFixtureFromSource(t, newFakeSource("fake"))
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("adopt")),
+		chromedp.WaitVisible(`[data-testid="setup-adopt"]`, chromedp.ByQuery),
+	)
+	var cards int
+	f.runInBrowser(t, chromedp.Evaluate(
+		`document.querySelectorAll('[data-testid="setup-workshop-adopt"]').length`, &cards))
+	assert.Equal(t, 0, cards)
+	assert.Empty(t, f.BrowserErrors())
+}
