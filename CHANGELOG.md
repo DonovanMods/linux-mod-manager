@@ -884,6 +884,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and both are accepted at all times: **`#3`** is row 3, **`app:10`** is
   Steam app id 10.
 
+- **The Setup page's Steam Workshop card no longer butts against the card
+  above it (#348).** The Adopt panel is the first place in the web UI to show
+  two cards in one panel, and nothing put space between them, so the "Steam
+  Workshop" heading sat flush against the previous card's button row.
+
 - **`lmm game detect --json`'s help and the README now describe what it
   actually emits (#368).** The help said a plain `--json` scan "carries the
   listing's default rows only" and the README said it "never carries those

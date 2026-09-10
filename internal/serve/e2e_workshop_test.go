@@ -754,6 +754,32 @@ func TestE2E_SetupAdopt_WorkshopCardTracksSubscribedItems(t *testing.T) {
 	assert.Empty(t, f.BrowserErrors())
 }
 
+// TestE2E_SetupAdopt_WorkshopCardIsSeparatedFromTheOneAboveIt pins #368
+// review Minor 6: SetupAdopt is the first place in the SPA to return TWO
+// sibling .setup-section elements, and their container has no rule of its
+// own, so the "Steam Workshop" heading sat flush against the previous card's
+// action row (.plan__heading has no top margin). Only a browser can see
+// that, which is why the visibility assertions above could not.
+func TestE2E_SetupAdopt_WorkshopCardIsSeparatedFromTheOneAboveIt(t *testing.T) {
+	f := newE2EWorkshopFixture(t)
+
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("adopt")),
+		chromedp.WaitVisible(`[data-testid="setup-workshop-adopt"]`, chromedp.ByQuery),
+	)
+
+	var gap float64
+	f.runInBrowser(t, chromedp.Evaluate(`(() => {
+		const first = document.querySelector('[data-testid="setup-adopt"]');
+		const second = document.querySelector('[data-testid="setup-workshop-adopt"]');
+		return second.getBoundingClientRect().top - first.getBoundingClientRect().bottom;
+	})()`, &gap))
+
+	assert.GreaterOrEqual(t, gap, 8.0,
+		"the second Setup card must not butt against the first (got %.1fpx)", gap)
+	assert.Empty(t, f.BrowserErrors())
+}
+
 // TestE2E_SetupAdopt_NoWorkshopCardWithoutTheMapping: the card is offered
 // from one fact - the game maps the steamworkshop source - because the plan
 // endpoint answers 400 for a game that does not, and a control that can
